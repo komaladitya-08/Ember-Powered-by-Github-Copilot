@@ -9,6 +9,15 @@ Research date: 2026-10-14.
 
 Facts marked *(verify)* were inferred from source code or binaries, not tested on real hardware.
 
+**Dev machine: RHEL 8.4** (GNOME 3.32, glibc 2.28, system Python 3.6). Implications:
+- Develop M0–M3 in the **"GNOME on Xorg"** session (gear icon on the login screen); check with
+  `echo $XDG_SESSION_TYPE`. The default Wayland session is handled later in M4.
+- The AT-SPI sidecar must run on the system `/usr/libexec/platform-python` / `python3` **3.6**
+  (no 3.8+ syntax such as walrus or `dict | dict`).
+- Package versions in §2 come from the latest RHEL 8 (8.10) sources; 8.4 may ship older
+  xdg-desktop-portal / at-spi2 builds. This affects M4 only.
+- CI images (Alma/Rocky 8) track 8.10, so run the smoke test on the real 8.4 box too.
+
 ---
 
 ## 1. What Ember must do
