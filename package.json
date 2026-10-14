@@ -1,0 +1,16 @@
+{
+  "name": "ember",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Ember: a cursor-companion agent that works visibly in your real apps, powered by the GitHub Copilot SDK.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:playground": "node scripts/build-playground.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "typescript": "5.9.3"
+  }
+}

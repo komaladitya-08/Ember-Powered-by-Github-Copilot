@@ -1,0 +1,133 @@
+<title>Ember Playground</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cantarell:wght@400;700&family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap">
+<style>/*@style*/</style>
+
+<main class="page">
+  <header class="intro">
+    <p class="eyebrow">Cursor companion · RHEL 8 prototype</p>
+    <h1 class="wordmark">Ember</h1>
+    <p class="lede">A small flame that lives beside your cursor. Ask it for something and it works in your real apps while you watch, with its thinking written underneath. Ask it to show you instead, and it rings the next thing to click with fire.</p>
+  </header>
+
+  <section class="stage-shell" aria-label="Ember on a simulated GNOME desktop">
+    <div class="stage" id="stage" data-app-theme="light" data-nightlight="off">
+      <div class="desk">
+        <div class="topbar">
+          <button class="tb-activities" id="t-activities" type="button">Activities</button>
+          <span class="tb-clock">Wed 14:32</span>
+          <span class="tb-status" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M8 13.5 1 6a10 10 0 0 1 14 0z"/></svg>
+            <svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M2 6h3l4-3.5v11L5 10H2z M11 5.5a4 4 0 0 1 0 5l-.9-.8a2.8 2.8 0 0 0 0-3.4z"/></svg>
+            <svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M3 5h9v6H3z M12.5 7h1.5v2h-1.5z"/></svg>
+          </span>
+        </div>
+
+        <div class="win win-editor" id="win-editor">
+          <div class="win-title"><span>notes.txt</span><span class="win-sub">~/Documents</span><i class="win-close" aria-hidden="true"></i></div>
+          <div class="editor-body">
+            <p>Standup notes, Wednesday</p>
+            <p>- Ember overlay: flame renderer works</p>
+            <p>- Next: AT-SPI sidecar on RHEL 8.4</p>
+            <p>- Ask IT about the GNOME on Xorg session</p>
+            <p>- Screen too blue in the evening?</p>
+          </div>
+        </div>
+
+        <div class="overview" id="overview" hidden>
+          <div class="ov-search">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M6.8 2.5a4.3 4.3 0 1 1 0 8.6 4.3 4.3 0 0 1 0-8.6zM10 10l3.6 3.6"/></svg>
+            <span class="ov-query" id="ov-query"></span><span class="ov-placeholder" id="ov-placeholder">Type to search</span>
+          </div>
+          <div class="ov-results">
+            <button class="ov-app" type="button" tabindex="-1"><span class="app-ico ico-files"></span>Files</button>
+            <button class="ov-app" id="t-settings" type="button"><span class="app-ico ico-settings"></span>Settings</button>
+            <button class="ov-app" type="button" tabindex="-1"><span class="app-ico ico-terminal"></span>Terminal</button>
+            <button class="ov-app" type="button" tabindex="-1"><span class="app-ico ico-firefox"></span>Firefox</button>
+          </div>
+        </div>
+
+        <div class="win win-settings" id="win-settings" hidden>
+          <div class="win-title"><span>Settings</span><i class="win-close" aria-hidden="true"></i></div>
+          <div class="settings-grid">
+            <nav class="set-side" aria-label="Settings sections">
+              <button type="button" aria-current="true" tabindex="-1">Wi-Fi</button>
+              <button type="button" tabindex="-1">Bluetooth</button>
+              <button type="button" tabindex="-1">Background</button>
+              <button type="button" tabindex="-1">Notifications</button>
+              <button type="button" id="t-displays">Displays</button>
+              <button type="button" tabindex="-1">Sound</button>
+              <button type="button" tabindex="-1">Power</button>
+            </nav>
+            <div class="set-main">
+              <div class="panel" id="panel-wifi">
+                <h3>Wi-Fi</h3>
+                <div class="list">
+                  <div class="row"><span>Office-5G</span><span class="muted">Connected</span></div>
+                  <div class="row"><span>Office-Guest</span><span class="muted">Secure</span></div>
+                </div>
+              </div>
+              <div class="panel" id="panel-displays" hidden>
+                <h3>Displays</h3>
+                <div class="list">
+                  <div class="row"><span>Orientation</span><span class="muted">Landscape</span></div>
+                  <div class="row"><span>Resolution</span><span class="muted">1920 × 1080 (16∶9)</span></div>
+                  <div class="row"><span>Refresh rate</span><span class="muted">60.00 Hz</span></div>
+                </div>
+                <div class="list">
+                  <div class="row"><span>Night Light</span><button class="switch" id="t-nightlight" type="button" role="switch" aria-checked="false" aria-label="Night Light"></button></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="nightlight-tint" aria-hidden="true"></div>
+      </div>
+
+      <canvas class="flame-layer" id="flame" aria-hidden="true"></canvas>
+      <div class="bubble-layer" id="bubble-host"></div>
+      <div class="os-cursor" id="os-cursor" aria-hidden="true">
+        <svg viewBox="0 0 18 26" width="18" height="26"><path d="M1.5 1.5v20.2l5-4.8 3.4 7.6 3.3-1.5-3.3-7.4h6.9z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="keycaps" id="keycaps" aria-hidden="true"></div>
+    </div>
+    <p class="stage-caption">Move your mouse over the desktop and Ember follows it. Press <b>Do it</b> to watch Ember work, or <b>Show me how</b> to be guided and click yourself.</p>
+  </section>
+
+  <section class="console" aria-label="Controls">
+    <div class="field">
+      <span class="label" id="lbl-task">Ask Ember</span>
+      <div class="btns" role="group" aria-labelledby="lbl-task">
+        <button class="btn btn-primary" id="run-do" type="button">Do it: “Turn on Night Light”</button>
+        <button class="btn" id="run-guide" type="button">Show me how</button>
+        <button class="btn btn-quiet" id="run-reset" type="button">Reset</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="label" id="lbl-mood">Preview a mood</span>
+      <div class="chips" id="mood-chips" role="radiogroup" aria-labelledby="lbl-mood"></div>
+    </div>
+    <div class="field">
+      <span class="label" id="lbl-app">App under Ember</span>
+      <div class="seg" role="radiogroup" aria-labelledby="lbl-app">
+        <button type="button" role="radio" data-app="light" aria-checked="true">Light</button>
+        <button type="button" role="radio" data-app="dark" aria-checked="false">Dark</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="moods" aria-labelledby="moods-h">
+    <h2 id="moods-h">How Ember shows what it's doing</h2>
+    <p class="moods-intro">The flame's colour and motion follow the agent's state. Each mood is driven by an event from the Copilot SDK session or from Ember's own tools.</p>
+    <dl class="mood-list" id="mood-list"></dl>
+  </section>
+
+  <footer class="foot">
+    <p>Renderer: <code>src/overlay/ember</code> (flame, bubble, motion). Canvas 2D only, so it runs on RHEL machines without a GPU. The flame is an original design inspired by the idea of a living fire spirit; it uses no film assets.</p>
+  </footer>
+</main>
+
+<script>/*@script*/</script>
