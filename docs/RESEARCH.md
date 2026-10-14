@@ -317,8 +317,51 @@ Rules and findings:
 
 ### 4.8 Character
 
-Ember's character is being explored in `demo/character-lab` (four directions on one emotion rig:
-Cinder, Wisp, Glassling, Glint). See `docs/DESIGN.md`.
+All four characters from `demo/character-lab` (Cinder, Wisp, Glassling, Glint) ship in the app and
+share one emotion rig, so switching is instant and changes nothing else. The user picks one during
+setup and can change it any time from the tray menu or settings (or by asking: "Hey Ember, switch to
+Glint"). The choice is stored in `~/.config/ember/settings.json` with size and voice. See `docs/DESIGN.md`.
+
+### 4.9 Sessions: one conductor, one worker per task
+
+```
+ voice / text ─▶ Conductor session ("Ember")      long-lived, resumed on restart, fast model
+                  tools: start_task · steer_task · cancel_task · list_tasks
+                         look_at_screen · point_at · ask_user · set_appearance
+                        │
+                        ▼  TaskManager (plain TypeScript, not an LLM)
+                  sessions · leases · desks · queue · approvals · audit log
+             ┌──────────┼──────────────┬──────────────────┐
+             ▼          ▼              ▼                  ▼
+       Worker #1     Worker #2      Worker #3        warm spare
+       Settings      Desk :99       (queued:          (pre-created
+       (tier 1)      Firefox        same window)      for low latency)
+```
+
+- **Conductor:** one Copilot session that is Ember's personality and memory. It hears every
+  utterance, answers questions itself (it can look at the screen), runs Guide mode itself (that's a
+  conversation with you), and turns requests to *do* something into `start_task` calls. It never
+  holds screenshots for long tasks, so its context stays small and replies stay fast. It uses
+  infinite sessions (automatic compaction) and is resumed by ID on restart.
+- **Workers:** each task gets its own Copilot session with the computer-use tools, a vision model
+  and its own context. Separate sessions run truly in parallel, so you can keep talking to Ember
+  while two tasks run. Progress events drive that task's card and mini-Ember; when it finishes, the
+  TaskManager sends the result back to the conductor (`send`, enqueued), which tells you.
+- **Orchestration is code, not another LLM:** the conductor decides *what* to do; the TaskManager
+  decides *where and when*: it creates and closes sessions, picks tier 1 or a desk, grants window
+  and clipboard leases, queues conflicting tasks, routes approval prompts to you, and writes the audit log.
+  "Ember, stop" aborts in code instantly; "stop the email one" goes through the conductor.
+- **Why not the SDK's built-in sub-agents (`customAgents`) for tasks?** They run inside the parent
+  session's turn and share its context, so the conductor would be busy (and fill up with
+  screenshots) while a task runs. They are still useful *inside* a worker, e.g. a cheap "verify the
+  result" agent with its own model.
+- **Latency:** keep one pre-created spare worker session so a new task starts immediately; the
+  conductor uses a fast model, workers a stronger vision model (both picked from `listModels()`).
+- **Cost:** every prompt to any session uses Copilot quota, so the conductor answers simple
+  things directly and workers stop as soon as a task is verified.
+- **Lifecycle:** finished workers stay resumable for ~10 minutes (for "undo that" or "do the same
+  for the other file"), then close. After a restart, unfinished GUI tasks are not resumed
+  automatically: Ember asks.
 
 ---
 
@@ -382,8 +425,8 @@ upstream nut.js (not on public npm), ydotool (AGPL), GPL projects above (referen
 | Milestone | Scope | Done when |
 |---|---|---|
 | **M0 Spike (X11)** | Electron overlay on RHEL 8/9 "GNOME on Xorg"; buddy follows cursor; bubble; clicky flight; overlay hides during capture | Smooth on a dual-monitor Xorg box; Electron 44 + Copilot runtime start on RHEL 8.10 |
-| **M1 Brain** | Copilot session, auth check, vision-capable model picker, stream intent/reasoning/steps into the bubble; text box | "What's on my screen?" answered from a screenshot |
-| **M2 Hands (X11)** | pyatspi sidecar + set-of-marks; robotjs + ghost-cursor glide; click/type/keys/scroll/open_app; verify loop; Esc abort | "Open gedit and write a haiku" done visibly, with no shell |
+| **M1 Brain** | Conductor session (resumed on restart), auth check, model picker, stream intent/reasoning into the bubble; text box; character picker in settings | "What's on my screen?" answered from a screenshot |
+| **M2 Hands (X11)** | TaskManager + one worker session per task; pyatspi sidecar + set-of-marks; robotjs + ghost-cursor glide; click/type/keys/scroll/open_app; verify loop; Esc abort | "Open gedit and write a haiku" done visibly, with no shell |
 | **M3 Guide + Voice** | `point_at`, highlight, `wait_for_user_click`; "Hey Ember" KWS + VAD + streaming ASR (WASM sherpa-onnx), follow-up window, barge-in; focused-window snapshot | "Hey Ember, show me how to change the wallpaper"; first action < ~5 s after speaking |
 | **M3b Alongside you** | Action router tiers 0–3; background AT-SPI actions; Xvnc desk with mini-view; lease manager; parallel sessions | Ember flips Settings switches in a background window while you type in another app, untouched |
 | **M4 GNOME Wayland (RHEL 8/9)** | Legacy-format Shell extension (overlay, pointer, keybinding, frame rects) + Mutter RemoteDesktop/ScreenCast | M2–M4 demos pass in the default Wayland session |
