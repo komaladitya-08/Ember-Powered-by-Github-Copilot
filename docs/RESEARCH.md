@@ -4,6 +4,10 @@
 > the work **inside your real applications** — visibly gliding the cursor, clicking,
 > typing — while streaming its reasoning in a bubble under the cursor. The agentic loop is the **GitHub Copilot SDK**.
 
+> **`PLAN.md` is the frozen plan.** This file is the background research; where they differ
+> (e.g. `@jitsi/robotjs` instead of robotjs, `desktopCapturer` instead of node-screenshots, no spare
+> worker session, usage-based billing), `PLAN.md` wins.
+
 Research date: 2026-10-14.
 **Platform order: Linux (RHEL 8 / 9 / 10, GNOME) → macOS → Windows.**
 
