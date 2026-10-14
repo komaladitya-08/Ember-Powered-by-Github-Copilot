@@ -2,8 +2,7 @@
 
 > A cursor-companion agent that lives next to your mouse, talks with you, and does
 > the work **inside your real applications** — visibly gliding the cursor, clicking,
-> typing, and driving a real terminal (including SSH sessions) — while streaming its
-> reasoning in a bubble under the cursor. The agentic loop is the **GitHub Copilot SDK**.
+> typing — while streaming its reasoning in a bubble under the cursor. The agentic loop is the **GitHub Copilot SDK**.
 
 Research date: 2026-10-14.
 **Platform order: Linux (RHEL 8 / 9 / 10, GNOME) → macOS → Windows.**
@@ -19,12 +18,10 @@ Facts marked *(verify)* were inferred from source code or binaries, not tested o
 | 1 | **Do it for me** | Ember's agent cursor flies to targets; the real cursor follows a human-like path, clicks and types in real apps. Reasoning + current step stream in a bubble below it. |
 | 2 | **Guide me** | Ember flies to the element, rings/highlights it with a label ("Click *Activities → Settings*"), waits for *you* to click, then points at the next step. |
 | 3 | **Quick, in context** | You're already in an app; hold push-to-talk, say "make this a table". Ember grabs the focused window's accessibility tree + screenshot and acts immediately. |
-| 4 | **SSH to remote machines** | Ember opens your real terminal, visibly types `ssh host` and commands; you watch and can take over at any moment. |
-| 5 | Talk to it | Push-to-talk voice (offline STT) or a small text box; optional spoken replies. |
+| 4 | Talk to it | Push-to-talk voice (offline STT) or a small text box; optional spoken replies. |
 
 Design rule: **no hidden shortcuts.** Every change goes through a real app the user can see
-(the Copilot SDK's built-in shell/edit tools are disabled). SSH is done in a visible
-terminal, not a background library.
+(the Copilot SDK's built-in shell/edit tools are disabled).
 
 ---
 
@@ -38,7 +35,6 @@ terminal, not a background library.
 | Falls back to Xorg | Yes on Matrox/Aspeed BMC (most rack servers), Hyper-V, vendor NVIDIA, `nomodeset` | NVIDIA < 470, hybrid laptops | Never |
 | xdg-desktop-portal(-gnome) | 1.12 / gtk 1.12 | 1.12 / 41.2 | 1.20 / 47.3 |
 | at-spi2-core / libei | 2.28 / — | 2.40 / — | 2.56 / 1.5 |
-| tmux / OpenSSH | 2.7 / 8.0p1 | 3.2a / 8.7p1 | 3.3a / 9.9p1 |
 | Default terminal | gnome-terminal (VTE GTK3) | gnome-terminal | **Ptyxis** (VTE GTK4) |
 
 What X11 gives us vs. what GNOME Wayland takes away:
@@ -87,7 +83,6 @@ GNOME; RHEL 8 has none, so it falls back to GTK 3 (or pass `--gtk-version=3`).
 | Real cursor & keys | **robotjs 0.9.1** (XTest, MIT) + **ghost-cursor** `path()` | Mutter `RemoteDesktop` (`NotifyPointerMotionAbsolute`…) or the extension's Clutter virtual device; portal RemoteDesktop + libei on RHEL 10 |
 | Cursor position | `screen.getCursorScreenPoint()` | extension `global.get_pointer()` |
 | Push-to-talk | **uiohook-napi** (XRecord, key-up) | extension keybinding + modifier-mask polling |
-| Terminal / SSH | **tmux** (`-L ember` socket) inside the user's real terminal | same (`send-keys` doesn't need synthetic keyboard input) |
 | STT / TTS | **sherpa-onnx-node** (offline, streaming) / `speechSynthesis` | same |
 
 Why Electron (not Tauri) still holds on Linux: a mature transparent overlay, `desktopCapturer`,
@@ -103,7 +98,7 @@ Shell extension anyway.
 ┌──────────────────────────────── Electron main process ─────────────────────────────────┐
 │ AgentHost ── CopilotClient / CopilotSession (Copilot runtime child, stdio JSON-RPC)    │
 │   • streaming events ──► Presenter (bubble: intent, reasoning, step "why")             │
-│   • custom tools ──────► DesktopBackend | TerminalBackend                              │
+│   • custom tools ──────► DesktopBackend                                                │
 │   • onPreToolUse hook ─► SafetyGate (policy, confirmations, audit log)                 │
 │                                                                                        │
 │ DesktopBackend (chosen from XDG_SESSION_TYPE + GNOME version)                          │
@@ -112,7 +107,6 @@ Shell extension anyway.
 │   └─ (later) MacBackend · WindowsBackend                                               │
 │                                                                                        │
 │ A11ySidecar (python3 + pyatspi) ── JSON-RPC: tree, find, bounds, actions, text          │
-│ TerminalBackend ── tmux -L ember: send-keys, capture-pane, pipe-pane → OSC 133 parser   │
 │ VoiceProcess (utilityProcess): sherpa-onnx STT                                          │
 └────────────────────────────────────────────────────────────────────────────────────────┘
                  ▲ D-Bus (Wayland only)
@@ -154,8 +148,7 @@ const session = await client.createSession({
   model: pickedModelId,               // from client.listModels(); must support vision
   streaming: true,
   tools: [perceive, clickElement, typeText, pressKeys, scroll, drag, openApp, focusWindow,
-          pointAt, waitForUserClick, zoom, sshOpen, terminalRun, terminalRead, terminalWait,
-          terminalSendKeys, sshClose],
+          pointAt, waitForUserClick, zoom],
   availableTools: EMBER_TOOL_NAMES,   // disable built-in shell/edit/view (verify name format vs SDK types)
   systemMessage: { mode: "customize", sections: {
     identity:          { action: "replace", content: EMBER_IDENTITY },
@@ -208,12 +201,6 @@ Element-id tools are preferred; raw coordinates are the fallback.
 | `focus_window{title}` | Bring a window forward |
 | `point_at{id \| x,y, label}` | **Guide mode**: fly + highlight ring + label; no click |
 | `wait_for_user_click{id, timeout}` | Guide mode: resolves when the user clicks inside the rectangle |
-| `ssh_open{host, purpose}` | Open the real terminal (tmux) and visibly `ssh <allowlisted alias>` |
-| `terminal_run{session_id, command, why, timeout_s}` | Type the command; returns `completed \| waiting_for_input \| tui_active \| timeout \| denied`, exit code, head/tail output |
-| `terminal_read{session_id, source, output_id?, offset?, lines}` | Page through screen/history/stored output |
-| `terminal_wait{session_id, until, pattern?, timeout_s}` | Wait for a prompt or regex |
-| `terminal_send_keys{session_id, keys[], why}` | `q`, `C-c`, `Enter`… (refused while a secret/host-key prompt is on screen) |
-| `ssh_close{session_id}` | |
 | `ask_user{question}` | Via the SDK's `onUserInputRequest`; the bubble becomes interactive |
 
 Modes are system prompt + tool subsets: **Do** = all; **Guide** = perceive / point_at /
@@ -251,81 +238,18 @@ Test with fractional scaling and mixed-DPI dual monitors early.
 - Chromium/Electron apps: `--force-renderer-accessibility` for full web trees.
 - Qt apps: `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`.
 - Good trees: GTK3/GTK4, Firefox, LibreOffice. gnome-terminal exposes visible text through
-  ATK; Ptyxis (RHEL 10) only does behind its `enable-a11y` toggle. Terminals use the tmux path instead.
+  ATK; Ptyxis (RHEL 10) only does behind its `enable-a11y` toggle. Terminal text is otherwise read from screenshots.
 - Poor trees (canvas, games, VNC viewers) → screenshot-only grounding (`click_at`, `zoom`).
 
 ---
 
-## 5. SSH design
-
-**Visible but machine-readable:** Ember opens the user's real terminal running tmux on
-Ember's own socket, then types `ssh <alias>` where the user can see it.
-
-```
-gnome-terminal -- tmux -L ember -f ~/.config/ember/tmux.conf new -s ssh-<id>   # ptyxis -- … on RHEL 10
-```
-
-- **Status bar** (in `tmux.conf`): "Ember is driving — Ctrl-B d to take over"; large `history-limit`.
-- **Typing:** `tmux send-keys -l` writes into the pane without needing keyboard focus or
-  synthetic input (important on Wayland). The overlay still animates the typing.
-- **Reading:** `capture-pane -p -J -S <start> -E <end>` gives exact text with scrollback
-  (`-J` joins wrapped lines). `#{alternate_on}` means a full-screen app (less, vim, top) is running.
-- **Command completion:** after login, Ember types one visible setup line:
-  `export PROMPT_COMMAND='printf "\e]133;D;%s\a\e]133;A\a" $?' PAGER=cat SYSTEMD_PAGER=cat GIT_PAGER=cat`.
-  tmux 3.8 is the first release with native OSC 133 events, and RHEL ships 2.7/3.2a/3.3a, so Ember
-  parses the OSC 133 markers itself from the `pipe-pane -O` byte stream. The markers are invisible
-  on screen and carry the exit code. Fallback for other shells: a `__EMBER_DONE_<nonce>_$?` sentinel.
-- **Why not AT-SPI or OCR:** VTE's accessible text only covers the rows on screen (no scrollback,
-  no command boundaries); OCR is lossy. Both are kept only as cross-checks.
-- **Connection reuse:** use system OpenSSH, so `~/.ssh/config`, ProxyJump, `known_hosts`,
-  ssh-agent, smartcards and Kerberos all work. `ControlMaster=auto` + `ControlPersist` let side
-  channels (e.g. file transfer, shown in the activity panel) reuse the visible session's login.
-  `ssh -G <alias>` resolves the config for policy checks.
-
-**Secrets never reach the model**
-
-- Prefer ssh-agent / keyring.
-- OpenSSH ≥ 8.4 (RHEL 9/10): `SSH_ASKPASS=ember-askpass` + `SSH_ASKPASS_REQUIRE=force` → Ember's
-  native prompt hands the secret straight to ssh.
-- RHEL 8 (OpenSSH 8.0) and remote `sudo`: detect the prompt on screen (Ember rewrites sudo as
-  `sudo -p '[ember-sudo] password: '`, visible to the user), ask the user in the overlay, then inject
-  with `send-keys` (echo is already off). The model only sees `[secret entered by user]`, and
-  injected keystrokes are excluded from logs.
-
-**Policy**
-
-- `ssh_open` accepts only allowlisted aliases. The model can't pass `-o` options.
-  Never `StrictHostKeyChecking=no`; new host keys go to the user with the fingerprint shown.
-- Each command is parsed (e.g. tree-sitter-bash) into **read-only / mutating / destructive / privileged**.
-  - Pipes, `$()`, `eval`, `curl|sh` and `xargs` raise the tier.
-  - Destructive and privileged commands need the user's confirmation in the overlay (command + `why`).
-  - A nested `ssh`, `scp` or `nc` counts as a new hop that needs approval.
-- Per-host modes: `read_only | confirm | trusted`. For real enforcement, recommend unprivileged accounts.
-- Output to the model: ANSI stripped, head 40 + tail 160 lines (≤ 16 KB), full output kept under an
-  `output_id`. Remote output is marked **untrusted** (prompt-injection risk).
-- `terminal_run` returns `waiting_for_input` on `password`, `(yes/no`, `[Y/n]`, `(END)`, `--More--`;
-  Ember never sends Ctrl-C on its own. `ServerAliveInterval=15` detects dead links.
-- Audit: the raw `pipe-pane` log + a JSONL log of tool calls, decisions, approvals and exit codes.
-
-**Remote GUI** (opt-in "remote desktop" mode): a remote desktop in Remmina/TigerVNC/xfreerdp is
-just pixels, so Ember drives it by screenshots and `click_at` only, confirming destructive clicks.
-Prefer `ssh -X` / `waypipe` to forward a single app; forwarded windows are local windows that
-Ember's normal pipeline can drive (their AT-SPI tree will likely be missing).
-
-**Later on macOS/Windows:** no tmux, so a small `ember-bridge` runs inside Terminal/iTerm2/Windows
-Terminal. It spawns `ssh` under `node-pty`, passes the bytes through to the visible terminal and
-mirrors them to Ember (`@xterm/headless` keeps the screen state). The OSC 133 parser, policy and
-askpass code are shared.
-
----
-
-## 6. Safety & control
+## 5. Safety & control
 
 - **Esc / hotkey kill switch** → `session.abort()` + cancel in-flight motion via `AbortSignal`.
 - **User takeover:** physical mouse/keyboard activity during an agent action pauses the agent and
   asks "continue?". Ember ignores its own injected events (uiohook on X11; extension on Wayland).
 - **Confirm risky actions** in `onPreToolUse`: sending messages, deleting, closing unsaved work,
-  password fields (AT-SPI `password text` role), destructive/privileged SSH commands.
+  password fields (AT-SPI `password text` role).
 - **Wayland control surfaces** (Mutter private API, the extension's D-Bus interface) are callable by
   any process in the session → sender allow-list in the extension plus a visible "Ember is in
   control" indicator.
@@ -333,7 +257,7 @@ askpass code are shared.
 
 ---
 
-## 7. Reusable code — inventory
+## 6. Reusable code — inventory
 
 ### Linux (now)
 
@@ -347,7 +271,6 @@ askpass code are shared.
 | [node-screenshots](https://github.com/nashaofu/node-screenshots) 0.2.8 | Apache-2.0 | X11 capture |
 | pyatspi / python3-gobject (RHEL packages) | LGPL | AT-SPI sidecar |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 | Offline STT/VAD/TTS |
-| tmux, OpenSSH (RHEL packages) | ISC / BSD | SSH terminal backend |
 
 ### Borrow patterns from
 
@@ -358,8 +281,6 @@ askpass code are shared.
 | [sbuysse/gnome-desktop-mcp](https://github.com/sbuysse/gnome-desktop-mcp) | GPL-3.0 (reference only) | Shell extension doing screenshots, windows and virtual input (GNOME 45–49) |
 | [AmrDab/clawdcursor](https://github.com/AmrDab/clawdcursor) | MIT | TypeScript + python3-gi AT-SPI sidecar; same stack shape as Ember |
 | [xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld) `desktop_env` | Apache-2.0 | AT-SPI tree serialization for LLMs |
-| [tufantunc/ssh-mcp](https://github.com/tufantunc/ssh-mcp) 2.19.1 | MIT | SSH command classifier, role × host policy, approval modes, audit |
-| [classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server) | ISC | Allow/deny lists, keyboard-interactive 2FA |
 | [UI-TARS-desktop](https://github.com/bytedance/UI-TARS-desktop) | Apache-2.0 | Electron overlay/marker windows; `Operator { screenshot(); execute() }` interface |
 | [Anthropic computer-use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool) | — | Action vocabulary |
 
@@ -368,8 +289,7 @@ askpass code are shared.
 | Platform | Perception | Input | Other |
 |---|---|---|---|
 | macOS | [Peekaboo](https://github.com/openclaw/Peekaboo) (MIT, AX map + screenshot) | robotjs + ghost-cursor | `setContentProtection`, `forward:true` work; Screen Recording + Accessibility permissions |
-| Windows | [`@mediar-ai/terminator`](https://github.com/mediar-ai/terminator) (MIT, UIA) or [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (MIT) | robotjs + ghost-cursor | Port clicky-windows ideas; `ember-bridge` for SSH |
-| Both | — | — | `node-pty` 1.1.0 + `@xterm/headless` 6.0.0 (MIT) for the SSH bridge |
+| Windows | [`@mediar-ai/terminator`](https://github.com/mediar-ai/terminator) (MIT, UIA) or [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (MIT) | robotjs + ghost-cursor | Port clicky-windows ideas |
 
 ### Avoid copying
 
@@ -378,31 +298,41 @@ upstream nut.js (not on public npm), ydotool (AGPL), GPL projects above (referen
 
 ---
 
-## 8. Build plan
+## 7. Build plan
 
 | Milestone | Scope | Done when |
 |---|---|---|
 | **M0 Spike (X11)** | Electron overlay on RHEL 8/9 "GNOME on Xorg"; buddy follows cursor; bubble; clicky flight; overlay hides during capture | Smooth on a dual-monitor Xorg box; Electron 44 + Copilot runtime start on RHEL 8.10 |
 | **M1 Brain** | Copilot session, auth check, vision-capable model picker, stream intent/reasoning/steps into the bubble; text box | "What's on my screen?" answered from a screenshot |
 | **M2 Hands (X11)** | pyatspi sidecar + set-of-marks; robotjs + ghost-cursor glide; click/type/keys/scroll/open_app; verify loop; Esc abort | "Open gedit and write a haiku" done visibly, with no shell |
-| **M3 SSH** | tmux backend, OSC 133 parser, askpass/overlay secrets, host allowlist, command classifier, audit log | "SSH to web01 and show disk usage" with a visible terminal, exact output, exit code |
-| **M4 Guide + Quick** | `point_at`, highlight, `wait_for_user_click`; uiohook push-to-talk + sherpa-onnx; focused-window snapshot | "Show me how to change the wallpaper"; voice command acts in < ~5 s |
-| **M5 GNOME Wayland (RHEL 8/9)** | Legacy-format Shell extension (overlay, pointer, keybinding, frame rects) + Mutter RemoteDesktop/ScreenCast | M2–M4 demos pass in the default Wayland session |
-| **M6 RHEL 10** | ESM extension build; portal RemoteDesktop v2 + libei with restore token; Ptyxis | Same demos on RHEL 10.2 (GNOME 49) |
-| **M7 Packaging** | RPM (+ AppImage), system-wide extension with dconf lock, native addons built on Alma 8, `doctor` check | Clean install on RHEL 8, 9, 10 |
-| **M8 macOS, M9 Windows** | Backends from §7 "Later ports"; `ember-bridge` for SSH | Same demo suite |
+| **M3 Guide + Quick** | `point_at`, highlight, `wait_for_user_click`; uiohook push-to-talk + sherpa-onnx; focused-window snapshot | "Show me how to change the wallpaper"; voice command acts in < ~5 s |
+| **M4 GNOME Wayland (RHEL 8/9)** | Legacy-format Shell extension (overlay, pointer, keybinding, frame rects) + Mutter RemoteDesktop/ScreenCast | M2–M4 demos pass in the default Wayland session |
+| **M5 RHEL 10** | ESM extension build; portal RemoteDesktop v2 + libei with restore token; Ptyxis | Same demos on RHEL 10.2 (GNOME 49) |
+| **M6 Packaging** | RPM (+ AppImage), system-wide extension with dconf lock, native addons built on Alma 8, `doctor` check | Clean install on RHEL 8, 9, 10 |
+| **M7 macOS, M8 Windows** | Backends from §6 "Later ports" | Same demo suite |
 
 CI: build and smoke-test on Alma/Rocky 8, 9, 10 containers (Xvfb for X11 tests).
 
-## 9. Risks / open questions
+## 8. Risks / open questions
 
 - **GNOME Wayland is the hard part.** The Mutter RemoteDesktop/ScreenCast API is private and can
   change across RHEL minor rebases (10.2 jumped 47 → 49). The Shell extension needs two builds
-  (legacy and ESM). Prototype M5 early, not last.
+  (legacy and ESM). Prototype M4 early, not last.
 - **XWayland overlay** (`--ozone-platform=x11`) stacking and fractional scaling on GNOME 49 *(verify)*.
 - **Copilot runtime packaging** in Electron (~148 MB, stdio issues reported) — validate in M0/M1.
 - **Reasoning visibility varies by model** — the bubble design doesn't depend on it.
 - **Latency & quota:** each step = screenshot → model → action. Prefer element-id actions, batch
   obvious steps, downscale images, use a faster model tier for Quick mode.
 - **Enterprise policy:** an always-on screen-reading/input agent will raise security review questions
-  → local-only processing except model calls, audit log, per-host SSH policy, a clear indicator.
+  → local-only processing except model calls, audit log, a clear indicator.
+
+## 9. Deferred: SSH to remote machines
+
+Out of scope for now. If it comes back, the researched approach was: Ember opens the user's real
+terminal running tmux on its own socket (`tmux -L ember`), visibly types `ssh <allowlisted alias>`,
+types with `send-keys`, reads exact output with `capture-pane`, and detects command completion and
+exit codes by parsing OSC 133 markers from `pipe-pane` (RHEL's tmux 2.7/3.2a/3.3a predates native
+support). Secrets go through ssh-agent / `SSH_ASKPASS` (OpenSSH ≥ 8.4) or an overlay prompt, never
+the model; commands are classified and destructive/privileged ones confirmed. Policy references:
+[tufantunc/ssh-mcp](https://github.com/tufantunc/ssh-mcp) (MIT), [classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server) (ISC).
+macOS/Windows would use an `ember-bridge` built on `node-pty` + `@xterm/headless`.
