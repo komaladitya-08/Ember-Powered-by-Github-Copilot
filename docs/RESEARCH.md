@@ -26,8 +26,9 @@ Facts marked *(verify)* were inferred from source code or binaries, not tested o
 |---|---|---|
 | 1 | **Do it for me** | Ember's agent cursor flies to targets; the real cursor follows a human-like path, clicks and types in real apps. Reasoning + current step stream in a bubble below it. |
 | 2 | **Guide me** | Ember flies to the element, rings/highlights it with a label ("Click *Activities → Settings*"), waits for *you* to click, then points at the next step. |
-| 3 | **Quick, in context** | You're already in an app; hold push-to-talk, say "make this a table". Ember grabs the focused window's accessibility tree + screenshot and acts immediately. |
-| 4 | Talk to it | Push-to-talk voice (offline STT) or a small text box; optional spoken replies. |
+| 3 | **Quick, in context** | You're already in an app; say "Hey Ember, make this a table". Ember grabs the focused window's accessibility tree + screenshot and acts immediately. |
+| 4 | **Always listening** | Ember listens on-device for "Hey Ember" (nothing leaves the machine before the wake word), then for a follow-up window without the wake word. "Ember, stop" or Esc aborts. A text box is the fallback. |
+| 5 | **Works alongside you** | Ember leaves your cursor and does the task in a background window or its own "desk" while you keep using your mouse and keyboard. You can glance at it at any time; it never takes your input without asking. |
 
 Design rule: **no hidden shortcuts.** Every change goes through a real app the user can see
 (the Copilot SDK's built-in shell/edit tools are disabled).
@@ -55,7 +56,7 @@ What X11 gives us vs. what GNOME Wayland takes away:
 | Screenshot | XShm (`node-screenshots`) | Mutter `ScreenCast`/PipeWire, portal ScreenCast (prompt), `org.gnome.Shell.Screenshot` (caller-restricted on 9/10) |
 | Always-on-top overlay | ✓ `_NET_WM_STATE_ABOVE` | ✗ native Wayland (no z-order, no layer-shell on GNOME) → Shell extension, or Electron under XWayland *(verify)* |
 | Click-through overlay | ✓ XShape input region | Electron ≥ 43 sets `wl_surface` input region |
-| Hold-to-talk key | `uiohook-napi` (XRecord) | ✗ (GlobalShortcuts portal needs xdp-gnome ≥ 48; not in any RHEL) → Shell extension |
+| Hold-to-talk key (optional; wake word is primary) | `uiohook-napi` (XRecord) | ✗ (GlobalShortcuts portal needs xdp-gnome ≥ 48; not in any RHEL) → Shell extension |
 | Accessibility tree | AT-SPI2, screen coords valid | AT-SPI2, **window-relative coords only** → add window frame rect from Shell extension |
 
 Electron-on-Linux caveats (all versions): `setIgnoreMouseEvents({forward:true})` and
@@ -91,8 +92,10 @@ GNOME; RHEL 8 has none, so it falls back to GTK 3 (or pass `--gtk-version=3`).
 | Screenshot | `node-screenshots` (xcap, Apache-2.0) | Mutter ScreenCast → PipeWire; portal ScreenCast + restore token on RHEL 10 |
 | Real cursor & keys | **robotjs 0.9.1** (XTest, MIT) + **ghost-cursor** `path()` | Mutter `RemoteDesktop` (`NotifyPointerMotionAbsolute`…) or the extension's Clutter virtual device; portal RemoteDesktop + libei on RHEL 10 |
 | Cursor position | `screen.getCursorScreenPoint()` | extension `global.get_pointer()` |
-| Push-to-talk | **uiohook-napi** (XRecord, key-up) | extension keybinding + modifier-mask polling |
-| STT / TTS | **sherpa-onnx-node** (offline, streaming) / `speechSynthesis` | same |
+| Wake word, VAD, STT | **sherpa-onnx** open-vocabulary keyword spotting ("hey ember", "ember stop") + Silero VAD + streaming Zipformer ASR. The prebuilt `sherpa-onnx-node` addon needs glibc 2.32 → use the WASM `sherpa-onnx` package first, rebuild the native addon in a UBI8 container later | same (PipeWire-pulse is transparent) |
+| Background actions | AT-SPI `doAction` / `EditableText` / `Value` / `Selection` on the user's display, never `grabFocus` | same |
+| Agent desk | Xvnc (`tigervnc-server-minimal`) or Xvfb display under `dbus-run-session` with its own AT-SPI bus; XTest on that display only | Xvfb (still in EL10) or headless Mutter |
+| TTS | `speechSynthesis` (same renderer as the mic, so echo cancellation works) | same |
 
 Why Electron (not Tauri) still holds on Linux: a mature transparent overlay, `desktopCapturer`,
 a native-addon ecosystem in TypeScript, and the same code base for the macOS/Windows ports.
@@ -116,7 +119,9 @@ Shell extension anyway.
 │   └─ (later) MacBackend · WindowsBackend                                               │
 │                                                                                        │
 │ A11ySidecar (python3 + pyatspi) ── JSON-RPC: tree, find, bounds, actions, text          │
-│ VoiceProcess (utilityProcess): sherpa-onnx STT                                          │
+│ VoiceService: mic ring buffer → KWS "hey ember" → VAD → streaming ASR (all local)        │
+│ ActionRouter: tier 0 APIs → tier 1 background AT-SPI → tier 2 agent desk → tier 3 ask   │
+│ DeskManager: Xvnc :N + private D-Bus/AT-SPI bus + live mini-view; LeaseManager          │
 └────────────────────────────────────────────────────────────────────────────────────────┘
                  ▲ D-Bus (Wayland only)
 ┌────────────────┴──────────────────────────────┐
@@ -250,6 +255,71 @@ Test with fractional scaling and mixed-DPI dual monitors early.
   ATK; Ptyxis (RHEL 10) only does behind its `enable-a11y` toggle. Terminal text is otherwise read from screenshots.
 - Poor trees (canvas, games, VNC viewers) → screenshot-only grounding (`click_at`, `zoom`).
 
+
+### 4.6 Always listening ("Hey Ember")
+
+Pipeline, all on-device until the wake word fires:
+
+1. **Capture:** renderer `getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}})` →
+   `AudioWorklet` at 16 kHz → 2–3 s RAM-only ring buffer (never written to disk). TTS plays from the same
+   renderer so Chromium's echo cancellation removes Ember's own voice. Fallback: `parec --rate=16000`.
+2. **Wake word:** sherpa-onnx keyword spotting with `sherpa-onnx-kws-zipformer-gigaspeech-3.3M`
+   (≈5 MB int8). Open vocabulary, so "hey ember" and "ember stop" are just lines in `keywords.txt`
+   with a boost and threshold, with no training. **Second-stage check:** run ASR over the ~1.5 s around the
+   trigger and accept only if the transcript contains "ember".
+3. **After the wake:** Silero VAD for end of speech, streaming Zipformer ASR for live partial
+   transcripts in the bubble, then `session.send(...)`.
+4. **Conversation window:** stay armed ~8 s after Ember replies (distinct glow), so follow-ups don't
+   need the wake word.
+5. **Barge-in:** keep KWS running during speech; "Ember, stop" or Esc → `session.abort()`.
+6. **Privacy:** overlay states off / listening-for-name / active; mute hotkey that *stops the stream*;
+   an admin policy switch. GNOME 3.32 lights its mic icon whenever any app records, so say so during onboarding.
+
+| Wake-word option | Verdict |
+|---|---|
+| sherpa-onnx KWS (Apache-2.0) | **v1.** No training. Native addon needs glibc 2.32 on RHEL 8 → WASM build or rebuild |
+| openWakeWord / livekit-wakeword (Apache-2.0) | **Upgrade path** if false accepts are too high: train a dedicated "hey ember" ONNX model (own model, so commercial use is clean; openWakeWord's *pretrained* models are CC BY-NC-SA). Runs via `onnxruntime-node` 1.30 (glibc 2.28 ✓) |
+| Picovoice Porcupine | Ruled out: online AccessKey check, free tier ended (reported), `pvrecorder-node` needs glibc 2.34 |
+| microWakeWord | Microcontroller-only |
+
+CPU cost and false-accept rates are estimates until measured on target laptops.
+
+### 4.7 Working alongside you (not stealing the cursor)
+
+Ember picks the least intrusive route for every action (the "no-foreground contract", as in
+Cua Driver), and escalates only when it has to:
+
+| Tier | How | Used for | Touches your input? |
+|---|---|---|---|
+| 0 | App APIs: D-Bus, files, CLI, Chrome DevTools Protocol for browsers/Electron apps | Settings via D-Bus/gsettings, web pages | No |
+| 1 | **Background AT-SPI** on your display: `doAction`, `EditableText`, `Value`, `Selection`, `Text` caret | Buttons, switches, text fields, lists in GTK3/GTK4/Qt5/Firefox/LibreOffice, even in unfocused windows | No |
+| 2 | **Ember's desk:** a private Xvnc display (`:N`) with its own D-Bus and AT-SPI bus; full XTest input there | Anything needing focus, shortcuts, popups/menus, drag-and-drop, apps without accessibility; long tasks | No |
+| 3 | **"Can I borrow your cursor for ~5 s?"** Wait for ≥3 s idle (Mutter `IdleMonitor`), save pointer and focus, act, restore; abort the instant real input arrives | Only when the target must be in your own session window | Yes, with permission |
+
+Rules and findings:
+
+- Never call `Component.grabFocus`: in GTK3 it presents the window and takes focus from the user.
+- Chromium/Electron apps have no `EditableText`; type into them via CDP or move them to the desk.
+- Opening combo boxes or menus takes a seat grab in GTK3 (briefly freezes your input) → tier 2.
+- **Desk recipes** for single-instance apps: Firefox `-no-remote -P ember`; `gnome-terminal-server --app-id org.ember.Terminal`;
+  LibreOffice `-env:UserInstallation=file:///…/ember-lo`; other GApplications under `dbus-run-session`.
+  The desk has its own clipboard and no keyring (a policy decision).
+- **Glanceable, never in the way:** the overlay is non-focusable and click-through; Ember flies to the
+  element it's working on (its extents come from AT-SPI) and the window gets a soft glow. Desk work shows in a
+  live mini-view (noVNC panel, view-only by default) with "Take over" / "Hand back". A task card lists progress.
+- **Several tasks at once:** one Copilot session per task (`createSession`, `setForegroundSessionId`
+  for the one voice talks to), plus a lease manager: per-window leases, one user-input lease for tier 3,
+  one desk per GUI-heavy task, a clipboard lease, LibreOffice lock files.
+- **Rejected:** X11 multi-pointer (MPX). A second cursor works at the X level, but Mutter grabs and
+  apps assume one seat, both pointers share one screen, and Wayland has nothing equivalent.
+- **Wayland/RHEL 10:** tier 1 is unchanged (coordinates come from the Shell extension); the desk becomes Xvfb with
+  `GDK_BACKEND=x11` etc. or a private `mutter --headless`; tier 3 goes through the RemoteDesktop portal.
+
+### 4.8 Character
+
+Ember's character is being explored in `demo/character-lab` (four directions on one emotion rig:
+Cinder, Wisp, Glassling, Glint). See `docs/DESIGN.md`.
+
 ---
 
 ## 5. Safety & control
@@ -314,7 +384,8 @@ upstream nut.js (not on public npm), ydotool (AGPL), GPL projects above (referen
 | **M0 Spike (X11)** | Electron overlay on RHEL 8/9 "GNOME on Xorg"; buddy follows cursor; bubble; clicky flight; overlay hides during capture | Smooth on a dual-monitor Xorg box; Electron 44 + Copilot runtime start on RHEL 8.10 |
 | **M1 Brain** | Copilot session, auth check, vision-capable model picker, stream intent/reasoning/steps into the bubble; text box | "What's on my screen?" answered from a screenshot |
 | **M2 Hands (X11)** | pyatspi sidecar + set-of-marks; robotjs + ghost-cursor glide; click/type/keys/scroll/open_app; verify loop; Esc abort | "Open gedit and write a haiku" done visibly, with no shell |
-| **M3 Guide + Quick** | `point_at`, highlight, `wait_for_user_click`; uiohook push-to-talk + sherpa-onnx; focused-window snapshot | "Show me how to change the wallpaper"; voice command acts in < ~5 s |
+| **M3 Guide + Voice** | `point_at`, highlight, `wait_for_user_click`; "Hey Ember" KWS + VAD + streaming ASR (WASM sherpa-onnx), follow-up window, barge-in; focused-window snapshot | "Hey Ember, show me how to change the wallpaper"; first action < ~5 s after speaking |
+| **M3b Alongside you** | Action router tiers 0–3; background AT-SPI actions; Xvnc desk with mini-view; lease manager; parallel sessions | Ember flips Settings switches in a background window while you type in another app, untouched |
 | **M4 GNOME Wayland (RHEL 8/9)** | Legacy-format Shell extension (overlay, pointer, keybinding, frame rects) + Mutter RemoteDesktop/ScreenCast | M2–M4 demos pass in the default Wayland session |
 | **M5 RHEL 10** | ESM extension build; portal RemoteDesktop v2 + libei with restore token; Ptyxis | Same demos on RHEL 10.2 (GNOME 49) |
 | **M6 Packaging** | RPM (+ AppImage), system-wide extension with dconf lock, native addons built on Alma 8, `doctor` check | Clean install on RHEL 8, 9, 10 |
@@ -332,6 +403,9 @@ CI: build and smoke-test on Alma/Rocky 8, 9, 10 containers (Xvfb for X11 tests).
 - **Reasoning visibility varies by model** — the bubble design doesn't depend on it.
 - **Latency & quota:** each step = screenshot → model → action. Prefer element-id actions, batch
   obvious steps, downscale images, use a faster model tier for Quick mode.
+- **Always-on mic in an enterprise:** needs a clear indicator, a hard mute, an admin switch and
+  documentation that audio stays local before the wake word. False accepts must be measured on real hardware.
+- **Background actions vary by app:** popups, combo boxes and some custom widgets will need the desk; test per app.
 - **Enterprise policy:** an always-on screen-reading/input agent will raise security review questions
   → local-only processing except model calls, audit log, a clear indicator.
 
