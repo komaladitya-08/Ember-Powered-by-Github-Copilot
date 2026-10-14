@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build:playground": "node scripts/build-playground.mjs",
+    "build:playground": "node scripts/build-demo.mjs playground",
+    "build:lab": "node scripts/build-demo.mjs character-lab",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
