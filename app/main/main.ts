@@ -547,8 +547,9 @@ function start(): void {
         if (!e.on && e.reason === "rejected") {
           agent?.claimBubble();
           setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
-          if (beforeWake?.bubble.visible && !beforeWake.bubble.actions.length) hideIfStill(beforeWake.bubble, 6000);
         }
+        // Main lets go of the bubble: an answer it put back (or left) hides after its reading time.
+        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) agent?.releaseBubble(lastState.bubble);
         break;
       case "speech":
         if (e.on) agent?.claimBubble();
@@ -1007,6 +1008,8 @@ function start(): void {
       isOnline: () => net.isOnline(),
       // "Not authenticated" while GitHub can't be reached is a network problem, not a bad sign-in.
       reachable: gitHubReachable((url, init) => net.fetch(url, init)),
+      // A proxy set only in GNOME Settings reaches the Copilot runtime too (it reads only HTTPS_PROXY).
+      resolveProxy: url => session.defaultSession.resolveProxy(url),
     });
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;

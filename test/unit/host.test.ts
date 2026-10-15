@@ -17,6 +17,7 @@ const sim = vi.hoisted(() => ({
   sessions: [] as any[],
   deleted: [] as string[],
   resumed: [] as string[],
+  resumeFails: false,
   deleteHangs: false,
   auth: async (): Promise<{ isAuthenticated: boolean; login?: string; statusMessage?: string }> => ({ isAuthenticated: true, login: "octo" }),
   ping: async (): Promise<unknown> => ({}),
@@ -55,12 +56,12 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async deleteSession(id: string) { if (sim.deleteHangs) await hang(); sim.deleted.push(id); }
     ping() { return sim.ping(); }
     async createSession(cfg: any) { await sim.createGate; const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
-    async resumeSession(id: string, cfg: any) { sim.resumed.push(id); const s = new FakeSession(id, cfg); sim.sessions.push(s); return s; }
+    async resumeSession(id: string, cfg: any) { if (sim.resumeFails) throw new Error(`Session not found: ${id}`); sim.resumed.push(id); const s = new FakeSession(id, cfg); sim.sessions.push(s); return s; }
   }
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, proxyFromChromium, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter } from "../../app/main/agent/presenter";
 import { SettingsStore } from "../../app/main/settings";
@@ -91,7 +92,7 @@ const hands = () => ({
 });
 
 beforeEach(() => {
-  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = []; sim.deleteHangs = false;
+  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = []; sim.deleteHangs = false; sim.resumeFails = false;
   sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
   sim.ping = async () => ({});
   sim.stopHangs = false;
@@ -420,5 +421,203 @@ describe("Conductor: Stop", () => {
     await c.abort();
     await c.ask("no, do it");
     expect(await startTask("tidy up")).toBe("started");
+  });
+});
+
+describe("review round 3", () => {
+  const presenterOf = (host: AgentHost) => (host as unknown as { presenter: Presenter }).presenter;
+  const setStateOf = (host: AgentHost) => (host as unknown as { o: HostOptions }).o.setState;
+  const listening = { visible: true, mood: "listening" as const, title: "Listening…", thought: "", step: null, streaming: true, actions: [] };
+  const taskSessions = () => sim.sessions.filter(x => x.sessionId.startsWith("ember-task-"));
+  function answer(host: AgentHost, text: string) {
+    const p = presenterOf(host);
+    p.userPrompt("a question");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+    p.event({ type: "assistant.message", data: { content: text } });
+    p.event({ type: "session.idle", data: {} });
+  }
+
+  it("main gives the bubble back: an answer it put back goes after its reading time; one it cleared doesn't come back", async () => {
+    vi.useFakeTimers();
+    const { host, screen, patches } = makeHost();
+    answer(host, "Paris.");
+    const shown = screen().bubble!;
+    // "Hey Ember", but it was another word: main puts the answer back.
+    host.claimBubble();
+    setStateOf(host)({ emotion: "listening", bubble: listening });
+    await vi.advanceTimersByTimeAsync(3000);
+    setStateOf(host)({ emotion: "neutral", bubble: shown });
+    host.releaseBubble(shown);
+    await vi.advanceTimersByTimeAsync(6000 + 6 * 50 - 100);
+    expect(screen().bubble?.thought).toBe("Paris.");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(screen().bubble?.visible).toBe(false);
+    // Nobody spoke after "Hey Ember": main cleared the bubble, and the answer stays gone.
+    answer(host, "Berlin.");
+    host.claimBubble();
+    setStateOf(host)({ emotion: "neutral", bubble: { ...listening, visible: false } });
+    host.releaseBubble(screen().bubble!);
+    const n = patches.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(patches.slice(n)).toEqual([]);
+  });
+
+  it("while main holds the bubble a task's work doesn't replace it; given back (or after 30 s), the work shows again", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(50);
+    const work = (text: string) => { for (const s of taskSessions()) s.emit("assistant.reasoning_delta", { deltaContent: text }); };
+    work("first look ");
+    expect(screen().bubble?.title).toBe("tidy my desktop");
+    host.claimBubble();
+    setStateOf(host)({ emotion: "listening", bubble: listening });
+    work("still looking ");
+    expect(screen().bubble?.title).toBe("Listening…");
+    host.releaseBubble(screen().bubble!);
+    expect(screen().bubble).toMatchObject({ title: "tidy my desktop", thought: "first look still looking " });
+    // main forgets to give it back: after 30 s the work shows again anyway.
+    host.claimBubble();
+    setStateOf(host)({ emotion: "listening", bubble: listening });
+    work("more ");
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(screen().bubble?.title).toBe("Listening…");
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(screen().bubble?.title).toBe("tidy my desktop");
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+  });
+
+  it("a runtime that dies under a task: the task fails (the user stopped nothing), its bubble says so and goes, and the next conductor hears it", async () => {
+    vi.useFakeTimers();
+    const finished: { status: string; text: string }[] = [];
+    const { host, screen } = makeHost({ hands: hands(), healthMs: 1000, onTaskFinished: t => finished.push(t) });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    let once = true;
+    sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: failed. ${CUT_OFF}` })]);
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: CUT_OFF });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(screen().bubble?.visible).toBe(false);
+    await host.ask("is it on?");
+    expect(conductorSession().sent.at(-1)).toContain(`Task "turn on night light" failed: ${CUT_OFF}`);
+    await host.ask("and now?");
+    expect(conductorSession().sent.at(-1)).not.toContain("task_results");
+    await host.stop();
+  });
+
+  it("a task the user stopped ends calmly: no sad face, no lasting card, no failure", async () => {
+    vi.useFakeTimers();
+    const finished: { status: string }[] = [];
+    const { host, screen } = makeHost({ hands: hands(), onTaskFinished: t => finished.push(t) });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    host.tasks!.cancel(t.id);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(finished).toEqual([expect.objectContaining({ status: "cancelled" })]);
+    expect(screen()).toMatchObject({ emotion: "neutral", bubble: { visible: true, mood: "idle", title: "turn on night light" } });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(screen().tasks).toEqual([]);
+    expect(screen().bubble?.visible).toBe(false);
+    await host.stop();
+  });
+
+  it("after the kill switch, and while quitting, stopped tasks aren't announced one by one", async () => {
+    vi.useFakeTimers();
+    const finished: string[] = [];
+    const { host } = makeHost({ hands: hands(), onTaskFinished: t => finished.push(t.text) });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(50);
+    await host.abortAll();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(host.getTranscript().at(-1)?.text).toBe("tidy my desktop: stopped.");
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+    expect(host.getTranscript().at(-1)?.text).toBe("turn on night light: stopped.");
+    expect(finished).toEqual([]);
+  });
+
+  it("a retry left over from a start that a newer one replaced doesn't restart the working connection", async () => {
+    vi.useFakeTimers();
+    sim.auth = async () => ({ isAuthenticated: false });
+    const { host } = makeHost({ reachable: async () => false });
+    sim.stopHangs = true;
+    const first = host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(100);
+    // The failed start is still stopping its runtime when the user signs in again.
+    sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
+    const second = host.start(TOKEN, "stored");
+    sim.stopHangs = false;
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(await first).toBe("ready");
+    expect(await second).toBe("ready");
+    const n = sim.clients.length;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(sim.clients).toHaveLength(n);
+    await host.stop();
+  });
+
+  it("a conversation that can't be resumed is deleted, not left behind", async () => {
+    const { host, agentJson } = makeHost();
+    await host.start(TOKEN, "stored");
+    const first = conductorSession().sessionId;
+    sim.resumeFails = true;
+    await host.start(TOKEN, "stored");
+    const second = conductorSession().sessionId;
+    expect(second).not.toBe(first);
+    expect(sim.deleted).toEqual([first]);
+    expect(agentJson()).toEqual({ conductorSessionId: second });
+    await host.stop();
+  });
+
+  it("the system proxy (GNOME settings, PAC) reaches the runtime, which reads only HTTPS_PROXY", async () => {
+    expect(proxyFromChromium("PROXY proxy.corp:3128; DIRECT")).toEqual({ url: "http://proxy.corp:3128" });
+    expect(proxyFromChromium("HTTPS secure.corp:443")).toEqual({ url: "https://secure.corp:443" });
+    expect(proxyFromChromium("DIRECT")).toEqual({ url: null });
+    expect(proxyFromChromium("")).toEqual({ url: null });
+    expect(proxyFromChromium("SOCKS5 socks.corp:1080")).toEqual({ url: null, socks: "socks5://socks.corp:1080" });
+
+    const saved = { ...process.env };
+    for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) delete process.env[k];
+    try {
+      vi.useFakeTimers();
+      const asked: string[] = [];
+      const { host } = makeHost({ resolveProxy: async url => { asked.push(url); return "PROXY proxy.corp:3128; DIRECT"; } });
+      await host.start(TOKEN, "stored");
+      expect(asked).toEqual(["https://api.github.com/"]);
+      expect(sim.clients[0].opts.env).toMatchObject({ HTTPS_PROXY: "http://proxy.corp:3128", https_proxy: "http://proxy.corp:3128", no_proxy: expect.stringContaining("localhost") });
+      // GitHub answers through the proxy but Copilot refuses: the error names the proxy.
+      sim.auth = async () => ({ isAuthenticated: false });
+      const failed = makeHost({ resolveProxy: async () => "PROXY proxy.corp:3128", reachable: async () => true });
+      const done = failed.host.start(TOKEN, "stored");
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await done).toBe("error");
+      expect(failed.host.getStatus().detail).toMatch(/system proxy \(http:\/\/proxy\.corp:3128\)/);
+      await host.stop();
+    } finally {
+      Object.assign(process.env, saved);
+    }
+    // A proxy in the environment wins: the system isn't asked.
+    process.env.HTTPS_PROXY = saved.HTTPS_PROXY ?? "http://env.proxy:8080";
+    try {
+      const asked: string[] = [];
+      const { host } = makeHost({ resolveProxy: async url => { asked.push(url); return "PROXY other:1"; } });
+      await host.start(TOKEN, "stored");
+      expect(asked).toEqual([]);
+      await host.stop();
+    } finally {
+      if (saved.HTTPS_PROXY === undefined) delete process.env.HTTPS_PROXY;
+    }
   });
 });

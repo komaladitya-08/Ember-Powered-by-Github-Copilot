@@ -76,6 +76,8 @@ export class TaskManager {
   private runs = new Set<Promise<void>>();
   /** Ember stopped or restarted: this manager's cards are gone from the screen and never come back. */
   private closed = false;
+  /** Why every task was stopped when the user didn't stop them (Copilot stopped under them): they end as failed. */
+  private cutOff: string | null = null;
 
   constructor(private d: TaskManagerDeps) {}
 
@@ -105,13 +107,16 @@ export class TaskManager {
     const q = this.queue.findIndex(x => x.task.id === id);
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
-      this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
+      if (this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
+      else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
       return;
     }
     this.running.get(id)?.abort.abort();
   }
 
-  cancelAll(): void {
+  /** Stops every task. `failed`: why, when it wasn't the user (they end as failed with that, not as stopped). */
+  cancelAll(failed?: string): void {
+    if (failed) this.cutOff = failed;
     for (const { task } of [...this.queue]) this.cancel(task.id);
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
@@ -211,7 +216,9 @@ export class TaskManager {
       result = { success: false, summary: `Something went wrong: ${err instanceof Error ? err.message : String(err)}` };
     }
     this.running.delete(task.id);
-    this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
+    if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
+    // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
+    else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
     const sessionId = worker.sessionId;
     await worker.dispose();
     if (sessionId) {

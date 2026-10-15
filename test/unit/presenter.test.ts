@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Presenter } from "../../app/main/agent/presenter";
+import { BubbleOwner, Presenter, plainText } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -105,7 +105,7 @@ describe("Presenter across turns and presenters (review fixes)", () => {
   it("the conversation's hide timer leaves a later guide step alone", () => {
     vi.useFakeTimers();
     const states: Partial<EmberState>[] = [];
-    const owner = { current: null };
+    const owner = new BubbleOwner();
     const conductor = new Presenter(s => states.push(s), undefined, () => "Ember", owner);
     const guide = new Presenter(s => states.push(s), undefined, () => "Save it", owner);
     conductor.userPrompt("show me how to save");
@@ -121,7 +121,7 @@ describe("Presenter across turns and presenters (review fixes)", () => {
     vi.useFakeTimers();
     const states: Partial<EmberState>[] = [];
     let full = "";
-    const p = new Presenter(s => states.push(s), undefined, () => "Ember", { current: null }, t => { full = t; });
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), t => { full = t; });
     p.userPrompt("explain");
     const long = "**Bold** start. " + "word ".repeat(80) + "`code` end.";
     p.event({ type: "assistant.message_delta", data: { deltaContent: long } });
@@ -164,7 +164,7 @@ describe("Presenter: review round 2", () => {
   it("the final answer is the message's own text, even when a second question cut the stream short", () => {
     vi.useFakeTimers();
     const said: string[] = [];
-    const p = new Presenter(() => undefined, undefined, () => "Ember", { current: null }, t => said.push(t));
+    const p = new Presenter(() => undefined, undefined, () => "Ember", new BubbleOwner(), t => said.push(t));
     p.userPrompt("first");
     p.event({ type: "assistant.message_delta", data: { deltaContent: "AAA first answer " } });
     p.event({ type: "user.message", data: {} }); // the second question, queued while the first streams
@@ -180,10 +180,10 @@ describe("Presenter: review round 2", () => {
   it("a turn ending while someone else has the bubble leaves it alone", () => {
     vi.useFakeTimers();
     const states: Partial<EmberState>[] = [];
-    const owner: { current: object | null } = { current: null };
+    const owner = new BubbleOwner();
     const p = new Presenter(s => states.push(s), undefined, () => "Ember", owner);
     p.userPrompt("hi");
-    owner.current = {}; // main's "Listening…", or a task's step
+    owner.claim({}); // main's "Listening…"
     const n = states.length;
     p.event({ type: "session.idle", data: { aborted: true } });
     expect(states.slice(n)).toEqual([]);
@@ -216,5 +216,121 @@ describe("Presenter: review round 2", () => {
       ["Resource not found on provider at http://x/v1 (HTTP 404).", "query", { statusCode: 404, provider: true }, /model I'm set to use/],
     ];
     for (const [raw, type, ctx, want] of cases) expect(friendlyError(raw, type, ctx), raw).toMatch(want);
+  });
+});
+
+describe("Presenter: one bubble, held while it's read (review round 3)", () => {
+  /** The conversation and a task sharing one bubble, as in the host. */
+  function shared(question?: { up: () => boolean; answered: () => Promise<void> }) {
+    vi.useFakeTimers();
+    const states: { who: string; s: Partial<EmberState> }[] = [];
+    const owner = new BubbleOwner(question);
+    const talk = new Presenter(s => states.push({ who: "ember", s }), undefined, () => "Ember", owner);
+    const task = new Presenter(s => states.push({ who: "task", s }), undefined, () => "Tidy up", owner, undefined, false, { task: true });
+    // What the bubble showed, one entry per change.
+    const shown = () => states.filter(x => x.s.bubble).map(x => `${x.who}:${x.s.bubble!.visible ? x.s.bubble!.thought : "(hidden)"}`).filter((x, i, a) => x !== a[i - 1]);
+    const work = (n: number) => {
+      for (let i = 0; i < n; i++) {
+        task.event({ type: "assistant.reasoning_delta", data: { deltaContent: `look ${i} ` } });
+        task.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
+        task.event({ type: "tool.execution_complete", data: { success: true } });
+      }
+    };
+    const answer = (text: string) => {
+      talk.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+      talk.event({ type: "assistant.message", data: { content: text } });
+      talk.event({ type: "session.idle", data: {} });
+    };
+    return { owner, talk, task, states, shown, work, answer };
+  }
+
+  it("an answer isn't replaced by a task's work while it's read; the work shows again afterwards, without a blank in between", () => {
+    const { talk, task, shown, work, answer } = shared();
+    task.taskStarted();
+    work(1);
+    talk.userPrompt("what time is it?");
+    const n = shown().length;
+    work(5);
+    answer("It is half past three.");
+    work(5);
+    expect(shown().slice(n)).toEqual(["ember:It is half past three."]);
+    vi.advanceTimersByTime(6000 + 22 * 50 - 10);
+    expect(shown().at(-1)).toBe("ember:It is half past three.");
+    vi.advanceTimersByTime(20);
+    expect(shown().at(-1)).toBe("task:look 4 ");
+    expect(shown().filter(s => s.endsWith("(hidden)"))).toEqual([]);
+    // Nothing holds the bubble now: the task's work shows as it happens.
+    work(1);
+    expect(shown().at(-1)).toBe("task:look 0 ");
+  });
+
+  it("main's own bubble (\"Listening…\") holds off a task's work and the rest of a turn", () => {
+    const { owner, talk, states, work } = shared();
+    talk.userPrompt("tell me a story");
+    owner.claim({});
+    const n = states.length;
+    work(3);
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Once upon a time" } });
+    vi.advanceTimersByTime(60_000);
+    expect(states.slice(n)).toEqual([]);
+    // A new request takes the bubble back.
+    talk.userPrompt("never mind");
+    expect(states.at(-1)?.s.bubble?.title).toBe("Thinking…");
+  });
+
+  it("an answer that came while a question was up shows once it's answered, after its answer, for its full reading time", async () => {
+    let up = true;
+    let answered!: () => void;
+    const { talk, shown, work, answer } = shared({ up: () => up, answered: () => new Promise<void>(r => { answered = r; }) });
+    talk.userPrompt("and the weather?");
+    work(2);
+    answer("Sunny all day.");
+    vi.advanceTimersByTime(60_000);
+    expect(shown()).toEqual([]);
+    up = false;
+    answered();
+    await vi.advanceTimersByTimeAsync(1400);
+    expect(shown()).toEqual([]);
+    work(2);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(shown()).toEqual(["ember:Sunny all day."]);
+    // Shown at 1.5 s; read for 6.7 s from then.
+    await vi.advanceTimersByTimeAsync(6000 + 14 * 50 - 200);
+    expect(shown().at(-1)).toBe("ember:Sunny all day.");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(shown().at(-1)).toBe("task:look 1 ");
+  });
+
+  it("a guide step replaces a finished answer, but not one still coming", () => {
+    const { talk, task, shown, answer } = shared();
+    talk.userPrompt("show me how to save");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Follow" } });
+    task.guide("Click File", "Step 1");
+    expect(shown().at(-1)).toBe("ember:Follow");
+    answer(" me!");
+    task.guide("Click File", "Step 1");
+    expect(shown().at(-1)).toBe("task:Click File");
+  });
+
+  it("a task's result waits for the answer being read, then shows and goes on its own", () => {
+    const { talk, task, shown, answer } = shared();
+    task.taskStarted();
+    talk.userPrompt("hi");
+    answer("Hello!");
+    task.outcome({ title: "Tidy up", text: "Copilot stopped unexpectedly; the task didn't finish.", emotion: "sad", gesture: "facepalm", mood: "error" });
+    expect(shown().at(-1)).toBe("ember:Hello!");
+    vi.advanceTimersByTime(6000 + 6 * 50);
+    expect(shown().at(-1)).toBe("task:Copilot stopped unexpectedly; the task didn't finish.");
+    vi.advanceTimersByTime(15_000);
+    expect(shown().at(-1)).toBe("task:(hidden)");
+  });
+});
+
+describe("plainText (review round 3)", () => {
+  it("keeps arithmetic and file names; emphasis only where the markers hug the words", () => {
+    expect(plainText("12 * 7 * 3 = 252")).toBe("12 * 7 * 3 = 252");
+    expect(plainText("5 * 2 = 10, and 3 * 4 = 12")).toBe("5 * 2 = 10, and 3 * 4 = 12");
+    expect(plainText("Edit __init__.py and path/__main__.py, not my_var or 5*3*2.")).toBe("Edit __init__.py and path/__main__.py, not my_var or 5*3*2.");
+    expect(plainText("**Bold** and *soft*, __strong__ and _light_.")).toBe("Bold and soft, strong and light.");
   });
 });

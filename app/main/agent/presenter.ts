@@ -4,9 +4,10 @@
  * scripted events.
  */
 
-import type { EmberState } from "../../shared/overlay";
-import type { Gesture } from "@ember/characters";
+import type { BubbleState, EmberState } from "../../shared/overlay";
+import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
+import { plainMarkdown } from "@ember/bubble";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
@@ -15,16 +16,12 @@ const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
 
-/** Markdown the model may use anyway, removed so the bubble and speech read naturally. */
+/**
+ * Markdown the model may use anyway, removed so the bubble and speech read naturally. The bubble's rules
+ * (its plainStream shows the answer while it streams), so the words don't change once the answer is done.
+ */
 export function plainText(s: string): string {
-  return s
-    .replace(/```[\s\S]*?```/g, m => m.replace(/```\w*\n?/g, ""))
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
-    .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?]|$)/g, "$1$2")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}[-*+]\s+/gm, "• ")
-    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1 ($2)");
+  return plainMarkdown(s);
 }
 
 /**
@@ -54,12 +51,121 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
 }
 
+/** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
+const ACK_MS = 1500;
+
 /**
- * Who wrote the bubble last. Several presenters share one bubble (the
- * conversation and each task); a presenter's timer only hides the bubble it
- * still owns, so the conversation can't hide a guide step that came after it.
+ * How a write claims the shared bubble.
+ * - "progress": a task at work. It shows only while nobody holds the bubble (the task's card shows it meanwhile).
+ * - "reply": something to read (the conversation's turn and answer, a task's result). It shows when nobody
+ *   else holds the bubble, then holds it until it goes.
+ * - "step": a guide step. Like a reply, and it also replaces an answer that has finished.
+ * - "take": the user asked, or Ember itself has to say something: it shows now.
+ * Main's own bubble ("Listening…") holds off all but "take"; a question with buttons holds off everything.
  */
-export interface BubbleOwner { current: object | null }
+export type Claim = "progress" | "reply" | "step" | "take";
+
+/**
+ * The bubble every presenter shares (the conversation and each task). `current` wrote it last: a
+ * presenter's timer only hides the bubble it still owns. `holder` holds it: an answer being read, a
+ * task's result, a guide step, or main's own bubble. A write it holds off waits; when the bubble is
+ * free again, the latest one waiting shows (an answer or a result before a task's progress).
+ */
+export class BubbleOwner {
+  /** The shared bubble for `o`: a plain `{ current }` object (as older tests share) gets one of its own. */
+  static of(o: BubbleOwner | { current: object | null }): BubbleOwner {
+    if (o instanceof BubbleOwner) return o;
+    let b = plainOwners.get(o);
+    if (!b) plainOwners.set(o, b = new BubbleOwner());
+    return b;
+  }
+
+  current: object | null = null;
+  holder: object | null = null;
+  /** Presenters with something to show, the latest last. */
+  private showing: Presenter[] = [];
+  /** A question was answered just now: its answer stays a moment before anything replaces it. */
+  private acking = false;
+  private waitingForAnswer = false;
+
+  constructor(
+    /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
+    private question?: { up: () => boolean; answered: () => Promise<void> },
+    private timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout },
+  ) {}
+
+  /** Main writes the bubble itself now ("Listening…", the kill switch's message). */
+  claim(by: object): void {
+    this.current = by;
+    this.holder = by;
+  }
+
+  /** May `p` write the bubble now? */
+  allows(p: Presenter, claim: Claim): boolean {
+    if (this.questionUp()) return false;
+    const h = this.holder;
+    if (h === null || h === p || claim === "take") return true;
+    // A guide step replaces an answer that has finished (not one still coming, nor main's bubble).
+    return claim === "step" && h instanceof Presenter && !h.busy;
+  }
+
+  /** `p` wrote its bubble: on screen, or waiting to show when the bubble is free. */
+  wrote(p: Presenter, claim: Claim, onScreen: boolean): void {
+    this.showing = this.showing.filter(x => x !== p);
+    if (p.visible) this.showing.push(p);
+    if (claim === "take") this.holder = p;
+    if (!onScreen) return;
+    this.current = p;
+    if (claim !== "progress") this.holder = p;
+    else if (this.holder === p) this.holder = null;
+  }
+
+  /** `p` has nothing to show any more (and holds nothing). */
+  forget(p: Presenter): void {
+    this.showing = this.showing.filter(x => x !== p);
+    if (this.holder === p) this.holder = null;
+  }
+
+  /** `p`'s bubble went: if it was on screen, the latest one waiting shows instead. Returns whether one did. */
+  gone(p: Presenter): boolean {
+    const had = this.holder === p || this.current === p;
+    this.forget(p);
+    return had && this.free();
+  }
+
+  /**
+   * Nobody holds the bubble (or a question went): the holder's bubble shows again, else the latest
+   * answer or result waiting, else the latest task's work. Returns whether something showed.
+   */
+  free(): boolean {
+    if (this.questionUp()) return false;
+    const h = this.holder;
+    if (h !== null && !(h instanceof Presenter)) return false;
+    const latest = [...this.showing].reverse();
+    return [...(h ? [h] : []), ...latest.filter(p => p.kind !== "progress"), ...latest].some(p => p.reshow());
+  }
+
+  /** A question is up, or was answered just now. What it holds off shows after it (free()). */
+  private questionUp(): boolean {
+    if (this.acking) return true;
+    if (!this.question?.up()) return false;
+    if (this.waitingForAnswer) return true;
+    this.waitingForAnswer = true;
+    void this.question.answered().then(() => {
+      this.waitingForAnswer = false;
+      this.acking = true;
+      this.timers.set(() => { this.acking = false; this.free(); }, ACK_MS);
+    });
+    return true;
+  }
+}
+
+const plainOwners = new WeakMap<object, BubbleOwner>();
+
+export interface PresenterOptions {
+  /** A task's presenter: its work shows in the bubble only while nobody holds it (its card shows the step anyway). */
+  task?: boolean;
+}
 
 export const TOOL_STEPS: Record<string, string> = {
   set_appearance: "Changing how I look",
@@ -103,32 +209,58 @@ export class Presenter {
   /** A tool ran since the last reasoning text: the next reasoning starts a new thought. */
   private thoughtBreak = false;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How long the armed hide waits (armed again when main gives the bubble back). */
+  private hideMs = 0;
+  /** A hide asked for while the bubble wasn't on screen: its time starts once it shows. */
+  private pendingHide: number | null = null;
+  /** The latest bubble hasn't reached the screen (someone else held it, or a question was up). */
+  private unseen = false;
   /** Stopped by the kill switch: nothing more is shown until the next request. */
   private silent = false;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
+  /** How the bubble this presenter shows claimed it (see Claim). */
+  kind: Claim = "progress";
+  /** How this presenter's own work claims the bubble. */
+  private readonly work: Claim;
+  /** Shared by every presenter writing the same bubble. */
+  private readonly owner: BubbleOwner;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
     private timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout },
     /** The character's name, shown as the speaker of answers. */
     private name: () => string = () => "Ember",
-    /** Shared by every presenter writing the same bubble. */
-    private owner: BubbleOwner = { current: null },
+    owner: BubbleOwner | { current: object | null } = new BubbleOwner(),
     /** A finished answer, in full (the bubble shows only the start of a long one). */
     private onFinalAnswer?: (text: string) => void,
     /** The organisation's own endpoint is configured: errors don't mention a GitHub sign-in. */
     private provider = false,
-  ) {}
+    opts: PresenterOptions = {},
+  ) {
+    this.work = opts.task ? "progress" : "reply";
+    this.owner = BubbleOwner.of(owner);
+  }
 
-  private apply(patch: Partial<EmberState>): void {
+  /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
+  private apply(patch: Partial<EmberState>, claim: Claim = this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}) } };
-    if (this.silent) return;
-    if (patch.bubble) this.owner.current = this;
-    this.push({ ...patch, ...(patch.bubble ? { bubble: this.state.bubble } : {}) });
+    if (this.silent) return false;
+    if (!patch.bubble) {
+      // Just the face (talking stops): only while this presenter's bubble is the one on screen.
+      if (this.owner.current === this && !this.unseen) this.push(patch);
+      return false;
+    }
+    this.kind = claim;
+    const ok = this.owner.allows(this, claim);
+    this.unseen = !ok;
+    this.owner.wrote(this, claim, ok);
+    if (ok) this.push({ ...patch, bubble: this.state.bubble });
+    return ok;
   }
 
   private cancelHide(): void {
     if (this.hideTimer) { this.timers.clear(this.hideTimer); this.hideTimer = null; }
+    this.pendingHide = null;
   }
 
   /** Thinking, streaming or working: a turn is under way. */
@@ -136,9 +268,48 @@ export class Presenter {
     return this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
   }
 
+  /** It has a bubble to show (on screen or waiting). */
+  get visible(): boolean {
+    return !this.silent && this.state.bubble.visible;
+  }
+
+  /** Its latest bubble is waiting to show (it hasn't been on screen). */
+  get waiting(): boolean {
+    return this.unseen && this.visible;
+  }
+
+  /** Is `b` this presenter's bubble (main showing it again)? */
+  isShowing(b: BubbleState): boolean {
+    const s = this.state.bubble;
+    return this.visible && b.visible && s.title === b.title && s.thought === b.thought;
+  }
+
   /** Someone else (main's own bubble) has the bubble now: no timer of this presenter hides it. */
   letGo(): void {
+    const ms = this.hideTimer ? this.hideMs : this.pendingHide;
     this.cancelHide();
+    // Its time starts over if it shows again (reshow).
+    this.pendingHide = ms;
+  }
+
+  /** Shows this presenter's bubble again after it waited or was covered; its hide starts now. False if there's nothing to show. */
+  reshow(): boolean {
+    if (!this.visible) return false;
+    const claim = this.kind === "progress" ? "progress" : "reply";
+    if (!this.owner.allows(this, claim)) return false;
+    this.unseen = false;
+    this.owner.wrote(this, claim, true);
+    this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
+    if (this.pendingHide !== null) this.hideLater(this.pendingHide);
+    return true;
+  }
+
+  /** Its bubble was replaced for good (main showed something else): it isn't shown again. */
+  drop(): void {
+    this.cancelHide();
+    this.unseen = false;
+    this.state = { ...this.state, bubble: { ...IDLE_BUBBLE } };
+    this.owner.forget(this);
   }
 
   /** The kill switch's message is up: this turn (or task) shows nothing more. The next request speaks again. */
@@ -146,16 +317,25 @@ export class Presenter {
     this.cancelHide();
     this.answering = false;
     this.silent = true;
+    this.owner.forget(this);
   }
 
   private hideLater(ms: number): void {
     this.cancelHide();
-    this.hideTimer = this.timers.set(() => {
-      this.hideTimer = null;
-      // Someone else has the bubble now (a task's step, a question): leave it alone.
-      if (this.owner.current !== this) return;
-      this.apply({ emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } });
-    }, ms);
+    // Not on screen yet: its time starts when it shows.
+    if (this.unseen) { this.pendingHide = ms; return; }
+    this.hideMs = ms;
+    this.hideTimer = this.timers.set(() => { this.hideTimer = null; this.hide(); }, ms);
+  }
+
+  /** This presenter's bubble goes. If it was on screen, the latest one waiting shows instead, or the bubble empties. */
+  private hide(): void {
+    this.cancelHide();
+    const onScreen = this.owner.current === this && !this.unseen;
+    this.unseen = false;
+    this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } };
+    if (this.owner.gone(this) || !onScreen || this.silent) return;
+    this.push({ emotion: "neutral", talking: false, bubble: this.state.bubble });
   }
 
   /** Something went wrong outside the session's own events (the runtime died, a send failed). */
@@ -166,7 +346,7 @@ export class Presenter {
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
       bubble: { visible: true, mood: "error", title: "Something went wrong", thought: message, step: null, streaming: false, actions: [{ id: "ui:settings", label: "Open settings" }] },
-    });
+    }, "take");
     this.hideLater(12000);
   }
 
@@ -178,7 +358,7 @@ export class Presenter {
     this.apply({
       emotion: "confused", talking: false,
       bubble: { visible: true, mood: "error", title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
-    });
+    }, "take");
     this.hideLater(n.ms ?? 12000);
   }
 
@@ -187,11 +367,8 @@ export class Presenter {
     const wasBusy = this.busy;
     this.answering = false;
     this.answer = "";
-    // Only a bubble this presenter still shows mid-turn is cleared; a notice or an answer keeps its own hide timer.
-    if (wasBusy && this.owner.current === this) {
-      this.cancelHide();
-      this.apply({ emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } });
-    }
+    // Only a bubble mid-turn is cleared; a notice or an answer keeps its own hide timer.
+    if (wasBusy) this.hide();
   }
 
   /** The user asked something (voice or text). */
@@ -203,7 +380,7 @@ export class Presenter {
     this.apply({
       emotion: "thinking", talking: false,
       bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${text.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
-    });
+    }, "take");
   }
 
   /** Guide mode: Ember points at something and says what to do; it stays until the next step. */
@@ -214,7 +391,7 @@ export class Presenter {
     this.apply({
       emotion: "happy", talking: true, gesture: "point",
       bubble: { visible: true, mood: "guiding", title: this.name(), thought: say, step, streaming: false, actions: [] },
-    });
+    }, "step");
     this.timers.set(() => this.apply({ talking: false }), 1200);
   }
 
@@ -228,6 +405,18 @@ export class Presenter {
       emotion: "focused", talking: false,
       bubble: { visible: true, mood: "acting", title: this.name(), thought: "", step: "Getting started", streaming: true, actions: [] },
     });
+  }
+
+  /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
+  outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"] }): void {
+    if (this.silent) return;
+    this.cancelHide();
+    this.answering = false;
+    this.apply({
+      emotion: o.emotion, talking: false, gesture: o.gesture,
+      bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: [] },
+    }, "reply");
+    this.hideLater(Math.min(30000, (o.mood === "error" ? 12000 : 6000) + o.text.length * 50));
   }
 
   event(e: PresenterEvent): void {
@@ -299,13 +488,9 @@ export class Presenter {
         break;
       case "session.idle": {
         const aborted = d.aborted === true;
-        // Someone else has the bubble now (a task, a question, main's "Listening…"): the turn ends quietly.
-        if (this.owner.current !== this && this.owner.current !== null) {
-          this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...this.state.bubble, streaming: false } };
-          this.answering = false;
-          break;
-        }
-        this.apply({ talking: false, emotion: aborted ? "neutral" : this.answering ? "happy" : this.state.emotion, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const } : {}) } });
+        // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
+        const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
+        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const } : {}) } });
         // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
         const chars = this.answer.length;
         this.hideLater(Math.min(30000, 6000 + chars * 50));

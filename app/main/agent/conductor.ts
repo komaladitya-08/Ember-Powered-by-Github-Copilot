@@ -204,7 +204,10 @@ export class Conductor {
         this.session = await d.client.resumeSession(d.resume, config);
         d.log.info("conductor.resumed", { sessionId: d.resume });
       } catch (err) {
+        // It can't be resumed (e.g. nothing was asked in it yet): it's deleted with the leftovers, and stays on the forget list until then.
         d.log.warn("conductor.resume_failed", { sessionId: d.resume, err });
+        leftovers.push(d.resume);
+        writeAgentState(d.stateFile, { forget: [...new Set([...(state.forget ?? []), d.resume])] });
       }
     }
     if (!this.session) {

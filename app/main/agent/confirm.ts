@@ -53,6 +53,8 @@ export class Confirmer {
   private blocked: () => boolean;
   private onChange: ConfirmerTiming["onChange"];
   private keyHint: ConfirmerTiming["keyHint"];
+  /** Waiting for no question to be up or queued (settled()). */
+  private settledWaiters: (() => void)[] = [];
 
   constructor(private show: (patch: Partial<EmberState>) => void, timing: number | ConfirmerTiming = {}) {
     const t = typeof timing === "number" ? { timeoutMs: timing } : timing;
@@ -87,6 +89,21 @@ export class Confirmer {
     return this.current !== null;
   }
 
+  /** Resolves once no question is up or waiting its turn (at once if none is). */
+  settled(): Promise<void> {
+    if (this.isSettled()) return Promise.resolve();
+    return new Promise(resolve => this.settledWaiters.push(resolve));
+  }
+
+  private isSettled(): boolean {
+    return !this.current && !this.queue.length && !this.gapTimer;
+  }
+
+  private checkSettled(): void {
+    if (!this.isSettled()) return;
+    for (const w of this.settledWaiters.splice(0)) w();
+  }
+
   /** A bubble button was clicked. Returns false if it didn't belong to a question (or came too soon). */
   answer(actionId: string): boolean {
     const m = /^q(\d+):(.+)$/.exec(actionId);
@@ -109,12 +126,13 @@ export class Confirmer {
     if (this.gapTimer) { clearTimeout(this.gapTimer); this.gapTimer = null; }
     for (const p of [...this.queue]) this.finish(p, null);
     if (this.current) this.finish(this.current, null);
+    this.checkSettled();
   }
 
   private next(): void {
     this.gapTimer = null;
     this.current = this.queue.shift() ?? null;
-    if (!this.current) return;
+    if (!this.current) { this.checkSettled(); return; }
     const p = this.current;
     p.shownAt = this.now();
     p.timer = setTimeout(() => this.finish(p, null), this.timeoutMs);
@@ -145,6 +163,7 @@ export class Confirmer {
       if (this.gapTimer) clearTimeout(this.gapTimer);
       this.gapTimer = setTimeout(() => this.next(), this.gapMs);
     }
+    this.checkSettled();
   }
 }
 

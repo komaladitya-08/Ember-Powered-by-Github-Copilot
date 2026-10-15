@@ -11,13 +11,13 @@
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { Presenter, type BubbleOwner } from "./presenter";
+import { BubbleOwner, Presenter } from "./presenter";
 import { chooseModels, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
-import type { EmberState } from "../../shared/overlay";
-import { TaskManager, statusWord, taskOutcome } from "./tasks";
+import type { BubbleState, EmberState } from "../../shared/overlay";
+import { TaskManager, statusWord, taskOutcome, type Task } from "./tasks";
 import { Worker, type WorkerDeps } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
@@ -88,6 +88,12 @@ export interface HostOptions {
    * with this, the sign-in is blamed only when GitHub answers and Copilot still refuses it.
    */
   reachable?: () => Promise<boolean>;
+  /**
+   * The system's proxy for a URL, in Chromium's words ("PROXY host:port; DIRECT"): main passes
+   * session.defaultSession.resolveProxy, which follows GNOME's settings and PAC files. The runtime only reads
+   * HTTPS_PROXY, so without one in the environment this is passed on to it.
+   */
+  resolveProxy?: (url: string) => Promise<string>;
   /** How often the runtime's health is checked (ms). */
   healthMs?: number;
 }
@@ -97,6 +103,21 @@ export function gitHubReachable(fetch: (url: string, init: { method: string; sig
   return () => fetch("https://api.github.com/", { method: "HEAD", signal: AbortSignal.timeout(ms) }).then(() => true, () => false);
 }
 
+/**
+ * Chromium's proxy for a URL ("PROXY host:port; DIRECT", the first entry counts) as a proxy URL for the runtime;
+ * null for DIRECT. A SOCKS proxy comes back as `socks`: the runtime can't use one.
+ */
+export function proxyFromChromium(rule: string): { url: string | null; socks?: string } {
+  const m = /^(PROXY|HTTPS|SOCKS[45]?)\s+(\S+)$/i.exec(rule.split(";")[0]?.trim() ?? "");
+  if (!m) return { url: null };
+  const kind = m[1].toUpperCase();
+  if (kind.startsWith("SOCKS")) return { url: null, socks: `${kind === "SOCKS5" ? "socks5" : "socks4"}://${m[2]}` };
+  return { url: `${kind === "HTTPS" ? "https" : "http"}://${m[2]}` };
+}
+
+/** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
+export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
+
 const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network is unreachable|fetch failed|socket hang up|net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|CONNECTION_\w+|ADDRESS_UNREACHABLE|NETWORK_\w+|TIMED_OUT|PROXY_\w+|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE)/i;
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
@@ -105,7 +126,14 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const SOURCE_TEXT: Record<string, string> = { stored: "Ember's saved sign-in", environment: "a token from the environment", "github-cli": "the GitHub CLI sign-in" };
 
-export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean } = {}): string {
+/** The system proxy Ember gave the runtime (or couldn't), for a sign-in error that may really be the proxy's. */
+function proxyNote(p?: { url: string | null; socks?: string }): string {
+  if (p?.socks) return ` Your system proxy (${p.socks}) is a SOCKS proxy, which Ember's Copilot runtime can't use: ask IT for an HTTP proxy and set HTTPS_PROXY for Ember.`;
+  if (p?.url) return ` Ember sent Copilot through your system proxy (${p.url}); if that proxy needs its own sign-in, set HTTPS_PROXY for Ember with it.`;
+  return "";
+}
+
+export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string } } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
   if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "Ember's Copilot runtime is missing or can't start. Reinstall Ember (sudo dnf reinstall ember).";
@@ -116,12 +144,22 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
   if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
-    return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.`;
+    return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
   return msg;
 }
 
 const NAMES: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
+/** How long main's own bubble holds off everything else at most, if main doesn't give it back sooner. */
+const MAIN_HOLD_MS = 30_000;
+/** How a finished task looks: proud, calm (stopped, or the user said no), or sorry. */
+const OUTCOME = {
+  done: { emotion: "proud", gesture: "thumbsUp", mood: "done", empty: "Done." },
+  cancelled: { emotion: "neutral", gesture: "rest", mood: "idle", empty: "Stopped." },
+  failed: { emotion: "sad", gesture: "facepalm", mood: "error", empty: "It didn't finish." },
+} as const;
+/** A finished task, as the conductor hears about it. */
+const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}`;
 
 export class AgentHost {
   private client: CopilotClient | null = null;
@@ -150,10 +188,20 @@ export class AgentHost {
   /** This run's conversation: a reconnect resumes it; quitting (stop()) and signing out delete it. */
   private conversation: string | null = null;
   private models: ModelLike[] = [];
-  /** The bubble is shared by the conversation and every task: whoever wrote it last owns it. */
-  private readonly owner: BubbleOwner = { current: null };
+  /** The bubble is shared by the conversation and every task (see BubbleOwner). */
+  private readonly owner: BubbleOwner;
   /** Main's own writes to the bubble ("Listening…", the kill switch's message), as an owner. */
   private readonly mainBubble = {};
+  /** Ends main's hold on the bubble if main doesn't give it back. */
+  private mainHold: ReturnType<typeof setTimeout> | null = null;
+  /** The runtime stopped under the tasks: the next stop ends them as failed, not as stopped by the user. */
+  private cutOff = false;
+  /** Ember is quitting: finished tasks are neither shown nor announced. */
+  private quitting = false;
+  /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
+  private carried: string[] = [];
+  /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
+  private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
@@ -165,6 +213,9 @@ export class AgentHost {
 
   constructor(private o: HostOptions) {
     this.stateFile = path.join(o.userData, "agent.json");
+    // A question with buttons holds the bubble; what it held off shows once it's answered.
+    const c = o.hands?.confirmer;
+    this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled() } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => NAMES[o.settings.get().character] ?? "Ember", this.owner, text => this.remember("ember", text), !!o.provider);
   }
 
@@ -173,10 +224,33 @@ export class AgentHost {
     return this.stops;
   }
 
-  /** Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides it. */
+  /**
+   * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
+   * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
+   * asks something, or 30 seconds pass. A task's work shows on its card meanwhile.
+   */
   claimBubble(): void {
-    this.owner.current = this.mainBubble;
+    this.owner.claim(this.mainBubble);
     this.presenter.letGo();
+    if (this.mainHold) clearTimeout(this.mainHold);
+    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
+    this.mainHold.unref?.();
+  }
+
+  /**
+   * Main is done with its own bubble; `showing` is what is on screen now. The conversation's answer comes
+   * back if main put it back on screen, it hadn't been seen yet, or its turn is still going, and it goes after
+   * its reading time. Otherwise it's over, and a task still at work shows its progress again.
+   */
+  releaseBubble(showing: BubbleState | null = null): void {
+    if (this.mainHold) { clearTimeout(this.mainHold); this.mainHold = null; }
+    if (this.owner.holder !== this.mainBubble) return;
+    this.owner.holder = null;
+    const p = this.presenter;
+    // (A question up meanwhile: it shows once that's answered.)
+    if ((p.busy || p.waiting || (showing !== null && p.isShowing(showing))) && (p.reshow() || p.visible)) return;
+    p.drop();
+    this.owner.free();
   }
 
   getStatus(): AgentStatus {
@@ -211,6 +285,7 @@ export class AgentHost {
    * environment sign-in found then isn't used until they sign in again ("user", the default).
    */
   start(token: string | null, source?: string, how: "user" | "auto" = "user"): Promise<AgentPhase> {
+    this.quitting = false;
     const automatic = source === "environment" || source === "github-cli";
     if (token && how === "user") this.setSignedOut(false);
     else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
@@ -245,6 +320,7 @@ export class AgentHost {
    * the runtime can still do it (what the user asked is kept only while Ember runs).
    */
   stop(): Promise<void> {
+    this.quitting = true;
     return this.halt(true);
   }
 
@@ -264,9 +340,10 @@ export class AgentHost {
       return;
     }
     this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });
-    const localhost = (v: string | undefined) => [v, "127.0.0.1", "localhost"].filter(Boolean).join(",");
     let unreachable = false;
     try {
+      const env = await this.runtimeEnv();
+      if (gen !== this.gen) return;
       let client: CopilotClient;
       let login: string | undefined;
       for (let attempt = 1; ; attempt++) {
@@ -277,8 +354,7 @@ export class AgentHost {
           ...(token ? { gitHubToken: token } : {}),
           connection: RuntimeConnection.forStdio({ path: this.o.runtimePath }),
           logLevel: "warning",
-          // Both spellings: the runtime reads the lowercase one first.
-          env: { ...process.env, NO_PROXY: localhost(process.env.NO_PROXY), no_proxy: localhost(process.env.no_proxy ?? process.env.NO_PROXY) },
+          env,
         });
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
@@ -339,21 +415,16 @@ export class AgentHost {
         onFinished: task => {
           const summary = task.result?.summary ?? "";
           const text = taskOutcome(task);
+          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal);
           this.taskPresenters.delete(task.id);
           this.remember("task", text);
+          // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
+          // Quitting: nothing more is shown or said.
+          if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
           this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text });
-          // Stopped by the kill switch: its message is on screen, and this task's "Stopped." doesn't replace it.
-          if (this.stoppedByAll.delete(task.id) && task.status === "cancelled") return;
-          // A question is up: the result waits for it (it is never dropped).
-          const show = (tries: number) => {
-            if (hands.confirmer.waiting && tries < 120) { setTimeout(() => show(tries + 1), 1000).unref?.(); return; }
-            this.o.setState({
-              emotion: task.status === "done" ? "proud" : task.status === "cancelled" ? "neutral" : "sad", talking: false,
-              gesture: task.status === "done" ? "thumbsUp" : task.status === "cancelled" ? "rest" : "facepalm",
-              bubble: { visible: true, mood: task.status === "done" ? "done" : task.status === "cancelled" ? "idle" : "error", title: task.title, thought: summary, step: null, streaming: false, actions: [] },
-            });
-          };
-          show(0);
+          // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
+          const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];
+          presenter.outcome({ title: task.title, text: summary || o.empty, emotion: o.emotion, gesture: o.gesture, mood: o.mood });
         },
         makeWorker: (spec, progress) => new Worker({
           client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, vision: workerVision(), provider: this.o.provider,
@@ -392,7 +463,7 @@ export class AgentHost {
           const t = tasks.start(goal, { target: this.askTarget ?? undefined, mode: "guide" });
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
-        takeReports: tasks ? () => tasks.takeReports().map(t => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}`) : undefined,
+        takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
@@ -422,11 +493,33 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      this.setStatus({ phase: "error", detail: explainStartError(err, { source: this.source, online: offline ? false : online }) });
+      this.setStatus({ phase: "error", detail: explainStartError(err, { source: this.source, online: offline ? false : online, proxy: this.proxy }) });
       await this.doStop();
-      // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the sign-in.
-      if (offline) this.retryLater();
+      // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the
+      // sign-in. Not if a newer start or stop came meanwhile: a stale retry would restart a working connection.
+      if (offline && gen === this.gen) this.retryLater();
     }
+  }
+
+  /**
+   * The runtime's environment. Localhost never goes through a proxy (both spellings: the runtime reads the
+   * lowercase one first). The runtime reads only HTTPS_PROXY, not GNOME's proxy settings or a PAC file, so
+   * without one in the environment the system's proxy for GitHub is passed on.
+   */
+  private async runtimeEnv(): Promise<NodeJS.ProcessEnv> {
+    const e = process.env;
+    const localhost = (v: string | undefined) => [v, "127.0.0.1", "localhost"].filter(Boolean).join(",");
+    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: localhost(e.NO_PROXY), no_proxy: localhost(e.no_proxy ?? e.NO_PROXY) };
+    this.proxy = undefined;
+    if (e.HTTPS_PROXY || e.https_proxy || !this.o.resolveProxy) return env;
+    const resolve = this.o.resolveProxy;
+    const rule = await within(Promise.resolve().then(() => resolve("https://api.github.com/")).catch(() => "DIRECT"), 3000);
+    const p = proxyFromChromium(rule === "timeout" ? "DIRECT" : rule);
+    if (!p.url && !p.socks) return env;
+    this.proxy = p;
+    this.o.log.info("agent.system_proxy", { kind: p.socks ? "socks" : "http" });
+    if (!p.url) return env;
+    return { ...env, HTTPS_PROXY: p.url, https_proxy: p.url, ...(e.HTTP_PROXY || e.http_proxy ? {} : { HTTP_PROXY: p.url, http_proxy: p.url }) };
   }
 
   private retryLater(): void {
@@ -457,6 +550,8 @@ export class AgentHost {
   private lost(gen: number, why: string): void {
     if (gen !== this.gen) return;
     this.o.log.error("agent.runtime_lost", { why });
+    // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
+    this.cutOff = true;
     // An answer cut off half-way says so, instead of vanishing.
     if (this.presenter.busy || why === "send failed") this.presenter.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
     else this.presenter.reset();
@@ -496,9 +591,9 @@ export class AgentHost {
     this.setStatus({ usage: { calls: u.calls + 1, inputTokens: u.inputTokens + input, outputTokens: u.outputTokens + output } });
   }
 
-  /** A task's own presenter: its bubble is titled with the goal. */
+  /** A task's own presenter: its bubble is titled with the goal, and gives way to an answer being read. */
   private taskPresenter(id: string, goal: string): Presenter {
-    const p = new Presenter(this.o.setState, undefined, () => goal.length > 40 ? goal.slice(0, 39) + "…" : goal, this.owner, undefined, !!this.o.provider);
+    const p = new Presenter(this.o.setState, undefined, () => goal.length > 40 ? goal.slice(0, 39) + "…" : goal, this.owner, undefined, !!this.o.provider, { task: true });
     this.taskPresenters.set(id, p);
     return p;
   }
@@ -567,6 +662,9 @@ export class AgentHost {
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     this.setSignedOut(true);
+    // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
+    this.tasks?.takeReports();
+    this.carried = [];
     this.transcript.length = 0;
     this.o.onTranscript?.([]);
     this.o.log.info("agent.conversation_forgotten");
@@ -586,14 +684,19 @@ export class AgentHost {
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
     if (this.health) { clearInterval(this.health); this.health = null; }
-    // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit).
-    this.tasks?.cancelAll();
+    const cutOff = this.cutOff;
+    this.cutOff = false;
+    // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
+    // that stopped, tasks end as failed.
+    this.tasks?.cancelAll(cutOff ? CUT_OFF : undefined);
     this.o.hands?.confirmer.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);
     await this.tasks?.drain(2500);
     // Finished tasks' sessions are deleted now, while the client can still do it (a hung runtime isn't waited for).
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
+    // A reconnect resumes the conversation: its next turn hears how these tasks ended. Quitting forgets it all.
+    this.carried = forget ? [] : [...this.carried, ...(this.tasks?.takeReports().map(report) ?? [])];
     // The cards go with their manager: a failed card's Close would reach nobody after a restart.
     this.tasks?.close();
     this.tasks = null;

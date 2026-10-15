@@ -275,3 +275,51 @@ describe("review round 2: stopping and questions", () => {
     vi.useRealTimers();
   });
 });
+
+describe("review round 3: how tasks end", () => {
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) => {
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0, ...extra });
+    return { tm, cards };
+  };
+
+  it("a task the user declined (“Not now”) ends calmly: a stopped card that goes, not a lasting failure", async () => {
+    vi.useFakeTimers();
+    const { tm, cards } = manager(() => fakeWorker(async () => ({ success: false, stopped: true, summary: "You said not now, so I left it." })), { cardMs: 100 });
+    const t = tm.start("Turn on Night Light");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(t.status).toBe("cancelled");
+    expect(cards.at(-1)).toEqual([{ id: t.id, title: "Turn on Night Light", status: "stopped", detail: "You said not now, so I left it.", actions: [] }]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(cards.at(-1)).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("tasks cut off under them (Copilot stopped) end as failed with the reason, running or waiting", async () => {
+    const { tm } = manager(() => fakeWorker(signal => new Promise(resolve => signal.addEventListener("abort", () => resolve({ success: false, stopped: true, summary: "Stopped." })))), { maxRunning: 1 });
+    const a = tm.start("a"), b = tm.start("b");
+    await vi.waitFor(() => expect(a.status).toBe("running"));
+    tm.cancelAll("Copilot stopped unexpectedly; the task didn't finish.");
+    await vi.waitFor(() => expect(a.status).toBe("failed"));
+    expect([a, b].map(t => [t.status, t.result?.summary])).toEqual([
+      ["failed", "Copilot stopped unexpectedly; the task didn't finish."],
+      ["failed", "Copilot stopped unexpectedly; the task didn't finish."],
+    ]);
+  });
+
+  it("settled() waits until no question is up or waiting its turn", async () => {
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 20 });
+    await c.settled();
+    const q = { title: "May I?", prompt: "Click?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] };
+    void c.ask(q);
+    void c.ask(q);
+    let settled = false;
+    void c.settled().then(() => { settled = true; });
+    c.answerKey("deny");
+    await new Promise(r => setTimeout(r, 40));
+    expect(settled).toBe(false);
+    c.answerKey("deny");
+    await new Promise(r => setTimeout(r, 0));
+    expect(settled).toBe(true);
+  });
+});
