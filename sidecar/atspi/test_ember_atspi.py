@@ -226,14 +226,14 @@ class Reading(unittest.TestCase):
 
     def scrolled_list(self, rows=5000, first=2500, visible=25):
         """A list of `rows` 20-px rows, scrolled so rows first..first+visible-1 fill a 500-px viewport."""
-        top = 100
+        top = 120  # under the column header
         kids = []
         for i in range(rows):
             y = top + (i - first) * 20
             on = first <= i < first + visible
             kids.append(Acc("list item", "row %d" % i, bounds=(10, y, 300, 20),
                             states=("showing", "visible", "enabled", "sensitive") if on else ("visible", "enabled")))
-        header = Acc("table column header", "Name", bounds=(10, 80, 300, 20))
+        header = Acc("table column header", "Name", bounds=(10, 100, 300, 20))
         lst = Acc("list", "Files", bounds=(10, -50000, 300, 200000), kids=[header] + kids)
         view = Acc("viewport", "", bounds=(10, 100, 300, 500), kids=[lst])
         return Acc("frame", "Files", bounds=(0, 0, 800, 700), kids=[view]), lst

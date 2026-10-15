@@ -73,7 +73,7 @@ describe("settings keep what the user set (review fixes)", () => {
     expect(r.recoveredFrom).toBeTruthy();
     expect(s.get().privacy.neverLook).toEqual(["thunderbird", "remmina"]);
     expect(s.get().grants).toEqual({ gedit: "act" });
-    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true });
+    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false });
   });
 
   it("a change made by hand while Ember runs is kept when Ember saves something else", () => {
