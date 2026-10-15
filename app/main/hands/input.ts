@@ -21,6 +21,8 @@ export interface XInput {
   /** Does typing this keysym need Shift on the current layout? */
   needsShift(sym: number): boolean;
   activeWindow(): number;
+  /** Size of the whole X screen in pixels. */
+  screenSize(): { width: number; height: number };
   /** Top-level window whose title contains `title` (_NET_CLIENT_LIST), or 0. */
   findWindow(title: string): number;
   /** Asks the window manager to activate a window (_NET_ACTIVE_WINDOW). */
@@ -56,6 +58,9 @@ export function openXInput(displayName?: string): XInput | null {
     const XQueryTree = x11.func("int XQueryTree(void *dpy, unsigned long w, _Out_ unsigned long *root, _Out_ unsigned long *parent, _Out_ void **children, _Out_ unsigned int *n)");
     const XSetInputFocus = x11.func("int XSetInputFocus(void *dpy, unsigned long focus, int revertTo, unsigned long time)");
     const XRaiseWindow = x11.func("int XRaiseWindow(void *dpy, unsigned long w)");
+    const XDisplayWidth = x11.func("int XDisplayWidth(void *dpy, int screen)");
+    const XDisplayHeight = x11.func("int XDisplayHeight(void *dpy, int screen)");
+    const XDefaultScreen = x11.func("int XDefaultScreen(void *dpy)");
     const XGetInputFocus = x11.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
     const XTestFakeMotionEvent = xtst.func("int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)");
     const XTestFakeButtonEvent = xtst.func("int XTestFakeButtonEvent(void *dpy, unsigned int button, int isPress, unsigned long delay)");
@@ -147,6 +152,10 @@ export function openXInput(displayName?: string): XInput | null {
         const focus = [0], revert = [0];
         XGetInputFocus(dpy, focus, revert);
         return Number(focus[0]) > 1 ? Number(focus[0]) : 0; // 0 None, 1 PointerRoot
+      },
+      screenSize() {
+        const n = XDefaultScreen(dpy);
+        return { width: XDisplayWidth(dpy, n), height: XDisplayHeight(dpy, n) };
       },
       findWindow(title) {
         const want = title.toLowerCase();

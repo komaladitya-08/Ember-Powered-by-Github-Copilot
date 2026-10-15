@@ -111,6 +111,10 @@ export class CursorBorrow {
     const hand: Hand = {
       glideTo: async (tx, ty) => {
         check();
+        const screen = x.screenSize();
+        if (tx < 0 || ty < 0 || tx >= screen.width || ty >= screen.height) {
+          throw new Error("That spot is off the screen; scroll it into view or move the window first.");
+        }
         const from = x.pointer() ?? { x: tx, y: ty };
         const dist = Math.hypot(tx - from.x, ty - from.y);
         const steps = Math.max(1, Math.round(Math.min(600, 180 + dist * 0.5) / STEP_MS));
