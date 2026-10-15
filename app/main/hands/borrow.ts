@@ -13,7 +13,7 @@
  */
 
 import type { XInput } from "./input";
-import { keysymForChar, planTyping, strokeFor, type TypedKey } from "./keymap";
+import { keysymForChar, planTyping, shortcutStroke, type TypedKey } from "./keymap";
 
 export class UserTookOver extends Error {
   constructor(readonly afterMs: number) {
@@ -35,6 +35,11 @@ export interface BorrowOptions {
   idleTimeoutMs?: number;
   /** The window to act in; activated first and the previous one restored after. */
   window?: number;
+  /**
+   * The window the element to click or scroll belongs to, when it is another window of the app over `window`
+   * (its dialog, a palette). Clicks land only on `window`, the menus and dropdown lists its app opens, or this.
+   */
+  elementWindow?: number;
   /** Called once the user is still and Ember actually takes the cursor. */
   onStart?: () => void;
   /** This borrow only: stops it while it waits its turn or runs (the kill switch uses stop() for all). */
@@ -125,7 +130,7 @@ export function canonicalCombo(combo: string): string {
 export const typeableText = (text: string) => /^[\x20-\x7e\n\t]*$/.test(text);
 
 const GRABBED = (then: string) => `Another program has taken the keyboard (a lock screen, a password prompt or the overview), so Ember ${then}.`;
-const COVERED = "Something else is on top of the app where Ember was going to click (a popup, a notification or another window), so it didn't click.";
+const COVERED = "Something else is on top of the app where Ember was going to click (a dialog, a popup, a notification or another window), so it didn't click.";
 
 export interface CursorBorrowOptions {
   /** Called whenever `pending` or `driving` changes (for the status shown to the user). */
@@ -229,9 +234,10 @@ export class CursorBorrow {
     const keyboardFree = () => {
       if (x.keyboardGrabbed?.(o.window)) throw new Error(GRABBED("stopped"));
     };
-    // A click goes to whatever is on top at that spot: it must be the approved window, or the app's own menu or dialog.
+    // A click goes to whatever is on top at that spot: it must be the approved window or the app's own open menu
+    // (not its dialog over that spot, unless the element is in it).
     const pointerOnTarget = () => {
-      if (o.window && x.pointerOn && !x.pointerOn(o.window)) throw new Error(COVERED);
+      if (o.window && x.pointerOn && !x.pointerOn(o.window, o.elementWindow)) throw new Error(COVERED);
     };
     const press = (sym: number, down: boolean) => {
       const code = x.keycodeOf(sym);
@@ -330,9 +336,11 @@ export class CursorBorrow {
         const sym = x.keysymOf(key);
         if (!sym) throw new Error(`unknown key "${key}"`);
         // The key in the active layout when it has one (with Shift if it's on the shifted level there, like
-        // "plus" on a US keyboard); else wherever the keymap has it (Ctrl+C still works with a Russian layout active).
+        // "plus" on a US keyboard); else in another layout of the keyboard (Ctrl+C still works with a Russian
+        // layout active). Never a key that gives it only with AltGr: without AltGr it is another shortcut.
         const layout = x.layout?.() ?? null;
-        const stroke = layout ? strokeFor(sym, layout.shortcuts) : null;
+        const stroke = layout ? shortcutStroke(sym, layout) : null;
+        if (layout && !stroke) throw new Error(`The keyboard layout in use can't press ${combo.trim()} (its key needs AltGr there, or isn't there), so Ember pressed nothing: any other key would be another shortcut. Switch the layout (for example to English) and try again.`);
         const mods = modifiers.map(m => x.keysymOf(m));
         if ((stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
         const tap = (down: boolean) => (stroke ? pressCode(stroke.code, sym, down) : press(sym, down));

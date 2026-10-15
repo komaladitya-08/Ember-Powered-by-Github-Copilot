@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { BorrowStopped, CursorBorrow, UserTookOver, canonicalCombo, parseCombo, type Hand } from "../../app/main/hands/borrow";
-import { planTyping, type KeyLayout, type KeyLevels } from "../../app/main/hands/keymap";
+import { planTyping, shortcutStroke, type KeyLayout, type KeyLevels } from "../../app/main/hands/keymap";
 import type { XInput } from "../../app/main/hands/input";
 
 const SHIFT_L = 0xffe1, CONTROL_L = 0xffe3, RETURN = 0xff0d;
@@ -29,13 +29,13 @@ const KEYS: Record<number, [[number, number], [number, number]]> = {
 };
 const LETTERS = new Set([26, 38, 43, 46, 32]);
 
-/** The layout as X would report it: the active group, and Caps Lock inverting the letters. */
+/** The layout as X would report it: the active group, Caps Lock inverting the letters, and the other group. */
 function layout(group: 0 | 1, caps = false): KeyLayout {
-  const levels = (lock: boolean): KeyLevels => new Map(Object.entries(KEYS).map(([code, groups]) => {
-    const [alone, shifted] = groups[group];
+  const levels = (lock: boolean, g: 0 | 1 = group): KeyLevels => new Map(Object.entries(KEYS).map(([code, groups]) => {
+    const [alone, shifted] = groups[g];
     return [Number(code), lock && LETTERS.has(Number(code)) ? [shifted, alone] : [alone, shifted]];
   }));
-  return { typing: levels(caps), shortcuts: levels(false), shift: 50 };
+  return { typing: levels(caps), shortcuts: levels(false), shift: 50, others: [levels(false, group ? 0 : 1)] };
 }
 
 /** German: "@" "{" are on AltGr (not on the first two levels) and "`" is a dead key. */
@@ -135,7 +135,32 @@ describe("CursorBorrow and the keyboard layout", () => {
   it("finds a shortcut's letter in another group when the active layout has none (ctrl+a with ru active)", async () => {
     const { s, x } = fakeX({ group: 1 });
     await new CursorBorrow(x).borrow(hand => hand.keys("ctrl+a"), fast);
-    expect(keysPressed(s.log)).toEqual(["sym ffe3 down", "sym 61 down", "sym 61 up", "sym ffe3 up"]);
+    expect(keysPressed(s.log)).toEqual(["sym ffe3 down", "code 38 down", "code 38 up", "sym ffe3 up"]);
+  });
+  it("never presses the key of a character that needs AltGr without AltGr: that would be another shortcut (review round 3)", async () => {
+    // German: "@" is AltGr+Q, "]" AltGr+9; the keymap still lists them on those keys, so a lookup by keysym finds Q and 9.
+    const { s, x } = fakeX();
+    x.layout = () => german;
+    x.keysymOf = name => ({ Control_L: CONTROL_L, Shift_L: SHIFT_L, at: ch("@"), bracketright: ch("]"), q: ch("q"), asterisk: ch("*") } as Record<string, number>)[name] ?? 0;
+    x.keycodeOf = sym => ({ [CONTROL_L]: 37, [SHIFT_L]: 50, [ch("@")]: 24, [ch("]")]: 18, [ch("q")]: 24 } as Record<number, number>)[sym] ?? 0;
+    const b = new CursorBorrow(x);
+    for (const combo of ["ctrl+@", "@", "ctrl+]"]) {
+      const err = await b.borrow(hand => hand.keys(combo), fast).catch(e => e);
+      expect(String(err)).toMatch(new RegExp(`can't press ${combo.replace(/[+\]]/g, "\\$&")} .*AltGr.*pressed nothing`));
+    }
+    expect(keysPressed(s.log)).toEqual([]);
+    await b.borrow(async hand => { await hand.keys("ctrl+q"); await hand.keys("ctrl+*"); }, fast);
+    expect(keysPressed(s.log)).toEqual(["sym ffe3 down", "code 24 down", "code 24 up", "sym ffe3 up", "sym ffe3 down", "sym ffe1 down", "code 35 down", "code 35 up", "sym ffe1 up", "sym ffe3 up"]);
+  });
+});
+
+describe("shortcut keys on the layout in use", () => {
+  it("takes the active group first, then another group's first two levels, never a third level", () => {
+    expect(shortcutStroke(ch("a"), layout(1))).toEqual({ code: 38, shift: false }); // from us, with ru active
+    expect(shortcutStroke(ch("@"), layout(1))).toEqual({ code: 11, shift: true }); // ru has none: us has it with Shift
+    expect(shortcutStroke(ch("\""), layout(1))).toEqual({ code: 11, shift: true }); // ru's own Shift+2
+    expect(shortcutStroke(ch("@"), german)).toBeNull();
+    expect(shortcutStroke(ch("*"), german)).toEqual({ code: 35, shift: true });
   });
 });
 
@@ -159,6 +184,15 @@ describe("CursorBorrow and other programs", () => {
     const click = await new CursorBorrow(x).borrow(hand => hand.click(), { ...fast }).catch(e => e);
     expect(String(click)).toMatch(/taken the keyboard/);
     expect(s.log).not.toContain("button 1 down");
+  });
+  it("clicks into another window of the app only when told the element is there (review round 3)", async () => {
+    const { s, x } = fakeX();
+    const asked: (number | undefined)[][] = [];
+    x.pointerOn = (w, el) => { asked.push([w, el]); return el === 33; };
+    expect(String(await new CursorBorrow(x).borrow(hand => hand.click(), fast).catch(e => e))).toMatch(/Something else is on top/);
+    await new CursorBorrow(x).borrow(hand => hand.click(), { ...fast, elementWindow: 33 });
+    expect(asked).toEqual([[22, undefined], [22, 33]]);
+    expect(s.log.filter(l => l.startsWith("button"))).toEqual(["button 1 down", "button 1 up"]);
   });
   it("doesn't click or scroll when something else is on top of the spot", async () => {
     const { s, x } = fakeX({ covered: true });

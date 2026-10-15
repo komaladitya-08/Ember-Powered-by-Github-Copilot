@@ -57,14 +57,16 @@ export interface XInput {
   layout?(): KeyLayout | null;
   /**
    * Has another program grabbed the keyboard (a lock screen, a password prompt, the overview)?
-   * Keys and clicks would go to it. A menu that `window`'s own app opened grabs it too: that doesn't count.
+   * Keys and clicks would go to it. A menu or dropdown list that `window`'s own app opened grabs it too:
+   * that doesn't count (its tooltips and other popups don't explain a grab).
    */
   keyboardGrabbed?(window?: number): boolean;
   /**
-   * Would a click at the pointer land in `window`: is the top-level window under the pointer its frame,
-   * or another window of the same app (its menu, its dialog)? Windows that let clicks through don't count.
+   * Would a click at the pointer land in `window`: is the top-level window under the pointer its frame, or a
+   * menu or dropdown list its app opened over it? Not another window of the app (a dialog, a palette) unless
+   * it is `elementWindow`, the window the caller says the element is in. Windows that let clicks through don't count.
    */
-  pointerOn?(window: number): boolean;
+  pointerOn?(window: number, elementWindow?: number): boolean;
   /** Is the screen saver on or the screen blanked? (false when the server can't say) */
   screenLocked?(): boolean;
   /**
@@ -84,6 +86,10 @@ export let xinputError: unknown = null;
 /** XI2 raw events (XI_RawKeyPress … XI_RawMotion): anything the user does with a mouse or keyboard. */
 const RAW_EVENTS = [13, 14, 15, 16, 17];
 const RAW_KEY_EVENTS = new Set([13, 14]);
+const RAW_KEY_PRESS = 13, RAW_BUTTON_PRESS = 15;
+/** EWMH window types (_NET_WM_WINDOW_TYPE_…), and those of an app's menus and dropdown lists. */
+const WINDOW_TYPES = ["NORMAL", "DIALOG", "UTILITY", "TOOLBAR", "MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO", "TOOLTIP", "NOTIFICATION", "SPLASH", "DND", "DOCK", "DESKTOP"];
+const MENU_TYPES = new Set(["MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO"]);
 
 export function openXInput(displayName?: string): XInput | null {
   try {
@@ -126,6 +132,7 @@ export function openXInput(displayName?: string): XInput | null {
     const XUngrabKeyboard = x11.func("int XUngrabKeyboard(void *dpy, unsigned long time)");
     const XkbGetState = x11.func("int XkbGetState(void *dpy, unsigned int device, _Out_ uint8_t *state)");
     const XkbGetMap = x11.func("void *XkbGetMap(void *dpy, unsigned int which, unsigned int device)");
+    const XkbGetControls = x11.func("int XkbGetControls(void *dpy, unsigned long which, void *xkb)");
     const XkbFreeKeyboard = x11.func("void XkbFreeKeyboard(void *xkb, unsigned int which, int freeAll)");
     const XkbTranslateKeyCode = x11.func("int XkbTranslateKeyCode(void *xkb, uint8_t key, unsigned int state, _Out_ unsigned int *modsRtrn, _Out_ unsigned long *sym)");
 
@@ -136,10 +143,16 @@ export function openXInput(displayName?: string): XInput | null {
     // What Ember holds down right now: let go of before the connection closes, or the server keeps them down.
     const keysHeld = new Set<number>(), buttonsHeld = new Set<number>();
     const ScreenSaverOn = 1, XkbUseCoreKbd = 0x100, ShiftMask = 1, LockMask = 2;
+    const atoms = new Map<string, number>();
+    const atom = (name: string): number => {
+      let a = atoms.get(name);
+      if (a === undefined) atoms.set(name, a = Number(XInternAtom(dpy, name, 0)));
+      return a;
+    };
     // Window properties, copied out of X's memory (koffi.view would abort Electron).
     const prop = (win: number, name: string, max: number): { format: number; bytes: Buffer } | null => {
       const type = [0], format = [0], items = [0], after = [0], data: unknown[] = [null];
-      if (XGetWindowProperty(dpy, win, XInternAtom(dpy, name, 0), 0, max, 0, 0, type, format, items, after, data) !== 0) return null;
+      if (XGetWindowProperty(dpy, win, atom(name), 0, max, 0, 0, type, format, items, after, data) !== 0) return null;
       const ptr = data[0];
       if (!ptr) return null;
       try {
@@ -222,6 +235,16 @@ export function openXInput(displayName?: string): XInput | null {
       return !!leader && leader === longs(window, "WM_CLIENT_LEADER", 1)[0];
     };
     const classOf = (win: number): string[] => (text(win, "WM_CLASS") ?? "").split("\0").filter(Boolean).map(c => c.toLowerCase());
+    /** The window's EWMH type: the first one in its list that Ember knows ("POPUP_MENU", "TOOLTIP"…), or "" for none. */
+    const windowType = (win: number): string => {
+      for (const a of longs(win, "_NET_WM_WINDOW_TYPE", 8)) {
+        const type = WINDOW_TYPES.find(t => atom(`_NET_WM_WINDOW_TYPE_${t}`) === a);
+        if (type) return type;
+      }
+      return "";
+    };
+    /** A menu or dropdown list `window`'s app opened: a popup of the app that says it is one. */
+    const ownMenu = (popup: number, window: number) => isPopup(popup) && MENU_TYPES.has(windowType(popup)) && sameApp(popup, window);
 
     // Is the screen saver on, or the monitor off (DPMS)? Both extensions are optional.
     const ext = [0], err = [0];
@@ -249,6 +272,7 @@ export function openXInput(displayName?: string): XInput | null {
 
     const keycode = (code: number, down: boolean) => {
       if (!open || code < 8 || code > 255) return;
+      if (down) watch?.sent("keys");
       XTestFakeKeyEvent(dpy, code, down ? 1 : 0, 0);
       XFlush(dpy);
       if (down) keysHeld.add(code); else keysHeld.delete(code);
@@ -280,6 +304,7 @@ export function openXInput(displayName?: string): XInput | null {
       },
       button(button, down) {
         if (!open) return;
+        if (down) watch?.sent("pointer");
         XTestFakeButtonEvent(dpy, button, down ? 1 : 0, 0);
         XFlush(dpy);
         if (down) buttonsHeld.add(button); else buttonsHeld.delete(button);
@@ -390,15 +415,20 @@ export function openXInput(displayName?: string): XInput | null {
           // XkbDescRec: min_key_code (12), max_key_code (13).
           const head = koffi.decode(xkb, "uint8_t", 14) as Uint8Array;
           const used = [0], sym = [0];
-          const at = (code: number, m: number) => (XkbTranslateKeyCode(xkb, code, (m & 0xff) | ((group & 3) << 13), used, sym) ? Number(sym[0]) : 0);
-          const levels = (m: number): KeyLevels => {
+          const at = (code: number, m: number, g: number) => (XkbTranslateKeyCode(xkb, code, (m & 0xff) | ((g & 3) << 13), used, sym) ? Number(sym[0]) : 0);
+          const levels = (m: number, g = group): KeyLevels => {
             const keys: KeyLevels = new Map();
-            for (let code = head[12]; code <= head[13]; code++) keys.set(code, [at(code, m), at(code, m | ShiftMask)]);
+            for (let code = head[12]; code <= head[13]; code++) keys.set(code, [at(code, m, g), at(code, m | ShiftMask, g)]);
             return keys;
           };
           const typing = levels(mods);
           const shortcuts = mods & LockMask ? levels(mods & ~LockMask) : typing;
-          return { typing, shortcuts, shift: shiftKey(shortcuts) };
+          // The other groups (layouts) the keyboard has: XkbDescRec.ctrls (16) → XkbControlsRec.num_groups (1).
+          const ctrls = XkbGetControls(dpy, 1 << 27 /* XkbGroupsWrapMask */, xkb) === 0 ? koffi.decode(xkb, 16, "void *") : null;
+          const groups = ctrls ? (koffi.decode(ctrls, "uint8_t", 2) as Uint8Array)[1] : 1;
+          const others: KeyLevels[] = [];
+          for (let g = 0; g < Math.min(groups, 4); g++) if (g !== group % groups) others.push(levels(mods & ~LockMask, g));
+          return { typing, shortcuts, shift: shiftKey(shortcuts), others };
         } finally {
           XkbFreeKeyboard(xkb, 0, 1);
         }
@@ -413,17 +443,26 @@ export function openXInput(displayName?: string): XInput | null {
         const status = XGrabKeyboard(dpy, root, 0, 1 /* GrabModeAsync */, 1, now ? (now + 60_000) >>> 0 : 0 /* CurrentTime */);
         if (status === 0) { XUngrabKeyboard(dpy, 0); XFlush(dpy); return false; }
         if (status !== 1 && status !== 4) return false; // only AlreadyGrabbed and GrabFrozen mean someone has it
-        // The app's own menu (a popup it mapped) holds the grab: keys for the menu are the app's.
-        return !(window && children(root).some(w => isPopup(w) && sameApp(w, window)));
+        // The app's own open menu or dropdown list holds the grab: keys for it are the app's. Its other popups
+        // (a tooltip, one that doesn't say what it is) don't explain a grab: someone else may have the keyboard.
+        return !(window && children(root).some(w => ownMenu(w, window)));
       },
-      pointerOn(window) {
+      pointerOn(window, elementWindow) {
         if (!open || !window) return false;
         // The server's own answer: the top-level that would get a click here (windows that let clicks through are skipped).
         const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
         if (!XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m)) return false;
         const top = Number(c[0]);
         if (!top) return false; // the bare desktop
-        return top === window || top === topLevelOf(window) || sameApp(top, window);
+        const targets = elementWindow ? [window, elementWindow] : [window];
+        if (targets.some(w => top === w || top === topLevelOf(w))) return true;
+        // Else only a popup the app opened over it: its menu or dropdown list, or one tied to the window
+        // (WM_TRANSIENT_FOR) that isn't a tooltip or a notification. Never another of the app's windows
+        // (its dialog over that spot): the click would do something else there.
+        if (!isPopup(top)) return false;
+        const type = windowType(top);
+        if (MENU_TYPES.has(type)) return sameApp(top, window);
+        return type !== "TOOLTIP" && type !== "NOTIFICATION" && targets.includes(longs(top, "WM_TRANSIENT_FOR", 1)[0] ?? 0);
       },
       screenLocked() {
         if (!open) return false;
@@ -468,6 +507,8 @@ export function openXInput(displayName?: string): XInput | null {
 interface Watch {
   /** Starts (or stops) the raw events; anything that arrived before is dropped. */
   select(on: boolean): void;
+  /** Ember presses a key or a mouse button (or turns the wheel) through XTest now. */
+  sent(kind: "pointer" | "keys"): void;
   /** Reads what arrived: "pointer" if the user used a mouse, else "keys" if a keyboard, else null. */
   drain(): "pointer" | "keys" | null;
   close(): void;
@@ -475,7 +516,7 @@ interface Watch {
 
 /**
  * A second connection that receives XInput2 raw events (every device's input, even while another client
- * grabs it), leaving out Ember's own XTest devices. It is only read when Ember asks (no timer): events queue
+ * grabs it), leaving out Ember's own XTest input. It is only read when Ember asks (no timer): events queue
  * on the connection meanwhile, so nothing between two reads is lost. null when XInput2 isn't there.
  */
 function openWatch(koffi: typeof import("koffi"), x11: import("koffi").LibraryHandle, xi: import("koffi").LibraryHandle, displayName: string | undefined, main: unknown): Watch | null {
@@ -515,7 +556,10 @@ function openWatch(koffi: typeof import("koffi"), x11: import("koffi").LibraryHa
     if (ours.size !== 2) throw new Error("no XTEST devices");
     const root = XDefaultRootWindow(dpy);
     const event = Buffer.alloc(192); // XEvent
-    let open = true;
+    let open = true, selected = false;
+    // Every XTest client shares those devices (xdotool, an on-screen keyboard, remote support): presses and wheel
+    // notches beyond the ones Ember sent are someone else's. (Their pointer motion can't be told from Ember's.)
+    const sent = { pointer: 0, keys: 0 };
     const drain = (): "pointer" | "keys" | null => {
       let seen: "pointer" | "keys" | null = null;
       while (open && XPending(dpy) > 0) {
@@ -525,8 +569,13 @@ function openWatch(koffi: typeof import("koffi"), x11: import("koffi").LibraryHa
         try {
           // XIRawEvent: evtype (36), sourceid (52): the device it came from.
           const raw = Buffer.from(koffi.decode(koffi.decode(event, 48, "void *"), "uint8_t", 56) as Uint8Array);
-          if (ours.has(raw.readInt32LE(52))) continue;
-          seen = RAW_KEY_EVENTS.has(raw.readInt32LE(36)) ? seen ?? "keys" : "pointer";
+          const type = raw.readInt32LE(36);
+          const kind = RAW_KEY_EVENTS.has(type) ? "keys" : "pointer";
+          if (ours.has(raw.readInt32LE(52))) {
+            if (type !== RAW_KEY_PRESS && type !== RAW_BUTTON_PRESS) continue;
+            if (sent[kind] > 0) { sent[kind]--; continue; }
+          }
+          seen = kind === "keys" ? seen ?? "keys" : "pointer";
         } finally {
           XFreeEventData(dpy, event);
         }
@@ -541,6 +590,11 @@ function openWatch(koffi: typeof import("koffi"), x11: import("koffi").LibraryHa
         XISelectEvents(dpy, root, { deviceid: 1 /* XIAllMasterDevices */, mask_len: mask.length, mask }, 1);
         XSync(dpy, 0);
         drain(); // what came before is not this borrow's business
+        selected = on;
+        sent.pointer = sent.keys = 0;
+      },
+      sent(kind) {
+        if (selected) sent[kind]++;
       },
       drain,
       close() {

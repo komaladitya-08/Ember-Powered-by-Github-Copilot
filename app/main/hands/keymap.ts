@@ -17,6 +17,8 @@ export interface KeyLayout {
   shortcuts: KeyLevels;
   /** The keycode of a Shift key (0 if the layout has none). */
   shift: number;
+  /** The keyboard's other groups (like us when ru is active in us,ru), without Caps Lock: for shortcuts. */
+  others?: KeyLevels[];
 }
 
 export interface KeyStroke {
@@ -48,6 +50,19 @@ export function strokeFor(sym: number, keys: KeyLevels): KeyStroke | null {
     if (!shifted && withShift === sym) shifted = { code, shift: true };
   }
   return shifted;
+}
+
+/**
+ * The key for a shortcut's keysym: in the active group, alone or with Shift; else alone or with Shift in another
+ * group (Ctrl+C with a Russian layout active: apps find shortcuts in any group). Never a key that gives it only
+ * with AltGr: pressed without, it is another shortcut (Ctrl+Q for Ctrl+@ on a German layout). null if none.
+ */
+export function shortcutStroke(sym: number, layout: KeyLayout): KeyStroke | null {
+  for (const keys of [layout.shortcuts, ...(layout.others ?? [])]) {
+    const stroke = strokeFor(sym, keys);
+    if (stroke) return stroke;
+  }
+  return null;
 }
 
 /** The keycode of a Shift key on these keys (0 if none). */

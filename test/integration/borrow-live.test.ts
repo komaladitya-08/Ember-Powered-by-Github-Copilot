@@ -1,10 +1,11 @@
 /**
  * Borrowing the mouse and keyboard on a private X server (Xvfb; skipped without it):
- * text comes out exactly on other keyboard layouts and with Caps Lock, a keyboard
- * grabbed by another program or a popup over the click spot stops Ember, the
- * user's own quick clicks, key taps and wheel notches are noticed, nothing stays
- * pressed after close, and windows are only found by their exact title when the
- * app's process has none.
+ * text comes out exactly on other keyboard layouts and with Caps Lock, shortcuts
+ * whose key needs AltGr aren't pressed, a keyboard grabbed by another program or
+ * a popup or dialog over the click spot stops Ember, the user's own quick clicks,
+ * key taps and wheel notches are noticed (also from another XTest program),
+ * nothing stays pressed after close, and windows are only found by their exact
+ * title when the app's process has none.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -77,8 +78,8 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
     server?.kill();
   });
 
-  /** An app's window on its own connection: a title, a pid, a class; override-redirect for a popup. */
-  function app(o: { title?: string; pid?: number; cls?: string; x?: number; y?: number; w?: number; h?: number; popup?: boolean; clickThrough?: boolean; focus?: boolean } = {}) {
+  /** An app's window on its own connection: a title, a pid, a class; override-redirect for a popup, its EWMH type, what it's transient for. */
+  function app(o: { title?: string; pid?: number; cls?: string; x?: number; y?: number; w?: number; h?: number; popup?: boolean; type?: string; transientFor?: number; clickThrough?: boolean; focus?: boolean } = {}) {
     const dpy = L.XOpenDisplay(display);
     apps.push(dpy);
     const attrs = Buffer.alloc(112);
@@ -92,6 +93,9 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
       L.XChangeProperty(dpy, win, L.XInternAtom(dpy, "_NET_WM_PID", 0), 6 /* CARDINAL */, 32, 0, pid, 1);
     }
     if (o.cls) { const c = Buffer.from(`${o.cls}\0${o.cls}\0`); L.XChangeProperty(dpy, win, L.XInternAtom(dpy, "WM_CLASS", 0), 31 /* STRING */, 8, 0, c, c.length); }
+    const long = (v: number) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
+    if (o.type) L.XChangeProperty(dpy, win, L.XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", 0), 4 /* ATOM */, 32, 0, long(L.XInternAtom(dpy, `_NET_WM_WINDOW_TYPE_${o.type}`, 0)), 1);
+    if (o.transientFor) L.XChangeProperty(dpy, win, L.XInternAtom(dpy, "WM_TRANSIENT_FOR", 0), 33 /* WINDOW */, 32, 0, long(o.transientFor), 1);
     if (o.clickThrough) L.XShapeCombineRectangles(dpy, win, 2 /* ShapeInput */, 0, 0, null, 0, 0 /* ShapeSet */, 0);
     L.XSelectInput(dpy, win, 1 /* KeyPress */ | 4 /* ButtonPress */ | (1 << 21) /* FocusChange */);
     L.XMapRaised(dpy, win);
@@ -168,6 +172,22 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
       layout("us");
     });
 
+    it("never presses a shortcut whose key needs AltGr on the layout in use: without it, it is another shortcut (review round 3)", async () => {
+      const a = app({ title: "Ember live: Shortcuts", focus: true });
+      for (const [map, combos] of [["de", ["ctrl+@", "@", "ctrl+]", "ctrl+{"]], ["fr", ["ctrl+["]]] as const) {
+        layout(map);
+        for (const combo of combos) {
+          const err = await new CursorBorrow(x).borrow(hand => hand.keys(combo), { ...fast, window: a.win }).catch(e => e);
+          expect(String(err)).toMatch(/can't press .*AltGr.*pressed nothing/);
+        }
+        expect(a.received().keys).toEqual([]); // not Ctrl+Q, Ctrl+9, Ctrl+7 or "("
+      }
+      layout("de");
+      await new CursorBorrow(x).borrow(hand => hand.keys("ctrl+q"), { ...fast, window: a.win });
+      expect(a.received().keys.at(-1)).toEqual({ code: 24, state: 4 });
+      layout("us");
+    });
+
     it("adds Shift for shortcut keys on the shifted level (ctrl+plus, ctrl+!)", async () => {
       layout("us");
       const a = app({ title: "Ember live: Zoom", focus: true });
@@ -189,13 +209,30 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
       L.XUngrabKeyboard(locker.dpy, 0);
       L.XSync(locker.dpy, 0);
       // The app opens a menu (a popup of its own) that grabs the keyboard: Ember's keys are for that menu.
-      const menu = app({ pid: 4244001, popup: true, x: 120, y: 130, w: 100, h: 80 });
+      const menu = app({ pid: 4244001, popup: true, type: "POPUP_MENU", x: 120, y: 130, w: 100, h: 80 });
       expect(L.XGrabKeyboard(menu.dpy, menu.win, 0, 1, 1, 0)).toBe(0);
       L.XSync(menu.dpy, 0);
       await new CursorBorrow(x).borrow(hand => hand.keys("Down"), { ...fast, window: a.win });
       expect(menu.received().keys).toHaveLength(1);
       L.XUngrabKeyboard(menu.dpy, 0);
       L.XSync(menu.dpy, 0);
+    });
+
+    it("a tooltip or a popup of the app that doesn't say it's a menu doesn't explain someone else's grab (review round 3)", async () => {
+      const a = app({ title: "Ember live: Sheet", pid: 4244101, focus: true });
+      app({ pid: 4244101, popup: true, type: "TOOLTIP", transientFor: a.win, x: 1200, y: 700, w: 60, h: 20 });
+      app({ pid: 4244101, popup: true, transientFor: a.win, x: 1200, y: 740, w: 60, h: 20 });
+      const locker = app({ title: "Password prompt", pid: 4244102, x: 0, y: 0, w: 10, h: 10 });
+      expect(L.XGrabKeyboard(locker.dpy, L.XDefaultRootWindow(locker.dpy), 0, 1, 1, 0)).toBe(0);
+      L.XSync(locker.dpy, 0);
+      try {
+        const err = await new CursorBorrow(x).borrow(hand => hand.keys("ctrl+a"), { ...fast, window: a.win }).catch(e => e);
+        expect(String(err)).toMatch(/Another program has taken the keyboard/);
+        expect(locker.received().keys).toEqual([]);
+      } finally {
+        L.XUngrabKeyboard(locker.dpy, 0);
+        L.XSync(locker.dpy, 0);
+      }
     });
 
     it("doesn't click when another app's popup is on top of the spot, and clicks through a click-through overlay", async () => {
@@ -210,9 +247,27 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
       expect(banner.received().clicks).toBe(0);
       expect(a.received().clicks).toBe(0);
       // The app's own popup (its menu) at that spot is fine.
-      const own = app({ pid: 4245001, popup: true, x: 480, y: 600, w: 100, h: 50 });
+      const own = app({ pid: 4245001, popup: true, type: "POPUP_MENU", x: 480, y: 600, w: 100, h: 50 });
       await new CursorBorrow(x).borrow(async hand => { await hand.glideTo(500, 620); await hand.click(); }, { ...fast, window: a.win });
       expect(own.received().clicks).toBe(1);
+    });
+
+    it("doesn't click the app's own dialog or tooltip over the spot, unless told the element is in that dialog (review round 3)", async () => {
+      const a = app({ title: "Ember live: Calc", pid: 4247001, x: 300, y: 300, w: 400, h: 300, focus: true });
+      const dialog = app({ title: "Find and Replace", pid: 4247001, x: 550, y: 320, w: 120, h: 80 });
+      const tip = app({ pid: 4247001, popup: true, type: "TOOLTIP", transientFor: a.win, x: 320, y: 320, w: 60, h: 30 });
+      const clickAt = (px: number, py: number, o: { elementWindow?: number } = {}) =>
+        new CursorBorrow(x).borrow(async hand => { await hand.glideTo(px, py); await hand.click(); }, { ...fast, window: a.win, ...o }).catch(e => e);
+      expect(String(await clickAt(600, 350))).toMatch(/Something else is on top of the app/);
+      expect(String(await clickAt(340, 330))).toMatch(/Something else is on top of the app/);
+      expect([a.received().clicks, dialog.received().clicks, tip.received().clicks]).toEqual([0, 0, 0]);
+      // The element is in the dialog: the click is meant for it.
+      expect(await clickAt(600, 350, { elementWindow: dialog.win })).toBeUndefined();
+      expect(dialog.received().clicks).toBe(1);
+      // A popup tied to the window that doesn't say what it is (an old toolkit's dropdown list) is the app's.
+      const list = app({ pid: 4247001, popup: true, transientFor: a.win, x: 320, y: 500, w: 80, h: 60 });
+      expect(await clickAt(340, 520)).toBeUndefined();
+      expect([list.received().clicks, a.received().clicks]).toEqual([1, 0]);
     });
   });
 
@@ -248,6 +303,27 @@ describe.skipIf(!xvfb)("borrowing on a real X server", () => {
         expect(await run).toBeInstanceOf(UserTookOver);
       });
     }
+    it("lets go when another XTest program (an on-screen keyboard, remote support) clicks, scrolls or types on the devices Ember uses (review round 3)", async () => {
+      const other = L.XOpenDisplay(display);
+      apps.push(other);
+      const taps: Record<string, () => void> = {
+        click: () => { L.XTestFakeButtonEvent(other, 1, 1, 0); L.XTestFakeButtonEvent(other, 1, 0, 0); },
+        wheel: () => { L.XTestFakeButtonEvent(other, 5, 1, 0); L.XTestFakeButtonEvent(other, 5, 0, 0); },
+        key: () => { L.XTestFakeKeyEvent(other, 50, 1, 0); L.XTestFakeKeyEvent(other, 50, 0, 0); },
+      };
+      for (const tap of Object.values(taps)) {
+        const run = new CursorBorrow(x).borrow(async hand => {
+          await hand.glideTo(200, 200);
+          await hand.click(3);
+          await sleep(400);
+          await hand.glideTo(600, 400);
+        }, fast).catch(e => e);
+        await sleep(300);
+        tap();
+        L.XSync(other, 0);
+        expect(await run).toBeInstanceOf(UserTookOver);
+      }
+    });
     it("waits while the user scrolls with a still mouse", async () => {
       let scrolling = true;
       void (async () => { while (scrolling) { await gestures["wheel notches"](); } })();
