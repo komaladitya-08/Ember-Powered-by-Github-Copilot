@@ -200,11 +200,44 @@ describe("policy: key combinations however they are spelled (review round 2)", (
     expect(keys(k, true).verdict).toBe(verdict);
   });
 
+  it.each([
+    ["Control_R+w", "confirm"], ["Control_R+q", "confirm"], ["Alt_R+F4", "confirm"], ["Control_R+Shift_R+Delete", "confirm"], ["Control_R+Return", "confirm"],
+    ["Control_R+s", "allow"],
+  ])("on the desk, the right-hand %s is judged like the left-hand one (%s)", (k, verdict) => {
+    expect(keys(k, true).verdict).toBe(verdict);
+  });
+
+  it.each(["Control_R+Alt_R+x", "Control_R+Alt_L+y", "Super_R+l", "Alt_R+F2", "Control_R+Alt_R+Delete", "Control_R+Alt_R+F3"])("%s is never pressed either", k => {
+    expect(keys(k).verdict).toBe("deny");
+    expect(keys(k, true).verdict).toBe("deny");
+  });
+
+  it.each(["KP_Space", "ISO_Enter", "Linefeed"])("%s on a focused Send button on the desk is asked about, like Return", k => {
+    const d = e.decide({ taskId: `k-${Math.random()}`, kind: "keys", app: "gedit", window: "notes", element: { role: "push button", name: "Send" }, value: k, onDesk: true });
+    expect(d.verdict).toBe("confirm");
+  });
+
   it("one spelling for every way of writing a combination", () => {
+    expect(canonicalKeys("Control_R+Alt_R+Delete")).toBe("ctrl+alt+delete");
     expect(canonicalKeys("Alt + Ctrl + Del")).toBe("ctrl+alt+delete");
     expect(canonicalKeys("shift+ctrl+alt+T")).toBe("ctrl+alt+shift+t");
     expect(canonicalKeys("cmd+space")).toBe("super+space");
     expect(canonicalKeys("ctrl++")).toBe("ctrl+plus");
     expect(canonicalKeys("hyper+x")).toBeNull();
+  });
+});
+
+describe("policy: Ember doesn't run programs, through a file manager either (review round 3)", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ nautilus: "act" }) });
+  const act = (name: string, onDesk: boolean, dialog?: { name: string; text: string }, role = "check box") =>
+    e.decide({ taskId: `x-${Math.random()}`, kind: "toggle", app: "Nautilus", window: "report.sh Properties", element: { role, name }, onDesk, dialog });
+  it.each(["Allow executing file as program", "Executable as Program", "Run in Terminal"])("“%s” is refused on the desk and on the user's screen", name => {
+    expect(act(name, true).verdict).toBe("deny");
+    expect(act(name, false).verdict).toBe("deny");
+  });
+  it("the file manager's “Run” answer is refused; a Run button elsewhere is judged as usual", () => {
+    const ask = { name: "", text: "Do you want to run “report.sh”, or display its contents?" };
+    expect(act("Run", true, ask, "push button").verdict).toBe("deny");
+    expect(act("Run", true, undefined, "push button").verdict).not.toBe("deny");
   });
 });

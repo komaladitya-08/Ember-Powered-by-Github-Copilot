@@ -122,10 +122,12 @@ export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s))
 
 const ACTIVATING_ROLES = /button|link|menu item|check box|radio|toggle|switch|tab/;
 /** Keys that activate the focused control (with Shift too, and the Ctrl+M / Ctrl+J line-feed equivalents). */
-const ACTIVATE_KEY = /^((shift|ctrl|alt)\+)?(return|enter|kp_enter|space)$|^ctrl\+(m|j)$/;
+const ACTIVATE_KEY = /^((shift|ctrl|alt)\+)?(return|enter|kp_enter|iso_enter|linefeed|space|kp_space)$|^ctrl\+(m|j)$/;
 /** Alt+letter presses whichever control has that underlined letter: Ember can't tell which. */
 const MNEMONIC_KEY = /^alt\+(shift\+)?[a-z0-9]$/;
-const MODIFIER_NAMES: Record<string, string> = { Control_L: "ctrl", Alt_L: "alt", Shift_L: "shift", Super_L: "super" };
+/** A modifier by its side-less name: Control_R is Ctrl as much as Control_L (apps see the same ControlMask). */
+const MODIFIER_NAMES: Record<string, string> = { control: "ctrl", ctrl: "ctrl", alt: "alt", shift: "shift", super: "super", meta: "super", hyper: "super", mod4: "super" };
+const modifierName = (m: string) => MODIFIER_NAMES[m.toLowerCase().replace(/_[lr]$/, "")] ?? m.toLowerCase();
 const MODIFIER_ORDER = ["ctrl", "alt", "shift", "super"];
 /** Other names people (and models) give the logo key. */
 const LOGO_KEY = /^\s*(win|windows|cmd|command|logo|mod4)\s*$/i;
@@ -139,7 +141,7 @@ export function canonicalKeys(keys: string): string | null {
   try {
     const { modifiers, key } = parseCombo(keys.split("+").map(t => (LOGO_KEY.test(t) ? "super" : t)).join("+"));
     if (/\s/.test(key)) return null;
-    const mods = [...new Set(modifiers.map(m => MODIFIER_NAMES[m] ?? m.toLowerCase()))].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
+    const mods = [...new Set(modifiers.map(modifierName))].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
     return [...mods, key.toLowerCase()].join("+");
   } catch {
     return null;
@@ -178,6 +180,10 @@ const SAFE_COMBOS = canonicalSet(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+
 /** Shortcuts that delete, send, close or quit, whatever has focus. */
 const DESTRUCTIVE_KEYS = canonicalSet(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
   "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
+/** Making a file executable or running one (a file manager's "Allow executing file as program", "Run in Terminal"). */
+const RUNS_PROGRAM = /\b(allow(ed)? execut(ing|e)|execut(able|e) as (a )?program|run as (a )?program|run in (a )?terminal|launch as (a )?program|make (it |the file |file )?executable)\b/;
+/** The file manager's "Do you want to run …, or display its contents?" question: its "Run" runs the file. */
+const RUN_FILE_DIALOG = /\b(do you want to run|or display its contents)\b/;
 const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
 const words = (s: string) => normalizeLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
 /** Rough stem, so "deleting", "deleted" and "delete" match. */
@@ -307,6 +313,11 @@ export class PolicyEngine {
     if (r.element?.role === "password text") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
+    if (r.kind !== "read" && r.element) {
+      const label = normalizeLabel(r.element.name);
+      const runFile = /^run\b/.test(label) && RUN_FILE_DIALOG.test(normalizeLabel(`${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+      if (RUNS_PROGRAM.test(label) || runFile) return never("Ember doesn't run programs, so it never makes files executable or runs them");
+    }
     if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "select" || r.kind === "value" || r.kind === "keys") && r.element && isSecretField(r.element.name)) {
       return never("this looks like a password or payment field");
     }
