@@ -11,6 +11,7 @@ import type { TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
+import type { AuditLog } from "../policy/audit";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -35,6 +36,8 @@ export interface TaskManagerDeps {
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   setCards: (cards: TaskCard[]) => void;
   onFinished?: (task: Task) => void;
+  /** The audit log gets each task's request and outcome. */
+  audit?: AuditLog;
   maxRunning?: number;
   /** How long a finished worker session is kept for follow-up questions. */
   keepMs?: number;
@@ -62,6 +65,7 @@ export class TaskManager {
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do" } });
     this.d.log.info("task.queued", { id, goal: task.title, target: target.title });
+    this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title });
     this.pump();
     this.publish();
     return task;
@@ -155,6 +159,7 @@ export class TaskManager {
     task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
+    this.d.audit?.write({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.publish();
     this.d.onFinished?.(task);
     // Finished cards stay on screen briefly, then go.

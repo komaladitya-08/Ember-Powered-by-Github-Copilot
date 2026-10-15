@@ -18,8 +18,9 @@ import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo } from "..
 import type { PolicyEngine, ActionKind } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 import { inferLabels } from "../perception/elements";
+import { isSecurityWindow } from "../policy/policy";
 import { SETTINGS, changeSetting, findApp, launchApp, listApps, type SettingName } from "../hands/system";
-import { CursorBorrow, UserTookOver, type Hand } from "../hands/borrow";
+import { BorrowStopped, CursorBorrow, UserTookOver, type Hand } from "../hands/borrow";
 import type { DeskPlace } from "../desk/place";
 import { focusedElement } from "../perception/elements";
 import type { Logger } from "../logger";
@@ -57,6 +58,8 @@ export interface WorkerDeps {
     findWindow: (title: string) => number;
     /** "waiting": for the user to be still; "active": Ember's windows stop taking clicks and the status says so. */
     setBorrowing: (state: "waiting" | "active" | "off") => void;
+    /** The window with keyboard focus on the user's screen (an auth prompt there pauses Ember's input). */
+    activeWindow?: () => { app: string; title: string } | null;
   };
   onUsage?: (input: number, output: number) => void;
 }
@@ -105,6 +108,8 @@ export class Worker {
   /** Where the worker is acting: null for the user's screen, or Ember's desk. */
   private place: DeskPlace | null = null;
   private deskBorrow: CursorBorrow | null = null;
+  /** True while this worker holds the user's mouse and keyboard. */
+  private usingCursor = false;
   private signal: AbortSignal | null = null;
   private guideStep = 0;
   private userTookOver = false;
@@ -331,7 +336,13 @@ export class Worker {
       if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
     });
     this.signal = signal;
-    const onAbort = () => { this.aborted = true; void session.abort().catch(() => undefined); };
+    const onAbort = () => {
+      this.aborted = true;
+      // Motion stops at once: a borrow in progress lets go and the pointer goes straight back.
+      if (this.usingCursor) this.d.cursor?.borrow.stop();
+      this.deskBorrow?.stop();
+      void session.abort().catch(() => undefined);
+    };
     signal.addEventListener("abort", onAbort, { once: true });
     d.presenter.taskStarted();
     try {
@@ -393,7 +404,7 @@ export class Worker {
 
   private async perceive(image: boolean): Promise<ToolResultObject> {
     const p = await this.perception.perceive({ image, scope: "window", target: this.target });
-    if (p.blocked) return denied("This window is on the user's never-look list. Don't use it; finish the task and say so.");
+    if (p.blocked) return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
     if (!p.window) return fail("That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
     this.window = { app: p.window.app, name: p.window.name };
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined };
@@ -481,11 +492,24 @@ export class Worker {
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId);
     if (!this.d.cursor) return fail("This needs the mouse or keyboard, which isn't available here. Try open_on_desk.");
     const c = this.d.cursor;
+    // A password or authentication prompt has the keyboard: those are the user's alone (M8.3).
+    const authPrompt = () => { const w = c.activeWindow?.(); return !!w && isSecurityWindow(w); };
+    if (authPrompt()) return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+    const guarded = (hand: Hand): Hand => {
+      const check = () => { if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped"); };
+      return {
+        ...hand,
+        click: async b => { check(); await hand.click(b); },
+        keys: async k => { check(); await hand.keys(k); },
+        type: async t => { for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); } },
+      };
+    };
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id);
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
+    this.usingCursor = true;
     try {
-      await c.borrow.borrow(fn, {
+      await c.borrow.borrow(hand => fn(guarded(hand)), {
         window: this.window.name ? c.findWindow(this.window.name) || undefined : undefined,
         onStart: () => c.setBorrowing("active"),
       });
@@ -498,8 +522,10 @@ export class Worker {
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: msg, ...(tookOver ? { tookOverAfterMs: err.afterMs } : {}) });
       if (tookOver) this.userTookOver = true;
       if (tookOver) return denied("The user took the mouse back, so you stopped. Don't try again; finish the task and say what's left.");
+      if (err instanceof BorrowStopped) return denied("Stopped.");
       return fail(msg);
     } finally {
+      this.usingCursor = false;
       c.setBorrowing("off");
       release();
     }
@@ -519,6 +545,7 @@ export class Worker {
       const msg = err instanceof Error ? err.message : String(err);
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: msg });
       if (err instanceof UserTookOver) return denied("The user took over your desk. Stop and finish the task, saying where you got to.");
+      if (err instanceof BorrowStopped) return denied("Stopped.");
       return fail(msg);
     } finally {
       release();
@@ -542,19 +569,19 @@ export class Worker {
 
   /** null when the action may go ahead; otherwise the tool result to return. */
   private async authorize(request: Parameters<PolicyEngine["decide"]>[0]): Promise<ToolResultObject | null> {
-    const req = { ...request, onDesk: !!this.place };
+    const req = { ...request, onDesk: !!this.place, goal: this.spec.goal };
     const decision = this.d.policy.decide(req);
-    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && this.allowedApps.has(req.app.toLowerCase());
-    this.d.audit.write({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason });
+    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && this.allowedApps.has(req.app.toLowerCase());
+    this.d.audit.write({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
     if (decision.verdict === "allow" || sessionAllowed) return null;
-    const options = decision.needsGrant && req.app
+    const options = decision.needsGrant && decision.remember && req.app
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${req.app}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options });
     this.d.audit.write({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: answer ?? "expired" });
-    if (answer === "always") {
+    if (answer === "always" && decision.remember) {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
     }
     if (answer === "once" || answer === "always") {

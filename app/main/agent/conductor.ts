@@ -145,7 +145,7 @@ export class Conductor {
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
     const parts = [
-      ...(reports.length ? [`<task_results>\n${reports.join("\n")}\n</task_results>`] : []),
+      ...(reports.length ? [`<task_results untrusted="true">\n${reports.map(r => r.replace(/</g, "‹")).join("\n")}\n</task_results>`] : []),
       ...(context ? [context] : []),
       text,
     ];

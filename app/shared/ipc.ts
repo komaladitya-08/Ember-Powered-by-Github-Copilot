@@ -4,6 +4,7 @@ import type { EnvReport } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus } from "../main/agent/host";
 import type { MicState } from "./voice";
+import type { AdminPolicy } from "../main/admin";
 
 export const IPC = {
   getStatus: "ember:get-status",
@@ -20,6 +21,7 @@ export const IPC = {
   voiceDownload: "voice:download",
   voiceProgress: "voice:progress",
   askClose: "agent:ask-close",
+  activity: "ember:activity",
 } as const;
 
 export interface SignInProgress {
@@ -41,6 +43,40 @@ export interface Status {
   settings: Settings;
   environment: EnvReport;
   logFile: string;
+  /** The administrator's policy in force, if any. */
+  admin: {
+    source: string | null;
+    /** The policy file is broken, so Ember is locked down. */
+    error: string | null;
+    /** Settings the administrator decides. */
+    managed: string[];
+    features: AdminPolicy["features"];
+    /** The organisation's own model endpoint, when set. */
+    provider: string | null;
+    confirmEveryAction: boolean;
+    allowGrants: boolean;
+    retentionDays: number;
+  };
+}
+
+/** One line of the activity timeline (an audit entry). */
+export interface ActivityEntry {
+  t: string;
+  event: string;
+  task?: string;
+  kind?: string;
+  app?: string;
+  window?: string;
+  element?: { role: string; name: string };
+  verdict?: string;
+  reason?: string;
+  answer?: string;
+  ok?: boolean;
+  error?: string;
+  tier?: number | string;
+  value?: string;
+  source?: string;
+  [key: string]: unknown;
 }
 
 export interface EmberHomeApi {
@@ -58,6 +94,8 @@ export interface EmberHomeApi {
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
   onVoiceProgress(fn: (p: { done: number; total: number }) => void): () => void;
+  /** The newest audit entries, newest first. */
+  activity(): Promise<ActivityEntry[]>;
 }
 
 export interface EmberAskApi {

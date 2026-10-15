@@ -62,7 +62,7 @@ const share = path.join(userData, "share");
 mkdirSync(path.join(share, "applications"), { recursive: true });
 writeFileSync(path.join(share, "applications", "ember-bench.desktop"), `[Desktop Entry]\nType=Application\nName=Ember Bench\nExec=${python} ${path.join(root, "test/fixtures/gtk3_bench.py")}\n`);
 const benchLog = path.join(userData, "bench.jsonl");
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: false, onboarded: true }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: false, onboarded: true, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
 
 const recorder = spawn("ffmpeg", ["-loglevel", "error", "-y", "-f", "x11grab", "-draw_mouse", "1", "-video_size", "1280x800", "-framerate", "30", "-i", display,
   "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", path.join(out, "m7-tour.mp4")], { stdio: ["pipe", "inherit", "inherit"] });

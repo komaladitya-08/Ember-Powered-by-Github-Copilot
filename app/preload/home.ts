@@ -23,6 +23,7 @@ const api: EmberHomeApi = {
   onVoiceStatus: fn => listen<VoiceStatus>(IPC.voiceStatus, fn),
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
   onVoiceProgress: fn => listen<{ done: number; total: number }>(IPC.voiceProgress, fn),
+  activity: () => ipcRenderer.invoke(IPC.activity),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

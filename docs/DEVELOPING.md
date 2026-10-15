@@ -111,8 +111,15 @@ asks **Allow / Always in this app / Not now**. Buttons that send, delete, pay an
 confirmed. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
 it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse
 or press any key to take over instantly. Ember never types into password, payment or terminal
-fields and never acts in authentication windows. **Stop** in the handle menu cancels every task. Apps you chose "Always" for
-are listed under `grants` in `settings.json`.
+fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
+doesn't read the screen, take screenshots or press keys. If something on screen tries to steer Ember (a page saying
+"click Delete all"), Ember still asks first, and the question says you didn't ask for it. **Ctrl+Alt+X** (or
+“Ember, stop”, or **Stop everything** in the handle menu) stops every task, question and borrowed mouse at once.
+Apps you chose "Always" for are listed under `grants` in `settings.json`. **What Ember did** in the settings window
+lists every request, question, action and refusal.
+
+The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
+agree.
 
 ### Ember's desk
 
@@ -188,6 +195,41 @@ Environment variables for development:
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json`
 (matched against app name and window title; password managers and polkit are listed by default).
+
+### For administrators: `/etc/ember/policy.json`
+
+An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
+users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down (no actions,
+no listening) until it is fixed, and says so in its settings window. Every key is optional:
+
+```json
+{
+  "features": { "voice": false, "speak": true, "actions": true, "cursor": false, "desk": false, "screenImages": false },
+  "neverLook": ["Thunderbird", "Remmina"],
+  "confirmEveryAction": true,
+  "allowGrants": false,
+  "maxActionsPerMinute": 20,
+  "models": { "allowed": ["fast-model-id", "vision-model-id"], "conductor": "fast-model-id" },
+  "provider": { "type": "azure", "baseUrl": "https://ai.example.org/openai/deployments/ember", "apiKeyFile": "/etc/ember/api-key" },
+  "auditRetentionDays": 90
+}
+```
+
+| Key | Effect |
+|---|---|
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies |
+| `features.actions` | Ember answers and guides ("show me") but never acts in apps |
+| `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
+| `features.screenImages` | Accessibility text only; no screenshots go to the model |
+| `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
+| `confirmEveryAction` | A click before every action, every time |
+| `allowGrants` | `false` removes "Always in this app" |
+| `models` | Only these models; or pin the conversation and task models |
+| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` |
+| `auditRetentionDays` | How long the audit log is kept (default 30) |
+
+Audit lines also go to the system journal: `journalctl -t ember-audit`. For testing, `EMBER_ADMIN_POLICY=/path/to/policy.json`
+points Ember at another file.
 
 ## 6. Native modules and RHEL 8
 

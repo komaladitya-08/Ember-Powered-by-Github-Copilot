@@ -40,7 +40,7 @@ const mock = await startMockLlm({
 });
 
 const userData = mkdtempSync(path.join(tmpdir(), "ember-m2-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
 const recorder = spawn("ffmpeg", ["-loglevel", "error", "-y", "-f", "x11grab", "-video_size", "1280x800", "-framerate", "30", "-i", display,
   "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", path.join(out, "m2-tour.mp4")], { stdio: ["pipe", "inherit", "inherit"] });
 

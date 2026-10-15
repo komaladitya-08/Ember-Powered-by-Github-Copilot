@@ -84,3 +84,23 @@ kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; 
 .consent p { margin: 0 0 10px; line-height: 1.45; }
 progress { width: 100%; accent-color: var(--accent); }
 progress[hidden] { display: none; }
+
+.start:disabled { opacity: 0.45; cursor: default; }
+.managed { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(140, 170, 255, 0.08); border: 1px solid rgba(140, 170, 255, 0.35); }
+.managed.error { background: rgba(255, 107, 87, 0.1); border-color: rgba(255, 107, 87, 0.5); }
+.managed[hidden], .welcome[hidden] { display: none; }
+.welcome { padding: 14px 16px; border-radius: 12px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.4); }
+.terms { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; }
+.terms code, .hint code { font: 12px ui-monospace, monospace; }
+.locked { opacity: 0.55; }
+.activity { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 12px 14px; color: var(--muted); }
+.activity li { display: grid; grid-template-columns: max-content auto 1fr; gap: 10px; align-items: baseline; padding: 7px 14px; font-size: 13px; }
+.activity li + li { border-top: 1px solid var(--line); }
+.activity time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.activity .tag { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--line); color: var(--fg); }
+.activity .tag.ok { background: rgba(124, 207, 138, 0.2); color: var(--ok); }
+.activity .tag.ask { background: rgba(242, 193, 78, 0.18); color: var(--warn); }
+.activity .tag.no { background: rgba(255, 107, 87, 0.18); color: var(--fail); }
+.activity .what { overflow-wrap: anywhere; }
+.activity .why { display: block; color: var(--muted); font-size: 12px; }

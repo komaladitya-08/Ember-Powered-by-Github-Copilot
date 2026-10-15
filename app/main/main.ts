@@ -9,7 +9,8 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
-import { SettingsStore, type SettingsPatch } from "./settings";
+import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
+import { loadAdminPolicy, managedKeys, providerApiKey } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createHomeWindow, isTrustedSender } from "./windows";
 import { IPC, type Status, type SignInProgress } from "../shared/ipc";
@@ -23,7 +24,8 @@ import { AskWindow } from "./ask";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES } from "../voice/models";
-import { AuditLog } from "./policy/audit";
+import { AuditLog, journalSink } from "./policy/audit";
+import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
@@ -94,7 +96,12 @@ function readEnvironment(): EnvReport {
 }
 
 function start(): void {
-  const settings = new SettingsStore(path.join(userData, "settings.json"));
+  // The administrator's policy (/etc/ember/policy.json) overrides the user's settings.
+  const admin = loadAdminPolicy();
+  if (admin.error) log.error("admin_policy.invalid", { error: admin.error, note: "locked down until it is fixed" });
+  else if (admin.source) log.info("admin_policy.loaded", { file: admin.source });
+  const policy = admin.policy;
+  const settings = new SettingsStore(path.join(userData, "settings.json"), policy);
   const loaded = settings.load();
   if (loaded.recoveredFrom) log.warn("settings.recovered", { backup: loaded.recoveredFrom });
 
@@ -134,7 +141,10 @@ function start(): void {
     settings: settings.get(),
     environment: readEnvironment(),
     logFile: log.file,
+    admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
+      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30 },
   })));
+  ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
   ipcMain.handle(IPC.updateSettings, guard((patch: SettingsPatch) => settings.update(patch)));
   ipcMain.handle(IPC.applyFix, guard((fix: string) => {
     if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
@@ -185,7 +195,7 @@ function start(): void {
     const hidden = overlay?.isHidden() ?? false;
     Menu.buildFromTemplate([
       { label: "Ask Ember…\tCtrl+Alt+Space", click: openAsk },
-      { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.abortAll(); } },
+      { label: "Stop everything\tCtrl+Alt+X", click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: voice.isMuted ? "Unmute microphone\tCtrl+Alt+M" : "Mute microphone\tCtrl+Alt+M", click: toggleMute }]
         : []),
@@ -206,9 +216,31 @@ function start(): void {
   let voice: VoiceService | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
-  const captureContext = () => { callContext = perception ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
-  const askEmber = async (text: string) => agent?.ask(text, await callContext);
-  const openAsk = () => { captureContext(); askWindow.show(overlay?.position ?? null); };
+  // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
+  const consented = () => hasConsent(settings.get());
+  const captureContext = () => { callContext = perception && consented() ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
+  const askEmber = async (text: string) => {
+    if (!consented()) { showHome(); return; }
+    return agent?.ask(text, await callContext);
+  };
+  const openAsk = () => {
+    if (!consented()) { showHome(); return; }
+    captureContext(); askWindow.show(overlay?.position ?? null);
+  };
+  let audit: AuditLog | null = null;
+  let borrowRef: CursorBorrow | null = null;
+  const killSwitch = new KillSwitch(() => [
+    { name: "borrow", stop: () => borrowRef?.stop() },
+    { name: "speech", stop: () => voice?.hush() },
+    { name: "agent", stop: () => agent?.abortAll() },
+    { name: "motion", stop: () => { overlay?.setBorrowing(false); showState({ focus: null, gesture: null }); } },
+  ], log.child("killswitch"), () => audit);
+  /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
+  const stopEverything = (source: "hotkey" | "voice" | "menu") => {
+    void killSwitch.pull(source);
+    setState({ emotion: "neutral", talking: false, status: null, bubble: { visible: true, mood: "idle", title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] } });
+    setTimeout(() => setState({ bubble: IDLE_BUBBLE }), 3000);
+  };
   let lastAskByVoice = false;
   const toggleMute = () => {
     if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
@@ -244,10 +276,7 @@ function start(): void {
         break;
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
-        voice?.hush();
-        void agent?.abortAll();
-        setState({ emotion: "neutral", talking: false, status: null, bubble: { visible: true, mood: "idle", title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] } });
-        setTimeout(() => setState({ bubble: IDLE_BUBBLE }), 3000);
+        stopEverything("voice");
         break;
     }
   };
@@ -384,12 +413,18 @@ function start(): void {
     if (!globalShortcut.register("Control+Alt+Space", openAsk)) {
       log.warn("shortcut.unavailable", { accel: "Control+Alt+Space" });
     }
+    if (!globalShortcut.register("Control+Alt+X", () => stopEverything("hotkey"))) log.warn("shortcut.unavailable", { accel: "Control+Alt+X" });
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
     tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage);
+    // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
+    let adminKey: string | undefined;
+    try { adminKey = policy.provider ? providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
     const provider = process.env.EMBER_TEST_PROVIDER_URL
       ? { type: "openai" as const, baseUrl: process.env.EMBER_TEST_PROVIDER_URL, apiKey: "test" }
-      : undefined;
+      : policy.provider
+        ? { type: policy.provider.type, baseUrl: policy.provider.baseUrl, apiKey: adminKey, wireApi: policy.provider.wireApi, azure: policy.provider.azure }
+        : undefined;
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
     // Perception: the accessibility sidecar (text) and X11 capture (images).
@@ -415,14 +450,16 @@ function start(): void {
     });
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
-    const audit = new AuditLog(path.join(userData, "audit"));
-    try { audit.prune(); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    audit = new AuditLog(path.join(userData, "audit"), undefined, journalSink(err => log.warn("audit.journal_failed", { err })));
+    try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState);
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
     const xinput = x11 ? openXInput() : null;
     if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
     app.on("will-quit", () => xinput?.close());
-    const borrow = xinput ? new CursorBorrow(xinput) : null;
+    // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
+    const borrow = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput) : null;
+    borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
     const deskManager = new DeskManager(log.child("desk"));
     const deskView = new DeskView(log.child("desk-view"), on => {
@@ -434,7 +471,13 @@ function start(): void {
     app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager.stop(); });
     const hands: Hands | undefined = x11 ? {
       perception, sidecar, audit, confirmer,
-      policy: new PolicyEngine({ neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants }),
+      policy: new PolicyEngine({
+        neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
+        rateLimit: policy.maxActionsPerMinute,
+        actionsAllowed: () => policy.features.actions !== false,
+        confirmEveryAction: () => policy.confirmEveryAction,
+        allowGrants: () => policy.allowGrants,
+      }),
       flyTo: b => setState({ focus: b ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
       currentWindow: () => {
         const w = x11.activeWindow();
@@ -442,7 +485,7 @@ function start(): void {
         return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
-      desk: DeskManager.available().ok ? () => (deskPlace ??= openDeskPlace(deskManager, {
+      desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {
         sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
       }).catch(err => { deskPlace = null; throw err; })) : undefined,
@@ -455,6 +498,8 @@ function start(): void {
       cursor: borrow && xinput ? {
         borrow,
         findWindow: title => xinput.findWindow(title),
+        // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
+        activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
         setBorrowing: state => {
           overlay?.setBorrowing(state === "active");
           setState({ status: state === "active" ? "Using your mouse: move it to take over" : state === "waiting" ? "Waiting until you let go of the mouse…" : null });
@@ -462,19 +507,25 @@ function start(): void {
       } : undefined,
     } : undefined;
     agent = new AgentHost({
-      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,
+      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
       onAnswer: text => { if (settings.get().speak) voice?.speak(text); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
       onStatus: status => broadcast(IPC.agentStatusChanged, status),
     });
-    void (async () => {
+    // The brain connects once the user has agreed to what Ember does (first run asks).
+    let brainStarted = false;
+    const startBrain = async () => {
+      if (brainStarted || !consented()) return;
+      brainStarted = true;
       const found = provider ? null : await resolveToken(tokens);
-      log.info("auth.token", { source: provider ? "test-provider" : found?.source ?? "none" });
+      log.info("auth.token", { source: process.env.EMBER_TEST_PROVIDER_URL ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       currentToken = found?.token ?? null;
       await agent?.start(currentToken);
-    })();
+    };
+    void startBrain();
+    settings.onChange(() => { void startBrain(); });
     let models = JSON.stringify(settings.get().models);
     settings.onChange(next => {
       const m = JSON.stringify(next.models);
@@ -492,7 +543,7 @@ function start(): void {
         broadcast(IPC.voiceStatus, voiceStatus(detail));
       },
     });
-    const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent;
+    const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     settings.onChange(() => { if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); } });

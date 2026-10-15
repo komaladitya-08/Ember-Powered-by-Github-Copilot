@@ -9,6 +9,7 @@ import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/c
 import { Conductor } from "./conductor";
 import { Presenter } from "./presenter";
 import { chooseModels, type ModelLike } from "./models";
+import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { EmberState } from "../../shared/overlay";
@@ -60,8 +61,10 @@ export interface HostOptions {
   hands?: Hands;
   onAnswer?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
-  /** Tests and offline demos: talk to an OpenAI-compatible server instead of Copilot. */
+  /** The organisation's own endpoint (admin policy), or for tests and offline demos an OpenAI-compatible server. */
   provider?: ProviderConfig;
+  /** Admin lockdown (/etc/ember/policy.json). */
+  admin?: () => AdminPolicy;
 }
 
 export function explainStartError(err: unknown): string {
@@ -121,19 +124,28 @@ export class AgentHost {
         login = (auth as { login?: string }).login;
         models = (await client.listModels()) as ModelLike[];
       } else {
-        models = [{ id: "mock-model", name: "Test model", capabilities: { supports: { vision: true } } }];
+        // A custom endpoint serves the models the admin named (its deployments), or a test model.
+        const named = [...new Set([this.o.admin?.().models.conductor, this.o.admin?.().models.worker].filter((m): m is string => !!m))];
+        models = named.length
+          ? named.map(id => ({ id, name: id, capabilities: { supports: { vision: true } } }))
+          : [{ id: "mock-model", name: "Test model", capabilities: { supports: { vision: true } } }];
       }
+      const allowed = this.o.admin?.().models.allowed;
+      if (allowed) models = models.filter(m => allowed.includes(m.id));
       const s = this.o.settings.get();
       const choice = chooseModels(models, { conductor: s.models.conductor ?? undefined, worker: s.models.worker ?? undefined });
 
       const names: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
       const hands = this.o.hands;
-      const workerVision = models.find(m => m.id === choice.worker)?.capabilities?.supports?.vision === true;
+      // Screenshots go to the model only if it can see and the administrator allows it.
+      const workerVision = models.find(m => m.id === choice.worker)?.capabilities?.supports?.vision === true
+        && this.o.admin?.().features.screenImages !== false;
       this.tasks = hands ? new TaskManager({
         log: this.o.log.child("tasks"),
         currentWindow: hands.currentWindow,
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
+        audit: hands.audit,
         onFinished: task => {
           if (hands.confirmer.waiting) return;
           this.o.setState({
@@ -169,6 +181,8 @@ export class AgentHost {
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
         startTask: tasks ? goal => {
+          // With actions turned off by the administrator, Ember can still answer and guide, never act.
+          if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           const t = tasks.start(goal, { target: this.askTarget ?? undefined });
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,

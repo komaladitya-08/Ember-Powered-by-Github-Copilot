@@ -5,6 +5,7 @@
  * windows blacked out.
  */
 
+import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, isNeverLook, serializeElements, inferLabels } from "./elements";
@@ -59,8 +60,9 @@ export class Perception {
     let res = target.title ? await this.o.sidecar.readWindow({ title: target.title }) : { window: null, nodes: [] as AxNode[], ms: 0 };
     if (!res.window) res = await this.o.sidecar.readWindow(target.pid ? { pid: target.pid } : {});
     const window = res.window;
-    const blocked = !!window && isNeverLook(window, this.o.neverLook())
-      || (!window && !!x11Window && isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()));
+    // Never-look apps, and password or authentication prompts (polkit, keyring…): Ember looks away (M8.3).
+    const blocked = !!window && (isNeverLook(window, this.o.neverLook()) || isSecurityWindow(window))
+      || (!window && !!x11Window && (isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()) || isSecurityWindow(x11Window)));
     return { window, x11Window, nodes: blocked ? [] : res.nodes, blocked, ms: Date.now() - t0 };
   }
 
@@ -80,7 +82,7 @@ export class Perception {
     if (!title) return null;
     const app = seen.window?.app ?? "";
     const target = { pid: seen.window?.pid ?? seen.x11Window?.pid ?? undefined, title, app };
-    if (seen.blocked) return { target, text: `<context untrusted="true">The user is in a window on their never-look list.</context>` };
+    if (seen.blocked) return { target, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
     const focus = focusedElement(seen.nodes);
     const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
     const q = (v: string, n: number) => JSON.stringify(v.length > n ? v.slice(0, n) + "…" : v).replace(/</g, "\\u003c");
@@ -101,7 +103,7 @@ export class Perception {
       return "Ember could not read the screen right now (the accessibility service did not answer).";
     }
     const title = seen.window?.name || seen.x11Window?.title || "an unknown window";
-    if (seen.blocked) return `The user is in "${title}", which is on their "never look at" list. Do not read or describe it.`;
+    if (seen.blocked) return `The user is in "${title}", a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
     if (!seen.window) return `The focused window is "${title}", but it does not expose accessibility information, so its contents can't be read as text.`;
     const focus = focusedElement(seen.nodes);
     const labels = inferLabels(seen.nodes);
@@ -113,9 +115,14 @@ export class Perception {
   async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
     const seen = opts.target ? await this.read(opts.target) : await this.focused();
     const text = seen.blocked
-      ? "This window is on the user's never-look list. Do not interact with it; tell the conductor."
+      ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
       : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true }) : "The focused window exposes no accessibility information; use the screenshot.";
     let capture: Capture | null = null;
+    // While a password prompt has focus anywhere on screen, no screenshots at all.
+    const active = opts.image && this.o.x11 && !seen.blocked ? this.o.x11.focusWindow() ?? this.o.x11.activeWindow() : null;
+    if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) {
+      return { ...seen, text: `${text}\n(No screenshot: a password prompt is open, so Ember looks away until it's done.)`, capture: null };
+    }
     if (opts.image && this.o.x11 && !seen.blocked) {
       const rect = opts.scope === "window" && (seen.window?.bounds || seen.x11Window)
         ? (seen.window?.bounds ?? { x: seen.x11Window!.x, y: seen.x11Window!.y, width: seen.x11Window!.width, height: seen.x11Window!.height })
