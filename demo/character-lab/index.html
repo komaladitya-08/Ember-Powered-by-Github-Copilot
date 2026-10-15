@@ -1,0 +1,117 @@
+<title>Ember Character Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cantarell:wght@400;700&family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap">
+<style>/*@style*/</style>
+
+<main class="page">
+  <header class="intro">
+    <p class="eyebrow">Ember · character exploration</p>
+    <h1 class="title">Who is Ember?</h1>
+    <p class="lede">Four directions for Ember's body. They all share one expressive brain: the same feelings, blinks, glances, hops and gestures, driven by what the agent is doing. Move your pointer and they'll watch it. Pick a feeling below to see how each one shows it.</p>
+  </header>
+
+  <div class="cast">
+  <section class="feel" aria-label="Expressions">
+    <div class="feel-row">
+      <span class="label" id="lbl-feel">Feeling</span>
+      <div class="chips" id="feel-chips" role="radiogroup" aria-labelledby="lbl-feel"></div>
+    </div>
+    <div class="feel-row toggles">
+      <label class="toggle"><input type="checkbox" id="opt-talk"><span>Talking</span></label>
+      <label class="toggle"><input type="checkbox" id="opt-alive" checked><span>Idle life (fidgets, yawns)</span></label>
+      <p class="feel-when" id="feel-when" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="gallery" id="gallery" aria-label="Character directions"></section>
+  </div>
+
+  <section class="scene-section" aria-labelledby="scene-h">
+    <div class="scene-head">
+      <h2 id="scene-h">“Hey Ember” while you keep working</h2>
+      <p>Ember is always listening for its name. When you ask for something, it leaves your cursor and does the work in a background window through the app's accessibility interface. Your mouse and keyboard stay yours, so you can keep typing and just glance over to see what it's doing. Move your mouse over the desktop: your cursor goes wherever you like while Ember works.</p>
+    </div>
+    <div class="stage" id="stage" data-nightlight="off">
+      <div class="desk">
+        <div class="topbar"><span>Activities</span><span class="tb-clock">Wed 14:32</span><span class="tb-right">Text Editor</span></div>
+
+        <div class="win win-settings" id="win-settings">
+          <div class="win-title">Settings</div>
+          <div class="settings-grid">
+            <nav class="set-side" aria-label="Settings sections">
+              <span data-panel="wifi" class="is-current">Wi-Fi</span>
+              <span>Bluetooth</span>
+              <span data-panel="notifications" id="s-notif">Notifications</span>
+              <span>Search</span>
+              <span data-panel="displays" id="s-displays">Displays</span>
+              <span>Sound</span>
+              <span>Power</span>
+            </nav>
+            <div class="set-main">
+              <div class="panel" data-panel="wifi">
+                <h3>Wi-Fi</h3>
+                <div class="list"><div class="row"><span>Office-5G</span><span class="muted">Connected</span></div></div>
+              </div>
+              <div class="panel" data-panel="displays" hidden>
+                <h3>Displays</h3>
+                <div class="list">
+                  <div class="row"><span>Resolution</span><span class="muted">1920 × 1080</span></div>
+                  <div class="row"><span>Night Light</span><span class="switch" id="s-night" role="switch" aria-checked="false"></span></div>
+                </div>
+              </div>
+              <div class="panel" data-panel="notifications" hidden>
+                <h3>Notifications</h3>
+                <div class="list">
+                  <div class="row"><span>Do Not Disturb</span><span class="switch" id="s-dnd" role="switch" aria-checked="false"></span></div>
+                  <div class="row"><span>Lock screen</span><span class="muted">On</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="win win-editor" id="win-editor">
+          <div class="win-title">plan.md <span class="win-sub">~/Documents</span></div>
+          <div class="editor-body"><p id="typed"></p></div>
+        </div>
+
+        <div class="nightlight-tint" aria-hidden="true"></div>
+      </div>
+      <div class="status-pill" id="status-pill" hidden><i></i><span id="status-text">Ember is working in Settings</span></div>
+      <canvas class="scene-canvas" id="scene-canvas" aria-hidden="true"></canvas>
+      <div class="bubble-layer" id="scene-bubble"></div>
+      <div class="user-cursor" id="user-cursor" aria-hidden="true">
+        <svg viewBox="0 0 18 26" width="18" height="26"><path d="M1.5 1.5v20.2l5-4.8 3.4 7.6 3.3-1.5-3.3-7.4h6.9z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <span>You</span>
+      </div>
+      <div class="voice" id="voice" hidden><span class="voice-dot"></span><span class="voice-who">You</span><span id="voice-text"></span></div>
+    </div>
+    <div class="scene-controls">
+      <div class="field">
+        <span class="label" id="lbl-who">Character</span>
+        <div class="seg" id="who" role="radiogroup" aria-labelledby="lbl-who"></div>
+      </div>
+      <div class="field">
+        <label class="label" for="size">Size on screen <output id="size-out">60 px</output></label>
+        <input type="range" id="size" min="36" max="110" value="60">
+      </div>
+      <div class="field">
+        <span class="label">Story</span>
+        <button class="btn" id="replay" type="button">Play again</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="map" aria-labelledby="map-h">
+    <h2 id="map-h">When each feeling shows up</h2>
+    <dl class="map-list" id="map-list"></dl>
+  </section>
+
+  <footer class="foot">
+    <p>Inspired by the idea of a living fire spirit, with original designs. Each character is drawn live with Canvas 2D from one shared rig, so swapping bodies never changes behaviour. Source: <code>demo/character-lab</code>.</p>
+  </footer>
+</main>
+
+<script>/*@script*/</script>

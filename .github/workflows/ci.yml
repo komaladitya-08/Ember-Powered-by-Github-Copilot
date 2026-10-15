@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:lab
+
+  el8:
+    name: RHEL 8 compatibility (rockylinux:8)
+    runs-on: ubuntu-24.04
+    container:
+      image: rockylinux:8
+      # Lets Chromium use its user-namespace sandbox inside the container.
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: System packages (build tools, Electron runtime libraries, Xvfb)
+        run: |
+          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 \
+            libX11-devel libXtst-devel libXt-devel \
+            gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
+            libXtst libXrandr libXcomposite libXdamage \
+            xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
+          useradd -m ci
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Rebuild native modules on glibc 2.28 and check every binary
+        run: scripts/rebuild-el8.sh --here
+      - run: npm run build
+      - name: Launch smoke test as a normal user (sandbox on)
+        run: |
+          chown -R ci .
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke

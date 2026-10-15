@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ember</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="home">
+    <header class="hero">
+      <canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas>
+      <div class="hero-text">
+        <h1>Ember</h1>
+        <p id="tagline">Starting…</p>
+      </div>
+    </header>
+
+    <section aria-labelledby="checks-h">
+      <h2 id="checks-h">Setup check</h2>
+      <ul class="checks" id="checks"></ul>
+    </section>
+
+    <section aria-labelledby="about-h">
+      <h2 id="about-h">About this build</h2>
+      <dl class="facts" id="facts"></dl>
+    </section>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
