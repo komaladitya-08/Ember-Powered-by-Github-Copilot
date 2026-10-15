@@ -33,6 +33,8 @@ export const SettingsSchema = z.object({
     version: z.number().int().min(0).default(0),
     at: z.string().nullable().default(null),
   }).default({ version: 0, at: null }),
+  /** Start Ember when the user logs in (an XDG autostart entry). */
+  startAtLogin: z.boolean().default(false),
   /** Onboarding finished (consent given, character picked). */
   onboarded: z.boolean().default(false),
   /** Apps and windows Ember must never read or capture (matched case-insensitively against app name and title). */

@@ -1,0 +1,8 @@
+{
+  "features": { "voice": true, "speak": true, "actions": true, "cursor": true, "desk": true, "screenImages": true },
+  "neverLook": ["Thunderbird", "Remmina"],
+  "confirmEveryAction": false,
+  "allowGrants": true,
+  "maxActionsPerMinute": 30,
+  "auditRetentionDays": 90
+}

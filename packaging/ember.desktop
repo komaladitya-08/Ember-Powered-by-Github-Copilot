@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Ember
+GenericName=Cursor companion
+Comment=Your cursor companion, powered by GitHub Copilot
+Exec=ember --show-settings
+Icon=ember
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=assistant;copilot;agent;helper;
+StartupNotify=false
+StartupWMClass=ember
