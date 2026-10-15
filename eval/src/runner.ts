@@ -300,7 +300,7 @@ export class Runner {
         setTimeout(() => confirmer.answer(actions.find(a => a.id.endsWith(`:${id}`))!.id), 30);
       }, 30_000);
       const xinput = this.xinput;
-      if (task.hands.includes("desk")) desk = new DeskManager(this.o.log.child("desk"), { handOff: path.join(tmp, "Ember") });
+      if (task.hands.includes("desk")) desk = new DeskManager(this.o.log.child("desk"), { handOff: path.join(tmp, "Ember"), ...(process.env.EMBER_BENCH_LOG ? { env: { EMBER_BENCH_LOG: process.env.EMBER_BENCH_LOG } } : {}) });
       const deps: WorkerDeps = {
         client: this.client!, log: this.o.log.child(task.id), model: this.o.model ?? "mock-model", vision: this.o.vision ?? false,
         ...(this.o.provider ? { provider: this.o.provider } : this.o.mode === "scripted" ? { provider: { type: "openai", baseUrl: this.mock!.baseUrl, apiKey: "test" } } : {}),

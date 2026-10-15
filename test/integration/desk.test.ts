@@ -79,7 +79,7 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("worker on E
       env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
     });
     await client.start();
-    desk = new DeskManager(quiet, { handOff: path.join(dir, "Ember") });
+    desk = new DeskManager(quiet, { handOff: path.join(dir, "Ember"), env: { EMBER_BENCH_LOG: log } });
   }, 60_000);
 
   afterAll(async () => {

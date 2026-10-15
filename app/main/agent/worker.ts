@@ -23,7 +23,7 @@ import type { PolicyEngine, ActionKind, ActionRequest, TextMode } from "../polic
 import type { AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q } from "../perception/elements";
 import { isSecurityWindow } from "../policy/policy";
-import { SETTINGS, changeSetting, findApp, launchApp, listApps, type SettingName } from "../hands/system";
+import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
 import type { DeskPlace } from "../desk/place";
 import { focusedElement } from "../perception/elements";
@@ -261,6 +261,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
+          if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
             this.setPlace(place);
@@ -281,6 +282,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
+          if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
           return this.system("open_app", app.name, async () => {
             this.setPlace(null);
             launchApp(app);

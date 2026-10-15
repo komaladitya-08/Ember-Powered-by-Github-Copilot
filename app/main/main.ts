@@ -36,6 +36,7 @@ import { openXInput, xinputError } from "./hands/input";
 import { CursorBorrow } from "./hands/borrow";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
+import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
 import { AgentHost, type Hands } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
@@ -391,12 +392,15 @@ function start(): void {
   };
   let audit: AuditLog | null = null;
   let borrowRef: CursorBorrow | null = null;
+  let deskViewRef: DeskView | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
     // A request still being spoken is dropped, not sent after Stop.
     { name: "listening", stop: () => voice?.cancelListening() },
     { name: "agent", stop: () => agent?.abortAll() },
+    // The user's take-over of the desk ends too (its keys are released).
+    { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); showState({ focus: null, gesture: null }); } },
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
@@ -721,13 +725,17 @@ function start(): void {
     const borrow = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput) : null;
     borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
-    const deskManager = new DeskManager(log.child("desk"));
+    // Desk apps get only the environment they need; the test bench's event log is passed on in development only.
+    const benchLog = devEnv("EMBER_BENCH_LOG");
+    const deskManager = new DeskManager(log.child("desk"), benchLog ? { env: { EMBER_BENCH_LOG: benchLog } } : {});
     const deskView = new DeskView(log.child("desk-view"), on => {
       deskInControl = on;
       overlay?.setState({ tasks: on ? [] : lastState.tasks });
     });
+    deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;
-    let deskHide: NodeJS.Timeout | null = null;
+    // A desk whose display died is gone: the next desk task starts a new one.
+    deskManager.onDead(() => { deskPlace = null; });
     app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager.stop(); });
     const hands: Hands | undefined = x11 ? {
       perception, sidecar, audit, confirmer,
@@ -737,6 +745,7 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
+        isTerminalApp: name => isTerminalApp({ id: name, name }),
       }),
       flyTo: b => setState({ focus: b ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
       currentWindow: () => {
@@ -753,12 +762,8 @@ function start(): void {
         sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
       }).catch(err => { deskPlace = null; throw err; })) : undefined,
-      onDesk: place => {
-        if (deskHide) clearTimeout(deskHide);
-        if (place) deskView.show(place);
-        // Keep the view up a little after the work ends, so the user sees the result.
-        else deskHide = setTimeout(() => { if (!deskView.userInControl) deskView.hide(); }, 10_000);
-      },
+      // The view counts the tasks on the desk; it stays up a little after the last one leaves, so the user sees the result.
+      onDesk: place => (place ? deskView.show(place) : deskView.leave()),
       cursor: borrow && xinput ? {
         borrow,
         findWindow: title => xinput.findWindow(title),
