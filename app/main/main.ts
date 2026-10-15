@@ -20,6 +20,9 @@ import { openX11 } from "./x11";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
 import { Perception } from "./perception";
 import { AskWindow } from "./ask";
+import { VoiceService, voicePermissions } from "./voice";
+import type { VoiceEvent } from "../voice/engine";
+import { VOICE_MODELS_BYTES } from "../voice/models";
 import { AuditLog } from "./policy/audit";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
@@ -178,6 +181,9 @@ function start(): void {
     Menu.buildFromTemplate([
       { label: "Ask Ember…\tCtrl+Alt+Space", click: () => askWindow.show(overlay?.position ?? null) },
       { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.abortAll(); } },
+      ...(voice && settings.get().wakeWord && settings.get().voice.consent
+        ? [{ label: voice.isMuted ? "Unmute microphone\tCtrl+Alt+M" : "Mute microphone\tCtrl+Alt+M", click: toggleMute }]
+        : []),
       { type: "separator" },
       { label: "Settings…", click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); } },
@@ -192,6 +198,47 @@ function start(): void {
   const askWindow = new AskWindow();
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
+  let voice: VoiceService | null = null;
+  let lastAskByVoice = false;
+  const toggleMute = () => {
+    if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
+    voice.setMuted(!voice.isMuted);
+    setState({ status: voice.isMuted ? "Microphone off" : null });
+    if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setState({ status: null }); }, 2500);
+  };
+  const voiceStatus = (detail?: string) => ({
+    state: voice?.micState ?? "off", detail: detail ?? null,
+    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES,
+  });
+  /** What Ember does with what it hears. */
+  const onVoice = (e: VoiceEvent) => {
+    switch (e.type) {
+      case "wake":
+        voice?.hush();
+        setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
+        break;
+      case "listening":
+        if (e.on && e.reason === "follow-up") setState({ emotion: "listening", status: "Listening for a follow-up…" });
+        if (!e.on) setState({ status: null });
+        if (!e.on && e.reason === "timeout") setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        break;
+      case "speech":
+        if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
+        break;
+      case "utterance":
+        lastAskByVoice = true;
+        log.info("voice.utterance", { chars: e.text.length, ms: e.ms });
+        void agent?.ask(e.text);
+        break;
+      case "stop":
+        // "Ember, stop": everything stops, locally, without asking the model.
+        voice?.hush();
+        void agent?.abortAll();
+        setState({ emotion: "neutral", talking: false, status: null, bubble: { visible: true, mood: "idle", title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] } });
+        setTimeout(() => setState({ bubble: IDLE_BUBBLE }), 3000);
+        break;
+    }
+  };
   // Packaged builds ship the sidecar under resources/; development runs it from the repo.
   const sidecarScript = () => app.isPackaged
     ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
@@ -233,9 +280,19 @@ function start(): void {
       progress({ state: "error", message: err instanceof Error ? err.message : String(err) });
     }
   }));
+  ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
+  ipcMain.handle(IPC.voiceDownload, guard(async () => {
+    try {
+      await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));
+    } catch (err) {
+      broadcast(IPC.voiceStatus, voiceStatus(err instanceof Error ? err.message : String(err)));
+    }
+    broadcast(IPC.voiceStatus, voiceStatus());
+  }));
   ipcMain.on(IPC.ask, (event, text: unknown) => {
     if (!askWindow.owns(event.sender) || typeof text !== "string") return;
     askWindow.hide();
+    lastAskByVoice = false;
     void agent?.ask(text.slice(0, 2000));
   });
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
@@ -273,7 +330,8 @@ function start(): void {
 
   void app.whenReady().then(() => {
     // Deny camera, mic, notifications etc. until a feature asks for them explicitly (M5).
-    session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+    // Everything is denied except the microphone, for Ember's own mic window, audio only.
+    voicePermissions(() => voice);
     // No background downloads: the spellchecker would fetch dictionaries from Google.
     session.defaultSession.setSpellCheckerEnabled(false);
     session.defaultSession.setSpellCheckerLanguages([]);
@@ -372,6 +430,9 @@ function start(): void {
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,
       describeScreen: () => seeing.describe(), hands,
+      onAnswer: text => { if (settings.get().speak) voice?.speak(text); },
+      // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
+      onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
       onStatus: status => broadcast(IPC.agentStatusChanged, status),
     });
     void (async () => {
@@ -386,13 +447,31 @@ function start(): void {
       if (m !== models) { models = m; void agent?.start(currentToken); }
     });
 
+    // ───── Voice ─────
+    voice = new VoiceService({
+      log: log.child("voice"),
+      modelsRoot: path.join(userData, "models"),
+      monitor: settings.get().voice.speakerRejection,
+      onEvent: onVoice,
+      onState: (state, detail) => {
+        setState({ mic: state });
+        broadcast(IPC.voiceStatus, voiceStatus(detail));
+      },
+    });
+    const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent;
+    void voice.setWanted(wantVoice());
+    let wanted = wantVoice();
+    settings.onChange(() => { if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); } });
+    if (!globalShortcut.register("Control+Alt+M", toggleMute)) log.warn("shortcut.unavailable", { accel: "Control+Alt+M" });
+    app.on("will-quit", () => voice?.stop());
+
     if (!settings.get().onboarded || process.argv.includes("--show-settings")) showHome();
     else setTimeout(greet, 800);
 
     if (process.env.EMBER_TEST_HOOKS === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
       };
     }
   });

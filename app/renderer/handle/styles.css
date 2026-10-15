@@ -25,3 +25,11 @@ body.fallback #line { white-space: normal; font-weight: 700; color: #fbeee3; }
 .actions button.primary { background: #b77bff; color: #1a0f0b; border-color: transparent; }
 .actions button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 body.fallback.asking .thought { -webkit-line-clamp: 2; }
+/* Microphone: a small dot on Ember's face. Dim = waiting for "Hey Ember", bright = hearing you. */
+.mic { position: absolute; left: 38px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: #ff9a3d; opacity: 0.45; box-shadow: 0 0 0 2px #1a0f0b; }
+.mic[data-state="active"] { opacity: 1; animation: mic-pulse 0.9s ease-in-out infinite; }
+.mic[data-state="muted"] { background: #8a7a70; opacity: 0.9; }
+.mic[data-state="error"] { background: #ff6b57; opacity: 0.9; }
+body.fallback .mic { left: 92px; top: 14px; }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 2px #1a0f0b, 0 0 10px 3px rgba(255, 154, 61, 0.8); } }
+@media (prefers-reduced-motion: reduce) { .mic { animation: none !important; } }

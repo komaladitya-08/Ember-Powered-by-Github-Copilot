@@ -32,6 +32,11 @@ api.onState(s => {
   rig.setTalking(s.talking);
   $("line").textContent = s.status ?? (s.bubble.visible ? s.bubble.title : "Ready");
   $("thought").textContent = s.bubble.visible ? s.bubble.thought : "";
+  const mic = $("mic");
+  const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
+  mic.hidden = !micShown;
+  mic.dataset.state = s.mic ?? "off";
+  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : "";
   // Only the fallback card shows buttons; with a compositor they are in Ember's bubble.
   const actions = document.body.classList.contains("fallback") && s.bubble.visible ? s.bubble.actions : [];
   document.body.classList.toggle("asking", actions.length > 0);

@@ -48,6 +48,22 @@
       </div>
     </section>
 
+    <section aria-labelledby="voice-h">
+      <h2 id="voice-h">Voice</h2>
+      <div class="copilot voice">
+        <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for <b>“Hey Ember”</b></span></label>
+        <div id="consent" class="consent" hidden>
+          <p>Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. GNOME shows a microphone icon while Ember listens. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> turns the microphone off and on.</p>
+          <div class="agent-actions"><button type="button" id="consent-yes" class="btn">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
+        </div>
+        <p class="agent-line"><i id="voice-dot" class="dot"></i><span id="voice-text">Off</span></p>
+        <div class="agent-actions"><button type="button" id="voice-download" class="btn" hidden>Download speech models</button></div>
+        <progress id="voice-progress" max="1" value="0" hidden></progress>
+        <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies out loud</span></label>
+        <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
+      </div>
+    </section>
+
     <section aria-labelledby="checks-h">
       <h2 id="checks-h">Setup check</h2>
       <ul class="checks" id="checks"></ul>

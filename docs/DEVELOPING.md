@@ -29,7 +29,7 @@ compilers and `-devel` packages are needed when native modules are rebuilt (§6)
 Later milestones also use these (safe to install now):
 
 ```bash
-sudo dnf install -y python3-pyatspi python3-gobject speech-dispatcher speech-dispatcher-espeak-ng
+sudo dnf install -y python3-pyatspi python3-gobject speech-dispatcher speech-dispatcher-espeak-ng pulseaudio-utils bzip2
 ```
 
 ## 3. Install Node 22 and npm 11
@@ -87,6 +87,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts` | Reads and operates a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
+| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) and synthesizes test clips into `.cache/voice` (needed by the voice tests and tour) |
+| `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
 
@@ -109,6 +111,16 @@ it waits until you're still, moves the pointer visibly, and puts it back afterwa
 or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. **Stop** in the handle menu cancels every task. Apps you chose "Always" for
 are listed under `grants` in `settings.json`.
+
+### Talking to Ember
+
+In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
+the speech models (about 120 MB, once). Then say “Hey Ember, …” with your request. You can say it in
+one breath, or pause after “Hey Ember”. After Ember answers you have 8 seconds to follow up without
+the wake word. “Ember, stop” stops everything, and **Ctrl+Alt+M** turns the microphone off and on.
+Listening happens on this computer: no audio leaves it, and only the text of your request is sent to
+Copilot. Ember ignores “Hey Ember” when it comes out of your speakers (needs `parec`, in
+`pulseaudio-utils`).
 
 ### Connecting Copilot
 
@@ -142,6 +154,7 @@ EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
 | Audit log: every decision and action Ember took (JSON lines, kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
+| Speech models (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 
 Environment variables for development:
 
@@ -177,6 +190,7 @@ Rules:
 | `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM sets up the sandbox helper properly (task M9.2). |
 | `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
 | Electron download fails | `npx install-electron` |
+| Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
 
 ## Repository layout
@@ -184,6 +198,7 @@ Rules:
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
 sidecar/atspi       Python accessibility helper (reads app controls over AT-SPI)
+app/voice           wake word, VAD and speech recognition (runs in a utility process)
 app/preload/        contextBridge APIs, one per window
 app/renderer/       window pages (home)
 app/shared/         IPC channel names and types

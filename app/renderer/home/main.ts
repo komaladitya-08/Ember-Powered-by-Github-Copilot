@@ -1,6 +1,7 @@
 /** Home window: pick your Ember, size, setup checks and build facts. */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
+import type { VoiceStatus } from "../../shared/ipc";
 import type { EmberHomeApi, Status } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 
@@ -199,3 +200,45 @@ window.ember.onAgentStatus(renderAgent);
 
 void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);
+
+// ───── Voice ─────
+const VOICE_TEXT: Record<string, string> = {
+  off: "Off", "needs-models": "Needs its speech models (one-time download)", downloading: "Downloading speech models…",
+  starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: "Microphone off (Ctrl+Alt+M to turn on)", error: "Not working",
+};
+let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
+function renderVoice(v: VoiceStatus): void {
+  $("voice-text").textContent = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
+  $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
+  const dl = $("voice-download") as HTMLButtonElement;
+  dl.hidden = v.modelsReady || v.state === "downloading";
+  dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
+  ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+}
+function applyVoiceSettings(s: Status["settings"]): void {
+  voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
+  ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
+  ($("speak") as HTMLInputElement).checked = s.speak;
+}
+$("wake").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; return; }
+  void window.ember.updateSettings({ wakeWord: on });
+});
+$("consent-yes").addEventListener("click", () => {
+  $("consent").hidden = true;
+  void window.ember.updateSettings({ wakeWord: true, voice: { consent: true, speakerRejection: true } });
+});
+$("consent-no").addEventListener("click", () => { $("consent").hidden = true; });
+$("speak").addEventListener("change", e => { void window.ember.updateSettings({ speak: (e.target as HTMLInputElement).checked }); });
+$("voice-download").addEventListener("click", () => { void window.ember.downloadVoice(); });
+window.ember.onVoiceProgress(p => {
+  const bar = $("voice-progress") as HTMLProgressElement;
+  bar.hidden = false;
+  bar.value = p.done / p.total;
+  $("voice-text").textContent = `Downloading speech models… ${Math.round((p.done / p.total) * 100)}%`;
+});
+void window.ember.voiceStatus().then(renderVoice);
+window.ember.onVoiceStatus(renderVoice);
+window.ember.onSettingsChanged(applyVoiceSettings);
+void window.ember.getStatus().then(st => applyVoiceSettings(st.settings));

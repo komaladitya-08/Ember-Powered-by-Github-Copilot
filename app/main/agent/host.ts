@@ -55,6 +55,8 @@ export interface HostOptions {
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
   hands?: Hands;
+  onAnswer?: (text: string) => void;
+  onTurnEnd?: (aborted: boolean) => void;
   /** Tests and offline demos: talk to an OpenAI-compatible server instead of Copilot. */
   provider?: ProviderConfig;
 }
@@ -157,6 +159,8 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider, describeScreen: this.o.describeScreen,
         onUsage: (i, o) => this.recordUsage(i, o),
+        onAnswer: this.o.onAnswer,
+        onTurnEnd: this.o.onTurnEnd,
         startTask: tasks ? goal => {
           const t = tasks.start(goal);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;

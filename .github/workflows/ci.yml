@@ -29,8 +29,16 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - name: Integration tests (real Copilot runtime, offline mock model)
+      - name: Speech models and test clips (cached; verified by SHA-256)
+        uses: actions/cache@v4
+        with:
+          path: .cache/voice
+          key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs
+      - name: Integration tests (real Copilot runtime with an offline mock model; real speech models)
         run: npm run test:integration
+        env:
+          EMBER_VOICE_TEST: "1"
       - run: npm run build
       - run: npm run build:lab
 
