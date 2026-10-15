@@ -6,6 +6,7 @@ and a hidden button. Python 3.6 compatible (RHEL 8). Prints JSON events on stdou
 when controls change, so tests can check what Ember did."""
 
 import json
+import os
 import sys
 
 import gi
@@ -13,10 +14,17 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 
 
+LOG = os.environ.get("EMBER_BENCH_LOG")
+
+
 def emit(kind, **data):
     data["event"] = kind
-    sys.stdout.write(json.dumps(data) + "\n")
+    line = json.dumps(data) + "\n"
+    sys.stdout.write(line)
     sys.stdout.flush()
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(line)
 
 
 class Bench(Gtk.Window):

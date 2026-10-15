@@ -19,7 +19,8 @@ import type { PolicyEngine, ActionKind } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 import { inferLabels } from "../perception/elements";
 import { SETTINGS, changeSetting, findApp, launchApp, listApps, type SettingName } from "../hands/system";
-import { UserTookOver, type CursorBorrow, type Hand } from "../hands/borrow";
+import { CursorBorrow, UserTookOver, type Hand } from "../hands/borrow";
+import type { DeskPlace } from "../desk/place";
 import { focusedElement } from "../perception/elements";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
@@ -43,6 +44,10 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
+  /** Ember's desk (tier 2), started on first use. */
+  desk?: () => Promise<DeskPlace>;
+  /** The worker moved to (or left) the desk: show or hide the mini-view. */
+  onDesk?: (place: DeskPlace | null) => void;
   /** Pointer position and button mask in screen pixels (guide mode watches for the user's click). */
   pointer?: () => { x: number; y: number; mask: number } | null;
   /** Tier 3, when available: borrowing the user's mouse and keyboard. */
@@ -97,6 +102,9 @@ export class Worker {
   /** Apps the user allowed for this task only ("Allow once"). */
   private allowedApps = new Set<string>();
   private aborted = false;
+  /** Where the worker is acting: null for the user's screen, or Ember's desk. */
+  private place: DeskPlace | null = null;
+  private deskBorrow: CursorBorrow | null = null;
   private signal: AbortSignal | null = null;
   private guideStep = 0;
   private userTookOver = false;
@@ -105,6 +113,11 @@ export class Worker {
     this.target = { ...spec.target };
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
   }
+
+  private get perception() { return this.place?.perception ?? this.d.perception; }
+  private get sidecar() { return this.place?.sidecar ?? this.d.sidecar; }
+  /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. */
+  private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(b); }
 
   get sessionId(): string | null {
     return this.session?.sessionId ?? null;
@@ -133,7 +146,7 @@ export class Worker {
         parameters: z.object({}),
         ...common,
         handler: async () => {
-          const wins = await this.d.perception.windows();
+          const wins = await this.perception.windows();
           return done(wins.map(w => `- ${w.app}: "${w.name}"${w.active ? " (focused by the user)" : ""}`).join("\n") || "No windows found.");
         },
       }),
@@ -150,7 +163,7 @@ export class Worker {
         description: "Click (activate) a button, menu item, link or similar element.",
         parameters: z.object({ id }),
         ...common,
-        handler: async a => this.act("click", a.id, undefined, () => this.d.sidecar.doAction(a.id, "click")),
+        handler: async a => this.act("click", a.id, undefined, () => this.sidecar.doAction(a.id, "click")),
       }),
       defineTool("toggle", {
         description: "Turn a switch, check box or toggle button on or off.",
@@ -159,30 +172,30 @@ export class Worker {
         handler: async a => {
           const node = this.known.get(a.id);
           if (node) {
-            const now = await this.d.sidecar.readElement(a.id).catch(() => null);
+            const now = await this.sidecar.readElement(a.id).catch(() => null);
             const isOn = now ? now.states.includes("checked") || now.states.includes("pressed") : null;
             if (isOn === a.on) return done(`Already ${a.on ? "on" : "off"}: ${describeAfter(now!)}`);
           }
-          return this.act("toggle", a.id, a.on ? "on" : "off", () => this.d.sidecar.doAction(a.id, "toggle"));
+          return this.act("toggle", a.id, a.on ? "on" : "off", () => this.sidecar.doAction(a.id, "toggle"));
         },
       }),
       defineTool("type_text", {
         description: "Put text into a text field or document: replace its contents, insert at the caret, or append at the end.",
         parameters: z.object({ id, text: z.string().max(5000), mode: z.enum(["replace", "insert", "append"]).optional() }),
         ...common,
-        handler: async a => this.act("text", a.id, a.text, () => this.d.sidecar.setText(a.id, a.text, a.mode ?? "replace")),
+        handler: async a => this.act("text", a.id, a.text, () => this.sidecar.setText(a.id, a.text, a.mode ?? "replace")),
       }),
       defineTool("choose_option", {
         description: "Choose an option in a combo box, drop-down or list by its visible name.",
         parameters: z.object({ id, option: z.string().min(1) }),
         ...common,
-        handler: async a => this.act("select", a.id, a.option, () => this.d.sidecar.selectOption(a.id, a.option)),
+        handler: async a => this.act("select", a.id, a.option, () => this.sidecar.selectOption(a.id, a.option)),
       }),
       defineTool("set_value", {
         description: "Set a slider or spin button to a number.",
         parameters: z.object({ id, value: z.number() }),
         ...common,
-        handler: async a => this.act("value", a.id, String(a.value), () => this.d.sidecar.setValue(a.id, a.value)),
+        handler: async a => this.act("value", a.id, String(a.value), () => this.sidecar.setValue(a.id, a.value)),
       }),
       defineTool("change_setting", {
         description: `Change a desktop setting directly: ${Object.entries(SETTINGS).map(([k, v]) => `${k} (${v})`).join("; ")}.`,
@@ -196,6 +209,31 @@ export class Worker {
           return `${SETTINGS[a.setting]}: was ${r.before}, now ${r.after}.`;
         }),
       }),
+      ...(this.d.desk ? [defineTool("open_on_desk", {
+        description: "Open an app on Ember's desk: a private screen the user doesn't see, where you can use mouse and keyboard freely without disturbing them (they can watch in a small view). Good for longer jobs and for apps that need typing or shortcuts. Save files the user should get into the folder this tool names.",
+        parameters: z.object({ name: z.string().min(1) }),
+        ...common,
+        handler: async (a: { name: string }) => {
+          const app = findApp(listApps(), a.name);
+          if (!app) return fail(`No installed app matches "${a.name}".`);
+          return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
+            const place = await this.d.desk!();
+            this.place = place;
+            this.d.onDesk?.(place);
+            // The app's window is the one from the process just started, or else whichever window is new.
+            const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
+            const before = new Set((await place.perception.windows().catch(() => [])).map(key));
+            const pid = place.open(app);
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 250));
+              const wins = await place.perception.windows().catch(() => []);
+              const w = wins.find(x => pid !== undefined && x.pid === pid) ?? wins.find(x => !before.has(key(x)));
+              if (w) { this.target = { title: w.name }; return `Opened ${app.name} on your desk ("${w.name}"). Everything you do now happens there. Save results in ${place.info.handOff}. Call perceive_window.`; }
+            }
+            return `Started ${app.name} on your desk, but its window hasn't appeared yet. Use list_windows.`;
+          });
+        },
+      })] : []),
       defineTool("open_app", {
         description: "Start an application by name (for example Text Editor, Files, Settings).",
         parameters: z.object({ name: z.string().min(1) }),
@@ -204,17 +242,18 @@ export class Worker {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches "${a.name}".`);
           return this.system("open_app", app.name, async () => {
+            if (this.place) { this.place = null; this.d.onDesk?.(null); }
             launchApp(app);
             for (let i = 0; i < 40; i++) {
               await new Promise(r => setTimeout(r, 250));
-              const w = (await this.d.perception.windows()).find(x => x.app.toLowerCase().includes(app.name.toLowerCase().split(" ")[0]) || x.name.toLowerCase().includes(app.name.toLowerCase()));
+              const w = (await this.perception.windows()).find(x => x.app.toLowerCase().includes(app.name.toLowerCase().split(" ")[0]) || x.name.toLowerCase().includes(app.name.toLowerCase()));
               if (w) { this.target = { title: w.name }; return `Opened ${app.name}; now working in its window "${w.name}". Call perceive_window.`; }
             }
             return `Started ${app.name}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
           });
         },
       }),
-      ...(this.d.cursor ? [
+      ...(this.d.cursor || this.d.desk ? [
         defineTool("press_keys", {
           description: "Press a key or shortcut in the window you are working in, e.g. \"ctrl+s\", \"Return\", \"ctrl+shift+t\". Borrows the user's keyboard, so the user is asked first; prefer element tools when they work.",
           parameters: z.object({ keys: z.string().min(1).max(40) }),
@@ -236,7 +275,7 @@ export class Worker {
           const node = this.known.get(a.id);
           if (!node?.bounds) return fail(`Element ${a.id} is not in your latest perceive_window (or has no position). Call perceive_window.`);
           this.guideStep++;
-          this.d.flyTo(node.bounds);
+          this.fly(node.bounds);
           this.d.presenter.guide(a.say, `Step ${this.guideStep}`);
           this.d.audit.write({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: node.name || this.labels.get(a.id) || "" }, ok: true });
           return done(`Pointing at [${a.id}]. Now call wait_for_click with id ${a.id}.`);
@@ -308,6 +347,7 @@ export class Worker {
     } finally {
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
+      if (this.place) d.onDesk?.(null);
     }
     if (this.aborted) return { success: false, summary: "Stopped.", stopped: true };
     const result = this.result ?? { success: false, summary: lastAnswer || "The worker stopped without a summary." };
@@ -324,7 +364,7 @@ export class Worker {
     if (!node?.bounds) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window.`);
     const b = node.bounds, pad = 4;
     const inside = (p: { x: number; y: number }) => p.x >= b.x - pad && p.y >= b.y - pad && p.x < b.x + b.width + pad && p.y < b.y + b.height + pad;
-    const before = await this.d.sidecar.readElement(id).catch(() => null);
+    const before = await this.sidecar.readElement(id).catch(() => null);
     const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => ["checked", "pressed", "selected", "expanded", "focused"].includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}` : "gone");
     const t0 = Date.now();
     let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
@@ -341,7 +381,7 @@ export class Worker {
       wasDown = down;
       if (Date.now() - lastCheck > 500) {
         lastCheck = Date.now();
-        const now = await this.d.sidecar.readElement(id).catch(() => null);
+        const now = await this.sidecar.readElement(id).catch(() => null);
         if (key(now) !== key(before)) {
           return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
         }
@@ -352,7 +392,7 @@ export class Worker {
   }
 
   private async perceive(image: boolean): Promise<ToolResultObject> {
-    const p = await this.d.perception.perceive({ image, scope: "window", target: this.target });
+    const p = await this.perception.perceive({ image, scope: "window", target: this.target });
     if (p.blocked) return denied("This window is on the user's never-look list. Don't use it; finish the task and say so.");
     if (!p.window) return fail("That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
     this.window = { app: p.window.app, name: p.window.name };
@@ -368,12 +408,13 @@ export class Worker {
   private async act(kind: ActionKind, id: number, value: string | undefined, run: () => Promise<ActionResult>): Promise<ToolResultObject> {
     const node = this.known.get(id);
     if (!node) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
+    if (this.place?.userInControl()) return denied("The user has taken over your desk. Wait for them, or finish the task saying where you got to.");
     const req = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element: { role: node.role, name: node.name || this.labels.get(id) || "" }, value };
     const verdict = await this.authorize(req);
     if (verdict) return verdict;
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id);
     try {
-      if (node.bounds) this.d.flyTo(node.bounds);
+      if (node.bounds) this.fly(node.bounds);
       await new Promise(r => setTimeout(r, 350)); // let Ember arrive, so the user sees where it acts
       const res = await run();
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok, after: { states: res.after.states, selected: res.after.selected } });
@@ -384,8 +425,8 @@ export class Worker {
       if (msg.includes("background_unavailable")) {
         release();
         // The router: tier 1 can't do it, so try tier 3 (the user's mouse), with their OK.
-        if (this.d.cursor && node.bounds && (kind === "click" || kind === "toggle" || kind === "text")) {
-          this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: "tier3", kind, role: node.role });
+        if ((this.place || this.d.cursor) && node.bounds && (kind === "click" || kind === "toggle" || kind === "text")) {
+          this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: this.place ? "tier2-desk" : "tier3", kind, role: node.role });
           return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value);
         }
         return fail(`${msg.replace("background_unavailable: ", "")}. This can't be done without the mouse; tell the user in finish_task.`);
@@ -415,7 +456,7 @@ export class Worker {
 
   private async pressKeys(keys: string): Promise<ToolResultObject> {
     // Keys go to whatever has focus in the window: never a password field.
-    const seen = await this.d.perception.read(this.target).catch(() => null);
+    const seen = await this.perception.read(this.target).catch(() => null);
     const focus = seen ? focusedElement(seen.nodes) : null;
     const element = focus ? { role: focus.role, name: focus.name } : undefined;
     const verdict = await this.authorize({ taskId: this.spec.id, kind: "keys", app: this.window.app, window: this.window.name, element, value: keys });
@@ -437,16 +478,18 @@ export class Worker {
   }
 
   private async withCursor(kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
-    const c = this.d.cursor!;
+    if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId);
+    if (!this.d.cursor) return fail("This needs the mouse or keyboard, which isn't available here. Try open_on_desk.");
+    const c = this.d.cursor;
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id);
     c.setBorrowing("waiting");
-    this.d.flyTo(null); // Ember rides along with the cursor
+    this.fly(null); // Ember rides along with the cursor
     try {
       await c.borrow.borrow(fn, {
         window: this.window.name ? c.findWindow(this.window.name) || undefined : undefined,
         onStart: () => c.setBorrowing("active"),
       });
-      const after = verifyId !== undefined ? await this.d.sidecar.readElement(verifyId).catch(() => null) : null;
+      const after = verifyId !== undefined ? await this.sidecar.readElement(verifyId).catch(() => null) : null;
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 3 });
       return done(`Done with the user's mouse, which is back where it was.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
     } catch (err) {
@@ -458,6 +501,26 @@ export class Worker {
       return fail(msg);
     } finally {
       c.setBorrowing("off");
+      release();
+    }
+  }
+
+  /** Tier 2: full mouse and keyboard on Ember's own desk (the user's input is never touched). */
+  private async onDeskInput(place: DeskPlace, kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
+    if (place.userInControl()) return denied("The user has taken over your desk. Wait for them, or finish the task saying where you got to.");
+    const release = await this.d.lease(`desk:${this.window.name || this.window.app}`, this.spec.id);
+    this.deskBorrow ??= new CursorBorrow(place.input);
+    try {
+      await this.deskBorrow.borrow(fn, { idleMs: 0, window: this.window.name ? place.input.findWindow(this.window.name) || undefined : undefined });
+      const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2 });
+      return done(`Done on your desk.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: msg });
+      if (err instanceof UserTookOver) return denied("The user took over your desk. Stop and finish the task, saying where you got to.");
+      return fail(msg);
+    } finally {
       release();
     }
   }
@@ -478,7 +541,8 @@ export class Worker {
   }
 
   /** null when the action may go ahead; otherwise the tool result to return. */
-  private async authorize(req: Parameters<PolicyEngine["decide"]>[0]): Promise<ToolResultObject | null> {
+  private async authorize(request: Parameters<PolicyEngine["decide"]>[0]): Promise<ToolResultObject | null> {
+    const req = { ...request, onDesk: !!this.place };
     const decision = this.d.policy.decide(req);
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && this.allowedApps.has(req.app.toLowerCase());
     this.d.audit.write({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason });

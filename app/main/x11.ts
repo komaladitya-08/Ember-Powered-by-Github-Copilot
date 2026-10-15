@@ -47,17 +47,21 @@ export interface X11 {
 }
 
 const requireCjs = createRequire(__filename);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- koffi's type handle
+let ximageType: any = null;
 
 export function openX11(displayName?: string): X11 | null {
   try {
     const koffi = requireCjs("koffi") as typeof import("koffi");
     const lib = koffi.load("libX11.so.6");
-    const XImage = koffi.struct("EmberXImage", {
+    // koffi type names are process-wide: define the struct once, however many displays are opened.
+    ximageType ??= koffi.struct("EmberXImage", {
       width: "int", height: "int", xoffset: "int", format: "int", data: "void *",
       byte_order: "int", bitmap_unit: "int", bitmap_bit_order: "int", bitmap_pad: "int",
       depth: "int", bytes_per_line: "int", bits_per_pixel: "int",
       red_mask: "unsigned long", green_mask: "unsigned long", blue_mask: "unsigned long",
     });
+    const XImage = ximageType;
     const XOpenDisplay = lib.func("void *XOpenDisplay(const char *name)");
     const XCloseDisplay = lib.func("int XCloseDisplay(void *dpy)");
     const XFree = lib.func("int XFree(void *data)");

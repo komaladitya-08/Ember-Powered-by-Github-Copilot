@@ -111,6 +111,21 @@ export function findApp(apps: DesktopApp[], query: string): DesktopApp | null {
     ?? null;
 }
 
+/**
+ * The environment for apps Ember starts. Chromium sets NO_AT_BRIDGE=1 in
+ * Electron's own environment (and GTK disables accessibility if the variable
+ * exists at all), so without this every app Ember launched would be invisible
+ * to its screen reading. Electron's other markers are dropped too.
+ */
+export function appEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base };
+  for (const k of Object.keys(env)) {
+    if (k === "NO_AT_BRIDGE" || k === "CHROME_DESKTOP" || k.startsWith("ELECTRON_") || k === "GOOGLE_API_KEY") delete env[k];
+  }
+  if (env.ORIGINAL_XDG_CURRENT_DESKTOP) { env.XDG_CURRENT_DESKTOP = env.ORIGINAL_XDG_CURRENT_DESKTOP; delete env.ORIGINAL_XDG_CURRENT_DESKTOP; }
+  return env;
+}
+
 /** The Exec line as argv, without field codes (%U, %f…). No shell is involved. */
 export function execArgv(exec: string): string[] {
   const out: string[] = [];
@@ -131,11 +146,11 @@ export function launchApp(app: DesktopApp): void {
   const fallback = () => {
     const argv = app.exec ? execArgv(app.exec) : [];
     if (!argv.length) return;
-    const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore" });
+    const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: appEnv() });
     c.on("error", () => { /* the caller notices no window appeared */ });
     c.unref();
   };
-  const child = spawn("gtk-launch", [app.id], { detached: true, stdio: "ignore" });
+  const child = spawn("gtk-launch", [app.id], { detached: true, stdio: "ignore", env: appEnv() });
   child.on("error", fallback);
   child.unref();
 }

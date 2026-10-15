@@ -70,11 +70,12 @@ export class AtspiSidecar {
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
-  constructor(private script: string, private log: Logger, private python = pickPython()) {}
+  /** `env`: the environment of the desktop to read (Ember's desk has its own display and bus). */
+  constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env) {}
 
   private ensure(): ChildProcessWithoutNullStreams {
     if (this.proc && this.proc.exitCode === null) return this.proc;
-    const proc = spawn(this.python, [this.script], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PYTHONUNBUFFERED: "1" } });
+    const proc = spawn(this.python, [this.script], { stdio: ["pipe", "pipe", "pipe"], env: { ...this.env, PYTHONUNBUFFERED: "1" } });
     this.proc = proc;
     readline.createInterface({ input: proc.stdout }).on("line", line => {
       let msg: { id?: number; result?: unknown; error?: { message: string } };
