@@ -1,0 +1,24 @@
+{
+  "id": "files-new-folder",
+  "title": "Makes a folder in Files",
+  "instruction": "Make a new folder called Reports here.",
+  "app": {
+    "command": [
+      "nautilus",
+      "--new-window",
+      "{tmp}"
+    ],
+    "window": "ember-eval"
+  },
+  "expect": [
+    {
+      "file": "{tmp}/Reports",
+      "exists": true
+    }
+  ],
+  "tags": [
+    "files",
+    "live-only"
+  ],
+  "timeout": 180
+}

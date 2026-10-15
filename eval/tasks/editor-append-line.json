@@ -1,0 +1,60 @@
+{
+  "id": "editor-append-line",
+  "title": "Adds a line to a note and saves",
+  "instruction": "Add a line \"- ship M10\" at the end of my notes and save.",
+  "app": {
+    "editor": "{tmp}/notes.txt"
+  },
+  "setup": [
+    {
+      "file": "{tmp}/notes.txt",
+      "content": "Standup notes\n- ship M9\n"
+    }
+  ],
+  "hands": [
+    "cursor"
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text"
+        },
+        "text": "- ship M10\n",
+        "mode": "append"
+      }
+    },
+    {
+      "tool": "press_keys",
+      "args": {
+        "keys": "ctrl+s"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Added and saved."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "file": "{tmp}/notes.txt",
+      "contains": "- ship M10"
+    },
+    {
+      "file": "{tmp}/notes.txt",
+      "contains": "Standup notes\n- ship M9"
+    }
+  ],
+  "tags": [
+    "editor",
+    "tier1",
+    "tier3"
+  ]
+}

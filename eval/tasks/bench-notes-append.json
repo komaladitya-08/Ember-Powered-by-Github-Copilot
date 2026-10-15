@@ -1,0 +1,48 @@
+{
+  "id": "bench-notes-append",
+  "title": "Add to notes",
+  "instruction": "Add \" - ship M10\" to the end of the meeting notes in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text \"Notes\""
+        },
+        "text": " - ship M10",
+        "mode": "append"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Added."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "atspi": {
+        "window": "Ember Test Bench",
+        "find": "^text \"Notes\"",
+        "textContains": "ship M3 - ship M10"
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

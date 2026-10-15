@@ -1,0 +1,46 @@
+{
+  "id": "settings-do-not-disturb",
+  "title": "Do Not Disturb",
+  "instruction": "Turn on Do Not Disturb.",
+  "app": {
+    "none": true
+  },
+  "setup": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.notifications",
+        "show-banners",
+        "true"
+      ]
+    }
+  ],
+  "script": [
+    {
+      "tool": "change_setting",
+      "args": {
+        "setting": "do_not_disturb",
+        "value": "on"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Do Not Disturb is on."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.notifications",
+        "show-banners"
+      ],
+      "equals": "false"
+    }
+  ],
+  "tags": [
+    "settings",
+    "tier0"
+  ]
+}

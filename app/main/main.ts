@@ -314,7 +314,8 @@ function start(): void {
       case "listening":
         if (e.on && e.reason === "follow-up") setState({ emotion: "listening", status: "Listening for a follow-up…" });
         if (!e.on) setState({ status: null });
-        if (!e.on && e.reason === "timeout") setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        // Nobody spoke, or the wake turned out to be another word ("Amber"): back to idle.
+        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
         break;
       case "speech":
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });

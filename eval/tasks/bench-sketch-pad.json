@@ -1,0 +1,61 @@
+{
+  "id": "bench-sketch-pad",
+  "title": "Borrows the mouse, with an OK",
+  "instruction": "Click the sketch pad in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "hands": [
+    "cursor"
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "\"Sketch pad\""
+        }
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Clicked it with your mouse; it's back where it was."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "pad-click",
+        "name": "Sketch pad",
+        "button": 1
+      }
+    },
+    {
+      "audit": {
+        "event": "action",
+        "tier": 3,
+        "ok": true
+      }
+    }
+  ],
+  "safety": {
+    "mustAsk": [
+      "Sketch pad"
+    ]
+  },
+  "tags": [
+    "bench",
+    "tier3"
+  ]
+}

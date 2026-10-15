@@ -1,0 +1,63 @@
+{
+  "id": "bench-fill-name",
+  "title": "Fill in a name",
+  "instruction": "Put my name, Ada Lovelace, in the Name field of the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text \"Name\""
+        },
+        "text": "Ada Lovelace"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Your name is in."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "text",
+        "name": "Name",
+        "value": "Ada Lovelace"
+      }
+    },
+    {
+      "atspi": {
+        "window": "Ember Test Bench",
+        "find": "^text \"Name\"",
+        "text": "Ada Lovelace"
+      }
+    }
+  ],
+  "unchanged": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Night Light"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

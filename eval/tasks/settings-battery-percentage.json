@@ -1,0 +1,46 @@
+{
+  "id": "settings-battery-percentage",
+  "title": "Battery percentage",
+  "instruction": "Show the battery percentage in the top bar.",
+  "app": {
+    "none": true
+  },
+  "setup": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "show-battery-percentage",
+        "false"
+      ]
+    }
+  ],
+  "script": [
+    {
+      "tool": "change_setting",
+      "args": {
+        "setting": "battery_percentage",
+        "value": "on"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "The battery percentage shows."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "show-battery-percentage"
+      ],
+      "equals": "true"
+    }
+  ],
+  "tags": [
+    "settings",
+    "tier0"
+  ]
+}

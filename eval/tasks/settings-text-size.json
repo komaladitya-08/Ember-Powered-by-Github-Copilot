@@ -1,0 +1,55 @@
+{
+  "id": "settings-text-size",
+  "title": "Bigger text",
+  "instruction": "Make the text a bit bigger, 125%.",
+  "app": {
+    "none": true
+  },
+  "setup": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "text-scaling-factor",
+        "1.0"
+      ]
+    }
+  ],
+  "script": [
+    {
+      "tool": "change_setting",
+      "args": {
+        "setting": "text_size",
+        "value": "1.25"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Text is at 125%."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "text-scaling-factor"
+      ],
+      "equals": "1.25"
+    }
+  ],
+  "unchanged": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "clock-show-seconds"
+      ],
+      "equals": "false"
+    }
+  ],
+  "tags": [
+    "settings",
+    "tier0"
+  ]
+}

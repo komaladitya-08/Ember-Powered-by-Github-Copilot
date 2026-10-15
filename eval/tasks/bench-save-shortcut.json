@@ -1,0 +1,47 @@
+{
+  "id": "bench-save-shortcut",
+  "title": "Presses a shortcut, with an OK",
+  "instruction": "Save the test bench with Ctrl+S.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "hands": [
+    "cursor"
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "press_keys",
+      "args": {
+        "keys": "ctrl+s"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Pressed Ctrl+S."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "key",
+        "name": "s",
+        "ctrl": true
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier3"
+  ]
+}

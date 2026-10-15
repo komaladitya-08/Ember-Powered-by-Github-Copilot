@@ -1,0 +1,45 @@
+{
+  "id": "bench-save",
+  "title": "Press a button",
+  "instruction": "Press Save in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "^push button \"Save\""
+        }
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Saved."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "clicked",
+        "name": "Save"
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

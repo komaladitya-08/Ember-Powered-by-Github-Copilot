@@ -19,5 +19,5 @@
       "@ember/motion": ["packages/motion/src/index.ts"]
     }
   },
-  "include": ["app", "packages", "demo", "test", "vitest.config.ts"]
+  "include": ["app", "packages", "demo", "test", "eval", "vitest.config.ts"]
 }

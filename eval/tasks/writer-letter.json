@@ -1,0 +1,28 @@
+{
+  "id": "writer-letter",
+  "title": "Writes a letter in LibreOffice Writer",
+  "instruction": "Write \"Dear Ada,\" in this new Writer document and save it as letter.odt in the folder it suggests.",
+  "app": {
+    "command": [
+      "soffice",
+      "--writer",
+      "--norestore",
+      "-env:UserInstallation=file://{tmp}/lo"
+    ],
+    "window": "LibreOffice Writer"
+  },
+  "expect": [
+    {
+      "atspi": {
+        "window": "LibreOffice Writer",
+        "find": "^paragraph",
+        "textContains": "Dear Ada,"
+      }
+    }
+  ],
+  "tags": [
+    "libreoffice",
+    "live-only"
+  ],
+  "timeout": 180
+}

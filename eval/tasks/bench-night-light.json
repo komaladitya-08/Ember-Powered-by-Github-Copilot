@@ -1,0 +1,65 @@
+{
+  "id": "bench-night-light",
+  "title": "Turn on Night Light",
+  "instruction": "Turn on Night Light in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "toggle",
+      "args": {
+        "id": {
+          "find": "^toggle button"
+        },
+        "on": true
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Night Light is on."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Night Light",
+        "active": true
+      }
+    }
+  ],
+  "unchanged": [
+    {
+      "atspi": {
+        "window": "Ember Test Bench",
+        "find": "^check box \"Remember me\"",
+        "notStates": [
+          "checked"
+        ]
+      }
+    },
+    {
+      "event": {
+        "event": "text",
+        "name": "Name"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

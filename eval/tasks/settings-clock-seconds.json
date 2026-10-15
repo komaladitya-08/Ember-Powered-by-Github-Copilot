@@ -1,0 +1,55 @@
+{
+  "id": "settings-clock-seconds",
+  "title": "Seconds on the clock",
+  "instruction": "Show seconds in the top bar clock.",
+  "app": {
+    "none": true
+  },
+  "setup": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "clock-show-seconds",
+        "false"
+      ]
+    }
+  ],
+  "script": [
+    {
+      "tool": "change_setting",
+      "args": {
+        "setting": "clock_seconds",
+        "value": "on"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "The clock shows seconds."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "clock-show-seconds"
+      ],
+      "equals": "true"
+    }
+  ],
+  "unchanged": [
+    {
+      "gsettings": [
+        "org.gnome.desktop.interface",
+        "text-scaling-factor"
+      ],
+      "equals": "1.0"
+    }
+  ],
+  "tags": [
+    "settings",
+    "tier0"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "bench-guide-night-light",
+  "title": "Shows the way (guide)",
+  "instruction": "Show me how to turn on Night Light in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "mode": "guide",
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "point_at",
+      "args": {
+        "id": {
+          "find": "^toggle button"
+        },
+        "say": "Turn on this switch"
+      }
+    },
+    {
+      "tool": "wait_for_click",
+      "args": {
+        "id": {
+          "find": "^toggle button"
+        },
+        "timeoutSeconds": 20
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "You turned on Night Light yourself."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Night Light",
+        "active": true
+      }
+    },
+    {
+      "audit": {
+        "event": "action",
+        "kind": "point"
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "guide"
+  ]
+}

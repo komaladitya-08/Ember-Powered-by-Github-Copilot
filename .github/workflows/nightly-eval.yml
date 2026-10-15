@@ -1,0 +1,41 @@
+# The nightly tier (PLAN.md M10.3): the task suite with a real model, three times per
+# task (pass^3), on a RHEL 8.4 GNOME on Xorg machine. It needs a self-hosted runner
+# labelled "rhel84-gnome" logged in to a desktop session, the repository variable
+# EMBER_NIGHTLY=true, EMBER_EVAL_MODEL, and a COPILOT_GITHUB_TOKEN secret (or
+# EMBER_EVAL_PROVIDER_URL + EMBER_EVAL_API_KEY for an OpenAI-compatible endpoint).
+# The runner's VM is reverted to a clean snapshot before the run (EMBER_EVAL_RESET).
+name: nightly evaluation
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    if: vars.EMBER_NIGHTLY == 'true'
+    runs-on: [self-hosted, rhel84-gnome]
+    timeout-minutes: 180
+    env:
+      EMBER_EVAL_MODEL: ${{ vars.EMBER_EVAL_MODEL }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      EMBER_EVAL_PROVIDER_URL: ${{ vars.EMBER_EVAL_PROVIDER_URL }}
+      EMBER_EVAL_API_KEY: ${{ secrets.EMBER_EVAL_API_KEY }}
+    steps:
+      - name: Revert the machine to its clean snapshot
+        if: vars.EMBER_EVAL_RESET != ''
+        run: ${{ vars.EMBER_EVAL_RESET }}
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: node scripts/voice/prepare.mjs
+      - name: Task suite with a live model (pass^3) and release gates
+        run: node eval/run.mjs --live --repeat 3 --out dist/eval
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ember-nightly-eval
+          path: dist/eval/
+          retention-days: 90

@@ -132,3 +132,45 @@ jobs:
             dist/package/*.rpm
             dist/package/*.AppImage
           retention-days: 14
+
+  eval:
+    name: Evaluation (task suite and release gates, rockylinux:8)
+    runs-on: ubuntu-24.04
+    container:
+      image: rockylinux:8
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: System packages (as el8, plus gedit and dconf for the task suite)
+        run: |
+          dnf -y -q install git tar xz bzip2 file binutils which sudo gcc-c++ make python3 \
+            libX11-devel libXtst-devel libXt-devel \
+            gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
+            libXtst libXrandr libXcomposite libXdamage \
+            xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
+            python3-pyatspi python3-gobject gedit dconf gsettings-desktop-schemas
+          useradd -m ci
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Rebuild native modules on glibc 2.28
+        run: scripts/rebuild-el8.sh --here
+      - name: Speech models (cached; verified by SHA-256)
+        uses: actions/cache@v4
+        with:
+          path: .cache/voice
+          key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs
+      - name: Task suite (scripted model) and release gates, as a normal user
+        run: |
+          chown -R ci .
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci \
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs --out dist/eval
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ember-eval
+          path: dist/eval/
+          retention-days: 30

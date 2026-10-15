@@ -62,7 +62,10 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
 
   it("ignores similar words and ordinary speech", () => {
     for (const name of ["amber", "remember", "chat"]) {
-      expect(play(name).events.filter(e => e.type === "wake"), name).toEqual([]);
+      const { events } = play(name);
+      // A near-miss may light Ember up for a moment, but the check takes it back: no request is taken.
+      expect(events.filter(e => e.type === "utterance"), name).toEqual([]);
+      expect(events.filter(e => e.type === "rejected" && e.reason === "check").length, name).toBeGreaterThanOrEqual(events.filter(e => e.type === "wake").length);
     }
   });
 
