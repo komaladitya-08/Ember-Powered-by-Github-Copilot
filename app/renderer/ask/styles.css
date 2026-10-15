@@ -1,0 +1,11 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+body { font: 15px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
+.ask { position: absolute; inset: 6px; display: flex; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+input {
+  flex: 1; min-width: 0; box-sizing: border-box; padding: 0 16px; border-radius: 14px; outline: none;
+  color: #fbeee3; background: rgba(26, 15, 11, 0.95); border: 1px solid rgba(255, 154, 61, 0.6);
+  box-shadow: 0 0 22px rgba(255, 138, 42, 0.25), 0 10px 26px rgba(0, 0, 0, 0.35); font: inherit;
+}
+input::placeholder { color: rgba(251, 238, 227, 0.5); }
+input:focus { border-color: #ff9a3d; }

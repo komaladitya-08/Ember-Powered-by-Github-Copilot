@@ -12,7 +12,8 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["test/unit/**/*.test.ts", "packages/**/*.test.ts"],
+    include: process.env.EMBER_INTEGRATION ? ["test/integration/**/*.test.ts"] : ["test/unit/**/*.test.ts", "packages/**/*.test.ts"],
+    fileParallelism: !process.env.EMBER_INTEGRATION,
     environment: "node",
   },
 });

@@ -74,6 +74,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 |---|---|
 | `npm run dev` | Build and start Ember |
 | `npm test` | Unit tests (Vitest) |
+| `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:smoke` | Starts Ember, checks the window appears and a second launch hands over. Without a desktop: `xvfb-run -a npm run test:smoke` |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
@@ -90,11 +91,36 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead.
 
+### Connecting Copilot
+
+Ember needs a GitHub account with Copilot. Until Ember's own GitHub App is registered (PLAN.md §7),
+sign in with the GitHub CLI and Ember will reuse it:
+
+```bash
+sudo dnf install -y gh      # or download from cli.github.com
+gh auth login
+```
+
+Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
+then `gh auth token`. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
+Enterprise, your organization must enable the **Copilot CLI** policy.
+
+Then press **Ctrl+Alt+Space** and type a question.
+
+To try Ember offline without Copilot, run the mock model and point Ember at it:
+
+```bash
+node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
+EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev
+```
+
 ### Where Ember keeps things
 
 | What | Where |
 |---|---|
 | Settings | `~/.config/ember/settings.json` |
+| Conversation (Copilot session state) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
+| GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
 
 Environment variables for development:

@@ -7,7 +7,7 @@ const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: root.pathname };
 
-const pages = ["home", "overlay", "handle"];
+const pages = ["home", "overlay", "handle", "ask"];
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
@@ -20,7 +20,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "koffi"],
+    external: ["electron", "koffi", "@github/copilot-sdk"],
   }),
   build({
     ...common,

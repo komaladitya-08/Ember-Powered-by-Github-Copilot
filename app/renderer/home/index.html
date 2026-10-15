@@ -28,6 +28,26 @@
       <p class="hint">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
 
+    <section aria-labelledby="copilot-h">
+      <h2 id="copilot-h">Copilot</h2>
+      <div class="copilot">
+        <p class="agent-line"><i id="agent-dot" class="dot"></i><span id="agent-text">Checking…</span></p>
+        <div class="agent-actions">
+          <button type="button" id="sign-in" class="btn" hidden>Sign in with GitHub</button>
+          <button type="button" id="sign-out" class="btn quiet" hidden>Sign out</button>
+        </div>
+        <p id="sign-in-msg" class="sign-in-msg" hidden></p>
+        <div class="models" id="models" hidden>
+          <label for="m-conductor">Conversation model</label>
+          <select id="m-conductor"></select>
+          <label for="m-worker">Model for tasks (needs vision)</label>
+          <select id="m-worker"></select>
+        </div>
+        <p class="usage" id="usage"></p>
+        <p class="hint">Ask Ember anything with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd>.</p>
+      </div>
+    </section>
+
     <section aria-labelledby="checks-h">
       <h2 id="checks-h">Setup check</h2>
       <ul class="checks" id="checks"></ul>
