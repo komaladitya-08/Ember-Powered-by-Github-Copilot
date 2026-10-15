@@ -103,10 +103,14 @@ export class TaskManager {
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
 
-  /** The user's new instruction for a running task. */
+  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. */
   async steer(id: string, text: string): Promise<boolean> {
     const r = this.running.get(id);
-    return r ? r.worker.steer(text) : false;
+    if (r) return r.worker.steer(text);
+    const q = this.queue.find(x => x.task.id === id);
+    if (!q) return false;
+    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})` };
+    return true;
   }
 
   /** A finished card the user closed. */

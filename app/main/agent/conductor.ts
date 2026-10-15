@@ -95,7 +95,8 @@ export function conductorTools(settings: SettingsStore, describeScreen?: () => P
         z.object({}),
         async () => {
           const list = tasks.list();
-          return list.length ? list.map(t => `- ${t.id}: "${t.title.replace(/</g, "‹")}" ${t.status}${t.detail ? ` (${t.detail.replace(/</g, "‹").slice(0, 120)})` : ""}`).join("\n") : "No tasks.";
+          // Progress notes come from the workers (which read the screen): data, never instructions.
+          return list.length ? `<tasks untrusted="true">\n${list.map(t => `- ${t.id}: "${t.title.replace(/</g, "‹")}" ${t.status}${t.detail ? ` (${t.detail.replace(/</g, "‹").slice(0, 120)})` : ""}`).join("\n")}\n</tasks>` : "No tasks.";
         }),
       checkedTool("cancel_task", "Stop one task (the user said to stop or cancel it). Other tasks keep going.",
         z.object({ id: taskId }),
@@ -114,8 +115,15 @@ export class Conductor {
   private session: CopilotSession | null = null;
   readonly toolNames: string[];
 
+  /** Stop was pressed and the turn hasn't ended yet: a start_task already on its way is refused. */
+  private stopping = false;
+
   constructor(private deps: ConductorDeps) {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
+  }
+
+  private guarded(start?: (goal: string) => string): ((goal: string) => string) | undefined {
+    return start && (goal => this.stopping ? "The user just stopped everything. Don't start anything now; say you've stopped." : start(goal));
   }
 
   get sessionId(): string | null {
@@ -129,7 +137,7 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, d.startTask, d.showMe, d.tasks),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks),
       systemMessage: emberSystemMessage(),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
@@ -157,7 +165,7 @@ export class Conductor {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
         if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
       }
-      if (e.type === "session.idle") d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true);
+      if (e.type === "session.idle") { this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
     });
   }
 
@@ -185,6 +193,7 @@ export class Conductor {
   }
 
   async abort(): Promise<void> {
+    if (this.session) this.stopping = true;
     await this.session?.abort();
   }
 

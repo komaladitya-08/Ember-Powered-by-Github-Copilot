@@ -418,18 +418,25 @@ describe("second-stage wake check", () => {
     expect(heardOtherWord("")).toBe(false);
   });
 
-  it("drops a wake when the recognizer heard 'Amber'", () => {
+  it("drops a wake when the recognizer heard 'Amber', checking once the word has ended", () => {
     const b = fake(["Hey Amber, what time is it?"]);
+    let heard = 0;
+    const transcribe = b.transcribe;
+    b.transcribe = s => { heard = s.length; return transcribe(s); };
     const events: VoiceEvent[] = [];
-    const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => 0 });
-    e.feed(frame(1));
-    // Ember lit up at once, then took it back when the recognizer heard "Amber".
-    expect(events).toEqual([
-      { type: "wake", keyword: "hey_ember" },
-      { type: "listening", on: true, reason: "wake", window: "wake" },
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => c.t });
+    e.feed(frame(0));
+    c.t += 32; e.feed(frame(1));
+    // Ember lights up at once…
+    expect(events).toEqual([{ type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" }]);
+    for (let i = 0; i < 8; i++) { c.t += 32; e.feed(frame(0)); }
+    // …and takes it back when the recognizer, hearing past the moment the spotter fired, heard "Amber".
+    expect(events.slice(2)).toEqual([
       { type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey Amber, what time is it?" },
       { type: "listening", on: false, reason: "rejected", window: "wake" },
     ]);
+    expect(heard).toBe(10 * 512);
     expect(e.listening).toBe(false);
   });
 });

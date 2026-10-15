@@ -32,6 +32,8 @@ export interface BorrowOptions {
   window?: number;
   /** Called once the user is still and Ember actually takes the cursor. */
   onStart?: () => void;
+  /** This borrow only: stops it while it waits its turn or runs (the kill switch uses stop() for all). */
+  signal?: AbortSignal;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -88,11 +90,25 @@ export class CursorBorrow {
   private epoch = 0;
   /** The borrow in progress (or queued last): the next one waits for it. */
   private turn: Promise<unknown> = Promise.resolve();
+  /** True only while Ember really drives the pointer and keys (not while it waits for the user to be still). */
+  private drivingNow = false;
+  /** Borrows asked for and not finished yet (waiting their turn, waiting for the user, or driving). */
+  private open = 0;
 
   constructor(private x: XInput) {}
 
   get active(): boolean {
     return this.busy;
+  }
+
+  /** Ember is moving the pointer or typing right now: clicks that reach Ember's own windows are its own. */
+  get driving(): boolean {
+    return this.drivingNow;
+  }
+
+  /** How many borrows are asked for and not finished (for the "waiting for you to let go" status). */
+  get pending(): number {
+    return this.open;
   }
 
   /** Kill switch: the current borrow sends no more input and the pointer goes straight back; queued ones never start. */
@@ -103,10 +119,11 @@ export class CursorBorrow {
 
   borrow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions = {}): Promise<T> {
     const epoch = this.epoch;
+    this.open++;
     const run = this.turn.catch(() => undefined).then(() => {
-      if (epoch !== this.epoch) throw new BorrowStopped();
+      if (epoch !== this.epoch || o.signal?.aborted) throw new BorrowStopped();
       return this.borrowNow(fn, o);
-    });
+    }).finally(() => { this.open--; });
     this.turn = run;
     return run;
   }
@@ -114,6 +131,9 @@ export class CursorBorrow {
   private async borrowNow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions): Promise<T> {
     this.busy = true;
     this.stopping = false;
+    // Its own task stopping stops this borrow (and no other).
+    const onAbort = () => { this.stopping = true; };
+    o.signal?.addEventListener("abort", onAbort, { once: true });
     const now = o.now ?? Date.now;
     const sleep = o.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
     const x = this.x;
@@ -161,6 +181,7 @@ export class CursorBorrow {
     } catch (err) {
       this.busy = false;
       this.stopping = false;
+      o.signal?.removeEventListener("abort", onAbort);
       throw err;
     }
 
@@ -251,6 +272,7 @@ export class CursorBorrow {
       home = x.pointer();
       previousWindow = x.activeWindow();
       expected = home;
+      this.drivingNow = true;
       o.onStart?.();
       if (o.window) {
         if (o.window !== previousWindow) x.activate(o.window);
@@ -279,8 +301,10 @@ export class CursorBorrow {
         }
         if (!tookOver) restoreFocus();
       }
+      this.drivingNow = false;
       this.busy = false;
       this.stopping = false;
+      o.signal?.removeEventListener("abort", onAbort);
     }
   }
 }

@@ -65,6 +65,8 @@ export interface EngineOptions {
   silenceRms?: number;
   /** Second-stage check: transcribe the wake word and reject near-misses ("Amber"). Default on. */
   verifyWake?: boolean;
+  /** The check waits this long after the spotter fires, so the whole word is in what it hears (ms). */
+  checkAfterMs?: number;
   now?: () => number;
 }
 
@@ -139,15 +141,16 @@ export class Ring {
  * Frames of 32 ms. The spotter gets half a second without speech after it (enough for its
  * own delay), then rests and is reset when speech returns: a stream fed long silence after
  * a detection stops recognizing the next "Hey Ember" (measured: 1 s of it misses wakes).
- * The frames it missed are replayed then, from 12 frames before the sound started: where
- * its stream starts changes what it hears (measured: a few frames either way costs wakes and
- * lets "Hey Amber" through). Speech too quiet to stand out gets the last 24 frames.
+ * The frames it missed are replayed then, from 12 frames before the sound started (out of a
+ * calm room): where its stream starts changes what it hears (measured: a few frames either way
+ * costs wakes). Speech that doesn't stand out from the room's noise gets the last 24 frames.
  */
 const MIC_REST_FRAMES = 16;
 const MIC_REPLAY_FRAMES = 12;
 const MIC_QUIET_REPLAY_FRAMES = 24;
-/** Frames kept while the spotter rests (the voice check's delay is well within it). */
+/** Frames kept while the spotter rests (the voice check's delay is well within it); a room this many frames calm has a clear start of sound. */
 const MIC_TAIL_FRAMES = 32;
+const CALM_FRAMES = 8;
 /** The voice check wakes on a frame this far above the room's noise, runs for 2 s after the last one, and starts with 8 frames of context. */
 const CHECK_WAKE_RATIO = 1.3;
 const CHECK_HANG_FRAMES = 63;
@@ -160,16 +163,21 @@ const SPEAKERS_QUIET_MS = 1500;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks). */
 const SELF_SPEAKING_MAX_MS = 60_000;
 
-/** `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake. */
-type Mode = { kind: "idle" } | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up" };
+/**
+ * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
+ * `checkAt`: when the wake's transcript check runs (0: none pending), for `keyword`.
+ */
+type Mode =
+  | { kind: "idle" }
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number; keyword: string };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
   private ring: Ring;
   private selfSpeakingUntil = 0;
   private monitorHits: { keyword: string; at: number }[] = [];
-  /** A spotted wake word waiting out the speakers check, with the audio as it was when it was heard. */
-  private pendingWake: { keyword: string; at: number; audio: Float32Array } | null = null;
+  /** A spotted wake word waiting out the speakers check. */
+  private pendingWake: { keyword: string; at: number } | null = null;
   /** When the speakers last made a sound (their stream is only spotted while they do). */
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorQuietRun = 0;
@@ -180,8 +188,9 @@ export class VoiceEngine {
   /** The room's noise level (RMS): follows the quietest frames down at once and rises only slowly. */
   private floor = 0;
   private quietTail: Float32Array[] = [];
-  /** Where in the tail the sound started (the first frame well above the room's noise), or -1. */
+  /** Where in the tail the sound started (the first frame well above a calm room's noise), or -1; and how long the room has been calm. */
   private loudAt = -1;
+  private calmRun = 0;
   /** Frames left before the voice check rests (the room was steady), and the frame it last heard. */
   private unsteady = 0;
   private checkedAt = -1;
@@ -216,7 +225,7 @@ export class VoiceEngine {
   followUp(ms = 8000): void {
     if (this.mode.kind === "listening") { this.mode.until = Math.max(this.mode.until, this.now() + ms); return; }
     this.backend.resetVad();
-    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up" };
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up", checkAt: 0, keyword: "" };
     this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
   }
 
@@ -264,7 +273,8 @@ export class VoiceEngine {
     const quiet = rms < base || (this.mode.kind === "idle" && !this.maybeSpeech(frame, rms));
     this.quietRun = quiet ? this.quietRun + 1 : 0;
     let toSpot: Float32Array[] = [frame];
-    const loud = rms >= Math.max(base, this.floor * 2.5);
+    const loud = rms >= Math.max(base, this.floor * 2.5) && this.calmRun >= CALM_FRAMES;
+    this.calmRun = rms < Math.max(base, this.floor * CHECK_WAKE_RATIO) ? this.calmRun + 1 : 0;
     if (quiet && this.quietRun > MIC_REST_FRAMES && this.mode.kind === "idle") {
       this.quietTail.push(frame);
       if (loud && this.loudAt < 0) this.loudAt = this.quietTail.length - 1;
@@ -289,7 +299,7 @@ export class VoiceEngine {
         continue;
       }
       if (now < this.selfSpeakingUntil) { this.emit({ type: "rejected", keyword, reason: "self" }); continue; }
-      if (this.mode.kind === "idle" && !this.pendingWake) this.pendingWake = { keyword, at: now, audio: this.ring.read() };
+      if (this.mode.kind === "idle" && !this.pendingWake) this.pendingWake = { keyword, at: now };
     }
 
     // A wake is accepted once we're sure the speakers didn't just say it.
@@ -302,22 +312,31 @@ export class VoiceEngine {
       } else if (!this.backend.spotMonitor || now - w.at >= window || now - this.monitorSoundAt > SPEAKERS_QUIET_MS) {
         // (Speakers that were quiet for the whole phrase can't have said it: no need to wait.)
         this.pendingWake = null;
-        // Ember shows it's listening at once; the transcript check (a few hundred ms of work) runs
-        // next and takes the wake back if the recognizer clearly heard another word ("Amber").
-        this.announceWake(w.keyword);
-        const heard = this.o.verifyWake === false ? "" : this.backend.transcribe(w.audio);
-        if (heard && heardOtherWord(heard)) {
-          this.emit({ type: "rejected", keyword: w.keyword, reason: "check", heard });
-          this.ring.clear();
-          this.endListening("rejected");
-        } else {
-          this.replayPreRoll();
-        }
+        // Ember shows it's listening at once. The transcript check takes the wake back if the recognizer
+        // clearly heard another word ("Amber"). It runs a moment later, so the whole word is in what it
+        // hears: the spotter can fire before the word has ended (measured: "Hey Amber" got through then).
+        this.announceWake(w.keyword, this.o.verifyWake === false ? 0 : w.at + (this.o.checkAfterMs ?? 256));
+        if (this.mode.kind === "listening" && !this.mode.checkAt) this.replayPreRoll();
       }
     }
 
     if (this.mode.kind === "idle") {
       this.ring.push(frame);
+      return;
+    }
+    if (this.mode.checkAt) {
+      // What's heard is held (with the pre-roll) until the wake is checked, then replayed.
+      this.ring.push(frame);
+      if (now < this.mode.checkAt) return;
+      this.mode.checkAt = 0;
+      const heard = this.backend.transcribe(this.ring.read());
+      if (heard && heardOtherWord(heard)) {
+        this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
+        this.ring.clear();
+        this.endListening("rejected");
+      } else {
+        this.replayPreRoll();
+      }
       return;
     }
     if (now < this.selfSpeakingUntil) {
@@ -357,11 +376,11 @@ export class VoiceEngine {
     return this.backend.hearsSpeech(frame);
   }
 
-  private announceWake(keyword: string): void {
+  private announceWake(keyword: string, checkAt: number): void {
     this.emit({ type: "wake", keyword });
     this.backend.resetVad();
     const ms = this.o.waitForSpeechMs ?? 6000;
-    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake" };
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake", checkAt, keyword };
     this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
   }
 

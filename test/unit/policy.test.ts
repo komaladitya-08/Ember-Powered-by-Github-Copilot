@@ -132,3 +132,44 @@ describe("policy: review fixes (screen text can't hide risk)", () => {
     expect(e.decide({ taskId: "o", kind: "open_app", app: "Text Editor", window: "", value: "Text Editor" }).verdict).toBe("allow");
   });
 });
+
+describe("policy: review round 2", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", files: "act" }) });
+  const deskKeys = (value: string, element?: { role: string; name: string }) =>
+    e.decide({ taskId: "d", kind: "keys", app: "Files", window: "Home", element, value, onDesk: true, goal: "tidy my downloads" });
+
+  it("on the desk, every way of pressing a button is asked about, and so are shortcuts Ember can't place", () => {
+    for (const k of ["shift+Return", "shift+space", "ctrl+m", "ctrl+j"]) expect(deskKeys(k, { role: "push button", name: "Delete all" }).verdict).toBe("confirm");
+    for (const k of ["alt+d", "alt+shift+s", "ctrl+k", "ctrl+shift+e"]) expect(deskKeys(k, { role: "text", name: "Doc" }).verdict).toBe("confirm");
+    for (const k of ["ctrl+a", "ctrl+v", "ctrl+s", "Tab", "Down", "ctrl+End"]) expect(deskKeys(k, { role: "text", name: "Doc" }).verdict).toBe("allow");
+  });
+  it("“OK” or “Yes” inside a dialog asks, even when the window's title says nothing risky", () => {
+    const d = e.decide({ taskId: "g", kind: "click", app: "Firefox", window: "Mail — Mozilla Firefox", element: { role: "push button", name: "Yes" },
+      dialog: { name: "Confirm", text: "Remove all 2,341 messages?" }, goal: "read my mail" });
+    expect(d.verdict).toBe("confirm");
+    expect(d.aligned).toBe(false);
+    expect(e.decide({ taskId: "g", kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name: "Continue" }, dialog: { name: "", text: "" } }).verdict).toBe("confirm");
+  });
+  it("the object has to match too, not just the verb", () => {
+    const off = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "send the report to Ana" });
+    expect(off.aligned).toBe(false);
+    expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Mail", element: { role: "push button", name: "Send report" }, goal: "send the report to Ana" }).aligned).toBeUndefined();
+  });
+  it("destructive words in other languages count", () => {
+    for (const name of ["Supprimer", "Alle löschen", "Eliminar", "Удалить", "削除", "删除", "Verwijderen", "Enviar"]) {
+      expect(e.decide({ taskId: "l", kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name } }).verdict, name).toBe("confirm");
+    }
+  });
+  it("GNOME Shell with the keyboard is treated like a password prompt", async () => {
+    const { isSecurityWindow } = await import("../../app/main/policy/policy");
+    expect(isSecurityWindow({ app: "gnome-shell", title: "" })).toBe(true);
+  });
+});
+
+describe("audit journal copy", () => {
+  it("keeps only the size of what the user asked and of window titles", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const out = JSON.parse(journalLine(JSON.stringify({ event: "task", goal: "email my therapist", window: "Re: biopsy results", kind: "click" })));
+    expect(out).toEqual({ event: "task", goalChars: 18, windowChars: 18, kind: "click" });
+  });
+});

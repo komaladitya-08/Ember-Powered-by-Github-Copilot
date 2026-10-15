@@ -231,3 +231,34 @@ describe("keys go only to the approved window", () => {
     expect(String(err)).toMatch(/another window has the keyboard/);
   });
 });
+
+describe("borrows belong to their task (review round 2)", () => {
+  it("stopping one task's borrow leaves another task's queued borrow alone", async () => {
+    const { s, x } = fakeX();
+    const b = new CursorBorrow(x);
+    const a = new AbortController();
+    let release!: () => void;
+    const first = b.borrow(() => new Promise<void>(r => { release = r; }), { ...fast, signal: a.signal });
+    await new Promise(r => setTimeout(r, 0));
+    const second = b.borrow(async hand => { await hand.click(); }, fast);
+    a.abort();
+    release();
+    await first.catch(() => undefined);
+    await second;
+    expect(s.log).toContain("button 1 down");
+  });
+  it("is only 'driving' while it really moves the pointer, not while waiting for the user", async () => {
+    const { x } = fakeX();
+    let t = 0;
+    const b = new CursorBorrow(x);
+    let drivingWhileWaiting = false;
+    let started = false;
+    const run = b.borrow(async () => undefined, { idleMs: 500, now: () => t, onStart: () => { started = true; }, sleep: async ms => { if (!started) drivingWhileWaiting ||= b.driving; t += ms; } });
+    let drivingInside = false;
+    await run;
+    await b.borrow(async () => { drivingInside = b.driving; }, fast);
+    expect(drivingWhileWaiting).toBe(false);
+    expect(drivingInside).toBe(true);
+    expect(b.driving).toBe(false);
+  });
+});

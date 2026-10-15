@@ -558,11 +558,12 @@ function start(): void {
   ipcMain.on(OVERLAY.bubbleAction, (event, id: unknown) => {
     const fromHandle = !!handle && event.sender === handle.win.webContents;
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
-    // A click that arrives while Ember drives the mouse was Ember's, not the user's: ignored.
-    if (borrowRef?.active) { log.warn("bubble.action_while_borrowing", { id }); return; }
+    const task = /^task:(.+):(stop|dismiss)$/.exec(id);
+    // Stopping a task is always honoured (also while Ember waits for the mouse). Anything else that arrives
+    // while Ember really drives the pointer was Ember's own click, not the user's: ignored.
+    if (borrowRef?.driving && !(task && task[2] === "stop")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { showHome(); return; }
     if (id === "ui:more") { showHome(); sendToHome(IPC.focusSection, "conversation"); return; }
-    const task = /^task:(.+):(stop|dismiss)$/.exec(id);
     if (task) {
       if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
@@ -715,8 +716,8 @@ function start(): void {
     audit = new AuditLog(path.join(userData, "audit"), undefined, journalSink(err => log.warn("audit.journal_failed", { err })));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
-      // A click while Ember drives the mouse was Ember's own: never an answer.
-      blocked: () => borrowRef?.active ?? false,
+      // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
+      blocked: () => borrowRef?.driving ?? false,
       onChange: questionChanged,
     });
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
@@ -772,11 +773,13 @@ function start(): void {
         findWindow: (title, pid) => xinput.findWindow(title, pid),
         // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
         activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
-        setBorrowing: state => {
-          overlay?.setBorrowing(state === "active");
+        // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
+        setBorrowing: () => {
+          const driving = borrow.driving;
+          overlay?.setBorrowing(driving);
           // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
-          handle?.setClickThrough(state === "active");
-          setState({ status: state === "active" ? "Using your mouse: move it to take over" : state === "waiting" ? "Waiting until you let go of the mouse…" : null });
+          handle?.setClickThrough(driving);
+          setState({ status: driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null });
         },
       } : undefined,
     } : undefined;

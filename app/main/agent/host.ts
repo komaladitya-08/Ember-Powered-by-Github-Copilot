@@ -419,7 +419,7 @@ export class AgentHost {
   async forgetConversation(): Promise<void> {
     this.tasks?.cancelAll();
     this.o.hands?.confirmer.cancelAll();
-    await this.tasks?.drain(1500);
+    await this.tasks?.drain(2500);
     await this.tasks?.flushDeletes();
     await this.conductor?.forget();
     this.transcript.length = 0;
@@ -432,7 +432,7 @@ export class AgentHost {
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit).
     this.tasks?.cancelAll();
     this.o.hands?.confirmer.cancelAll();
-    await this.tasks?.drain(1500);
+    await this.tasks?.drain(2500);
     // Finished tasks' sessions are deleted now, while the client can still do it.
     await this.tasks?.flushDeletes();
     this.tasks = null;

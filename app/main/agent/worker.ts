@@ -100,6 +100,14 @@ const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /** After Stop, a turn that doesn't wind down within this long is left behind. */
 const STOP_GRACE_MS = 2000;
 
+/** One borrow per desk: every task's desk input waits its turn there (a desk has one keyboard and pointer). */
+const deskBorrows = new WeakMap<DeskPlace, CursorBorrow>();
+const deskBorrowFor = (place: DeskPlace) => {
+  let b = deskBorrows.get(place);
+  if (!b) { b = new CursorBorrow(place.input); deskBorrows.set(place, b); }
+  return b;
+};
+
 function describeAfter(a: ElementInfo): string {
   const bits = [`${a.role} ${q(a.name, 80)}`];
   if (a.states.length) bits.push(`(${a.states.join(", ")})`);
@@ -125,9 +133,7 @@ export class Worker {
   private allowedApps = new Set<string>();
   /** Where the worker is acting: null for the user's screen, or Ember's desk. */
   private place: DeskPlace | null = null;
-  private deskBorrow: CursorBorrow | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
-  private usingCursor = false;
   private guideStep = 0;
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
@@ -148,6 +154,11 @@ export class Worker {
   private get perception() { return this.place?.perception ?? this.d.perception; }
   private get sidecar() { return this.place?.sidecar ?? this.d.sidecar; }
   private get halted() { return this.halt.signal.aborted; }
+  /** Ended by finish_task (or run() returning): a tool still in flight (a question, a window wait) then does nothing. */
+  private ended = new AbortController();
+  /** Aborts when the task stops or ends: questions, window waits and borrows give up on it. */
+  private overSignal = AbortSignal.any([this.halt.signal, this.ended.signal]);
+  private get isOver() { return this.halted || this.ended.signal.aborted; }
   /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. */
   private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(b); }
 
@@ -169,9 +180,7 @@ export class Worker {
   private stopNow(reason: string | null): void {
     if (this.halted) return;
     this.haltReason = reason;
-    // Motion stops at once: a borrow in progress lets go and the pointer goes straight back.
-    if (this.usingCursor) this.d.cursor?.borrow.stop();
-    this.deskBorrow?.stop();
+    // Motion stops at once: this task's borrow (and only this task's) lets go through its signal.
     this.halt.abort();
     void this.session?.abort().catch(() => undefined);
   }
@@ -232,7 +241,7 @@ export class Worker {
           const node = this.known.get(a.id);
           if (node) {
             const now = await this.sidecar.readElement(a.id).catch(() => null);
-            if (this.halted) return STOPPED();
+            if (this.isOver) return STOPPED();
             const isOn = now ? now.states.includes("checked") || now.states.includes("pressed") : null;
             if (isOn === a.on) return done(`Already ${a.on ? "on" : "off"}: ${describeAfter(now!)}`);
           }
@@ -265,16 +274,18 @@ export class Worker {
           if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
+            // Stopped while the desk started: nothing is opened (and the desk view isn't shown for a task that is gone).
+            if (this.isOver) throw new BorrowStopped();
             this.setPlace(place);
             // The app's window is the one from the process just started, or else whichever window is new.
             const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
             const before = new Set((await place.perception.windows().catch(() => [])).map(key));
             const pid = place.open(app);
-            for (let i = 0; i < 60 && !this.halted; i++) {
+            for (let i = 0; i < 60 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const wins = await place.perception.windows().catch(() => []);
               const w = wins.find(x => pid !== undefined && x.pid === pid) ?? wins.find(x => !before.has(key(x)));
-              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; return `Opened ${app.name} on your desk (window ${q(w.name, 100)}). Everything you do now happens there. Save results in ${place.info.handOff}. Call perceive_window.`; }
+              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${app.name} on your desk (window ${q(w.name, 100)}). Everything you do now happens there. Save results in ${place.info.handOff}. Call perceive_window.`; }
             }
             return `Started ${app.name} on your desk, but its window hasn't appeared yet. Use list_windows.`;
           }, app.name);
@@ -285,12 +296,13 @@ export class Worker {
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
           if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
           return this.system("open_app", app.name, async () => {
+            if (this.isOver) throw new BorrowStopped();
             this.setPlace(null);
             launchApp(app);
-            for (let i = 0; i < 40 && !this.halted; i++) {
+            for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const w = (await this.perception.windows()).find(x => x.app.toLowerCase().includes(app.name.toLowerCase().split(" ")[0]) || x.name.toLowerCase().includes(app.name.toLowerCase()));
-              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; return `Opened ${app.name}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
+              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${app.name}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
             }
             return `Started ${app.name}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
           }, app.name);
@@ -324,6 +336,7 @@ export class Worker {
         z.object({ success: z.boolean(), summary: z.string().max(400) }),
         async a => {
           this.result = { success: a.success, summary: a.summary };
+          this.ended.abort();
           // The task is over: end the turn, so a model that keeps going can't act any more.
           setTimeout(() => { void this.session?.abort().catch(() => undefined); }, 50);
           return done("Task closed. Stop now.");
@@ -394,6 +407,7 @@ export class Worker {
         }
       }
     } finally {
+      this.ended.abort();
       clearTimeout(deadline);
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
@@ -428,7 +442,7 @@ export class Worker {
     let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
     let lastCheck = 0;
     while (Date.now() - t0 < timeoutMs) {
-      if (this.halted) return STOPPED();
+      if (this.isOver) return STOPPED();
       const p = this.d.pointer?.();
       const down = (p?.mask ?? 0) & 256;
       if (p && down && !wasDown && inside(p)) {
@@ -453,7 +467,7 @@ export class Worker {
   private async perceive(image: boolean, expectTitle?: string): Promise<ToolResultObject> {
     const target = expectTitle ? { title: expectTitle } : this.target;
     const p = await this.perception.perceive({ image, scope: "window", target });
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     if (p.blocked) {
       this.d.audit.write({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
@@ -474,6 +488,26 @@ export class Worker {
   }
 
   /**
+   * The dialog an element sits in (its title and text), if any: "OK" or "Yes" there agrees to whatever the
+   * dialog says, so the policy reads the dialog, not just the window's title.
+   */
+  private dialogOf(id: number): { name: string; text: string } | undefined {
+    const DIALOG = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
+    let cur = this.known.get(id);
+    for (let i = 0; cur && i < 40; i++) {
+      if (DIALOG.test(cur.role)) {
+        const top = cur.id;
+        const inside = (n: AxNode) => { let p = n.parent; for (let j = 0; p !== null && j < 40; j++) { if (p === top) return true; p = this.known.get(p)?.parent ?? null; } return false; };
+        const words = [...this.known.values()].filter(n => inside(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
+          .map(n => n.name || n.text || "").filter(Boolean).join(" ");
+        return { name: cur.name, text: words.slice(0, 400) };
+      }
+      cur = cur.parent !== null ? this.known.get(cur.parent) : undefined;
+    }
+    return undefined;
+  }
+
+  /**
    * The element as it is now. The policy decides on what is on screen at the
    * moment of acting, not on a list read minutes ago (a "Next" button can become "Install").
    */
@@ -481,11 +515,12 @@ export class Worker {
     const node = this.known.get(id);
     if (!node) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
     const live = await this.sidecar.readElement(id).catch(() => null);
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     if (!live) return fail(`Element ${id} is gone (the window changed). Call perceive_window.`);
     if (live.role !== node.role) return fail(`Element ${id} has changed (it is now a ${live.role}). Call perceive_window.`);
     if (isDisabled(live.states)) return fail(`Element ${id} is disabled right now, so it can't be used. Call perceive_window to see why.`);
-    const current: AxNode = { ...node, name: live.name, states: live.states, bounds: live.bounds ?? node.bounds };
+    // Everything the policy looks at is current, including what a field holds now (replacing it may need the user's OK).
+    const current: AxNode = { ...node, name: live.name, states: live.states, bounds: live.bounds ?? node.bounds, text: live.text ?? node.text, secret: live.secret ?? node.secret };
     this.known.set(id, current);
     return { node: current, element: { role: current.role, name: current.name || this.labels.get(id) || "" } };
   }
@@ -494,7 +529,7 @@ export class Worker {
   private async stillSame(id: number, element: { role: string; name: string }): Promise<ToolResultObject | null> {
     if (!this.asked) return null;
     const live = await this.sidecar.readElement(id).catch(() => null);
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     const name = live ? live.name || this.labels.get(id) || "" : null;
     if (!live || live.role !== element.role || name !== element.name) {
       return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
@@ -508,20 +543,29 @@ export class Worker {
     const f = await this.fresh(id);
     if (!("node" in f)) return f;
     const { node, element } = f;
+    const dialog = this.dialogOf(id);
     const req: ActionRequest = {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "text" ? { mode: mode ?? "replace", currentText: node.text } : {}),
+      ...(dialog ? { dialog } : {}),
     };
     const verdict = await this.authorize(req);
     if (verdict) return verdict;
     const changed = await this.stillSame(id, element);
     if (changed) return changed;
-    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.halt.signal);
+    // A switch the user flipped while deciding may already be where it should be: toggling would undo it.
+    if (kind === "toggle" && this.asked) {
+      const now = await this.sidecar.readElement(id).catch(() => null);
+      if (this.isOver) return STOPPED();
+      const isOn = now ? now.states.includes("checked") || now.states.includes("pressed") : null;
+      if (now && isOn === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
+    }
+    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
-      if (this.halted) return STOPPED();
+      if (this.isOver) return STOPPED();
       if (node.bounds) this.fly(node.bounds);
       await new Promise(r => setTimeout(r, 350)); // let Ember arrive, so the user sees where it acts
-      if (this.halted) return STOPPED();
+      if (this.isOver) return STOPPED();
       const res = await run();
       if (res.after) this.known.set(id, { ...node, name: res.after.name, states: res.after.states, bounds: res.after.bounds ?? node.bounds });
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok, ...auditValue(req), after: { states: res.after.states, selected: res.after.selected } });
@@ -558,7 +602,7 @@ export class Worker {
     if (verdict) return verdict;
     // Where it is now: the window may have moved or scrolled while the user decided.
     const live = await this.sidecar.readElement(id).catch(() => null);
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     if (!live?.bounds || live.role !== node.role || (live.name || this.labels.get(id) || "") !== element.name) {
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
@@ -584,8 +628,9 @@ export class Worker {
     await cb.writeText(text);
     try {
       await hand.keys("ctrl+v");
-      await new Promise(r => setTimeout(r, 250)); // the app reads the clipboard after the key
     } finally {
+      // The app reads the clipboard after the key (even if Ember stopped right after sending it): only then is it given back.
+      await new Promise(r => setTimeout(r, 250));
       await cb.writeText(before);
     }
   }
@@ -593,7 +638,8 @@ export class Worker {
   private async pressKeys(keys: string): Promise<ToolResultObject> {
     // Keys go to whatever has focus in the window: the policy decides on that element (never a password field).
     const seen = await this.perception.read(this.target).catch(() => null);
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
+    if (seen?.blocked) return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
     const focus = seen ? focusedElement(seen.nodes) : null;
     const element = focus ? { role: focus.role, name: focus.name } : undefined;
     const verdict = await this.authorize({ taskId: this.spec.id, kind: "keys", app: this.window.app, window: this.window.name, element, value: keys });
@@ -615,7 +661,7 @@ export class Worker {
   }
 
   private async withCursor(kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId);
     if (!this.d.cursor) return fail("This needs the mouse or keyboard, which isn't available here. Try open_on_desk.");
     const c = this.d.cursor;
@@ -627,7 +673,7 @@ export class Worker {
     }
     const guarded = (hand: Hand): Hand => {
       const check = () => {
-        if (this.halted) throw new BorrowStopped();
+        if (this.isOver) throw new BorrowStopped();
         if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
       };
       return {
@@ -638,18 +684,19 @@ export class Worker {
         type: async t => { for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); } },
       };
     };
-    // Exactly the window the user approved, or nothing: a title several windows share (or none) is refused.
-    const win = this.window.name ? c.findWindow(this.window.name, this.target.pid) : 0;
-    if (this.window.name && !win) return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
-    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.halt.signal);
+    // Exactly the window the user approved, or nothing: no known window, or a title several windows share (or none), is refused.
+    if (!this.window.name) return fail("Ember doesn't know which window to use yet. Call perceive_window first.");
+    const win = c.findWindow(this.window.name, this.target.pid);
+    if (!win) return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
+    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     // Stopped while waiting for another task's window: the approved borrow never starts.
-    if (this.halted) { release(); return STOPPED(); }
+    if (this.isOver) { release(); return STOPPED(); }
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
-    this.usingCursor = true;
     try {
       await c.borrow.borrow(hand => fn(guarded(hand)), {
-        window: win || undefined,
+        window: win,
+        signal: this.overSignal,
         onStart: () => c.setBorrowing("active"),
       });
       const after = verifyId !== undefined ? await this.sidecar.readElement(verifyId).catch(() => null) : null;
@@ -664,7 +711,6 @@ export class Worker {
       if (err instanceof BorrowStopped) return STOPPED();
       return fail(msg);
     } finally {
-      this.usingCursor = false;
       c.setBorrowing("off");
       release();
     }
@@ -673,11 +719,13 @@ export class Worker {
   /** Tier 2: full mouse and keyboard on Ember's own desk (the user's input is never touched). */
   private async onDeskInput(place: DeskPlace, kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
     if (place.userInControl()) return denied("The user has taken over your desk. Wait for them, or finish the task saying where you got to.");
-    const release = await this.d.lease(`desk:${this.window.name || this.window.app}`, this.spec.id, this.halt.signal);
-    if (this.halted) { release(); return STOPPED(); }
-    this.deskBorrow ??= new CursorBorrow(place.input);
+    if (!this.window.name) return fail("Ember doesn't know which window on its desk to use yet. Call perceive_window first.");
+    const release = await this.d.lease(`desk:${this.window.name}`, this.spec.id, this.overSignal);
+    if (this.isOver) { release(); return STOPPED(); }
+    // One keyboard and pointer per desk: every task's desk input goes through the same queue.
+    const deskBorrow = deskBorrowFor(place);
     const guarded = (hand: Hand): Hand => {
-      const check = () => { if (this.halted) throw new BorrowStopped(); };
+      const check = () => { if (this.isOver) throw new BorrowStopped(); };
       return {
         ...hand,
         glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
@@ -686,10 +734,10 @@ export class Worker {
         type: async t => { check(); await hand.type(t); },
       };
     };
-    const win = this.window.name ? place.input.findWindow(this.window.name, this.target.pid) : 0;
-    if (this.window.name && !win) { release(); return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window."); }
+    const win = place.input.findWindow(this.window.name, this.target.pid);
+    if (!win) { release(); return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window."); }
     try {
-      await this.deskBorrow.borrow(hand => fn(guarded(hand)), { idleMs: 0, window: win || undefined });
+      await deskBorrow.borrow(hand => fn(guarded(hand)), { idleMs: 0, window: win, signal: this.overSignal });
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2 });
       return done(`Done on your desk.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
@@ -708,12 +756,13 @@ export class Worker {
   private async system(kind: "setting" | "open_app", value: string, run: () => Promise<string>, app = ""): Promise<ToolResultObject> {
     const verdict = await this.authorize({ taskId: this.spec.id, kind, app, window: "", value });
     if (verdict) return verdict;
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     try {
       const text = await run();
       this.d.audit.write({ event: "action", task: this.spec.id, kind, value, ok: true });
       return done(text);
     } catch (err) {
+      if (err instanceof BorrowStopped) return STOPPED();
       const msg = err instanceof Error ? err.message : String(err);
       this.d.audit.write({ event: "action", task: this.spec.id, kind, value, ok: false, error: msg });
       return fail(msg);
@@ -723,7 +772,7 @@ export class Worker {
   /** null when the action may go ahead; otherwise the tool result to return. */
   private async authorize(request: ActionRequest): Promise<ToolResultObject | null> {
     this.asked = false;
-    if (this.halted) return STOPPED();
+    if (this.isOver) return STOPPED();
     const req = { ...request, onDesk: !!this.place, goal: this.spec.goal };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
@@ -733,7 +782,8 @@ export class Worker {
         reason: `${decision.reason}; something on screen asked for an action you didn't`,
         prompt: `${decision.prompt.replace(/\?$/, "")}? (I'm checking each step: something on screen asked me to do something you didn't.)` };
     }
-    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && this.allowedApps.has(req.app.toLowerCase());
+    // "Allow" earlier in this task covers ordinary steps in that app, but not once something on screen tried to steer Ember.
+    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted && this.allowedApps.has(req.app.toLowerCase());
     this.d.audit.write({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
     if (decision.verdict === "allow" || sessionAllowed) return null;
@@ -742,9 +792,9 @@ export class Worker {
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     this.asked = true;
-    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options }, this.halt.signal);
-    this.d.audit.write({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: this.halted ? "stopped" : answer ?? "expired" });
-    if (this.halted) return STOPPED();
+    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options }, this.overSignal);
+    this.d.audit.write({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: this.isOver ? "stopped" : answer ?? "expired" });
+    if (this.isOver) return STOPPED();
     if (answer === "always" && decision.remember) {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
     }

@@ -78,6 +78,22 @@ export function journalSink(onError: (err: unknown) => void = () => undefined): 
   return line => {
     if (broken) return;
     if (!child) start();
-    child!.stdin!.write(line + "\n");
+    child!.stdin!.write(journalLine(line) + "\n");
   };
+}
+
+/**
+ * The journal is readable by more people than the user's own 0600 audit file: what the user asked
+ * and window titles go there as sizes only (the full text stays in ~/.config/ember/audit).
+ */
+export function journalLine(line: string): string {
+  try {
+    const e = JSON.parse(line) as Record<string, unknown>;
+    for (const k of ["goal", "summary", "window"]) {
+      if (typeof e[k] === "string") { e[`${k}Chars`] = (e[k] as string).length; delete e[k]; }
+    }
+    return JSON.stringify(e);
+  } catch {
+    return line;
+  }
 }

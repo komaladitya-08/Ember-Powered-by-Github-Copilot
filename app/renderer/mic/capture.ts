@@ -51,7 +51,7 @@ export class Capture {
     try {
       stream = await this.d.getUserMedia();
       const ctx = await this.d.graph(stream);
-      if (attempt !== this.attempt) { stopTracks(stream); void ctx.close(); return; } // superseded meanwhile
+      if (attempt !== this.attempt) { stopTracks(stream); void ctx.close().catch(() => undefined); return; } // superseded meanwhile
       this.stream = stream;
       this.ctx = ctx;
       const track = stream.getAudioTracks()[0];

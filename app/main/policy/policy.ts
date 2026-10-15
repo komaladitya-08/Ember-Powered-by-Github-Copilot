@@ -33,6 +33,8 @@ export interface ActionRequest {
   mode?: TextMode;
   /** For text: what the field holds now (replacing a lot of it is confirmed). */
   currentText?: string;
+  /** The dialog the element sits in (its title and text): "OK" there agrees to what the dialog says. */
+  dialog?: { name: string; text: string };
   /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
   onDesk?: boolean;
   /** The user's request this action serves (for the task-alignment check). */
@@ -94,7 +96,12 @@ export function normalizeLabel(s: string): string {
 
 /** Words on buttons that make an action hard to undo or visible to others. */
 const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|overwrite|replace|empty|format|buy|pay|order|purchase|checkout|install|uninstall|upload|transfer|reply|forward|sign|accept|approve|confirm|authori[sz]e|grant|trust|merge|run|execute|reset|clear|archive|revoke|unsubscribe|trash|wipe|destroy|quit|close without saving|don't save|log ?out|sign ?out|shut ?down|restart|reboot|power off)\b/;
-/** Answers that agree to whatever a dialog asks: risky when the dialog's own title is about something risky. */
+/**
+ * The same in the languages RHEL desktops commonly use, matched before look-alike folding (which maps
+ * Cyrillic letters to Latin). CJK has no word boundaries, so those match anywhere in the label.
+ */
+const RISKY_INTL = /(^|[^\p{L}])(supprimer|effacer|envoyer|publier|payer|acheter|vider|löschen|entfernen|senden|absenden|veröffentlichen|bezahlen|kaufen|leeren|eliminar|borrar|enviar|publicar|pagar|comprar|vaciar|eliminare|cancellare|inviare|pubblicare|pagare|acquistare|svuotare|excluir|apagar|remover|verwijderen|verzenden|versturen|betalen|kopen|legen|usuń|wyślij|zapłać|kup|удалить|удали|отправить|отправь|оплатить|купить|очистить|опубликовать)(?=$|[^\p{L}])|削除|送信|購入|支払|消去|删除|发送|购买|支付|清空|삭제|전송|결제|구매/u;
+/** Answers that agree to whatever a dialog asks: risky in a dialog, or when the window's own title is about something risky. */
 const AFFIRMATIVE = /^\s*(yes|ok|okay|continue|proceed|allow|confirm|do it|i understand|got it|agree)\b/;
 /** Fields Ember never fills: secrets and payment details. */
 const SECRET_FIELD = /\b(password|passphrase|passcode|pin|card ?number|credit ?card|cvv|cvc|security code|expir(y|ation)|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
@@ -103,16 +110,25 @@ const SECURITY_WINDOW = /\b(authenticat(e|ion) (is )?required|polkit|sudo|unlock
 
 /** Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. */
 export function isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean {
-  return SECURITY_WINDOW.test(normalizeLabel(`${w.app ?? ""} ${w.title ?? w.name ?? ""}`)) || /polkit|gcr-prompter|pinentry|ssh-askpass/i.test(w.app ?? "");
+  // GNOME Shell draws its own password prompts (polkit, keyring) in its own window: while it has the
+  // keyboard, Ember treats it as one (it never acts in the shell anyway).
+  return SECURITY_WINDOW.test(normalizeLabel(`${w.app ?? ""} ${w.title ?? w.name ?? ""}`)) || /polkit|gcr-prompter|pinentry|ssh-askpass|^gnome-shell$/i.test(w.app ?? "");
 }
 
-export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s));
+export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(s.normalize("NFKC").replace(/[\p{Cf}\u00ad]/gu, "").toLowerCase());
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
 const ACTIVATING_ROLES = /button|link|menu item|check box|radio|toggle|switch|tab/;
-/** Keys that activate the focused control. */
-const ACTIVATE_KEY = /^(return|enter|kp_enter|space)$/;
+/** Keys that activate the focused control (with Shift too, and the Ctrl+M / Ctrl+J line-feed equivalents). */
+const ACTIVATE_KEY = /^((shift|ctrl|alt)\+)?(return|enter|kp_enter|space)$|^ctrl\+(m|j)$/;
+/** Alt+letter presses whichever control has that underlined letter: Ember can't tell which. */
+const MNEMONIC_KEY = /^alt\+(shift\+)?[a-z0-9]$/;
+/** Shortcuts that only move, select, copy, paste, undo, format, search or zoom: fine on Ember's desk. */
+const SAFE_COMBOS = new Set(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+z", "ctrl+y", "ctrl+shift+z", "ctrl+b", "ctrl+i", "ctrl+u",
+  "ctrl+f", "ctrl+g", "ctrl+h", "ctrl+s", "ctrl+shift+s", "ctrl+n", "ctrl+t", "ctrl+l", "ctrl+o", "ctrl+home", "ctrl+end", "ctrl+left", "ctrl+right",
+  "ctrl+up", "ctrl+down", "ctrl+shift+left", "ctrl+shift+right", "ctrl+shift+home", "ctrl+shift+end", "ctrl+backspace", "ctrl+plus", "ctrl+minus",
+  "ctrl+equal", "ctrl+0", "ctrl+tab", "ctrl+shift+tab", "ctrl+prior", "ctrl+next", "ctrl+pageup", "ctrl+pagedown"]);
 /** Shortcuts that delete, send, close or quit, whatever has focus. */
 const DESTRUCTIVE_KEYS = new Set(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
   "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
@@ -140,9 +156,15 @@ const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "");
 export function alignedWithGoal(goal: string | undefined, element: string): boolean {
   if (!goal) return true;
   const asked = new Set(words(goal).map(stem));
-  const risky = words(element).filter(w => RISKY.test(w));
-  if (risky.length) return risky.some(w => asked.has(stem(w)));
-  return words(element).some(w => asked.has(stem(w)));
+  const all = words(element);
+  const risky = all.filter(w => RISKY.test(w));
+  if (risky.length) {
+    if (!risky.some(w => asked.has(stem(w)))) return false;
+    // The verb is what the user asked for; what it acts on must be too ("Send money to…" isn't "send the report").
+    const rest = all.filter(w => !RISKY.test(w));
+    return rest.length === 0 || rest.some(w => asked.has(stem(w)));
+  }
+  return all.some(w => asked.has(stem(w)));
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -199,12 +221,15 @@ export class PolicyEngine {
   private riskOf(r: ActionRequest): { reason: string; about?: string } | null {
     const name = r.element?.name ?? "";
     const role = r.element?.role ?? "";
-    // "OK" / "Yes" in a "Delete 500 files?" dialog agrees to the dialog's own risky question.
-    const agrees = AFFIRMATIVE.test(normalizeLabel(name)) && isRiskyLabel(r.window);
+    // "OK" / "Yes" agrees to whatever its dialog asks (in-page dialogs keep the browser's title), and in a
+    // "Delete 500 files?" window to that window's question.
+    const affirmative = AFFIRMATIVE.test(normalizeLabel(name));
+    const agrees = affirmative && (!!r.dialog || isRiskyLabel(r.window));
+    const asks = r.dialog ? `${name} ${r.dialog.name} ${r.dialog.text}` : `${name} ${r.window}`;
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (isRiskyLabel(name)) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (agrees) return { reason: "this answers a dialog about something hard to undo", about: `${name} ${r.window}` };
+        if (agrees) return { reason: r.dialog && !isRiskyLabel(asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo", about: asks };
         return null;
       case "select":
         return isRiskyLabel(r.value ?? "") ? { reason: "this choice may be hard to undo or visible to others", about: r.value } : null;
@@ -220,9 +245,13 @@ export class PolicyEngine {
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button.
           if (ACTIVATING_ROLES.test(role) && isRiskyLabel(name)) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
-          if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog about something hard to undo", about: `${name} ${r.window}` };
+          if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog, and Ember can't be sure what it agrees to", about: asks };
           if (!r.element) return { reason: "Ember can't tell what this key will activate" };
+          return null;
         }
+        if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
+        // Any other shortcut with Ctrl or Alt: unknown to Ember unless it only moves, edits or saves.
+        if (/(^|\+)(ctrl|alt)\+/.test(k) && !SAFE_COMBOS.has(k)) return { reason: "Ember can't tell what this shortcut does in this app" };
         return null;
       }
       default:
