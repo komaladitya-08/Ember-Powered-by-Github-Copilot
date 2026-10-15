@@ -19,13 +19,34 @@ const { workerData, parentPort } = require("node:worker_threads");
 const { fork } = require("node:child_process");
 const { sig, port, script, env } = workerData;
 const wake = () => { Atomics.store(sig, 0, 1); Atomics.notify(sig, 0); };
-let child, err = "", over = false;
-const exited = why => { if (over) return; over = true; Atomics.store(sig, 1, 1); wake(); parentPort.postMessage({ exit: why, stderr: err.slice(-1500) }); port.close(); };
+// The helper's stderr, for the report when it ends: the last of it, where the reason it died is. sharp (libvips)
+// inside Electron prints a hundred or so "GLib-GObject-CRITICAL ... assertion 'G_IS_OBJECT (object)' failed" lines
+// (and blank ones) with every picture: harmless, and they would push the reason out, so they aren't kept.
+const NOISE = /^\\s*$|GLib-GObject-CRITICAL \\*\\*: [^\\n]*assertion '[^']*' failed/;
+let child, err = "", line = "", over = false;
+const keep = text => { if (text && !NOISE.test(text)) err = (err + text + "\\n").slice(-4000); };
+const exited = why => {
+  if (over) return;
+  over = true;
+  // Calls fail at once; the report waits (briefly) for the helper's last words.
+  Atomics.store(sig, 1, 1);
+  wake();
+  let sent = false, timer;
+  const report = () => { if (sent) return; sent = true; clearTimeout(timer); keep(line); line = ""; parentPort.postMessage({ exit: why, stderr: err.slice(-1500) }); port.close(); };
+  if (!child || !child.stderr || child.stderr.readableEnded || child.stderr.destroyed) return report();
+  timer = setTimeout(report, 250);
+  child.stderr.once("close", report);
+};
 try {
   child = fork(script, [], { execPath: process.execPath, env, serialization: "advanced", stdio: ["ignore", "ignore", "pipe", "ipc"] });
 } catch (e) { exited(String(e && e.message || e)); }
 if (child) {
-  child.stderr.on("data", d => { if (err.length < 4000) err += d; });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", d => {
+    const lines = (line + d).split("\\n");
+    line = lines.pop().slice(-4000);
+    for (const l of lines) keep(l);
+  });
   child.on("error", e => exited(String(e && e.message || e)));
   child.on("exit", (code, signal) => exited("the desk's helper exited (" + (signal || code) + ")"));
   child.on("message", m => {

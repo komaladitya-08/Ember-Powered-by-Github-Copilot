@@ -6,6 +6,7 @@
 //     resources/sidecar/atspi/     the accessibility sidecar (run by the system Python)
 //   dist/package/voice-models/     the speech models, trimmed to the files Ember loads (if downloaded and verified)
 // Only linux-x64 glibc builds are kept (no musl, no wasm fallbacks). Licence and notice files always are.
+// The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
 // usage: node scripts/package/stage.mjs   (after npm run build)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
@@ -15,6 +16,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
+import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -53,6 +55,11 @@ const electronDist = path.dirname(createRequire(import.meta.url)("electron"));
 fs.cpSync(electronDist, app, { recursive: true, verbatimSymlinks: true });
 fs.renameSync(path.join(app, "electron"), path.join(app, "ember"));
 fs.rmSync(path.join(resources, "default_app.asar"), { force: true });
+// Its fuses: no debugger (--inspect*) and no NODE_OPTIONS, in the app or in what it runs as plain Node; plain Node
+// itself (RunAsNode) stays, for the desk helper. Only the copy changes, not node_modules/electron.
+const fuses = flipFuses(path.join(app, "ember"), EMBER_FUSES);
+const wrongFuses = fuseMismatches(fuses, EMBER_FUSES);
+if (wrongFuses.length) throw new Error(`the staged binary's fuses didn't take: ${wrongFuses.join("; ")}`);
 
 // 2. The app: its package.json, the build, and production dependencies only.
 const appDir = path.join(resources, "app");
@@ -162,6 +169,7 @@ async function voiceModels() {
 
 const du = p => execFileSync("du", ["-sh", p], { encoding: "utf8" }).split("\t")[0];
 console.log(`staged ${rel(app)} (${du(app)}): Ember ${version}, Electron ${electronVersion}`);
+console.log(`  fuses: ${Object.entries(fuses).map(([k, v]) => `${k} ${v === true ? "on" : v === false ? "off" : v}`).join(", ")}`);
 console.log(`  production modules: ${prod.map(p => path.relative(path.join(root, "node_modules"), p)).join(", ")}`);
 if (fs.existsSync(path.join(out, "voice-models"))) console.log(`staged ${rel(path.join(out, "voice-models"))} (${du(path.join(out, "voice-models"))})`);
 else if (!fs.existsSync(models)) console.log("no speech models in .cache/voice (run scripts/voice/prepare.mjs to include them)");

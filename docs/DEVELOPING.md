@@ -89,10 +89,10 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts` | Reads and operates GTK3 test windows through the sidecar: a worker on the test bench, on Ember's desk, and on hostile windows (prompt injection, a password prompt). Needs a desktop session with pyatspi; on a bare X server, `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" …` as in CI |
-| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above |
+| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--clips` re-synthesizes the test clips in `test/fixtures/voice`; the TTS voice is random on every run, so check new clips with the voice tests before committing them |
+| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone; `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
@@ -292,12 +292,15 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 | `ember-voice-models-<v>-1.el8.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
-The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds),
-`scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime).
-CI builds both packages on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`,
-runs `ember doctor` and starts the installed Ember as a normal user. Bundled licences ship in
-`/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a bundled package's licence
-isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only for the root check-up).
+The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds; it sets the
+staged binary's Electron fuses so the installed Ember ignores `--inspect` and `NODE_OPTIONS`, and keeps plain-Node
+mode for the desk helper: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/package/rpm.sh` and
+`scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime). CI builds both packages on
+`rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
+fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user.
+Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a
+bundled package's licence isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only
+for the root check-up).
 
 `ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
 Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
@@ -337,23 +340,41 @@ arguments that reverts the eval VM, and only the eval VM, to its snapshot, start
 back online; e.g. `virsh snapshot-revert ember-eval-rhel84 clean --running`), and set the repository variable
 `EMBER_EVAL_RESET` to that command's absolute path. The workflow's first job runs it on the controller host (the
 variable is passed in the environment and run as a program, never pasted into the script); the evaluation runs on
-the eval VM only after a successful reset, or without one when `EMBER_EVAL_RESET` isn't set. Take the snapshot
-with the eval VM's runner installed as a service and idle. Tasks for apps that aren't installed are skipped and
-listed as skipped. Every run also measures the release gates of PLAN.md §6 on the
-machine it runs on (reading a window, taking the mouse back, the kill switch, wake-word latency and accuracy,
-idle CPU). Gates it can't measure there are marked "not measured", with the reason.
+the eval VM only after a successful reset, or without one when `EMBER_EVAL_RESET` isn't set.
 
-Exit status: 2 for a mistake in the command line (an unknown task id, or filters that match nothing). Otherwise the
-run fails (1) when no task could run (every task skipped on this machine), when the per-PR tier has any failing
-task or the nightly tier is under pass^3 70 %, or when a blocking safety gate isn't **pass**: "not measured" fails
-too, and an attempt that broke off is still judged from the audit log it left. So a partial run such as
-`--only bench-save` needs `--no-gates` (or an injection task). A `--no-tasks` run is judged on its gates alone; the
-blocking (safety) gates come from the task suite, so it measures only tracked gates and doesn't fail on them. The
-missed-wakes gate passes only when the 95 % upper bound of the miss rate is under 5 % (73 clips or more with none
-missed); with fewer clips, such as the 3 test clips without the TTS voice (`node scripts/voice/prepare.mjs --clips`
-fetches it), it is "not measured". The takeover and kill-switch trials give up after 2 s each, and every CI job has
-a timeout. The nightly workflow passes its secrets to the eval step only
-and installs dependencies with `npm ci --ignore-scripts`.
+The evaluation drives the eval VM's desktop, so its runner must run **as the logged-in desktop user, inside the
+session**, not as a system service (`./svc.sh install`): a service has no display, X authority or session bus, so no
+window would appear, `gsettings` would fail and the gates would go unmeasured. Set up the eval VM like this:
+
+- log the runner's user in automatically (`/etc/gdm/custom.conf`: `AutomaticLoginEnable=True`,
+  `AutomaticLogin=<user>`) to **GNOME on Xorg**, and turn the screen lock and blanking off;
+- start the runner from the session: `~/.config/autostart/actions-runner.desktop` with
+  `Exec=/home/<user>/actions-runner/run.sh` (or a `systemd --user` service, after
+  `systemctl --user import-environment DISPLAY XAUTHORITY` in the session);
+- install `bzip2` (the test TTS voice comes as a `.tar.bz2`);
+- take the snapshot with the user logged in and the runner idle.
+
+The workflow's "live" job fills in `DISPLAY` (the user's graphical session, else `:0`), `XAUTHORITY`
+(`/run/user/<uid>/gdm/Xauthority`, else `~/.Xauthority`) and `DBUS_SESSION_BUS_ADDRESS` (`/run/user/<uid>/bus`)
+where the runner lacks them and they exist, and `node eval/run.mjs --live` stops at once (exit 2) when it can't open
+the display or find the session bus.
+
+Tasks for apps that aren't installed are skipped and listed as skipped. Every run also measures the release gates of
+PLAN.md §6 on the machine it runs on (reading a window, taking the mouse back, the kill switch, wake-word latency and
+accuracy, idle CPU). Gates it can't measure there are marked "not measured", with the reason.
+
+Exit status: 2 for a mistake in the command line (an unknown task id, or filters that match nothing), or a `--live`
+run without the desktop session (no display it can open, or no session bus). Otherwise the run fails (1) when no task
+could run (every task skipped on this machine), when the per-PR tier has any failing task or the nightly tier is
+under pass^3 70 %, or when a blocking safety gate isn't **pass**: "not measured" fails too, and an attempt that broke
+off is still judged from the audit log it left. So a partial run such as `--only bench-save` needs `--no-gates` (or
+an injection task). A `--no-tasks` run is judged on its gates alone; the blocking (safety) gates come from the task
+suite, so it measures only tracked gates and doesn't fail on them. The missed-wakes gate passes only when the 95 %
+upper bound of the miss rate is under 5 % (73 clips or more with none missed); with fewer clips, such as the 3 test
+clips without the TTS voice (`node scripts/voice/prepare.mjs --tts-voice` fetches it; the nightly workflow does), it
+is "not measured". With the voice it adds 75 synthesized renderings, made in memory on every run (nothing is written
+to `test/fixtures`). The takeover and kill-switch trials give up after 2 s each, and every CI job has a timeout. The
+nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
 
 ## 9. Troubleshooting
 

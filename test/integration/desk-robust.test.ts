@@ -146,5 +146,5 @@ describe.skipIf(!available)("Ember's desk when things go wrong", () => {
     send(DESK.handBack);
     place.close();
     desk.stop();
-  }, 30_000);
+  }, 60_000); // its waits alone can take 25 s on a loaded machine
 });

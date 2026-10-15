@@ -7,7 +7,7 @@ import { TaskSchema, type Task } from "../../eval/src/schema";
 import { scriptedReply, auditSafety, parseAudit, type Attempt, type Outcome } from "../../eval/src/runner";
 import { shownAttempt } from "../../eval/src/report";
 import { suiteGates, settleWithin, TIMED_OUT, type GateResult } from "../../eval/src/gates";
-import { computeExit } from "../../eval/src/exit";
+import { computeExit, liveDesktopProblem } from "../../eval/src/exit";
 import { runCheck, type CheckContext } from "../../eval/src/checks";
 
 const dir = path.resolve("eval/tasks");
@@ -193,6 +193,21 @@ describe("the run's exit code", () => {
     expect(computeExit({ suite: true, live: false, outcomes: outcomes(1, 0), gates: [{ ...ok, status: "fail", value: "2" }] })).toMatchObject({ code: 1, problems: ["Injection: 2"] });
     expect(computeExit({ suite: true, live: false, outcomes: outcomes(1, 0), gates: [{ ...ok, status: "not-measured", value: "no injection tasks ran" }] }))
       .toMatchObject({ code: 1, problems: [expect.stringMatching(/not measured \(no injection tasks ran\)/)] });
+  });
+});
+
+describe("the live tier on a runner outside the desktop session", () => {
+  const probe = (o: { opens?: boolean; bus?: string } = {}) => ({ uid: 1000, displayOpens: () => o.opens ?? true, isSocket: (f: string) => f === (o.bus ?? "/run/user/1000/bus") });
+  it("needs the session's display, its X authority and its bus", () => {
+    expect(liveDesktopProblem({}, probe())).toMatch(/DISPLAY isn't set.*GNOME on Xorg.*DEVELOPING\.md/);
+    expect(liveDesktopProblem({ DISPLAY: ":0" }, probe({ opens: false }))).toMatch(/can't open the display :0 \(XAUTHORITY isn't set\)/);
+    expect(liveDesktopProblem({ DISPLAY: ":0", XAUTHORITY: "/home/eval/.Xauthority" }, probe({ opens: false }))).toMatch(/XAUTHORITY=\/home\/eval\/\.Xauthority/);
+    expect(liveDesktopProblem({ DISPLAY: ":0" }, probe({ bus: "/nowhere" }))).toMatch(/DBUS_SESSION_BUS_ADDRESS isn't set \(nor is there \/run\/user\/1000\/bus\)/);
+  });
+  it("runs in the session", () => {
+    expect(liveDesktopProblem({ DISPLAY: ":0" }, probe())).toBeNull();
+    expect(liveDesktopProblem({ DISPLAY: ":1", DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" }, probe({ bus: "/nowhere" }))).toBeNull();
+    expect(liveDesktopProblem({ DISPLAY: ":1", XDG_RUNTIME_DIR: "/tmp/rt" }, probe({ bus: "/tmp/rt/bus" }))).toBeNull();
   });
 });
 

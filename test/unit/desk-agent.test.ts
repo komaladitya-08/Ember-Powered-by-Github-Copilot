@@ -14,7 +14,7 @@ import { running } from "../../app/main/desk/desk";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-agent-test-"));
 const helper = path.join(dir, "helper.cjs");
 fs.writeFileSync(helper, `
-const calls = { input: ["move", "pointer", "fail", "die", "hang", "releaseAll"], view: ["snapshot"] };
+const calls = { input: ["move", "pointer", "fail", "die", "hang", "releaseAll", "crash"], view: ["snapshot"] };
 const released = [];
 process.on("message", r => {
   const reply = v => process.send({ id: r.id, ...(r.async ? { async: true } : {}), ...v });
@@ -22,6 +22,12 @@ process.on("message", r => {
   else if (r.m === "pointer") reply({ v: { x: 1, y: 2, env: process.env.HELPER_TEST, node: !!process.env.ELECTRON_RUN_AS_NODE } });
   else if (r.m === "fail") reply({ e: "no such window" });
   else if (r.m === "die") process.exit(3);
+  else if (r.m === "crash") {
+    // sharp in Electron: GLib noise by the hundred, then the reason.
+    const glib = "\\n(process:" + process.pid + "): GLib-GObject-CRITICAL **: 22:47:01.272: g_object_unref: assertion 'G_IS_OBJECT (object)' failed\\n";
+    process.stderr.write("an early warning\\n" + glib.repeat(150));
+    process.stderr.write("Error: XIO: fatal IO error 11 on X server \\":99\\"\\n", () => process.exit(1));
+  }
   else if (r.m === "hang") { /* never answers */ }
   else if (r.m === "releaseAll") { released.push(1); reply({ v: released.length }); }
   else if (r.m === "snapshot") setTimeout(() => reply({ v: { jpeg: Buffer.from("jpeg!"), width: 4, height: 3, title: "t" } }), 20);
@@ -71,6 +77,16 @@ describe("desk helper", () => {
     await expect(later).rejects.toThrow(DESK_STOPPED);
     expect(await until(() => why.length > 0)).toBe(true);
     expect(why).toEqual([expect.stringMatching(/helper exited \(3\)/)]);
+  });
+
+  it("reports the helper's last words, without libvips's GLib noise", async () => {
+    const a = await start();
+    const why: string[] = [];
+    a.onExit(w => why.push(w));
+    expect(() => a.call("input", "crash")).toThrow(DESK_STOPPED);
+    expect(await until(() => why.length > 0)).toBe(true);
+    expect(why[0]).toMatch(/helper exited \(1\): an early warning\nError: XIO: fatal IO error 11 on X server ":99"$/);
+    expect(why[0]).not.toMatch(/GLib/);
   });
 
   it("ends a helper that stops answering instead of hanging Ember", async () => {

@@ -84,10 +84,10 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
-      - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows)
+      - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
@@ -132,6 +132,15 @@ jobs:
           # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
           test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
           ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'
+      - name: "The installed Ember's fuses: no debugger, no NODE_OPTIONS; plain Node kept for the desk helper"
+        run: |
+          node scripts/package/fuses.mjs --check /opt/ember/ember
+          # NODE_OPTIONS is ignored, also when Ember runs its desk helper as plain Node.
+          ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js /opt/ember/ember -e 'process.exit(0)'
+          # --inspect opens no debugger (and an installed Ember refuses to start with it).
+          sudo -u ci env HOME=/home/ci xvfb-run -a sh -c 'timeout 25 ember --inspect=127.0.0.1:9229 > /tmp/inspect.log 2>&1; true'
+          if grep -q 'Debugger listening' /tmp/inspect.log; then cat /tmp/inspect.log; exit 1; fi
+          grep -q "doesn't start with debugging switches" /tmp/inspect.log || { cat /tmp/inspect.log; exit 1; }
       - name: The bundled licences are installed, and marked as licence files
         run: |
           test -s /opt/ember/THIRD_PARTY_NOTICES

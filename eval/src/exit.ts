@@ -6,6 +6,7 @@
  * be measured doesn't.
  */
 
+import path from "node:path";
 import type { Outcome } from "./runner";
 import type { GateResult } from "./gates";
 
@@ -40,4 +41,23 @@ export function computeExit(r: ExitInput): { code: 0 | 1; problems: string[] } {
       : `${g.name}: not measured (${g.value}${g.note ? `; ${g.note}` : ""}), and a blocking gate has to pass`);
   }
   return { code: problems.length ? 1 : 0, problems };
+}
+
+/**
+ * Why the live tier can't run here, or null. It measures Ember on the eval VM's real desktop, so it needs that
+ * session's display (and the X authority to open it) and its session bus (settings, the accessibility bus). A
+ * runner started as a system service has none of them, and a run there would only skip tasks and leave gates
+ * unmeasured: it stops at once instead (exit 2). docs/DEVELOPING.md §8 says how to run the runner in the session.
+ */
+export function liveDesktopProblem(env: NodeJS.ProcessEnv, probe: { uid: number; displayOpens: (name: string) => boolean; isSocket: (file: string) => boolean }): string | null {
+  const fix = "run it in the logged-in “GNOME on Xorg” session, as its user, or set DISPLAY, XAUTHORITY and DBUS_SESSION_BUS_ADDRESS to that session's (docs/DEVELOPING.md §8)";
+  if (!env.DISPLAY) return `the live tier runs on a desktop, and DISPLAY isn't set: ${fix}`;
+  if (!probe.displayOpens(env.DISPLAY)) {
+    return `the live tier can't open the display ${env.DISPLAY} (${env.XAUTHORITY ? `XAUTHORITY=${env.XAUTHORITY}` : "XAUTHORITY isn't set"}): ${fix}`;
+  }
+  const bus = path.join(env.XDG_RUNTIME_DIR || `/run/user/${probe.uid}`, "bus");
+  if (!env.DBUS_SESSION_BUS_ADDRESS && !probe.isSocket(bus)) {
+    return `the live tier needs the desktop session's bus (settings, the accessibility bus), and DBUS_SESSION_BUS_ADDRESS isn't set (nor is there ${bus}): ${fix}`;
+  }
+  return null;
 }

@@ -16,8 +16,9 @@ import { TaskSchema, type Task } from "./schema";
 import { Runner, type Outcome } from "./runner";
 import { measureGates, type GateResult } from "./gates";
 import { renderReport, shownAttempt } from "./report";
-import { computeExit } from "./exit";
+import { computeExit, liveDesktopProblem } from "./exit";
 import { pickPython } from "../../app/main/perception/sidecar";
+import { openX11 } from "../../app/main/x11";
 import { locateRuntime } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
 
@@ -79,6 +80,14 @@ function loadTasks(): Task[] {
 }
 
 async function main(): Promise<number> {
+  if (live) {
+    const problem = liveDesktopProblem(process.env, {
+      uid: process.getuid?.() ?? 0,
+      displayOpens: name => { const x = openX11(name); x?.close(); return !!x; },
+      isSocket: file => { try { return fs.statSync(file).isSocket(); } catch { return false; } },
+    });
+    if (problem) throw new UsageError(problem);
+  }
   fs.mkdirSync(out, { recursive: true });
   const python = pickPython();
   const suite = !flag("no-tasks");
