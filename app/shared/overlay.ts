@@ -55,6 +55,8 @@ export interface EmberState {
   bubble: BubbleState;
   tasks: TaskCard[];
   status: string | null;
+  /** The control Ember is working on (global DIP): Ember flies beside it and it glows. */
+  focus?: Rect | null;
 }
 
 export const IDLE_BUBBLE: BubbleState = {
@@ -75,4 +77,5 @@ export interface HandleApi {
   onState(fn: (s: EmberState) => void): void;
   onInit(fn: (i: OverlayInit) => void): void;
   openMenu(): void;
+  bubbleAction(id: string): void;
 }

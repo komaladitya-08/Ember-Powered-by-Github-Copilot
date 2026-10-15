@@ -31,6 +31,18 @@ api.onState(s => {
   rig.setTalking(s.talking);
   $("line").textContent = s.status ?? (s.bubble.visible ? s.bubble.title : "Ready");
   $("thought").textContent = s.bubble.visible ? s.bubble.thought : "";
+  // Only the fallback card shows buttons; with a compositor they are in Ember's bubble.
+  const actions = document.body.classList.contains("fallback") && s.bubble.visible ? s.bubble.actions : [];
+  document.body.classList.toggle("asking", actions.length > 0);
+  $("actions").hidden = actions.length === 0;
+  $("actions").replaceChildren(...actions.map(a => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = a.label;
+    if (a.primary) b.className = "primary";
+    b.addEventListener("click", () => api.bubbleAction(a.id));
+    return b;
+  }));
 });
 $("handle").addEventListener("click", () => api.openMenu());
 

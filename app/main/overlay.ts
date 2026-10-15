@@ -89,8 +89,14 @@ export class OverlayManager {
     const waiting = (s: EmberState) => s.bubble.visible && s.bubble.actions.length > 0;
     const before = waiting(this.state);
     this.state = { ...this.state, ...next };
-    // While Ember waits for a decision it holds still, so its buttons don't run away from the cursor.
-    if (waiting(this.state) !== before) this.follower.park(waiting(this.state) ? this.follower.position : null);
+    const now = waiting(this.state);
+    if ("focus" in next || now !== before) {
+      const f = this.state.focus;
+      const size = this.settings().size;
+      // Working on a control: Ember sits just to its right. Waiting for a decision: it holds still,
+      // so its buttons don't run away from the cursor. Otherwise it follows the cursor again.
+      this.follower.park(f ? { x: f.x + f.width + size * 0.6 + 10, y: f.y + f.height / 2 } : now ? this.follower.position : null);
+    }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
 

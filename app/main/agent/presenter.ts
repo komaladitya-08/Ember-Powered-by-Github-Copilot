@@ -16,6 +16,18 @@ export const TOOL_STEPS: Record<string, string> = {
   set_appearance: "Changing how I look",
   describe_screen: "Looking at your screen",
   start_task: "Starting a task",
+  perceive_window: "Reading the window",
+  list_windows: "Looking at your windows",
+  switch_window: "Switching windows",
+  click: "Clicking",
+  toggle: "Flipping a switch",
+  type_text: "Typing",
+  choose_option: "Choosing an option",
+  set_value: "Setting a value",
+  change_setting: "Changing a setting",
+  open_app: "Opening an app",
+  report_progress: "Updating you",
+  finish_task: "Wrapping up",
 };
 
 export class Presenter {
@@ -55,6 +67,17 @@ export class Presenter {
     this.apply({
       emotion: "thinking", talking: false,
       bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${text.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
+    });
+  }
+
+  /** A worker started on a task: its bubble is titled with the task (this presenter's name). */
+  taskStarted(): void {
+    this.cancelHide();
+    this.answering = false;
+    this.answer = "";
+    this.apply({
+      emotion: "focused", talking: false,
+      bubble: { visible: true, mood: "acting", title: this.name(), thought: "", step: "Getting started", streaming: true, actions: [] },
     });
   }
 

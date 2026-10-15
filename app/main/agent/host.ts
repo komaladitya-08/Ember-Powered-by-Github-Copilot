@@ -12,6 +12,24 @@ import { chooseModels, type ModelLike } from "./models";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { EmberState } from "../../shared/overlay";
+import { TaskManager } from "./tasks";
+import { Worker } from "./worker";
+import type { Confirmer } from "./confirm";
+import type { Perception, WindowTarget } from "../perception";
+import type { AtspiSidecar, Bounds } from "../perception/sidecar";
+import type { PolicyEngine } from "../policy/policy";
+import type { AuditLog } from "../policy/audit";
+
+/** What workers need to see and act (absent when there is no desktop). */
+export interface Hands {
+  perception: Perception;
+  sidecar: AtspiSidecar;
+  policy: PolicyEngine;
+  audit: AuditLog;
+  confirmer: Confirmer;
+  flyTo: (bounds: Bounds | null) => void;
+  currentWindow: () => (WindowTarget & { app?: string }) | null;
+}
 
 export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
 
@@ -34,6 +52,7 @@ export interface HostOptions {
   onStatus: (s: AgentStatus) => void;
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
+  hands?: Hands;
   /** Tests and offline demos: talk to an OpenAI-compatible server instead of Copilot. */
   provider?: ProviderConfig;
 }
@@ -50,6 +69,7 @@ export function explainStartError(err: unknown): string {
 export class AgentHost {
   private client: CopilotClient | null = null;
   conductor: Conductor | null = null;
+  tasks: TaskManager | null = null;
   private status: AgentStatus = {
     phase: "signed-out", detail: "Not signed in to GitHub.", models: [], conductorModel: null, workerModel: null,
     usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
@@ -100,6 +120,33 @@ export class AgentHost {
       const choice = chooseModels(models, { conductor: s.models.conductor ?? undefined, worker: s.models.worker ?? undefined });
 
       const names: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
+      const hands = this.o.hands;
+      const workerVision = models.find(m => m.id === choice.worker)?.capabilities?.supports?.vision === true;
+      this.tasks = hands ? new TaskManager({
+        log: this.o.log.child("tasks"),
+        currentWindow: hands.currentWindow,
+        setCards: cards => this.o.setState({ tasks: cards }),
+        deleteSession: id => client.deleteSession(id),
+        onFinished: task => {
+          if (hands.confirmer.waiting) return;
+          this.o.setState({
+            emotion: task.status === "done" ? "proud" : task.status === "cancelled" ? "neutral" : "sad", talking: false,
+            bubble: { visible: true, mood: task.status === "done" ? "done" : "error", title: task.title, thought: task.result?.summary ?? "", step: null, streaming: false, actions: [] },
+          });
+        },
+        makeWorker: (spec, progress) => new Worker({
+          client, log: this.o.log.child(`task-${spec.id}`), model: choice.worker, vision: workerVision, provider: this.o.provider,
+          workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+          perception: hands.perception, sidecar: hands.sidecar, policy: hands.policy, confirmer: hands.confirmer, audit: hands.audit,
+          settings: this.o.settings,
+          presenter: new Presenter(this.o.setState, undefined, () => spec.goal.length > 40 ? spec.goal.slice(0, 39) + "…" : spec.goal),
+          lease: (key, owner) => this.tasks!.lease(key, owner),
+          flyTo: hands.flyTo,
+          onProgress: progress,
+          onUsage: (i, o) => this.recordUsage(i, o),
+        }, spec),
+      }) : null;
+      const tasks = this.tasks;
       const presenter = new Presenter(this.o.setState, undefined, () => names[this.o.settings.get().character] ?? "Ember");
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter, log: this.o.log.child("conductor"),
@@ -107,6 +154,11 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider, describeScreen: this.o.describeScreen,
         onUsage: (i, o) => this.recordUsage(i, o),
+        startTask: tasks ? goal => {
+          const t = tasks.start(goal);
+          return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
+        } : undefined,
+        takeReports: tasks ? () => tasks.takeReports().map(t => `Task "${t.title}" ${t.status}: ${t.result?.summary ?? ""}`) : undefined,
       });
       await this.conductor.start();
 
@@ -142,7 +194,16 @@ export class AgentHost {
     await this.conductor.ask(text);
   }
 
+  /** Stops the current answer and every running task (the handle's Stop). */
+  async abortAll(): Promise<void> {
+    this.tasks?.cancelAll();
+    this.o.hands?.confirmer.cancelAll();
+    await this.conductor?.abort();
+  }
+
   async stop(): Promise<void> {
+    this.tasks?.cancelAll();
+    this.tasks = null;
     await this.conductor?.stop();
     this.conductor = null;
     await this.client?.stop().catch(() => undefined);
