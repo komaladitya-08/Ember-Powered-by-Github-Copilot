@@ -32,6 +32,8 @@ window.emberAsk.onContext(c => {
   history = c.history;
   at = history.length;
   draft = "";
+  // "↑ earlier questions" only when there are some.
+  document.getElementById("hint-history")!.hidden = history.length === 0;
   sees.hidden = !c.sees;
   sees.textContent = c.sees ? `Ember will see: ${c.sees}` : "";
   input.focus();

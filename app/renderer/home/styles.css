@@ -133,3 +133,50 @@ h3.sub { margin: 4px 0 0; font-size: 13px; color: var(--fg); }
 .activity li.day { display: block; padding: 8px 14px 4px; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--bg); }
 h2[tabindex="-1"]:focus { outline: none; }
 .models-hint { grid-column: 1 / -1; margin: 0; }
+
+/* ── First run: only the welcome, the character picker and Start ── */
+body.first-run .after-setup { display: none !important; }
+
+/* ── Section links: one compact row that stays at the top (scrolls sideways when the window is narrow) ── */
+.jump {
+  position: sticky; top: 0; z-index: 2; margin: -10px -24px 0; padding: 8px 24px;
+  display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.jump a {
+  flex: none; padding: 4px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px;
+  border: 1px solid transparent;
+}
+.jump a:hover { color: var(--fg); background: var(--panel); }
+.jump a[aria-current="true"] { color: var(--fg); background: var(--panel); border-color: var(--line); }
+.jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+h2, summary { scroll-margin-top: 64px; }
+#agree { scroll-margin: 120px; }
+
+/* ── Folded sections (What Ember did, Setup check, About) ── */
+.fold > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-radius: 6px;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: "▸"; color: var(--muted); font-size: 12px; transition: transform 120ms ease; }
+.fold[open] > summary::before { transform: rotate(90deg); }
+.fold > summary h2 { margin: 0; }
+.fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fold-note { color: var(--muted); font-size: 13px; }
+.fold-note.fail { color: var(--fail); }
+.fold-note.warn { color: var(--warn); }
+.fold[open] > summary { margin-bottom: 10px; }
+
+/* ── Small things ── */
+.link { all: unset; cursor: pointer; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.link[hidden] { display: none; }
+.presence-line { margin: 0; color: var(--fg); }
+.never-look-msg { margin: 0; }
+.never-look-msg:empty { display: none; }
+.agent-actions[hidden] { display: none; }
+
+/* ── Calm mode: nothing slides or spins ── */
+html.calm *, html.calm *::before { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) { .fold > summary::before { transition: none; } }
+.managed-tag { color: var(--muted); font-size: 12px; }

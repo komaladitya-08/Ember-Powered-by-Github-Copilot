@@ -10,10 +10,12 @@ input {
 }
 input::placeholder { color: rgba(251, 238, 227, 0.62); }
 input:focus { border-color: #ff9a3d; }
+/* Never wider than the field (its padding counts): the place Ember will look shortens first. */
 .meta {
-  margin: 0; padding: 2px 10px; display: flex; gap: 10px; justify-content: space-between; align-items: center;
+  box-sizing: border-box; margin: 0; padding: 2px 10px; display: flex; gap: 10px; justify-content: space-between; align-items: center;
   font-size: 12px; color: #f3dccb; background: rgba(26, 15, 11, 0.9); border-radius: 9px; width: fit-content; max-width: 100%;
   white-space: nowrap; overflow: hidden;
 }
-.sees { overflow: hidden; text-overflow: ellipsis; color: #ffd2a8; }
-.hint { color: rgba(243, 220, 203, 0.82); }
+.sees { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #ffd2a8; }
+.hint { flex: none; color: rgba(243, 220, 203, 0.82); }
+.hint [hidden] { display: none; }

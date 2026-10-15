@@ -1,7 +1,9 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
+import { plainStream } from "@ember/bubble";
 import type { HandleApi } from "../../shared/overlay";
+import { cardTask, cardText } from "./card";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -28,45 +30,103 @@ function applySettings(s: Settings): void {
   name = NAMES[s.character] ?? "Ember";
   $("name").textContent = name;
   reduceSetting = s.reduceMotion;
+  document.documentElement.classList.toggle("calm", s.reduceMotion);
   applyMotion();
 }
 
+let fallback = false;
 api.onInit(i => {
+  fallback = i.fallback;
   document.body.classList.toggle("fallback", i.fallback);
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
-let shownActions = "";
+
+/** Buttons are kept (not rebuilt) while they stay the same, so a click is never lost to a re-render. */
+function buttons(host: HTMLElement, list: { id: string; label: string; primary?: boolean }[], label: (a: { label: string }) => string): void {
+  const key = JSON.stringify(list.map(a => [a.id, a.label, a.primary === true]));
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.replaceChildren(...list.map(a => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = a.label;
+    b.setAttribute("aria-label", label(a));
+    if (a.primary) b.className = "primary";
+    b.addEventListener("click", () => api.bubbleAction(a.id));
+    return b;
+  }));
+}
+
+const thoughtEl = $("thought");
+let wasStreaming = false;
 api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
-  // An answer's title is the character's name, already shown above: the line shows what it said instead.
-  const said = s.bubble.visible ? (s.bubble.title === name ? s.bubble.thought : s.bubble.title) : "";
-  $("line").textContent = s.status ?? (said || "Ready");
-  $("thought").textContent = s.bubble.visible ? s.bubble.thought : "";
   busy = s.talking || s.bubble.streaming;
+  const b = s.bubble;
   const mic = $("mic");
   const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
   mic.hidden = !micShown;
   mic.dataset.state = s.mic ?? "off";
   mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : "";
-  // Only the fallback card shows buttons; with a compositor they are in Ember's bubble.
-  const actions = document.body.classList.contains("fallback") && s.bubble.visible ? s.bubble.actions : [];
+  if (!fallback) {
+    // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
+    const said = b.visible ? (b.title === name ? b.thought : b.title) : "";
+    $("line").textContent = s.status ?? (said || "Ready");
+    return;
+  }
+  // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
+  const text = cardText(b, name, s.status);
+  if ($("line").textContent !== text.line) $("line").textContent = text.line;
+  const thought = b.streaming ? plainStream(text.thought) : text.thought;
+  if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;
+  // While it streams, the newest lines show; once done, it reads (and scrolls) from the start.
+  if (b.streaming) thoughtEl.scrollTop = thoughtEl.scrollHeight;
+  else if (wasStreaming) thoughtEl.scrollTop = 0;
+  wasStreaming = b.visible && b.streaming;
+  document.body.dataset.mood = b.visible ? b.mood : "idle";
+  const step = b.visible ? b.step : null;
+  $("step").hidden = !step;
+  $("step").textContent = step ?? "";
+
+  const actions = b.visible ? b.actions : [];
   document.body.classList.toggle("asking", actions.length > 0);
-  // Keep the same buttons across updates so a click is never lost to a re-render.
-  const key = JSON.stringify(actions.map(a => a.id));
-  if (key === shownActions) return;
-  shownActions = key;
   $("actions").hidden = actions.length === 0;
-  $("actions").replaceChildren(...actions.map(a => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = a.label;
-    if (a.primary) b.className = "primary";
-    b.addEventListener("click", () => api.bubbleAction(a.id));
-    return b;
-  }));
+  buttons($("actions"), actions, a => a.label);
+
+  const task = cardTask(s.tasks);
+  $("task").hidden = !task;
+  if (task) {
+    $("task").dataset.status = task.status;
+    $("task-title").textContent = task.title;
+    $("task-detail").textContent = task.detail;
+    $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
+  }
+  buttons($("task-actions"), task?.actions ?? [], a => `${a.label}: ${task?.title ?? ""}`);
+  requestAnimationFrame(fitCard);
 });
+
+/**
+ * Asks the main process for a card as tall as what it shows (no empty gap under a short question,
+ * room for a long one), when it offers that (`fit`); otherwise the card keeps the size main gives it.
+ */
+let askedHeight = 0;
+function fitCard(): void {
+  const fit = (api as HandleApi & { fit?: (height: number) => void }).fit;
+  if (!fallback || typeof fit !== "function") return;
+  const handleEl = $("handle");
+  const extra = thoughtEl.scrollHeight - thoughtEl.clientHeight;
+  let h = handleEl.offsetHeight + Math.max(0, extra);
+  for (const id of ["actions", "task"]) {
+    const el = $(id);
+    if (!el.hidden) h += el.offsetHeight + 10;
+  }
+  h = Math.ceil(h);
+  if (Math.abs(h - askedHeight) < 4) return;
+  askedHeight = h;
+  fit(h);
+}
 $("handle").addEventListener("click", () => api.openMenu());
 
 let pointer = { x: -1, y: -1 };

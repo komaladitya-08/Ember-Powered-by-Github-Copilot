@@ -53,6 +53,17 @@ const titleOf = (goal: string) => {
   return t.length > 40 ? t.slice(0, 39) + "…" : t;
 };
 
+/** How a finished task went, in the user's words: "stopped", never "cancelled". */
+export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
+
+/** One line for the conversation: "Tidy the desktop: done. Moved 3 files." or "Tidy the desktop: stopped." */
+export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): string {
+  const summary = t.result?.summary.trim() ?? "";
+  // "Stopped." or "Stopped before it started." says it already.
+  if (t.status === "cancelled" && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
+  return `${t.title}: ${statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
+}
+
 export class TaskManager {
   private tasks = new Map<string, Task>();
   private queue: { task: Task; spec: TaskSpec }[] = [];
@@ -63,6 +74,8 @@ export class TaskManager {
   /** Finished workers' sessions waiting to be deleted, with their timers. */
   private toDelete = new Map<string, ReturnType<typeof setTimeout>>();
   private runs = new Set<Promise<void>>();
+  /** Ember stopped or restarted: this manager's cards are gone from the screen and never come back. */
+  private closed = false;
 
   constructor(private d: TaskManagerDeps) {}
 
@@ -92,7 +105,7 @@ export class TaskManager {
     const q = this.queue.findIndex(x => x.task.id === id);
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
-      this.finish(task, "cancelled", { success: false, summary: "Cancelled before it started." });
+      this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
       return;
     }
     this.running.get(id)?.abort.abort();
@@ -117,6 +130,12 @@ export class TaskManager {
   dismiss(id: string): void {
     const t = this.tasks.get(id);
     if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.publish(); }
+  }
+
+  /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
+  close(): void {
+    this.closed = true;
+    this.d.setCards([]);
   }
 
   /** Waits (up to `ms`) for running workers to wind down after cancelAll(). */
@@ -225,6 +244,7 @@ export class TaskManager {
   }
 
   private publish(): void {
+    if (this.closed) return;
     const cards: TaskCard[] = [...this.tasks.values()].map(t => ({
       id: t.id,
       title: t.title,

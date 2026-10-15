@@ -9,7 +9,7 @@
  */
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
-import { ReasoningBubble } from "@ember/bubble";
+import { ReasoningBubble, plainStream } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 
@@ -57,9 +57,15 @@ let lastInteractive = "";
 let taskRects: Rect[] = [];
 let interactiveDirty = true;
 let bubbleShown = false;
+/** Ember's handle in the corner, in this overlay's coordinates (null: not on this display). */
+let handleRect: Rect | null = null;
+/** What the bubble keeps off: the handle and the task cards. */
+let avoid: Rect[] = [];
 
 function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
+  // Calm mode also stills the CSS pulses (the bubble's dot, the status dot, the focus glow).
+  document.documentElement.classList.toggle("calm", settings?.reduceMotion === true);
 }
 reducedMotionQuery.addEventListener("change", applyReducedMotion);
 
@@ -71,7 +77,17 @@ function applySettings(s: Settings): void {
   requestDraw();
 }
 
-api.onInit((i: OverlayInit) => { bounds = i.bounds; applySettings(i.settings); });
+api.onInit((i: OverlayInit) => {
+  bounds = i.bounds;
+  // The handle's place, when the main process says (`handle`, global DIP; null = on another display).
+  // Otherwise it is where it always is: the bottom-right corner, 200×56, 12 px in.
+  const given = (i as OverlayInit & { handle?: Rect | null }).handle;
+  handleRect = given === undefined
+    ? { x: i.bounds.width - 212, y: i.bounds.height - 68, width: 200, height: 56 }
+    : given && { x: given.x - i.bounds.x, y: given.y - i.bounds.y, width: given.width, height: given.height };
+  placeTasks();
+  applySettings(i.settings);
+});
 api.onSettings(applySettings);
 api.onFrame(f => {
   frame = f;
@@ -97,7 +113,8 @@ api.onState(s => {
   const b = s.bubble;
   bubble.setMood(b.mood);
   bubble.setTitle(b.title);
-  bubble.setThought(b.thought);
+  // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
+  bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
   bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
@@ -110,19 +127,35 @@ api.onState(s => {
   statusEl.hidden = !s.status;
   const statusText = statusEl.querySelector("span")!;
   if (statusText.textContent !== (s.status ?? "")) statusText.textContent = s.status ?? "";
-  if (renderTasks(s.tasks)) {
-    // Cards sit at a fixed place, so their buttons are measured only when the cards change.
-    taskRects = [...tasksEl.querySelectorAll<HTMLElement>(".task-actions:not([hidden])")].map(el => {
-      const r = el.getBoundingClientRect();
-      return { x: r.x - 4, y: r.y - 4, width: r.width + 8, height: r.height + 8 };
-    });
-    interactiveDirty = true;
-    reportInteractive();
-  }
+  // Cards sit at a fixed place, so their buttons are measured only when the cards change.
+  if (renderTasks(s.tasks)) measureTasks();
   requestDraw();
 });
 
-// ── Task cards: kept (not rebuilt) across updates, so a click is never lost to a re-render ──
+// ── Task cards: stacked just above the handle; kept (not rebuilt) across updates, so a click is never lost to a re-render ──
+
+function placeTasks(): void {
+  const h = handleRect;
+  tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width)) : 12}px`;
+  tasksEl.style.bottom = `${h ? Math.max(8, viewport.height - h.y + 10) : 80}px`;
+  measureTasks();
+}
+
+/** Where the cards' buttons are (they take clicks) and what the bubble keeps off. */
+function measureTasks(): void {
+  taskRects = [...tasksEl.querySelectorAll<HTMLElement>(".task-actions:not([hidden])")].map(el => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x - 4, y: r.y - 4, width: r.width + 8, height: r.height + 8 };
+  });
+  const list: Rect[] = handleRect ? [handleRect] : [];
+  if (tasksEl.children.length) {
+    const r = tasksEl.getBoundingClientRect();
+    list.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+  }
+  avoid = list;
+  interactiveDirty = true;
+  reportInteractive();
+}
 
 interface CardEls { li: HTMLLIElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string }
 const cards = new Map<string, CardEls>();
@@ -189,6 +222,7 @@ function isHere(f: OverlayFrame | null): f is OverlayFrame {
 
 function fit(): void {
   viewport = { width: window.innerWidth, height: window.innerHeight };
+  placeTasks();
   interactiveDirty = true;
   requestDraw();
 }
@@ -280,7 +314,7 @@ function draw(now: number): void {
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
     showStage(true);
-    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size)) interactiveDirty = true;
+    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid)) interactiveDirty = true;
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;

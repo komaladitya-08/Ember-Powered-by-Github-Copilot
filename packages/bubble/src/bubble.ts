@@ -68,9 +68,12 @@ const GAP = 6;
  * centre + 0.4 × size). The bubble sits below-right of it and flips left or above
  * near the edges of `bounds`. Given Ember's `size` (px), it also keeps clear of
  * Ember's body and the emote over its head, so it never covers Ember in a corner;
- * if neither below nor above fits, it goes beside Ember.
+ * if neither below nor above fits, it goes beside Ember. `avoid` are things it
+ * should rather not cover (Ember's handle, the task cards): the first placement
+ * that clears them wins, sliding sideways past them if that is what it takes;
+ * when nothing clears them, the usual placement stands.
  */
-export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0): Point {
+export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = []): Point {
   const { width: w, height: h } = box;
   const clampX = (x: number) => Math.min(Math.max(x, MARGIN), Math.max(MARGIN, bounds.width - w - MARGIN));
   const clampY = (y: number) => Math.min(Math.max(y, MARGIN), Math.max(MARGIN, bounds.height - h - MARGIN));
@@ -81,15 +84,42 @@ export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0)
   const x = clampX(right + w > bounds.width - MARGIN ? anchor.x - w + 22 : right);
   const below = anchor.y + Math.max(18, size * 0.2 + GAP);
   const above = anchor.y - h - Math.max(52, size * 1.5 + GAP);
-  if (fitsY(below)) return { x, y: below };
-  if (fitsY(above)) return { x, y: above };
+  // The usual places, in order of preference.
+  const places: Point[] = [below, above].filter(fitsY).map(y => ({ x, y }));
   if (size > 0) {
     const cy = anchor.y - size * 0.4;
     const y = clampY(cy - h / 2);
-    if (fitsX(anchor.x + size * 0.75 + GAP)) return { x: anchor.x + size * 0.75 + GAP, y };
-    if (fitsX(anchor.x - size * 0.75 - GAP - w)) return { x: anchor.x - size * 0.75 - GAP - w, y };
+    if (fitsX(anchor.x + size * 0.75 + GAP)) places.push({ x: anchor.x + size * 0.75 + GAP, y });
+    if (fitsX(anchor.x - size * 0.75 - GAP - w)) places.push({ x: anchor.x - size * 0.75 - GAP - w, y });
   }
-  return { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) };
+  const fallback = { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) };
+  if (!avoid.length) return places[0] ?? fallback;
+  // Below and above are clear of Ember at any x, so there the bubble may also slide sideways past what it avoids.
+  const tries: Point[] = [];
+  for (const p of places) {
+    tries.push(p);
+    if (p.y !== below && p.y !== above) continue;
+    for (const r of avoid) for (const sx of [r.x - w - GAP, r.x + r.width + GAP]) if (fitsX(sx)) tries.push({ x: sx, y: p.y });
+  }
+  const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
+  return tries.find(clear) ?? (clear(fallback) ? fallback : places[0] ?? fallback);
+}
+
+/**
+ * Markdown in text that is still arriving, made plain. The finished answer is
+ * cleaned by the main process; this covers the tail shown while it streams,
+ * including markers whose other half hasn't arrived yet ("**Ste").
+ */
+export function plainStream(s: string): string {
+  return s
+    .replace(/```\w*\n?/g, "")
+    .replace(/`/g, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "• ")
+    .replace(/(^|[\s(])[*_](?=[^\s*_])/gm, "$1")
+    .replace(/([^\s*_])[*_](?=[\s.,!?;:)]|$)/gm, "$1")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1 ($2)");
 }
 
 const STYLE_ID = "ember-bubble-style";
@@ -137,7 +167,7 @@ export const BUBBLE_CSS = `
 .eb-thought {
   margin: 0; max-height: calc(1.4em * 6); overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-start;
-  color: #fbeee3;
+  color: #fbeee3; white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
 /* Running commentary (thinking, working, listening) is quieter: italic, three lines. */
@@ -161,11 +191,15 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: none; mask-image: none;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
 }
-.eb-thought span::after { content: ""; display: inline-block; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); opacity: 0; }
-.ember-bubble[data-streaming="true"] .eb-thought span::after { opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
+/* The caret exists only while text arrives (an invisible one could wrap onto a blank line of its own). */
+.eb-thought span::after { content: ""; display: none; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); }
+.ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
 .eb-step { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 220, 190, 0.12); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 700; }
+/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
+.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; color: rgba(251, 238, 227, 0.8); }
+.ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
 .eb-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 .eb-actions button {
@@ -180,7 +214,10 @@ export const BUBBLE_CSS = `
 @keyframes eb-blink { 50% { opacity: 0; } }
 /* Nothing animates while the bubble is hidden (an endless animation keeps the compositor busy). */
 .ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after { animation: none !important; } }
+/* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). */
+@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after { animation: none !important; } .ember-bubble { transition: none; } }
+html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !important; }
+html.calm .ember-bubble { transition: none; }
 `;
 
 export interface BubbleAction {
@@ -338,11 +375,12 @@ export class ReasoningBubble {
   /**
    * Sit below-right of the flame base (`anchor`), flipping left or above near the
    * edges of `bounds` (the overlay's size) and, given Ember's `size` in px, never
-   * over Ember itself. Returns true when the bubble moved or changed size.
+   * over Ember itself, nor (if it can help it) over the `avoid` rects. Returns
+   * true when the bubble moved or changed size.
    */
-  place(anchor: Point, bounds: Size, size = 0): boolean {
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = []): boolean {
     const resized = this.dirty && this.measure();
-    const p = bubblePosition(anchor, this.box, bounds, size);
+    const p = bubblePosition(anchor, this.box, bounds, size, avoid);
     const x = Math.round(p.x), y = Math.round(p.y);
     if (!resized && this.pos?.x === x && this.pos.y === y) return false;
     this.pos = { x, y };

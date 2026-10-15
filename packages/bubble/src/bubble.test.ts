@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubblePosition, chipLabel, BUBBLE_LABEL, type BubbleView } from "./bubble";
+import { announcement, bubblePosition, chipLabel, plainStream, BUBBLE_CSS, BUBBLE_LABEL, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -85,5 +85,61 @@ describe("bubblePosition", () => {
         }
       }
     }
+  });
+
+  describe("keeping off the handle and the task cards", () => {
+    const handle = { x: 1068, y: 732, width: 200, height: 56 };
+    const hits = (p: { x: number; y: number }, box: { width: number; height: number }, r: typeof handle) =>
+      p.x < r.x + r.width && p.x + box.width > r.x && p.y < r.y + r.height && p.y + box.height > r.y;
+
+    it("places exactly as before when there is nothing to avoid", () => {
+      expect(bubblePosition({ x: 400, y: 324 }, { width: 300, height: 100 }, screen, 60, [])).toEqual({ x: 378, y: 342 });
+    });
+
+    it("slides past the handle instead of covering it", () => {
+      const size = 60, c = { x: 1080, y: 560 }, box = { width: 300, height: 170 };
+      const plain = bubblePosition({ x: c.x, y: c.y + size * 0.4 }, box, screen, size);
+      expect(hits(plain, box, handle)).toBe(true);
+      const p = bubblePosition({ x: c.x, y: c.y + size * 0.4 }, box, screen, size, [handle]);
+      expect(hits(p, box, handle)).toBe(false);
+      expect(overlaps(p, box, c, size)).toBe(false);
+      expect(inside(p, box)).toBe(true);
+    });
+
+    it("never covers the handle, Ember or the screen edge anywhere near the corner", () => {
+      for (const size of [40, 60, 110]) {
+        const box = { width: 300, height: 140 };
+        for (let x = 700; x <= screen.width - size; x += 23) {
+          for (let y = 420; y <= screen.height - size; y += 19) {
+            const p = bubblePosition({ x, y: y + size * 0.4 }, box, screen, size, [handle]);
+            expect(inside(p, box), `${size} at ${x},${y}`).toBe(true);
+            expect(overlaps(p, box, { x, y }, size), `${size} at ${x},${y}`).toBe(false);
+            expect(hits(p, box, handle), `${size} at ${x},${y}`).toBe(false);
+          }
+        }
+      }
+    });
+  });
+});
+
+describe("plainStream", () => {
+  it("drops markdown markers, also half-arrived ones", () => {
+    expect(plainStream("**Steps:**\n1. Open `Settings`\n2. Click **Background**\n- Pick an image now & enjoy"))
+      .toBe("Steps:\n1. Open Settings\n2. Click Background\n• Pick an image now & enjoy");
+    expect(plainStream("Here: **Ste")).toBe("Here: Ste");
+    expect(plainStream("## Heading\nsome *soft* words and _more_.")).toBe("Heading\nsome soft words and more.");
+    expect(plainStream("See [the docs](https://example.com/x).")).toBe("See the docs (https://example.com/x).");
+  });
+
+  it("leaves ordinary text alone", () => {
+    for (const t of ["2 * 3 = 6", "file_name.txt and my_var", "5*3", "Hi Ana, thanks!"]) expect(plainStream(t)).toBe(t);
+  });
+});
+
+describe("bubble styles", () => {
+  it("keeps line breaks, hides the caret unless streaming, and calms down with html.calm", () => {
+    expect(BUBBLE_CSS).toMatch(/\.eb-thought \{[^}]*white-space: pre-line/);
+    expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
+    expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
   });
 });

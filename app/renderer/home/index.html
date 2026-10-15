@@ -17,6 +17,10 @@
       </div>
     </header>
 
+    <nav class="jump after-setup" id="jump" aria-label="Settings sections">
+      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Privacy</a><a href="#access-h">Comfort</a><a href="#activity-h">Activity</a><a href="#checks-h">Setup</a><a href="#about-h">About</a>
+    </nav>
+
     <p id="managed" class="managed" hidden></p>
 
     <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
@@ -31,7 +35,7 @@
     </section>
 
     <section class="pick" aria-labelledby="pick-h">
-      <h2 id="pick-h">Your Ember</h2>
+      <h2 id="pick-h" tabindex="-1">Your Ember</h2>
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
       <div class="pick-row">
         <label for="size">Size <output id="size-out" for="size">60 px</output></label>
@@ -42,11 +46,11 @@
         <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
         <p class="hint" id="start-hint">Agree first, then start.</p>
       </div>
-      <label class="switch-row login-row"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
-      <p class="hint">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
+      <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
+      <p class="hint after-setup">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
 
-    <section aria-labelledby="copilot-h">
+    <section class="after-setup" aria-labelledby="copilot-h">
       <h2 id="copilot-h" tabindex="-1">Copilot</h2>
       <div class="copilot">
         <p class="agent-line" role="status"><i id="agent-dot" class="dot" aria-hidden="true"></i><span id="agent-text">Checking…</span></p>
@@ -69,29 +73,30 @@
       </div>
     </section>
 
-    <section aria-labelledby="conversation-h">
+    <section class="after-setup" aria-labelledby="conversation-h">
       <h2 id="conversation-h" tabindex="-1">Conversation</h2>
       <ol class="conversation" id="conversation" aria-labelledby="conversation-h"></ol>
       <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
     </section>
 
-    <section aria-labelledby="voice-h">
-      <h2 id="voice-h">Voice</h2>
+    <section class="after-setup" aria-labelledby="voice-h">
+      <h2 id="voice-h" tabindex="-1">Voice</h2>
       <div class="copilot voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for <b>“Hey Ember”</b></span></label>
         <div id="consent" class="consent" hidden>
           <p>Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only). GNOME shows a microphone icon while Ember listens. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> turns the microphone off and on.</p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
-        <p class="agent-line" role="status"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
-        <div class="agent-actions"><button type="button" id="voice-download" class="btn" hidden>Download speech models</button></div>
+        <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
+        <p class="sr" id="voice-live" role="status"></p>
+        <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
         <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud</span></label>
         <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
       </div>
     </section>
 
-    <section aria-labelledby="privacy-h">
+    <section class="after-setup" aria-labelledby="privacy-h">
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="copilot">
         <h3 class="sub">Apps Ember may act in without asking first</h3>
@@ -101,35 +106,50 @@
         <ul class="plain-list" id="never-look" aria-label="Apps and windows Ember never reads"></ul>
         <form class="add-row" id="never-look-form" autocomplete="off">
           <label for="never-look-add" class="sr">App or window name to add</label>
-          <input id="never-look-add" type="text" maxlength="100" placeholder="App or window name, e.g. Thunderbird">
+          <input id="never-look-add" type="text" maxlength="100" placeholder="App or window name, e.g. Thunderbird" aria-describedby="never-look-msg">
           <button type="submit" class="btn quiet">Add</button>
         </form>
-        <p class="hint">Ember never reads, captures or acts in an app or window whose name contains one of these.</p>
+        <p class="hint never-look-msg" id="never-look-msg" role="status"></p>
+        <p class="hint">Ember never reads, captures or acts in an app or window whose name contains one of these. <button type="button" id="never-look-defaults" class="link">Restore defaults</button></p>
       </div>
     </section>
 
-    <section aria-labelledby="access-h">
-      <h2 id="access-h">Comfort &amp; access</h2>
+    <section class="after-setup" aria-labelledby="access-h">
+      <h2 id="access-h" tabindex="-1">Comfort &amp; access</h2>
       <div class="copilot">
+        <h3 class="sub">Ember on screen</h3>
+        <p class="presence-line" id="presence-text" role="status"></p>
+        <div class="agent-actions" id="presence-actions">
+          <button type="button" id="p-hide" class="btn quiet">Hide Ember</button>
+          <button type="button" id="p-follow" class="btn quiet">Stay put</button>
+          <button type="button" id="p-quit" class="btn quiet">Quit Ember</button>
+        </div>
+        <h3 class="sub">Motion and keys</h3>
         <label class="switch-row"><input type="checkbox" id="reduce-motion" role="switch"><span>Calm mode: no hops, bounces or fidgets</span></label>
         <p class="hint">When Ember asks “May I?”, press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd> to allow or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.</p>
       </div>
     </section>
 
-    <section aria-labelledby="activity-h">
-      <h2 id="activity-h">What Ember did</h2>
-      <ol class="activity" id="activity"></ol>
-      <p class="hint">Every decision and action is also in <code>~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
+    <section class="after-setup fold-section" aria-labelledby="activity-h">
+      <details class="fold" id="activity-fold">
+        <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
+        <ol class="activity" id="activity"></ol>
+        <p class="hint">Every decision and action is also in <code>~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
+      </details>
     </section>
 
-    <section aria-labelledby="checks-h">
-      <h2 id="checks-h">Setup check</h2>
-      <ul class="checks" id="checks"></ul>
+    <section class="after-setup fold-section" aria-labelledby="checks-h">
+      <details class="fold" id="checks-fold">
+        <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
+        <ul class="checks" id="checks"></ul>
+      </details>
     </section>
 
-    <section aria-labelledby="about-h">
-      <h2 id="about-h">About this build</h2>
-      <dl class="facts" id="facts"></dl>
+    <section class="after-setup fold-section" aria-labelledby="about-h">
+      <details class="fold" id="about-fold">
+        <summary><h2 id="about-h">About this build</h2><span class="fold-note" id="about-note"></span></summary>
+        <dl class="facts" id="facts"></dl>
+      </details>
     </section>
   </main>
   <script src="main.js"></script>

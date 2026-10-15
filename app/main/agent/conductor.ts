@@ -111,12 +111,61 @@ export function conductorTools(settings: SettingsStore, describeScreen?: () => P
 /** A request could not be sent: the Copilot runtime is gone. */
 export class ConnectionLost extends Error {}
 
+/** `p`, or "timeout" if it hasn't settled within `ms` (a hung runtime never answers). */
+export function within<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), ms); timer.unref?.(); });
+  return Promise.race([p.finally(() => clearTimeout(timer)), late]);
+}
+
+/** What Ember keeps in agent.json between runs. */
+export interface AgentState {
+  conductorSessionId?: string;
+  /** Conversations forgotten while Copilot wasn't connected: deleted at the next start. */
+  forget?: string[];
+  /** The user signed out: a GitHub CLI or environment sign-in isn't used on its own until they sign in again. */
+  signedOut?: boolean;
+}
+
+export function readAgentState(file: string): AgentState {
+  try {
+    const j = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    return {
+      ...(typeof j.conductorSessionId === "string" ? { conductorSessionId: j.conductorSessionId } : {}),
+      ...(Array.isArray(j.forget) ? { forget: j.forget.filter((x): x is string => typeof x === "string") } : {}),
+      ...(j.signedOut === true ? { signedOut: true } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Merges `patch` into agent.json (undefined removes a field; nothing left removes the file). */
+export function writeAgentState(file: string, patch: Partial<Record<keyof AgentState, AgentState[keyof AgentState] | undefined>>): void {
+  const next: Record<string, unknown> = { ...readAgentState(file), ...patch };
+  for (const k of Object.keys(next)) if (next[k] === undefined || next[k] === false) delete next[k];
+  if (!Object.keys(next).length) { try { fs.rmSync(file); } catch { /* none */ } return; }
+  fs.writeFileSync(file, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+}
+
+/**
+ * Drops the saved conversation. Unless it was `deleted` already, it is deleted from the runtime's
+ * store at the next start (e.g. signed out while Copilot wasn't connected).
+ */
+export function forgetSavedConversation(file: string, deleted = false): void {
+  const s = readAgentState(file);
+  const id = s.conductorSessionId;
+  writeAgentState(file, { conductorSessionId: undefined, ...(id && !deleted ? { forget: [...new Set([...(s.forget ?? []), id])] } : {}) });
+}
+
 export class Conductor {
   private session: CopilotSession | null = null;
   readonly toolNames: string[];
 
-  /** Stop was pressed and the turn hasn't ended yet: a start_task already on its way is refused. */
+  /** Stop was pressed during a turn that hasn't ended yet: a start_task already on its way is refused. */
   private stopping = false;
+  /** A turn is in flight (sent, and no idle or error yet). */
+  private busy = false;
 
   constructor(private deps: ConductorDeps) {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
@@ -133,7 +182,8 @@ export class Conductor {
   async start(): Promise<void> {
     const d = this.deps;
     fs.mkdirSync(d.workDir, { recursive: true });
-    const saved = this.readState();
+    const state = readAgentState(d.stateFile);
+    const saved = state.conductorSessionId ?? null;
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
@@ -153,8 +203,13 @@ export class Conductor {
     if (!this.session) {
       const sessionId = `ember-conductor-${crypto.randomUUID()}`;
       this.session = await d.client.createSession({ ...config, sessionId });
-      this.writeState(sessionId);
+      writeAgentState(d.stateFile, { conductorSessionId: sessionId });
       d.log.info("conductor.created", { sessionId });
+    }
+    // Conversations forgotten while Copilot wasn't connected (signed out from an error) go now.
+    if (state.forget?.length) {
+      await within(Promise.all(state.forget.map(id => d.client.deleteSession(id).catch(err => d.log.warn("conductor.delete_failed", { err })))), 5000);
+      writeAgentState(d.stateFile, { forget: undefined });
     }
     const tools = await verifySessionTools(this.session, this.toolNames);
     d.log.info("conductor.tools", { tools });
@@ -165,13 +220,16 @@ export class Conductor {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
         if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
       }
-      if (e.type === "session.idle") { this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
+      if (e.type === "session.error") this.busy = false;
+      if (e.type === "session.idle") { this.busy = false; this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
     });
   }
 
   /** `context`: a snapshot of where the user was when they called Ember (untrusted). */
   async ask(text: string, context?: string): Promise<void> {
     if (!this.session) throw new Error("Ember's brain is not connected yet.");
+    // A new request: an earlier Stop doesn't refuse what the user asks for now.
+    this.stopping = false;
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
@@ -181,9 +239,11 @@ export class Conductor {
       text,
     ];
     const prompt = parts.join("\n\n");
+    this.busy = true;
     try {
       await this.session.send({ prompt });
     } catch (err) {
+      this.busy = false;
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err });
@@ -192,8 +252,9 @@ export class Conductor {
     }
   }
 
+  /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
-    if (this.session) this.stopping = true;
+    if (this.session && this.busy) this.stopping = true;
     await this.session?.abort();
   }
 
@@ -202,9 +263,11 @@ export class Conductor {
     await this.session?.setModel(model);
   }
 
+  /** Lets go of the session; a runtime that doesn't answer within a few seconds is left behind. */
   async stop(): Promise<void> {
-    await this.session?.disconnect().catch(() => undefined);
+    const session = this.session;
     this.session = null;
+    if (session) await within(session.disconnect().catch(() => undefined), 3000);
   }
 
   /**
@@ -213,22 +276,10 @@ export class Conductor {
    * another account never resumes this one's conversation).
    */
   async forget(): Promise<void> {
-    const id = this.session?.sessionId ?? this.readState();
+    const id = this.session?.sessionId ?? readAgentState(this.deps.stateFile).conductorSessionId;
     await this.stop();
-    if (id) await this.deps.client.deleteSession(id).catch(err => this.deps.log.warn("conductor.delete_failed", { err }));
-    try { fs.rmSync(this.deps.stateFile); } catch { /* none */ }
-  }
-
-  private readState(): string | null {
-    try {
-      const j = JSON.parse(fs.readFileSync(this.deps.stateFile, "utf8")) as { conductorSessionId?: string };
-      return j.conductorSessionId ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  private writeState(id: string): void {
-    fs.writeFileSync(this.deps.stateFile, JSON.stringify({ conductorSessionId: id }, null, 2) + "\n", { mode: 0o600 });
+    const deleted = id ? await within(this.deps.client.deleteSession(id).then(() => true, err => { this.deps.log.warn("conductor.delete_failed", { err }); return false; }), 5000) : true;
+    // Not deleted now (the runtime didn't answer): it goes at the next start.
+    forgetSavedConversation(this.deps.stateFile, deleted === true);
   }
 }
