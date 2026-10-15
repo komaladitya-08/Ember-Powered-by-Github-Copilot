@@ -53,6 +53,10 @@ export function openXInput(displayName?: string): XInput | null {
     const XKeycodeToKeysym = x11.func("unsigned long XKeycodeToKeysym(void *dpy, uint8_t code, int index)");
     const XGetWindowProperty = x11.func("int XGetWindowProperty(void *dpy, unsigned long w, unsigned long prop, long offset, long length, int del, unsigned long reqType, _Out_ unsigned long *actualType, _Out_ int *actualFormat, _Out_ unsigned long *nitems, _Out_ unsigned long *bytesAfter, _Out_ void **data)");
     const XSendEvent = x11.func("int XSendEvent(void *dpy, unsigned long w, int propagate, long mask, void *event)");
+    const XQueryTree = x11.func("int XQueryTree(void *dpy, unsigned long w, _Out_ unsigned long *root, _Out_ unsigned long *parent, _Out_ void **children, _Out_ unsigned int *n)");
+    const XSetInputFocus = x11.func("int XSetInputFocus(void *dpy, unsigned long focus, int revertTo, unsigned long time)");
+    const XRaiseWindow = x11.func("int XRaiseWindow(void *dpy, unsigned long w)");
+    const XGetInputFocus = x11.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
     const XTestFakeMotionEvent = xtst.func("int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)");
     const XTestFakeButtonEvent = xtst.func("int XTestFakeButtonEvent(void *dpy, unsigned int button, int isPress, unsigned long delay)");
     const XTestFakeKeyEvent = xtst.func("int XTestFakeKeyEvent(void *dpy, unsigned int keycode, int isPress, unsigned long delay)");
@@ -82,6 +86,18 @@ export function openXInput(displayName?: string): XInput | null {
       if (!p || p.format !== 32) return [];
       return Array.from({ length: p.bytes.length / 8 }, (_, i) => Number(p.bytes.readBigUInt64LE(i * 8)));
     };
+    const children = (win: number): number[] => {
+      const r = [0], parent = [0], list: unknown[] = [null], n = [0];
+      if (!XQueryTree(dpy, win, r, parent, list, n) || !list[0]) return [];
+      try {
+        const a = koffi.decode(list[0], "uint8_t", n[0] * 8) as Uint8Array;
+        const b = Buffer.from(a);
+        return Array.from({ length: n[0] }, (_, i) => Number(b.readBigUInt64LE(i * 8)));
+      } finally {
+        XFree(list[0]);
+      }
+    };
+    const hasWindowManager = () => longs(root, "_NET_SUPPORTING_WM_CHECK", 1).length > 0;
     const text = (win: number, name: string): string | null => {
       const p = prop(win, name, 1024);
       return p && p.format === 8 ? p.bytes.toString("utf8") : null;
@@ -127,17 +143,30 @@ export function openXInput(displayName?: string): XInput | null {
         return down;
       },
       activeWindow() {
-        return longs(root, "_NET_ACTIVE_WINDOW", 1)[0] ?? 0;
+        if (hasWindowManager()) return longs(root, "_NET_ACTIVE_WINDOW", 1)[0] ?? 0;
+        const focus = [0], revert = [0];
+        XGetInputFocus(dpy, focus, revert);
+        return Number(focus[0]) > 1 ? Number(focus[0]) : 0; // 0 None, 1 PointerRoot
       },
       findWindow(title) {
         const want = title.toLowerCase();
-        for (const w of longs(root, "_NET_CLIENT_LIST", 1024)) {
-          const name = text(w, "_NET_WM_NAME") ?? text(w, "WM_NAME") ?? "";
-          if (name.toLowerCase().includes(want)) return w;
+        const named = (w: number) => (text(w, "_NET_WM_NAME") ?? text(w, "WM_NAME") ?? "").toLowerCase().includes(want);
+        for (const w of longs(root, "_NET_CLIENT_LIST", 1024)) if (named(w)) return w;
+        // No EWMH window manager: look through the window tree (top two levels).
+        for (const w of children(root)) {
+          if (named(w)) return w;
+          for (const c of children(w)) if (named(c)) return c;
         }
         return 0;
       },
       activate(window) {
+        if (!hasWindowManager()) {
+          // Without a window manager, focus and raise the window ourselves.
+          XRaiseWindow(dpy, window);
+          XSetInputFocus(dpy, window, 2 /* RevertToParent */, 0 /* CurrentTime */);
+          XFlush(dpy);
+          return;
+        }
         // XClientMessageEvent on x86-64: type, serial, send_event, display, window, message_type, format, data.l[5].
         const ev = Buffer.alloc(192);
         ev.writeInt32LE(33, 0);                       // ClientMessage
