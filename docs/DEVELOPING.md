@@ -86,7 +86,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu (and to login) |
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
-| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts` | Reads a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
+| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts` | Reads and operates a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
+| `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
 
 ### Using Ember
 
@@ -95,6 +96,16 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 - **Ctrl+Alt+E** opens settings from anywhere.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead.
+
+### Asking Ember to do things
+
+Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember
+starts a task in the background, with a card in the top-right corner. It works through the app's
+accessibility interface, so your mouse and keyboard stay yours. Before its first action in an app it
+asks **Allow / Always in this app / Not now**. Buttons that send, delete, pay and the like are always
+confirmed. Ember never types into password, payment or terminal fields and never acts in
+authentication windows. **Stop** in the handle menu cancels every task. Apps you chose "Always" for
+are listed under `grants` in `settings.json`.
 
 ### Connecting Copilot
 
@@ -127,6 +138,7 @@ EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev
 | Conversation (Copilot session state) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
+| Audit log: every decision and action Ember took (JSON lines, kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 
 Environment variables for development:
 

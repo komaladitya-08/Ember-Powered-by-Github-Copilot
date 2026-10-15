@@ -33,6 +33,26 @@ try {
     check(urls.includes("handle"), "handle card is shown");
     check(logs.some(l => l.includes("overlay.fallback")), "fallback is logged");
     execFileSync("import", ["-window", "root", path.join(out, "fallback-handle-card.png")], { env: process.env });
+    // M4: questions can be answered on the card too.
+    await app.evaluate(() => {
+      globalThis.__answer = globalThis.__ember.confirmer().ask({ title: "May I?", prompt: "Click “Save” push button in Text Editor?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    });
+    await sleep(800);
+    const btn = await app.evaluate(async ({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(b => b.webContents.getURL().includes("/renderer/handle/"));
+      const r = await w.webContents.executeJavaScript(`(() => { const b = document.querySelector("#actions button.primary"); const r = b && b.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`);
+      const c = w.getContentBounds();
+      return r ? { x: Math.round(c.x + r.x), y: Math.round(c.y + r.y) } : null;
+    });
+    check(!!btn, "the card shows the question's buttons");
+    execFileSync("import", ["-window", "root", path.join(out, "fallback-question.png")], { env: process.env });
+    if (btn) {
+      xdo("mousemove", String(btn.x), String(btn.y));
+      await sleep(300);
+      xdo("click", "1");
+      await sleep(500);
+      check(await app.evaluate(() => globalThis.__answer) === "once", "clicking Allow on the card answers the question");
+    }
   } else {
     xdo("mousemove", "500", "400");
     await sleep(800);

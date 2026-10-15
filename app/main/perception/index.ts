@@ -22,6 +22,8 @@ export interface PerceptionOptions {
   log: Logger;
 }
 
+export interface WindowTarget { pid?: number; title?: string }
+
 export interface Seen {
   window: AxWindow | null;
   x11Window: X11Window | null;
@@ -40,10 +42,15 @@ export class Perception {
 
   /** The focused window's accessibility tree (empty when blocked or unreadable). */
   async focused(): Promise<Seen> {
-    const t0 = Date.now();
     const x11Window = this.o.x11?.activeWindow() ?? null;
-    let res = await this.o.sidecar.readWindow(x11Window?.pid ? { pid: x11Window.pid } : {});
-    if (!res.window && x11Window?.title) res = await this.o.sidecar.readWindow({ title: x11Window.title });
+    return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window);
+  }
+
+  /** A specific window's tree: by title (most precise), else by pid, else the active one. */
+  async read(target: WindowTarget, x11Window: X11Window | null = null): Promise<Seen> {
+    const t0 = Date.now();
+    let res = target.title ? await this.o.sidecar.readWindow({ title: target.title }) : { window: null, nodes: [] as AxNode[], ms: 0 };
+    if (!res.window) res = await this.o.sidecar.readWindow(target.pid ? { pid: target.pid } : {});
     const window = res.window;
     const blocked = !!window && isNeverLook(window, this.o.neverLook())
       || (!window && !!x11Window && isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()));
@@ -69,8 +76,8 @@ export class Perception {
   }
 
   /** For workers: elements with bounds, plus an optional marked screenshot. */
-  async perceive(opts: { image: boolean; scope: "window" | "screen" }): Promise<Perceived> {
-    const seen = await this.focused();
+  async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
+    const seen = opts.target ? await this.read(opts.target) : await this.focused();
     const text = seen.blocked
       ? "This window is on the user's never-look list. Do not interact with it; tell the conductor."
       : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true }) : "The focused window exposes no accessibility information; use the screenshot.";
@@ -92,6 +99,12 @@ export class Perception {
       });
     }
     return { ...seen, text, capture };
+  }
+
+  /** Visible windows (app and title), never-look ones left out. */
+  async windows(): Promise<AxWindow[]> {
+    const { windows } = await this.o.sidecar.listWindows();
+    return windows.filter(w => !isNeverLook(w, this.o.neverLook()));
   }
 
   /** Bounds of every visible window on the never-look list (blacked out in screenshots). */

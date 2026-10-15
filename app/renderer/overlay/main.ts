@@ -17,6 +17,7 @@ const ctx = canvas.getContext("2d")!;
 const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
+const focusEl = document.getElementById("focus")!;
 
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 const rig = new Rig();
@@ -47,7 +48,13 @@ api.onState(s => {
   bubble.setThought(b.thought);
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
+  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
+  const f = s.focus;
+  focusEl.hidden = !f;
+  if (f) {
+    const pad = 4;
+    Object.assign(focusEl.style, { left: `${f.x - bounds.x - pad}px`, top: `${f.y - bounds.y - pad}px`, width: `${f.width + pad * 2}px`, height: `${f.height + pad * 2}px` });
+  }
   statusEl.hidden = !s.status;
   statusEl.querySelector("span")!.textContent = s.status ?? "";
   tasksEl.replaceChildren(...s.tasks.map(t => {

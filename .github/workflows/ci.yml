@@ -64,7 +64,7 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
-      - name: Screen reading on RHEL 8's Python 3.6 (AT-SPI sidecar against a GTK3 window)
+      - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar and a worker against a GTK3 window)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
-            dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/perception.test.ts
+            dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts

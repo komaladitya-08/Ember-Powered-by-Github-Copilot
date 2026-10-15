@@ -20,7 +20,10 @@ import { openX11 } from "./x11";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
 import { Perception } from "./perception";
 import { AskWindow } from "./ask";
-import { AgentHost } from "./agent/host";
+import { AuditLog } from "./policy/audit";
+import { PolicyEngine } from "./policy/policy";
+import { Confirmer, guardWhileAsking } from "./agent/confirm";
+import { AgentHost, type Hands } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 
@@ -143,11 +146,15 @@ function start(): void {
   let greetTimer: NodeJS.Timeout | null = null;
 
   let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
-  const setState = (next: Partial<EmberState>) => {
+  let confirmer: Confirmer | null = null;
+  const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
     overlay?.setState(next);
     handle?.sendState(lastState);
   };
+  // While Ember is asking the user something, nothing else may replace the question
+  // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
+  const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
 
   const greet = () => {
     const name = CHARACTER_NAMES[settings.get().character];
@@ -168,7 +175,7 @@ function start(): void {
     const hidden = overlay?.isHidden() ?? false;
     Menu.buildFromTemplate([
       { label: "Ask Ember…\tCtrl+Alt+Space", click: () => askWindow.show(overlay?.position ?? null) },
-      { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.conductor?.abort(); } },
+      { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.abortAll(); } },
       { type: "separator" },
       { label: "Settings…", click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); } },
@@ -237,7 +244,9 @@ function start(): void {
     if (overlay?.owns(event.sender)) overlay.setInteractive(event.sender, rects);
   });
   ipcMain.on(OVERLAY.bubbleAction, (event, id: string) => {
-    if (overlay?.owns(event.sender)) log.info("bubble.action", { id });
+    const fromHandle = !!handle && event.sender === handle.win.webContents;
+    if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string") return;
+    log.info("bubble.action", { id, handled: confirmer?.answer(id) ?? false });
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
     if (handle && event.sender === handle.win.webContents) showMenu();
@@ -333,9 +342,24 @@ function start(): void {
       },
     });
     const seeing = perception;
+    // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
+    const audit = new AuditLog(path.join(userData, "audit"));
+    try { audit.prune(); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    confirmer = new Confirmer(showState);
+    const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
+    const hands: Hands | undefined = x11 ? {
+      perception, sidecar, audit, confirmer,
+      policy: new PolicyEngine({ neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants }),
+      flyTo: b => setState({ focus: b ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
+      currentWindow: () => {
+        const w = x11.activeWindow();
+        // Ember's own windows (ask box, settings) are not a task's target.
+        return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
+      },
+    } : undefined;
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,
-      describeScreen: () => seeing.describe(),
+      describeScreen: () => seeing.describe(), hands,
       onStatus: status => broadcast(IPC.agentStatusChanged, status),
     });
     void (async () => {
@@ -356,7 +380,7 @@ function start(): void {
     if (process.env.EMBER_TEST_HOOKS === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
       };
     }
   });

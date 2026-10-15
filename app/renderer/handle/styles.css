@@ -18,3 +18,10 @@ body.fallback .handle { inset: 0; border-radius: 0; align-items: flex-start; pad
 body.fallback #face { width: 96px; height: 96px; }
 body.fallback .thought { display: block; color: rgba(251, 238, 227, 0.72); font-style: italic; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 body.fallback #line { white-space: normal; font-weight: 700; color: #fbeee3; }
+/* Without a compositor the card is Ember's only surface, so questions are answered here. */
+.actions { position: absolute; left: 112px; right: 12px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.actions[hidden] { display: none; }
+.actions button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; font-weight: 600; font-size: 12px; border: 1px solid rgba(255, 220, 190, 0.3); }
+.actions button.primary { background: #b77bff; color: #1a0f0b; border-color: transparent; }
+.actions button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+body.fallback.asking .thought { -webkit-line-clamp: 2; }

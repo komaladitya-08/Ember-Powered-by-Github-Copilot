@@ -25,6 +25,8 @@ export const SettingsSchema = z.object({
   privacy: z.object({
     neverLook: z.array(z.string().max(100)).max(100).default(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]),
   }).default({ neverLook: ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"] }),
+  /** Apps Ember may act in without asking first (lower-case app name → grant). */
+  grants: z.record(z.string(), z.enum(["observe", "act"])).default({}),
   /** Preferred Copilot models; null lets Ember choose. */
   models: z.object({
     conductor: z.string().nullable().default(null),

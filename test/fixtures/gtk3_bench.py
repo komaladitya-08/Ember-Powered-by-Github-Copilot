@@ -60,11 +60,13 @@ class Bench(Gtk.Window):
             combo.append_text(c)
         combo.set_active(0)
         combo.get_accessible().set_name("Theme")
+        combo.connect("changed", lambda c: emit("selected", name="Theme", value=c.get_active_text()))
         grid.attach(combo, 0, 5, 2, 1)
 
         view = Gtk.TextView()
         view.get_accessible().set_name("Notes")
         view.get_buffer().set_text("Meeting notes\n- ship M3")
+        view.get_buffer().connect("changed", lambda b: emit("text", name="Notes", value=b.get_text(b.get_start_iter(), b.get_end_iter(), False)))
         view.set_size_request(400, 80)
         grid.attach(view, 0, 6, 2, 1)
 

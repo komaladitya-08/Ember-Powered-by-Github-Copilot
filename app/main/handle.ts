@@ -14,7 +14,7 @@ import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 
 const appDir = __dirname;
 const PILL = { width: 200, height: 56 };
-const CARD = { width: 340, height: 132 };
+const CARD = { width: 360, height: 150 };
 const MARGIN = 12;
 
 export class HandleWindow {

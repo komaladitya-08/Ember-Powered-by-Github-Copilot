@@ -27,12 +27,16 @@ export interface ConductorDeps {
   provider?: ProviderConfig;
   /** Text description of the user's screen (M3 perception). */
   describeScreen?: () => Promise<string>;
+  /** Starts a background task; returns what to tell the model. */
+  startTask?: (goal: string) => string;
+  /** Finished-task results the conductor hasn't heard about yet. */
+  takeReports?: () => string[];
   /** Called for every model call with its token counts (usage meter). */
   onUsage?: (inputTokens: number, outputTokens: number) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>, startTask?: (goal: string) => string): Tool<any>[] {
   return [
     defineTool("set_appearance", {
       description: "Change how Ember looks: one of cinder, wisp, glassling, glint; optionally its size in pixels (36-110).",
@@ -57,12 +61,13 @@ export function conductorTools(settings: SettingsStore, describeScreen?: () => P
         : "Ember can't read the screen in this session (no X11 display or accessibility service). Tell the user.",
     }),
     defineTool("start_task", {
-      description: "Start a task in the user's applications (opening apps, clicking, typing, changing settings).",
-      parameters: z.object({ goal: z.string().describe("One clear goal, in the user's words") }),
+      description: "Start a task in the user's applications (opening apps, clicking, typing, changing settings). It runs in the background; the user keeps working. Results arrive with the user's next message.",
+      parameters: z.object({ goal: z.string().min(3).max(500).describe("One clear goal, in the user's words, with any details they gave") }),
       skipPermission: true,
       defer: "never",
-      // Workers arrive in M4.
-      handler: async () => "Ember cannot operate applications in this version yet. Tell the user this is coming soon and offer to explain how to do it instead.",
+      handler: async ({ goal }) => startTask
+        ? startTask(goal)
+        : "Ember cannot operate applications in this session (no desktop access). Tell the user and offer to explain how to do it instead.",
     }),
   ];
 }
@@ -72,7 +77,7 @@ export class Conductor {
   readonly toolNames: string[];
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen).map(t => t.name);
+    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask).map(t => t.name);
   }
 
   get sessionId(): string | null {
@@ -86,7 +91,7 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen),
+      tools: conductorTools(d.settings, d.describeScreen, d.startTask),
       systemMessage: emberSystemMessage(),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
@@ -117,7 +122,9 @@ export class Conductor {
     if (!this.session) throw new Error("Ember's brain is not connected yet.");
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
-    await this.session.send({ prompt: text });
+    const reports = this.deps.takeReports?.() ?? [];
+    const prompt = reports.length ? `<task_results>\n${reports.join("\n")}\n</task_results>\n\n${text}` : text;
+    await this.session.send({ prompt });
   }
 
   async abort(): Promise<void> {

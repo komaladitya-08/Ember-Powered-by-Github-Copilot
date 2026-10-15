@@ -41,6 +41,19 @@ export interface ReadWindowResult {
   ms: number;
 }
 
+/** An element as it is right after an action (for verification). */
+export interface ElementInfo {
+  role: string;
+  name: string;
+  states: string[];
+  bounds: Bounds | null;
+  text?: string;
+  value?: number;
+  selected?: string;
+}
+
+export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo }
+
 export interface SidecarStatus { version: number; python: string; toolkitAccessibility: boolean | null; apps: number }
 
 /** RHEL's system Python first (it has pyatspi), then python3 on PATH. */
@@ -100,6 +113,16 @@ export class AtspiSidecar {
   readWindow(params: { pid?: number; title?: string; maxDepth?: number; maxNodes?: number } = {}): Promise<ReadWindowResult> {
     return this.request("read_window", params);
   }
+
+  // Tier 1 actions on element ids from a previous readWindow.
+  readElement(id: number): Promise<ElementInfo> { return this.request("read_element", { id }); }
+  doAction(id: number, action = "click"): Promise<ActionResult> { return this.request("do_action", { id, action }); }
+  setText(id: number, text: string, mode: "replace" | "insert" | "append" = "replace"): Promise<ActionResult> {
+    return this.request("set_text", { id, text, mode });
+  }
+  setValue(id: number, value: number): Promise<ActionResult> { return this.request("set_value", { id, value }); }
+  selectOption(id: number, option: string): Promise<ActionResult> { return this.request("select_option", { id, option }); }
+  listOptions(id: number): Promise<{ options: string[] }> { return this.request("list_options", { id }); }
 
   stop(): void {
     this.proc?.kill();
