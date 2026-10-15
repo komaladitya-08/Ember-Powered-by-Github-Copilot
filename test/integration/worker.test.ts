@@ -191,7 +191,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     const result = await worker.run(new AbortController().signal);
     await worker.dispose();
     expect(result).toEqual({ success: true, summary: "Clicked the pad and saved." });
-    expect(asked).toEqual(["Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?", "Borrow your keyboard to press ctrl+s on “Save” push button in gtk3_bench.py?"]);
+    expect(asked).toEqual(["Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?", "Borrow your keyboard to press Ctrl+S on “Save” push button in gtk3_bench.py?"]);
     await new Promise(r => setTimeout(r, 300));
     const mine = events.slice(before);
     expect(mine).toEqual(expect.arrayContaining([

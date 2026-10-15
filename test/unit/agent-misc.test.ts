@@ -154,4 +154,21 @@ describe("review round 2", () => {
     await old.restore(s);
     expect(text).toBe("mine");
   });
+
+  it("the clipboard: raw X targets are never read (Electron crashes on PIXMAP), and an owner that doesn't answer ends the save", async () => {
+    const { electronClipboard, ClipboardTimeout } = await import("../../app/main/agent/clipboard");
+    const read: string[] = [];
+    const data: Record<string, unknown> = { "text/plain": "cells", PIXMAP: 1, BITMAP: 2, TARGETS: 3, "application/x-openoffice-embed-source-xml;windows_formatname=\"Star Embed Source (XML)\"": 4 };
+    const item = { types: Object.keys(data), getType: async (t: string) => { read.push(t); return data[t]; } };
+    class Item { constructor(readonly data: Record<string, unknown>) {} }
+    const cb = electronClipboard<Item>({ read: async () => [item], write: async () => undefined, writeText: async () => undefined, clear: () => undefined }, Item as unknown as new (d: Record<string, never>) => Item);
+    expect(Object.keys((await cb.save()).items[0])).toEqual(["text/plain", Object.keys(data)[4]]);
+    expect(read).not.toContain("PIXMAP");
+    // A frozen owner: one format never comes.
+    const stuck = { types: ["text/plain", "text/html"], getType: (t: string) => (t === "text/html" ? new Promise(() => undefined) : Promise.resolve("x")) };
+    const slow = electronClipboard<Item>({ read: async () => [stuck], write: async () => undefined, writeText: async () => undefined, clear: () => undefined }, Item as unknown as new (d: Record<string, never>) => Item, 100);
+    const t0 = Date.now();
+    await expect(slow.save()).rejects.toBeInstanceOf(ClipboardTimeout);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
 });

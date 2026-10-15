@@ -90,7 +90,8 @@ export interface ElementInfo {
   secret?: boolean;
 }
 
-export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo }
+/** `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering. */
+export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean }
 
 export interface SidecarStatus { version: number; python: string; toolkitAccessibility: boolean | null; apps: number }
 
@@ -244,7 +245,7 @@ export class AtspiSidecar {
   }
 
   private physicalResult(id: number, r: ActionResult): ActionResult {
-    return this.scales.has(id) ? { ...r, before: this.physical(id, r.before), after: this.physical(id, r.after) } : r;
+    return this.scales.has(id) ? { ...r, before: this.physical(id, r.before), after: r.after && this.physical(id, r.after) } : r;
   }
 
   status(): Promise<SidecarStatus> { return this.request("status"); }

@@ -93,15 +93,29 @@ export function journalSink(onError: (err: unknown) => void = () => undefined): 
   };
 }
 
+/** Values that say nothing private: key combinations, scroll directions, Ember's own settings, app names, on/off. */
+const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "toggle"]);
+
 /**
- * The journal is readable by more people than the user's own 0600 audit file: what the user asked
- * and window titles go there as sizes only (the full text stays in ~/.config/ember/audit).
+ * The journal is readable by more people than the user's own 0600 audit file: what the user asked,
+ * window titles, element names (an email's subject) and chosen values (a form's answers) go there as
+ * sizes only (the full text stays in ~/.config/ember/audit).
  */
 export function journalLine(line: string): string {
   try {
     const e = JSON.parse(line) as Record<string, unknown>;
-    for (const k of ["goal", "summary", "window"]) {
-      if (typeof e[k] === "string") { e[`${k}Chars`] = (e[k] as string).length; delete e[k]; }
+    const size = (o: Record<string, unknown>, k: string) => {
+      if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
+    };
+    for (const k of ["goal", "summary", "window"]) size(e, k);
+    if (!PLAIN_VALUE_KINDS.has(String(e.kind))) size(e, "value");
+    for (const k of ["element", "after"]) {
+      if (e[k] && typeof e[k] === "object") {
+        const copy = { ...(e[k] as Record<string, unknown>) };
+        size(copy, "name");
+        size(copy, "selected");
+        e[k] = copy;
+      }
     }
     return JSON.stringify(e);
   } catch {

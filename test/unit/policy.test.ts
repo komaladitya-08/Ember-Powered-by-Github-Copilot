@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PolicyEngine, canonicalKeys, type ActionRequest } from "../../app/main/policy/policy";
+import { PolicyEngine, alignedWithGoal, canonicalKeys, isRiskyLabel, isSecurityWindow, keyLabel, type ActionRequest } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 
 const engine = (grants: Record<string, "observe" | "act"> = {}, now = () => 0) =>
@@ -91,7 +91,7 @@ describe("policy: review fixes (screen text can't hide risk)", () => {
   it("Enter on a focused risky button is a click on it, and destructive shortcuts are asked about on the desk too", () => {
     const keys = (value: string, element?: { role: string; name: string }, onDesk = false) =>
       e.decide({ taskId: "k", kind: "keys", app: "Files", window: "Home", element, value, onDesk, goal: "tidy my downloads" });
-    expect(keys("Return", { role: "push button", name: "Delete all" }).prompt).toMatch(/press Return on “Delete all” push button/);
+    expect(keys("Return", { role: "push button", name: "Delete all" }).prompt).toMatch(/press Enter on “Delete all” push button/);
     expect(keys("Return", { role: "push button", name: "Delete all" }).aligned).toBe(false);
     expect(keys("shift+Delete", undefined, true).verdict).toBe("confirm");
     expect(keys("ctrl+Return", { role: "text", name: "Message" }, true).verdict).toBe("confirm");
@@ -239,5 +239,142 @@ describe("policy: Ember doesn't run programs, through a file manager either (rev
     const ask = { name: "", text: "Do you want to run “report.sh”, or display its contents?" };
     expect(act("Run", true, ask, "push button").verdict).toBe("deny");
     expect(act("Run", true, undefined, "push button").verdict).not.toBe("deny");
+  });
+});
+
+describe("policy: review round 3", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", gedit: "act" }) });
+  const click = (name: string, o: Partial<ActionRequest> = {}) =>
+    e.decide({ taskId: `c-${Math.random()}`, kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name }, goal: "fill in the form", ...o });
+  const deskKeys = (value: string, element?: { role: string; name: string; secret?: boolean }) =>
+    e.decide({ taskId: `k-${Math.random()}`, kind: "keys", app: "gedit", window: "notes", element, value, onDesk: true, goal: "tidy my notes" });
+
+  it.each([
+    // Italian, German, French, Spanish, Portuguese, Dutch, Polish, Russian.
+    "Elimina", "Elimina definitivamente", "Invia", "Svuota cestino", "Rimuovi", "Acquista ora", "Paga ora", "Inoltra", "Condividi", "Conferma",
+    "Zahlungspflichtig bestellen", "Jetzt kaufen", "Überweisen", "Antworten", "Weiterleiten", "Installieren", "Teilen", "Bestätigen", "Abmelden", "Zurücksetzen", "Verwerfen", "Loeschen",
+    "Valider la commande", "Commander", "Répondre", "Repondre", "Transférer", "Partager", "Installer", "Confirmer", "Réinitialiser", "Se déconnecter", "Vider la corbeille",
+    "Finalizar compra", "Realizar pedido", "Responder", "Reenviar", "Compartir", "Instalar", "Confirmar", "Cerrar sesión", "Pagar ahora",
+    "Excluir", "Encaminhar", "Compartilhar", "Terminar sessão", "Verwijderen", "Doorsturen", "Afrekenen", "Uitloggen", "Bevestigen",
+    "Usuń", "Wyślij", "Zapłać", "Zamów", "Wyloguj", "Potwierdź", "Удалить", "Отправить", "Оплатить", "Оформить заказ", "Подтвердить", "Выйти",
+    // Nordic, Finnish, Czech, Turkish, and scripts without spaces.
+    "Kill Process", "End Process", "Terminate", "Donate", "Book now", "Leave group",
+    "Ta bort", "Skicka", "Logga ut", "Slet", "Bekræft", "Slett", "Poista", "Lähetä", "Maksa", "Smazat", "Odeslat", "Zaplatit", "Sil", "Gönder", "Satın al", "Onayla",
+    "削除", "すべて送信", "購入する", "ログアウト", "删除所有文件", "提交订单", "转账", "삭제", "결제하기", "로그아웃",
+  ])("“%s” is asked about, even with a grant", name => {
+    expect(isRiskyLabel(name)).toBe(true);
+    expect(click(name).verdict).toBe("confirm");
+  });
+
+  it.each([
+    "Formato", "Zahlen", "Ordina per nome", "Inviati", "Posta inviata", "Liste d'envies", "Bearbeiten", "Speichern", "Enregistrer", "Guardar", "Salva",
+    "Opslaan", "Zapisz", "Сохранить", "Öffnen", "Abrir", "Annulla", "Abbrechen", "Annuler", "Cancelar", "Configuración del sistema", "Tom", "Ode to Joy",
+    "Vapaata tilaa", "In den Warenkorb legen", "Kop 1", "Перевод", "保存", "打开", "열기", "Ansicht", "Hilfe",
+  ])("“%s” (an everyday label) isn't", name => {
+    expect(click(name).verdict).toBe("allow");
+  });
+
+  it.each([["Ja", "Alle Dateien endgültig löschen?"], ["Oui", "Supprimer définitivement ?"], ["Sí", "¿Eliminar todos los archivos?"], ["Да", "Удалить все файлы?"],
+    ["Tak", "Usunąć wszystkie pliki?"], ["はい(Y)", "すべて削除しますか?"], ["确定", "删除所有文件?"], ["Weiter", "Zahlung bestätigen"], ["Evet", "Tüm dosyaları sil?"]])(
+    "“%s” agrees to what its dialog asks (%s), and the question quotes it", (name, text) => {
+      const d = click(name, { dialog: { name: "", text } });
+      expect(d.verdict).toBe("confirm");
+      expect(d.prompt).toContain(`It says: “${text}”.`);
+      expect(click(name, { window: "Settings" }).verdict).toBe("allow");
+    });
+
+  it("the question about answering a dialog says what it asks, also on the desk", () => {
+    const d = e.decide({ taskId: "q", kind: "click", app: "Files", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "Confirm", text: "Delete all 2,341\nmessages?" }, onDesk: true, goal: "delete my old messages" });
+    expect(d.prompt).toBe("Click “OK” push button in Files (on my desk)? It says: “Delete all 2,341 messages?”.");
+  });
+
+  it("whether a risky word was asked for is judged in every language", () => {
+    expect(alignedWithGoal("Aggiungi un commento", "Elimina commento")).toBe(false);
+    expect(alignedWithGoal("Elimina il vecchio commento", "Elimina commento")).toBe(true);
+    expect(alignedWithGoal("Lösche die Datei notes.txt", "Löschen")).toBe(true);
+    expect(alignedWithGoal("Удали старый файл", "Удалить")).toBe(true);
+    expect(alignedWithGoal("删除旧文件", "删除")).toBe(true);
+    expect(alignedWithGoal("写一封邮件", "删除")).toBe(false);
+    expect(alignedWithGoal("log out of the shop", "Log out")).toBe(true);
+    expect(alignedWithGoal("fill in my name", "Log out")).toBe(false);
+  });
+
+  it("keypad twins are judged as the keys they act like", () => {
+    for (const k of ["KP_Delete", "shift+KP_Delete", "ctrl+KP_Enter", "alt+KP_Enter", "KP_Decimal"]) expect(deskKeys(k, { role: "text", name: "Doc" }).verdict, k).toBe("confirm");
+    expect(deskKeys("KP_Enter", { role: "push button", name: "Send" }).verdict).toBe("confirm");
+    expect(deskKeys("ctrl+alt+KP_Delete").verdict).toBe("deny");
+    expect(deskKeys("ctrl+KP_Add", { role: "text", name: "Doc" }).verdict).toBe("allow");
+  });
+
+  it("a letter in an open menu picks an item, so it is asked about", () => {
+    expect(deskKeys("d", { role: "menu item", name: "Copy" }).verdict).toBe("confirm");
+    expect(deskKeys("d", { role: "text", name: "Doc" }).verdict).toBe("allow");
+  });
+
+  it("Enter with nothing Ember can see focused says it can't tell what it will activate", () => {
+    expect(deskKeys("Return").prompt).toBe("Borrow your keyboard to press Enter in gedit (on my desk)? I can't tell what it will activate.");
+    expect(e.decide({ taskId: "u", kind: "keys", app: "gedit", window: "notes", value: "space" }).prompt).toBe("Borrow your keyboard to press Space in gedit? I can't tell what it will activate.");
+  });
+
+  it.each(["ctrl+alt+0x74", "ctrl+alt+0xffbf", "alt+0xffbf", "0xffeb", "0x1008ff2a", "U0074", "ctrl+alt+U+0074"])("%s (a key by its number) is never pressed", k => {
+    expect(canonicalKeys(k)).toBeNull();
+    expect(deskKeys(k).verdict).toBe("deny");
+  });
+
+  it("keys are shown the way the rest of Ember writes them, never as the model spelled them", () => {
+    expect(keyLabel("ctrl+s")).toBe("Ctrl+S");
+    expect(keyLabel("Control_R+Shift_R+Delete")).toBe("Ctrl+Shift+Delete");
+    expect(keyLabel("Return")).toBe("Enter");
+    expect(keyLabel("escape")).toBe("Esc");
+    expect(keyLabel("KP_Delete")).toBe("keypad Delete");
+    expect(keyLabel("alt+F4")).toBe("Alt+F4");
+    expect(keyLabel("ctrl+Page_Down")).toBe("Ctrl+Page Down");
+    expect(e.decide({ taskId: "l", kind: "keys", app: "gedit", window: "notes", value: "shift+ctrl+DELETE" }).prompt).toBe("Borrow your keyboard to press Ctrl+Shift+Delete in gedit?");
+  });
+
+  it("a field the reader found secret (by a Show-password toggle or a label beside it) is never typed into, by any route", () => {
+    const secret = { role: "text", name: "", secret: true };
+    expect(deskKeys("4", secret).verdict).toBe("deny");
+    for (const kind of ["text", "cursor_text", "select", "value", "keys"] as const) {
+      expect(e.decide({ taskId: `s-${kind}`, kind, app: "Firefox", window: "Login", element: secret, value: "4" }).verdict, kind).toBe("deny");
+    }
+  });
+
+  it("an expiry date is secret only on a card (the screen reader's rule)", () => {
+    const fill = (name: string) => e.decide({ taskId: `x-${name}`, kind: "text", app: "Firefox", window: "Form", element: { role: "text", name }, value: "12/27" }).verdict;
+    expect(fill("Expiration date")).toBe("allow");
+    expect(fill("Card expiry")).toBe("deny");
+    expect(fill("MM/YY")).toBe("deny");
+  });
+
+  it("a second look at the same request isn't counted against the rate limit", () => {
+    const tight = new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }), rateLimit: 1 });
+    const r: ActionRequest = { taskId: "r", kind: "click", app: "gedit", window: "notes", element: { role: "push button", name: "Bold" } };
+    expect(tight.decide(r).verdict).toBe("allow");
+    for (let i = 0; i < 3; i++) expect(tight.recheck(r).verdict).toBe("allow");
+    expect(tight.decide(r).verdict).toBe("deny");
+  });
+
+  it.each([
+    [{ app: "polkit-gnome-authentication-agent-1", title: "Authentication Required" }, true], [{ app: "gtk3_hostile.py", title: "Authentication Required" }, true],
+    [{ title: "Authenticate" }, true], [{ app: "gcr-prompter", title: "" }, true], [{ title: "Unlock Login Keyring" }, true], [{ title: "Enter password for “ada@example.com”" }, true],
+    [{ title: "[sudo] password for ada" }, true], [{ title: "Password Required" }, true], [{ app: "pinentry-gnome3", title: "" }, true], [{ app: "ssh-askpass", title: "" }, true],
+    [{ app: "firewall-config", title: "Firewall Configuration" }, true],
+    [{ app: "mousepad", title: "firewall-notes.txt - Mousepad" }, false], [{ app: "Firefox", title: "How sudo works — Mozilla Firefox" }, false],
+    [{ app: "soffice", title: "Security settings review.odt - LibreOffice Writer" }, false], [{ app: "Firefox", title: "Firewall - Wikipedia" }, false],
+    [{ app: "gedit", title: "password-manager-comparison.md - gedit" }, false], [{ app: "gedit", title: "Authentication methods (draft).txt - gedit" }, false],
+  ] as const)("security window %o: %s", (w, expected) => {
+    expect(isSecurityWindow(w)).toBe(expected);
+  });
+});
+
+describe("audit journal copy (review round 3)", () => {
+  it("keeps element names and chosen values as sizes; keys and settings stay readable", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const click = JSON.parse(journalLine(JSON.stringify({ event: "action", kind: "click", app: "Evolution", element: { role: "table cell", name: "Re: your test results" }, ok: true })));
+    expect(click.element).toEqual({ role: "table cell", nameChars: 21 });
+    const choice = JSON.parse(journalLine(JSON.stringify({ event: "action", kind: "select", element: { role: "combo box", name: "Reason" }, value: "Pregnancy test", after: { states: [], selected: "Pregnancy test" } })));
+    expect(choice).toEqual({ event: "action", kind: "select", element: { role: "combo box", nameChars: 6 }, valueChars: 14, after: { states: [], selectedChars: 14 } });
+    expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "keys", value: "ctrl+s" }))).value).toBe("ctrl+s");
   });
 });

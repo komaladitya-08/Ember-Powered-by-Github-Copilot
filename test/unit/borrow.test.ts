@@ -206,7 +206,7 @@ describe("tier 3 policy", () => {
   it("asks every time Ember needs the mouse or keyboard, even with a grant", () => {
     const d = e.decide({ taskId: "t", kind: "cursor_click", app: "gedit", window: "notes", element: { role: "panel", name: "Canvas" } });
     expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true, prompt: "Borrow your mouse to click “Canvas” panel in gedit?" });
-    expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "notes", value: "ctrl+s" }).prompt).toBe("Borrow your keyboard to press ctrl+s in gedit?");
+    expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "notes", value: "ctrl+s" }).prompt).toBe("Borrow your keyboard to press Ctrl+S in gedit?");
   });
   it("still refuses secrets", () => {
     expect(e.decide({ taskId: "t", kind: "cursor_text", app: "gedit", window: "w", element: { role: "text", name: "Password" }, value: "x" }).verdict).toBe("deny");

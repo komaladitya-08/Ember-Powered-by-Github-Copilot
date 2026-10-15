@@ -132,7 +132,7 @@ describe("AtspiSidecar", () => {
     expect((await s.readElement(5)).bounds).toEqual({ x: 20, y: 40, width: 60, height: 80 });
     expect((await s.readElement(6)).bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
     const r = await s.doAction(5);
-    expect([r.before?.bounds, r.after.bounds]).toEqual([{ x: 20, y: 40, width: 60, height: 80 }, { x: 20, y: 40, width: 60, height: 80 }]);
+    expect([r.before?.bounds, r.after?.bounds]).toEqual([{ x: 20, y: 40, width: 60, height: 80 }, { x: 20, y: 40, width: 60, height: 80 }]);
   });
 
   it("hands the secret fields earlier helpers knew to every new one, before anything else", async () => {
