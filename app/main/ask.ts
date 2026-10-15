@@ -63,6 +63,15 @@ export class AskWindow {
     if (this.win && !this.win.isDestroyed()) this.win.hide();
   }
 
+  /** Open now (it closes when it loses focus, so open means the user is typing in it). */
+  get visible(): boolean {
+    return !!this.win && !this.win.isDestroyed() && this.win.isVisible();
+  }
+
+  focus(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.focus();
+  }
+
   owns(sender: Electron.WebContents): boolean {
     return !!this.win && !this.win.isDestroyed() && this.win.webContents === sender;
   }

@@ -71,6 +71,8 @@ export interface Status {
     confirmEveryAction: boolean;
     allowGrants: boolean;
     retentionDays: number;
+    /** Never-look entries the administrator set: shown locked; they never go into the user's own list. */
+    neverLook: string[];
   };
 }
 

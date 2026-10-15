@@ -27,14 +27,24 @@ export class AuditLog {
     return path.join(this.dir, `audit-${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}.jsonl`);
   }
 
+  /** The newest entries, newest first: read from the files once, then kept up to date in memory. */
+  private latest: (AuditEntry & { t: string })[] | null = null;
+  private static readonly KEEP = 500;
+
   write(e: AuditEntry): void {
     const line = JSON.stringify({ t: this.now().toISOString(), ...e });
     fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+    if (this.latest) { this.latest.unshift(JSON.parse(line)); this.latest.length = Math.min(this.latest.length, AuditLog.KEEP); }
     try { this.sink?.(line); } catch { /* the journal is a copy; the file is the record */ }
   }
 
-  /** The newest entries, newest first (for the activity timeline). */
+  /** The newest entries, newest first (for the activity timeline, asked for every few seconds). */
   recent(limit = 100): (AuditEntry & { t: string })[] {
+    this.latest ??= this.readNewest(AuditLog.KEEP);
+    return this.latest.slice(0, limit);
+  }
+
+  private readNewest(limit: number): (AuditEntry & { t: string })[] {
     const files = fs.readdirSync(this.dir).filter(f => MONTH_FILE.test(f)).sort().reverse();
     const out: (AuditEntry & { t: string })[] = [];
     for (const f of files) {
@@ -56,6 +66,7 @@ export class AuditLog {
       const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
       if (end < cutoff) fs.rmSync(path.join(this.dir, f));
     }
+    this.latest = null;
   }
 }
 

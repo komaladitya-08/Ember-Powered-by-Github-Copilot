@@ -1,6 +1,6 @@
 /** M8: admin lockdown, consent, kill switch, task alignment, auth prompts, audit timeline. */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -177,6 +177,18 @@ describe("audit timeline", () => {
     expect(audit.recent(2)).toHaveLength(2);
     expect(lines).toHaveLength(3);
     expect(JSON.parse(lines[1])).toMatchObject({ event: "action", ok: true });
+  });
+
+  it("reads the files once for the timeline, then keeps new entries in memory", () => {
+    const dir = tmp();
+    const audit = new AuditLog(dir);
+    audit.write({ event: "task", task: "1", phase: "asked" });
+    expect(audit.recent(5).map(e => e.phase)).toEqual(["asked"]);
+    const read = vi.spyOn(fs, "readFileSync");
+    audit.write({ event: "task", task: "1", phase: "done" });
+    expect(audit.recent(5).map(e => e.phase)).toEqual(["done", "asked"]);
+    expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
   });
 
   it("still records when the journal copy fails", () => {

@@ -193,7 +193,8 @@ function start(): void {
   if (loaded.recoveredFrom) log.warn("settings.recovered", { backup: loaded.recoveredFrom });
   // Edits made by hand (never-look list, grants) are picked up while Ember runs.
   const unwatch = settings.watch();
-  app.on("will-quit", unwatch);
+  settings.onProblem(msg => log.warn("settings.hand_edit_not_used", { msg }));
+  app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
   const showHome = () => {
@@ -205,8 +206,21 @@ function start(): void {
     }
     home = createHomeWindow();
     home.once("ready-to-show", () => log.info("window.home.shown"));
-    home.on("closed", () => { home = null; });
+    // While the user works in settings, Ember waits beside the window instead of over it.
+    for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
+    home.on("closed", () => {
+      home = null;
+      stepAside();
+      if (greetOnClose) { greetOnClose = false; setTimeout(() => greet(), 300); }
+    });
   };
+  /** Ember greets once settings closes (first run while Copilot isn't connected yet). */
+  let greetOnClose = false;
+  const stepAside = () => {
+    const h = home && !home.isDestroyed() && home.isVisible() && !home.isMinimized() && home.isFocused() ? home : null;
+    overlay?.stepAside(h ? h.getBounds() : null);
+  };
+  const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
   app.on("second-instance", () => {
     log.info("instance.second", {});
@@ -234,10 +248,23 @@ function start(): void {
     environment: readEnvironment(),
     logFile: log.file,
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
-      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30 },
+      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
+      neverLook: policy.neverLook },
   })));
   ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
-  ipcMain.handle(IPC.updateSettings, guard((patch: SettingsPatch) => settings.update(patch)));
+  /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
+  const ownNeverLook = (patch: SettingsPatch): SettingsPatch => {
+    if (!patch.privacy?.neverLook || !policy.neverLook.length) return patch;
+    const lower = (x: string) => x.toLowerCase();
+    const mine = new Set(settings.own().privacy.neverLook.map(lower));
+    const adminOnly = new Set(policy.neverLook.map(lower).filter(x => !mine.has(x)));
+    return { ...patch, privacy: { ...patch.privacy, neverLook: patch.privacy.neverLook.filter(x => !adminOnly.has(lower(x))) } };
+  };
+  // Dragging the size slider sends a change per step: shown at once, saved a moment later.
+  ipcMain.handle(IPC.updateSettings, guard((patch: SettingsPatch) => {
+    const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
+    return settings.update(ownNeverLook(patch), { soon: sizeOnly });
+  }));
   ipcMain.handle(IPC.applyFix, guard((fix: string) => {
     if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
     execFileSync("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
@@ -272,16 +299,21 @@ function start(): void {
   const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
     if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
   }, ms);
+  /** Whether one of Ember's own shortcuts works (another app may hold it). */
+  const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   const greet = () => {
     const name = CHARACTER_NAMES[settings.get().character];
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
-    const keys = (shortcutsTaken ?? []).length ? "Click my handle in the corner to ask me something or to stop me." : "Press Ctrl+Alt+Space to ask me anything; Ctrl+Alt+X stops me.";
+    const keys = hasKey("Control+Alt+Space") && hasKey("Control+Alt+X")
+      ? "Press Ctrl+Alt+Space to ask me anything; Ctrl+Alt+X stops me."
+      : "Click my handle in the corner to ask me something or to stop me.";
+    const settingsOpen = homeOpen();
     const thought = !connected
-      ? "I'm not connected to Copilot yet. Open settings (Ctrl+Alt+E) to connect me."
+      ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey("Control+Alt+E") ? " (Ctrl+Alt+E)" : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: "idle" as const, title: `Hi, I'm ${name}!`, thought,
-      actions: connected ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+      actions: connected || settingsOpen ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
@@ -305,17 +337,17 @@ function start(): void {
     if (!handle) return;
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
-    // Accelerators are shown, not registered here (the global shortcuts already are).
-    const keys = (accelerator: string) => ({ accelerator, registerAccelerator: false });
+    // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
+    const label = (text: string, accel: string) => hasKey(accel) ? `${text}   ${accel.replace("Control", "Ctrl")}` : text;
     Menu.buildFromTemplate([
-      { label: "Ask Ember…", ...keys("Ctrl+Alt+Space"), click: openAsk },
-      { label: "Stop everything", ...keys("Ctrl+Alt+X"), click: () => stopEverything("menu") },
+      { label: label("Ask Ember…", "Control+Alt+Space"), click: openAsk },
+      { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: voice.isMuted ? "Unmute microphone" : "Mute microphone", ...keys("Ctrl+Alt+M"), click: toggleMute }]
+        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
         : []),
-      ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { showHome(); sendToHome(IPC.focusSection, "conversation"); } }] : []),
+      ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: readLastAnswer }] : []),
       { type: "separator" },
-      { label: "Settings…", ...keys("Ctrl+Alt+E"), click: showHome },
+      { label: label("Settings…", "Control+Alt+E"), click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
@@ -324,26 +356,54 @@ function start(): void {
   };
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
+  /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
+  const readLastAnswer = () => {
+    if (lastState.bubble.visible && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+    showHome();
+    sendToHome(IPC.focusSection, "conversation");
+  };
+  /** Settings, at the Copilot section when that's what needs doing. */
+  const openSettings = () => {
+    showHome();
+    const phase = agent?.getStatus().phase;
+    if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
+  };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
     if (home && !home.isDestroyed() && home.webContents.isLoading()) home.webContents.once("did-finish-load", send); else send();
   };
-  /** Questions are answered with keys too (Orca and keyboard users can't click the bubble). */
-  const QUESTION_KEYS = { "Control+Alt+Y": "primary", "Control+Alt+N": "deny", "Control+Alt+A": "always" } as const;
+  /**
+   * Questions are answered with keys too (Orca and keyboard users can't click the bubble): Y allows, N says
+   * not now. "Always" is a click only: a global key would take an app's own Ctrl+Alt+A and grant for good.
+   */
+  const QUESTION_KEYS = [
+    { accel: "Control+Alt+Y", which: "primary", hint: "Ctrl+Alt+Y allow", say: "Control Alt Y to allow" },
+    { accel: "Control+Alt+N", which: "deny", hint: "Ctrl+Alt+N not now", say: "Control Alt N for not now" },
+  ] as const;
   let questionKeys: string[] = [];
-  const questionChanged = (q: { question: { prompt: string; options: { id: string }[] } } | null) => {
-    for (const k of questionKeys) globalShortcut.unregister(k);
-    questionKeys = [];
-    if (!q) return;
-    for (const [accel, which] of Object.entries(QUESTION_KEYS)) {
-      if (which === "always" && !q.question.options.some(o => o.id === "always")) continue;
-      if (globalShortcut.register(accel, () => confirmer?.answerKey(which))) questionKeys.push(accel);
+  const holdQuestionKeys = () => {
+    if (questionKeys.length) return;
+    for (const k of QUESTION_KEYS) {
+      if (globalShortcut.register(k.accel, () => confirmer?.answerKey(k.which))) questionKeys.push(k.accel);
+      else log.warn("shortcut.question_key_taken", { accel: k.accel });
     }
+  };
+  const heldKeys = () => QUESTION_KEYS.filter(k => questionKeys.includes(k.accel));
+  /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
+  const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
+  const questionChanged = (q: { question: { prompt: string; options: { id: string }[] } } | null) => {
+    if (!q) {
+      for (const k of questionKeys) globalShortcut.unregister(k);
+      questionKeys = [];
+      return;
+    }
+    holdQuestionKeys();
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask.
     if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
     if (settings.get().speak || screenReaderOn()) {
-      voice?.speak(`Ember asks: ${q.question.prompt} Press Control Alt Y to allow, or Control Alt N for not now.`);
+      const keys = heldKeys().map(k => k.say);
+      voice?.speak(`Ember asks: ${q.question.prompt}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
     }
     if (userAway()) notify("Ember needs your OK", q.question.prompt);
   };
@@ -381,6 +441,8 @@ function start(): void {
   };
   const openAsk = () => {
     if (!consented()) { showHome(); return; }
+    // Already open: the user is typing in it. Looking again would only find the ask box itself.
+    if (askWindow.visible) { askWindow.focus(); return; }
     captureContext();
     askWindow.show(overlay?.position ?? null, { sees: null, history: askHistory });
     // What Ember will read, shown as a chip once the quick look is done.
@@ -478,6 +540,7 @@ function start(): void {
     await agent?.forgetConversation();
     tokens?.clear();
     currentToken = null;
+    askHistory = [];
     await agent?.start(null);
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
@@ -505,6 +568,7 @@ function start(): void {
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
         const found = await resolveToken(tokens).catch(() => null);
+        if (ac.signal.aborted) return;
         if (found && found.token !== before) {
           currentToken = found.token;
           await agent?.start(found.token, found.source);
@@ -524,6 +588,8 @@ function start(): void {
       // Only GitHub's own page is ever opened.
       if (/^https:\/\/github\.com\//.test(code.verificationUri)) void shell.openExternal(code.verificationUri);
       const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal });
+      // Cancelled at the last moment: the code was approved, but the user said no here.
+      if (ac.signal.aborted) return;
       const kept = tokens?.save(token) ?? false;
       if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
       currentToken = token;
@@ -575,8 +641,8 @@ function start(): void {
     // Stopping a task is always honoured (also while Ember waits for the mouse). Anything else that arrives
     // while Ember really drives the pointer was Ember's own click, not the user's: ignored.
     if (borrowRef?.driving && !(task && task[2] === "stop")) { log.warn("bubble.action_while_borrowing", { id }); return; }
-    if (id === "ui:settings") { showHome(); return; }
-    if (id === "ui:more") { showHome(); sendToHome(IPC.focusSection, "conversation"); return; }
+    if (id === "ui:settings") { openSettings(); return; }
+    if (id === "ui:more") { readLastAnswer(); return; }
     if (task) {
       if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
@@ -610,8 +676,11 @@ function start(): void {
       // connected, the window stays and shows how to connect (asking would only say "not connected").
       setTimeout(() => {
         const phase = agent?.getStatus().phase;
-        if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
-        else if (home && !home.isDestroyed()) home.close();
+        if (phase === "signed-out" || phase === "error") {
+          // Settings stays open at Copilot; Ember says hello once it closes, not over it.
+          sendToHome(IPC.focusSection, "copilot");
+          if (homeOpen()) { greetOnClose = true; return; }
+        } else if (home && !home.isDestroyed()) home.close();
         greet();
       }, 500);
     }
@@ -857,7 +926,7 @@ function start(): void {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
-        showMenu, state: () => lastState,
+        showMenu, state: () => lastState, questionKeyHint,
       };
     }
   };

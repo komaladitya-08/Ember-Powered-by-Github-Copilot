@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -39,5 +39,28 @@ describe("logger robustness", () => {
     const line = JSON.parse(fs.readFileSync(log.file, "utf8").trim().split("\n").at(-1)!);
     expect(line).toMatchObject({ big: "10", loop: { a: 1, self: "[circular]" }, nested: { err: { message: "boom", code: "ENOSPC" } } });
     expect(fs.statSync(log.file).mode & 0o077).toBe(0);
+  });
+
+  it("prints a value used twice side by side, and an error that is its own cause once", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-log-"));
+    const log = createLogger({ dir });
+    const shared = { app: "gedit" };
+    const err = new Error("loop") as Error & { cause?: unknown };
+    err.cause = err;
+    log.info("twice", { a: shared, b: shared, err });
+    const line = JSON.parse(fs.readFileSync(log.file, "utf8").trim());
+    expect(line).toMatchObject({ a: { app: "gedit" }, b: { app: "gedit" }, err: { message: "loop", cause: "[circular]" } });
+  });
+
+  it("writes to stderr when its folder can't be made, instead of throwing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-log-"));
+    fs.writeFileSync(path.join(dir, "logs"), "a file in the way");
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((s: string | Uint8Array) => { writes.push(String(s)); return true; });
+    try {
+      const log = createLogger({ dir: path.join(dir, "logs") });
+      log.warn("still here");
+    } finally { spy.mockRestore(); }
+    expect(writes.join("")).toContain("still here");
   });
 });

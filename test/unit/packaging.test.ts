@@ -57,6 +57,16 @@ describe("ember doctor", () => {
     expect(byId(doctorChecks(probes({ sandbox: { userNamespaces: false, suidHelper: false } })), "sandbox")).toMatchObject({ status: "fail", fix: expect.stringMatching(/chmod 4755/) });
   });
 
+  it("gives each desktop-session problem its own fix", () => {
+    const withSession = (detail: string) => {
+      const p = probes();
+      return byId(doctorChecks({ ...p, env: { ...p.env, checks: [...p.env.checks.filter(c => c.id !== "session"), { id: "session", label: "Desktop session", status: "fail", detail }] } }), "session").fix;
+    };
+    expect(withSession("Wayland session. Ember v1 needs “GNOME on Xorg”")).toMatch(/GNOME on Xorg/);
+    expect(withSession("Ember can't connect to the X display :0.")).toMatch(/terminal inside your desktop/);
+    expect(withSession("No X display. Start Ember from inside your desktop session")).not.toMatch(/Xorg/);
+  });
+
   it("names the organisation's endpoint when there is one", () => {
     expect(byId(doctorChecks(probes({ auth: { kind: "provider", host: "ai.example.org" } })), "copilot").detail).toMatch(/ai\.example\.org/);
   });

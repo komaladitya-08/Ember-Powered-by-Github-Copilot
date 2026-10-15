@@ -106,4 +106,56 @@ describe("settings keep what the user set (review fixes)", () => {
       fs.chmodSync(path.dirname(file), 0o700);
     }
   });
+
+  const touch = (f: string, ahead = 5000) => fs.utimesSync(f, new Date(), new Date(Date.now() + ahead));
+
+  it("a hand edit that isn't valid JSON while Ember runs keeps the settings in use (and the user's file)", () => {
+    const dir = tmp();
+    const file = path.join(dir, "settings.json");
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ consent: { version: 99, at: "now" }, onboarded: true, privacy: { neverLook: ["payroll"] }, wakeWord: false });
+    const problems: string[] = [];
+    s.onProblem(m => problems.push(m));
+    const broken = fs.readFileSync(file, "utf8").replace('"payroll"', '"payroll", "salary",');
+    fs.writeFileSync(file, broken);
+    touch(file);
+    expect(s.reloadIfChanged()).toBe(false);
+    expect(s.get()).toMatchObject({ onboarded: true, wakeWord: false, privacy: { neverLook: ["payroll"] } });
+    expect(fs.readFileSync(file, "utf8")).toBe(broken);
+    expect(problems[0]).toMatch(/isn't valid JSON/);
+    // Fixed by hand: picked up.
+    fs.writeFileSync(file, broken.replace('"salary",', '"salary"'));
+    touch(file, 9000);
+    expect(s.reloadIfChanged()).toBe(true);
+    expect(s.get().privacy.neverLook).toEqual(["payroll", "salary"]);
+  });
+
+  it("a deleted file is written again from the settings in use, not from defaults", () => {
+    const dir = tmp();
+    const file = path.join(dir, "settings.json");
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ privacy: { neverLook: ["payroll"] }, wakeWord: false });
+    fs.rmSync(file);
+    expect(s.reloadIfChanged()).toBe(false);
+    s.update({ size: 80 });
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({ size: 80, wakeWord: false, privacy: { neverLook: ["payroll"] } });
+  });
+
+  it("a slider's many changes apply at once and are saved together a moment later", async () => {
+    const dir = tmp();
+    const file = path.join(dir, "settings.json");
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ size: 60 });
+    for (let v = 62; v <= 90; v += 2) s.update({ size: v }, { soon: true });
+    expect(s.get().size).toBe(90);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).size).toBe(60);
+    await new Promise(r => setTimeout(r, 500));
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).size).toBe(90);
+    s.update({ size: 70 }, { soon: true });
+    s.flush();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).size).toBe(70);
+  });
 });

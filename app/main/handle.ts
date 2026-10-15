@@ -10,6 +10,7 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { Settings } from "./settings";
+import { revive } from "./revive";
 import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 
 const appDir = __dirname;
@@ -61,9 +62,7 @@ export class HandleWindow {
       this.win.showInactive();
     });
     // The handle is the way to Quit and Stop when shortcuts are taken: a crashed one comes back.
-    this.win.webContents.on("render-process-gone", () => {
-      setTimeout(() => { if (!this.win.isDestroyed()) this.win.webContents.reload(); }, 500);
-    });
+    revive(this.win);
     screen.on("display-metrics-changed", () => this.reposition());
     screen.on("display-removed", () => this.reposition());
     void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));

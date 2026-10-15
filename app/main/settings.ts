@@ -108,16 +108,18 @@ export class SettingsStore {
   private current: Settings = DEFAULT_SETTINGS;
   private effective: Settings = DEFAULT_SETTINGS;
   private listeners = new Set<(s: Settings) => void>();
+  private problemListeners = new Set<(msg: string) => void>();
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
   private seen: number | null = null;
+  /** A change applied in memory whose save is due shortly (a slider being dragged). */
+  private pending: SettingsPatch | null = null;
+  private pendingTimer: NodeJS.Timeout | null = null;
 
   constructor(readonly file: string, private admin: AdminPolicy | null = null) {}
 
   load(): LoadResult {
-    const r = this.read();
-    // Onboarding isn't finished until the current consent is given (older files are asked again).
-    if (this.current.onboarded && !hasConsent(this.current)) this.current = { ...this.current, onboarded: false };
-    this.effective = this.admin ? applyAdminPolicy(this.current, this.admin) : this.current;
+    const r = this.read(false);
+    this.apply(this.current);
     return { ...r, settings: this.effective };
   }
 
@@ -125,40 +127,79 @@ export class SettingsStore {
     try { return fs.statSync(this.file).mtimeMs; } catch { return null; }
   }
 
-  private read(): LoadResult {
+  /** Onboarding isn't finished until the current consent is given (older files are asked again). */
+  private apply(next: Settings): void {
+    this.current = next.onboarded && !hasConsent(next) ? { ...next, onboarded: false } : next;
+    this.effective = this.admin ? applyAdminPolicy(this.current, this.admin) : this.current;
+  }
+
+  /**
+   * Reads the file. At start-up a missing or unreadable file means defaults. While Ember runs
+   * (`running`), a file that is gone, unreadable or not JSON at all (a hand edit in progress, a
+   * trailing comma) never replaces the settings in use: they stay, and the file is read again
+   * when it next changes. JSON with a few bad values is repaired value by value either way.
+   */
+  private read(running: boolean): LoadResult {
     let raw: string;
     this.seen = this.mtime();
     try {
       raw = fs.readFileSync(this.file, "utf8");
-    } catch {
+    } catch (err) {
+      if (running) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
+        return { settings: this.current };
+      }
       this.current = DEFAULT_SETTINGS;
       return { settings: this.current };
     }
+    let json: unknown;
     try {
-      const parsed = SettingsSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) {
-        this.current = parsed.data;
+      json = JSON.parse(raw);
+    } catch {
+      if (running) {
+        this.problem(`${this.file} isn't valid JSON, so Ember keeps the settings it has until the file is fixed.`);
         return { settings: this.current };
       }
-      // Keep what is valid (down to single entries), reset only what isn't.
-      this.current = repairSettings(JSON.parse(raw) as Record<string, unknown>);
-    } catch {
-      this.current = DEFAULT_SETTINGS;
+      json = undefined;
     }
+    const parsed = SettingsSchema.safeParse(json);
+    if (parsed.success) {
+      this.current = parsed.data;
+      return { settings: this.current };
+    }
+    // Keep what is valid (down to single entries), reset only what isn't.
+    this.current = json && typeof json === "object" && !Array.isArray(json) ? repairSettings(json as Record<string, unknown>) : DEFAULT_SETTINGS;
     const backup = `${this.file}.bad-${Date.now()}`;
     try { fs.copyFileSync(this.file, backup); } catch { /* best effort */ }
     // A full disk must not stop Ember starting: the repaired settings are used from memory.
     try { this.save(this.current); } catch { /* kept in memory; saved with the next change */ }
+    if (running) this.problem(`Some values in ${this.file} weren't valid and were reset; your file was kept as ${backup}.`);
     return { settings: this.current, recoveredFrom: backup };
+  }
+
+  private problem(msg: string): void {
+    for (const fn of this.problemListeners) { try { fn(msg); } catch { /* a listener's own problem */ } }
+  }
+
+  /** Told when a hand edit couldn't be used (the settings in use are kept). */
+  onProblem(fn: (msg: string) => void): () => void {
+    this.problemListeners.add(fn);
+    return () => this.problemListeners.delete(fn);
   }
 
   /** The file changed outside Ember (edited by hand): use it. Returns true when it did. */
   reloadIfChanged(): boolean {
     const m = this.mtime();
-    if (m === null || m === this.seen) return false;
-    this.read();
-    if (this.current.onboarded && !hasConsent(this.current)) this.current = { ...this.current, onboarded: false };
-    this.effective = this.admin ? applyAdminPolicy(this.current, this.admin) : this.current;
+    if (m === this.seen) return false;
+    const before = this.current;
+    this.read(true);
+    // A change still waiting to be saved goes on top of the hand edit.
+    if (this.pending) {
+      const next = SettingsSchema.safeParse({ ...this.current, ...this.pending });
+      if (next.success) this.current = next.data;
+    }
+    if (this.current === before) return false;
+    this.apply(this.current);
     for (const fn of this.listeners) fn(this.effective);
     return true;
   }
@@ -175,18 +216,48 @@ export class SettingsStore {
     return this.effective;
   }
 
-  /** Validates and applies a patch to the user's settings; throws on invalid values (or if it can't be saved). */
-  update(patch: SettingsPatch): Settings {
+  /** The user's own settings, without the administrator's policy. */
+  own(): Settings {
+    return this.current;
+  }
+
+  /**
+   * Validates and applies a patch to the user's settings; throws on invalid values (or if it can't
+   * be saved). `soon`: applied now and saved a moment later, for changes that come many times a
+   * second (a slider being dragged); any other change, or flush(), saves it at once.
+   */
+  update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
     // A hand edit since Ember last looked comes first: the patch goes on top of it.
-    if (this.mtime() !== this.seen) { try { this.read(); } catch { /* keep what is in memory */ } }
+    if (this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
     const next = SettingsSchema.parse({ ...this.current, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
-    // Saved first: memory changes only once the change is on disk.
-    this.save(next);
-    this.current = next;
-    this.effective = this.admin ? applyAdminPolicy(next, this.admin) : next;
+    if (opts.soon) {
+      this.pending = { ...this.pending, ...patch };
+      if (!this.pendingTimer) {
+        this.pendingTimer = setTimeout(() => { try { this.flush(); } catch { /* saved with the next change */ } }, 400);
+        this.pendingTimer.unref?.();
+      }
+    } else {
+      // Saved first: memory changes only once the change is on disk.
+      this.save(next);
+      this.clearPending();
+    }
+    this.apply(next);
     for (const fn of this.listeners) fn(this.effective);
     return this.effective;
+  }
+
+  /** Saves a change made with `soon` now (also done on quit). */
+  flush(): void {
+    if (!this.pending) return;
+    this.save(this.current);
+    this.clearPending();
+  }
+
+  private clearPending(): void {
+    this.pending = null;
+    if (this.pendingTimer) clearTimeout(this.pendingTimer);
+    this.pendingTimer = null;
   }
 
   onChange(fn: (s: Settings) => void): () => void {

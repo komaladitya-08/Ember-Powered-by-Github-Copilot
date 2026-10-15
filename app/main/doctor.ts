@@ -42,7 +42,11 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   for (const id of ["platform", "os", "glibc", "session", "desktop"]) {
     const c = env(id);
     if (!c) continue;
-    const fix = id === "session" && c.status !== "ok" ? "Log out, click the gear on the login screen and choose “GNOME on Xorg”." : undefined;
+    // Each session problem has its own way out: only Wayland needs another session.
+    const fix = id !== "session" || c.status === "ok" ? undefined
+      : /wayland/i.test(c.detail) ? "Log out, click the gear on the login screen and choose “GNOME on Xorg”."
+        : /can't connect/i.test(c.detail) ? "Start Ember from a terminal inside your desktop session (DISPLAY and XAUTHORITY come from it)."
+          : "Run Ember inside your desktop session (or over ssh -X).";
     out.push({ id, status: c.status, label: c.label, detail: c.detail, ...(fix ? { fix } : {}) });
   }
 

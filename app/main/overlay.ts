@@ -10,7 +10,8 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains } from "./follow";
+import { Follower, followTarget, contains, besideRect, besideControl } from "./follow";
+import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
@@ -90,6 +91,12 @@ export class OverlayManager {
   /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
   avoid: (() => Rect | null) | null = null;
   systemReducedMotion = false;
+  /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
+  private aside: Rect | null = null;
+
+  stepAside(r: Rect | null): void {
+    this.aside = r;
+  }
 
   setState(next: Partial<EmberState>): void {
     // Ember holds still while you decide (buttons) and while you read a finished answer or error;
@@ -102,9 +109,9 @@ export class OverlayManager {
     if ("focus" in next || now !== before) {
       const f = this.state.focus;
       const size = this.settings().size;
-      // Working on a control: Ember sits just to its right. Waiting for a decision: it holds still,
+      // Working on a control: Ember sits just beside it (on screen). Waiting for a decision: it holds still,
       // so its buttons don't run away from the cursor. Otherwise it follows the cursor again.
-      this.follower.park(f ? { x: f.x + f.width + size * 0.6 + 10, y: f.y + f.height / 2 } : now ? this.follower.position : null);
+      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? this.follower.position : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -191,14 +198,13 @@ export class OverlayManager {
       win.setBounds(display.bounds); // re-apply after map; some WMs adjust on first show
       this.log.info("overlay.shown", { display: display.id, bounds: display.bounds });
     });
-    // A crashed overlay must not leave an invisible window that swallows clicks: click-through again, then reload.
-    win.webContents.on("render-process-gone", (_e, details) => {
-      this.log.warn("overlay.renderer_gone", { display: display.id, reason: details.reason });
+    // A crashed overlay must not leave an invisible window that swallows clicks: click-through again, then reload
+    // (sooner the first time, more slowly if it keeps crashing).
+    revive(win, reason => {
+      this.log.warn("overlay.renderer_gone", { display: display.id, reason });
       overlay.interactive = [];
       overlay.clickThrough = true;
-      if (win.isDestroyed()) return;
-      win.setIgnoreMouseEvents(true);
-      setTimeout(() => { if (!win.isDestroyed()) win.webContents.reload(); }, 500);
+      if (!win.isDestroyed()) win.setIgnoreMouseEvents(true);
     });
     win.on("closed", () => this.overlays.delete(display.id));
     void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
@@ -226,8 +232,14 @@ export class OverlayManager {
     const display = screen.getDisplayNearestPoint(cursor);
     const s = this.settings();
     this.follower.setReducedMotion(s.reduceMotion || this.systemReducedMotion);
-    const ember = this.follower.step(followTarget(cursor, s.size, display.workArea, this.avoid?.() ?? null), dt);
-    const frame = { ember, cursor, visible: !this.hidden };
+    // Out of the settings window's way while the user works in it; out of sight when it fills the screen.
+    // A question is never hidden, though: with no room beside the window, Ember asks by the cursor as usual.
+    const aside = this.aside ? besideRect(this.aside, s.size, screen.getDisplayMatching(this.aside).workArea, this.aside.y + 90) : null;
+    const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
+    const ember = aside
+      ? this.follower.step(aside, dt, true)
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.avoid?.() ?? null), dt);
+    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;
     const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25

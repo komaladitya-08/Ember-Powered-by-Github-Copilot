@@ -30,6 +30,29 @@ export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rec
   return p;
 }
 
+/**
+ * A spot for Ember just beside `r` (right if there is room, else left), at height `y`, inside the
+ * work area; null when neither side has room (a window filling the screen).
+ */
+export function besideRect(r: Rect, size: number, area: Rect, y: number, gap = 10): Point | null {
+  const half = size * 0.6;
+  const cy = Math.min(Math.max(y, area.y + half), area.y + area.height - half);
+  const right = r.x + r.width + gap + half;
+  if (right + half <= area.x + area.width) return { x: right, y: cy };
+  const left = r.x - gap - half;
+  if (left - half >= area.x) return { x: left, y: cy };
+  return null;
+}
+
+/** Beside a control Ember works on, always on screen (inside it when the control is as wide as the screen). */
+export function besideControl(r: Rect, size: number, area: Rect): Point {
+  const half = size * 0.6;
+  return besideRect(r, size, area, r.y + r.height / 2) ?? {
+    x: Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half),
+    y: Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half),
+  };
+}
+
 export class Follower {
   private spring: Spring2D;
   private paused = false;
@@ -57,7 +80,9 @@ export class Follower {
     this.parked = at;
   }
 
-  step(target: Point, dt: number): Point {
+  /** `force`: go to the target even when parked or paused (stepping out of the way of a window). */
+  step(target: Point, dt: number, force = false): Point {
+    if (force) return this.spring.step(target, Math.min(dt, 0.05));
     if (this.paused && !this.parked) return this.position;
     return this.spring.step(this.parked ?? target, Math.min(dt, 0.05));
   }
