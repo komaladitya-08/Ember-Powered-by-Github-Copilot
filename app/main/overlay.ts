@@ -31,6 +31,8 @@ export class OverlayManager {
   private topTimer: NodeJS.Timeout | null = null;
   private last = Date.now();
   private hidden = false;
+  /** While Ember borrows the cursor its windows never take clicks, so every click reaches the app. */
+  private borrowing = false;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
 
   constructor(
@@ -109,6 +111,10 @@ export class OverlayManager {
     for (const w of wins) w.setOpacity(0);
     await new Promise(r => setTimeout(r, 60));
     return () => { for (const w of wins) if (!w.isDestroyed()) w.setOpacity(1); };
+  }
+
+  setBorrowing(on: boolean): void {
+    this.borrowing = on;
   }
 
   getState(): EmberState {
@@ -207,7 +213,7 @@ export class OverlayManager {
       o.win.webContents.send(OVERLAY.frame, frame);
       // Hover-to-interact: only while the cursor is over something clickable.
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
-      const over = contains(o.display.bounds, cursor) && o.interactive.some(r => contains(r, local));
+      const over = !this.borrowing && contains(o.display.bounds, cursor) && o.interactive.some(r => contains(r, local));
       if (over === o.clickThrough) {
         o.clickThrough = !over;
         o.win.setIgnoreMouseEvents(!over);

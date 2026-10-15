@@ -23,6 +23,8 @@ import { Presenter } from "../../app/main/agent/presenter";
 import { Worker } from "../../app/main/agent/worker";
 import { locateRuntime } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
+import { openXInput } from "../../app/main/hands/input";
+import { CursorBorrow } from "../../app/main/hands/borrow";
 import type { EmberState } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
 
@@ -60,6 +62,14 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
       respond: (messages: Msg[]) => {
         const results = messages.filter(m => m.role === "tool");
         const step = results.length;
+        if (text(messages.find(m => m.role === "user")!).includes("sketch pad")) {
+          // Tier 3: the pad has no accessible actions, so a click escalates to the user's mouse.
+          if (step === 0) return { tool: { name: "perceive_window", args: {} } };
+          if (step === 1) return { tool: { name: "click", args: { id: idOf(messages, /"Sketch pad"/) } } };
+          if (step === 2) return { tool: { name: "press_keys", args: { keys: "ctrl+s" } } };
+          if (step === 3) return { tool: { name: "finish_task", args: { success: true, summary: "Clicked the pad and saved." } } };
+          return { text: "Done." };
+        }
         if (step === 0) return { reasoning: "Read the window first.", tool: { name: "perceive_window", args: {} } };
         if (step === 1) return { reasoning: "Night Light is the switch.", tool: { name: "toggle", args: { id: idOf(messages, /^toggle button/), on: true } } };
         if (step === 2) return { tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace" } } };
@@ -91,6 +101,51 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     await client?.stop();
     await mock?.close();
   });
+
+  it("borrows the mouse when accessibility can't do it, with the user's OK, and gives it back", async () => {
+    const xinput = openXInput();
+    expect(xinput).not.toBeNull();
+    const settings = new SettingsStore(path.join(dir, "settings-t3.json"));
+    settings.load();
+    settings.update({ grants: { "gtk3_bench.py": "act" } });
+    const asked: string[] = [];
+    const confirmer: Confirmer = new Confirmer(p => {
+      const actions = p.bubble?.actions ?? [];
+      if (actions.length) { asked.push(p.bubble!.thought); setTimeout(() => confirmer.answer(actions[0].id), 20); }
+    });
+    const home = xinput!.pointer();
+    const borrowing: string[] = [];
+    const audit = new AuditLog(path.join(dir, "audit-t3"));
+    const before = events.length;
+    const worker = new Worker({
+      client, log: quiet, model: "mock-model", vision: false,
+      provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
+      workDir: path.join(dir, "empty"),
+      perception: new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1280, height: 800 }), log: quiet }),
+      sidecar, policy: new PolicyEngine({ neverLook: () => [], grants: () => settings.get().grants }),
+      confirmer, audit, settings,
+      presenter: new Presenter(() => undefined),
+      lease: async () => () => undefined,
+      flyTo: () => undefined,
+      onProgress: () => undefined,
+      cursor: { borrow: new CursorBorrow(xinput!), findWindow: t => xinput!.findWindow(t), setBorrowing: on => borrowing.push(on) },
+    }, { id: "w2", goal: "Click the sketch pad, then save with ctrl+s", target: { title: "Ember Test Bench" } });
+    const result = await worker.run(new AbortController().signal);
+    await worker.dispose();
+    expect(result).toEqual({ success: true, summary: "Clicked the pad and saved." });
+    expect(asked).toEqual(["Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?", "Borrow your keyboard to press ctrl+s in gtk3_bench.py?"]);
+    await new Promise(r => setTimeout(r, 300));
+    const mine = events.slice(before);
+    expect(mine).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "pad-click", name: "Sketch pad", button: 1 }),
+      expect.objectContaining({ event: "key", name: "s", ctrl: true }),
+    ]));
+    expect(xinput!.pointer()).toEqual(home); // handed back
+    expect(borrowing).toEqual(["waiting", "active", "off", "waiting", "active", "off"]);
+    const audited = fs.readFileSync(audit.file, "utf8").trim().split("\n").map(l => JSON.parse(l));
+    expect(audited.filter(e => e.event === "action" && e.tier === 3 && e.ok)).toHaveLength(2);
+    xinput!.close();
+  }, 120_000);
 
   it("does the task, asks before acting in a new app, and refuses the password field", async () => {
     const states: Partial<EmberState>[] = [];

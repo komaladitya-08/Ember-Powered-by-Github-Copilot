@@ -23,6 +23,8 @@ import { AskWindow } from "./ask";
 import { AuditLog } from "./policy/audit";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
+import { openXInput, xinputError } from "./hands/input";
+import { CursorBorrow } from "./hands/borrow";
 import { AgentHost, type Hands } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -347,6 +349,10 @@ function start(): void {
     try { audit.prune(); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState);
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
+    const xinput = x11 ? openXInput() : null;
+    if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
+    app.on("will-quit", () => xinput?.close());
+    const borrow = xinput ? new CursorBorrow(xinput) : null;
     const hands: Hands | undefined = x11 ? {
       perception, sidecar, audit, confirmer,
       policy: new PolicyEngine({ neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants }),
@@ -356,6 +362,14 @@ function start(): void {
         // Ember's own windows (ask box, settings) are not a task's target.
         return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
       },
+      cursor: borrow && xinput ? {
+        borrow,
+        findWindow: title => xinput.findWindow(title),
+        setBorrowing: state => {
+          overlay?.setBorrowing(state === "active");
+          setState({ status: state === "active" ? "Using your mouse: move it to take over" : state === "waiting" ? "Waiting until you let go of the mouse…" : null });
+        },
+      } : undefined,
     } : undefined;
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,

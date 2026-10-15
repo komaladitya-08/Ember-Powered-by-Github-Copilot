@@ -45,7 +45,7 @@ export interface BubbleState {
 export interface TaskCard {
   id: string;
   title: string;
-  status: "running" | "waiting" | "done" | "failed";
+  status: "running" | "waiting" | "done" | "failed" | "stopped";
   detail: string;
 }
 

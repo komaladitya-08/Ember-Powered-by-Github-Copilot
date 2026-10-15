@@ -26,6 +26,8 @@ export const TOOL_STEPS: Record<string, string> = {
   set_value: "Setting a value",
   change_setting: "Changing a setting",
   open_app: "Opening an app",
+  press_keys: "Pressing keys (your keyboard)",
+  scroll: "Scrolling (your mouse)",
   report_progress: "Updating you",
   finish_task: "Wrapping up",
 };

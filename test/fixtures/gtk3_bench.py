@@ -10,7 +10,7 @@ import sys
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib  # noqa: E402
+from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 
 
 def emit(kind, **data):
@@ -22,7 +22,7 @@ def emit(kind, **data):
 class Bench(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title="Ember Test Bench")
-        self.set_default_size(520, 420)
+        self.set_default_size(520, 500)
         self.move(140, 120)
         grid = Gtk.Grid(column_spacing=12, row_spacing=10, margin=16)
         self.add(grid)
@@ -70,8 +70,23 @@ class Bench(Gtk.Window):
         view.set_size_request(400, 80)
         grid.attach(view, 0, 6, 2, 1)
 
+        # An area with no accessible actions: only a real pointer click reaches it (tier 3).
+        pad = Gtk.EventBox()
+        pad.set_size_request(400, 60)
+        pad.add(Gtk.Label(label="Sketch pad (click me)"))
+        pad.get_accessible().set_name("Sketch pad")
+        pad.connect("button-press-event", lambda w, e: emit("pad-click", name="Sketch pad", x=int(e.x), y=int(e.y), button=e.button) or True)
+        grid.attach(pad, 0, 7, 2, 1)
+        self.connect("key-press-event", self.on_key)
+
         self.connect("destroy", Gtk.main_quit)
         GLib.idle_add(lambda: emit("ready") and False)
+
+
+    def on_key(self, widget, event):
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        emit("key", name=Gdk.keyval_name(event.keyval), ctrl=ctrl)
+        return False
 
 
 if __name__ == "__main__":

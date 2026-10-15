@@ -10,7 +10,9 @@ import { isNeverLook } from "../perception/elements";
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
 
-export type ActionKind = "read" | "click" | "toggle" | "text" | "select" | "value" | "setting" | "open_app";
+export type ActionKind = "read" | "click" | "toggle" | "text" | "select" | "value" | "setting" | "open_app"
+  /** Tier 3: with the user's borrowed mouse and keyboard. */
+  | "cursor_click" | "cursor_text" | "keys" | "scroll";
 
 export interface ActionRequest {
   taskId: string;
@@ -66,6 +68,10 @@ function describe(r: ActionRequest, withApp = true): string {
     case "value": return `Set ${el} to ${r.value}${where}?`;
     case "setting": return `Change the setting ${quote(r.value ?? "")}?`;
     case "open_app": return `Open ${quote(r.value ?? "")}?`;
+    case "cursor_click": return `Borrow your mouse to click ${el}${where}?`;
+    case "cursor_text": return `Borrow your mouse and keyboard to type ${quote(r.value ?? "")} into ${el}${where}?`;
+    case "keys": return `Borrow your keyboard to press ${r.value ?? ""}${where}?`;
+    case "scroll": return `Borrow your mouse to scroll ${el} ${r.value ?? ""}${where}?`;
     default: return `Read ${r.window || r.app}?`;
   }
 }
@@ -84,11 +90,16 @@ export class PolicyEngine {
     if (SECURITY_WINDOW.test(`${r.app} ${r.window}`)) return never("authentication and security windows are for the user only");
     if (r.element?.role === "password text") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
-    if (r.kind === "text" && r.element && SECRET_FIELD.test(r.element.name)) return never("this looks like a password or payment field");
+    if ((r.kind === "text" || r.kind === "cursor_text") && r.element && SECRET_FIELD.test(r.element.name)) return never("this looks like a password or payment field");
 
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt };
 
     if (!this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt };
+
+    // Anything with the borrowed mouse or keyboard is confirmed every time (PLAN.md §5).
+    if (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll") {
+      return { tier: "confirm", verdict: "confirm", reason: "Ember needs your mouse or keyboard for this", prompt, risky: true };
+    }
 
     // Launching apps and Ember's short list of comfort settings are easy to undo.
     if (r.kind === "open_app" || r.kind === "setting") return { tier: "reversible", verdict: "allow", reason: "easy to undo", prompt };
