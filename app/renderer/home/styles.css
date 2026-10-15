@@ -55,3 +55,24 @@ h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.1em; text-transform: u
 .start[hidden] { display: none; }
 .hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
 kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); }
+
+.copilot { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.agent-line { margin: 0; display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot[data-phase="ready"] { background: var(--ok); }
+.dot[data-phase="starting"] { background: var(--warn); }
+.dot[data-phase="error"] { background: var(--fail); }
+.agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { all: unset; cursor: pointer; padding: 8px 14px; border-radius: 9px; background: var(--accent); color: #1a0f0b; font-weight: 700; }
+.btn.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.btn[hidden] { display: none; }
+.sign-in-msg { margin: 0; color: var(--fg); }
+.sign-in-msg code { font: 700 18px ui-monospace, monospace; letter-spacing: 0.08em; color: var(--accent); }
+.sign-in-msg[hidden] { display: none; }
+.models { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+.models[hidden] { display: none; }
+.models label { color: var(--muted); }
+.models select { min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); font: inherit; }
+.usage { margin: 0; color: var(--muted); font-size: 13px; }
+.usage:empty { display: none; }

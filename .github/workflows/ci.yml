@@ -29,6 +29,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Integration tests (real Copilot runtime, offline mock model)
+        run: npm run test:integration
       - run: npm run build
       - run: npm run build:lab
 

@@ -68,6 +68,7 @@ export const BUBBLE_CSS = `
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
 }
 .eb-thought:empty { display: none; }
+.ember-bubble[data-mood="idle"] .eb-thought, .ember-bubble[data-mood="done"] .eb-thought { font-style: normal; color: #fbeee3; }
 .eb-thought span::after { content: ""; display: inline-block; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); opacity: 0; }
 .ember-bubble[data-streaming="true"] .eb-thought span::after { opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
 .eb-step { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 220, 190, 0.12); }

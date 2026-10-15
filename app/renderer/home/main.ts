@@ -133,5 +133,51 @@ function frame(now: number): void {
 }
 requestAnimationFrame(frame);
 
+// ───── Copilot section ─────
+type AgentStatus = Awaited<ReturnType<EmberHomeApi["agentStatus"]>>;
+function renderAgent(a: AgentStatus | null): void {
+  if (!a) return;
+  ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
+  $("agent-text").textContent = a.detail;
+  $("sign-in").hidden = a.phase === "ready" || a.phase === "starting";
+  $("sign-out").hidden = a.phase !== "ready" || !a.login;
+  $("models").hidden = a.phase !== "ready" || a.models.length === 0;
+  const fill = (id: string, list: AgentStatus["models"], current: string | null) => {
+    const sel = $(id) as HTMLSelectElement;
+    sel.replaceChildren(...list.map(m => {
+      const o = document.createElement("option");
+      o.value = m.id; o.textContent = m.name; o.selected = m.id === current;
+      return o;
+    }));
+  };
+  fill("m-conductor", a.models, a.conductorModel);
+  fill("m-worker", a.models.filter(m => m.vision), a.workerModel);
+  $("usage").textContent = a.usage.calls
+    ? `This session: ${a.usage.calls} model calls, ${(a.usage.inputTokens / 1000).toFixed(1)}k tokens in, ${(a.usage.outputTokens / 1000).toFixed(1)}k out.`
+    : "";
+}
+for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] as const) {
+  $(id).addEventListener("change", e => {
+    const value = (e.target as HTMLSelectElement).value;
+    const current = settings?.models ?? { conductor: null, worker: null };
+    void window.ember.updateSettings({ models: { ...current, [key]: value } });
+  });
+}
+$("sign-in").addEventListener("click", () => { void window.ember.signIn(); });
+$("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
+window.ember.onSignInProgress(p => {
+  const msg = $("sign-in-msg");
+  msg.hidden = false;
+  if (p.state === "code") {
+    msg.innerHTML = "";
+    msg.append("Enter ", Object.assign(document.createElement("code"), { textContent: p.userCode ?? "" }), ` at ${p.verificationUri} (your browser should open it).`);
+  } else {
+    msg.textContent = p.message ?? (p.state === "done" ? "Signed in." : "");
+    if (p.state === "done" && !p.message) setTimeout(() => { msg.hidden = true; }, 3000);
+  }
+});
+void window.ember.agentStatus().then(renderAgent);
+window.ember.onAgentStatus(renderAgent);
+
 void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);

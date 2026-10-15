@@ -21,6 +21,11 @@ export const SettingsSchema = z.object({
   wakeWord: z.boolean().default(true),
   /** Onboarding finished (consent given, character picked). */
   onboarded: z.boolean().default(false),
+  /** Preferred Copilot models; null lets Ember choose. */
+  models: z.object({
+    conductor: z.string().nullable().default(null),
+    worker: z.string().nullable().default(null),
+  }).default({ conductor: null, worker: null }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

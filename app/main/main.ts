@@ -4,18 +4,22 @@
  * the Copilot conductor, perception and voice.
  */
 
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, screen, session, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, net, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, type SettingsPatch } from "./settings";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createHomeWindow, isTrustedSender } from "./windows";
-import { IPC, type Status } from "../shared/ipc";
+import { IPC, type Status, type SignInProgress } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { openX11 } from "./x11";
+import { AskWindow } from "./ask";
+import { AgentHost } from "./agent/host";
+import { locateRuntime } from "./agent/runtime";
+import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 
 const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
 
@@ -133,6 +137,9 @@ function start(): void {
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     Menu.buildFromTemplate([
+      { label: "Ask Ember…\tCtrl+Alt+Space", click: () => askWindow.show(overlay?.position ?? null) },
+      { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.conductor?.abort(); } },
+      { type: "separator" },
       { label: "Settings…", click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => overlay?.setHidden(!hidden) },
@@ -141,6 +148,55 @@ function start(): void {
     ]).popup({ window: handle.win });
   };
   let followPaused = false;
+
+  // ───── Copilot brain ─────
+  const askWindow = new AskWindow();
+  let agent: AgentHost | null = null;
+  let tokens: TokenStore | null = null;
+  let currentToken: string | null = null;
+  let signInAbort: AbortController | null = null;
+  const broadcast = (channel: string, value: unknown) => {
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
+  };
+  const progress = (p: SignInProgress) => broadcast(IPC.signInProgress, p);
+
+  ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
+  ipcMain.handle(IPC.signOut, guard(async () => {
+    // While still connected: delete this account's conversation so the next sign-in starts fresh.
+    await agent?.forgetConversation();
+    tokens?.clear();
+    currentToken = null;
+    await agent?.start(null);
+  }));
+  ipcMain.handle(IPC.signIn, guard(async () => {
+    const clientId = process.env.EMBER_GITHUB_CLIENT_ID;
+    if (!clientId) {
+      progress({ state: "unavailable", message: "This build has no GitHub sign-in app yet. In a terminal, run “gh auth login”, then restart Ember: it will use that sign-in." });
+      return;
+    }
+    signInAbort?.abort();
+    signInAbort = new AbortController();
+    const fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => net.fetch(url, init);
+    try {
+      const code = await startDeviceFlow(fetch, clientId);
+      progress({ state: "code", userCode: code.userCode, verificationUri: code.verificationUri });
+      void shell.openExternal(code.verificationUri);
+      const token = await pollDeviceFlow(fetch, clientId, code, { signal: signInAbort.signal });
+      const kept = tokens?.save(token) ?? false;
+      if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
+      currentToken = token;
+      await agent?.start(token);
+      progress({ state: "done", message: kept ? undefined : "Signed in. No keyring is available, so you'll need to sign in again next time." });
+    } catch (err) {
+      progress({ state: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+  }));
+  ipcMain.on(IPC.ask, (event, text: unknown) => {
+    if (!askWindow.owns(event.sender) || typeof text !== "string") return;
+    askWindow.hide();
+    void agent?.ask(text.slice(0, 2000));
+  });
+  ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
 
   ipcMain.on(OVERLAY.interactive, (event, rects: Rect[]) => {
     if (overlay?.owns(event.sender)) overlay.setInteractive(event.sender, rects);
@@ -168,6 +224,7 @@ function start(): void {
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
     overlay?.stop();
+    void agent?.stop();
   });
 
   void app.whenReady().then(() => {
@@ -208,12 +265,41 @@ function start(): void {
     handle = new HandleWindow(() => settings.get(), !compositing);
 
     if (!globalShortcut.register("Control+Alt+E", showHome)) log.warn("shortcut.unavailable", { accel: "Control+Alt+E" });
+    if (!globalShortcut.register("Control+Alt+Space", () => askWindow.show(overlay?.position ?? null))) {
+      log.warn("shortcut.unavailable", { accel: "Control+Alt+Space" });
+    }
+
+    // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
+    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage);
+    const provider = process.env.EMBER_TEST_PROVIDER_URL
+      ? { type: "openai" as const, baseUrl: process.env.EMBER_TEST_PROVIDER_URL, apiKey: "test" }
+      : undefined;
+    const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath });
+    if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
+    agent = new AgentHost({
+      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,
+      onStatus: status => broadcast(IPC.agentStatusChanged, status),
+    });
+    void (async () => {
+      const found = provider ? null : await resolveToken(tokens);
+      log.info("auth.token", { source: provider ? "test-provider" : found?.source ?? "none" });
+      currentToken = found?.token ?? null;
+      await agent?.start(currentToken);
+    })();
+    let models = JSON.stringify(settings.get().models);
+    settings.onChange(next => {
+      const m = JSON.stringify(next.models);
+      if (m !== models) { models = m; void agent?.start(currentToken); }
+    });
 
     if (!settings.get().onboarded || process.argv.includes("--show-settings")) showHome();
     else setTimeout(greet, 800);
 
     if (process.env.EMBER_TEST_HOOKS === "1") {
-      (globalThis as Record<string, unknown>).__ember = { settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle };
+      (globalThis as Record<string, unknown>).__ember = {
+        settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
+        agent: () => agent, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
+      };
     }
   });
 }
