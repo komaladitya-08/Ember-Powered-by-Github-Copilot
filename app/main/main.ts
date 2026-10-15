@@ -260,6 +260,8 @@ function start(): void {
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
   ipcMain.handle(IPC.signOut, guard(async () => {
+    // While still connected: delete this account's conversation so the next sign-in starts fresh.
+    await agent?.forgetConversation();
     tokens?.clear();
     currentToken = null;
     await agent?.start(null);

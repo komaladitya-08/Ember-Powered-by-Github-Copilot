@@ -219,6 +219,13 @@ export class AgentHost {
     await this.conductor?.abort();
   }
 
+  /** Sign-out: the conversation belongs to the account that had it, so it is deleted. */
+  async forgetConversation(): Promise<void> {
+    this.tasks?.cancelAll();
+    await this.conductor?.forget();
+    this.o.log.info("agent.conversation_forgotten");
+  }
+
   async stop(): Promise<void> {
     this.tasks?.cancelAll();
     this.tasks = null;
