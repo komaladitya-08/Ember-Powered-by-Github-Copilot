@@ -12,6 +12,7 @@ function fakeX() {
   };
   const x: XInput = {
     pointer: () => { s.user(); return { ...s.pointer }; },
+    pointerState: () => ({ ...s.pointer, mask: 0 }),
     move: (px, py) => { s.pointer = { x: px, y: py }; },
     button: (b, down) => { s.log.push(`button ${b} ${down ? "down" : "up"}`); },
     keysym: (sym, down) => { const code = sym % 200 + 8; if (down) s.keys.add(code); else s.keys.delete(code); s.log.push(`key ${sym} ${down ? "down" : "up"}`); return true; },

@@ -87,6 +87,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts` | Reads and operates a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
+| `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
 | `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) and synthesizes test clips into `.cache/voice` (needed by the voice tests and tour) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
@@ -111,6 +112,13 @@ it waits until you're still, moves the pointer visibly, and puts it back afterwa
 or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. **Stop** in the handle menu cancels every task. Apps you chose "Always" for
 are listed under `grants` in `settings.json`.
+
+### Learning with Ember
+
+Ask “show me how to …” (or “where is …”) and Ember guides instead of doing it. It flies to each
+control, highlights it, says what to do, and waits for you to click before moving on. When you call
+Ember, it notes where you are (the window, the focused field and any text you selected), so you can
+say “make this bold” or “what does this mean?”.
 
 ### Talking to Ember
 

@@ -54,6 +54,7 @@ export function serializeElements(window: AxWindow, nodes: AxNode[], opts: Seria
     if (n.value !== undefined) bits.push(`value=${n.value}`);
     if (n.actions?.length) bits.push(`actions=${n.actions.join("/")}`);
     if (n.text) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
+    if (n.selection) bits.push(`selected=${quote(n.selection, 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
     lines.push("  ".repeat(Math.max(0, n.depth - minDepth)) + bits.join(" "));
   }

@@ -24,6 +24,13 @@ export interface PerceptionOptions {
 
 export interface WindowTarget { pid?: number; title?: string }
 
+export interface QuickContext {
+  /** The window the user was in; tasks start there. */
+  target: WindowTarget & { app?: string };
+  /** For the model, wrapped as untrusted. */
+  text: string;
+}
+
 export interface Seen {
   window: AxWindow | null;
   x11Window: X11Window | null;
@@ -55,6 +62,33 @@ export class Perception {
     const blocked = !!window && isNeverLook(window, this.o.neverLook())
       || (!window && !!x11Window && isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()));
     return { window, x11Window, nodes: blocked ? [] : res.nodes, blocked, ms: Date.now() - t0 };
+  }
+
+  /**
+   * Taken the moment the user calls Ember (before the ask box or anything else
+   * takes focus): which window they're in, what has focus, and any selected
+   * text, so "make this bold" knows what "this" is. Short; untrusted.
+   */
+  async quickContext(): Promise<QuickContext | null> {
+    let seen: Seen;
+    try {
+      seen = await this.focused();
+    } catch {
+      return null;
+    }
+    const title = seen.window?.name || seen.x11Window?.title || "";
+    if (!title) return null;
+    const app = seen.window?.app ?? "";
+    const target = { pid: seen.window?.pid ?? seen.x11Window?.pid ?? undefined, title, app };
+    if (seen.blocked) return { target, text: `<context untrusted="true">The user is in a window on their never-look list.</context>` };
+    const focus = focusedElement(seen.nodes);
+    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+    const q = (v: string, n: number) => JSON.stringify(v.length > n ? v.slice(0, n) + "…" : v).replace(/</g, "\\u003c");
+    const lines = [`App: ${q(app || "unknown", 60)}, window: ${q(title, 100)}.`];
+    if (focus) lines.push(`Focused: ${focus.role}${label ? ` ${q(label, 60)}` : ""}.`);
+    if (focus?.selection) lines.push(`Selected text: ${q(focus.selection, 300)}.`);
+    else if (focus?.text && focus.role !== "password text") lines.push(`Its text begins: ${q(focus.text, 120)}.`);
+    return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>` };
   }
 
   /** Text for the conductor: where the user is and what the window contains. */

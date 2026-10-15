@@ -29,6 +29,7 @@ export interface Hands {
   confirmer: Confirmer;
   flyTo: (bounds: Bounds | null) => void;
   currentWindow: () => (WindowTarget & { app?: string }) | null;
+  pointer?: WorkerDeps["pointer"];
   /** Tier 3 (borrowing the user's mouse), when XTest is available. */
   cursor?: WorkerDeps["cursor"];
 }
@@ -135,6 +136,7 @@ export class AgentHost {
           if (hands.confirmer.waiting) return;
           this.o.setState({
             emotion: task.status === "done" ? "proud" : task.status === "cancelled" ? "neutral" : "sad", talking: false,
+            gesture: task.status === "done" ? "thumbsUp" : task.status === "cancelled" ? "rest" : "facepalm",
             bubble: { visible: true, mood: task.status === "done" ? "done" : task.status === "cancelled" ? "idle" : "error", title: task.title, thought: task.result?.summary ?? "", step: null, streaming: false, actions: [] },
           });
         },
@@ -147,6 +149,7 @@ export class AgentHost {
           lease: (key, owner) => this.tasks!.lease(key, owner),
           flyTo: hands.flyTo,
           cursor: hands.cursor,
+          pointer: hands.pointer,
           onProgress: progress,
           onUsage: (i, o) => this.recordUsage(i, o),
         }, spec),
@@ -162,8 +165,12 @@ export class AgentHost {
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
         startTask: tasks ? goal => {
-          const t = tasks.start(goal);
+          const t = tasks.start(goal, { target: this.askTarget ?? undefined });
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
+        } : undefined,
+        showMe: tasks ? goal => {
+          const t = tasks.start(goal, { target: this.askTarget ?? undefined, mode: "guide" });
+          return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: tasks ? () => tasks.takeReports().map(t => `Task "${t.title}" ${t.status}: ${t.result?.summary ?? ""}`) : undefined,
       });
@@ -190,7 +197,11 @@ export class AgentHost {
     this.setStatus({ usage: { calls: u.calls + 1, inputTokens: u.inputTokens + input, outputTokens: u.outputTokens + output } });
   }
 
-  async ask(text: string): Promise<void> {
+  /** Where the user was when they last called Ember: tasks from this request start there. */
+  private askTarget: (WindowTarget & { app?: string }) | null = null;
+
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null): Promise<void> {
+    this.askTarget = context?.target ?? null;
     if (!this.conductor) {
       this.o.setState({
         emotion: "confused", talking: false,
@@ -198,7 +209,7 @@ export class AgentHost {
       });
       return;
     }
-    await this.conductor.ask(text);
+    await this.conductor.ask(text, context?.text);
   }
 
   /** Stops the current answer and every running task (the handle's Stop). */

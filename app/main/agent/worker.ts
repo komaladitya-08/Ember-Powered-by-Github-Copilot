@@ -10,7 +10,7 @@ import fs from "node:fs";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
-import { workerSystemMessage } from "./worker-persona";
+import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import type { Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
@@ -43,6 +43,8 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
+  /** Pointer position and button mask in screen pixels (guide mode watches for the user's click). */
+  pointer?: () => { x: number; y: number; mask: number } | null;
   /** Tier 3, when available: borrowing the user's mouse and keyboard. */
   cursor?: {
     borrow: CursorBorrow;
@@ -59,6 +61,8 @@ export interface TaskSpec {
   goal: string;
   /** The window the user was in when they asked. */
   target: WindowTarget & { app?: string };
+  /** "do": Ember acts. "guide": Ember points and the user clicks. */
+  mode?: "do" | "guide";
 }
 
 export interface WorkerResult {
@@ -93,6 +97,8 @@ export class Worker {
   /** Apps the user allowed for this task only ("Allow once"). */
   private allowedApps = new Set<string>();
   private aborted = false;
+  private signal: AbortSignal | null = null;
+  private guideStep = 0;
   private userTookOver = false;
 
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
@@ -106,6 +112,13 @@ export class Worker {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   tools(): Tool<any>[] {
+    const all = this.allTools();
+    const guide = new Set(["perceive_window", "list_windows", "switch_window", "point_at", "wait_for_click", "report_progress", "finish_task"]);
+    return this.spec.mode === "guide" ? all.filter(t => guide.has(t.name)) : all.filter(t => t.name !== "point_at" && t.name !== "wait_for_click");
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+  private allTools(): Tool<any>[] {
     const common = { skipPermission: true, defer: "never" as const };
     const id = z.number().int().describe("Element id from your latest perceive_window");
     return [
@@ -215,6 +228,26 @@ export class Worker {
           handler: async (a: { id: number; direction: "up" | "down" | "left" | "right"; steps?: number }) => this.scroll(a.id, a.direction, a.steps ?? 5),
         }),
       ] : []),
+      defineTool("point_at", {
+        description: "Point at an element so the user can do this step themselves: Ember flies next to it, highlights it and shows your short instruction.",
+        parameters: z.object({ id, say: z.string().min(1).max(160).describe("A short instruction, e.g. \"Click Display\"") }),
+        ...common,
+        handler: async a => {
+          const node = this.known.get(a.id);
+          if (!node?.bounds) return fail(`Element ${a.id} is not in your latest perceive_window (or has no position). Call perceive_window.`);
+          this.guideStep++;
+          this.d.flyTo(node.bounds);
+          this.d.presenter.guide(a.say, `Step ${this.guideStep}`);
+          this.d.audit.write({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: node.name || this.labels.get(a.id) || "" }, ok: true });
+          return done(`Pointing at [${a.id}]. Now call wait_for_click with id ${a.id}.`);
+        },
+      }),
+      defineTool("wait_for_click", {
+        description: "Wait until the user clicks the element you pointed at (or it changes, e.g. a switch turns on, or the window changes).",
+        parameters: z.object({ id, timeoutSeconds: z.number().int().min(5).max(300).optional() }),
+        ...common,
+        handler: async a => this.waitForClick(a.id, (a.timeoutSeconds ?? 90) * 1000),
+      }),
       defineTool("report_progress", {
         description: "Tell the user briefly how the task is going (shown on Ember's task card).",
         parameters: z.object({ text: z.string().max(200) }),
@@ -239,7 +272,7 @@ export class Worker {
       model: d.model ?? undefined,
       provider: d.provider,
       tools,
-      systemMessage: workerSystemMessage(),
+      systemMessage: this.spec.mode === "guide" ? guideSystemMessage() : workerSystemMessage(),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
     });
@@ -258,6 +291,7 @@ export class Worker {
       if (e.type === "assistant.message") lastAnswer = String((e.data as { content?: string }).content ?? lastAnswer);
       if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
     });
+    this.signal = signal;
     const onAbort = () => { this.aborted = true; void session.abort().catch(() => undefined); };
     signal.addEventListener("abort", onAbort, { once: true });
     d.presenter.taskStarted();
@@ -282,6 +316,39 @@ export class Worker {
 
   async dispose(): Promise<void> {
     await this.session?.disconnect().catch(() => undefined);
+  }
+
+  /** Guide mode: done when the user presses inside the element, the element changes, or the window does. */
+  private async waitForClick(id: number, timeoutMs: number): Promise<ToolResultObject> {
+    const node = this.known.get(id);
+    if (!node?.bounds) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window.`);
+    const b = node.bounds, pad = 4;
+    const inside = (p: { x: number; y: number }) => p.x >= b.x - pad && p.y >= b.y - pad && p.x < b.x + b.width + pad && p.y < b.y + b.height + pad;
+    const before = await this.d.sidecar.readElement(id).catch(() => null);
+    const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => ["checked", "pressed", "selected", "expanded", "focused"].includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}` : "gone");
+    const t0 = Date.now();
+    let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
+    let lastCheck = 0;
+    while (Date.now() - t0 < timeoutMs) {
+      if (this.signal?.aborted) return denied("Stopped.");
+      const p = this.d.pointer?.();
+      const down = (p?.mask ?? 0) & 256;
+      if (p && down && !wasDown && inside(p)) {
+        await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
+        this.d.audit.write({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: node.name }, ok: true });
+        return done("The user clicked it. Call perceive_window to see what changed.");
+      }
+      wasDown = down;
+      if (Date.now() - lastCheck > 500) {
+        lastCheck = Date.now();
+        const now = await this.d.sidecar.readElement(id).catch(() => null);
+        if (key(now) !== key(before)) {
+          return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
+        }
+      }
+      await new Promise(r => setTimeout(r, 30));
+    }
+    return done("The user hasn't clicked it yet. Finish kindly, saying where they got to, unless the goal is already done.");
   }
 
   private async perceive(image: boolean): Promise<ToolResultObject> {

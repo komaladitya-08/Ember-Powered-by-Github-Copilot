@@ -60,6 +60,20 @@ def text_of(acc, limit=200):
         return None
 
 
+def selection_of(acc, limit=500):
+    """The selected text in a text element (first selection), or None."""
+    try:
+        t = acc.queryText()
+        if t.getNSelections() < 1:
+            return None
+        start, end = t.getSelection(0)
+        if end <= start:
+            return None
+        return t.getText(start, min(end, start + limit))
+    except Exception:
+        return None
+
+
 def value_of(acc):
     try:
         return acc.queryValue().currentValue
@@ -141,6 +155,10 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id):
                     txt = text_of(acc)
                     if txt:
                         node["text"] = txt
+                    if "focused" in states:
+                        sel = selection_of(acc)
+                        if sel:
+                            node["selection"] = sel
             val = value_of(acc)
             if val is not None:
                 node["value"] = val
