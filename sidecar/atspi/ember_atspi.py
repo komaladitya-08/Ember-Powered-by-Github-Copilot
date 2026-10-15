@@ -18,7 +18,8 @@ import traceback
 import pyatspi
 
 VERSION = 2
-MAX_DEPTH = 12
+# Deep enough for GTK 3.22's gedit, whose text view sits 15 levels down under fillers and panels.
+MAX_DEPTH = 24
 MAX_NODES = 400
 
 # Roles that only group or decorate; their children are kept, they are not listed.
