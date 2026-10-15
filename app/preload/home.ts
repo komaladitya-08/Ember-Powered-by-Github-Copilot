@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type EmberHomeApi, type SignInProgress } from "../shared/ipc";
+import { IPC, type EmberHomeApi, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus } from "../main/agent/host";
 
@@ -19,6 +19,10 @@ const api: EmberHomeApi = {
   signIn: () => ipcRenderer.invoke(IPC.signIn),
   onSignInProgress: fn => listen<SignInProgress>(IPC.signInProgress, fn),
   signOut: () => ipcRenderer.invoke(IPC.signOut),
+  voiceStatus: () => ipcRenderer.invoke(IPC.voiceStatus),
+  onVoiceStatus: fn => listen<VoiceStatus>(IPC.voiceStatus, fn),
+  downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
+  onVoiceProgress: fn => listen<{ done: number; total: number }>(IPC.voiceProgress, fn),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

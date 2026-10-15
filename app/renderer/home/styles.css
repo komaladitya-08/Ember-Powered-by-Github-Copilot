@@ -78,3 +78,9 @@ kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; 
 .models select { min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); font: inherit; }
 .usage { margin: 0; color: var(--muted); font-size: 13px; }
 .usage:empty { display: none; }
+.switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.switch-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+.consent { padding: 10px 12px; border-radius: 10px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.35); }
+.consent p { margin: 0 0 10px; line-height: 1.45; }
+progress { width: 100%; accent-color: var(--accent); }
+progress[hidden] { display: none; }

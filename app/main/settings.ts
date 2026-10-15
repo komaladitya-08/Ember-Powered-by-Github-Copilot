@@ -19,6 +19,12 @@ export const SettingsSchema = z.object({
   speak: z.boolean().default(false),
   /** Listen for "Hey Ember". */
   wakeWord: z.boolean().default(true),
+  voice: z.object({
+    /** The user agreed to the microphone disclosure (nothing listens before this). */
+    consent: z.boolean().default(false),
+    /** Ignore "Hey Ember" when it comes out of the speakers (needs parec). */
+    speakerRejection: z.boolean().default(true),
+  }).default({ consent: false, speakerRejection: true }),
   /** Onboarding finished (consent given, character picked). */
   onboarded: z.boolean().default(false),
   /** Apps and windows Ember must never read or capture (matched case-insensitively against app name and title). */

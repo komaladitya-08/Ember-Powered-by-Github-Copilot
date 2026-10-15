@@ -7,7 +7,7 @@ const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: root.pathname };
 
-const pages = ["home", "overlay", "handle", "ask"];
+const pages = ["home", "overlay", "handle", "ask", "mic"];
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
@@ -21,6 +21,24 @@ await Promise.all([
     format: "cjs",
     target: "node24",
     external: ["electron", "koffi", "@github/copilot-sdk", "sharp"],
+  }),
+  // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself).
+  build({
+    ...common,
+    entryPoints: ["app/voice/process.ts"],
+    outfile: "dist/app/voice.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "sherpa-onnx"],
+  }),
+  build({
+    ...common,
+    entryPoints: ["app/renderer/mic/worklet.ts"],
+    outfile: "dist/app/renderer/mic/worklet.js",
+    platform: "browser",
+    format: "iife",
+    target: "chrome140",
   }),
   build({
     ...common,
@@ -44,6 +62,8 @@ await Promise.all([
 
 for (const p of pages) {
   for (const f of ["index.html", "styles.css"]) {
-    await cp(new URL(`app/renderer/${p}/${f}`, root), new URL(`renderer/${p}/${f}`, out));
+    await cp(new URL(`app/renderer/${p}/${f}`, root), new URL(`renderer/${p}/${f}`, out)).catch(err => {
+      if (!(f === "styles.css" && err.code === "ENOENT")) throw err;
+    });
   }
 }

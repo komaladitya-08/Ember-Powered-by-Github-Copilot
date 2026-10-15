@@ -3,6 +3,7 @@
 import type { Emotion } from "@ember/characters";
 import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
+import type { MicState } from "./voice";
 
 export const OVERLAY = {
   init: "overlay:init",
@@ -57,6 +58,8 @@ export interface EmberState {
   status: string | null;
   /** The control Ember is working on (global DIP): Ember flies beside it and it glows. */
   focus?: Rect | null;
+  /** Microphone: off, waiting for "Hey Ember", or hearing a request. */
+  mic?: MicState;
 }
 
 export const IDLE_BUBBLE: BubbleState = {
