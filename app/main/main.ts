@@ -470,7 +470,7 @@ function start(): void {
     { name: "agent", stop: () => agent?.abortAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
-    { name: "motion", stop: () => { overlay?.setBorrowing(false); showState({ focus: null, gesture: null }); } },
+    { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
@@ -842,6 +842,7 @@ function start(): void {
       overlay?.setBorrowing(driving);
       // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
       handle?.setClickThrough(driving);
+      deskViewRef?.setDriving(driving);
       setState({ status: driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null });
     };
     const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
@@ -886,7 +887,8 @@ function start(): void {
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
       }).catch(err => { deskPlace = null; throw err; })) : undefined,
       // The view counts the tasks on the desk; it stays up a little after the last one leaves, so the user sees the result.
-      onDesk: place => (place ? deskView.show(place) : deskView.leave()),
+      // A task leaving a desk that has since died doesn't hide the view another task uses on the new desk.
+      onDesk: (place, previous) => { if (previous) deskView.leave(previous); if (place) deskView.show(place); },
       cursor: borrow && xinput ? {
         borrow,
         findWindow: (title, pid) => xinput.findWindow(title, pid),

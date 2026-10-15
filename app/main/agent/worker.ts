@@ -54,7 +54,8 @@ export interface WorkerDeps {
   /** Ember's desk (tier 2), started on first use. */
   desk?: () => Promise<DeskPlace>;
   /** The worker moved to (or left) the desk: show or hide the mini-view. */
-  onDesk?: (place: DeskPlace | null) => void;
+  /** The task moved to `place` (null: off the desk) from `previous`; the view counts the tasks on each desk. */
+  onDesk?: (place: DeskPlace | null, previous: DeskPlace | null) => void;
   /** Pointer position and button mask in screen pixels (guide mode watches for the user's click). */
   pointer?: () => { x: number; y: number; mask: number } | null;
   /** Tier 3, when available: borrowing the user's mouse and keyboard. */
@@ -180,12 +181,13 @@ export class Worker {
   /** Moving between the user's screen and the desk: element ids belong to the other screen's reader now. */
   private setPlace(place: DeskPlace | null): void {
     if (place === this.place) return;
+    const previous = this.place;
     this.place = place;
     this.known = new Map();
     this.labels = new Map();
     this.window = { app: "", name: "" };
     this.frame = null;
-    this.d.onDesk?.(place);
+    this.d.onDesk?.(place, previous);
   }
 
   /** Stops the task now. `reason` is set when a limit stopped it rather than the user. */
@@ -438,7 +440,7 @@ export class Worker {
       clearTimeout(deadline);
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
-      if (this.place) d.onDesk?.(null);
+      if (this.place) d.onDesk?.(null, this.place);
     }
     if (this.halted && this.haltReason === null) return { success: false, summary: "Stopped.", stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };

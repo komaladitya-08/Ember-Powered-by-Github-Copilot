@@ -5,17 +5,22 @@
  * input there without ever touching the user's. It has its own clipboard (a
  * separate display), an auth cookie so other users can't connect, its own
  * user folders (so its apps never change the user's settings), and is torn
- * down completely when Ember quits.
+ * down completely when Ember quits. Ember itself makes no X call there: a
+ * helper process does (agent.ts), so a dying desk can't take Ember with it.
+ * Everything on the desk carries EMBER_DESK_ID in its environment, and the
+ * desk's folder names its owner: a desk left behind by an Ember that was
+ * killed is cleared away the next time one starts.
  */
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { Logger } from "../logger";
 import { appEnv } from "../hands/system";
-import { openX11 } from "../x11";
+import { DeskAgent } from "./agent";
 
 export interface DeskInfo {
   display: string;
@@ -33,11 +38,6 @@ const which = (cmd: string): string | null => {
   }
   return null;
 };
-
-/** Is a process with this id running (as anyone)? */
-export function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === "EPERM"; }
-}
 
 /** Is this child still running? False as soon as it has exited, even before Node reaps it (a zombie). */
 export function running(pid: number | undefined, read: (p: string) => string = p => fs.readFileSync(p, "utf8")): boolean {
@@ -60,7 +60,7 @@ export interface DisplayProbe {
 const realProbe: DisplayProbe = {
   exists: fs.existsSync,
   lockPid: n => { try { const pid = Number(fs.readFileSync(`/tmp/.X${n}-lock`, "utf8").trim()); return Number.isInteger(pid) && pid > 0 ? pid : null; } catch { return null; } },
-  alive: pidAlive,
+  alive: pid => running(pid), // a zombie X server (killed, not yet reaped) holds nothing: its lock is stale
   remove: p => { try { fs.unlinkSync(p); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; } },
 };
 
@@ -84,6 +84,156 @@ export function freeDisplay(from = 90, probe: Partial<DisplayProbe> = {}): numbe
   throw new Error("no free X display number");
 }
 
+/**
+ * Does the X server on :n let this cookie in? A plain X11 handshake on its socket: no
+ * Xlib in Ember, so nothing here can end Ember if the server goes away meanwhile.
+ */
+export function xAccepts(n: number, cookie: Buffer, timeoutMs = 1000): Promise<boolean> {
+  const name = Buffer.from("MIT-MAGIC-COOKIE-1");
+  const pad = (k: number) => (4 - (k % 4)) % 4;
+  // Byte order "l" (little-endian), protocol 11.0, then the authorisation name and data, each padded to 4 bytes.
+  const req = Buffer.alloc(12 + name.length + pad(name.length) + cookie.length + pad(cookie.length));
+  req.write("l", 0);
+  req.writeUInt16LE(11, 2);
+  req.writeUInt16LE(name.length, 6);
+  req.writeUInt16LE(cookie.length, 8);
+  name.copy(req, 12);
+  cookie.copy(req, 12 + name.length + pad(name.length));
+  return new Promise(resolve => {
+    const s = net.connect(`/tmp/.X11-unix/X${n}`);
+    let done = false;
+    const finish = (ok: boolean) => { if (done) return; done = true; clearTimeout(timer); s.destroy(); resolve(ok); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    s.once("connect", () => s.write(req));
+    s.once("data", d => finish(d[0] === 1)); // 1: Success (0 Failed, 2 Authenticate)
+    s.once("error", () => finish(false));
+    s.once("close", () => finish(false));
+  });
+}
+
+/** When a process started (clock ticks since boot): with its id, it tells a process from a later one given the same id. */
+export function startTime(pid: number): number | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Processes of the desk `id`: those with EMBER_DESK_ID=<id> in their environment (however they
+ * detached), and everyone in a recorded process group that one of them is in. Never Ember itself.
+ */
+export function deskProcesses(id: string, groups: number[] = []): number[] {
+  const marker = Buffer.from(`EMBER_DESK_ID=${id}\0`);
+  const self = (() => { try { const s = fs.readFileSync("/proc/self/stat", "utf8"); return Number(s.slice(s.lastIndexOf(")") + 2).split(" ")[2]); } catch { return -1; } })();
+  const all: { pid: number; group: number; marked: boolean }[] = [];
+  let names: string[];
+  try { names = fs.readdirSync("/proc"); } catch { return []; }
+  for (const name of names) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    let env: Buffer, stat: string;
+    try { env = fs.readFileSync(`/proc/${name}/environ`); stat = fs.readFileSync(`/proc/${name}/stat`, "utf8"); } catch { continue; } // gone, or another user's
+    const at = env.indexOf(marker);
+    all.push({ pid: Number(name), group: Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]), marked: at === 0 || (at > 0 && env[at - 1] === 0) });
+  }
+  const ours = new Set(all.filter(p => p.marked && p.group !== self && groups.includes(p.group)).map(p => p.group));
+  return all.filter(p => p.marked || ours.has(p.group)).map(p => p.pid);
+}
+
+function killAll(pids: number[], sig: NodeJS.Signals): void {
+  for (const pid of pids) try { process.kill(pid, sig); } catch { /* gone */ }
+}
+
+/** Mount points (from /proc/self/mountinfo, unescaped). */
+function mountPoints(): string[] {
+  try {
+    return fs.readFileSync("/proc/self/mountinfo", "utf8").split("\n").filter(Boolean)
+      .map(l => l.split(" ")[4].replace(/\\([0-7]{3})/g, (_, o: string) => String.fromCharCode(parseInt(o, 8))));
+  } catch {
+    return [];
+  }
+}
+
+/** Lets go of a FUSE mount (gvfs, the document portal) even while it's busy. */
+function lazyUnmount(p: string): void {
+  for (const cmd of ["fusermount", "fusermount3"]) {
+    try { execFileSync(cmd, ["-u", "-z", p], { stdio: "ignore", timeout: 3000 }); return; } catch { /* the other one, or not ours */ }
+  }
+}
+
+/**
+ * Removes a folder Ember made. Anything mounted inside it (gvfs's FUSE mount in the desk's
+ * runtime folder, the document portal) is let go first, lazily; what can't be is left alone:
+ * removal never reaches into a mount, which may show the user's own files. `keep`: names in
+ * the folder itself to leave (the folder then stays too). Never throws; false if something else was left behind.
+ */
+export function removeTree(dir: string, o: { mounts?: () => string[]; unmount?: (p: string) => void; keep?: string[] } = {}): boolean {
+  const mounted = (o.mounts ?? mountPoints)().filter(m => m === dir || m.startsWith(dir + "/"));
+  for (const m of mounted.sort((a, b) => b.length - a.length)) try { (o.unmount ?? lazyUnmount)(m); } catch { /* left alone below */ }
+  const still = new Set((o.mounts ?? mountPoints)());
+  const gone = (err: unknown) => (err as NodeJS.ErrnoException).code === "ENOENT";
+  let root: fs.Stats;
+  try { root = fs.lstatSync(dir); } catch (err) { return gone(err); }
+  const remove = (p: string, st: fs.Stats): boolean => {
+    if (st.dev !== root.dev || still.has(p)) return false; // a mount: never into it
+    if (!st.isDirectory()) { try { fs.unlinkSync(p); return true; } catch (err) { return gone(err); } }
+    // Folders made read-only there (LibreOffice's macro folders) are Ember's own: they can go too.
+    if ((st.mode & 0o700) !== 0o700) try { fs.chmodSync(p, 0o700); } catch { /* not ours */ }
+    let names: string[];
+    try { names = fs.readdirSync(p); } catch (err) { return gone(err); }
+    let all = true, kept = false;
+    for (const n of names) {
+      if (p === dir && o.keep?.includes(n)) { kept = true; continue; }
+      const c = path.join(p, n);
+      try { all = remove(c, fs.lstatSync(c)) && all; } catch (err) { all = gone(err) && all; }
+    }
+    if (!all || kept) return all;
+    try { fs.rmdirSync(p); return true; } catch (err) { return gone(err); }
+  };
+  return remove(dir, root);
+}
+
+/** What the desk's folder says about who made it. */
+interface Owner { pid: number; start: number | null; id: string; groups: number[] }
+const OWNER = "owner.json";
+
+/**
+ * Desks left behind by an Ember that is gone (killed, or ended by a crash): their processes are
+ * killed and their folders removed. Resolves once those processes have exited, so their display
+ * numbers are free again. Desks of an Ember still running are left alone.
+ */
+export function reapDesks(log?: Logger, tmp = os.tmpdir()): Promise<number> {
+  // One at a time: a desk starting waits for the clearing already under way.
+  let p = reaping.get(tmp);
+  if (!p) { p = reapNow(log, tmp).finally(() => reaping.delete(tmp)); reaping.set(tmp, p); }
+  return p;
+}
+const reaping = new Map<string, Promise<number>>();
+
+async function reapNow(log: Logger | undefined, tmp: string): Promise<number> {
+  const victims: number[] = [];
+  let names: string[];
+  try { names = fs.readdirSync(tmp).filter(n => n.startsWith("ember-desk-")); } catch { return 0; }
+  for (const name of names) {
+    const dir = path.join(tmp, name);
+    let owner: Owner;
+    try {
+      if (fs.lstatSync(dir).uid !== process.getuid?.()) continue; // another user's
+      owner = JSON.parse(fs.readFileSync(path.join(dir, OWNER), "utf8")) as Owner;
+    } catch { continue; } // not a desk folder
+    if (owner.id !== name || (running(owner.pid) && startTime(owner.pid) === owner.start)) continue;
+    const pids = deskProcesses(owner.id, owner.groups ?? []);
+    killAll(pids, "SIGKILL");
+    victims.push(...pids);
+    removeTree(dir);
+    log?.info("desk.reaped", { desk: name, processes: pids.length });
+  }
+  for (const t0 = Date.now(); victims.some(p => running(p)) && Date.now() - t0 < 3000;) await new Promise(r => setTimeout(r, 25));
+  return victims.length;
+}
+
 /** Signals a desk process and everything it started (each runs in its own process group). */
 function signal(p: ChildProcess, sig: NodeJS.Signals): void {
   if (!p.pid) return;
@@ -93,35 +243,66 @@ function signal(p: ChildProcess, sig: NodeJS.Signals): void {
 export class DeskManager {
   private procs: ChildProcess[] = [];
   private dir: string | null = null;
+  /** The desk's EMBER_DESK_ID (its folder's name). */
+  private id: string | null = null;
+  /** Process groups started for the desk (recorded in its folder for reapDesks()). */
+  private groups = new Set<number>();
   private info: DeskInfo | null = null;
   private xvfb: ChildProcess | null = null;
+  private helper: DeskAgent | null = null;
   private starting: Promise<DeskInfo> | null = null;
   private deadFns = new Set<(why: string) => void>();
+  /** Desks stopped in the last moments, whose processes may still be quitting (id → folder). */
+  private leaving = new Map<string, string>();
 
   /**
    * `profiles`: where the desk's own user folders live (default: a throw-away folder).
    * `env`: extra variables for everything on the desk (tests pass their fixtures' settings).
    * `display`: the first display number to try.
+   * `agent`: the desk helper's script (default: desk-agent.cjs beside Ember's main script).
    */
-  constructor(private log: Logger, private o: { width?: number; height?: number; handOff?: string; profiles?: string; env?: NodeJS.ProcessEnv; display?: number } = {}) {
+  constructor(private log: Logger, private o: { width?: number; height?: number; handOff?: string; profiles?: string; env?: NodeJS.ProcessEnv; display?: number; agent?: string } = {}) {
     // Even if Ember exits without quitting cleanly, don't leave the desk running or its cookie on disk.
-    // (SIGTERM, so Xvfb removes its lock and socket.)
+    // SIGTERM first (Xvfb then removes its lock and socket), a moment to go, then SIGKILL: Ember won't be
+    // there to wait. A folder keeps its owner record if something still runs; the next Ember clears it.
     process.once("exit", () => {
+      this.helper?.stop();
       for (const p of this.procs) signal(p, "SIGTERM");
-      if (this.dir) try { fs.rmSync(this.dir, { recursive: true, force: true }); } catch { /* best effort */ }
+      const desks = new Map(this.leaving);
+      if (this.id && this.dir) {
+        desks.set(this.id, this.dir);
+        killAll(deskProcesses(this.id, [...this.groups]), "SIGTERM");
+      }
+      const left = (ms: number) => {
+        const nap = new Int32Array(new SharedArrayBuffer(4));
+        for (const t0 = Date.now(); ; Atomics.wait(nap, 0, 0, 10)) {
+          const pids = [...desks.keys()].flatMap(id => deskProcesses(id));
+          if (!pids.length || Date.now() - t0 >= ms) return pids;
+        }
+      };
+      killAll(left(300), "SIGKILL");
+      const still = left(200).length > 0;
+      for (const dir of desks.values()) removeTree(dir, still ? { keep: [OWNER] } : {});
     });
+    // Desks an earlier Ember left behind (it was killed) go as soon as Ember starts.
+    void reapDesks(log);
   }
 
   get running(): DeskInfo | null {
     return this.info;
   }
 
-  /** Is the desk's display up? No X call may be made on it otherwise: Xlib would end Ember. */
-  alive(): boolean {
-    return !!this.info && running(this.xvfb?.pid);
+  /** The helper that makes the desk's X calls (null while the desk isn't running). */
+  get agent(): DeskAgent | null {
+    return this.info ? this.helper : null;
   }
 
-  /** Calls `fn` when the desk's display dies on its own (not when stopped). Returns a function that stops listening. */
+  /** Is the desk up: its display, and the helper that talks to it? */
+  alive(): boolean {
+    return !!this.info && running(this.xvfb?.pid) && !!this.helper?.alive;
+  }
+
+  /** Calls `fn` when the desk dies on its own (its display or its helper; not when stopped). Returns a function that stops listening. */
   onDead(fn: (why: string) => void): () => void {
     this.deadFns.add(fn);
     return () => { this.deadFns.delete(fn); };
@@ -148,23 +329,36 @@ export class DeskManager {
     // The hand-off folder first: if it can't be made, nothing has been started.
     const handOff = this.o.handOff ?? path.join(os.homedir(), "Ember");
     fs.mkdirSync(handOff, { recursive: true });
+    // A desk an earlier Ember left running (it was killed) goes first: its display number is free again.
+    await reapDesks(this.log);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-desk-"));
     fs.chmodSync(dir, 0o700);
     this.dir = dir;
+    this.id = path.basename(dir);
+    this.groups = new Set();
+    this.record();
     try {
+      // Every process on the desk carries this, however it detaches: stop() and reapDesks() find them by it.
+      const marker = { EMBER_DESK_ID: this.id };
       // Only Ember (and processes it starts) may connect: an MIT cookie in a private file.
       const xauth = path.join(dir, "Xauthority");
       fs.writeFileSync(xauth, "", { mode: 0o600 });
-      const cookie = crypto.randomBytes(16).toString("hex");
+      const cookie = crypto.randomBytes(16);
       let display = "";
       for (let attempt = 0, from = this.o.display ?? 90; !display; attempt++) {
         const n = freeDisplay(from);
         // On stdin, never on a command line: any user can read those in /proc.
-        execFileSync("xauth", ["-f", xauth, "source", "-"], { input: `add :${n} . ${cookie}\n`, stdio: ["pipe", "ignore", "ignore"] });
-        if (await this.startDisplay(n, width, height, xauth)) display = `:${n}`;
+        execFileSync("xauth", ["-f", xauth, "source", "-"], { input: `add :${n} . ${cookie.toString("hex")}\n`, stdio: ["pipe", "ignore", "ignore"] });
+        if (await this.startDisplay(n, width, height, xauth, cookie, { ...appEnv(process.env, { session: false }), ...marker })) display = `:${n}`;
         else if (attempt >= 4) throw new Error("the desk display didn't start");
         else from = n + 1; // another X server took the number first
       }
+
+      // The helper that makes every X call on the desk (Ember makes none).
+      const agent = await DeskAgent.start(this.o.agent ?? path.join(__dirname, "desk-agent.cjs"),
+        { ...appEnv(process.env, { session: false }), ...marker, DISPLAY: display, XAUTHORITY: xauth });
+      this.helper = agent;
+      agent.onExit(why => { if (this.helper === agent) this.died(why); });
 
       // The desk's own user folders: settings, data and caches of its apps and of the D-Bus
       // services they start (dconf writes settings for them) stay there, never in the user's.
@@ -175,7 +369,14 @@ export class DeskManager {
       const runtime = path.join(dir, "runtime");
       fs.mkdirSync(runtime, { mode: 0o700 });
       // Built from an allowlist: Ember's sign-in, keys and the user's agents never reach the desk.
-      const baseEnv: NodeJS.ProcessEnv = { ...appEnv(process.env, { session: false }), ...this.o.env, ...folders, DISPLAY: display, XAUTHORITY: xauth, XDG_RUNTIME_DIR: runtime };
+      // The bus passes this environment to the services it starts, so accessibility is on for them too.
+      const baseEnv: NodeJS.ProcessEnv = {
+        ...appEnv(process.env, { session: false }), ...this.o.env, ...folders, ...marker, DISPLAY: display, XAUTHORITY: xauth, XDG_RUNTIME_DIR: runtime,
+        // Every toolkit exposes accessibility on the desk.
+        // (NO_AT_BRIDGE must be absent, not "0": GTK only checks that it exists.)
+        GNOME_ACCESSIBILITY: "1", QT_LINUX_ACCESSIBILITY_ALWAYS_ON: "1", QT_ACCESSIBILITY: "1", ACCESSIBILITY_ENABLED: "1",
+        GDK_BACKEND: "x11", QT_QPA_PLATFORM: "xcb", XDG_SESSION_TYPE: "x11",
+      };
       const bus = spawn("dbus-daemon", ["--session", "--nofork", "--nopidfile", "--print-address=1"], { env: baseEnv, stdio: ["ignore", "pipe", "ignore"], detached: true });
       this.track(bus, "dbus-daemon");
       const address = await new Promise<string>((resolve, reject) => {
@@ -189,16 +390,10 @@ export class DeskManager {
         });
       });
 
-      const env: NodeJS.ProcessEnv = {
-        ...baseEnv,
-        DBUS_SESSION_BUS_ADDRESS: address,
-        // Every toolkit exposes accessibility on the desk.
-        // (NO_AT_BRIDGE must be absent, not "0": GTK only checks that it exists.)
-        GNOME_ACCESSIBILITY: "1", QT_LINUX_ACCESSIBILITY_ALWAYS_ON: "1", ACCESSIBILITY_ENABLED: "1",
-        GDK_BACKEND: "x11", QT_QPA_PLATFORM: "xcb", XDG_SESSION_TYPE: "x11",
-      };
+      const env: NodeJS.ProcessEnv = { ...baseEnv, DBUS_SESSION_BUS_ADDRESS: address };
       const wm = ["metacity", "openbox", "xfwm4"].find(c => which(c));
       if (wm) this.track(spawn(wm, wm === "metacity" ? ["--replace", "--no-composite"] : [], { env, stdio: "ignore", detached: true }), wm);
+      if (!running(this.xvfb?.pid) || !agent.alive) throw new Error("the desk display didn't start");
 
       this.info = { display, width, height, env, handOff };
       this.log.info("desk.started", { display, wm: wm ?? "none", ms: Date.now() - t0 });
@@ -216,32 +411,30 @@ export class DeskManager {
    * False if it exits first (another server has :n). (Not -displayfd: with it,
    * Xvfb writes no lock file, and other X servers could take the number.)
    */
-  private async startDisplay(n: number, width: number, height: number, xauth: string): Promise<boolean> {
-    const xvfb = spawn("Xvfb", [`:${n}`, "-screen", "0", `${width}x${height}x24`, "-nolisten", "tcp", "-auth", xauth, "-noreset"], { stdio: "ignore", detached: true });
+  private async startDisplay(n: number, width: number, height: number, xauth: string, cookie: Buffer, env: NodeJS.ProcessEnv): Promise<boolean> {
+    const xvfb = spawn("Xvfb", [`:${n}`, "-screen", "0", `${width}x${height}x24`, "-nolisten", "tcp", "-auth", xauth, "-noreset"], { env, stdio: "ignore", detached: true });
     this.track(xvfb, "Xvfb");
     let exited = false;
     xvfb.once("exit", () => { exited = true; });
     xvfb.once("error", () => { exited = true; });
-    const display = { display: `:${n}`, env: { XAUTHORITY: xauth } };
     for (const t0 = Date.now(); Date.now() - t0 < 5000; await new Promise(r => setTimeout(r, 25))) {
       if (exited || !running(xvfb.pid)) return false;
       if (realProbe.lockPid(n) !== xvfb.pid) continue;
-      const probe = withDeskAuth(display, d => openX11(d));
-      if (!probe) continue;
-      probe.close();
+      if (!(await xAccepts(n, cookie))) continue;
       this.xvfb = xvfb;
-      xvfb.once("exit", (code, sig) => { if (this.xvfb === xvfb) this.died(code, sig); });
+      xvfb.once("exit", (code, sig) => { if (this.xvfb === xvfb) this.died(`the desk display exited (${sig ?? code})`); });
       return true;
     }
     throw new Error("the desk display didn't start");
   }
 
-  /** The display went away on its own: everyone stops using it before anything else, then the rest is torn down. */
-  private died(code: number | null, sig: NodeJS.Signals | null): void {
+  /** The desk died on its own (its display or its helper): everyone stops using it before anything else, then the rest is torn down. */
+  private died(why: string): void {
+    if (!this.info) return;
     this.xvfb = null;
-    this.log.warn("desk.died", { display: this.info?.display, code, signal: sig });
+    this.log.warn("desk.died", { display: this.info.display, why });
     for (const fn of [...this.deadFns]) {
-      try { fn(`the desk display exited (${sig ?? code})`); } catch (err) { this.log.warn("desk.dead_handler_failed", { err }); }
+      try { fn(why); } catch (err) { this.log.warn("desk.dead_handler_failed", { err }); }
     }
     this.stop();
   }
@@ -249,7 +442,7 @@ export class DeskManager {
   /** Starts a program on the desk (never on the user's display). */
   run(argv: string[], extraEnv: NodeJS.ProcessEnv = {}): ChildProcess {
     if (!this.alive()) throw new Error("the desk isn't running");
-    const child = spawn(argv[0], argv.slice(1), { env: { ...this.info!.env, ...extraEnv }, stdio: ["ignore", "ignore", "pipe"], cwd: this.info!.handOff, detached: true });
+    const child = spawn(argv[0], argv.slice(1), { env: { ...this.info!.env, ...extraEnv, EMBER_DESK_ID: this.id! }, stdio: ["ignore", "ignore", "pipe"], cwd: this.info!.handOff, detached: true });
     this.track(child, path.basename(argv[0]));
     let err = "";
     child.stderr?.on("data", (d: Buffer) => { if (err.length < 4000) err += d.toString(); });
@@ -258,41 +451,43 @@ export class DeskManager {
   }
 
   stop(): void {
-    // Apps first, then the window manager, bus and display (reverse start order), each with what it started.
-    const procs = [...this.procs].reverse();
+    // Everything is let go first, so nothing below can leave the manager half stopped.
+    const procs = [...this.procs].reverse(), dir = this.dir, id = this.id, groups = [...this.groups], info = this.info, helper = this.helper;
     this.procs = [];
     this.xvfb = null;
-    for (const p of procs) signal(p, "SIGTERM");
-    const dir = this.dir;
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    this.helper = null;
+    this.dir = null;
+    this.id = null;
+    this.info = null;
+    if (id && dir) this.leaving.set(id, dir);
     setTimeout(() => {
       // Only processes not yet exited: their ids (and groups) can't have been reused yet.
       for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL");
+      if (id) { killAll(deskProcesses(id, groups), "SIGKILL"); this.leaving.delete(id); }
       // Apps that save as they quit may have put files back.
-      if (dir) try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+      if (dir && !removeTree(dir)) this.log.warn("desk.folder_left", { dir });
     }, 1500).unref();
-    if (this.info) this.log.info("desk.stopped", { display: this.info.display });
-    this.dir = null;
-    this.info = null;
+    helper?.stop();
+    // Apps first, then the window manager, bus and display (reverse start order), each with what it started;
+    // then whatever left its group (setsid) but carries the desk's mark.
+    for (const p of procs) signal(p, "SIGTERM");
+    if (id) killAll(deskProcesses(id, groups), "SIGTERM");
+    // The cookie and everything else go now; the owner record stays until the desk's processes have gone.
+    if (dir && !removeTree(dir, { keep: [OWNER] })) this.log.warn("desk.folder_left", { dir });
+    if (info) this.log.info("desk.stopped", { display: info.display });
+  }
+
+  /** Writes who owns the desk into its folder (reapDesks() reads it). */
+  private record(): void {
+    if (!this.dir || !this.id) return;
+    const owner: Owner = { pid: process.pid, start: startTime(process.pid), id: this.id, groups: [...this.groups] };
+    try { fs.writeFileSync(path.join(this.dir, OWNER), JSON.stringify(owner), { mode: 0o600 }); } catch (err) { this.log.warn("desk.record_failed", { err }); }
   }
 
   private track(p: ChildProcess, name: string): void {
     this.procs.push(p);
+    if (p.pid) { this.groups.add(p.pid); this.record(); }
     p.on("error", err => this.log.warn("desk.process_error", { name, err }));
     p.on("exit", () => { this.procs = this.procs.filter(x => x !== p); });
-  }
-}
-
-/**
- * Opens an X connection to the desk. libX11 reads XAUTHORITY when the
- * connection is made, so it is pointed at the desk's cookie just for the call.
- */
-export function withDeskAuth<T>(desk: Pick<DeskInfo, "display" | "env">, open: (display: string) => T): T {
-  const saved = process.env.XAUTHORITY;
-  process.env.XAUTHORITY = desk.env.XAUTHORITY;
-  try {
-    return open(desk.display);
-  } finally {
-    if (saved === undefined) delete process.env.XAUTHORITY; else process.env.XAUTHORITY = saved;
   }
 }

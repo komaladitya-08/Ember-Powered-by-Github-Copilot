@@ -7,10 +7,8 @@
 
 import { BrowserWindow, ipcMain, screen } from "electron";
 import path from "node:path";
-import { createRequire } from "node:module";
-import type Sharp from "sharp";
 import { DESK, type DeskInput } from "../../shared/desk";
-import { bgraToRgba } from "../perception/capture";
+import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
 
@@ -19,28 +17,18 @@ const SMALL = { width: 340, height: 238 };
 const LARGE = { width: 980, height: 646 };
 /** How long the view stays up after the last desk task ends, so the user sees the result. */
 const LINGER_MS = 10_000;
+/** Spare keys lent to the user's characters get their nothing back this long after hand back (an app may still be reading them). */
+const RESTORE_KEYS_MS = 2000;
 /**
  * With Ctrl+Alt held, these keys hand the desk back (the way out by keyboard, as Tab and Esc go to the desk).
  * GNOME keeps Ctrl+Alt+Esc for itself (switch system controls), so End is the one the view shows.
  */
 const HAND_BACK = /^(End|Escape)$/;
 
-/** Browser KeyboardEvent.key → X keysym name. */
-const KEYS: Record<string, string> = {
-  Enter: "Return", Backspace: "BackSpace", Tab: "Tab", Escape: "Escape", " ": "space", Delete: "Delete",
-  ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Home: "Home", End: "End",
-  PageUp: "Prior", PageDown: "Next", Control: "Control_L", Shift: "Shift_L", Alt: "Alt_L", Meta: "Super_L", CapsLock: "Caps_Lock",
-};
-
-/** `code` (KeyboardEvent.code) picks the right-hand modifier keys (ShiftRight → Shift_R). */
+/** Browser KeyboardEvent.key → X keysym for keys pressed as they are (see keys.ts); 0 for characters and keys the desk doesn't get. */
 export function keysymFor(key: string, lookup: (name: string) => number, code = ""): number {
-  if (KEYS[key]) return lookup(/Right$/.test(code) && KEYS[key].endsWith("_L") ? KEYS[key].replace(/_L$/, "_R") : KEYS[key]);
-  if (/^F\d{1,2}$/.test(key)) return lookup(key);
-  if (key.length === 1) {
-    const c = key.charCodeAt(0);
-    if (c >= 0x20 && c <= 0x7e) return c; // Latin-1 keysyms are the character codes
-  }
-  return 0;
+  const plan = planKey(key, code, true, lookup);
+  return plan?.sym ?? 0;
 }
 
 /** MouseEvent.button → X button: left, middle, right, then back and forward (8 and 9 in X). 0 for others. */
@@ -53,26 +41,33 @@ export function wheelButtons(dx: number, dy: number): number[] {
   return [...(dy ? [dy > 0 ? 5 : 4] : []), ...(dx ? [dx > 0 ? 7 : 6] : [])];
 }
 
+/** A key the user holds on the desk: its keycode, and whether it is a Shift or a shortcut modifier. */
+interface Held { code: number; kind: "shift" | "shortcut" | "key" }
+
 export class DeskView {
   private win: BrowserWindow | null = null;
   private timer: NodeJS.Timeout | null = null;
   private hideTimer: NodeJS.Timeout | null = null;
+  private restoreTimer: NodeJS.Timeout | null = null;
   private place: DeskPlace | null = null;
   private control = false;
+  /** Ember is moving the user's own mouse (tier 3): the view lets clicks through and can't be taken over. */
+  private driving = false;
   private busy = false;
-  private sharp: typeof Sharp | null = null;
-  /** Desk tasks working now: the view stays up while any is. */
-  private users = 0;
-  /** What the user holds down on the desk while in control (physical key → X keycode, X buttons), let go on hand back. */
-  private keys = new Map<string, number>();
+  /** Desk tasks working now, per desk: the view stays up while any works on the desk it shows. */
+  private users = new Map<DeskPlace, number>();
+  /** What the user holds down on the desk while in control (physical key → keycode, X buttons), let go on hand back. */
+  private keys = new Map<string, Held>();
   private buttons = new Set<number>();
+  /** Keys were lent to characters the desk's keyboard lacks: they get their nothing back later. */
+  private lentKeys = false;
 
   constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined, private o: { lingerMs?: number } = {}) {
-    ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender)) this.setControl(true); });
+    ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
-    ipcMain.on(DESK.hide, e => { if (this.owns(e.sender)) this.hide(); });
+    ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
     ipcMain.on(DESK.release, e => { if (this.owns(e.sender)) this.releaseAll(); });
-    ipcMain.on(DESK.input, (e, input: DeskInput) => { if (this.owns(e.sender) && this.control) this.forward(input); });
+    ipcMain.on(DESK.input, (e, input: DeskInput) => { if (this.owns(e.sender) && this.control && !this.driving) this.forward(input); });
   }
 
   /** True while the user is using the desk: Ember must not act there. */
@@ -80,10 +75,20 @@ export class DeskView {
     return this.control;
   }
 
-  /** A desk task is working there: show the view. It stays up while any desk task works (see leave()). */
+  /**
+   * Ember starts (true) or stops (false) moving the user's own mouse and keys. Meanwhile the view
+   * lets every click through (a borrowed click must never land on it) and can't be taken over.
+   */
+  setDriving(on: boolean): void {
+    this.driving = on;
+    if (on) this.releaseAll();
+    if (this.win && !this.win.isDestroyed()) this.win.setIgnoreMouseEvents(on);
+  }
+
+  /** A desk task is working on `place`: show the view. It stays up while any desk task works there (see leave()). */
   show(place: DeskPlace): void {
     if (place.dead) return;
-    this.users++;
+    this.users.set(place, (this.users.get(place) ?? 0) + 1);
     this.clearHide();
     if (this.place !== place) {
       this.releaseAll();
@@ -100,6 +105,7 @@ export class DeskView {
       });
       this.win = win;
       win.setAlwaysOnTop(true, "screen-saver");
+      if (this.driving) win.setIgnoreMouseEvents(true);
       void win.loadFile(path.join(appDir, "renderer", "desk", "index.html"));
       // Shown without focus so it never takes the user's keys; it is focusable so
       // "Take over" can give it the keyboard (a non-focusable X window can't get it later).
@@ -117,10 +123,16 @@ export class DeskView {
     this.startFrames();
   }
 
-  /** A desk task finished (or left the desk): once none works there and the user isn't using it, hide a little later. */
-  leave(): void {
-    this.users = Math.max(0, this.users - 1);
-    this.armHide();
+  /**
+   * A desk task finished (or left the desk): once none works on the desk shown and the user isn't using it,
+   * hide a little later. `place`: the desk it worked on; a desk that is gone (or not shown) doesn't count.
+   */
+  leave(place: DeskPlace | null = this.place): void {
+    if (!place) return;
+    const n = this.users.get(place);
+    if (n === undefined) return;
+    if (n > 1) this.users.set(place, n - 1); else this.users.delete(place);
+    if (place === this.place) this.armHide();
   }
 
   hide(): void {
@@ -141,13 +153,14 @@ export class DeskView {
 
   private setControl(on: boolean): void {
     const win = this.win && !this.win.isDestroyed() ? this.win : null;
-    if (!win || !this.place || this.place.dead) on = false;
+    if (!win || !this.place || this.place.dead || this.driving) on = false;
     if (!on) this.releaseAll();
     const changed = this.control !== on;
     this.control = on;
     if (changed) {
       this.log.info("desk.control", { user: on });
       this.onControl(on);
+      if (on) this.clearRestore(); else this.armRestore();
     }
     if (!win) return;
     if (changed) {
@@ -162,24 +175,45 @@ export class DeskView {
     if (changed && !on) this.armHide();
   }
 
-  /** The desk died: nothing more is shown or sent there. */
+  /** The desk died: nothing more is shown or sent there, and the tasks that were on it no longer count. */
   private lost(place: DeskPlace): void {
+    this.users.delete(place);
     if (this.place !== place) return;
     this.log.warn("desk.view_lost", {});
-    this.users = 0;
+    this.lentKeys = false;
+    this.clearRestore();
     this.hide();
     this.place = null;
   }
 
   private armHide(): void {
     this.clearHide();
-    if (this.users > 0 || this.control || !this.win || this.win.isDestroyed()) return;
-    this.hideTimer = setTimeout(() => { this.hideTimer = null; if (!this.users && !this.control) this.hide(); }, this.o.lingerMs ?? LINGER_MS);
+    const busy = () => (this.place ? this.users.get(this.place) ?? 0 : 0) > 0 || this.control;
+    if (busy() || !this.win || this.win.isDestroyed()) return;
+    this.hideTimer = setTimeout(() => { this.hideTimer = null; if (!busy()) this.hide(); }, this.o.lingerMs ?? LINGER_MS);
   }
 
   private clearHide(): void {
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = null;
+  }
+
+  /** Spare keys lent to the user's characters go back a little after hand back. */
+  private armRestore(): void {
+    this.clearRestore();
+    if (!this.lentKeys) return;
+    const place = this.place;
+    this.restoreTimer = setTimeout(() => {
+      this.restoreTimer = null;
+      if (this.control || !place || place.dead || place !== this.place) return;
+      this.lentKeys = false;
+      try { place.keys.restore(); } catch (err) { this.log.debug("desk.restore_keys_failed", { err }); }
+    }, RESTORE_KEYS_MS);
+  }
+
+  private clearRestore(): void {
+    if (this.restoreTimer) clearTimeout(this.restoreTimer);
+    this.restoreTimer = null;
   }
 
   /** Lets go of every key and button the user holds on the desk, so nothing stays pressed there. */
@@ -191,10 +225,37 @@ export class DeskView {
     if (!input || (!keys.length && !buttons.length)) return;
     try {
       for (const b of buttons) input.button(b, false);
-      for (const code of keys) input.keycode(code, false);
+      for (const k of keys) input.keycode(k.code, false);
     } catch (err) {
       this.log.debug("desk.release_failed", { err });
     }
+  }
+
+  /**
+   * Types a character the user's keyboard made: its key on the desk, with Shift as that key needs it
+   * there, whatever the user holds (Shift+7 on a German keyboard makes "/", which needs no Shift on
+   * the desk). Returns the keycode pressed, or 0.
+   */
+  private typeChar(place: DeskPlace, sym: number): number {
+    const k = place.keys.key(sym);
+    if (!k) return 0;
+    // (Shift makes no difference on a lent key, and on few others.)
+    if (k.shift === null) this.lentKeys = true;
+    const input = place.input;
+    const shifts = [...this.keys.values()].filter(h => h.kind === "shift").map(h => h.code);
+    if (k.shift === null || k.shift === shifts.length > 0) {
+      input.keycode(k.code, true);
+    } else if (k.shift) {
+      const shift = input.keycodeOf(input.keysymOf("Shift_L"));
+      if (shift) input.keycode(shift, true);
+      input.keycode(k.code, true);
+      if (shift) input.keycode(shift, false);
+    } else {
+      for (const s of shifts) input.keycode(s, false);
+      input.keycode(k.code, true);
+      for (const s of shifts) input.keycode(s, true);
+    }
+    return k.code;
   }
 
   private forward(e: DeskInput): void {
@@ -221,15 +282,18 @@ export class DeskView {
           // Ctrl+Alt+End and Ctrl+Alt+Esc are Ember's own: they hand the desk back and never reach the desk.
           const held = [...this.keys.keys()];
           if (HAND_BACK.test(e.key) && held.some(k => /^Control/.test(k)) && held.some(k => /^Alt/.test(k))) { this.setControl(false); return; }
-          const code = input.keycodeOf(keysymFor(e.key, n => input.keysymOf(n), e.code));
+          const shortcut = [...this.keys.values()].some(h => h.kind === "shortcut");
+          const plan = planKey(e.key, e.code, shortcut, n => input.keysymOf(n));
+          if (!plan) return;
+          const code = plan.kind === "char" ? this.typeChar(place, plan.sym) : input.keycodeOf(plan.sym);
           if (!code) return;
-          input.keycode(code, true);
-          this.keys.set(id, code);
+          if (plan.kind === "key") input.keycode(code, true);
+          this.keys.set(id, { code, kind: e.key === "Shift" ? "shift" : SHORTCUT_MODIFIERS.has(e.key) ? "shortcut" : "key" });
         } else {
           // The key that went down goes up, by keycode ("A" may come up as "a" once Shift is let go).
-          const code = this.keys.get(id) ?? input.keycodeOf(keysymFor(e.key, n => input.keysymOf(n), e.code));
+          const held = this.keys.get(id);
           this.keys.delete(id);
-          if (code) input.keycode(code, false);
+          if (held) input.keycode(held.code, false);
         }
       }
     } catch (err) {
@@ -247,22 +311,16 @@ export class DeskView {
     this.timer = null;
   }
 
+  /** One picture of the desk, made by the desk's helper (Ember's thread doesn't wait for it). */
   private async frame(): Promise<void> {
     const place = this.place;
     if (this.busy || !place || !this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
     if (place.dead) { this.stopFrames(); return; }
     this.busy = true;
     try {
-      const { info, x11 } = place;
-      const img = x11.capture(0, 0, info.width, info.height);
-      if (!img) return;
-      this.sharp ??= createRequire(__filename)("sharp") as typeof Sharp;
-      const width = this.control ? 960 : 320;
-      const jpg = await this.sharp(bgraToRgba(img.bgra), { raw: { width: img.width, height: img.height, channels: 4 } })
-        .resize(width).jpeg({ quality: this.control ? 80 : 65 }).toBuffer();
-      if (place.dead || !this.win || this.win.isDestroyed()) return;
-      const active = x11.activeWindow();
-      this.win.webContents.send(DESK.frame, { url: `data:image/jpeg;base64,${jpg.toString("base64")}`, width: info.width, height: info.height, title: active?.title ?? "" });
+      const shot = await place.snapshot(this.control ? 960 : 320, this.control ? 80 : 65);
+      if (!shot || place.dead || place !== this.place || !this.win || this.win.isDestroyed()) return;
+      this.win.webContents.send(DESK.frame, { url: `data:image/jpeg;base64,${shot.jpeg.toString("base64")}`, width: shot.width, height: shot.height, title: shot.title });
     } catch (err) {
       this.log.debug("desk.frame_failed", { err });
     } finally {

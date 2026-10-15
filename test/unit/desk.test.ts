@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { freeDisplay, running } from "../../app/main/desk/desk";
-import { deskRecipe, guardX } from "../../app/main/desk/place";
+import { pathToFileURL } from "node:url";
+import { freeDisplay, removeTree, running } from "../../app/main/desk/desk";
+import { deskRecipe, guardX, lockDownLibreOffice } from "../../app/main/desk/place";
 import { keysymFor, wheelButtons, xButton } from "../../app/main/desk/view";
 import { PolicyEngine } from "../../app/main/policy/policy";
-import { appEnv, darkTheme, isTerminalApp, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
+import { appEnv, darkTheme, execArgv, hasBuiltInShell, isTerminalApp, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
 
 const app = (id: string, name: string, exec: string, more: Partial<DesktopApp> = {}): DesktopApp => ({ id, name, exec, file: "", keywords: [], ...more });
 
@@ -48,9 +49,53 @@ describe("desk", () => {
     expect(fs.statSync(path.join(p, "firefox")).isDirectory()).toBe(true);
     expect(deskRecipe(app("mozilla-thunderbird", "Thunderbird", "thunderbird %u"), { handOff: "/h" }, p)).toEqual(["thunderbird", "--new-instance", "--profile", path.join(p, "thunderbird")]);
     expect(deskRecipe(app("libreoffice-writer", "LibreOffice Writer", "libreoffice --writer %U"), { handOff: "/h" }, p))
-      .toEqual(["libreoffice", "--writer", `-env:UserInstallation=file://${path.join(p, "libreoffice")}`]);
+      .toEqual(["libreoffice", "--writer", `-env:UserInstallation=${pathToFileURL(path.join(p, "libreoffice")).href}`]);
+    // On a desk, LibreOffice's profile is the desk's own (in its runtime folder, gone when it stops).
+    const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "ember-runtime-"));
+    expect(deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: "/h", env: { XDG_RUNTIME_DIR: runtime } }, p).at(-1))
+      .toBe(`-env:UserInstallation=${pathToFileURL(path.join(runtime, "libreoffice")).href}`);
+    for (const d of [p, runtime]) removeTree(d);
     expect(deskRecipe(app("org.gnome.gedit", "Text Editor", "gedit %U"), { handOff: "/h" }, p)).toEqual(["gedit"]);
     expect(deskRecipe(app("ember-bench", "Ember Bench", "python3 /src/test/fixtures/gtk3_bench.py"), { handOff: "/h" }, p)).toEqual(["python3", "/src/test/fixtures/gtk3_bench.py"]);
+  });
+
+  it("gives LibreOffice a profile URL that survives spaces and other characters in the path", () => {
+    const p = fs.mkdtempSync(path.join(os.tmpdir(), "ember profiles #1 "));
+    const argv = deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: "/h" }, p);
+    const url = argv.at(-1)!.replace("-env:UserInstallation=", "");
+    expect(url).toMatch(/^file:\/\/\/.*%20profiles%20%231%20/);
+    expect(new URL(url).pathname).toBe(encodeURI(path.join(p, "libreoffice")).replace(/#/g, "%23"));
+    removeTree(p);
+  });
+
+  it("runs LibreOffice on the desk with macros off, the macro editors switched off and its macro folders read-only, keeping the rest of its profile", () => {
+    const p = fs.mkdtempSync(path.join(os.tmpdir(), "ember-lo-"));
+    // LibreOffice's presets: a new profile's Basic libraries start as a copy of them.
+    const presets = fs.mkdtempSync(path.join(os.tmpdir(), "ember-lo-presets-"));
+    fs.mkdirSync(path.join(presets, "basic", "Standard"), { recursive: true });
+    fs.writeFileSync(path.join(presets, "basic", "Standard", "Module1.xba"), "<module/>");
+    const file = path.join(p, "user", "registrymodifications.xcu");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // A profile where someone lowered the macro security on the desk, plus a setting of the user's own.
+    fs.writeFileSync(file, `<?xml version="1.0" encoding="UTF-8"?>\n<oor:items xmlns:oor="http://openoffice.org/2001/registry">\n`
+      + `<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>0</value></prop></item>\n`
+      + `<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="FirstRun" oor:op="fuse"><value>false</value></prop></item>\n</oor:items>\n`);
+    lockDownLibreOffice(p, presets);
+    lockDownLibreOffice(p, presets); // twice: still one of each
+    const xcu = fs.readFileSync(file, "utf8");
+    // No macro can be written where LibreOffice runs them from (saving a document over a module, a new script).
+    const mode = (f: string) => fs.statSync(path.join(p, "user", f)).mode & 0o777;
+    expect(fs.readFileSync(path.join(p, "user", "basic", "Standard", "Module1.xba"), "utf8")).toBe("<module/>");
+    expect([mode("basic"), mode("basic/Standard"), mode("basic/Standard/Module1.xba"), mode("Scripts")]).toEqual([0o500, 0o500, 0o400, 0o500]);
+    expect(xcu).toContain('<prop oor:name="DisableExtensionInstallation" oor:op="fuse"><value>true</value></prop>');
+    expect(xcu).toContain("<value>PackageManager</value>");
+    expect(xcu.match(/MacroSecurityLevel/g)).toHaveLength(1);
+    expect(xcu).toContain('<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>');
+    expect(xcu).toContain('<prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop>');
+    for (const c of ["BasicIDEAppear", "MacroDialog", "RunMacro", "ScriptOrganizer"]) expect(xcu.match(new RegExp(`<value>${c}</value>`, "g")), c).toHaveLength(1);
+    expect(xcu).toContain('oor:name="FirstRun"');
+    expect(xcu).toMatch(/^<\?xml[\s\S]*<\/oor:items>\n$/);
+    for (const d of [p, presets]) expect(removeTree(d)).toBe(true);
   });
 
   it("never runs terminals", () => {
@@ -59,9 +104,11 @@ describe("desk", () => {
     expect(() => deskRecipe(app("my-shell", "Quick shell", "sh -c \"exec urxvt -e bash\""), { handOff: "/h" }, "/p")).toThrow(/terminals/);
   });
 
-  it("doesn't run VS Code on the desk (it has a terminal built in)", () => {
+  it("doesn't run apps with a terminal or shell built in on the desk (VS Code, Emacs, IDEs)", () => {
     expect(() => deskRecipe(app("code", "Visual Studio Code", "/usr/share/code/code --unity-launch %F"), { handOff: "/h" }, "/p")).toThrow(/terminal built in/);
     expect(() => deskRecipe(app("com.visualstudio.code", "Code", "/usr/bin/flatpak run --command=code com.visualstudio.code"), { handOff: "/h" }, "/p")).toThrow(/terminal built in/);
+    expect(() => deskRecipe(app("emacs", "Emacs", "emacs %F"), { handOff: "/h" }, "/p")).toThrow(/terminal built in/);
+    expect(() => deskRecipe(app("jetbrains-pycharm-ce", "PyCharm Community Edition", "/opt/pycharm/bin/pycharm.sh %f"), { handOff: "/h" }, "/p")).toThrow(/terminal built in/);
   });
 
   it("maps browser keys and buttons to X", () => {
@@ -158,6 +205,77 @@ describe("terminals", () => {
     expect(parsed).toMatchObject({ name: "XTerm", categories: ["System", "TerminalEmulator"] });
     expect(parsed?.terminal).toBeUndefined();
     expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=top\nExec=top\nTerminal=true\n")?.terminal).toBe(true);
+    // GLib's booleans: "1" is true too (and "0" false).
+    expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=top\nExec=top\nTerminal=1\n")?.terminal).toBe(true);
+    expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=top\nExec=top\nTerminal=0\n")?.terminal).toBeUndefined();
+    expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=x\nExec=x\nNoDisplay=1\n")?.visible).toBe(false);
+    // Key-file escapes come off before the Exec line is read.
+    expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=x\nExec=sh\\s-c\\sxterm\n")?.exec).toBe("sh -c xterm");
+  });
+
+  it("reads Exec lines as GLib does: quotes, backslashes, comments, field codes", () => {
+    const table: [string, string[]][] = [
+      ["xterm", ["xterm"]],
+      ["'xterm'", ["xterm"]],
+      ["\\xterm", ["xterm"]],
+      ["x\\ term -e", ["x term", "-e"]],
+      ['sh -c "echo \\"hi\\" \\$HOME \\n"', ["sh", "-c", 'echo "hi" $HOME \\n']],
+      ["sh -c 'a \"b\" c'", ["sh", "-c", 'a "b" c']],
+      ["gedit %U", ["gedit"]],
+      ["app --opt=100%% %f", ["app", "--opt=100%"]],
+      ["app # a comment", ["app"]],
+      ['"/opt/My App/run" ""', ["/opt/My App/run", ""]],
+    ];
+    for (const [exec, argv] of table) expect(execArgv(exec), exec).toEqual(argv);
+  });
+
+  it("follows wrappers to the command they run, and refuses ones that run commands elsewhere or as someone else", () => {
+    const terminals = [
+      "env -S \"xterm -e bash\"", "env -S'xterm -e bash'", "env --split-string=\"FOO=1 xterm\"", "env -u VAR xterm", "env -C /tmp xterm", "env -i PATH=/bin xterm",
+      "env --unset VAR --chdir /tmp xterm", "env -- xterm", "/usr/bin/env -vS 'nice xterm'",
+      "timeout 10 xterm", "timeout -s KILL -k 5 10 xterm", "timeout --signal=TERM 10s xterm", "taskset 0x1 xterm", "taskset -c 0,1 xterm",
+      "nice -n 5 xterm", "nice -10 xterm", "ionice -c 3 xterm", "stdbuf -o L xterm", "stdbuf --output=L xterm", "setsid -f xterm", "nohup xterm",
+      "chrt -f 10 xterm", "chrt --sched-runtime 5 -d 0 xterm", "flock /tmp/l xterm", "flock -w 3 /tmp/l xterm", "flock /tmp/l -c 'exec xterm'", "dbus-launch --exit-with-session xterm",
+      "systemd-cat -t x xterm", "firejail --private xterm",
+      "systemd-run --user xterm", "systemd-run --user gedit", "sudo gedit", "pkexec gedit", "su -c xterm", "doas gedit", "runuser -u a gedit",
+      "gtk-launch org.gnome.Terminal", "gtk-launch org.gnome.gedit", "gio launch /usr/share/applications/xterm.desktop", "xdg-open /usr/share/applications/xterm.desktop",
+      "dbus-send --session --dest=org.gnome.Terminal /x org.x.Y", "busctl --user call org.gnome.Terminal /x", "gdbus call --session -d org.x",
+      "flatpak run --command=xterm org.gnome.gedit", "flatpak run --command bash org.gnome.gedit", "flatpak --user run --branch=stable --command=sh org.x.Y -c 'xterm'",
+      "flatpak enter org.gnome.gedit bash", "flatpak run org.gnome.Console",
+      "'xterm'", "\\xterm", "\"/usr/bin/xterm\" -e top", "sh -c 'nohup xterm'", "bash -c \"timeout 5 xterm\"", "python3 -m idlelib", "python3 -m code",
+      "env env env env env env env env env env xterm",
+    ];
+    for (const exec of terminals) expect(isTerminalApp(app("some.App", "Some App", exec)), exec).toBe(true);
+    const fine = ["env GDK_BACKEND=x11 gimp %U", "timeout 3600 gedit", "nice -n 5 evince %U", "taskset -p 0x1 1234", "flatpak run org.gnome.Calculator",
+      "flatpak run --command=gnome-calculator org.gnome.Calculator", "flock /tmp/l gedit", "sh -c \"cd /opt/app && ./run\"", "python3 -m http.server",
+      "stdbuf -oL /usr/bin/evince", "env -u GTK_MODULES nautilus --new-window %U", "sh -c 'exec /opt/app/code-runner'"];
+    for (const exec of fine) expect(isTerminalApp(app("some.App", "Some App", exec)), exec).toBe(false);
+  });
+
+  it("knows apps with a shell or terminal built in, by program, desktop id, name and Categories", () => {
+    const shellApps: [string, string, string, string[]?][] = [
+      ["emacs", "Emacs", "emacs %F"], ["emacs", "GNU Emacs (GUI)", "/usr/bin/emacs-26.1 %F"], ["xemacs", "XEmacs", "xemacs"], ["gvim", "GVim", "gvim -f %F"],
+      ["nvim-qt", "Neovim Qt", "nvim-qt %F"], ["idle3", "IDLE (using Python-3.6)", "idle3"], ["org.thonny.Thonny", "Thonny", "thonny %F"],
+      ["spyder3", "Spyder", "spyder3"], ["jetbrains-pycharm-ce", "PyCharm", "/opt/pycharm/bin/pycharm.sh %f"], ["jetbrains-idea", "IntelliJ IDEA", "/opt/idea/bin/idea.sh"],
+      ["com.jetbrains.CLion", "CLion", "/app/bin/clion"], ["android-studio", "Android Studio", "/opt/android-studio/bin/studio.sh"],
+      ["eclipse", "Eclipse", "/usr/bin/eclipse"], ["org.kde.kate", "Kate", "kate -b %U"], ["geany", "Geany", "geany %F"], ["org.gnome.Builder", "Builder", "gnome-builder"],
+      ["code-oss", "Code - OSS", "code-oss %F"], ["codium", "VSCodium", "/usr/share/codium/codium %F"], ["atom", "Atom", "atom %F"], ["sublime_text", "Sublime Text", "/opt/sublime_text/sublime_text %F"],
+      ["org.qt-project.qtcreator", "Qt Creator", "qtcreator %F"], ["org.kde.kdevelop", "KDevelop", "kdevelop"], ["lazarus", "Lazarus", "startlazarus"],
+      ["netbeans", "Apache NetBeans", "/usr/bin/netbeans"], ["arduino", "Arduino IDE", "arduino"], ["rstudio", "RStudio", "/usr/lib/rstudio/bin/rstudio %F"],
+      ["org.octave.Octave", "GNU Octave", "octave --gui"], ["matlab", "MATLAB", "matlab -desktop"], ["jupyter-notebook", "Jupyter Notebook", "jupyter-notebook"],
+      ["some.Thing", "Some IDE", "thing", ["Development", "IDE"]],
+    ];
+    for (const [id, name, exec, categories] of shellApps) {
+      expect(hasBuiltInShell({ id, name, exec, ...(categories ? { categories } : {}) }), `${id} ${exec}`).toBe(true);
+      expect(isTerminalApp(app(id, name, exec, categories ? { categories } : {})), id).toBe(true);
+    }
+    // By name only (the policy asks with what the model typed).
+    for (const name of ["emacs", "pycharm", "Visual Studio Code", "IDLE"]) expect(isTerminalApp({ id: name, name }), name).toBe(true);
+    // Editors without one, office apps and others stay allowed.
+    const fine: [string, string, string][] = [["org.gnome.gedit", "Text Editor", "gedit %U"], ["org.kde.kwrite", "KWrite", "kwrite %U"], ["mousepad", "Mousepad", "mousepad %F"],
+      ["libreoffice-writer", "LibreOffice Writer", "libreoffice --writer %U"], ["org.gnome.Calculator", "Calculator", "gnome-calculator"],
+      ["obs", "OBS Studio", "obs"], ["io.github.qr_code_generator", "QR Code Generator", "qr-code"], ["idle-slayer", "Idle Slayer", "idleslayer"]];
+    for (const [id, name, exec] of fine) expect(isTerminalApp(app(id, name, exec)), id).toBe(false);
   });
 });
 

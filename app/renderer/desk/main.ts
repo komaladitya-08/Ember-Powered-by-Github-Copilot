@@ -1,6 +1,7 @@
 /** The desk mini-view: watch Ember work; take over to use the desk yourself. */
 
 import type { DeskViewApi } from "../../shared/desk";
+import { wheelSteps, type WheelState } from "./wheel";
 
 declare global { interface Window { emberDesk: DeskViewApi } }
 
@@ -53,10 +54,15 @@ img.addEventListener("mousedown", e => {
 window.addEventListener("mouseup", e => {
   if (pressed.delete(e.button) && inControl) api.input({ type: "button", button: e.button, down: false, ...toDesk(e) });
 });
+const wheel: WheelState = { x: 0, y: 0, at: 0 };
 img.addEventListener("wheel", e => {
   if (!inControl) return;
   e.preventDefault();
-  api.input({ type: "wheel", dx: Math.sign(e.deltaX), dy: Math.sign(e.deltaY), ...toDesk(e) });
+  const { dx, dy } = wheelSteps(wheel, e, img.clientHeight || 600);
+  // A very fast fling is a few steps, not dozens.
+  for (let i = 0; i < Math.min(10, Math.max(Math.abs(dx), Math.abs(dy))); i++) {
+    api.input({ type: "wheel", dx: i < Math.abs(dx) ? Math.sign(dx) : 0, dy: i < Math.abs(dy) ? Math.sign(dy) : 0, ...toDesk(e) });
+  }
 }, { passive: false });
 img.addEventListener("contextmenu", e => e.preventDefault());
 // Back and forward buttons go to the desk, not to this page.

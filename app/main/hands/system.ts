@@ -102,6 +102,12 @@ export interface DesktopApp {
   terminal?: boolean;
 }
 
+/** A key file's string escapes (\\s \\n \\t \\r \\\\), as GLib reads them; any other backslash stays for the Exec parser. */
+const unescapeValue = (v: string) => v.replace(/\\([sntr\\])/g, (_, c: string) => ({ s: " ", n: "\n", t: "\t", r: "\r", "\\": "\\" })[c]!);
+
+/** A key file boolean as GLib reads it: "true" or "1" (GLib also takes a prefix of "true"). */
+const keyFileTrue = (v: string | undefined) => v !== undefined && /^(1|t|tr|tru|true)$/.test(v.trim());
+
 export function parseDesktopFile(text: string): { name: string; keywords: string[]; visible: boolean; exec?: string; categories?: string[]; terminal?: boolean } | null {
   let section = "";
   const kv: Record<string, string> = {};
@@ -110,16 +116,16 @@ export function parseDesktopFile(text: string): { name: string; keywords: string
     if (t.startsWith("[")) { section = t; continue; }
     if (section !== "[Desktop Entry]") continue;
     const i = t.indexOf("=");
-    if (i > 0) kv[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    if (i > 0) kv[t.slice(0, i).trim()] = unescapeValue(t.slice(i + 1).trim());
   }
   if (kv.Type !== "Application" || !kv.Name) return null;
-  const visible = kv.NoDisplay !== "true" && kv.Hidden !== "true";
+  const visible = !keyFileTrue(kv.NoDisplay) && !keyFileTrue(kv.Hidden);
   const categories = (kv.Categories ?? "").split(";").map(s => s.trim()).filter(Boolean);
   return {
     name: kv.Name, keywords: [kv.GenericName, ...(kv.Keywords ?? "").split(";")].filter(Boolean).map(s => s!.toLowerCase()), visible,
     ...(kv.Exec ? { exec: kv.Exec } : {}),
     ...(categories.length ? { categories } : {}),
-    ...(kv.Terminal === "true" ? { terminal: true } : {}),
+    ...(keyFileTrue(kv.Terminal) ? { terminal: true } : {}),
   };
 }
 
@@ -134,57 +140,181 @@ const TERMINALS = new Set([
 ]);
 /** Command shells and terminal multiplexers: given no script, they wait for typed commands. */
 const SHELLS = /^(sh|bash|rbash|dash|zsh|ksh|ksh93|mksh|pdksh|oksh|ash|yash|csh|tcsh|fish|elvish|xonsh|nu|pwsh|busybox|toybox|screen|tmux|byobu)$/;
-/** Interpreters: with -c/-e they run the code given to them. */
-const INTERPRETERS = /^(python|pypy|perl|ruby|irb|node|nodejs|deno|bun|lua|luajit|php|tclsh|wish|guile|gjs|jshell|julia|rscript|expect)[\d.]*$/i;
-/** Programs that start the next word as the real command. */
-const WRAPPERS = new Set(["env", "nohup", "setsid", "nice", "ionice", "exec", "stdbuf", "dbus-launch", "dbus-run-session", "chrt", "taskset"]);
+/** Interpreters: with -c/-e they run the code given to them; alone, they wait for typed code. */
+const INTERPRETERS = /^(python|pypy|perl|ruby|irb|node|nodejs|deno|bun|lua|luajit|php|tclsh|wish|guile|gjs|jshell|julia|rscript|expect|ipython|bpython|ptpython)[\d.]*$/i;
+/** Python modules that are an interactive shell or an IDE (python -m idlelib). */
+const SHELL_MODULES = /^(idlelib(\..*)?|code|pdb|asyncio|ipython|jupyter.*|qtconsole|thonny|spyder.*|bpython|ptpython)$/i;
+/**
+ * Apps with a terminal or shell built in (IDEs, programmers' editors, REPLs): whatever is typed into
+ * them can run as a command (Emacs' M-x shell, Vim's :!, IDLE, an IDE's terminal panel). Program
+ * names or desktop-id parts, with any version after them.
+ */
+const SHELL_APP = new RegExp("^(x?emacs(client)?|g?vimx?|evim|nvim(-qt)?|neovim(-qt)?|neovide|gnvim|idle|thonny|spyder|code(-insiders|-oss)?|codium|vscodium|visual-studio-code"
+  + "|atom|pulsar|subl|sublime_text|sublimetext|sublime-text|kate|geany|gnome-builder|qtcreator|kdevelop|lazarus(-ide)?|monodevelop|netbeans|arduino(-?ide)?"
+  + "|rstudio|octave(-gui|-cli)?|matlab|jupyter[\\w-]*|eclipse|idea|intellij[\\w-]*|pycharm|clion|goland|webstorm|rider|phpstorm|rubymine|datagrip|dataspell"
+  + "|android-?studio|jetbrains[\\w-]*|fleet|zed|lapce|codeblocks|anjuta)"
+  // Versions and editions after the name (emacs-26.1, idle3, idle-python3.6, pycharm-community, idea.sh).
+  + "([-_]?\\d[\\w.]*|-(ce|community|professional|ultimate|edu|eap|nightly|preview|beta|stable|bin|gui|cli|qt|gtk\\d?|x11|nox|lucid|python[\\d.]*))*(\\.sh)?$");
+const SHELL_APP_ID = /^(org\.gnome\.builder|com\.visualstudio\.code.*|com\.vscodium\.codium|org\.kde\.kate|cc\.arduino\..*|org\.qt-project\.qtcreator|com\.jetbrains\..*|com\.google\.androidstudio|org\.octave\.octave|org\.jupyter\..*)$/;
+const SHELL_APP_NAME = /\b(x?emacs|g?vim|neovim|neovide|thonny|spyder|visual studio code|vs ?code|vscodium|code - oss|sublime text|kate|geany|gnome builder|qt ?creator|kdevelop|lazarus|monodevelop|netbeans|arduino|rstudio|octave|matlab|jupyter\w*|eclipse|intellij|jetbrains|pycharm|clion|goland|webstorm|phpstorm|rubymine|datagrip|dataspell|android studio|code::blocks|anjuta)\b/i;
+
+/** Programs that start the next word as the real command (after their own options). */
+const WRAPPERS: Record<string, { value?: string; long?: string[]; positional?: number; noCommand?: RegExp }> = {
+  nohup: {}, setsid: {}, exec: { value: "a" }, "dbus-launch": { long: ["autolaunch", "config-file"] }, "dbus-run-session": { long: ["config-file", "dbus-daemon"] },
+  nice: { value: "n", long: ["adjustment"] },
+  ionice: { value: "cnpPu", long: ["class", "classdata", "pid", "pgid", "uid"], noCommand: /^-([a-z]*[pPu]|-pid|-pgid|-uid)/ },
+  stdbuf: { value: "ioe", long: ["input", "output", "error"] },
+  timeout: { value: "ks", long: ["kill-after", "signal"], positional: 1 },
+  taskset: { positional: 1, noCommand: /^-([a-z]*p|-pid)/ },
+  chrt: { value: "TPD", long: ["sched-runtime", "sched-period", "sched-deadline"], positional: 1, noCommand: /^-([a-z]*[pm]|-pid|-max)/ },
+  flock: { value: "Ew", long: ["conflict-exit-code", "timeout", "wait"], positional: 1 },
+  "systemd-cat": { value: "tp", long: ["identifier", "priority", "stderr-priority", "level-prefix"] },
+  firejail: {}, torsocks: {}, proxychains: {}, proxychains4: {}, "prime-run": {}, primusrun: {}, optirun: {}, vglrun: { value: "dc" }, gamemoderun: {}, mangohud: {},
+  "xdg-terminal-exec": {},
+};
+/**
+ * Programs that run commands Ember can't follow, or as someone else: never started. (systemd-run
+ * runs it inside the user's own session, sudo and friends as another user, the launchers start
+ * another desktop entry, URL or D-Bus service.)
+ */
+const REFUSED = /^(sudo|sudoedit|pkexec|su|doas|runuser|run0|sg|newgrp|systemd-run|machinectl|nsenter|unshare|ssh|mosh|telnet|rsh|rlogin|gksu|gksudo|kdesu|kdesudo|beesu|xdg-su|flatpak-spawn|toolbox|distrobox|gtk-launch|gio|gvfs-open|gnome-open|xdg-open|kde-open5?|kioclient5?|exo-open|dex|dbus-send|gdbus|busctl|qdbus(-qt\d)?|dbus-update-activation-environment|snap|xdotool|xte|ydotool)$/;
+/** flatpak run options that take a value (the next word, unless given as --name=value). */
+const FLATPAK_VALUE = new Set(["arch", "branch", "command", "cwd", "runtime", "runtime-version", "commit", "runtime-commit", "filesystem", "nofilesystem",
+  "env", "unset-env", "persist", "socket", "nosocket", "device", "nodevice", "share", "unshare", "allow", "disallow", "talk-name", "no-talk-name",
+  "own-name", "system-talk-name", "system-no-talk-name", "system-own-name", "add-policy", "remove-policy", "app-path", "usr-path", "instance-id-fd", "parent-pid", "env-fd"]);
 
 const base = (p: string) => path.basename(p).toLowerCase();
 const named = (word: string) => TERMINALS.has(word) || TERMINALS.has(word.replace(/\.(py|pl|rb|js|sh)$/, ""));
+const shellApp = (word: string) => SHELL_APP.test(word);
 
-/** Does this argv (an Exec line, after wrappers) start a terminal or wait for typed commands? */
-function runsTerminal(argv: string[], depth = 0): boolean {
+/** The words after a command's own options (`value`: short options taking a value; `long`: long ones), less `positional` more. */
+function afterOptions(args: string[], value = "", long: string[] = [], positional = 0): string[] {
   let i = 0;
-  while (i < argv.length && WRAPPERS.has(base(argv[i]))) {
-    i++;
-    while (i < argv.length && (argv[i].startsWith("-") || /^[A-Za-z_]\w*=/.test(argv[i]) || /^\d+$/.test(argv[i]))) i++;
+  while (i < args.length) {
+    const a = args[i];
+    if (a === "--") { i++; break; }
+    if (a.startsWith("--")) { i += !a.includes("=") && long.includes(a.slice(2)) ? 2 : 1; continue; }
+    if (a.startsWith("-") && a.length > 1) {
+      // A cluster (-ab, -n5): a letter taking a value takes the rest of the word, or the next word if it's last.
+      const k = [...a.slice(1)].findIndex(c => value.includes(c));
+      i += k >= 0 && k === a.length - 2 ? 2 : 1;
+      continue;
+    }
+    break;
   }
-  const args = argv.slice(i);
-  if (!args.length) return false;
-  const prog = base(args[0]);
-  if (named(prog) || args.some(a => /TerminalEmulator/i.test(a))) return true;
-  if (prog === "flatpak") {
-    const id = args.slice(args.indexOf("run") + 1).find(a => !a.startsWith("-"));
-    return !!id && idIsTerminal(id);
-  }
-  if (!SHELLS.test(prog) && !INTERPRETERS.test(prog)) return false;
-  // Inline code (sh -c "…", python -c "…", perl -e "…"): refuse it if it names a terminal anywhere.
-  const inline = args.findIndex((a, k) => k > 0 && /^-[a-zA-Z]*[ceE]$/.test(a));
-  if (inline > 0) {
-    // (The rest of the line: single quotes aren't Exec quoting, so 'a b' arrives split.)
-    const code = args.slice(inline + 1).join(" ").replace(/['"]/g, " ");
-    if (depth < 3 && SHELLS.test(prog) && runsTerminal(execArgv(code.replace(/[;&|()`$<>]/g, " ")), depth + 1)) return true;
-    return (code.match(/[\w./+-]+/g) ?? []).some(w => named(base(w)));
-  }
-  // A script runs: refuse only a script that is itself a terminal (terminator is a Python program).
-  const script = args.slice(1).find(a => !a.startsWith("-"));
-  return script ? named(base(script)) : true;
+  return args.slice(i + positional);
 }
 
-const idIsTerminal = (id: string) => {
-  const parts = id.toLowerCase().replace(/\.desktop$/, "").split(".");
-  return parts.some(p => named(p) || p === "console" || p.split(/[-_]/).some(w => named(w) || w === "console"));
-};
+/** What `env [options] [NAME=VALUE…] command` runs (-S splits its string into more arguments). */
+function envCommand(args: string[], depth: number): string[] {
+  let i = 0;
+  while (i < args.length && depth < 8) {
+    const a = args[i];
+    if (a === "--") { i++; break; }
+    if (a === "-") { i++; continue; }
+    if (a.startsWith("--split-string=")) return envCommand([...execArgv(a.slice(15)), ...args.slice(i + 1)], depth + 1);
+    if (a === "--split-string") return envCommand([...execArgv(args[i + 1] ?? ""), ...args.slice(i + 2)], depth + 1);
+    if (a.startsWith("--")) { i += !a.includes("=") && ["unset", "chdir"].includes(a.slice(2)) ? 2 : 1; continue; }
+    if (a.startsWith("-") && a.length > 1) {
+      const s = a.indexOf("S"), uc = [...a.slice(1)].findIndex(c => c === "u" || c === "C") + 1;
+      if (s > 0 && (!uc || s < uc)) {
+        const rest = a.slice(s + 1);
+        return envCommand([...execArgv(rest || (args[i + 1] ?? "")), ...args.slice(i + (rest ? 1 : 2))], depth + 1);
+      }
+      i += uc && uc === a.length - 1 ? 2 : 1;
+      continue;
+    }
+    break;
+  }
+  while (i < args.length && /^[^=-][^=]*=/.test(args[i])) i++; // NAME=VALUE
+  return args.slice(i);
+}
+
+/** What `flatpak run …` runs: --command's program with the app's arguments, or the app itself. true: refuse. */
+function flatpakCommand(args: string[]): { id: string; argv: string[] | null } | true | null {
+  const sub = args.findIndex(a => !a.startsWith("-"));
+  if (sub < 0) return null;
+  if (args[sub] === "enter") return true; // a command inside a running app's sandbox
+  if (args[sub] !== "run") return null;
+  let command: string | null = null, i = sub + 1;
+  for (; i < args.length && args[i].startsWith("-"); i++) {
+    const a = args[i];
+    if (a === "--") { i++; break; }
+    const [name, val] = a.replace(/^--?/, "").split(/=(.*)/s);
+    const value = val ?? (FLATPAK_VALUE.has(name) ? args[++i] ?? "" : undefined);
+    if (name === "command") command = value ?? "";
+  }
+  const id = args[i] ?? "";
+  return { id, argv: command !== null ? [command, ...args.slice(i + 1)] : null };
+}
+
+/** Does this argv (an Exec line) start a terminal, a shell or an app with one built in, or wait for typed commands? */
+function runsTerminal(argv: string[], depth = 0): boolean {
+  if (!argv.length) return false;
+  if (depth > 8) return true; // wrappers inside wrappers: Ember doesn't follow that far
+  const prog = base(argv[0]), args = argv.slice(1);
+  if (REFUSED.test(prog)) return true;
+  if (prog === "env") return runsTerminal(envCommand(args, 0), depth + 1);
+  const wrapper = WRAPPERS[prog];
+  if (wrapper) {
+    if (wrapper.noCommand && args.some(a => wrapper.noCommand!.test(a))) return false;
+    // flock -c runs its string with sh.
+    if (prog === "flock") {
+      const c = args.findIndex(a => a === "-c" || a === "--command" || a.startsWith("--command="));
+      if (c >= 0) return runsTerminal(["sh", "-c", args[c].startsWith("--command=") ? args[c].slice(10) : args[c + 1] ?? ""], depth + 1);
+    }
+    return runsTerminal(afterOptions(args, wrapper.value, wrapper.long, wrapper.positional), depth + 1);
+  }
+  if (named(prog) || shellApp(prog) || argv.some(a => /TerminalEmulator/i.test(a))) return true;
+  if (prog === "flatpak") {
+    const f = flatpakCommand(args);
+    if (f === true) return true;
+    if (!f) return false;
+    return idIsTerminal(f.id) || idHasShell(f.id) || (!!f.argv && runsTerminal(f.argv, depth + 1));
+  }
+  if (!SHELLS.test(prog) && !INTERPRETERS.test(prog)) return false;
+  // Inline code (sh -c "…", python -c "…", perl -e "…"): refuse it if it starts any of the above.
+  const inline = args.findIndex(a => /^-[a-zA-Z]*[ceE]$/.test(a));
+  if (inline >= 0) {
+    const code = args.slice(inline + 1).join(" ");
+    if (SHELLS.test(prog) && runsTerminal(execArgv(code.replace(/[;&|()`$<>]/g, " ")), depth + 1)) return true;
+    return (code.match(/[\w./+-]+/g) ?? []).some(w => named(base(w)) || shellApp(base(w)) || REFUSED.test(base(w)));
+  }
+  // python -m idlelib, python -m code: an interactive shell.
+  const m = args.findIndex(a => a === "-m");
+  if (m >= 0 && INTERPRETERS.test(prog)) return SHELL_MODULES.test(args[m + 1] ?? "");
+  // A script runs: refuse only a script that is itself a terminal (terminator is a Python program) or an IDE.
+  const script = args.find(a => !a.startsWith("-"));
+  return script ? named(base(script)) || shellApp(base(script)) : true;
+}
+
+const idWords = (id: string) => id.toLowerCase().replace(/\.desktop$/, "").split(".");
+const idIsTerminal = (id: string) => idWords(id).some(p => named(p) || p === "console" || p.split(/[-_]/).some(w => named(w) || w === "console"));
+const idHasShell = (id: string) => SHELL_APP_ID.test(id.toLowerCase().replace(/\.desktop$/, "")) || idWords(id).some(shellApp);
 
 /**
- * Is this a terminal (or a shell)? Ember doesn't run commands, so it never
- * opens one, on its desk or on the user's screen. Checks the desktop id, name,
- * Categories (TerminalEmulator), Terminal=true and what the Exec line starts.
+ * Does this app have a terminal or shell built in (an IDE, Emacs, Vim, IDLE)? Text typed into it
+ * can run commands, so Ember doesn't open it (isTerminalApp() includes this). LibreOffice isn't
+ * one: on Ember's desk it runs with macros off (desk/place.ts).
+ */
+export function hasBuiltInShell(app: Pick<DesktopApp, "id" | "name"> & Partial<Pick<DesktopApp, "exec" | "categories">>): boolean {
+  if (app.categories?.some(c => /^IDE$/i.test(c))) return true;
+  if (idHasShell(app.id) || SHELL_APP_NAME.test(app.name) || /\bIDLE\b/.test(app.name)) return true;
+  const argv = app.exec ? execArgv(app.exec) : [];
+  return argv.length > 0 && shellApp(base(argv[0]));
+}
+
+/**
+ * Is this a terminal, a shell, or an app with one built in? Ember doesn't run commands, so it never
+ * opens one, on its desk or on the user's screen: both ways of opening apps ask this. Checks the
+ * desktop id, name, Categories (TerminalEmulator, IDE), Terminal=true and what the Exec line starts,
+ * through wrappers (env, timeout, flatpak run --command…); programs that run commands as someone
+ * else or elsewhere (sudo, systemd-run, gtk-launch, gio launch…) count too.
  */
 export function isTerminalApp(app: Pick<DesktopApp, "id" | "name"> & Partial<Pick<DesktopApp, "exec" | "categories" | "terminal">>): boolean {
   if (app.terminal) return true;
   if (app.categories?.some(c => /^TerminalEmulator$/i.test(c))) return true;
-  if (idIsTerminal(app.id)) return true;
+  if (idIsTerminal(app.id) || hasBuiltInShell(app)) return true;
   if (/\b(terminal|console)\b/i.test(app.name) || named(app.name.trim().toLowerCase().replace(/\s+/g, "-"))) return true;
   return !!app.exec && runsTerminal(execArgv(app.exec));
 }
@@ -241,16 +371,41 @@ export function appEnv(base: NodeJS.ProcessEnv = process.env, o: { session?: boo
   return env;
 }
 
-/** The Exec line as argv, without field codes (%U, %f…). No shell is involved. */
+/**
+ * The Exec line as argv, read the way GLib does (g_shell_parse_argv): words split on blanks, '…'
+ * taken as it is, "…" with \\ escaping only $ ` " \\ and a newline, a backslash elsewhere escaping
+ * the next character, # starting a comment. Field codes (%U, %f…) are dropped. No shell is involved.
+ */
 export function execArgv(exec: string): string[] {
   const out: string[] = [];
-  let cur = "", quoted = false, any = false;
+  let cur = "", any = false;
   for (let i = 0; i < exec.length; i++) {
     const c = exec[i];
-    if (c === '"') { quoted = !quoted; any = true; continue; }
-    if (c === "\\" && quoted && i + 1 < exec.length) { cur += exec[++i]; continue; }
-    if (c === " " && !quoted) { if (any) out.push(cur); cur = ""; any = false; continue; }
-    cur += c; any = true;
+    if (c === "'") {
+      const end = exec.indexOf("'", i + 1);
+      cur += exec.slice(i + 1, end < 0 ? exec.length : end);
+      i = end < 0 ? exec.length : end;
+      any = true;
+    } else if (c === '"') {
+      for (i++; i < exec.length && exec[i] !== '"'; i++) {
+        if (exec[i] === "\\" && i + 1 < exec.length && '$`"\\\n'.includes(exec[i + 1])) i++;
+        cur += exec[i];
+      }
+      any = true;
+    } else if (c === "\\") {
+      if (i + 1 < exec.length && exec[i + 1] !== "\n") cur += exec[i + 1];
+      i++;
+      any = true;
+    } else if (c === " " || c === "\t" || c === "\n") {
+      if (any) out.push(cur);
+      cur = "";
+      any = false;
+    } else if (c === "#" && !any) {
+      break; // a comment, to the end of the line
+    } else {
+      cur += c;
+      any = true;
+    }
   }
   if (any) out.push(cur);
   return out.filter(a => !/^%[a-zA-Z]$/.test(a)).map(a => a.replace(/%%/g, "%"));
