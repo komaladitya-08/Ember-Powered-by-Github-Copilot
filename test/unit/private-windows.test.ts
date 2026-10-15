@@ -99,6 +99,7 @@ e.text_of = lambda a, limit=200: "Standup notes" if a.role == "text" else None
 e.selection_of = lambda a: None
 e.value_of = lambda a: None
 e.is_editable = lambda a, s: a.role == "text"
+getattr(getattr(e, "SNAPSHOTS", None), "begin", lambda: None)()  # a read starts a snapshot (newer sidecars)
 out = []
 e.walk(root, 0, out, e.MAX_DEPTH, e.MAX_NODES, None)
 print(json.dumps([[n["depth"], n["role"]] for n in out if n["role"] == "text"]))
