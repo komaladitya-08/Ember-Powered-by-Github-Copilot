@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubblePosition, chipLabel, plainStream, BUBBLE_CSS, BUBBLE_LABEL, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -122,23 +122,92 @@ describe("bubblePosition", () => {
   });
 });
 
-describe("plainStream", () => {
-  it("drops markdown markers, also half-arrived ones", () => {
-    expect(plainStream("**Steps:**\n1. Open `Settings`\n2. Click **Background**\n- Pick an image now & enjoy"))
-      .toBe("Steps:\n1. Open Settings\n2. Click Background\n• Pick an image now & enjoy");
-    expect(plainStream("Here: **Ste")).toBe("Here: Ste");
-    expect(plainStream("## Heading\nsome *soft* words and _more_.")).toBe("Heading\nsome soft words and more.");
-    expect(plainStream("See [the docs](https://example.com/x).")).toBe("See the docs (https://example.com/x).");
+describe("bubbleFit: room beside the settings window", () => {
+  /** Ember beside the window (as main puts it while the user works in settings), the bubble's own size, and the handle. */
+  const setup = (screen: { width: number; height: number }, size = 60) => {
+    const win = { x: Math.round((screen.width - 760) / 2), y: 80, width: 760, height: Math.min(640, screen.height - 100) };
+    const handle = { x: screen.width - 212, y: screen.height - 68, width: 200, height: 56 };
+    const ember = { x: win.x + win.width + 10 + size * 0.6, y: win.y + 90 };
+    return { win, handle, ember, size, anchor: { x: ember.x, y: ember.y + size * 0.4 } };
+  };
+  const box = { width: 326, height: 120 };
+  /** Wrapping onto more lines as it narrows. */
+  const heightAt = (w: number) => Math.ceil(box.height * box.width / w);
+  const covers = (p: { x: number; y: number; width: number; height: number }, r: { x: number; y: number; width: number; height: number }) =>
+    p.x < r.x + r.width && p.x + p.width > r.x && p.y < r.y + r.height && p.y + p.height > r.y;
+  const onEmber = (p: { x: number; y: number; width: number; height: number }, c: { x: number; y: number }, size: number) =>
+    covers(p, { x: c.x - size * 0.75, y: c.y - size * 1.1, width: size * 1.5, height: size * 1.7 });
+
+  it("narrows to fit beside the window when its own width doesn't (1280 × 800)", () => {
+    const screen = { width: 1280, height: 800 };
+    const { win, handle, ember, size, anchor } = setup(screen);
+    expect(bubbleFit(anchor, box, screen, size, [win, handle])).toBeNull();
+    const p = bubbleFit(anchor, box, screen, size, [win, handle], heightAt)!;
+    expect(p.width).toBeLessThan(box.width);
+    expect(p.width).toBeGreaterThanOrEqual(MIN_BUBBLE_WIDTH);
+    expect(p.height).toBe(heightAt(p.width));
+    expect(covers(p, win)).toBe(false);
+    expect(covers(p, handle)).toBe(false);
+    expect(onEmber(p, ember, size)).toBe(false);
+    // By Ember, not across the window from it.
+    expect(p.x).toBeGreaterThanOrEqual(win.x + win.width);
+    expect(p.x + p.width).toBeLessThanOrEqual(screen.width - 8);
+    expect(p.y + p.height).toBeLessThanOrEqual(screen.height - 8);
   });
 
-  it("leaves ordinary text alone", () => {
-    for (const t of ["2 * 3 = 6", "file_name.txt and my_var", "5*3", "Hi Ana, thanks!"]) expect(plainStream(t)).toBe(t);
+  it("stays on Ember's side of the window even when the far side has a pixel more room", () => {
+    const screen = { width: 1279, height: 799 };
+    const win = { x: 260, y: 80, width: 760, height: 640 };
+    const handle = { x: 1068, y: 732, width: 200, height: 56 };
+    const p = bubbleFit({ x: 1066, y: 194 }, box, screen, 60, [handle, win], heightAt)!;
+    expect(p.x).toBeGreaterThanOrEqual(win.x + win.width);
+    expect(p.x + p.width).toBeLessThanOrEqual(screen.width - 8);
+  });
+
+  it("keeps its own width where that fits (1440 × 900) and finds no room at all on a small screen (1024 × 600)", () => {
+    const wide = { width: 1440, height: 900 };
+    const w = setup(wide);
+    expect(bubbleFit(w.anchor, box, wide, w.size, [w.win, w.handle], heightAt)).toMatchObject({ width: box.width, height: box.height });
+    // One pixel short on Ember's side: a pixel narrower there, rather than its own width across the window.
+    const p = bubbleFit(w.anchor, box, { width: 1439, height: 899 }, w.size, [w.win, w.handle], heightAt)!;
+    expect(p.width).toBe(box.width - 1);
+    expect(p.x).toBeGreaterThanOrEqual(w.win.x + w.win.width);
+    const small = { width: 1024, height: 600 };
+    const s = setup(small);
+    expect(bubbleFit(s.anchor, box, small, s.size, [s.win, s.handle], heightAt)).toBeNull();
+  });
+
+  it("is never over the window, the handle, Ember or the screen edge, wherever Ember is", () => {
+    for (const screen of [{ width: 1280, height: 800 }, { width: 1366, height: 768 }, { width: 1440, height: 900 }]) {
+      const { win, handle } = setup(screen);
+      for (const size of [40, 60, 110]) {
+        for (let x = size; x <= screen.width - size; x += 41) {
+          for (let y = size; y <= screen.height - size; y += 37) {
+            const p = bubbleFit({ x, y: y + size * 0.4 }, box, screen, size, [win, handle], heightAt);
+            if (!p) continue;
+            const at = `${screen.width} ${size} at ${x},${y}`;
+            expect(covers(p, win), at).toBe(false);
+            expect(covers(p, handle), at).toBe(false);
+            expect(onEmber(p, { x, y }, size), at).toBe(false);
+            expect(p.x >= 8 && p.y >= 8 && p.x + p.width <= screen.width - 8 && p.y + p.height <= screen.height - 8, at).toBe(true);
+            expect(p.width, at).toBeGreaterThanOrEqual(MIN_BUBBLE_WIDTH);
+          }
+        }
+      }
+    }
+  });
+
+  it("is the usual place when there is nothing in the way", () => {
+    const screen = { width: 1280, height: 800 };
+    expect(bubbleFit({ x: 400, y: 324 }, { width: 300, height: 100 }, screen, 60, [], heightAt)).toEqual({ x: 378, y: 342, width: 300, height: 100 });
   });
 });
 
 describe("bubble styles", () => {
   it("keeps line breaks, hides the caret unless streaming, and calms down with html.calm", () => {
     expect(BUBBLE_CSS).toMatch(/\.eb-thought \{[^}]*white-space: pre-line/);
+    // Once faded out, a hidden bubble takes no clicks or keys.
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*visibility: hidden/);
     expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
   });

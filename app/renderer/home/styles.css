@@ -16,6 +16,8 @@ body {
   font: 14px/1.5 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif;
 }
 .home { max-width: 680px; margin: 0 auto; padding: 22px 24px 32px; display: grid; gap: 22px; }
+/* A long name never widens the page past the window (grid items otherwise grow to their longest word). */
+.home > * { min-width: 0; }
 .hero { display: flex; align-items: center; gap: 16px; }
 #buddy { width: 132px; height: 132px; flex: none; border-radius: 18px; background: radial-gradient(circle at 50% 35%, #2b1d17, #120c0a 75%); }
 h1 { margin: 0; font-size: 34px; letter-spacing: -0.01em; }
@@ -117,9 +119,15 @@ h3.sub { margin: 4px 0 0; font-size: 13px; color: var(--fg); }
 .plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .plain-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
 .plain-list li.empty { color: var(--muted); justify-content: flex-start; }
+.plain-list li > span { min-width: 0; overflow-wrap: anywhere; }
+/* Grants under "ask before every action": shown (with the note above them), but plainly not in force. */
+.plain-list.off li > span:first-child { color: var(--muted); }
+.plain-list li > button, .plain-list li > .managed-tag { flex: none; }
 .add-row { display: flex; gap: 8px; }
 .add-row input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; background: var(--bg); color: var(--fg); border: 1px solid #8a776b; font: inherit; }
 .add-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 5.2:1 on the page (the default grey is 4.1:1). */
+.add-row input::placeholder { color: #968379; opacity: 1; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .conversation { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 12px 14px; color: var(--muted); }
@@ -143,7 +151,6 @@ body.first-run .after-setup { display: none !important; }
   display: flex; flex-wrap: wrap; gap: 2px 0;
   background: var(--bg); border-bottom: 1px solid var(--line);
 }
-@media (min-width: 640px) { .jump { position: sticky; top: 0; z-index: 2; } }
 .jump a {
   flex: none; padding: 4px 8px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px;
   border: 1px solid transparent;
@@ -151,8 +158,14 @@ body.first-run .after-setup { display: none !important; }
 .jump a:hover { color: var(--fg); background: var(--panel); }
 .jump a[aria-current="true"] { color: var(--fg); background: var(--panel); border-color: var(--line); }
 .jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-h2, summary { scroll-margin-top: 64px; }
-@media (max-width: 639px) { h2, summary { scroll-margin-top: 16px; } }
+h2, summary { scroll-margin-top: 16px; }
+/* Wide: the links stay at the top, and whatever scrolls into view (a section, or what has keyboard focus,
+   Shift+Tab included) stops below them, never under them (WCAG 2.4.11). main.ts keeps --jump-h their height. */
+@media (min-width: 640px) {
+  .jump { position: sticky; top: 0; z-index: 2; }
+  html { scroll-padding-top: calc(var(--jump-h, 46px) + 10px); }
+  h2, summary { scroll-margin-top: 8px; }
+}
 #agree { scroll-margin: 120px; }
 
 /* ── Folded sections (What Ember did, Setup check, About) ── */
@@ -160,7 +173,8 @@ h2, summary { scroll-margin-top: 64px; }
   list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-radius: 6px;
 }
 .fold > summary::-webkit-details-marker { display: none; }
-.fold > summary::before { content: "▸"; color: var(--muted); font-size: 12px; transition: transform 120ms ease; }
+/* Decoration only: the empty alt text keeps the arrow out of the section's spoken name. */
+.fold > summary::before { content: "▸" / ""; color: var(--muted); font-size: 12px; transition: transform 120ms ease; }
 .fold[open] > summary::before { transform: rotate(90deg); }
 .fold > summary h2 { margin: 0; }
 .fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

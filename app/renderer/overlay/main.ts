@@ -62,6 +62,8 @@ let bubbleShown = false;
 let handleRect: Rect | null = null;
 /** What the bubble keeps off: the handle, the task cards, and any windows main names. */
 let avoid: Rect[] = [];
+/** The windows main names (the settings window while the user works in it), in this overlay's coordinates. */
+let windows: Rect[] = [];
 let avoidKey = "null";
 
 function applyReducedMotion(): void {
@@ -153,9 +155,9 @@ function measureTasks(): void {
   });
   const list: Rect[] = handleRect ? [handleRect] : [];
   // Windows main asks the bubble to keep off (the settings window while it is open), in global DIP.
-  const extra = state?.avoid ?? [];
   avoidKey = JSON.stringify(state?.avoid ?? null);
-  for (const r of extra) list.push({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height });
+  windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
+  list.push(...windows);
   let cardsAt: Rect | null = null;
   if (tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
@@ -327,7 +329,10 @@ function draw(now: number): void {
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
     showStage(true);
-    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid)) interactiveDirty = true;
+    // With no room beside the settings window, a bubble that asks nothing hides rather than cover it (the window's
+    // Conversation section has its words); a question stays, wherever it must go.
+    const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:"));
+    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows)) interactiveDirty = true;
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;

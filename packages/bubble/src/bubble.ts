@@ -62,6 +62,52 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
 
 const MARGIN = 8;
 const GAP = 6;
+/** The narrowest the bubble gets (border box, px) to fit beside something it keeps off. */
+export const MIN_BUBBLE_WIDTH = 220;
+
+/** Where the bubble goes: its top-left corner and the size it has there. */
+export interface BubbleSpot extends Point { width: number; height: number }
+
+/** The usual places for a bubble of this size, in order of preference, and the one to fall back on. */
+function placesFor(anchor: Point, box: Size, bounds: Size, size: number): { places: Point[]; fallback: Point; below: number; above: number } {
+  const { width: w, height: h } = box;
+  const clampX = (x: number) => Math.min(Math.max(x, MARGIN), Math.max(MARGIN, bounds.width - w - MARGIN));
+  const clampY = (y: number) => Math.min(Math.max(y, MARGIN), Math.max(MARGIN, bounds.height - h - MARGIN));
+  const fitsY = (y: number) => y >= MARGIN && y + h <= bounds.height - MARGIN;
+  const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
+
+  const right = anchor.x - 22;
+  const x = clampX(right + w > bounds.width - MARGIN ? anchor.x - w + 22 : right);
+  const below = anchor.y + Math.max(18, size * 0.2 + GAP);
+  const above = anchor.y - h - Math.max(52, size * 1.5 + GAP);
+  const places: Point[] = [below, above].filter(fitsY).map(y => ({ x, y }));
+  if (size > 0) {
+    const cy = anchor.y - size * 0.4;
+    const y = clampY(cy - h / 2);
+    if (fitsX(anchor.x + size * 0.75 + GAP)) places.push({ x: anchor.x + size * 0.75 + GAP, y });
+    if (fitsX(anchor.x - size * 0.75 - GAP - w)) places.push({ x: anchor.x - size * 0.75 - GAP - w, y });
+  }
+  return { places, fallback: { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) }, below, above };
+}
+
+/** The first place that covers nothing in `avoid` (sliding sideways past it below or above Ember), or null. */
+function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid: readonly Rect[]): Point | null {
+  const { width: w, height: h } = box;
+  const { places, fallback, below, above } = placesFor(anchor, box, bounds, size);
+  const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
+  // Below and above are clear of Ember at any x, so there the bubble may also slide sideways past what it
+  // avoids: the shortest slide first (it stays by Ember rather than jump to the far side of a window).
+  const tries: Point[] = [];
+  for (const p of places) {
+    tries.push(p);
+    if (p.y !== below && p.y !== above) continue;
+    const slides = avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - p.x) - Math.abs(b - p.x));
+    for (const sx of slides) tries.push({ x: sx, y: p.y });
+  }
+  tries.push(fallback);
+  const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
+  return tries.find(clear) ?? null;
+}
 
 /**
  * Where the bubble's top-left corner goes. `anchor` is the base of Ember (its
@@ -74,52 +120,39 @@ const GAP = 6;
  * when nothing clears them, the usual placement stands.
  */
 export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = []): Point {
-  const { width: w, height: h } = box;
-  const clampX = (x: number) => Math.min(Math.max(x, MARGIN), Math.max(MARGIN, bounds.width - w - MARGIN));
-  const clampY = (y: number) => Math.min(Math.max(y, MARGIN), Math.max(MARGIN, bounds.height - h - MARGIN));
-  const fitsY = (y: number) => y >= MARGIN && y + h <= bounds.height - MARGIN;
-  const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
-
-  const right = anchor.x - 22;
-  const x = clampX(right + w > bounds.width - MARGIN ? anchor.x - w + 22 : right);
-  const below = anchor.y + Math.max(18, size * 0.2 + GAP);
-  const above = anchor.y - h - Math.max(52, size * 1.5 + GAP);
-  // The usual places, in order of preference.
-  const places: Point[] = [below, above].filter(fitsY).map(y => ({ x, y }));
-  if (size > 0) {
-    const cy = anchor.y - size * 0.4;
-    const y = clampY(cy - h / 2);
-    if (fitsX(anchor.x + size * 0.75 + GAP)) places.push({ x: anchor.x + size * 0.75 + GAP, y });
-    if (fitsX(anchor.x - size * 0.75 - GAP - w)) places.push({ x: anchor.x - size * 0.75 - GAP - w, y });
-  }
-  const fallback = { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) };
-  if (!avoid.length) return places[0] ?? fallback;
-  // Below and above are clear of Ember at any x, so there the bubble may also slide sideways past what it avoids.
-  const tries: Point[] = [];
-  for (const p of places) {
-    tries.push(p);
-    if (p.y !== below && p.y !== above) continue;
-    for (const r of avoid) for (const sx of [r.x - w - GAP, r.x + r.width + GAP]) if (fitsX(sx)) tries.push({ x: sx, y: p.y });
-  }
-  const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
-  return tries.find(clear) ?? (clear(fallback) ? fallback : places[0] ?? fallback);
+  const { places, fallback } = placesFor(anchor, box, bounds, size);
+  return (avoid.length ? clearPlace(anchor, box, bounds, size, avoid) : null) ?? places[0] ?? fallback;
 }
 
 /**
- * Markdown in text that is still arriving, made plain. The finished answer is
- * cleaned by the main process; this covers the tail shown while it streams,
- * including markers whose other half hasn't arrived yet ("**Ste").
+ * Like `bubblePosition`, but only a place that covers nothing in `avoid`: at the
+ * bubble's own width, or narrower (down to MIN_BUBBLE_WIDTH) to fit the room
+ * beside what it avoids, e.g. next to a centred settings window. A narrower
+ * bubble is chosen when its own width finds no place, or only one much further
+ * from Ember (across the window from it). `heightAt` says how tall the bubble is
+ * at a given width (its text wraps onto more lines). Null when no place clears them.
  */
-export function plainStream(s: string): string {
-  return s
-    .replace(/```\w*\n?/g, "")
-    .replace(/`/g, "")
-    .replace(/\*\*|__/g, "")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}[-*+]\s+/gm, "• ")
-    .replace(/(^|[\s(])[*_](?=[^\s*_])/gm, "$1")
-    .replace(/([^\s*_])[*_](?=[\s.,!?;:)]|$)/gm, "$1")
-    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1 ($2)");
+export function bubbleFit(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = [], heightAt?: (width: number) => number): BubbleSpot | null {
+  const away = (p: Point, b: Size) => Math.hypot(p.x + b.width / 2 - anchor.x, p.y + b.height / 2 - anchor.y);
+  const own = clearPlace(anchor, box, bounds, size, avoid);
+  let best: BubbleSpot | null = own && { ...own, ...box };
+  if (!heightAt) return best;
+  // A narrower one must be nearer by more than the bubble's width; of the narrower ones, the nearest (the wider of two as near).
+  let far = own ? away(own, box) - box.width : Infinity;
+  for (const width of narrowerWidths(box.width, bounds, avoid)) {
+    const b = { width, height: heightAt(width) };
+    const q = clearPlace(anchor, b, bounds, size, avoid);
+    if (!q) continue;
+    const d = away(q, b);
+    if (d < far - 1) { best = { ...q, ...b }; far = d; }
+  }
+  return best;
+}
+
+/** The room beside each thing to avoid (left of it, right of it), widest first, where a bubble narrower than `width` would fit. */
+function narrowerWidths(width: number, bounds: Size, avoid: readonly Rect[]): number[] {
+  const rooms = avoid.flatMap(r => [r.x - GAP - MARGIN, bounds.width - MARGIN - (r.x + r.width + GAP)]).map(Math.floor);
+  return [...new Set(rooms.filter(w => w >= MIN_BUBBLE_WIDTH && w < width))].sort((a, b) => b - a);
 }
 
 const STYLE_ID = "ember-bubble-style";
@@ -141,9 +174,10 @@ export const BUBBLE_CSS = `
   font: 13px/1.4 var(--ember-font, "Atkinson Hyperlegible", system-ui, sans-serif);
   pointer-events: none;
   will-change: transform;
-  transition: opacity 160ms ease, border-color 300ms ease, box-shadow 300ms ease;
+  transition: opacity 160ms ease, visibility 0s, border-color 300ms ease, box-shadow 300ms ease;
 }
-.ember-bubble[data-hidden="true"] { opacity: 0; }
+/* Hidden is gone once it has faded: nothing in it takes a click or the keyboard. */
+.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; transition-delay: 0s, 160ms, 0s, 0s; }
 .ember-bubble[data-mood="listening"] { --eb-mood: #ffc45a; }
 .ember-bubble[data-mood="thinking"]  { --eb-mood: #ffd36b; }
 .ember-bubble[data-mood="acting"]    { --eb-mood: #ff9330; }
@@ -228,6 +262,9 @@ export interface BubbleAction {
   onClick: () => void;
 }
 
+/** The bubble at one width: its size, where its clickable parts are, and whether its text overflows. */
+interface Measured { box: Size; hot: Rect[]; over: boolean }
+
 export class ReasoningBubble {
   readonly root: HTMLDivElement;
   private readonly chipText: HTMLSpanElement;
@@ -249,10 +286,16 @@ export class ReasoningBubble {
   private announceQueued = false;
   /** Content changed since the bubble last measured itself. */
   private dirty = true;
+  /** What the bubble measured at each width tried since its content changed (0: its own width). */
+  private sizes = new Map<number, Measured>();
+  /** The width set on the bubble now (0: its own width). */
+  private width = 0;
   private box: Size = { width: 0, height: 0 };
   private pos: Point | null = null;
   /** Clickable or scrollable parts, relative to the bubble's border box. */
   private hot: Rect[] = [];
+  /** Hidden because there was no room for it beside what it must not cover (see `place`). */
+  private crowded = false;
 
   constructor(host: HTMLElement) {
     if (!document.getElementById(STYLE_ID)) {
@@ -366,23 +409,49 @@ export class ReasoningBubble {
   setVisible(on: boolean): void {
     if (on === this.visible) return;
     this.visible = on;
-    this.root.dataset.hidden = String(!on);
-    if (on) this.root.removeAttribute("aria-hidden");
-    else this.root.setAttribute("aria-hidden", "true");
+    this.showHide();
     this.queueAnnounce();
+  }
+
+  private showHide(): void {
+    const shown = this.visible && !this.crowded;
+    this.root.dataset.hidden = String(!shown);
+    if (shown) this.root.removeAttribute("aria-hidden");
+    else this.root.setAttribute("aria-hidden", "true");
   }
 
   /**
    * Sit below-right of the flame base (`anchor`), flipping left or above near the
    * edges of `bounds` (the overlay's size) and, given Ember's `size` in px, never
-   * over Ember itself, nor (if it can help it) over the `avoid` rects. Returns
-   * true when the bubble moved or changed size.
+   * over Ember itself, nor (if it can help it) over the `avoid` rects, narrowing
+   * itself to fit beside them if that is what it takes. `hideFrom` (also in
+   * `avoid`) are places it would rather hide than cover, such as the settings
+   * window the user works in: with no room beside them it hides until there is.
+   * Returns true when the bubble moved, changed size, or hid or showed for room.
    */
-  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = []): boolean {
-    const resized = this.dirty && this.measure();
-    const p = bubblePosition(anchor, this.box, bounds, size, avoid);
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = []): boolean {
+    if (this.dirty) { this.dirty = false; this.sizes.clear(); }
+    const own = this.sized(0);
+    const heightAt = (w: number) => this.sized(w).box.height;
+    // Clear of everything; else (with places to hide from) at least clear of those; else the usual place.
+    const spot = avoid.length ? bubbleFit(anchor, own.box, bounds, size, avoid, heightAt)
+      ?? (hideFrom.length ? bubbleFit(anchor, own.box, bounds, size, hideFrom, heightAt) : undefined) : undefined;
+    if (spot === null) {
+      this.useWidth(0);
+      return this.setCrowded(true);
+    }
+    const width = spot && spot.width < own.box.width ? spot.width : 0;
+    const p = spot ?? bubblePosition(anchor, own.box, bounds, size, avoid);
+    const m = this.sized(width);
+    this.useWidth(width);
+    if ((this.thoughtBox.dataset.overflow === "true") !== m.over) this.thoughtBox.dataset.overflow = String(m.over);
     const x = Math.round(p.x), y = Math.round(p.y);
-    if (!resized && this.pos?.x === x && this.pos.y === y) return false;
+    // A new measurement (the content changed, or another width) may move the buttons.
+    const resized = m.box !== this.box || m.hot !== this.hot;
+    const shown = this.setCrowded(false);
+    this.box = m.box;
+    this.hot = m.hot;
+    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) return false;
     this.pos = { x, y };
     this.root.style.transform = `translate(${x}px, ${y}px)`;
     return true;
@@ -391,8 +460,33 @@ export class ReasoningBubble {
   /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
   interactiveRects(pad = 4): Rect[] {
     const pos = this.pos;
-    if (!this.visible || !pos) return [];
+    if (!this.visible || this.crowded || !pos) return [];
     return this.hot.map(r => ({ x: pos.x + r.x - pad, y: pos.y + r.y - pad, width: r.width + pad * 2, height: r.height + pad * 2 }));
+  }
+
+  private setCrowded(on: boolean): boolean {
+    if (on === this.crowded) return false;
+    this.crowded = on;
+    this.showHide();
+    return true;
+  }
+
+  /** The bubble's size at `width` (0: its own), measured once per content change. */
+  private sized(width: number): Measured {
+    let m = this.sizes.get(width);
+    if (!m) {
+      this.useWidth(width);
+      m = this.measure();
+      this.sizes.set(width, m);
+    }
+    return m;
+  }
+
+  private useWidth(width: number): void {
+    if (width === this.width) return;
+    this.width = width;
+    this.root.style.width = width ? `${width}px` : "";
+    this.root.style.boxSizing = width ? "border-box" : "";
   }
 
   private changed(): void {
@@ -405,22 +499,17 @@ export class ReasoningBubble {
     if (this.chipText.textContent !== label) this.chipText.textContent = label;
   }
 
-  /** One layout read after the content changed: size, overflow, and where the clickable parts are. */
-  private measure(): boolean {
-    this.dirty = false;
+  /** One layout read: size, overflow, and where the clickable parts are. */
+  private measure(): Measured {
     const t = this.thoughtBox;
     const over = t.style.display !== "none" && this.thought.offsetHeight > t.clientHeight + 1;
-    if ((t.dataset.overflow === "true") !== over) t.dataset.overflow = String(over);
     const box = { width: this.root.offsetWidth, height: this.root.offsetHeight };
     const edge = this.root.clientLeft;
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
     if (over && this.mood === "attention" && !this.streaming) hot.push(rel(t));
-    const changed = box.width !== this.box.width || box.height !== this.box.height || JSON.stringify(hot) !== JSON.stringify(this.hot);
-    this.box = box;
-    this.hot = hot;
-    return changed;
+    return { box, hot, over };
   }
 
   private queueAnnounce(): void {

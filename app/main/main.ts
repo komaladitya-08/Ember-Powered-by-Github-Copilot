@@ -473,7 +473,7 @@ function start(): void {
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
     captureContext();
-    askWindow.show(overlay?.position ?? null, { sees: null, history: askHistory });
+    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
@@ -673,6 +673,8 @@ function start(): void {
   }));
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
+    // Listening turned off by the organisation: nothing to download for.
+    if (policy.features.voice === false) return;
     try {
       await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));
     } catch {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, friendlyApp, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
@@ -107,5 +108,38 @@ describe("corner card with a task", () => {
     const b: BubbleState = { ...IDLE_BUBBLE, visible: true, mood: "acting", title: "Turn on Night Light", thought: "Opening Settings", streaming: true };
     expect(cardText(b, "Cinder", "Working in Settings", "Turn on Night Light")).toEqual({ line: "Working…", thought: "Opening Settings" });
     expect(cardText(b, "Cinder", null, "Something else").line).toBe("Turn on Night Light");
+  });
+});
+
+describe("page styles that keep things readable and reachable", () => {
+  const read = (f: string) => readFileSync(new URL(`../../app/renderer/${f}`, import.meta.url), "utf8");
+  const home = read("home/styles.css"), page = read("home/index.html"), overlay = read("overlay/styles.css");
+  /** WCAG contrast ratio of two #rrggbb colours. */
+  const contrast = (a: string, b: string) => {
+    const lum = (h: string) => {
+      const [r, g, bl] = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+  };
+
+  it("keeps keyboard focus clear of the sticky section links", () => {
+    expect(home).toMatch(/@media \(min-width: 640px\) \{[^}]*\.jump \{ position: sticky[^}]*\}\s*html \{ scroll-padding-top: calc\(var\(--jump-h, 46px\) \+ 10px\); \}/);
+  });
+
+  it("wraps long names instead of widening the window or a task card", () => {
+    expect(home).toMatch(/\.home > \* \{ min-width: 0; \}/);
+    expect(home).toMatch(/\.plain-list li > span \{ min-width: 0; overflow-wrap: anywhere; \}/);
+    expect(overlay).toMatch(/\.task \{[^}]*min-width: 0;/);
+    expect(overlay).toMatch(/\.task b, \.task span \{ overflow-wrap: anywhere; \}/);
+  });
+
+  it("gives the never-look placeholder enough contrast and the folds clean names", () => {
+    const bg = /--bg: (#[0-9a-f]{6})/.exec(home)![1];
+    const placeholder = /\.add-row input::placeholder \{ color: (#[0-9a-f]{6})/.exec(home)![1];
+    expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
+    expect(home).toMatch(/\.fold > summary::before \{ content: "▸" \/ "";/);
+    for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);
   });
 });

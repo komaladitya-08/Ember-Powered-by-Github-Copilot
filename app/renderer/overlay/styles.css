@@ -16,10 +16,12 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
 }
+/* min-width 0 and wrapping anywhere: a long unbroken word wraps inside the 260 px card instead of stretching it off screen. */
 .task {
   display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
-  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 0;
 }
+.task b, .task span { overflow-wrap: anywhere; }
 .task b { font-size: 13px; }
 .task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
 .task span[hidden] { display: none; }

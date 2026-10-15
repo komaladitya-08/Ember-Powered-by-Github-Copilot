@@ -1,4 +1,5 @@
 export {
-  ReasoningBubble, BUBBLE_CSS, BUBBLE_LABEL, chipLabel, announcement, bubblePosition, plainStream,
-  type BubbleAction, type BubbleMood, type BubbleView, type Point, type Rect, type Size,
+  ReasoningBubble, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, chipLabel, announcement, bubbleFit, bubblePosition,
+  type BubbleAction, type BubbleMood, type BubbleSpot, type BubbleView, type Point, type Rect, type Size,
 } from "./bubble";
+export { plainMarkdown, plainStream } from "./markdown";

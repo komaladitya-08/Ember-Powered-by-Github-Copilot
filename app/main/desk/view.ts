@@ -15,6 +15,25 @@ import type { Logger } from "../logger";
 const appDir = path.join(__dirname);
 const SMALL = { width: 340, height: 238 };
 const LARGE = { width: 980, height: 646 };
+/** Gap to the screen's edges. */
+const EDGE = 16;
+/** Room left free in the bottom-right corner for Ember's handle (200 px wide, 12 px in) beside a view along the bottom. */
+const HANDLE_ROOM = 224;
+
+interface Box { x: number; y: number; width: number; height: number }
+
+/**
+ * The view's bounds at its small or large size, from where it is now (`b`): it grows and shrinks from its
+ * bottom-left corner, as large as the work area allows (same shape, with room for the handle in the
+ * corner), and its bottom edge is always on screen.
+ */
+export function deskViewBounds(b: Box, large: boolean, wa: Box): Box {
+  const want = large ? LARGE : SMALL;
+  const scale = Math.min(1, (wa.width - EDGE - HANDLE_ROOM) / want.width, (wa.height - 2 * EDGE) / want.height);
+  const width = Math.round(want.width * scale), height = Math.round(want.height * scale);
+  const bottom = Math.min(Math.max(b.y + b.height, wa.y + height + EDGE), wa.y + wa.height - EDGE);
+  return { width, height, x: Math.max(wa.x, Math.min(b.x, wa.x + wa.width - width)), y: bottom - height };
+}
 /** How long the view stays up after the last desk task ends, so the user sees the result. */
 const LINGER_MS = 10_000;
 /** Spare keys lent to the user's characters get their nothing back this long after hand back (an app may still be reading them). */
@@ -99,7 +118,7 @@ export class DeskView {
       const wa = screen.getPrimaryDisplay().workArea;
       const win = new BrowserWindow({
         // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
-        ...SMALL, x: wa.x + 16, y: wa.y + wa.height - SMALL.height - 16,
+        ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa),
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
         backgroundColor: "#1a0f0b",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
@@ -166,10 +185,8 @@ export class DeskView {
     if (!win) return;
     if (changed) {
       const b = win.getBounds();
-      const size = on ? LARGE : SMALL;
-      const wa = screen.getDisplayMatching(b).workArea;
-      // Grows up and to the right from its bottom-left corner, staying on screen.
-      win.setBounds({ ...size, x: Math.max(wa.x, Math.min(b.x, wa.x + wa.width - size.width)), y: Math.max(wa.y, b.y + b.height - size.height) });
+      // Grows up and to the right from its bottom-left corner, as large as the screen allows, staying on it.
+      win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea));
       if (on) win.focus();
     }
     // Always, so the view never shows the wrong button (e.g. after it was reopened).

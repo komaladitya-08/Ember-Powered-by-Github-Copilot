@@ -233,6 +233,8 @@ window.ember.onSettingsNotice(renderSettingsNotice);
 
 // ───── Organisation policy ─────
 let managed = new Set<string>();
+/** The organisation has Ember ask before every action: "Always in this app" grants don't apply. */
+let confirmEvery = false;
 /** Never-look entries the administrator set (lower case): shown locked, never part of the user's own list. */
 let adminNeverLook = new Set<string>();
 const FEATURE_TEXT: Record<string, string> = {
@@ -241,6 +243,7 @@ const FEATURE_TEXT: Record<string, string> = {
 };
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
+  confirmEvery = a.confirmEveryAction;
   adminNeverLook = new Set((a.neverLook ?? []).map(x => x.trim().toLowerCase()));
   const el = $("managed");
   el.classList.toggle("error", !!a.error);
@@ -270,6 +273,7 @@ function renderAdmin(a: Status["admin"]): void {
   }
   privacyKey = "";
   if (settings) renderPrivacy(settings);
+  if (voice) renderVoice(voice);
 }
 
 // ───── What Ember did ─────
@@ -310,8 +314,37 @@ void refreshActivity();
 setInterval(() => { if (document.visibilityState === "visible") void refreshActivity(); }, 3000);
 
 // ───── Drawing the characters ─────
+// Only while the window shows and a character is on screen (not hidden or scrolled away); every frame while something
+// moves or the pointer is about, else ~30 fps for a calm face and ~15 for a still one, as the handle.
 let pointer = { x: 0, y: 0 };
-window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; });
+/** The pointer moved since the last frame (the characters look at it). */
+let looking = false;
+/** The canvases on screen now: only these are drawn. */
+const onScreen = new Set<Element>();
+let drawTimer: ReturnType<typeof setTimeout> | null = null;
+let drawPending = false;
+/** Draw on the next frame, or after `gap` ms (a sooner draw already asked for wins). */
+function drawSoon(gap = 0): void {
+  if (drawPending || document.hidden || !onScreen.size) return;
+  if (gap > 0) {
+    if (!drawTimer) drawTimer = setTimeout(() => { drawTimer = null; drawSoon(); }, gap);
+    return;
+  }
+  if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
+  drawPending = true;
+  requestAnimationFrame(frame);
+}
+window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; looking = true; drawSoon(); });
+document.addEventListener("visibilitychange", () => drawSoon());
+const seen = new IntersectionObserver(entries => {
+  for (const e of entries) {
+    if (e.isIntersecting) onScreen.add(e.target);
+    else onScreen.delete(e.target);
+  }
+  drawSoon();
+});
+seen.observe(heroCanvas);
+for (const c of cards) seen.observe(c.canvas);
 
 function paint(canvas: HTMLCanvasElement, rig: Rig, character: Character, dt: number, zoom: number): void {
   const dpr = window.devicePixelRatio || 1;
@@ -333,13 +366,20 @@ function paint(canvas: HTMLCanvasElement, rig: Rig, character: Character, dt: nu
 
 let last = performance.now();
 function frame(now: number): void {
+  drawPending = false;
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
   last = now;
-  paint(heroCanvas, heroRig, heroChars[settings?.character ?? "cinder"], dt, 170);
-  for (const c of cards) paint(c.canvas, c.rig, c.character, dt, 175);
-  requestAnimationFrame(frame);
+  // Hidden or scrolled away: nothing is drawn until it shows again (drawSoon is called then).
+  if (document.hidden || !onScreen.size) return;
+  const drawn: Rig[] = [];
+  if (onScreen.has(heroCanvas)) { paint(heroCanvas, heroRig, heroChars[settings?.character ?? "cinder"], dt, 170); drawn.push(heroRig); }
+  for (const c of cards) if (onScreen.has(c.canvas)) { paint(c.canvas, c.rig, c.character, dt, 175); drawn.push(c.rig); }
+  const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => r.motion === "gentle") ? 1 : 2;
+  looking = false;
+  // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often.
+  drawSoon((document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion]);
 }
-requestAnimationFrame(frame);
+drawSoon();
 
 // ───── Copilot ─────
 type AgentStatus = Awaited<ReturnType<EmberHomeApi["agentStatus"]>>;
@@ -498,6 +538,8 @@ void window.ember.conversation().then(renderConversation);
 window.ember.onConversation(renderConversation);
 
 // ───── Section links ─────
+// The links stay at the top of a wide window, one row or two: scrolling keeps clear of their height (styles.css).
+new ResizeObserver(() => document.documentElement.style.setProperty("--jump-h", `${$("jump").offsetHeight}px`)).observe($("jump"));
 /** Shows a section (opening it if folded) and moves focus there. */
 function showSection(section: string): void {
   const h = document.getElementById(`${section}-h`);
@@ -556,7 +598,7 @@ let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
 function renderPrivacy(s: Settings): void {
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
-  const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), [...adminNeverLook]]);
+  const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;
   privacyKey = key;
   /** `locked`: true = Remove disabled (managed); null = the organisation's entry (no Remove at all). */
@@ -574,6 +616,12 @@ function renderPrivacy(s: Settings): void {
     return li;
   };
   const grants = Object.entries(s.grants).filter(([, g]) => g === "act");
+  // Asked before every action anyway: the list stays (Remove still tidies it) but says it doesn't apply.
+  $("grants-off").hidden = !confirmEvery;
+  $("grants-hint").hidden = confirmEvery || managed.has("grants");
+  $("grants").classList.toggle("off", confirmEvery);
+  if (confirmEvery) $("grants").setAttribute("aria-describedby", "grants-off");
+  else $("grants").removeAttribute("aria-describedby");
   $("grants").replaceChildren(...(grants.length
     ? grants.map(([app], i) => row(friendlyApp(app), () => {
       const next = { ...s.grants };
@@ -581,7 +629,7 @@ function renderPrivacy(s: Settings): void {
       focusAfter = { list: "grants", index: i };
       void window.ember.updateSettings({ grants: next });
     }, managed.has("grants")))
-    : [Object.assign(document.createElement("li"), { className: "empty", textContent: "None: Ember asks before its first action in each app." })]));
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: confirmEvery ? "None." : "None: Ember asks before its first action in each app." })]));
   // The user's own entries (with Remove), then the organisation's (locked).
   const own = ownNeverLook(s);
   const theirs = s.privacy.neverLook.filter(isAdminEntry);
@@ -669,7 +717,8 @@ function renderVoice(v: VoiceStatus): void {
   if (v.state !== "downloading") voiceLive(text);
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
-  dl.hidden = v.modelsReady || v.state === "downloading";
+  // Listening turned off by the organisation: nothing to download it for.
+  dl.hidden = v.modelsReady || v.state === "downloading" || managed.has("wakeWord");
   dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));

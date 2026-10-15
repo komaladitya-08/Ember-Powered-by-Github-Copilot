@@ -101,8 +101,9 @@
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="copilot">
         <h3 class="sub">Apps Ember may act in without asking first</h3>
+        <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>
         <ul class="plain-list" id="grants" aria-label="Apps Ember may act in without asking"></ul>
-        <p class="hint">You add an app here by choosing “Always in …” when Ember asks. Ember still asks every time before anything hard to undo.</p>
+        <p class="hint" id="grants-hint">You add an app here by choosing “Always in …” when Ember asks. Ember still asks every time before anything hard to undo.</p>
         <h3 class="sub">Never look at</h3>
         <ul class="plain-list" id="never-look" aria-label="Apps and windows Ember never reads"></ul>
         <form class="add-row" id="never-look-form" autocomplete="off">
@@ -132,7 +133,7 @@
     </section>
 
     <section class="after-setup fold-section" aria-labelledby="activity-h">
-      <details class="fold" id="activity-fold">
+      <details class="fold" id="activity-fold" aria-labelledby="activity-h">
         <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
         <ol class="activity" id="activity"></ol>
         <p class="hint">Every decision and action is also in <code>~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
@@ -140,14 +141,14 @@
     </section>
 
     <section class="after-setup fold-section" aria-labelledby="checks-h">
-      <details class="fold" id="checks-fold">
+      <details class="fold" id="checks-fold" aria-labelledby="checks-h">
         <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
         <ul class="checks" id="checks"></ul>
       </details>
     </section>
 
     <section class="after-setup fold-section" aria-labelledby="about-h">
-      <details class="fold" id="about-fold">
+      <details class="fold" id="about-fold" aria-labelledby="about-h">
         <summary><h2 id="about-h">About this build</h2><span class="fold-note" id="about-note"></span></summary>
         <dl class="facts" id="facts"></dl>
       </details>
