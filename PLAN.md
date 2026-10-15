@@ -264,15 +264,14 @@ wake-word protections (second-stage check, self-mute, speaker-output rejection).
 
 ---
 
-## 7. Open questions (need decisions outside engineering)
+## 7. Open questions
 
-1. **GitHub App:** which org owns Ember's GitHub App, and which scopes are approved?
-2. **Copilot policy:** confirm the Copilot CLI policy is enabled for the target users, and accept
-   the data-retention terms for prompts and screenshots (reported as 28 days for CLI surfaces; get it in writing).
-3. **Legal:** espeak-ng (GPL) is used through the system speech-dispatcher, not bundled; review before
-   any bundled TTS (Piper's maintained fork is GPL-3.0).
-4. **Fleet settings:** STIG hosts with user namespaces disabled; whether admins will enable the
-   top-icons extension.
+| # | Question | Status |
+|---|---|---|
+| 1 | Who registers Ember's GitHub App (the "Sign in with GitHub" identity)? | **Open.** Development uses a token from `gh auth token` / `COPILOT_GITHUB_TOKEN`, so M0–M2 are not blocked. Default: register it under the repo owner's personal account before the first release (M2.2). |
+| 2 | Copilot policy and data retention acceptable? | **Resolved 2026-10-15: yes.** |
+| 3 | Bundling a natural-sounding offline voice (Piper is GPL-3.0; espeak-ng, used for pronunciation, is GPL-3.0; each voice model has its own license) | **Open, not blocking v1.** v1 uses the system speech-dispatcher (separate RHEL package, no bundling). Decide before adding neural TTS: is Ember going to stay open source? |
+| 4 | Are target machines STIG-hardened (user namespaces off)? | **Unknown; handled both ways.** The RPM installs the setuid sandbox helper when namespaces are off (M9.2). Check with `sysctl user.max_user_namespaces` (0 = hardened). |
 
 ---
 
