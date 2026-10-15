@@ -97,6 +97,7 @@ const STOP_GRACE_MS = 2000;
 function describeAfter(a: ElementInfo): string {
   const bits = [`${a.role} ${q(a.name, 80)}`];
   if (a.states.length) bits.push(`(${a.states.join(", ")})`);
+  if (a.secret) bits.push("(secret: contents hidden)");
   if (a.selected !== undefined) bits.push(`selected=${q(a.selected, 80)}`);
   if (a.value !== undefined) bits.push(`value=${a.value}`);
   if (a.text !== undefined) bits.push(`text=${q(a.text, 300)}`);

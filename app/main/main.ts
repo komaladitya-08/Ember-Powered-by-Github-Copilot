@@ -19,6 +19,8 @@ import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { openX11 } from "./x11";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
+import { isNeverLook } from "./perception/elements";
+import { isSecurityWindow } from "./policy/policy";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
 import { VoiceService, voicePermissions } from "./voice";
@@ -708,7 +710,8 @@ function start(): void {
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
     const xinput = x11 ? openXInput() : null;
     if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
-    app.on("will-quit", () => xinput?.close());
+    // A borrow still running lets go (keys up, pointer home) before the connection closes.
+    app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
     const borrow = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput) : null;
     borrowRef = borrow;
@@ -734,7 +737,10 @@ function start(): void {
       currentWindow: () => {
         const w = x11.activeWindow();
         // Ember's own windows (ask box, settings) are not a task's target.
-        return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
+        if (!w || w.pid === process.pid) return null;
+        // A private window: its process only (a task there is refused), never its title.
+        const priv = isNeverLook({ app: w.wmClass ?? "", name: w.title }, settings.get().privacy.neverLook) || isSecurityWindow({ app: w.wmClass ?? "", title: w.title });
+        return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
       desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {

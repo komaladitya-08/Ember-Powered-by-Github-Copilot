@@ -9,7 +9,7 @@
  * hide a "Delete" from the risky-word check.
  */
 
-import { isNeverLook } from "../perception/elements";
+import { isNeverLook, isSecretLabel } from "../perception/elements";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -107,7 +107,8 @@ export function isSecurityWindow(w: { app?: string; title?: string; name?: strin
 }
 
 export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s));
-export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s));
+/** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
+export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
 const ACTIVATING_ROLES = /button|link|menu item|check box|radio|toggle|switch|tab/;
 /** Keys that activate the focused control. */
