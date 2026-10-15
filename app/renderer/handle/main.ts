@@ -26,6 +26,7 @@ api.onInit(i => {
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
+let shownActions = "";
 api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
@@ -34,6 +35,10 @@ api.onState(s => {
   // Only the fallback card shows buttons; with a compositor they are in Ember's bubble.
   const actions = document.body.classList.contains("fallback") && s.bubble.visible ? s.bubble.actions : [];
   document.body.classList.toggle("asking", actions.length > 0);
+  // Keep the same buttons across updates so a click is never lost to a re-render.
+  const key = JSON.stringify(actions.map(a => a.id));
+  if (key === shownActions) return;
+  shownActions = key;
   $("actions").hidden = actions.length === 0;
   $("actions").replaceChildren(...actions.map(a => {
     const b = document.createElement("button");

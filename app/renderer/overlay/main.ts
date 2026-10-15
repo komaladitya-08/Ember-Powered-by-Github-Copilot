@@ -48,7 +48,7 @@ api.onState(s => {
   bubble.setThought(b.thought);
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
+  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
   const f = s.focus;
   focusEl.hidden = !f;
   if (f) {

@@ -22,7 +22,7 @@ import { Perception } from "./perception";
 import { AskWindow } from "./ask";
 import { AuditLog } from "./policy/audit";
 import { PolicyEngine } from "./policy/policy";
-import { Confirmer } from "./agent/confirm";
+import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { AgentHost, type Hands } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -146,11 +146,15 @@ function start(): void {
   let greetTimer: NodeJS.Timeout | null = null;
 
   let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
-  const setState = (next: Partial<EmberState>) => {
+  let confirmer: Confirmer | null = null;
+  const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
     overlay?.setState(next);
     handle?.sendState(lastState);
   };
+  // While Ember is asking the user something, nothing else may replace the question
+  // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
+  const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
 
   const greet = () => {
     const name = CHARACTER_NAMES[settings.get().character];
@@ -186,7 +190,6 @@ function start(): void {
   const askWindow = new AskWindow();
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
-  let confirmer: Confirmer | null = null;
   // Packaged builds ship the sidecar under resources/; development runs it from the repo.
   const sidecarScript = () => app.isPackaged
     ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
@@ -340,7 +343,7 @@ function start(): void {
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     const audit = new AuditLog(path.join(userData, "audit"));
     try { audit.prune(); } catch (err) { log.warn("audit.prune_failed", { err }); }
-    confirmer = new Confirmer(setState);
+    confirmer = new Confirmer(showState);
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
     const hands: Hands | undefined = x11 ? {
       perception, sidecar, audit, confirmer,

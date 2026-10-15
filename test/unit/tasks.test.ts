@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { Confirmer } from "../../app/main/agent/confirm";
+import { Confirmer, guardWhileAsking } from "../../app/main/agent/confirm";
 import { findApp, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import type { TaskCard, EmberState } from "../../app/shared/overlay";
@@ -131,5 +131,24 @@ describe("execArgv", () => {
     expect(execArgv("gedit %U")).toEqual(["gedit"]);
     expect(execArgv('"/opt/My App/bin/app" --flag %f')).toEqual(["/opt/My App/bin/app", "--flag"]);
     expect(execArgv("env FOO=1 app 100%%")).toEqual(["env", "FOO=1", "app", "100%"]);
+  });
+});
+
+describe("guardWhileAsking", () => {
+  it("keeps a question on screen until it is answered", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const confirmer = new Confirmer(p => shown.push(p));
+    const setState = guardWhileAsking(() => confirmer.waiting, p => shown.push(p));
+    const q = confirmer.ask({ title: "May I?", prompt: "Press ctrl+s?", options: [{ id: "once", label: "Allow" }] });
+    const question = shown.at(-1)!.bubble!;
+    // A worker's reasoning arrives while the question is up: the bubble stays, other fields pass.
+    setState({ emotion: "thinking", bubble: { ...question, mood: "thinking", thought: "hmm", actions: [] }, tasks: [] });
+    expect(shown.at(-1)).toEqual({ tasks: [] });
+    setState({ talking: true });
+    expect(shown.at(-1)).toEqual({ tasks: [] });
+    confirmer.answer(question.actions[0].id);
+    await q;
+    setState({ emotion: "happy" });
+    expect(shown.at(-1)).toEqual({ emotion: "happy" });
   });
 });

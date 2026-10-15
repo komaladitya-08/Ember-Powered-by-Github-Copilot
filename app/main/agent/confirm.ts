@@ -9,6 +9,8 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 
 export interface Question {
   title: string;
+  /** What the bubble is titled with once answered (e.g. the task's name). */
+  context?: string;
   prompt: string;
   options: { id: string; label: string; primary?: boolean }[];
 }
@@ -69,9 +71,25 @@ export class Confirmer {
     const wasCurrent = this.current === p;
     if (wasCurrent) {
       this.current = null;
-      this.show({ emotion: answer && answer !== "deny" ? "focused" : "neutral", bubble: { visible: true, mood: "acting", title: p.q.title, thought: answer && answer !== "deny" ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [] } });
+      this.show({ emotion: answer && answer !== "deny" ? "focused" : "neutral", bubble: { visible: true, mood: "acting", title: p.q.context ?? p.q.title, thought: answer && answer !== "deny" ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [] } });
     }
     p.resolve(answer);
     if (wasCurrent) this.next();
   }
+}
+
+/**
+ * Wraps a state setter so that, while a question is on screen, nothing else
+ * replaces the bubble or Ember's face (a worker's reasoning would otherwise
+ * wipe the buttons before the user can click them). Other fields still pass.
+ */
+export function guardWhileAsking(asking: () => boolean, show: (patch: Partial<EmberState>) => void): (patch: Partial<EmberState>) => void {
+  return next => {
+    if (asking() && (next.bubble || next.emotion || next.talking !== undefined)) {
+      const { bubble: _b, emotion: _e, talking: _t, ...rest } = next;
+      if (Object.keys(rest).length) show(rest);
+      return;
+    }
+    show(next);
+  };
 }
