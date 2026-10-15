@@ -49,13 +49,16 @@ npm 10 crashes while resolving the test tools (`Cannot read properties of null (
 
 ## 4. Turn on accessibility
 
-Ember reads apps through the accessibility service:
+Ember reads apps through the accessibility service, with RHEL's own Python
+(`/usr/libexec/platform-python` and `python3-pyatspi`):
 
 ```bash
+sudo dnf install -y python3-pyatspi python3-gobject
 gsettings set org.gnome.desktop.interface toolkit-accessibility true
 ```
 
-Log out and in again so running apps pick it up.
+The **Screen reading** row in Ember's setup check shows the state and has a **Turn on** button for the
+second command. Restart open apps (or log out and in) so they pick it up.
 
 ## 5. Run it
 
@@ -82,6 +85,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run check:symvers` | Only the binary check |
 | `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu (and to login) |
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
+| `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
+| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts` | Reads a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
 
 ### Using Ember
 
@@ -130,6 +135,10 @@ Environment variables for development:
 | `EMBER_USER_DATA=/tmp/x` | Use another settings and log folder |
 | `EMBER_LOG_LEVEL=debug` | More detail in the log |
 | `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
+| `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (default: `/usr/libexec/platform-python`, then `python3`) |
+
+Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json`
+(matched against app name and window title; password managers and polkit are listed by default).
 
 ## 6. Native modules and RHEL 8
 
@@ -153,11 +162,13 @@ Rules:
 | `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM sets up the sandbox helper properly (task M9.2). |
 | `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
 | Electron download fails | `npx install-electron` |
+| Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
 
 ## Repository layout
 
 ```
-app/main/           Electron main process (settings, logging, environment checks, windows)
+app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
+sidecar/atspi       Python accessibility helper (reads app controls over AT-SPI)
 app/preload/        contextBridge APIs, one per window
 app/renderer/       window pages (home)
 app/shared/         IPC channel names and types
@@ -166,5 +177,6 @@ packages/bubble     reasoning bubble
 packages/motion     follow spring and flight path
 demo/character-lab  interactive character prototype
 scripts/            build, RHEL 8 rebuild and binary checks
-test/unit           Vitest tests;  test/smoke  launch test
+test/unit           Vitest tests;  test/integration  real runtime / real AT-SPI;  test/smoke  launch test
+test/fixtures       GTK3 test bench window;  test/demo  recorded tours
 ```

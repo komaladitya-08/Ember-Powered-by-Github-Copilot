@@ -10,6 +10,8 @@ export interface EnvInputs {
   versions: { electron?: string; chrome?: string; node: string };
   platform: string;
   arch: string;
+  /** Accessibility (screen reading). Omitted when not probed. */
+  accessibility?: { enabled: boolean | null; pyatspi: boolean };
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -19,6 +21,8 @@ export interface Check {
   label: string;
   status: CheckStatus;
   detail: string;
+  /** A fix Ember can apply itself (shown as a button). */
+  fix?: "enable-accessibility";
 }
 
 export interface EnvReport {
@@ -90,6 +94,17 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     checks.push(versionAtLeast(i.glibc, "2.28")
       ? { id: "glibc", label: "glibc", status: "ok", detail: i.glibc }
       : { id: "glibc", label: "glibc", status: "fail", detail: `${i.glibc} (needs 2.28 or newer)` });
+  }
+
+  if (i.accessibility) {
+    const a = i.accessibility;
+    if (!a.pyatspi) {
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi" });
+    } else if (a.enabled === false) {
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off, so Ember can only see screenshots. Turn it on, then restart open apps.", fix: "enable-accessibility" });
+    } else {
+      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
+    }
   }
 
   return {

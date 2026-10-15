@@ -12,6 +12,16 @@ case "$cmd" in
     mkdir -p "$state"
     Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp >"$state/xvfb.log" 2>&1 & echo $! > "$state/xvfb.pid"
     for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+    # A session bus (and so an accessibility bus) like a real GNOME session, owned by the demo user.
+    user=${EMBER_DEMO_USER:-}
+    mkdir -p "$state/runtime"; chmod 700 "$state/runtime"
+    if [ -n "$user" ]; then
+      chown "$user" "$state/runtime"
+      su "$user" -c "DISPLAY=$DISPLAY dbus-launch --sh-syntax" > "$state/dbus.env"
+    else
+      DISPLAY=$DISPLAY dbus-launch --sh-syntax > "$state/dbus.env"
+    fi
+    chmod 644 "$state/dbus.env"
     convert -size 1280x800 radial-gradient:'#2b5683'-'#06101d' \
       \( -size 1280x800 xc:none -fill 'rgba(238,0,0,0.20)' -draw 'polygon 700,800 900,0 1080,0 880,800' \) \
       -composite "$state/wallpaper.png"
@@ -22,7 +32,7 @@ case "$cmd" in
     printf 'Standup notes, Wednesday\n\n- Ember overlay follows the cursor\n- Next: Copilot conductor (M2)\n- Try all four characters\n' > "$state/notes.txt"
     chmod 755 "$state"; chmod 644 "$state/notes.txt"
     if [ -n "${EMBER_DEMO_USER:-}" ]; then
-      su "$EMBER_DEMO_USER" -c "DISPLAY=$DISPLAY mousepad '$state/notes.txt'" >"$state/mousepad.log" 2>&1 &
+      "$(dirname "$0")/as-demo-user.sh" mousepad "$state/notes.txt" >"$state/mousepad.log" 2>&1 &
     else
       mousepad "$state/notes.txt" >"$state/mousepad.log" 2>&1 &
     fi
@@ -33,6 +43,7 @@ case "$cmd" in
     ;;
   stop)
     pkill -f "mousepad $state/notes.txt" 2>/dev/null || true
+    [ -f "$state/dbus.env" ] && . "$state/dbus.env" && kill "$DBUS_SESSION_BUS_PID" 2>/dev/null || true
     for p in mousepad xcompmgr openbox xvfb; do
       [ -f "$state/$p.pid" ] && kill "$(cat "$state/$p.pid")" 2>/dev/null || true
     done

@@ -59,15 +59,8 @@ $("size").addEventListener("input", e => {
 });
 $("start").addEventListener("click", () => { void window.ember.updateSettings({ onboarded: true }); });
 
-function render(status: Status): void {
-  const failing = status.environment.checks.filter(c => c.status === "fail").length;
-  $("tagline").textContent = failing
-    ? "Ember needs a couple of things fixed before it can work on this machine."
-    : status.settings.onboarded
-      ? "Ember is beside your cursor. Pick a different look or size any time."
-      : "Pick who keeps you company, then press Start.";
-
-  $("checks").replaceChildren(...status.environment.checks.map(c => {
+function renderChecks(environment: Status["environment"]): void {
+  $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
     const pill = document.createElement("span");
     pill.className = `pill ${c.status}`;
@@ -79,8 +72,33 @@ function render(status: Status): void {
     detail.className = "check-detail";
     detail.textContent = c.detail;
     li.append(pill, label, detail);
+    if (c.fix) {
+      const fix = c.fix;
+      const btn = document.createElement("button");
+      btn.className = "btn quiet check-fix";
+      btn.textContent = "Turn on";
+      btn.addEventListener("click", () => {
+        btn.disabled = true;
+        window.ember.applyFix(fix).then(renderChecks, err => {
+          btn.disabled = false;
+          detail.textContent = `Couldn't change it: ${err instanceof Error ? err.message : String(err)}`;
+        });
+      });
+      li.append(btn);
+    }
     return li;
   }));
+}
+
+function render(status: Status): void {
+  const failing = status.environment.checks.filter(c => c.status === "fail").length;
+  $("tagline").textContent = failing
+    ? "Ember needs a couple of things fixed before it can work on this machine."
+    : status.settings.onboarded
+      ? "Ember is beside your cursor. Pick a different look or size any time."
+      : "Pick who keeps you company, then press Start.";
+
+  renderChecks(status.environment);
 
   const v = status.environment.versions;
   const facts: [string, string][] = [

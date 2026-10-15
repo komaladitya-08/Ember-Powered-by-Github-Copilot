@@ -13,6 +13,7 @@ const api: EmberHomeApi = {
   getStatus: () => ipcRenderer.invoke(IPC.getStatus),
   updateSettings: patch => ipcRenderer.invoke(IPC.updateSettings, patch),
   onSettingsChanged: fn => listen<Settings>(IPC.settingsChanged, fn),
+  applyFix: fix => ipcRenderer.invoke(IPC.applyFix, fix),
   agentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
   onAgentStatus: fn => listen<AgentStatus>(IPC.agentStatusChanged, fn),
   signIn: () => ipcRenderer.invoke(IPC.signIn),

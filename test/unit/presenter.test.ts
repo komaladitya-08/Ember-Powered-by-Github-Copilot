@@ -31,6 +31,27 @@ describe("Presenter", () => {
     expect(states.length).toBeGreaterThan(6);
   });
 
+  it("separates reasoning before and after a tool call", () => {
+    const { p, last } = setup();
+    p.userPrompt("what's on screen?");
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "I'll look first." } });
+    p.event({ type: "tool.execution_start", data: { toolName: "describe_screen" } });
+    p.event({ type: "tool.execution_complete", data: { success: true } });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Now I know." } });
+    expect(last().bubble?.thought).toBe("I'll look first. Now I know.");
+  });
+
+  it("shows a finished long answer from its start", () => {
+    const { p, last } = setup();
+    p.userPrompt("tell me everything");
+    const long = "Start. " + "word ".repeat(200) + "End.";
+    p.event({ type: "assistant.message_delta", data: { deltaContent: long } });
+    expect(last().bubble?.thought.startsWith("Start.")).toBe(false);
+    p.event({ type: "assistant.message", data: {} });
+    expect(last().bubble?.thought.startsWith("Start.")).toBe(true);
+    expect(last().bubble?.thought.endsWith("…")).toBe(true);
+  });
+
   it("shows the current tool as a step and looks focused", () => {
     const { p, last } = setup();
     p.userPrompt("be glint");

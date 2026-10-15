@@ -94,6 +94,17 @@ export class OverlayManager {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
 
+  /**
+   * Makes every overlay fully transparent so a screenshot doesn't include Ember,
+   * waits for the compositor to repaint, and returns a function that restores them.
+   */
+  async hideForCapture(): Promise<() => void> {
+    const wins = [...this.overlays.values()].map(o => o.win).filter(w => !w.isDestroyed());
+    for (const w of wins) w.setOpacity(0);
+    await new Promise(r => setTimeout(r, 60));
+    return () => { for (const w of wins) if (!w.isDestroyed()) w.setOpacity(1); };
+  }
+
   getState(): EmberState {
     return this.state;
   }

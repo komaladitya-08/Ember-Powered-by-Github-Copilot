@@ -51,12 +51,12 @@ try {
   // Onboarding: pick a character with the real pointer.
   let home;
   for (let i = 0; i < 100 && !home; i++) {
-    home = app.windows().find(w => w.url().includes("/home/"));
+    home = app.windows().find(w => w.url().includes("/renderer/home/"));
     if (!home) await sleep(150);
   }
   await home.waitForSelector(".card[data-id='glint']");
   const origin = await hook(({ BrowserWindow }) => {
-    const w = BrowserWindow.getAllWindows().find(b => b.webContents.getURL().includes("/home/"));
+    const w = BrowserWindow.getAllWindows().find(b => b.webContents.getURL().includes("/renderer/home/"));
     return w.getContentBounds();
   });
   const at = async sel => { const b = await home.locator(sel).boundingBox(); return [origin.x + b.x + b.width / 2, origin.y + b.y + b.height / 2]; };

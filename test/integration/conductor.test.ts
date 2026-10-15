@@ -35,7 +35,7 @@ afterAll(async () => {
   await mock?.close();
 });
 
-function makeConductor(states: Partial<EmberState>[]) {
+function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const conductor = new Conductor({
@@ -46,6 +46,7 @@ function makeConductor(states: Partial<EmberState>[]) {
     workDir: path.join(dir, "empty"),
     model: "mock-model",
     provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
+    describeScreen,
   });
   return { conductor, settings };
 }
@@ -92,6 +93,20 @@ describe("conductor on the real Copilot runtime", () => {
     await idle(states, 0);
     expect(settings.get()).toMatchObject({ character: "glint", size: 80 });
     expect(states.some(s => s.emotion === "focused" && s.bubble?.step === "Changing how I look")).toBe(true);
+    await conductor.stop();
+  }, 60000);
+
+  it("gives the model the screen text when it calls describe_screen", async () => {
+    const states: Partial<EmberState>[] = [];
+    const screen = '<screen source="accessibility" app="gedit" window="notes.txt" untrusted="true">\n[1] push button "Save"\n</screen>';
+    const { conductor } = makeConductor(states, async () => screen);
+    await conductor.start();
+    const before = mock.requests.length;
+    await conductor.ask("CALLTOOL:describe_screen{}");
+    await idle(states, 0);
+    const toolResults = mock.requests.slice(before).flatMap(r => r.messages).filter(m => m.role === "tool");
+    expect(toolResults.some(m => String(m.content).includes('push button "Save"'))).toBe(true);
+    expect(states.some(s => s.bubble?.step === "Looking at your screen")).toBe(true);
     await conductor.stop();
   }, 60000);
 

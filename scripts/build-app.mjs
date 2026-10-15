@@ -20,7 +20,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "koffi", "@github/copilot-sdk"],
+    external: ["electron", "koffi", "@github/copilot-sdk", "sharp"],
   }),
   build({
     ...common,
