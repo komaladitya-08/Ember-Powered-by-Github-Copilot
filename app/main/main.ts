@@ -316,13 +316,14 @@ function start(): void {
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { showHome(); sendToHome(IPC.focusSection, "conversation"); } }] : []),
       { type: "separator" },
       { label: "Settings…", ...keys("Ctrl+Alt+E"), click: showHome },
-      { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); } },
-      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => overlay?.setHidden(!hidden) },
+      { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
+      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
       { label: "Quit Ember", click: () => { void quitEmber(); } },
     ]).popup({ window: handle.win });
   };
   let followPaused = false;
+  let presenceChanged = () => { /* set once the IPC is ready */ };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
@@ -340,7 +341,7 @@ function start(): void {
       if (globalShortcut.register(accel, () => confirmer?.answerKey(which))) questionKeys.push(accel);
     }
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask.
-    if (overlay?.isHidden()) overlay.setHidden(false);
+    if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
     if (settings.get().speak || screenReaderOn()) {
       voice?.speak(`Ember asks: ${q.question.prompt} Press Control Alt Y to allow, or Control Alt N for not now.`);
     }
@@ -481,11 +482,12 @@ function start(): void {
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
   /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
-  const retrySignIn = async () => {
-    if (!consented()) { showHome(); return; }
+  const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
+    if (!consented()) { showHome(); return { found: false, source: null }; }
     const found = await resolveToken(tokens).catch(() => null);
     currentToken = found?.token ?? null;
     await agent?.start(currentToken, found?.source);
+    return { found: !!found, source: found?.source ?? null };
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
   ipcMain.handle(IPC.signIn, guard(async () => {
@@ -532,6 +534,17 @@ function start(): void {
     }
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
+  const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay });
+  presenceChanged = () => broadcast(IPC.presenceChanged, presence());
+  ipcMain.handle(IPC.presence, guard(presence));
+  ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
+    const want = (p && typeof p === "object" ? p : {}) as { hidden?: unknown; paused?: unknown };
+    if (typeof want.hidden === "boolean") overlay?.setHidden(want.hidden);
+    if (typeof want.paused === "boolean") { followPaused = want.paused; overlay?.setPaused(followPaused); }
+    broadcast(IPC.presenceChanged, presence());
+    return presence();
+  }));
+  ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     try {
       await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));

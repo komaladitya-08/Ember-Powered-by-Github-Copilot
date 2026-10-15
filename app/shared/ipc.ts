@@ -31,6 +31,11 @@ export const IPC = {
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",
+  /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
+  presence: "ember:presence",
+  setPresence: "ember:set-presence",
+  presenceChanged: "ember:presence-changed",
+  quit: "ember:quit",
 } as const;
 
 export interface SignInProgress {
@@ -106,14 +111,22 @@ export interface EmberHomeApi {
   onVoiceProgress(fn: (p: { done: number; total: number }) => void): () => void;
   /** The newest audit entries, newest first. */
   activity(): Promise<ActivityEntry[]>;
-  /** Look for a sign-in again (e.g. after gh auth login) and reconnect. */
-  retrySignIn(): Promise<void>;
+  /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
+  retrySignIn(): Promise<{ found: boolean; source: string | null }>;
+  /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */
+  presence(): Promise<Presence>;
+  setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;
+  onPresence(fn: (p: Presence) => void): () => void;
+  /** Quit Ember (asks first while tasks are running). */
+  quit(): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
   onFocusSection(fn: (section: string) => void): () => void;
 }
+
+export interface Presence { hidden: boolean; paused: boolean; overlay: boolean }
 
 /** What the ask box shows: where Ember will look, and the user's recent questions (newest last). */
 export interface AskContext {

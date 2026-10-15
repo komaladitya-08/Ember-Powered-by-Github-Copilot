@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type EmberHomeApi, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { IPC, type EmberHomeApi, type Presence, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 
@@ -29,6 +29,10 @@ const api: EmberHomeApi = {
   conversation: () => ipcRenderer.invoke(IPC.conversation),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),
+  presence: () => ipcRenderer.invoke(IPC.presence),
+  setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),
+  onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
+  quit: () => ipcRenderer.invoke(IPC.quit),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

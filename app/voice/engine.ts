@@ -265,7 +265,7 @@ export class VoiceEngine {
     // Nobody is saying "Hey Ember" unless someone is speaking: the spotter (most of the idle CPU) rests
     // after half a second without speech, and the frames it missed are replayed when speech returns.
     // True silence is never speech. Otherwise the voice check decides: it hears speech under a fan,
-    // where loudness can't (measured: wakes at 3–6 dB SNR were all missed). It only runs while the room
+    // where loudness can't (measured: in steady noise at 3–6 dB SNR, most wakes were missed). It only runs while the room
     // isn't steady, so a quiet room costs nothing. The room's noise floor is minimum statistics, so
     // continuous speech or TV, which dips between words, can't drag it up.
     const base = this.o.silenceRms ?? 0.0008;
