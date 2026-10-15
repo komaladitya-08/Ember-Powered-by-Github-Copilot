@@ -6,6 +6,7 @@
 
 import type { EnvReport } from "./environment";
 import type { LoadedAdminPolicy } from "./admin";
+import { VOICE_MODELS_BYTES } from "../voice/models";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -86,7 +87,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
       : { id: "microphone", status: "warn", label: "Microphone", detail: "No microphone found. Only needed for “Hey Ember”; typing (Ctrl+Alt+Space) always works." });
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: "Turn on “Hey Ember” in Ember's settings and download them (about 140 MB), or install ember-voice-models." }
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once), or install ember-voice-models.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
   out.push(p.speechDispatcher
     ? { id: "speech", status: "ok", label: "Speaking", detail: "speech-dispatcher is installed." }

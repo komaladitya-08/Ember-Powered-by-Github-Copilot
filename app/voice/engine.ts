@@ -139,11 +139,15 @@ export class Ring {
  * Frames of 32 ms. The spotter gets half a second without speech after it (enough for its
  * own delay), then rests and is reset when speech returns: a stream fed long silence after
  * a detection stops recognizing the next "Hey Ember" (measured: 1 s of it misses wakes).
- * The frames it missed are replayed then, enough to cover the voice check's own delay,
- * so the "Hey" that started the speech is still heard.
+ * The frames it missed are replayed then, from 12 frames before the sound started: where
+ * its stream starts changes what it hears (measured: a few frames either way costs wakes and
+ * lets "Hey Amber" through). Speech too quiet to stand out gets the last 24 frames.
  */
 const MIC_REST_FRAMES = 16;
-const MIC_REPLAY_FRAMES = 20;
+const MIC_REPLAY_FRAMES = 12;
+const MIC_QUIET_REPLAY_FRAMES = 24;
+/** Frames kept while the spotter rests (the voice check's delay is well within it). */
+const MIC_TAIL_FRAMES = 32;
 /** The voice check wakes on a frame this far above the room's noise, runs for 2 s after the last one, and starts with 8 frames of context. */
 const CHECK_WAKE_RATIO = 1.3;
 const CHECK_HANG_FRAMES = 63;
@@ -176,6 +180,8 @@ export class VoiceEngine {
   /** The room's noise level (RMS): follows the quietest frames down at once and rises only slowly. */
   private floor = 0;
   private quietTail: Float32Array[] = [];
+  /** Where in the tail the sound started (the first frame well above the room's noise), or -1. */
+  private loudAt = -1;
   /** Frames left before the voice check rests (the room was steady), and the frame it last heard. */
   private unsteady = 0;
   private checkedAt = -1;
@@ -258,14 +264,18 @@ export class VoiceEngine {
     const quiet = rms < base || (this.mode.kind === "idle" && !this.maybeSpeech(frame, rms));
     this.quietRun = quiet ? this.quietRun + 1 : 0;
     let toSpot: Float32Array[] = [frame];
+    const loud = rms >= Math.max(base, this.floor * 2.5);
     if (quiet && this.quietRun > MIC_REST_FRAMES && this.mode.kind === "idle") {
       this.quietTail.push(frame);
-      if (this.quietTail.length > MIC_REPLAY_FRAMES) this.quietTail.shift();
+      if (loud && this.loudAt < 0) this.loudAt = this.quietTail.length - 1;
+      if (this.quietTail.length > MIC_TAIL_FRAMES) { this.quietTail.shift(); this.loudAt--; }
       toSpot = [];
     } else if (this.quietTail.length) {
       this.backend.resetSpot?.();
-      toSpot = [...this.quietTail, frame];
+      const from = this.loudAt >= 0 ? this.loudAt - MIC_REPLAY_FRAMES : loud ? this.quietTail.length - MIC_REPLAY_FRAMES : this.quietTail.length - MIC_QUIET_REPLAY_FRAMES;
+      toSpot = [...this.quietTail.slice(Math.max(0, from)), frame];
       this.quietTail = [];
+      this.loudAt = -1;
     }
     const keywords: string[] = [];
     for (const f of toSpot) { this.spotted++; keywords.push(...this.backend.spot(f)); }

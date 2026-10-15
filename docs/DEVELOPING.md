@@ -97,26 +97,40 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 ### Using Ember
 
 - Ember appears beside your cursor; its handle sits in the bottom-right corner. Click the handle for
-  **Settings**, **Stay put / Follow my cursor**, **Hide / Show Ember** and **Quit**.
-- **Ctrl+Alt+E** opens settings from anywhere.
+  **Ask Ember…**, **Stop everything**, **Read the last answer**, **Settings**, **Stay put / Follow my cursor**,
+  **Hide / Show Ember** and **Quit** (Quit asks first while a task is running).
+- **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
+  will look at, and ↑/↓ bring back earlier questions.
+- Long answers have **Read all**: the settings window's **Conversation** section keeps this session's questions,
+  answers and task results (in memory only; quitting or signing out forgets them).
+- If another app already holds one of Ember's shortcuts, the **Setup check** says which, Ember keeps trying to get
+  it, and the handle menu does the same things.
+- **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
+  animations are off or the desktop asks for reduced motion.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
-  card in the corner instead.
+  card in the corner instead; it grows to show a whole question.
 
 ### Asking Ember to do things
 
 Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember
 starts a task in the background, with a card in the top-right corner. It works through the app's
 accessibility interface, so your mouse and keyboard stay yours. Before its first action in an app it
-asks **Allow / Always in this app / Not now**. Buttons that send, delete, pay and the like are always
-confirmed. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
+asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow), **Ctrl+Alt+N**
+(not now) and **Ctrl+Alt+A** (always), so you never need the mouse. A hidden Ember shows itself to ask, and with
+**Speak replies** on (or a screen reader running) it says the question out loud. Buttons that send, delete, pay and
+the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and
+“Always” is never offered for them. Each task card has **Stop**; a failed card stays until you close it. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
 it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse
 or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
 doesn't read the screen, take screenshots or press keys. If something on screen tries to steer Ember (a page saying
-"click Delete all"), Ember still asks first, and the question says you didn't ask for it. **Ctrl+Alt+X** (or
-“Ember, stop”, or **Stop everything** in the handle menu) stops every task, question and borrowed mouse at once.
-Apps you chose "Always" for are listed under `grants` in `settings.json`. **What Ember did** in the settings window
-lists every request, question, action and refusal.
+"click Delete all"), Ember still asks first, the question says you didn't ask for it, and from then on that task
+asks before every step. **Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every
+task, question, borrowed mouse, desk take-over and request still being spoken at once; nothing more reaches an app
+after it. Apps you chose "Always" for are listed in **Apps & privacy** in the settings window (with **Remove**),
+next to the never-look list, which you can edit there too. **What Ember did** lists every request, question,
+action and refusal, by day. Text the keyboard can't type (accents, other layouts) is pasted, and your clipboard is
+put back afterwards.
 
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
@@ -127,9 +141,10 @@ Say "on your desk" (or ask for a long typing job) and Ember opens the app on its
 invisible display instead of yours. There it can use a full mouse and keyboard without
 borrowing yours, so you keep working undisturbed. A small **Ember's desk** window in the
 bottom-right corner shows what it is doing. Click **Take over** to enlarge it and use the desk
-yourself (Ember pauses), then **Hand back**. Files Ember makes there go to `~/Ember`. The desk
-has its own clipboard and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
-(§2). Ember never runs terminals there.
+yourself (Ember pauses), then **Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
+The desk has its own clipboard, its own app settings (`~/.config/ember/desk-profiles`), only the environment its
+apps need (no tokens or keys), and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
+(§2). Ember never runs terminals there (or anywhere).
 
 ### Learning with Ember
 
@@ -141,7 +156,7 @@ say “make this bold” or “what does this mean?”.
 ### Talking to Ember
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
-the speech models (about 120 MB, once). Then say “Hey Ember, …” with your request. You can say it in
+the speech models (126 MB, once; agreeing to the microphone note starts the download). Then say “Hey Ember, …” with your request. You can say it in
 one breath, or pause after “Hey Ember”. After Ember answers you have 8 seconds to follow up without
 the wake word. “Ember, stop” stops everything, and **Ctrl+Alt+M** turns the microphone off and on.
 Listening happens on this computer: no audio leaves it, and only the text of your request is sent to
@@ -160,11 +175,15 @@ gh auth login
 
 Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
 then `gh auth token`. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
-Enterprise, your organization must enable the **Copilot CLI** policy.
+Enterprise, your organization must enable the **Copilot CLI** policy. No restart is needed: press **Sign in with
+GitHub** and run `gh auth login` in a terminal (Ember notices within a few seconds), or press **Check again**. If
+sign-in fails, the Copilot section says which sign-in Ember tried and why; while offline, Ember retries by itself.
 
 Then press **Ctrl+Alt+Space** and type a question.
 
-To try Ember offline without Copilot, run the mock model and point Ember at it:
+To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
+installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS` and `EMBER_BENCH_LOG`
+switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -228,8 +247,9 @@ no listening) until it is fixed, and says so in its settings window. Every key i
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` |
 | `auditRetentionDays` | How long the audit log is kept (default 30) |
 
-Audit lines also go to the system journal: `journalctl -t ember-audit`. For testing, `EMBER_ADMIN_POLICY=/path/to/policy.json`
-points Ember at another file.
+Audit lines also go to the system journal: `journalctl -t ember-audit`. `/etc/ember/policy.json` must belong to root
+and be writable only by root, or Ember locks down. In a development checkout, `EMBER_ADMIN_POLICY=/path/to/policy.json`
+points Ember at another file (an installed Ember ignores it).
 
 ## 6. Native modules and RHEL 8
 
@@ -260,7 +280,9 @@ npm run package            # dist/package: the RPMs and the AppImage
 The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds),
 `scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime).
 CI builds both packages on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`,
-runs `ember doctor` and starts the installed Ember as a normal user.
+runs `ember doctor` and starts the installed Ember as a normal user. Bundled licences ship in
+`/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a bundled package's licence
+isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only for the root check-up).
 
 `ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
 Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
@@ -293,6 +315,13 @@ The nightly tier needs the repository variable `EMBER_NIGHTLY=true`, `EMBER_EVAL
 installed are skipped and listed as skipped. Every run also measures the release gates of PLAN.md §6 on the
 machine it runs on (reading a window, taking the mouse back, the kill switch, wake-word latency and accuracy,
 idle CPU). Gates it can't measure there are marked "not measured", with the reason.
+
+Exit status: the run fails when no task ran (filters that match nothing, or an unknown id, exit 2), when the per-PR
+tier has any failing task or the nightly tier is under pass^3 70 %, or when a blocking safety gate isn't **pass**:
+"not measured" fails too, and an attempt that broke off is still judged from the audit log it left. So a partial
+run such as `--only bench-save` needs `--no-gates` (or an injection task). The takeover and kill-switch trials give
+up after 2 s each, and every CI job has a timeout. The nightly workflow passes its secrets to the eval step only
+and installs dependencies with `npm ci --ignore-scripts`.
 
 ## 9. Troubleshooting
 

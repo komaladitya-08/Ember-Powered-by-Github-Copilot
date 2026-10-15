@@ -346,6 +346,68 @@ describe("VoiceEngine idle CPU", () => {
   });
 });
 
+describe("VoiceEngine idle CPU with a voice check", () => {
+  /** Noise at a steady level, and the voice check's verdicts (tagged on the frame's last sample). */
+  let seed = 5;
+  const noise = (rms: number, speech = false) => {
+    const f = Float32Array.from({ length: 512 }, () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff - 0.5) * rms / 0.2887; });
+    f[511] = speech ? 0.25 : 0;
+    return f;
+  };
+  function counted(withCheck = true) {
+    const b = fake([]);
+    const n = { spot: 0, check: 0, resets: 0 };
+    const spot = b.spot;
+    b.spot = f => { n.spot++; return spot(f); };
+    if (withCheck) {
+      b.hearsSpeech = f => { n.check++; return f[511] === 0.25; };
+      b.resetHearsSpeech = () => { n.resets++; };
+    }
+    return { e: new VoiceEngine(b, () => undefined, { now: () => 0 }), n };
+  }
+
+  it("never runs the voice check in true silence", () => {
+    const { e, n } = counted();
+    for (let i = 0; i < 200; i++) e.feed(new Float32Array(512));
+    expect(n.check).toBe(0);
+    expect(n.spot).toBe(16);
+  });
+
+  it("learns a noisy room in seconds, then rests both the spotter and the voice check", () => {
+    for (const withCheck of [true, false]) {
+      const { e, n } = counted(withCheck);
+      for (let i = 0; i < 200; i++) e.feed(noise(0.02)); // 6 s of a fan, from the start
+      const was = { ...n };
+      for (let i = 0; i < 300; i++) e.feed(noise(0.02));
+      expect(n.spot - was.spot, `spotter, check ${withCheck}`).toBe(0);
+      expect(n.check - was.check, `check ${withCheck}`).toBe(0);
+    }
+  });
+
+  it("hears speech under a fan that loudness alone misses", () => {
+    for (const withCheck of [true, false]) {
+      const { e, n } = counted(withCheck);
+      for (let i = 0; i < 300; i++) e.feed(noise(0.02));
+      const was = n.spot;
+      // Speech at about 4 dB SNR: louder than the fan, but not 2.5 times.
+      for (let i = 0; i < 20; i++) e.feed(noise(0.032, true));
+      expect(n.spot - was > 0, `check ${withCheck}`).toBe(withCheck);
+    }
+  });
+
+  it("replays from 12 frames before the sound started, once the voice check confirms it", () => {
+    const { e, n } = counted();
+    for (let i = 0; i < 100; i++) e.feed(new Float32Array(512));
+    const was = n.spot;
+    const loud = (speech: boolean) => { const f = new Float32Array(512).fill(0.1); f[511] = speech ? 0.25 : 0.1; return f; };
+    for (let i = 0; i < 3; i++) e.feed(loud(false)); // the check needs a few frames to be sure
+    expect(n.spot).toBe(was);
+    expect(n.resets).toBe(1); // started afresh (with context) at the first sound
+    e.feed(loud(true));
+    expect(n.spot - was).toBe(12 + 3 + 1);
+  });
+});
+
 describe("second-stage wake check", () => {
   it("rejects clear near-misses only", async () => {
     const { heardOtherWord } = await import("../../app/voice/engine");
