@@ -17,13 +17,27 @@
       </div>
     </header>
 
+    <p id="managed" class="managed" hidden></p>
+
+    <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
+      <h2 id="welcome-h">Before Ember starts</h2>
+      <ul class="terms">
+        <li><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.</li>
+        <li><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
+        <li><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> stops everything at once.</li>
+        <li><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code>~/.config/ember</code>. It sends no usage statistics.</li>
+        <li><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
+      </ul>
+      <label class="switch-row"><input type="checkbox" id="agree"><span>I understand and agree</span></label>
+    </section>
+
     <section class="pick" aria-labelledby="pick-h">
       <h2 id="pick-h">Your Ember</h2>
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
       <div class="pick-row">
         <label for="size">Size <output id="size-out">60 px</output></label>
         <input type="range" id="size" min="36" max="110" step="2" value="60">
-        <button type="button" id="start" class="start" hidden>Start Ember</button>
+        <button type="button" id="start" class="start" hidden disabled>Start Ember</button>
       </div>
       <p class="hint">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
@@ -62,6 +76,12 @@
         <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies out loud</span></label>
         <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
       </div>
+    </section>
+
+    <section aria-labelledby="activity-h">
+      <h2 id="activity-h">What Ember did</h2>
+      <ol class="activity" id="activity"></ol>
+      <p class="hint">Every decision and action is also in <code>~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
     </section>
 
     <section aria-labelledby="checks-h">

@@ -25,6 +25,8 @@ export interface ActionRequest {
   value?: string;
   /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
   onDesk?: boolean;
+  /** The user's request this action serves (for the task-alignment check). */
+  goal?: string;
 }
 
 export interface Decision {
@@ -37,6 +39,12 @@ export interface Decision {
   needsGrant?: boolean;
   /** The action itself needs the user's OK every time, whatever the grant. */
   risky?: boolean;
+  /** "Always in this app" may be offered (the administrator can turn grants off). */
+  remember?: boolean;
+  /** False when a risky action names nothing the user asked for (shown in the question). */
+  aligned?: boolean;
+  /** Ask every time: an earlier "Allow" in this task doesn't cover it. */
+  everyTime?: boolean;
 }
 
 export type Grant = "observe" | "act";
@@ -47,6 +55,10 @@ export interface PolicyInputs {
   /** Max actions per task per minute. */
   rateLimit?: number;
   now?: () => number;
+  /** Administrator switches (admin.ts): acting at all, and asking before every action. */
+  actionsAllowed?: () => boolean;
+  confirmEveryAction?: () => boolean;
+  allowGrants?: () => boolean;
 }
 
 /** Words on buttons that make an action hard to undo or visible to others. */
@@ -55,6 +67,27 @@ const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|ove
 const SECRET_FIELD = /\b(password|passphrase|pin|card ?number|credit ?card|cvv|cvc|security code|expir(y|ation)|iban|routing number|one-time code|otp|2fa|recovery code)\b/i;
 /** Windows Ember never acts in: authentication prompts and keyrings. */
 const SECURITY_WINDOW = /\b(authenticat(e|ion) (is )?required|polkit|sudo|unlock (login )?keyring|password required|enter password|security settings|firewall)\b/i;
+
+/** Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. */
+export function isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean {
+  return SECURITY_WINDOW.test(`${w.app ?? ""} ${w.title ?? w.name ?? ""}`) || /polkit|gcr-prompter|pinentry|ssh-askpass/i.test(w.app ?? "");
+}
+
+const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
+const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
+/** Rough stem, so "deleting", "deleted" and "delete" match. */
+const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "");
+
+/**
+ * Task alignment: does a risky control's name share a word with what the user
+ * asked for? "Send" in "send the report to Ana" does; "Delete all" while filling in
+ * a form doesn't, and the question then says so (words on screen can't make it look asked-for).
+ */
+export function alignedWithGoal(goal: string | undefined, element: string): boolean {
+  if (!goal) return true;
+  const asked = new Set(words(goal).map(stem));
+  return words(element).some(w => asked.has(stem(w)));
+}
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const quote = (s: string) => `“${s.length > 60 ? s.slice(0, 59) + "…" : s}”`;
@@ -84,6 +117,23 @@ export class PolicyEngine {
   constructor(private o: PolicyInputs) {}
 
   decide(r: ActionRequest): Decision {
+    const d = this.decideBase(r);
+    if (d.verdict === "deny") return d;
+    const remember = (this.o.allowGrants?.() ?? true) && !!d.needsGrant;
+    // Risky and off-task: say so in the question, so a page that talked Ember into it is easy to spot.
+    if (d.risky && r.element && !alignedWithGoal(r.goal, r.element.name)) {
+      return { ...d, remember, aligned: false, reason: `${d.reason}; not something the user asked for`, prompt: `${d.prompt} You didn't ask for this, so say no if it looks wrong.` };
+    }
+    // The administrator wants a click before every action.
+    if (d.tier !== "read" && this.o.confirmEveryAction?.()) {
+      return d.verdict === "allow"
+        ? { ...d, verdict: "confirm", tier: "confirm", reason: "your organisation asks you to confirm every action", remember: false, everyTime: true }
+        : { ...d, remember: false, everyTime: true };
+    }
+    return { ...d, remember };
+  }
+
+  private decideBase(r: ActionRequest): Decision {
     const prompt = describe(r);
     const win = { app: r.app, name: r.window };
     const never = (reason: string): Decision => ({ tier: "never", verdict: "deny", reason, prompt });
@@ -95,6 +145,7 @@ export class PolicyEngine {
     if ((r.kind === "text" || r.kind === "cursor_text") && r.element && SECRET_FIELD.test(r.element.name)) return never("this looks like a password or payment field");
 
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt };
+    if (this.o.actionsAllowed && !this.o.actionsAllowed()) return never("your organisation has turned off Ember acting in apps");
 
     if (!this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt };
 

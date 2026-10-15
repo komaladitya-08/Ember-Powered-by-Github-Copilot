@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CursorBorrow, UserTookOver, parseCombo } from "../../app/main/hands/borrow";
+import { BorrowStopped, CursorBorrow, UserTookOver, parseCombo } from "../../app/main/hands/borrow";
 import type { XInput } from "../../app/main/hands/input";
 import { PolicyEngine } from "../../app/main/policy/policy";
 
@@ -42,6 +42,30 @@ describe("parseCombo", () => {
 });
 
 describe("CursorBorrow", () => {
+  it("stops at once on the kill switch: no more input, no keys left down, pointer straight home", async () => {
+    const { s, x } = fakeX();
+    const b = new CursorBorrow(x);
+    let moves = 0;
+    const move = x.move;
+    x.move = (px, py) => { moves++; move(px, py); };
+    const run = b.borrow(async hand => {
+      await hand.glideTo(100, 120);
+      await hand.keys("ctrl+s"); // never reached
+    }, { ...fast, window: 22, sleep: () => new Promise(r => setTimeout(r, 1)) });
+    await new Promise(r => setTimeout(r, 15));
+    b.stop();
+    const movesAtStop = moves;
+    await expect(run).rejects.toBeInstanceOf(BorrowStopped);
+    expect(s.pointer).toEqual({ x: 500, y: 400 });
+    expect(moves - movesAtStop).toBeLessThanOrEqual(2); // a jump home, not a glide
+    expect(s.log.some(l => l.startsWith("key"))).toBe(false);
+    expect(s.keys.size).toBe(0);
+    expect(s.active).toBe(11);
+    expect(b.active).toBe(false);
+    // The next borrow works normally.
+    await b.borrow(async hand => { await hand.click(); }, fast);
+  });
+
   it("acts in the target window, then puts the pointer and focus back", async () => {
     const { s, x } = fakeX();
     const b = new CursorBorrow(x);

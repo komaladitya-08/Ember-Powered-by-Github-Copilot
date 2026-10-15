@@ -34,7 +34,7 @@ export interface X11 {
    */
   pointer(): { x: number; y: number } | null;
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
-  activeWindow(): X11Window | null;
+  activeWindow(): (X11Window & { wmClass: string }) | null;
   /**
    * Every top-level window (from _NET_CLIENT_LIST, or the window tree when no
    * window manager publishes one), with its class. Used to black out private
@@ -144,7 +144,10 @@ export function openX11(displayName?: string): X11 | null {
         const active = property(root, "_NET_ACTIVE_WINDOW", "longs");
         const id = Array.isArray(active) ? active[0] : 0;
         if (!id) return null;
-        return describe(id);
+        const w = describe(id);
+        if (!w) return null;
+        const cls = property(id, "WM_CLASS", "string");
+        return { ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "" };
       },
 
       clientWindows() {

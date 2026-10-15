@@ -56,7 +56,7 @@ const mock = await startMockLlm({
 
 const bench = spawn(python, [path.join(root, "test/fixtures/gtk3_bench.py")], { env, stdio: "ignore" });
 const userData = mkdtempSync(path.join(tmpdir(), "ember-m3-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
 await sleep(2500);
 xdo("search", "--sync", "--name", "Ember Test Bench", "windowactivate", "--sync");
 

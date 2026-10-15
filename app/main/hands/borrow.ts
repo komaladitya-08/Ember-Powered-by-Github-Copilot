@@ -15,6 +15,13 @@ export class UserTookOver extends Error {
   }
 }
 
+/** The kill switch (or Stop) ended the borrow: no more input, the pointer jumps home. */
+export class BorrowStopped extends Error {
+  constructor() {
+    super("Stopped.");
+  }
+}
+
 export interface BorrowOptions {
   /** How long the user must be still before Ember starts (ms). */
   idleMs?: number;
@@ -60,6 +67,7 @@ export function parseCombo(combo: string): { modifiers: string[]; key: string } 
 
 export class CursorBorrow {
   private busy = false;
+  private stopping = false;
 
   constructor(private x: XInput) {}
 
@@ -67,9 +75,15 @@ export class CursorBorrow {
     return this.busy;
   }
 
+  /** Kill switch: the current borrow sends no more input and the pointer goes straight back. */
+  stop(): void {
+    if (this.busy) this.stopping = true;
+  }
+
   async borrow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions = {}): Promise<T> {
     if (this.busy) throw new Error("Ember is already using the cursor");
     this.busy = true;
+    this.stopping = false;
     const now = o.now ?? Date.now;
     const sleep = o.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
     const x = this.x;
@@ -79,6 +93,7 @@ export class CursorBorrow {
     let tookOver = false;
 
     const check = () => {
+      if (this.stopping) throw new BorrowStopped();
       const p = x.pointer();
       const foreign = x.keysDown().filter(k => !held.has(k));
       if ((p && expected && (Math.abs(p.x - expected.x) > TOLERANCE || Math.abs(p.y - expected.y) > TOLERANCE)) || foreign.length) {
@@ -99,6 +114,7 @@ export class CursorBorrow {
       const p = x.pointer();
       if (!p || !last || p.x !== last.x || p.y !== last.y || x.keysDown().length) stillSince = now();
       last = p;
+      if (this.stopping) { this.busy = false; this.stopping = false; throw new BorrowStopped(); }
       if (now() - stillSince >= idleMs) break;
       if (now() - t0 > (o.idleTimeoutMs ?? 15_000)) { this.busy = false; throw new Error("The user kept using the mouse, so Ember didn't borrow it."); }
       await sleep(50);
@@ -192,7 +208,11 @@ export class CursorBorrow {
       // Never leave a key stuck down, whatever happened.
       for (const sym of held.values()) x.keysym(sym, false);
       held.clear();
-      if (!tookOver) {
+      if (this.stopping) {
+        // Stopped: no gliding, the pointer is simply put back.
+        if (home) x.move(home.x, home.y);
+        if (previousWindow && o.window && previousWindow !== o.window) x.activate(previousWindow);
+      } else if (!tookOver) {
         // Hand everything back the way it was.
         if (home) {
           try { await hand.glideTo(home.x, home.y); } catch { /* the user took over on the way back */ }
@@ -200,6 +220,7 @@ export class CursorBorrow {
         if (previousWindow && o.window && previousWindow !== o.window && !tookOver) x.activate(previousWindow);
       }
       this.busy = false;
+      this.stopping = false;
     }
   }
 }

@@ -65,7 +65,7 @@ mkdirSync(path.join(userData, "models"), { recursive: true });
 for (const f of readdirSync(path.join(voiceDir, "models"), { withFileTypes: true })) {
   if (!f.name.startsWith(".download")) symlinkSync(path.join(voiceDir, "models", f.name), path.join(userData, "models", f.name));
 }
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, voice: { consent: true, speakerRejection: true } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" }, voice: { consent: true, speakerRejection: true } }));
 gs("set", "org.gnome.desktop.notifications", "show-banners", "true");
 gs("set", "org.gnome.desktop.interface", "text-scaling-factor", "1.0");
 
