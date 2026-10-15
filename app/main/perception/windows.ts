@@ -36,7 +36,10 @@ export function matchFrame(w: Pick<AxWindow, "pid" | "name" | "bounds">, stack: 
     const o = s.outer;
     const kw = o.width / b.width, kh = o.height / b.height;
     if (!(kw > 0) || Math.abs(kw - kh) > SAME * Math.max(kw, kh)) continue;
-    const k = Math.abs(kw - 1) <= SAME ? 1 : kw;
+    // GDK scales are whole numbers and Qt's usually quarters: one logical pixel of rounding in
+    // the frame size shouldn't put a click 5 px off at the far side of a 4K screen.
+    const nice = Math.round(kw * 4) / 4;
+    const k = Math.abs(kw - 1) <= SAME ? 1 : Math.abs(kw - nice) <= 0.01 * nice ? nice : kw;
     const off = Math.abs(o.x - b.x * k) + Math.abs(o.y - b.y * k);
     if (off > 8 + 4 * k) continue;
     const cost = off + (s.title === w.name ? 0 : 1000);

@@ -647,6 +647,9 @@ function start(): void {
 
     if (compositing) {
       overlay = new OverlayManager(() => settings.get(), log.child("overlay"), cursor);
+      // GNOME's "Animations" switch off counts as asking for calm mode.
+      try { overlay.systemReducedMotion = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { /* not GNOME */ }
+      overlay.avoid = () => handle?.bounds ?? null;
       overlay.start();
     } else {
       log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });

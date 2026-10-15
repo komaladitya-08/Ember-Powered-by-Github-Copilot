@@ -7,8 +7,11 @@ import { Spring2D, type Point } from "@ember/motion";
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
-/** Ember's centre relative to the cursor tip, flipped to stay inside the work area. */
-export function followTarget(cursor: Point, size: number, area: Rect): Point {
+/**
+ * Ember's centre relative to the cursor tip, flipped to stay inside the work area,
+ * and kept off `avoid` (Ember's own handle in the corner: it never hides behind it).
+ */
+export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rect | null = null): Point {
   const dx = size * 0.55 + 14;
   const dy = size * 0.62 + 16;
   const half = size * 0.6;
@@ -16,10 +19,15 @@ export function followTarget(cursor: Point, size: number, area: Rect): Point {
   let y = cursor.y + dy;
   if (x + half > area.x + area.width) x = cursor.x - dx;
   if (y + half > area.y + area.height) y = cursor.y - dy * 0.55;
-  return {
+  const p = {
     x: Math.min(Math.max(x, area.x + half), area.x + area.width - half),
     y: Math.min(Math.max(y, area.y + half), area.y + area.height - half),
   };
+  if (avoid && p.x + half > avoid.x && p.x - half < avoid.x + avoid.width && p.y + half > avoid.y && p.y - half < avoid.y + avoid.height) {
+    // Over the handle: sit just above it instead.
+    p.y = Math.max(area.y + half, avoid.y - half - 4);
+  }
+  return p;
 }
 
 export class Follower {
@@ -37,6 +45,11 @@ export class Follower {
 
   setPaused(on: boolean): void {
     this.paused = on;
+  }
+
+  /** Calm mode: no overshoot on the way to the cursor. */
+  setReducedMotion(on: boolean): void {
+    this.spring.setCriticallyDamped(on);
   }
 
   /** Hold Ember at a point (e.g. while it works in another window); null releases it. */

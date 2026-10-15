@@ -12,10 +12,10 @@ const electron = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- hoisted above the imports
   const { EventEmitter: Emitter } = require("node:events") as typeof import("node:events");
   const procs: (InstanceType<typeof Emitter> & { postMessage: ReturnType<typeof vi.fn>; kill: ReturnType<typeof vi.fn>; stderr: null })[] = [];
-  const windows: { title: string; webContents: { send: ReturnType<typeof vi.fn>; postMessage: ReturnType<typeof vi.fn> }; destroyed: boolean }[] = [];
+  const windows: { title: string; webContents: InstanceType<typeof Emitter> & { send: ReturnType<typeof vi.fn>; postMessage: ReturnType<typeof vi.fn> }; destroyed: boolean }[] = [];
   class BrowserWindow {
     title: string;
-    webContents = { send: vi.fn(), postMessage: vi.fn() };
+    webContents = Object.assign(new Emitter(), { send: vi.fn(), postMessage: vi.fn() });
     destroyed = false;
     constructor(o: { title: string }) { this.title = o.title; windows.push(this); }
     loadFile() { return Promise.resolve(); }
@@ -185,6 +185,91 @@ describe("VoiceService", () => {
     await failed;
     expect(states.at(-1)?.s).toBe("off"); // listening wasn't on
     expect(modelsReady(root)).toBe(false);
+  });
+});
+
+describe("VoiceService keeps listening going", () => {
+  const micWindow = () => electron.windows.filter(w => w.title === "Ember microphone").at(-1)!;
+  const micStatus = (status: object) => electron.ipcMain.emit(VOICE.status, { sender: micWindow().webContents }, status);
+
+  it("starts again after the voice process stops: 1 s, 5 s, then every 30 s, saying so meanwhile", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    for (const [n, wait] of [[1, 1000], [2, 5000], [3, 30_000], [4, 30_000]]) {
+      electron.procs[n - 1].emit("exit", 1);
+      expect(states.at(-1)).toEqual({ s: "error", detail: `The voice process stopped. Trying again in ${wait / 1000} s…` });
+      expect(micWindow().destroyed).toBe(true);
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(electron.procs).toHaveLength(n);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(electron.procs).toHaveLength(n + 1);
+    }
+    electron.procs[4].emit("message", { type: "ready", loadMs: 900 });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+    // A minute of listening later, a new failure starts the backoff over.
+    await vi.advanceTimersByTimeAsync(61_000);
+    electron.procs[4].emit("exit", 1);
+    expect(states.at(-1)?.detail).toMatch(/Trying again in 1 s/);
+  });
+
+  it("starts again when the microphone page crashes", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    const mic = micWindow();
+    mic.webContents.emit("render-process-gone", {}, { reason: "crashed" });
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)?.detail).toBe("The microphone page stopped. Trying again in 1 s…");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+    expect(micWindow()).not.toBe(mic);
+  });
+
+  it("starts again when no sound arrives, unless the mic page is getting the microphone back", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    micStatus({ state: "lost", message: "The microphone was disconnected." });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The microphone was disconnected. Trying again…" });
+    electron.procs[0].emit("message", { type: "stalled", ms: 3100 });
+    expect(electron.procs[0].kill).not.toHaveBeenCalled();
+    micStatus({ state: "capturing", device: "USB Headset", rate: 16000, context: "running" });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+    electron.procs[0].emit("message", { type: "stalled", ms: 3100 });
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)?.detail).toBe("No sound is arriving from the microphone. Trying again in 1 s…");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+  });
+
+  it("doesn't start again once listening was turned off (or muted)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("exit", 1);
+    await v.setWanted(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(electron.procs).toHaveLength(1);
+    expect(states.at(-1)?.s).toBe("off");
+    await v.setWanted(true); // on again: at once, not after the backoff
+    expect(electron.procs).toHaveLength(2);
+    electron.procs[1].emit("exit", 1);
+    v.setMuted(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(electron.procs).toHaveLength(2);
+    expect(states.at(-1)?.s).toBe("muted");
+  });
+
+  it("a model that won't load is an error to show, not a restart loop", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "error", message: "Invalid model file" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(electron.procs).toHaveLength(1);
+    expect(states.at(-1)).toEqual({ s: "error", detail: "Invalid model file" });
   });
 });
 

@@ -32,8 +32,17 @@ export interface XInput {
   activeWindow(): number;
   /** Size of the whole X screen in pixels. */
   screenSize(): { width: number; height: number };
-  /** Top-level window whose title contains `title` (_NET_CLIENT_LIST), or 0. */
-  findWindow(title: string): number;
+  /**
+   * The app window titled `title` (a client window, as listed in _NET_CLIENT_LIST). An exact
+   * title wins over one that only contains it; when `pid` has windows, only its windows count.
+   * 0 when nothing matches or several windows do: input sent to a guess could go anywhere.
+   */
+  findWindow(title: string, pid?: number): number;
+  /**
+   * The app window with keyboard focus (the focused X window mapped up to its client window,
+   * comparable with findWindow), or 0. Check it after activate(), and before typing.
+   */
+  focusedWindow(): number;
   /** Asks the window manager to activate a window (_NET_ACTIVE_WINDOW). */
   activate(window: number): void;
   sync(): void;
@@ -71,6 +80,7 @@ export function openXInput(displayName?: string): XInput | null {
     const XDisplayHeight = x11.func("int XDisplayHeight(void *dpy, int screen)");
     const XDefaultScreen = x11.func("int XDefaultScreen(void *dpy)");
     const XGetInputFocus = x11.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
+    const XGetWindowAttributes = x11.func("int XGetWindowAttributes(void *dpy, unsigned long w, _Out_ uint8_t *attrs)");
     const XTestFakeMotionEvent = xtst.func("int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)");
     const XTestFakeButtonEvent = xtst.func("int XTestFakeButtonEvent(void *dpy, unsigned int button, int isPress, unsigned long delay)");
     const XTestFakeKeyEvent = xtst.func("int XTestFakeKeyEvent(void *dpy, unsigned int keycode, int isPress, unsigned long delay)");
@@ -112,6 +122,30 @@ export function openXInput(displayName?: string): XInput | null {
       }
     };
     const hasWindowManager = () => longs(root, "_NET_SUPPORTING_WM_CHECK", 1).length > 0;
+    const parentOf = (win: number): number => {
+      const r = [0], parent = [0], list: unknown[] = [null], n = [0];
+      if (!XQueryTree(dpy, win, r, parent, list, n)) return 0;
+      if (list[0]) XFree(list[0]);
+      return Number(parent[0]);
+    };
+    /** XWindowAttributes.map_state (offset 92 on x86-64) is IsViewable. */
+    const viewable = (win: number) => { const a = Buffer.alloc(136); return !!XGetWindowAttributes(dpy, win, a) && a.readInt32LE(92) === 2; };
+    const managed = (win: number) => longs(win, "WM_STATE", 2).length > 0;
+    /** The app window inside a top-level (ICCCM: the first one with WM_STATE), or the top-level itself. */
+    const clientBelow = (top: number): number => {
+      let level = [top];
+      for (let depth = 0; depth < 3 && level.length && level.length <= 64; depth++) {
+        const next: number[] = [];
+        for (const w of level) { if (managed(w)) return w; next.push(...children(w)); }
+        level = next;
+      }
+      return top;
+    };
+    /** App windows: _NET_CLIENT_LIST, or without an EWMH window manager, the clients of the mapped top-levels. */
+    const clients = (): number[] => {
+      const listed = longs(root, "_NET_CLIENT_LIST", 1024);
+      return listed.length ? listed : children(root).filter(viewable).map(clientBelow);
+    };
     const text = (win: number, name: string): string | null => {
       const p = prop(win, name, 1024);
       return p && p.format === 8 ? p.bytes.toString("utf8") : null;
@@ -184,15 +218,30 @@ export function openXInput(displayName?: string): XInput | null {
         const n = XDefaultScreen(dpy);
         return { width: XDisplayWidth(dpy, n), height: XDisplayHeight(dpy, n) };
       },
-      findWindow(title) {
-        if (!open) return 0;
+      findWindow(title, pid) {
+        if (!open || !title) return 0;
+        const all = clients().map(id => ({ id, title: text(id, "_NET_WM_NAME") ?? text(id, "WM_NAME") ?? "", pid: longs(id, "_NET_WM_PID", 1)[0] }));
+        // A process's own windows, when it has any: another app's window of the same name is not it.
+        const theirs = pid !== undefined ? all.filter(w => w.pid === pid) : [];
+        const pool = theirs.length ? theirs : all;
+        const only = (list: typeof pool) => (list.length === 1 ? list[0].id : 0);
+        const exact = pool.filter(w => w.title === title);
+        if (exact.length) return only(exact);
         const want = title.toLowerCase();
-        const named = (w: number) => (text(w, "_NET_WM_NAME") ?? text(w, "WM_NAME") ?? "").toLowerCase().includes(want);
-        for (const w of longs(root, "_NET_CLIENT_LIST", 1024)) if (named(w)) return w;
-        // No EWMH window manager: look through the window tree (top two levels).
-        for (const w of children(root)) {
-          if (named(w)) return w;
-          for (const c of children(w)) if (named(c)) return c;
+        return only(pool.filter(w => w.title.toLowerCase().includes(want)));
+      },
+      focusedWindow() {
+        if (!open) return 0;
+        const f = [0], revert = [0];
+        XGetInputFocus(dpy, f, revert);
+        let id = Number(f[0]);
+        if (id <= 1) return 0; // None or PointerRoot
+        // Up from the focused (possibly inner) window to the app window that holds it.
+        for (let hops = 0; hops < 32; hops++) {
+          if (managed(id)) return id;
+          const parent = parentOf(id);
+          if (!parent || parent === Number(root)) return clientBelow(id); // a top-level: the frame, or an unmanaged window
+          id = parent;
         }
         return 0;
       },

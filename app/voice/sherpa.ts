@@ -21,6 +21,9 @@ export const KEYWORDS = [
   "▁E M BER ▁ST O P :2.0 #0.15 @ember_stop",
 ].join("\n");
 
+/** The idle voice check's speech threshold (Silero's probability; 0.5 is its usual). */
+const CHECK_THRESHOLD = 0.35;
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
 export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = {}): VoiceBackend & { free(): void } {
   const requireCjs = createRequire(__filename);
@@ -45,6 +48,12 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
     sileroVad: { model: models.vad, threshold: 0.5, minSilenceDuration: 0.6, minSpeechDuration: 0.2, maxSpeechDuration: 15, windowSize: 512 },
     sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
   });
+  // The voice check for the idle spotter: a second Silero, eager (low threshold, a 64 ms onset), with its own state.
+  // Its segments aren't needed: they're dropped as they come.
+  const check = sherpa.createVad({
+    sileroVad: { model: models.vad, threshold: CHECK_THRESHOLD, minSilenceDuration: 0.25, minSpeechDuration: 0.064, maxSpeechDuration: 30, windowSize: 512 },
+    sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
+  });
   const a = (f: string) => path.join(models.asr, f);
   const asr = sherpa.createOfflineRecognizer({
     featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
@@ -66,7 +75,16 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
     return hits;
   };
   // VAD consumes fixed 512-sample windows.
-  let pending = new Float32Array(0);
+  const windows = (vadLike: { acceptWaveform(s: Float32Array): void }, rest: Float32Array, frame: Float32Array): Float32Array<ArrayBuffer> => {
+    const joined = new Float32Array(rest.length + frame.length);
+    joined.set(rest);
+    joined.set(frame, rest.length);
+    let i = 0;
+    for (; i + 512 <= joined.length; i += 512) vadLike.acceptWaveform(joined.subarray(i, i + 512));
+    return joined.slice(i);
+  };
+  let pending: Float32Array = new Float32Array(0);
+  let checkPending: Float32Array = new Float32Array(0);
   const drain = (): Float32Array[] => {
     const out: Float32Array[] = [];
     while (!vad.isEmpty()) { out.push(Float32Array.from(vad.front().samples)); vad.pop(); }
@@ -82,13 +100,17 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
       spotIn(micStream, new Float32Array(SAMPLE_RATE / 2));
     },
     ...(monStream ? { spotMonitor: (frame: Float32Array) => spotIn(monStream, frame) } : {}),
+    hearsSpeech(frame) {
+      checkPending = windows(check, checkPending, frame);
+      if (!check.isEmpty()) check.clear();
+      return check.isDetected();
+    },
+    resetHearsSpeech() {
+      check.reset();
+      checkPending = new Float32Array(0);
+    },
     vad(frame) {
-      const joined = new Float32Array(pending.length + frame.length);
-      joined.set(pending);
-      joined.set(frame, pending.length);
-      let i = 0;
-      for (; i + 512 <= joined.length; i += 512) vad.acceptWaveform(joined.subarray(i, i + 512));
-      pending = joined.slice(i);
+      pending = windows(vad, pending, frame);
       return drain();
     },
     speaking: () => vad.isDetected(),
@@ -111,7 +133,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
       }
     },
     free() {
-      micStream.free(); monStream?.free(); kws.free(); vad.free(); asr.free();
+      micStream.free(); monStream?.free(); kws.free(); vad.free(); check.free(); asr.free();
     },
   };
 }

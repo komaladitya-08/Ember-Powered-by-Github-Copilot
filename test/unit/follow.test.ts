@@ -45,3 +45,13 @@ describe("Follower", () => {
     expect(settle(f, { x: 900, y: 700 }).x).toBeCloseTo(100, 0);
   });
 });
+
+describe("Ember keeps off its own handle", () => {
+  it("sits just above the handle instead of behind it in the corner", () => {
+    const area = { x: 0, y: 0, width: 1280, height: 800 };
+    const handle = { x: 1068, y: 732, width: 200, height: 56 };
+    const p = followTarget({ x: 1150, y: 760 }, 60, area, handle);
+    expect(p.y + 36).toBeLessThanOrEqual(handle.y);
+    expect(followTarget({ x: 300, y: 300 }, 60, area, handle)).toEqual(followTarget({ x: 300, y: 300 }, 60, area));
+  });
+});

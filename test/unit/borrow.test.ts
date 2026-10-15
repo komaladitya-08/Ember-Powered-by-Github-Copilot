@@ -22,6 +22,7 @@ function fakeX() {
     needsShift: sym => sym >= 0x41 && sym <= 0x5a,
     keysDown: () => [...s.keys],
     activeWindow: () => s.active,
+    focusedWindow: () => s.active,
     screenSize: () => ({ width: 1280, height: 800 }),
     findWindow: () => 22,
     activate: w => { s.active = w; s.log.push(`activate ${w}`); },

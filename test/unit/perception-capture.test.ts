@@ -3,15 +3,20 @@ import sharp from "sharp";
 import { captureRect } from "../../app/main/perception/capture";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, Bounds } from "../../app/main/perception/sidecar";
-import type { X11, X11Image } from "../../app/main/x11";
+import type { StackedWindow, X11, X11Image } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const SCREEN = { width: 300, height: 200 };
 
+/** A top-level window in a pretend stack. */
+const top = (id: number, pid: number | null, r: Bounds, title = ""): StackedWindow =>
+  ({ id, client: id, pid, title, wmClass: "app", ...r, outer: r, overrideRedirect: false });
+
 /** A pretend X server: a grey screen, clipped like the real x11.capture. */
-function fakeX11(onCapture: () => void = () => undefined): X11 {
+function fakeX11(onCapture: () => void = () => undefined, stack: StackedWindow[] = []): X11 {
   return {
+    stack: () => stack,
     capture(x: number, y: number, width: number, height: number): X11Image | null {
       onCapture();
       const x0 = Math.max(0, x), y0 = Math.max(0, y);
@@ -71,7 +76,8 @@ describe("Perception.perceive screenshots", () => {
   } as unknown as AtspiSidecar;
 
   it("says why there is no screenshot", async () => {
-    const p = new Perception({ sidecar, x11: fakeX11(), neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, ...SCREEN }), log: quiet });
+    const x11 = fakeX11(undefined, [top(5, 42, { x: 1000, y: 1000, width: 50, height: 50 }, "notes.txt")]);
+    const p = new Perception({ sidecar, x11, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, ...SCREEN }), log: quiet });
     const off = await p.perceive({ image: true, scope: "window" });
     expect(off.capture).toBeNull();
     expect(off.text).toContain("(No screenshot: the window is off screen");

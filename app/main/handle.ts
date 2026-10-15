@@ -15,6 +15,8 @@ import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 const appDir = __dirname;
 const PILL = { width: 200, height: 56 };
 const CARD = { width: 360, height: 150 };
+/** The card while it asks something: tall enough for the whole question above its buttons. */
+const ASKING = { width: 360, height: 230 };
 const MARGIN = 12;
 
 export class HandleWindow {
@@ -69,9 +71,20 @@ export class HandleWindow {
 
   private last: EmberState | null = null;
 
+  private asking = false;
+
   sendState(state: EmberState): void {
     this.last = state;
-    if (!this.win.isDestroyed()) this.win.webContents.send(OVERLAY.state, state);
+    if (this.win.isDestroyed()) return;
+    // Without a compositor the card is where questions are asked: it grows upward (same corner) while asking.
+    const asking = this.fallback && state.bubble.visible && state.bubble.actions.length > 0;
+    if (asking !== this.asking) { this.asking = asking; this.reposition(); }
+    this.win.webContents.send(OVERLAY.state, state);
+  }
+
+  /** The handle's place on screen (Ember keeps off it). */
+  get bounds(): { x: number; y: number; width: number; height: number } | null {
+    return this.win.isDestroyed() ? null : this.win.getBounds();
   }
 
   /** While Ember borrows the mouse, its own windows let clicks through (a borrowed click must never land on Ember). */
@@ -90,7 +103,7 @@ export class HandleWindow {
 
   private reposition(): void {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? CARD : PILL;
+    const size = this.fallback ? (this.asking ? ASKING : CARD) : PILL;
     this.win.setBounds({ ...size, ...this.corner(size) });
   }
 }

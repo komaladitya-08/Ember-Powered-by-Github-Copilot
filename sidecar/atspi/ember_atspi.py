@@ -39,9 +39,11 @@ MAX_CHILDREN = 200
 # and Ember asks one thing at a time, so one hung app would stall everything.
 CALL_TIMEOUT_MS = 800
 STARTUP_TIMEOUT_MS = 1000
-# An app this slow to list its windows is treated as hung, and skipped for a while (a call that
-# times out takes at least CALL_TIMEOUT_MS; a busy but working app rarely comes close).
+# A call that fails after this long timed out (it takes CALL_TIMEOUT_MS). An app that times out
+# twice in a row is hung, and skipped for a while; once is only busy (opening a file dialog with
+# hundreds of files takes a second), and a busy app's windows mustn't vanish from the list.
 SLOW_APP_S = 0.7
+STRIKES_WITHIN_S = 60.0
 HUNG_FOR_S = 30.0
 
 # GTK reports this position for widgets that have none.
@@ -339,12 +341,72 @@ def ends_above(acc, i, top):
     return b is not None and b["y"] + b["height"] <= top
 
 
+def raw_height(acc):
+    """An element's height, even when its position is unknown (GTK's tree view cells)."""
+    try:
+        return acc.queryComponent().getExtents(pyatspi.DESKTOP_COORDS).height
+    except Exception:
+        return None
+
+
+def scroll_fraction(acc):
+    """How far down its scroll pane a container is scrolled (0 to 1), from the vertical scroll bar."""
+    try:
+        pane = acc.parent
+        bars = [pane.getChildAtIndex(i) for i in range(min(pane.childCount, 8))]
+    except Exception:
+        return None
+    for bar in bars:
+        if bar is None or bar.getRoleName() != "scroll bar" or "vertical" not in state_names(bar):
+            continue
+        try:
+            v = bar.queryValue()
+            low, high, now = float(v.minimumValue), float(v.maximumValue), float(v.currentValue)
+        except Exception:
+            continue
+        return 0.0 if high <= low else min(1.0, max(0.0, (now - low) / (high - low)))
+    return None
+
+
+def table_indices(acc, count):
+    """For a big table: its header cells and the rows around the scroll position. GTK's tree view
+    (file dialogs, mail lists) reports every cell as showing and none with a position, so the
+    vertical scroll bar says where the view is; the Table interface maps rows to children."""
+    try:
+        t = acc.queryTable()
+        nrows, ncols = t.nRows, t.nColumns
+        first_cell = t.getIndexAt(0, 0)
+    except Exception:
+        return None
+    if nrows <= 0 or ncols <= 0 or first_cell < 0:
+        return None
+    frac = scroll_fraction(acc)
+    if frac is None:
+        return None
+    b = extents(acc)
+    row_h = raw_height(child_at(acc, first_cell)) or 20
+    shown = int((b["height"] if b else 600) / max(1, row_h)) + 1
+    first = max(0, int(round(frac * max(0, nrows - shown))) - 1)
+    rows = range(first, min(nrows, first + shown + 2))
+    try:
+        # Cells are usually row after row; one look confirms it, else ask for each cell.
+        regular = t.getIndexAt(first, 0) == first_cell + first * ncols
+        cells = [first_cell + r * ncols + c if regular else t.getIndexAt(r, c) for r in rows for c in range(ncols)]
+    except Exception:
+        return None
+    heads = list(range(min(first_cell, 16)))
+    return (heads + [i for i in cells if 0 <= i < count])[:MAX_CHILDREN]
+
+
 def child_indices(acc, count, clip):
     """Which children to read. Long lists and tables (thousands of rows) are read from the
     first row on screen, not from the top: rows are laid out top to bottom, so a binary search
     finds where the visible ones start. Leading children on screen (column headers) are kept."""
     if count <= MAX_CHILDREN:
         return list(range(count))
+    in_table = table_indices(acc, count)
+    if in_table is not None:
+        return in_table
     if clip is None:
         return list(range(MAX_CHILDREN))
     top = clip["y"]
@@ -439,6 +501,7 @@ def redact_by_layout(nodes, accessible_of):
 # ---------------------------------------------------------------- windows
 
 HUNG = {}  # pid -> time.monotonic() until which the app is skipped
+STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one)
 
 
 def is_hung(pid):
@@ -456,6 +519,30 @@ def mark_hung(pid):
         HUNG[pid] = time.monotonic() + HUNG_FOR_S
 
 
+def timed_out(pid):
+    """A call to this app failed after a timeout: the second time in a row, it counts as hung."""
+    if pid is None:
+        return
+    now = time.monotonic()
+    count, last = STRIKES.get(pid, (0, now))
+    count = count + 1 if now - last <= STRIKES_WITHIN_S else 1
+    STRIKES[pid] = (count, now)
+    if count >= 2:
+        mark_hung(pid)
+
+
+def answered(pid):
+    STRIKES.pop(pid, None)
+
+
+def note_answer(pid, t0, ok):
+    """After asking app `pid` something at t0: a failure that took a timeout's time is a strike."""
+    if ok:
+        answered(pid)
+    elif time.monotonic() - t0 > SLOW_APP_S:
+        timed_out(pid)
+
+
 def process_id(app):
     try:
         return app.get_process_id()
@@ -465,7 +552,7 @@ def process_id(app):
 
 def frames(only_pid=None, skip_pid=None):
     """(app, pid, window) for every top-level window. The process id is checked before an app is
-    asked for its windows; apps that recently took too long to answer are skipped unless asked for."""
+    asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for."""
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
@@ -486,9 +573,11 @@ def frames(only_pid=None, skip_pid=None):
         if only_pid is None and is_hung(pid):
             continue
         t0 = time.monotonic()
-        wins = []
+        wins, ok = [], True
         try:
-            for i in range(min(app.childCount, MAX_CHILDREN)):
+            count = app.childCount
+            ok = count >= 0  # libatspi answers -1 when the call timed out
+            for i in range(min(count, MAX_CHILDREN)):
                 try:
                     win = app.getChildAtIndex(i)
                 except Exception:
@@ -496,23 +585,23 @@ def frames(only_pid=None, skip_pid=None):
                 if win is not None:
                     wins.append(win)
         except Exception:
-            pass
-        if time.monotonic() - t0 > SLOW_APP_S:
-            mark_hung(pid)
+            ok = False
+        if not ok:
+            # (Success here proves little: libatspi may answer from its cache. window_facts asks the app.)
+            note_answer(pid, t0, False)
         for win in wins:
             yield app, pid, win
 
 
 def window_facts(pid, win):
-    """(lowercase name, states) of a window; a slow answer marks its app as hung."""
+    """(lowercase name, states) of a window; a timed-out answer is a strike against its app."""
     t0 = time.monotonic()
-    states = state_names(win)
+    states = state_names(win)  # [] when the call failed: every window has some state
     try:
         name = (win.name or "").lower()
     except Exception:
         name = ""
-    if time.monotonic() - t0 > SLOW_APP_S:
-        mark_hung(pid)
+    note_answer(pid, t0, bool(states))
     return name, states
 
 

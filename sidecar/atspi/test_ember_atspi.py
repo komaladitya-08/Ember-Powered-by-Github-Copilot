@@ -247,6 +247,28 @@ class Reading(unittest.TestCase):
         # Found by a binary search, and the rows below the viewport aren't walked one by one.
         self.assertLess(lst.child_reads, 120)
 
+    def test_big_tables_are_read_at_the_scroll_bar(self):
+        # GTK's tree view (file dialogs): every cell "showing", no cell positions; rows of 4 cells.
+        rows, cols = 800, 4
+        heads = [Acc("table column header", h, bounds=(10 + 100 * i, 100, 100, 20)) for i, h in enumerate(["Name", "Size", "Type", "Modified"])]
+        cells = [Acc("table cell", "file%03d.txt" % (r + 1) if c == 0 else "cell", bounds=(e.INT_MIN, e.INT_MIN, 100, 21))
+                 for r in range(rows) for c in range(cols)]
+        table = Acc("table", "", bounds=(10, 100, 400, 630), kids=heads + cells)
+        table.queryTable = lambda: types.SimpleNamespace(nRows=rows, nColumns=cols, getIndexAt=lambda r, c: 4 + r * cols + c)
+        bar = Acc("scroll bar", "", states=("showing", "visible", "enabled", "vertical"), bounds=(410, 100, 6, 630))
+        bar.queryValue = lambda: types.SimpleNamespace(minimumValue=0.0, maximumValue=1000.0, currentValue=500.0)
+        pane = Acc("scroll pane", "", bounds=(10, 100, 406, 630), kids=[table, bar])
+        table.parent = pane
+        nodes = []
+        e.walk(Acc("dialog", "Open File", bounds=(0, 0, 800, 800), kids=[pane]), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        files = [n["name"] for n in nodes if n["name"].startswith("file")]
+        self.assertEqual([n["name"] for n in nodes if n["role"] == "table column header"], ["Name", "Size", "Type", "Modified"])
+        # Halfway down 800 rows, about 31 on screen: the rows around 385, not the first 50.
+        self.assertTrue(files and "file001.txt" not in files, files[:3])
+        middle = int(files[len(files) // 2][4:7])
+        self.assertTrue(370 <= middle <= 420, files)
+        self.assertLessEqual(len(files), 40)
+
     def test_long_lists_at_the_top(self):
         root, _ = self.scrolled_list(rows=1000, first=0)
         nodes = []
@@ -361,6 +383,7 @@ class Windows(unittest.TestCase):
 
     def setUp(self):
         e.HUNG.clear()
+        e.STRIKES.clear()
         self.mail = self.AppNode(10, [Acc("frame", "Inbox - Mail", states=("showing",)),
                                       Acc("frame", "Compose - Mail", states=("showing", "active"))])
         self.notes = self.AppNode(20, [Acc("frame", "notes.txt - Text Editor", states=("showing",))])
@@ -392,19 +415,40 @@ class Windows(unittest.TestCase):
         self.assertEqual(self.notes.asked, 0)
 
     def test_hung_apps_are_skipped_for_a_while(self):
+        class Hung(self.AppNode):
+            @property
+            def childCount(self):
+                self.asked += 1
+                time.sleep(self.delay)
+                return -1  # what libatspi answers when the call timed out
         old = e.SLOW_APP_S
         e.SLOW_APP_S = 0.01
         try:
-            self.notes.delay = 0.05
+            hung = Hung(30, [], delay=0.05)
+            self.desktop.kids.append(hung)
+            self.assertEqual(len(e.list_windows({})["windows"]), 3)
+            self.assertFalse(e.is_hung(30))  # once: maybe only busy
+            e.list_windows({})
+            self.assertTrue(e.is_hung(30))  # twice in a row: hung
+            asked = hung.asked
             self.assertEqual(self.name_of({"title": "notes"}), "notes.txt - Text Editor")
-            self.assertTrue(e.is_hung(20))
-            asked = self.notes.asked
-            self.assertEqual(e.list_windows({})["windows"][0]["app"], "app10")
-            self.assertEqual(len(e.list_windows({})["windows"]), 2)
-            self.assertEqual(self.notes.asked, asked)
-            # Asked for by its own pid, it is still read.
-            self.assertEqual(self.name_of({"pid": 20}), "notes.txt - Text Editor")
-            e.HUNG[20] = time.monotonic() - 1  # 30 s later
+            self.assertEqual(len(e.list_windows({})["windows"]), 3)
+            self.assertEqual(hung.asked, asked)
+            # Asked for by its own pid, it is still tried.
+            self.assertIsNone(self.name_of({"pid": 30}))
+            self.assertEqual(hung.asked, asked + 1)
+            e.HUNG[30] = time.monotonic() - 1  # 30 s later
+            self.assertFalse(e.is_hung(30))
+        finally:
+            e.SLOW_APP_S = old
+
+    def test_busy_apps_stay_listed(self):
+        old = e.SLOW_APP_S
+        e.SLOW_APP_S = 0.01
+        try:
+            self.notes.delay = 0.05  # slow, but it answers
+            for _ in range(3):
+                self.assertEqual(len(e.list_windows({})["windows"]), 3)
             self.assertFalse(e.is_hung(20))
         finally:
             e.SLOW_APP_S = old

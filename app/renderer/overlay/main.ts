@@ -3,10 +3,9 @@
  * process says it is, plus its reasoning bubble, status pill and task cards.
  * Ember is drawn on a small canvas that moves with it (a full-screen canvas
  * would ship a screen-sized bitmap to the compositor every frame), and only as
- * often as it needs to be: every
- * frame while Ember moves or changes expression, ~30 fps while it talks or its
- * hands are busy, ~15 fps while it rests, ~8 fps while it dozes, and not at all
- * while it is hidden or on another display.
+ * often as it needs to be: every frame while Ember moves or changes expression,
+ * ~30 fps while it talks or its hands are busy, ~15 fps while it rests, ~8 fps
+ * while it dozes, and not at all while it is hidden or on another display.
  */
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
@@ -60,8 +59,7 @@ let interactiveDirty = true;
 let bubbleShown = false;
 
 function applyReducedMotion(): void {
-  const fromSettings = (settings as (Settings & { reduceMotion?: boolean }) | null)?.reduceMotion === true;
-  rig.reducedMotion = reducedMotionQuery.matches || fromSettings;
+  rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
 }
 reducedMotionQuery.addEventListener("change", applyReducedMotion);
 

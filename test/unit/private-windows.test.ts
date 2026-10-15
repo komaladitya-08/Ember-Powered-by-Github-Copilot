@@ -7,7 +7,9 @@ import type { X11 } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
-const win = (title: string, wmClass: string, x = 0) => ({ id: 1, pid: 1, title, wmClass, x, y: 0, width: 100, height: 50 });
+const win = (title: string, wmClass: string, x = 0) => ({
+  id: 1, client: 1, pid: 1, title, wmClass, x, y: 0, width: 100, height: 50, outer: { x, y: 0, width: 100, height: 50 }, overrideRedirect: false,
+});
 
 function make(opts: { x11?: X11 | null; atspi?: () => Promise<{ windows: { app: string; name: string; bounds: { x: number; y: number; width: number; height: number } | null; pid: number | null; role: string; active: boolean }[] }> }) {
   const sidecar = { listWindows: opts.atspi ?? (async () => ({ windows: [] })) } as unknown as AtspiSidecar;
@@ -16,13 +18,13 @@ function make(opts: { x11?: X11 | null; atspi?: () => Promise<{ windows: { app: 
 
 describe("private windows", () => {
   it("masks never-look windows found by X11 even when accessibility doesn't list them", async () => {
-    const x11 = { clientWindows: () => [win("Passwords.kdbx - KeePassXC", "keepassxc KeePassXC", 300), win("notes.txt", "gedit")] } as unknown as X11;
+    const x11 = { stack: () => [win("Passwords.kdbx - KeePassXC", "keepassxc KeePassXC", 300), win("notes.txt", "gedit")] } as unknown as X11;
     const masks = await make({ x11 }).privateWindows();
     expect(masks).toEqual([{ x: 300, y: 0, width: 100, height: 50 }]);
   });
 
   it("adds what accessibility finds", async () => {
-    const x11 = { clientWindows: () => [] } as unknown as X11;
+    const x11 = { stack: () => [] } as unknown as X11;
     const masks = await make({ x11, atspi: async () => ({ windows: [{ app: "KeePassXC", name: "vault", bounds: { x: 5, y: 6, width: 7, height: 8 }, pid: 1, role: "frame", active: false }] }) }).privateWindows();
     expect(masks).toEqual([{ x: 5, y: 6, width: 7, height: 8 }]);
   });

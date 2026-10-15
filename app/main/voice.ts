@@ -14,6 +14,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ensureModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
 import type { VoiceEvent } from "../voice/engine";
+import type { VoiceProcessMessage } from "../voice/process";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
 import type { Logger } from "./logger";
 
@@ -26,6 +27,8 @@ const SPEECH_START_MS = 3000;
 const SPEAKING_MAX_MS = 60_000;
 /** A request heard this soon after a cancel (the kill switch) was already on its way: it's dropped (ms). */
 const CANCEL_GRACE_MS = 1000;
+/** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
+const RESTART_MS = [1000, 5000, 30_000];
 
 export interface VoiceOptions {
   log: Logger;
@@ -74,12 +77,22 @@ export class VoiceService {
   private followUpMs = 0;
   private followUpTimer: NodeJS.Timeout | null = null;
   private cancelledAt = Number.NEGATIVE_INFINITY;
+  /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
+  private micLost = false;
+  /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
+  private retry: NodeJS.Timeout | null = null;
+  private failures = 0;
+  private readyAt = 0;
 
   constructor(private o: VoiceOptions) {
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message)); this.teardown(); }
-      else this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
+      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message)} Trying again…`); }
+      else {
+        this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
+        if (this.micLost) { this.micLost = false; this.setState("waiting"); }
+      }
     });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
@@ -105,13 +118,13 @@ export class VoiceService {
   /** Listening on or off (from settings and consent). */
   async setWanted(on: boolean): Promise<void> {
     this.wanted = on;
-    if (!on) { this.teardown(); this.setState("off"); return; }
+    if (!on) { this.cancelRetry(); this.teardown(); this.setState("off"); return; }
     await this.start();
   }
 
   setMuted(on: boolean): void {
     this.muted = on;
-    if (on) { this.teardown(); this.setState("muted"); } else void this.start();
+    if (on) { this.cancelRetry(); this.teardown(); this.setState("muted"); } else void this.start();
   }
 
   get isMuted(): boolean {
@@ -189,20 +202,29 @@ export class VoiceService {
 
   private async start(): Promise<void> {
     if (!this.wanted || this.proc) return;
+    this.cancelRetry();
     if (this.muted) { this.setState("muted"); return; }
     if (!this.modelsReady) { this.setState(this.downloading ? "downloading" : "needs-models"); return; }
     this.setState("starting");
+    this.readyAt = 0;
+    this.micLost = false;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
-      if (this.proc === proc) { this.proc = null; this.closeMic(); if (this.wanted && !this.muted) { this.o.log.warn("voice.exit", { code }); this.setState("error", "The voice process stopped."); } }
+      if (this.proc === proc) { this.o.log.warn("voice.exit", { code }); this.restartLater("The voice process stopped."); }
     });
-    proc.on("message", (m: VoiceEvent | { type: "ready"; loadMs: number; monitor: boolean } | { type: "error"; message: string } | { type: "stats"; cpuMs: number; audioMs: number; peak: number }) => {
+    proc.on("message", (m: VoiceProcessMessage) => {
       if (this.proc !== proc) return; // a process being replaced: only the current one speaks for the mic
-      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs, speakerRejection: m.monitor }); this.setState("waiting"); return; }
+      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
       if (m.type === "error") { this.o.log.error("voice.error", { message: m.message }); this.setState("error", m.message); this.teardown(); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
+      if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "stalled") {
+        // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
+        if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
+        return;
+      }
       if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
       if (m.type === "wake") this.dropFollowUp(); // a new request: the old answer's follow-up is moot
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
@@ -215,14 +237,35 @@ export class VoiceService {
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
-    await mic.loadFile(path.join(appDir, "renderer", "mic", "index.html"));
-    if (mic.isDestroyed()) return;
+    mic.webContents.on("render-process-gone", (_e, d) => {
+      if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
+    });
+    await mic.loadFile(path.join(appDir, "renderer", "mic", "index.html")).catch(() => undefined);
+    if (mic.isDestroyed() || this.mic !== mic) return;
     mic.webContents.postMessage(VOICE.port, null, [port2]);
   }
 
+  /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
+  private restartLater(why: string): void {
+    this.teardown();
+    if (!this.wanted || this.muted) return;
+    if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
+    const ms = RESTART_MS[Math.min(this.failures++, RESTART_MS.length - 1)];
+    this.o.log.warn("voice.restart", { why, inMs: ms, attempt: this.failures });
+    this.setState("error", `${why} Trying again in ${ms / 1000} s…`);
+    this.cancelRetry();
+    this.retry = setTimeout(() => { this.retry = null; void this.start(); }, ms);
+  }
+
+  private cancelRetry(): void {
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
+  }
+
   private closeMic(): void {
-    if (this.mic && !this.mic.isDestroyed()) this.mic.destroy();
+    const mic = this.mic;
     this.mic = null;
+    if (mic && !mic.isDestroyed()) mic.destroy();
   }
 
   private teardown(): void {
@@ -235,6 +278,7 @@ export class VoiceService {
 
   stop(): void {
     this.wanted = false;
+    this.cancelRetry();
     this.teardown();
     if (this.speaker && !this.speaker.win.isDestroyed()) this.speaker.win.destroy();
     this.speaker = null;

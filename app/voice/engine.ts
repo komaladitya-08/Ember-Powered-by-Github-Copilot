@@ -23,6 +23,13 @@ export interface VoiceBackend {
   resetSpot?(): void;
   /** Keywords spotted in speaker output (for rejecting wake words from videos); optional. */
   spotMonitor?(frame: Float32Array): string[];
+  /**
+   * Is someone speaking? An eager voice check with its own state (not vad()'s), which decides when the spotter
+   * runs while Ember waits for its name; optional (without it, loudness against the room's noise decides).
+   */
+  hearsSpeech?(frame: Float32Array): boolean;
+  /** Starts that check afresh (it rested while the room was steady). */
+  resetHearsSpeech?(): void;
   /** Feeds voice activity detection; returns finished speech segments. */
   vad(frame: Float32Array): Float32Array[];
   /** True while VAD hears speech. */
@@ -129,12 +136,20 @@ export class Ring {
 }
 
 /**
- * Frames of 32 ms. The spotter gets half a second of silence after sound (enough for its
- * own delay), then rests and is reset when sound returns: a stream fed long silence after
+ * Frames of 32 ms. The spotter gets half a second without speech after it (enough for its
+ * own delay), then rests and is reset when speech returns: a stream fed long silence after
  * a detection stops recognizing the next "Hey Ember" (measured: 1 s of it misses wakes).
+ * The frames it missed are replayed then, enough to cover the voice check's own delay,
+ * so the "Hey" that started the speech is still heard.
  */
 const MIC_REST_FRAMES = 16;
-const MIC_REPLAY_FRAMES = 12;
+const MIC_REPLAY_FRAMES = 20;
+/** The voice check wakes on a frame this far above the room's noise, runs for 2 s after the last one, and starts with 8 frames of context. */
+const CHECK_WAKE_RATIO = 1.3;
+const CHECK_HANG_FRAMES = 63;
+const CHECK_CONTEXT_FRAMES = 8;
+/** The room's noise is learned in its first 3 s (a noisy room in about 2 s), then follows slowly. */
+const FLOOR_LEARN_FRAMES = 94;
 const SPEAKERS_TAIL_FRAMES = 16;
 /** Speakers silent this long before a wake can't have played "Hey Ember" (phrase + spotter delay). */
 const SPEAKERS_QUIET_MS = 1500;
@@ -161,6 +176,9 @@ export class VoiceEngine {
   /** The room's noise level (RMS): follows the quietest frames down at once and rises only slowly. */
   private floor = 0;
   private quietTail: Float32Array[] = [];
+  /** Frames left before the voice check rests (the room was steady), and the frame it last heard. */
+  private unsteady = 0;
+  private checkedAt = -1;
   /** Frames the keyword spotter actually decoded (for CPU accounting and tests). */
   spotted = 0;
   private now: () => number;
@@ -229,13 +247,15 @@ export class VoiceEngine {
     const rms = Math.sqrt(sum / Math.max(1, frame.length));
     if (++this.frames % 4 === 0) this.emit({ type: "level", rms });
 
-    // In a silent room nobody is saying "Hey Ember": skip the spotter (most of the idle CPU)
-    // after half a second of silence, and replay the last few quiet frames when sound returns.
-    // A steady fan or hum isn't speech either: compare with the room's noise floor (minimum
-    // statistics, so continuous speech or TV, which dips between words, can't drag it up).
+    // Nobody is saying "Hey Ember" unless someone is speaking: the spotter (most of the idle CPU) rests
+    // after half a second without speech, and the frames it missed are replayed when speech returns.
+    // True silence is never speech. Otherwise the voice check decides: it hears speech under a fan,
+    // where loudness can't (measured: wakes at 3–6 dB SNR were all missed). It only runs while the room
+    // isn't steady, so a quiet room costs nothing. The room's noise floor is minimum statistics, so
+    // continuous speech or TV, which dips between words, can't drag it up.
     const base = this.o.silenceRms ?? 0.0008;
-    this.floor = Math.min(rms, (this.floor || base) * 1.003);
-    const quiet = rms < Math.max(base, this.floor * 2.5);
+    this.floor = Math.min(rms, Math.max(this.floor, base / 4) * (this.frames <= FLOOR_LEARN_FRAMES ? 1.05 : 1.003));
+    const quiet = rms < base || (this.mode.kind === "idle" && !this.maybeSpeech(frame, rms));
     this.quietRun = quiet ? this.quietRun + 1 : 0;
     let toSpot: Float32Array[] = [frame];
     if (quiet && this.quietRun > MIC_REST_FRAMES && this.mode.kind === "idle") {
@@ -309,6 +329,22 @@ export class VoiceEngine {
       for (const seg of this.backend.flushVad()) this.handleSegment(seg);
       if (this.mode.kind === "listening") this.endListening("timeout");
     }
+  }
+
+  /** Idle: might someone be speaking? (See feed.) */
+  private maybeSpeech(frame: Float32Array, rms: number): boolean {
+    if (!this.backend.hearsSpeech) return rms >= this.floor * 2.5;
+    if (rms >= this.floor * CHECK_WAKE_RATIO) this.unsteady = CHECK_HANG_FRAMES;
+    else if (this.unsteady > 0) this.unsteady--;
+    if (!this.unsteady) return false;
+    if (this.checkedAt !== this.frames - 1) {
+      // Starting afresh (it rested, or Ember was listening): a moment of what came before, for context.
+      this.backend.resetHearsSpeech?.();
+      const pre = this.ring.read();
+      for (let i = Math.max(0, pre.length - CHECK_CONTEXT_FRAMES * 512); i < pre.length; i += 512) this.backend.hearsSpeech(pre.subarray(i, i + 512));
+    }
+    this.checkedAt = this.frames;
+    return this.backend.hearsSpeech(frame);
   }
 
   private announceWake(keyword: string): void {

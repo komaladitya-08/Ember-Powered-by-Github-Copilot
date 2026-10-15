@@ -4,29 +4,36 @@
  * word), resamples to 16 kHz (the AudioContext does it), and streams
  * 512-sample frames to the voice process. Also speaks Ember's replies (speechSynthesis). Nothing is
  * stored; the stream stops (and the mic is released) when Ember stops listening. Without an audio
- * port (listening off) the page only speaks.
+ * port (listening off) the page only speaks. If the microphone goes away, capture starts again (capture.ts).
  */
 
 import type { MicApi } from "../../shared/voice";
+import { Capture } from "./capture";
 
 declare global { interface Window { emberMic: MicApi } }
 
 const api = window.emberMic;
 let port: MessagePort | null = null;
-let stream: MediaStream | null = null;
-let ctx: AudioContext | null = null;
+let capture: Capture | null = null;
 
 window.addEventListener("message", e => {
-  if (e.data === "ember-voice-port" && e.ports[0]) {
+  if (e.data === "ember-voice-port" && e.ports[0] && !capture) {
     port = e.ports[0];
-    void start();
+    capture = new Capture({
+      getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, video: false }),
+      enumerateDevices: () => navigator.mediaDevices.enumerateDevices(),
+      onDeviceChange: fn => navigator.mediaDevices.addEventListener("devicechange", fn),
+      graph,
+      status: s => api.status(s),
+    });
+    void capture.start();
   }
 });
 
-async function start(): Promise<void> {
+/** 16 kHz (the AudioContext resamples) → the worklet's 512-sample frames → the voice process. */
+async function graph(stream: MediaStream): Promise<AudioContext> {
+  const ctx = new AudioContext({ sampleRate: 16000 });
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, video: false });
-    ctx = new AudioContext({ sampleRate: 16000 });
     await ctx.audioWorklet.addModule("worklet.js");
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, "ember-frames", { numberOfInputs: 1, numberOfOutputs: 0 });
@@ -34,10 +41,10 @@ async function start(): Promise<void> {
     node.port.onmessage = ev => port?.postMessage(ev.data);
     src.connect(node);
     if (ctx.state !== "running") await ctx.resume();
-    const track = stream.getAudioTracks()[0];
-    api.status({ state: "capturing", device: track?.label ?? "", rate: ctx.sampleRate, context: ctx.state });
+    return ctx;
   } catch (err) {
-    api.status({ state: "error", message: err instanceof Error ? `${err.name}: ${err.message}` : String(err) });
+    void ctx.close().catch(() => undefined);
+    throw err;
   }
 }
 
@@ -63,7 +70,4 @@ api.onSpeak(text => {
 });
 api.onHush(() => { speechSynthesis.cancel(); setSaying(null); });
 
-window.addEventListener("beforeunload", () => {
-  stream?.getTracks().forEach(t => t.stop());
-  void ctx?.close();
-});
+window.addEventListener("beforeunload", () => capture?.stop());

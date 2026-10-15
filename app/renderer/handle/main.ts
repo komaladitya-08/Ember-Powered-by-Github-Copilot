@@ -17,10 +17,18 @@ const ctx = canvas.getContext("2d")!;
 const $ = (id: string) => document.getElementById(id)!;
 
 let name = "Ember";
+// Calm mode follows the setting or the desktop's reduced-motion preference; the face dozes with Ember.
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+let reduceSetting = false;
+const applyMotion = () => { rig.reducedMotion = reduceSetting || reduce.matches; };
+reduce.addEventListener("change", applyMotion);
+rig.sleepAfter = 180;
 function applySettings(s: Settings): void {
   character = characters[s.character] ?? characters.cinder;
   name = NAMES[s.character] ?? "Ember";
   $("name").textContent = name;
+  reduceSetting = s.reduceMotion;
+  applyMotion();
 }
 
 api.onInit(i => {
@@ -65,10 +73,14 @@ let pointer = { x: -1, y: -1 };
 window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; });
 
 let last = performance.now();
-/** Talking or streaming: full frame rate; otherwise a small face doesn't need more than ~15 frames a second. */
+/** Talking or streaming, or a lively face: full frame rate; a calm face ~30 fps; a still one ~15 (the page sleeps in between). */
 let busy = false;
+const next = () => {
+  const motion = rig.motion;
+  const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : 66;
+  if (gap) setTimeout(() => requestAnimationFrame(frame), gap); else requestAnimationFrame(frame);
+};
 function frame(now: number): void {
-  if (!busy && now - last < 66) { requestAnimationFrame(frame); return; }
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
   last = now;
   const dpr = window.devicePixelRatio || 1;
@@ -84,6 +96,6 @@ function frame(now: number): void {
   ctx.translate(size / 2, size * 0.6);
   ctx.scale(size / 150, size / 150);
   character.draw(ctx, pose);
-  requestAnimationFrame(frame);
+  next();
 }
 requestAnimationFrame(frame);

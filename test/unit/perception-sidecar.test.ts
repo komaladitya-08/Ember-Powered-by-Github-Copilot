@@ -27,6 +27,11 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       process.stdout.write('{"jsonrpc": "2.0", "id": 999999, "result": NaN}\\n');
       return ok("after noise");
     case "fail": return send({ jsonrpc: "2.0", id: req.id, error: { message: "no such element" } });
+    case "read_element": return ok({ role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } });
+    case "do_action": {
+      const info = { role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } };
+      return ok({ ok: true, action: "click", before: info, after: info });
+    }
   }
 });
 `;
@@ -114,6 +119,15 @@ describe("AtspiSidecar", () => {
     // An answer that isn't JSON may carry screen text: only its size is logged.
     expect(bad[1].fields?.start).toBeUndefined();
     await expect(s.request("fail")).rejects.toThrow("no such element");
+  });
+
+  it("gives HiDPI elements' bounds in physical pixels, once Perception has said so", async () => {
+    const { s } = sidecar();
+    s.scaleElements([5], 2);
+    expect((await s.readElement(5)).bounds).toEqual({ x: 20, y: 40, width: 60, height: 80 });
+    expect((await s.readElement(6)).bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+    const r = await s.doAction(5);
+    expect([r.before?.bounds, r.after.bounds]).toEqual([{ x: 20, y: 40, width: 60, height: 80 }, { x: 20, y: 40, width: 60, height: 80 }]);
   });
 
   it("runs Python with UTF-8 stdio and gives every helper its own id range", async () => {

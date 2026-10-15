@@ -87,8 +87,15 @@ export class OverlayManager {
     return this.follower.position;
   }
 
+  /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
+  avoid: (() => Rect | null) | null = null;
+  systemReducedMotion = false;
+
   setState(next: Partial<EmberState>): void {
-    const waiting = (s: EmberState) => s.bubble.visible && s.bubble.actions.length > 0;
+    // Ember holds still while you decide (buttons) and while you read a finished answer or error;
+    // following the cursor resumes when the bubble goes.
+    const waiting = (s: EmberState) => s.bubble.visible && (s.bubble.actions.length > 0
+      || (!s.bubble.streaming && !!s.bubble.thought && (s.bubble.mood === "idle" || s.bubble.mood === "done" || s.bubble.mood === "error")));
     const before = waiting(this.state);
     this.state = { ...this.state, ...next };
     const now = waiting(this.state);
@@ -218,7 +225,8 @@ export class OverlayManager {
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
     const s = this.settings();
-    const ember = this.follower.step(followTarget(cursor, s.size, display.workArea), dt);
+    this.follower.setReducedMotion(s.reduceMotion || this.systemReducedMotion);
+    const ember = this.follower.step(followTarget(cursor, s.size, display.workArea, this.avoid?.() ?? null), dt);
     const frame = { ember, cursor, visible: !this.hidden };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;

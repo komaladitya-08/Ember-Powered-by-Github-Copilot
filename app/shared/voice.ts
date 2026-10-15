@@ -8,7 +8,8 @@ export const VOICE = {
   speaking: "voice:speaking",
 } as const;
 
-export type MicStatus = { state: "capturing"; device: string; rate: number; context: string } | { state: "error"; message: string };
+/** "error": the microphone couldn't be opened at all; "lost": it worked, went away, and the page is trying again. */
+export type MicStatus = { state: "capturing"; device: string; rate: number; context: string } | { state: "error"; message: string } | { state: "lost"; message: string };
 
 export interface MicApi {
   status(s: MicStatus): void;
