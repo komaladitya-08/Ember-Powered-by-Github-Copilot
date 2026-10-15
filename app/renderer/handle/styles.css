@@ -1,0 +1,20 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
+body { font: 13px/1.35 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; color: #fbeee3; }
+body.fallback { background: #1a120e; }
+.handle {
+  all: unset; box-sizing: border-box; cursor: pointer; position: absolute; inset: 4px;
+  display: flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; border-radius: 999px;
+  background: rgba(26, 15, 11, 0.92); border: 1px solid rgba(255, 154, 61, 0.45);
+  box-shadow: 0 0 14px rgba(255, 138, 42, 0.22);
+}
+.handle:hover { border-color: #ff9a3d; }
+.handle:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+#face { width: 46px; height: 46px; flex: none; }
+.text { display: grid; min-width: 0; }
+.text b { font-size: 13px; }
+#line { color: rgba(251, 238, 227, 0.72); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thought { display: none; }
+body.fallback .handle { inset: 0; border-radius: 0; align-items: flex-start; padding: 12px 14px 12px 8px; border: 0; box-shadow: none; background: transparent; }
+body.fallback #face { width: 96px; height: 96px; }
+body.fallback .thought { display: block; color: rgba(251, 238, 227, 0.72); font-style: italic; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+body.fallback #line { white-space: normal; font-weight: 700; color: #fbeee3; }

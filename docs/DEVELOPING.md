@@ -79,6 +79,16 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
 | `npm run check:symvers` | Only the binary check |
+| `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu (and to login) |
+| `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
+
+### Using Ember
+
+- Ember appears beside your cursor; its handle sits in the bottom-right corner. Click the handle for
+  **Settings**, **Stay put / Follow my cursor**, **Hide / Show Ember** and **Quit**.
+- **Ctrl+Alt+E** opens settings from anywhere.
+- Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
+  card in the corner instead.
 
 ### Where Ember keeps things
 
