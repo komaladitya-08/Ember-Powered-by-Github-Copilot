@@ -70,3 +70,41 @@ print(found[2].name if found else "none")
     expect(run({ pid: 99 })).toBe("none");
   });
 });
+
+// Reading a window: deeply nested content (gedit 3.28 on RHEL 8 puts its text view 15 levels down).
+describe.skipIf(!python)("sidecar walk", () => {
+  it("reaches content nested deep under containers", () => {
+    const script = `
+import sys, types, json
+fake = types.ModuleType("pyatspi")
+fake.DESKTOP_COORDS = 0
+fake.stateToString = lambda s: s
+sys.modules["pyatspi"] = fake
+sys.path.insert(0, ${JSON.stringify(path.resolve("sidecar/atspi"))})
+import ember_atspi as e
+class N:
+    def __init__(self, role, name="", kids=()): self.role = role; self.name = name; self.kids = list(kids)
+    def getRoleName(self): return self.role
+    @property
+    def childCount(self): return len(self.kids)
+    def getChildAtIndex(self, i): return self.kids[i]
+node = N("text", "")
+for role in ["scroll pane", "filler", "panel", "panel", "filler", "page tab", "page tab list", "panel", "panel", "filler", "panel", "filler", "panel", "filler"]:
+    node = N(role, "", [node])
+root = N("frame", "notes.txt (/tmp) - gedit", [node])
+e.state_names = lambda a: ["showing", "visible", "editable", "focused"]
+e.extents = lambda a: {"x": 0, "y": 0, "width": 900, "height": 600}
+e.actions = lambda a: []
+e.text_of = lambda a, limit=200: "Standup notes" if a.role == "text" else None
+e.selection_of = lambda a: None
+e.value_of = lambda a: None
+e.is_editable = lambda a, s: a.role == "text"
+out = []
+e.walk(root, 0, out, e.MAX_DEPTH, e.MAX_NODES, None)
+print(json.dumps([[n["depth"], n["role"]] for n in out if n["role"] == "text"]))
+`;
+    const r = spawnSync(python!, ["-c", script], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    expect(JSON.parse(r.stdout)).toEqual([[15, "text"]]);
+  });
+});
