@@ -36,6 +36,11 @@ export interface X11 {
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
   activeWindow(): (X11Window & { wmClass: string }) | null;
   /**
+   * The top-level window that has keyboard focus (XGetInputFocus), whether or not a
+   * window manager says so. Typed keys go there, so this is what safety checks use.
+   */
+  focusWindow(): (X11Window & { wmClass: string }) | null;
+  /**
    * Every top-level window (from _NET_CLIENT_LIST, or the window tree when no
    * window manager publishes one), with its class. Used to black out private
    * windows even when they expose nothing over accessibility.
@@ -77,6 +82,7 @@ export function openX11(displayName?: string): X11 | null {
     const XGetImage = lib.func("EmberXImage *XGetImage(void *dpy, unsigned long d, int x, int y, unsigned int w, unsigned int h, unsigned long planeMask, int format)");
     const XDestroyImage = lib.func("int XDestroyImage(EmberXImage *image)");
     const XSync = lib.func("int XSync(void *dpy, int discard)");
+    const XGetInputFocus = lib.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
 
     const dpy = XOpenDisplay(displayName ?? null);
     if (!dpy) return null;
@@ -144,6 +150,28 @@ export function openX11(displayName?: string): X11 | null {
         const active = property(root, "_NET_ACTIVE_WINDOW", "longs");
         const id = Array.isArray(active) ? active[0] : 0;
         if (!id) return null;
+        const w = describe(id);
+        if (!w) return null;
+        const cls = property(id, "WM_CLASS", "string");
+        return { ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "" };
+      },
+
+      focusWindow() {
+        if (!open) return null;
+        const f = [0], revert = [0];
+        XGetInputFocus(dpy, f, revert);
+        let id = Number(f[0]);
+        if (id <= 1) return null; // None or PointerRoot
+        // Walk up from the focused (possibly inner) window to the first one with a title.
+        for (let hops = 0; hops < 20; hops++) {
+          const title = property(id, "_NET_WM_NAME", "string") ?? property(id, "WM_NAME", "string");
+          if (typeof title === "string" && title) break;
+          const r = [0], parent = [0], list: unknown[] = [null], n = [0];
+          if (!XQueryTree(dpy, id, r, parent, list, n)) return null;
+          if (list[0]) XFree(list[0]);
+          if (!parent[0] || Number(parent[0]) === Number(root)) break;
+          id = Number(parent[0]);
+        }
         const w = describe(id);
         if (!w) return null;
         const cls = property(id, "WM_CLASS", "string");
