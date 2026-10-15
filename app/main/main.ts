@@ -835,7 +835,16 @@ function start(): void {
     // A borrow still running lets go (keys up, pointer home) before the connection closes.
     app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
-    const borrow = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput) : null;
+    // The borrow says when someone starts waiting for the mouse or Ember starts driving it; the status follows.
+    const showBorrowing = () => {
+      if (!borrow) return;
+      const driving = borrow.driving;
+      overlay?.setBorrowing(driving);
+      // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
+      handle?.setClickThrough(driving);
+      setState({ status: driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null });
+    };
+    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
     borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
     // Desk apps get only the environment they need; the test bench's event log is passed on in development only.
@@ -884,13 +893,7 @@ function start(): void {
         // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
         activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
         // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
-        setBorrowing: () => {
-          const driving = borrow.driving;
-          overlay?.setBorrowing(driving);
-          // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
-          handle?.setClickThrough(driving);
-          setState({ status: driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null });
-        },
+        setBorrowing: showBorrowing,
       } : undefined,
     } : undefined;
     agent = new AgentHost({

@@ -120,8 +120,9 @@ describe.skipIf(!process.env.DISPLAY)("X11 on a real display", () => {
       const x = openXInput()!;
       try {
         expect(x.findWindow("Ember test: Report")).toBe(a); // exact beats "contains"
-        expect(x.findWindow("Report (copy)")).toBe(b); // contained in one title only
-        expect(x.findWindow("Ember test")).toBe(0); // in several
+        expect(x.findWindow("Report (copy)", 4242002)).toBe(b); // part of the title, among that process's own windows
+        expect(x.findWindow("Report (copy)")).toBe(0); // no process to go by: never a title that merely contains it
+        expect(x.findWindow("Ember test", 4242003)).toBe(0); // in several of its windows
         expect(x.findWindow("Ember test: Twin")).toBe(0); // two windows, same title
         expect(x.findWindow("Ember test: Report", 4242002)).toBe(b); // that process's window, not another app's
         expect(x.findWindow("Ember test: Report", 999999999)).toBe(a); // an unknown pid doesn't narrow anything

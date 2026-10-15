@@ -640,6 +640,8 @@ export class Worker {
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     return this.withCursor(kind, element, async hand => {
+      // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
+      if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
       // And where it is once its window is in front (Ember may have waited seconds for its turn and for the user to be still).
       const spot = this.landingSpot(id, node, element, await this.sidecar.readElement(id).catch(() => null));
       if (kind === "cursor_text" && mode === "insert") {

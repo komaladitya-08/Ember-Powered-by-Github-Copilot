@@ -27,6 +27,7 @@ function fakeX() {
     findWindow: () => 22,
     activate: w => { s.active = w; s.log.push(`activate ${w}`); },
     sync: () => undefined,
+    releaseAll: () => undefined,
     close: () => undefined,
   };
   return { s, x };
