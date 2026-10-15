@@ -245,12 +245,34 @@ Rules:
    `rockylinux:8` container (needs podman or docker).
 3. `scripts/check-symvers.sh` must pass. CI runs both steps on every pull request.
 
-## 7. Troubleshooting
+## 7. Packages
+
+```bash
+npm run package            # dist/package: the RPMs and the AppImage
+```
+
+| Output | What it is |
+|---|---|
+| `ember-<v>-1.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, speaking, microphone list, tray icons, speech models). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
+| `ember-voice-models-<v>-1.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
+| `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
+
+The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds),
+`scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime).
+CI builds both packages on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`,
+runs `ember doctor` and starts the installed Ember as a normal user.
+
+`ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
+Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
+Ember's desk and the sandbox, and says what to do about each problem. It exits 1 if Ember can't work.
+**Start Ember when I log in** in the settings window adds `~/.config/autostart/ember.desktop`.
+
+## 8. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | Setup check says "Wayland session" | Log in with **GNOME on Xorg** (§1) |
-| `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM sets up the sandbox helper properly (task M9.2). |
+| `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM installs the setuid sandbox helper, so installed Ember works there; `ember doctor` checks it. |
 | `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
 | Electron download fails | `npx install-electron` |
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
@@ -269,7 +291,8 @@ packages/characters Ember's characters and the shared emotion rig
 packages/bubble     reasoning bubble
 packages/motion     follow spring and flight path
 demo/character-lab  interactive character prototype
-scripts/            build, RHEL 8 rebuild and binary checks
+scripts/            build, RHEL 8 rebuild, binary checks, packaging (scripts/package)
+packaging/          RPM spec, launcher, menu entry, example admin policy
 test/unit           Vitest tests;  test/integration  real runtime / real AT-SPI;  test/smoke  launch test
 test/fixtures       GTK3 test bench window;  test/demo  recorded tours
 ```

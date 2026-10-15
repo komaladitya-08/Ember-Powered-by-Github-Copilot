@@ -1,0 +1,56 @@
+#!/bin/bash
+# Builds dist/package/Ember-<version>-x86_64.AppImage from the folder stage.mjs made, with
+# pinned (SHA-256 checked) appimagetool and runtime. The speech models aren't included
+# (Ember downloads them when "Hey Ember" is turned on). usage: scripts/package/appimage.sh
+set -euo pipefail
+root=$(cd "$(dirname "$0")/../.." && pwd)
+version=$(node -p "require('$root/package.json').version")
+stage="$root/dist/package"
+cache="$root/.cache/appimage"
+[ -x "$stage/ember/ember" ] || { echo "stage first: node scripts/package/stage.mjs" >&2; exit 1; }
+
+TOOL_URL=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+TOOL_SHA=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+RUNTIME_URL=https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+RUNTIME_SHA=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+fetch() { # url sha dest
+  if [ ! -f "$3" ] || ! echo "$2  $3" | sha256sum -c --quiet - 2>/dev/null; then
+    curl -sSfL --retry 3 -o "$3.part" "$1"
+    echo "$2  $3.part" | sha256sum -c --quiet - || { echo "checksum mismatch for $1" >&2; rm -f "$3.part"; exit 1; }
+    mv "$3.part" "$3"
+  fi
+}
+mkdir -p "$cache"
+fetch "$TOOL_URL" "$TOOL_SHA" "$cache/appimagetool"
+fetch "$RUNTIME_URL" "$RUNTIME_SHA" "$cache/runtime-x86_64"
+chmod +x "$cache/appimagetool"
+
+app=$(mktemp -d)
+trap 'rm -rf "$app"' EXIT
+cp -a "$stage/ember" "$app/ember"
+cp "$root/packaging/ember.desktop" "$app/ember.desktop"
+sed -i 's|^Exec=.*|Exec=ember --show-settings|' "$app/ember.desktop"
+node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$app/ember.png" 256
+ln -s ember.png "$app/.DirIcon"
+cat > "$app/AppRun" <<'RUN'
+#!/bin/sh
+# Ember as an AppImage. "Ember.AppImage doctor" checks this computer.
+here=$(dirname "$(readlink -f "$0")")
+platform=--ozone-platform=x11
+sandbox=
+# An AppImage can't carry a setuid sandbox helper. Where user namespaces are off
+# (STIG-hardened hosts) Chromium can't sandbox, so Ember runs without it; it only
+# ever shows its own local pages. The RPM installs the helper instead.
+if [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 0)" = "0" ]; then sandbox=--no-sandbox; fi
+if [ "$1" = "doctor" ]; then
+  shift
+  [ -z "$DISPLAY" ] && platform=--ozone-platform=headless
+  exec "$here/ember/ember" --doctor $platform $sandbox "$@"
+fi
+exec "$here/ember/ember" $platform $sandbox "$@"
+RUN
+chmod +x "$app/AppRun"
+
+out="$stage/Ember-$version-x86_64.AppImage"
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$cache/appimagetool" --no-appstream --runtime-file "$cache/runtime-x86_64" "$app" "$out" >/dev/null
+ls -la "$out"

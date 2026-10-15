@@ -49,6 +49,7 @@ function applySettings(s: Settings): void {
     if (!on) c.rig.setEmotion("neutral");
   }
   ($("size") as HTMLInputElement).value = String(s.size);
+  ($("login") as HTMLInputElement).checked = s.startAtLogin;
   $("size-out").textContent = `${s.size} px`;
   // First run (or changed terms): the consent panel comes first and Start waits for "I agree".
   const consented = s.consent.version >= CONSENT_VERSION;
@@ -57,6 +58,7 @@ function applySettings(s: Settings): void {
   ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
 }
+$("login").addEventListener("change", e => { void window.ember.updateSettings({ startAtLogin: (e.target as HTMLInputElement).checked }); });
 $("agree").addEventListener("change", e => { ($("start") as HTMLButtonElement).disabled = !(e.target as HTMLInputElement).checked; });
 
 $("size").addEventListener("input", e => {

@@ -23,7 +23,9 @@ import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
-import { VOICE_MODELS_BYTES } from "../voice/models";
+import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
+import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
+import { launchCommand, syncAutostart } from "./autostart";
 import { AuditLog, journalSink } from "./policy/audit";
 import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
@@ -47,13 +49,17 @@ const userData = app.getPath("userData");
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: (process.env.EMBER_LOG_LEVEL as LogLevel | undefined) ?? "info",
-  stdout: process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged,
+  // `ember doctor` prints a report; log lines would get in its way.
+  stdout: !process.argv.includes("--doctor") && (process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged),
 });
 
 process.on("uncaughtException", err => log.error("uncaught exception", { err }));
 process.on("unhandledRejection", reason => log.error("unhandled rejection", { reason }));
 
-if (!app.requestSingleInstanceLock()) {
+if (process.argv.includes("--doctor")) {
+  // A check-up, not a second Ember: runs even while Ember is running.
+  void runDoctor();
+} else if (!app.requestSingleInstanceLock()) {
   log.info("instance.handover", { pid: process.pid });
   app.quit();
 } else {
@@ -93,6 +99,51 @@ function readEnvironment(): EnvReport {
     arch: process.arch,
     accessibility: process.platform === "linux" ? probeAccessibility() : undefined,
   });
+}
+
+/** Speech models installed with Ember (the ember-voice-models package) are used in place of a download. */
+function voiceModelsRoot(): { root: string; bundled: boolean } {
+  const bundled = [process.env.EMBER_VOICE_MODELS, "/usr/share/ember/voice-models", path.join(process.resourcesPath ?? "", "voice-models")]
+    .find((d): d is string => !!d && modelsReady(d));
+  return bundled ? { root: bundled, bundled: true } : { root: path.join(userData, "models"), bundled: false };
+}
+
+const which = (cmd: string) => (process.env.PATH ?? "/usr/bin:/bin").split(":").some(d => { try { fs.accessSync(path.join(d, cmd), fs.constants.X_OK); return true; } catch { return false; } });
+
+async function runDoctor(): Promise<void> {
+  await app.whenReady();
+  const env = readEnvironment();
+  const x11 = process.env.DISPLAY ? openX11() : null;
+  const xin = x11 ? openXInput() : null;
+  const admin = loadAdminPolicy();
+  const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath });
+  let auth: DoctorProbes["auth"] = null;
+  if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
+  else {
+    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage)).catch(() => null);
+    if (t) auth = { kind: "github", source: t.source };
+  }
+  let microphones: string[] | null;
+  try {
+    microphones = execFileSync("pactl", ["list", "short", "sources"], { encoding: "utf8", timeout: 3000 })
+      .split("\n").map(l => l.split("\t")[1]).filter((n): n is string => !!n && !n.endsWith(".monitor"));
+  } catch { microphones = which("pactl") ? [] : null; }
+  const models = voiceModelsRoot();
+  let userNamespaces = false;
+  try { userNamespaces = Number(fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8")) > 0; } catch { /* not Linux */ }
+  try { if (fs.readFileSync("/proc/sys/kernel/unprivileged_userns_clone", "utf8").trim() === "0") userNamespaces = false; } catch { /* not Debian */ }
+  let suidHelper = false;
+  try { const st = fs.statSync(path.join(path.dirname(process.execPath), "chrome-sandbox")); suidHelper = st.uid === 0 && (st.mode & 0o4000) !== 0; } catch { /* none */ }
+  const checks = doctorChecks({
+    env, compositor: x11 ? x11.hasCompositor() : null, xtest: x11 ? !!xin : null,
+    speechDispatcher: which("spd-say"), microphones,
+    voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
+    runtime: runtime.exists, auth, admin, desk: DeskManager.available(), sandbox: { userNamespaces, suidHelper },
+  });
+  process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
+  xin?.close();
+  x11?.close();
+  app.exit(checks.some(c => c.status === "fail") ? 1 : 0);
 }
 
 function start(): void {
@@ -356,6 +407,17 @@ function start(): void {
     overlay?.broadcastSettings(s);
     handle?.sendSettings(s);
   });
+  // "Start Ember when I log in" keeps ~/.config/autostart/ember.desktop in step.
+  const autostart = () => {
+    try {
+      if (syncAutostart(settings.get().startAtLogin, launchCommand({ packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath() }))) {
+        log.info("autostart.updated", { on: settings.get().startAtLogin });
+      }
+    } catch (err) { log.warn("autostart.failed", { err }); }
+  };
+  autostart();
+  settings.onChange(autostart);
+  if (process.argv.includes("--autostart")) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
   settings.onChange(s => {
     if (s.onboarded && !wasOnboarded) {
@@ -532,9 +594,11 @@ function start(): void {
     });
 
     // ───── Voice ─────
+    const speechModels = voiceModelsRoot();
+    if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
     voice = new VoiceService({
       log: log.child("voice"),
-      modelsRoot: path.join(userData, "models"),
+      modelsRoot: speechModels.root,
       monitor: settings.get().voice.speakerRejection,
       onEvent: onVoice,
       onState: (state, detail) => {

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Starts Ember (installed in /opt/ember). "ember doctor" checks this machine and explains
+# anything that needs fixing; it works without a display too.
+APP=/opt/ember/ember
+# Ember needs X11 (GNOME on Xorg): never let Chromium pick Wayland.
+case "$1" in
+  doctor)
+    shift
+    if [ -z "$DISPLAY" ]; then exec "$APP" --doctor --ozone-platform=headless "$@"; fi
+    exec "$APP" --doctor --ozone-platform=x11 "$@"
+    ;;
+  -h|--help)
+    echo "usage: ember [doctor | --show-settings]"
+    echo "  ember              start Ember (it stays beside your cursor; Ctrl+Alt+E opens its settings)"
+    echo "  ember doctor       check this computer and explain anything that needs fixing"
+    echo "  ember --show-settings   start and open the settings window"
+    exit 0
+    ;;
+esac
+exec "$APP" --ozone-platform=x11 "$@"

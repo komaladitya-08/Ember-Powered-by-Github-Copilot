@@ -104,3 +104,4 @@ progress[hidden] { display: none; }
 .activity .tag.no { background: rgba(255, 107, 87, 0.18); color: var(--fail); }
 .activity .what { overflow-wrap: anywhere; }
 .activity .why { display: block; color: var(--muted); font-size: 12px; }
+.login-row { margin-top: 12px; }

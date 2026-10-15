@@ -76,3 +76,59 @@ jobs:
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts
+
+  package:
+    name: Package (RPM, AppImage) and install on rockylinux:8
+    runs-on: ubuntu-24.04
+    container:
+      image: rockylinux:8
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: Build tools only (the RPM must bring in its own runtime dependencies)
+        run: |
+          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 rpm-build \
+            libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
+          useradd -m ci
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Rebuild native modules on glibc 2.28
+        run: scripts/rebuild-el8.sh --here
+      - run: npm run build
+      - name: Stage the app and check every binary against RHEL 8.4's glibc
+        run: |
+          node scripts/package/stage.mjs
+          scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
+          scripts/check-symvers.sh dist/package/ember > /dev/null
+      - name: Build the RPM
+        run: scripts/package/rpm.sh
+      - name: Build the AppImage
+        run: scripts/package/appimage.sh
+      - name: Install the RPM with dnf (resolves every Requires from the distribution)
+        run: |
+          dnf -y install ./dist/package/ember-*.x86_64.rpm
+          rpm -q --requires ember | grep -v rpmlib
+          stat -c '%A %U %n' /opt/ember/chrome-sandbox | grep -q '^-rwsr-xr-x root'
+          test -x /usr/bin/ember && test -f /usr/share/applications/ember.desktop
+      - name: ember doctor (no display, then on a display)
+        run: |
+          sudo -u ci env HOME=/home/ci ember doctor || true
+          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
+          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Sandbox'
+      - name: The installed Ember starts and shows its window (as a normal user)
+        run: |
+          sudo -u ci env HOME=/home/ci EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 ember > /tmp/ember.log 2>&1; true'
+          grep -q '"msg":"window.home.shown"' /tmp/ember.log || { cat /tmp/ember.log; exit 1; }
+      - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
+        # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
+        run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ember-packages
+          path: |
+            dist/package/*.rpm
+            dist/package/*.AppImage
+          retention-days: 14
