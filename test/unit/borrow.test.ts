@@ -20,6 +20,7 @@ function fakeX() {
     needsShift: sym => sym >= 0x41 && sym <= 0x5a,
     keysDown: () => [...s.keys],
     activeWindow: () => s.active,
+    screenSize: () => ({ width: 1280, height: 800 }),
     findWindow: () => 22,
     activate: w => { s.active = w; s.log.push(`activate ${w}`); },
     sync: () => undefined,
@@ -100,6 +101,13 @@ describe("CursorBorrow", () => {
       `key ${0xffe1} down`, `key ${0x48} down`, `key ${0x48} up`, `key ${0xffe1} up`, `key ${0x69} down`, `key ${0x69} up`,
     ]);
     await expect(new CursorBorrow(x).borrow(hand => hand.type("héllo"), fast)).rejects.toThrow(/ASCII/);
+  });
+
+  it("never clicks off the screen (the pointer would be clamped onto something else)", async () => {
+    const { s, x } = fakeX();
+    await expect(new CursorBorrow(x).borrow(async hand => { await hand.glideTo(300, 900); await hand.click(); }, fast)).rejects.toThrow(/off the screen/);
+    expect(s.log).not.toContain("button 1 down");
+    expect(s.pointer).toEqual({ x: 500, y: 400 });
   });
 
   it("refuses to borrow twice at once", async () => {
