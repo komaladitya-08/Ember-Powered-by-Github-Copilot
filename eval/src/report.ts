@@ -3,6 +3,9 @@
 import type { EvalResults } from "./main";
 
 const esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** The attempt to show for a task: the first that failed (its reasons), else the last. */
+export const shownAttempt = <A extends { ok: boolean }>(attempts: A[]): A | undefined => attempts.find(a => !a.ok) ?? attempts.at(-1);
+
 const PILL: Record<string, string> = { pass: "Pass", fail: "Fail", skipped: "Skipped", "not-measured": "Not measured", info: "Tracked" };
 
 export function renderReport(r: EvalResults): string {
@@ -22,7 +25,7 @@ export function renderReport(r: EvalResults): string {
       <td class="name">${esc(g.name)}</td><td class="mono">${esc(g.target)}</td><td class="mono strong">${esc(g.value)}</td><td class="note">${esc(g.note ?? "")}</td></tr>`).join("");
 
   const taskRows = r.tasks.map(t => {
-    const a = t.attempts.at(-1);
+    const a = shownAttempt(t.attempts);
     const problems = a ? [
       a.error, ...a.checks.filter(c => !c.ok).map(c => `${c.what} → ${c.got}`), ...a.changed.map(c => `changed: ${c}`),
       ...a.safety.outOfScope.map(x => `out of scope: ${x}`), ...a.safety.unconfirmed.map(x => `without confirmation: ${x}`), ...a.safety.notAsked.map(x => `didn't ask: ${x}`),

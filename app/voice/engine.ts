@@ -108,6 +108,13 @@ export class Ring {
   }
 }
 
+/** Frames of 32 ms. The spotter reports a phrase about 460 ms after it ends. */
+const MIC_REST_FRAMES = 32;
+const MIC_REPLAY_FRAMES = 24;
+const SPEAKERS_TAIL_FRAMES = 48;
+/** Speakers silent this long before a wake can't have played "Hey Ember" (phrase + spotter delay). */
+const SPEAKERS_QUIET_MS = 1500;
+
 type Mode = { kind: "idle" } | { kind: "listening"; until: number; heardSpeech: boolean; reason: "wake" | "follow-up" };
 
 export class VoiceEngine {
@@ -163,9 +170,10 @@ export class VoiceEngine {
     const at = this.now();
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
-    // Nothing playing: nothing to spot (most of the speakers stream's CPU).
+    // Nothing playing: nothing to spot (most of the speakers stream's CPU). The spotter keeps
+    // running for a while after the sound stops, since it reports a phrase about half a second late.
     if (Math.sqrt(sum / Math.max(1, frame.length)) < (this.o.silenceRms ?? 0.0008)) {
-      if (++this.monitorQuietRun > 16) return;
+      if (++this.monitorQuietRun > SPEAKERS_TAIL_FRAMES) return;
     } else {
       this.monitorQuietRun = 0;
       this.monitorSoundAt = at;
@@ -184,7 +192,8 @@ export class VoiceEngine {
     if (++this.frames % 4 === 0) this.emit({ type: "level", rms });
 
     // In a silent room nobody is saying "Hey Ember": skip the spotter (most of the idle CPU)
-    // after half a second of silence, and replay the last few quiet frames when sound returns.
+    // after a second of silence (longer than a pause inside "Hey… Ember", and than the spotter's
+    // own delay), and replay the last few quiet frames when sound returns.
     // A steady fan or hum isn't speech either: compare with the room's noise floor (minimum
     // statistics, so continuous speech or TV, which dips between words, can't drag it up).
     const base = this.o.silenceRms ?? 0.0008;
@@ -192,9 +201,9 @@ export class VoiceEngine {
     const quiet = rms < Math.max(base, this.floor * 2.5);
     this.quietRun = quiet ? this.quietRun + 1 : 0;
     let toSpot: Float32Array[] = [frame];
-    if (quiet && this.quietRun > 16 && this.mode.kind === "idle") {
+    if (quiet && this.quietRun > MIC_REST_FRAMES && this.mode.kind === "idle") {
       this.quietTail.push(frame);
-      if (this.quietTail.length > 12) this.quietTail.shift();
+      if (this.quietTail.length > MIC_REPLAY_FRAMES) this.quietTail.shift();
       toSpot = [];
     } else if (this.quietTail.length) {
       this.backend.resetSpot?.();
@@ -223,8 +232,8 @@ export class VoiceEngine {
       if (this.monitorHits.some(h => h.keyword === w.keyword && Math.abs(h.at - w.at) <= window)) {
         this.pendingWake = null;
         this.emit({ type: "rejected", keyword: w.keyword, reason: "speakers" });
-      } else if (!this.backend.spotMonitor || now - w.at >= window || now - this.monitorSoundAt > window * 2) {
-        // (Quiet speakers can't have said it: no need to wait.)
+      } else if (!this.backend.spotMonitor || now - w.at >= window || now - this.monitorSoundAt > SPEAKERS_QUIET_MS) {
+        // (Speakers that were quiet for the whole phrase can't have said it: no need to wait.)
         this.pendingWake = null;
         // Ember shows it's listening at once; the transcript check (a few hundred ms of work) runs
         // next and takes the wake back if the recognizer clearly heard another word ("Amber").

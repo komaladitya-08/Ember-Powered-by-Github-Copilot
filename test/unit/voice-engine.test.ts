@@ -122,6 +122,23 @@ describe("VoiceEngine", () => {
     expect(events[0]).toEqual({ type: "wake", keyword: "hey_ember" });
   });
 
+  it("rejects a video's wake word that the speakers' spotter reports late, after the video paused", () => {
+    const b = fake([]);
+    b.spotMonitor = f => (f[0] === 1 ? ["hey_ember"] : []);
+    const playing = new Float32Array(512).fill(0.05);
+    const silent = new Float32Array(512);
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => c.t, verifyWake: false });
+    e.feedMonitor(playing); // the video says "Hey Ember." and stops
+    for (let i = 0; i < 12; i++) { c.t += 32; e.feedMonitor(silent); }
+    e.feed(frame(1)); // both spotters report it ~400 ms later
+    const hit = new Float32Array(512); hit[0] = 1;
+    c.t += 20; e.feedMonitor(hit);
+    c.t += 20; e.feed(frame(0));
+    expect(events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "speakers" }]);
+  });
+
   it("waits out the speakers check while something is playing, then accepts a real wake", () => {
     const b = fake([]);
     b.spotMonitor = () => [];
@@ -157,12 +174,12 @@ describe("VoiceEngine idle CPU", () => {
     const e = new VoiceEngine(b, () => undefined, { now: () => 0 });
     const quiet = new Float32Array(512);
     for (let i = 0; i < 100; i++) e.feed(quiet);
-    expect(spotCalls).toBe(16); // half a second, then the spotter rests
+    expect(spotCalls).toBe(32); // a second, then the spotter rests
     const loud = new Float32Array(512).fill(0.1);
     e.feed(loud);
-    expect(spotCalls).toBe(16 + 12 + 1); // the last 12 quiet frames, then the new one
+    expect(spotCalls).toBe(32 + 24 + 1); // the last 24 quiet frames, then the new one
     e.feed(loud);
-    expect(spotCalls).toBe(30);
+    expect(spotCalls).toBe(58);
   });
 
   it("rests in a steady noisy room too (a fan), and wakes up for speech", () => {
@@ -178,7 +195,7 @@ describe("VoiceEngine idle CPU", () => {
     for (let i = 0; i < 100; i++) e.feed(hum());
     expect(spotCalls - resting).toBe(0);
     e.feed(new Float32Array(512).fill(0.1)); // someone speaks
-    expect(spotCalls - resting).toBe(12 + 1);
+    expect(spotCalls - resting).toBe(24 + 1);
   });
 });
 

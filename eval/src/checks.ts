@@ -59,7 +59,11 @@ export async function runCheck(c: Check, ctx: CheckContext): Promise<CheckResult
     for (const s of a.notStates ?? []) if (node.states.includes(s)) problems.push(s);
     if (a.text !== undefined && (node.text ?? "") !== a.text) problems.push(`text ${JSON.stringify(node.text ?? "")}`);
     if (a.textContains && !(node.text ?? "").includes(a.textContains)) problems.push(`text ${JSON.stringify((node.text ?? "").slice(0, 80))}`);
-    if (a.selected !== undefined && !(node.name === a.selected || (node.text ?? "") === a.selected || node.states.includes("selected"))) problems.push(`selected is ${JSON.stringify(node.name)}`);
+    if (a.selected !== undefined) {
+      const info = await ctx.sidecar.readElement(node.id).catch(() => null);
+      const value = info?.selected ?? node.text ?? node.name;
+      if (value !== a.selected) problems.push(`selected is ${JSON.stringify(value)}`);
+    }
     return { ok: problems.length === 0, what, got: problems.length ? `${line}: ${problems.join(", ")}` : `${line} (${node.states.filter(s => ["checked", "pressed", "selected", "focused"].includes(s)).join(", ") || "ok"})` };
   }
   if ("gsettings" in c) {

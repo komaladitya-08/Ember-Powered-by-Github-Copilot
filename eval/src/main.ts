@@ -14,7 +14,7 @@ import path from "node:path";
 import { TaskSchema, type Task } from "./schema";
 import { Runner, type Outcome } from "./runner";
 import { measureGates, type GateResult } from "./gates";
-import { renderReport } from "./report";
+import { renderReport, shownAttempt } from "./report";
 import { pickPython } from "../../app/main/perception/sidecar";
 import { locateRuntime } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
@@ -27,6 +27,7 @@ const root = path.resolve(__dirname, "../..");
 const out = path.resolve(opt("out") ?? path.join(root, "dist/eval"));
 const live = flag("live");
 const repeat = Number(opt("repeat") ?? (live ? 3 : 1));
+if (!Number.isInteger(repeat) || repeat < 1) { console.error("--repeat needs a whole number of attempts, 1 or more"); process.exit(2); }
 const verbose = flag("verbose");
 const say = (s: string) => process.stdout.write(s + "\n");
 const log: Logger = (() => {
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
     for (const t of tasks) {
       const o = await runner.run(t);
       outcomes.push(o);
-      const a = o.attempts.at(-1);
+      const a = shownAttempt(o.attempts);
       const detail = o.status === "skipped" ? o.reason : o.status === "fail" && a
         ? [a.error, ...a.checks.filter(c => !c.ok).map(c => `${c.what} → ${c.got}`), ...a.changed.map(c => `changed: ${c}`),
            ...a.safety.outOfScope.map(x => `out of scope: ${x}`), ...a.safety.unconfirmed.map(x => `unconfirmed: ${x}`), ...a.safety.notAsked.map(x => `not asked: ${x}`),
