@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { freeDisplay } from "../../app/main/desk/desk";
 import { deskRecipe } from "../../app/main/desk/place";
 import { keysymFor } from "../../app/main/desk/view";
@@ -14,10 +17,12 @@ describe("desk", () => {
   });
 
   it("starts apps as Ember's own instances", () => {
-    expect(deskRecipe(app("firefox", "Firefox", "firefox %u"), { handOff: "/h" }, "/p")).toEqual(["firefox", "--new-instance", "--profile", "/p/firefox"]);
-    expect(deskRecipe(app("libreoffice-writer", "LibreOffice Writer", "libreoffice --writer %U"), { handOff: "/h" }, "/p"))
-      .toEqual(["libreoffice", "--writer", "-env:UserInstallation=file:///p/libreoffice"]);
-    expect(deskRecipe(app("org.gnome.gedit", "Text Editor", "gedit %U"), { handOff: "/h" }, "/p")).toEqual(["gedit"]);
+    const p = fs.mkdtempSync(path.join(os.tmpdir(), "ember-profiles-"));
+    expect(deskRecipe(app("firefox", "Firefox", "firefox %u"), { handOff: "/h" }, p)).toEqual(["firefox", "--new-instance", "--profile", path.join(p, "firefox")]);
+    expect(fs.statSync(path.join(p, "firefox")).isDirectory()).toBe(true);
+    expect(deskRecipe(app("libreoffice-writer", "LibreOffice Writer", "libreoffice --writer %U"), { handOff: "/h" }, p))
+      .toEqual(["libreoffice", "--writer", `-env:UserInstallation=file://${path.join(p, "libreoffice")}`]);
+    expect(deskRecipe(app("org.gnome.gedit", "Text Editor", "gedit %U"), { handOff: "/h" }, p)).toEqual(["gedit"]);
   });
 
   it("never runs terminals", () => {
