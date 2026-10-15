@@ -184,7 +184,7 @@ describe("the policy decides on what is on screen now", () => {
   it("a button that turned from Next into Install is asked about before the second click", async () => {
     scripts.set("Go through the setup wizard", m => steps(m) <= 2 ? (steps(m) === 0 ? { tool: { name: "perceive_window", args: {} } } : { tool: { name: "click", args: { id: 1 } } }) : { tool: { name: "finish_task", args: { success: true, summary: "done" } } });
     const screen = fakeScreen([{ id: 1, role: "push button", name: "Next" }]);
-    screen.sidecar.doAction = async (id: number) => { screen.log.push({ t: Date.now(), what: `doAction ${id}` }); screen.live.get(1)!.name = "Install"; return { ok: true, after: { role: "push button", name: "Install", states: ["enabled", "sensitive"], bounds: null } }; };
+    screen.sidecar.doAction = async (id: number) => { screen.log.push({ t: Date.now(), what: `doAction ${id}` }); screen.live.get(1)!.name = "Install"; return { ok: true, after: { role: "push button", name: "Install", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 60, height: 20 } } }; };
     const asked: string[] = [];
     const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 });
     confirmer.ask = async q => { asked.push(q.prompt); return "deny"; };
@@ -259,8 +259,8 @@ describe("text the keyboard can't type", () => {
     let at = { x: 5, y: 5 };
     const x: XInput = {
       pointer: () => ({ ...at }), pointerState: () => ({ ...at, mask: 0 }), move: (px: number, py: number) => { at = { x: px, y: py }; }, button: () => undefined,
-      keysym: () => true, keycode: () => undefined, keysymOf: n => ({ Control_L: 0xffe3, v: 0x76, End: 0xff57 } as Record<string, number>)[n] ?? 0x61,
-      keycodeOf: sym => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
+      keysym: () => true, keycode: () => undefined, keysymOf: (n: string) => ({ Control_L: 0xffe3, v: 0x76, End: 0xff57 } as Record<string, number>)[n] ?? 0x61,
+      keycodeOf: (sym: number) => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
       findWindow: () => 1, activate: () => undefined, sync: () => undefined, close: () => undefined,
     } as unknown as XInput;
     const borrow = new CursorBorrow(x);

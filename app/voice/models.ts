@@ -111,7 +111,7 @@ export async function ensureModels(root: string, download: Downloader, progress:
   return modelPaths(root);
 }
 
-/** A downloader using curl (scripts and CI; honours the proxy environment). */
+/** A downloader using curl (scripts and CI; honours the proxy environment). A transfer that stalls for 30 s fails. */
 export const curlDownloader: Downloader = (url, dest) => new Promise((resolve, reject) => {
-  execFile("curl", ["-sSfL", "--retry", "3", "-o", dest, url], { timeout: 20 * 60_000 }, err => (err ? reject(err) : resolve()));
+  execFile("curl", ["-sSfL", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "30", "-o", dest, url], { timeout: 20 * 60_000 }, err => (err ? reject(err) : resolve()));
 });

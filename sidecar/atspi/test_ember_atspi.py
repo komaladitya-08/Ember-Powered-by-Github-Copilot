@@ -221,7 +221,38 @@ class Reading(unittest.TestCase):
         nodes = []
         e.walk(root, 0, nodes, e.MAX_DEPTH, 5, None)
         self.assertEqual(len(nodes), 5)
-        self.assertLessEqual(root.child_reads, 5)
+        # A few looks to find the rows on screen, then four rows: not a thousand.
+        self.assertLessEqual(root.child_reads, 60)
+
+    def scrolled_list(self, rows=5000, first=2500, visible=25):
+        """A list of `rows` 20-px rows, scrolled so rows first..first+visible-1 fill a 500-px viewport."""
+        top = 100
+        kids = []
+        for i in range(rows):
+            y = top + (i - first) * 20
+            on = first <= i < first + visible
+            kids.append(Acc("list item", "row %d" % i, bounds=(10, y, 300, 20),
+                            states=("showing", "visible", "enabled", "sensitive") if on else ("visible", "enabled")))
+        header = Acc("table column header", "Name", bounds=(10, 80, 300, 20))
+        lst = Acc("list", "Files", bounds=(10, -50000, 300, 200000), kids=[header] + kids)
+        view = Acc("viewport", "", bounds=(10, 100, 300, 500), kids=[lst])
+        return Acc("frame", "Files", bounds=(0, 0, 800, 700), kids=[view]), lst
+
+    def test_long_lists_are_read_where_they_are_scrolled_to(self):
+        root, lst = self.scrolled_list()
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        names = [n["name"] for n in nodes if n["role"] in ("list item", "table column header")]
+        self.assertEqual(names, ["Name"] + ["row %d" % i for i in range(2500, 2525)])
+        # Found by a binary search, and the rows below the viewport aren't walked one by one.
+        self.assertLess(lst.child_reads, 120)
+
+    def test_long_lists_at_the_top(self):
+        root, _ = self.scrolled_list(rows=1000, first=0)
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        names = [n["name"] for n in nodes if n["role"] == "list item"]
+        self.assertEqual(names, ["row %d" % i for i in range(25)])
 
     def test_actions_only_for_controls(self):
         label = Acc("label", "Hello", acts=["click"])
@@ -339,6 +370,15 @@ class Windows(unittest.TestCase):
     def name_of(self, params):
         found = e.find_window(params)
         return found[2].name if found else None
+
+    def test_a_window_by_its_path_or_none(self):
+        compose = self.mail.wins[1]
+        found = e.find_window({"pid": 10, "path": compose.path})
+        self.assertIs(found[2], compose)
+        self.assertEqual(e.describe_window(*found)["path"], compose.path)
+        # Closed: nothing, not the app's other window and not the active one.
+        self.assertIsNone(e.find_window({"pid": 10, "path": "/org/a11y/atspi/accessible/gone"}))
+        self.assertIsNone(e.find_window({"pid": 20, "path": compose.path}))
 
     def test_window_choice(self):
         self.assertEqual(self.name_of({"pid": 10}), "Compose - Mail")

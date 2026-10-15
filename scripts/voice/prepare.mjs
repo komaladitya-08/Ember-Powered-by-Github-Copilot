@@ -35,9 +35,16 @@ if (!makeClips) {
 const ttsDir = path.join(dir, "vits-piper-en_US-amy-low");
 if (!fs.existsSync(ttsDir)) {
   const tar = path.join(dir, "tts.tar.bz2");
-  execFileSync("curl", ["-sSfL", "--retry", "3", "-o", tar, "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2"]);
-  execFileSync("tar", ["-xjf", tar, "-C", dir]);
-  fs.rmSync(tar);
+  // A failed download or unpack leaves nothing behind (a half-unpacked voice would be skipped next time).
+  try {
+    execFileSync("curl", ["-sSfL", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "30", "-o", tar, "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2"]);
+    execFileSync("tar", ["-xjf", tar, "-C", dir]);
+  } catch (err) {
+    fs.rmSync(ttsDir, { recursive: true, force: true });
+    throw err;
+  } finally {
+    fs.rmSync(tar, { force: true });
+  }
 }
 const sherpa = require("sherpa-onnx");
 const tts = sherpa.createOfflineTts({

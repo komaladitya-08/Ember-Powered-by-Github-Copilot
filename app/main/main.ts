@@ -394,6 +394,8 @@ function start(): void {
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
+    // A request still being spoken is dropped, not sent after Stop.
+    { name: "listening", stop: () => voice?.cancelListening() },
     { name: "agent", stop: () => agent?.abortAll() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); showState({ focus: null, gesture: null }); } },
   ], log.child("killswitch"), () => audit);
@@ -410,6 +412,8 @@ function start(): void {
   const toggleMute = () => {
     if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
     voice.setMuted(!voice.isMuted);
+    // Remembered: a restart (or login) doesn't quietly open the microphone again.
+    try { settings.update({ voice: { ...settings.get().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
     setState({ status: voice.isMuted ? "Microphone off" : null });
     if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setState({ status: null }); }, 2500);
   };
@@ -430,7 +434,8 @@ function start(): void {
         if (e.on && e.reason === "follow-up") setState({ emotion: "listening", status: "Listening for a follow-up…" });
         if (!e.on) setState({ status: null });
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
-        if (!e.on && e.reason === "timeout") setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…").
+        if (!e.on && e.reason === "timeout") setState(e.window === "wake" || lastState.bubble.mood === "listening" ? { emotion: "neutral", bubble: IDLE_BUBBLE } : { emotion: "neutral" });
         if (!e.on && e.reason === "rejected") setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
         break;
       case "speech":
@@ -526,8 +531,8 @@ function start(): void {
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     try {
       await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));
-    } catch (err) {
-      broadcast(IPC.voiceStatus, voiceStatus(err instanceof Error ? err.message : String(err)));
+    } catch {
+      return; // VoiceService already left "Downloading…" and said why (onState → voiceStatus with the detail)
     }
     broadcast(IPC.voiceStatus, voiceStatus());
   }));
@@ -814,6 +819,7 @@ function start(): void {
         broadcast(IPC.voiceStatus, voiceStatus(detail));
       },
     });
+    if (settings.get().voice.muted) voice.setMuted(true);
     const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();

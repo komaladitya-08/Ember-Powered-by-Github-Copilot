@@ -4,7 +4,7 @@
  * start), and the current step with its "why".
  *
  * It floats over any app, light or dark, so it always uses the same smoked-glass
- * look instead of following a page theme.
+ * look (dark and nearly opaque) instead of following a page theme.
  *
  * It is drawn every frame, so it only touches the DOM when something changed and
  * only measures itself (a layout read) after its content changed.
@@ -102,9 +102,9 @@ export const BUBBLE_CSS = `
   display: grid; gap: 6px;
   padding: 10px 12px 11px;
   border-radius: 12px;
-  background: rgba(26, 15, 11, 0.88);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
-  backdrop-filter: blur(10px) saturate(1.2);
+  /* Nearly opaque instead of a backdrop blur: with software compositing the blur cost ~10% of a core
+     while Ember animated beside it, and at this opacity it made no visible difference. */
+  background: rgba(26, 15, 11, 0.94);
   border: 1px solid color-mix(in srgb, var(--eb-mood) 38%, transparent);
   box-shadow: 0 0 22px color-mix(in srgb, var(--eb-mood) 22%, transparent), 0 10px 26px rgba(0, 0, 0, 0.35);
   color: #fbeee3;

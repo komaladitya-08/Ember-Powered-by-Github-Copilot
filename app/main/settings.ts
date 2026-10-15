@@ -29,7 +29,9 @@ export const SettingsSchema = z.object({
     consent: z.boolean().default(false),
     /** Ignore "Hey Ember" when it comes out of the speakers (needs parec). */
     speakerRejection: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true }),
+    /** The user turned the microphone off (Ctrl+Alt+M): it stays off across restarts. */
+    muted: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

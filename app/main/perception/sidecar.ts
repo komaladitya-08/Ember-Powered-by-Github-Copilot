@@ -35,6 +35,8 @@ export interface AxNode {
 export interface AxWindow {
   app: string;
   pid: number | null;
+  /** The frame's accessible object path: with the pid, names this window until it closes, whatever its title. */
+  path?: string;
   name: string;
   role: string;
   active: boolean;
@@ -65,6 +67,13 @@ export interface ActionResult { ok: boolean; action?: string; option?: string; b
 
 export interface SidecarStatus { version: number; python: string; toolkitAccessibility: boolean | null; apps: number }
 
+/** A rectangle in physical pixels, from one reported by an app that draws `k` physical pixels per pixel it reports. */
+export function scaleBounds(b: Bounds, k: number): Bounds {
+  if (k === 1) return b;
+  const x = Math.round(b.x * k), y = Math.round(b.y * k);
+  return { x, y, width: Math.round((b.x + b.width) * k) - x, height: Math.round((b.y + b.height) * k) - y };
+}
+
 /** RHEL's system Python first (it has pyatspi), then python3 on PATH. */
 export function pickPython(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = fs.existsSync): string {
   if (env.EMBER_PYTHON) return env.EMBER_PYTHON;
@@ -87,6 +96,9 @@ interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, P
 export class AtspiSidecar {
   private helper: Helper | null = null;
   private nextId = 1;
+  /** Elements of HiDPI windows: physical pixels per pixel the app reports (see scaleElements). */
+  private scales = new Map<number, number>();
+  private scaled: number[][] = [];
 
   /** `env`: the environment of the desktop to read (Ember's desk has its own display and bus). */
   constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env) {}
@@ -164,20 +176,49 @@ export class AtspiSidecar {
     });
   }
 
+  /**
+   * Perception found that these elements' window reports logical pixels (HiDPI): `k` physical
+   * pixels each. From now on their bounds in readElement and action results are physical too, like
+   * the nodes Perception hands out. (Window reads here stay as the app reports them.)
+   */
+  scaleElements(ids: number[], k: number): void {
+    if (k === 1 || !ids.length) return;
+    for (const id of ids) this.scales.set(id, k);
+    this.scaled.push(ids);
+    // Ids are only used from the last few reads (the sidecar forgets older ones too).
+    while (this.scaled.length > 16) for (const id of this.scaled.shift()!) this.scales.delete(id);
+  }
+
+  private physical<T extends ElementInfo | undefined>(id: number, e: T): T {
+    const k = this.scales.get(id);
+    return k && e?.bounds ? { ...e, bounds: scaleBounds(e.bounds, k) } : e;
+  }
+
+  private physicalResult(id: number, r: ActionResult): ActionResult {
+    return this.scales.has(id) ? { ...r, before: this.physical(id, r.before), after: this.physical(id, r.after) } : r;
+  }
+
   status(): Promise<SidecarStatus> { return this.request("status"); }
   listWindows(): Promise<{ windows: AxWindow[] }> { return this.request("list_windows"); }
-  readWindow(params: { pid?: number; title?: string; maxDepth?: number; maxNodes?: number } = {}): Promise<ReadWindowResult> {
+  /** `pid` and `path` together name one window (no other is read if it is gone). */
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number } = {}): Promise<ReadWindowResult> {
     return this.request("read_window", params);
   }
 
   // Tier 1 actions on element ids from a previous readWindow.
-  readElement(id: number): Promise<ElementInfo> { return this.request("read_element", { id }); }
-  doAction(id: number, action = "click"): Promise<ActionResult> { return this.request("do_action", { id, action }); }
-  setText(id: number, text: string, mode: "replace" | "insert" | "append" = "replace"): Promise<ActionResult> {
-    return this.request("set_text", { id, text, mode });
+  readElement(id: number): Promise<ElementInfo> { return this.request<ElementInfo>("read_element", { id }).then(e => this.physical(id, e)); }
+  doAction(id: number, action = "click"): Promise<ActionResult> {
+    return this.request<ActionResult>("do_action", { id, action }).then(r => this.physicalResult(id, r));
   }
-  setValue(id: number, value: number): Promise<ActionResult> { return this.request("set_value", { id, value }); }
-  selectOption(id: number, option: string): Promise<ActionResult> { return this.request("select_option", { id, option }); }
+  setText(id: number, text: string, mode: "replace" | "insert" | "append" = "replace"): Promise<ActionResult> {
+    return this.request<ActionResult>("set_text", { id, text, mode }).then(r => this.physicalResult(id, r));
+  }
+  setValue(id: number, value: number): Promise<ActionResult> {
+    return this.request<ActionResult>("set_value", { id, value }).then(r => this.physicalResult(id, r));
+  }
+  selectOption(id: number, option: string): Promise<ActionResult> {
+    return this.request<ActionResult>("select_option", { id, option }).then(r => this.physicalResult(id, r));
+  }
   listOptions(id: number): Promise<{ options: string[] }> { return this.request("list_options", { id }); }
 
   stop(): void {

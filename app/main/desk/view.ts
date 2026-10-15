@@ -173,7 +173,7 @@ export class DeskView {
 
   private armHide(): void {
     this.clearHide();
-    if (this.users > 0 || this.control || !this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
+    if (this.users > 0 || this.control || !this.win || this.win.isDestroyed()) return;
     this.hideTimer = setTimeout(() => { this.hideTimer = null; if (!this.users && !this.control) this.hide(); }, this.o.lingerMs ?? LINGER_MS);
   }
 

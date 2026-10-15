@@ -313,38 +313,100 @@ def node_of(acc, role, name, states, bounds):
     return node
 
 
-def walk(acc, depth, out, max_depth, max_nodes, parent_id):
+def clip_to(clip, bounds):
+    """The visible area inside a scrolling container: the overlap of the two rectangles."""
+    if bounds is None:
+        return clip
+    if clip is None:
+        return bounds
+    x, y = max(clip["x"], bounds["x"]), max(clip["y"], bounds["y"])
+    x1 = min(clip["x"] + clip["width"], bounds["x"] + bounds["width"])
+    y1 = min(clip["y"] + clip["height"], bounds["y"] + bounds["height"])
+    return {"x": x, "y": y, "width": max(0, x1 - x), "height": max(0, y1 - y)}
+
+
+def child_at(acc, i):
+    try:
+        return acc.getChildAtIndex(i)
+    except Exception:
+        return None
+
+
+def ends_above(acc, i, top):
+    """Does child i lie wholly above `top` (scrolled out of view upwards)?"""
+    child = child_at(acc, i)
+    b = extents(child) if child is not None else None
+    return b is not None and b["y"] + b["height"] <= top
+
+
+def child_indices(acc, count, clip):
+    """Which children to read. Long lists and tables (thousands of rows) are read from the
+    first row on screen, not from the top: rows are laid out top to bottom, so a binary search
+    finds where the visible ones start. Leading children on screen (column headers) are kept."""
+    if count <= MAX_CHILDREN:
+        return list(range(count))
+    if clip is None:
+        return list(range(MAX_CHILDREN))
+    top = clip["y"]
+    lead = 0
+    while lead < min(count, 16) and not ends_above(acc, lead, top) and "showing" in state_names(child_at(acc, lead)):
+        lead += 1
+    lo, hi = lead, count - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if ends_above(acc, mid, top):
+            lo = mid + 1
+        else:
+            hi = mid
+    rest = MAX_CHILDREN - lead
+    return list(range(lead)) + list(range(lo, min(count, lo + rest)))
+
+
+# Containers whose extents bound what their children show: scrolled lists stop at their edges.
+CLIP_ROLES = frozenset(["scroll pane", "viewport"])
+
+
+def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None):
+    """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
     if len(out) >= max_nodes or depth > max_depth:
-        return
+        return False
     states = state_names(acc)
     if "showing" not in states or "visible" not in states:
         # Invisible elements are a known prompt-injection channel; never report them.
-        return
+        return False
     role = acc.getRoleName()
     name = (acc.name or "").strip()
     my_id = parent_id
-    if role not in SKIP_ROLES or name:
-        bounds = extents(acc)
-        if bounds is None or (bounds["width"] > 0 and bounds["height"] > 0):
-            node = node_of(acc, role, name, states, bounds)
-            node["id"] = SNAPSHOTS.add(acc)
-            node["parent"] = parent_id
-            node["depth"] = depth
-            out.append(node)
-            my_id = node["id"]
+    listed = role not in SKIP_ROLES or bool(name)
+    bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES else None
+    if listed and (bounds is None or (bounds["width"] > 0 and bounds["height"] > 0)):
+        node = node_of(acc, role, name, states, bounds)
+        node["id"] = SNAPSHOTS.add(acc)
+        node["parent"] = parent_id
+        node["depth"] = depth
+        out.append(node)
+        my_id = node["id"]
+    if depth == 0 or role in CLIP_ROLES:
+        clip = clip_to(clip, bounds)
     try:
         count = acc.childCount
     except Exception:
         count = 0
-    for i in range(min(count, MAX_CHILDREN)):
+    long_list = count > MAX_CHILDREN
+    shown, misses = False, 0
+    for i in child_indices(acc, count, clip):
         if len(out) >= max_nodes:
             break
-        try:
-            child = acc.getChildAtIndex(i)
-        except Exception:
+        child = child_at(acc, i)
+        if child is None:
             continue
-        if child is not None:
-            walk(child, depth + 1, out, max_depth, max_nodes, my_id)
+        on_screen = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip)
+        if long_list:
+            # Past the rows on screen: the rest of a long list is scrolled away too.
+            shown, misses = (True, 0) if on_screen else (shown, misses + 1 if shown else 0)
+            if misses >= 3:
+                break
+    return True
 
 
 def left_label(node, labels):
@@ -454,11 +516,20 @@ def window_facts(pid, win):
     return name, states
 
 
+def window_path(win):
+    """The frame's object path: with the pid, it names one window for as long as it is open."""
+    try:
+        return win.path
+    except Exception:
+        return None
+
+
 def describe_window(app, pid, win):
     states = state_names(win)
     return {
         "app": app.name or "",
         "pid": pid,
+        "path": window_path(win),
         "name": win.name or "",
         "role": win.getRoleName(),
         "active": "active" in states,
@@ -500,10 +571,18 @@ def best_window(found, pid, title):
 
 
 def find_window(params):
-    """The window to read: by pid and/or title (see best_window), or with neither, the active window.
-    With a pid, only that app is asked first; other apps' windows can at most score 9."""
+    """The window to read: by pid and path (exactly that window), by pid and/or title (see
+    best_window), or with none of them, the active window. With a pid, only that app is asked
+    first; other apps' windows can at most score 9."""
     pid = params.get("pid")
     title = (params.get("title") or "").lower()
+    path = params.get("path")
+    if pid is not None and path:
+        # One particular window: that one, or none (never another window in its place).
+        for app, apid, win in frames(only_pid=pid):
+            if window_path(win) == path:
+                return app, apid, win
+        return None
     if pid is None and not title:
         for app, apid, win in frames():
             if "active" in window_facts(apid, win)[1]:

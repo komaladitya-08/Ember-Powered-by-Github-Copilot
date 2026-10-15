@@ -263,9 +263,14 @@ export class DeskManager {
     this.procs = [];
     this.xvfb = null;
     for (const p of procs) signal(p, "SIGTERM");
-    // Only processes not yet exited: their ids (and groups) can't have been reused yet.
-    setTimeout(() => { for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL"); }, 1500).unref();
-    if (this.dir) fs.rmSync(this.dir, { recursive: true, force: true });
+    const dir = this.dir;
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    setTimeout(() => {
+      // Only processes not yet exited: their ids (and groups) can't have been reused yet.
+      for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL");
+      // Apps that save as they quit may have put files back.
+      if (dir) try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }, 1500).unref();
     if (this.info) this.log.info("desk.stopped", { display: this.info.display });
     this.dir = null;
     this.info = null;

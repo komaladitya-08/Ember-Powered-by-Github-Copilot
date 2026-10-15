@@ -17,6 +17,28 @@ export interface X11Window {
   height: number;
 }
 
+export interface Rect { x: number; y: number; width: number; height: number }
+
+/** A mapped top-level window, as stacked on screen. */
+export interface StackedWindow {
+  /** The top-level window: a window manager's frame, or the app's own window when it has none. */
+  id: number;
+  /** The app's window inside it (the one with WM_STATE); `id` itself for menus and tooltips. */
+  client: number;
+  pid: number | null;
+  title: string;
+  wmClass: string;
+  /** What it covers on screen (root coordinates, physical pixels): the frame, less GTK's client-side shadows. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The window as its toolkit reports it (client plus _NET_FRAME_EXTENTS): matches accessibility frame extents. */
+  outer: Rect;
+  /** Menus, tooltips and other popups the window manager doesn't manage. */
+  overrideRedirect: boolean;
+}
+
 export interface X11Image {
   /** Where the image starts on the screen (the requested rectangle, clipped to the screen). */
   x: number;
@@ -49,6 +71,11 @@ export interface X11 {
    * windows even when they expose nothing over accessibility.
    */
   clientWindows(): (X11Window & { wmClass: string })[];
+  /**
+   * Every mapped top-level window (the root window's children), bottom to top: what covers
+   * what on screen, including popups the window manager doesn't list.
+   */
+  stack(): StackedWindow[];
   /**
    * A rectangle of the screen as BGRA pixels (includes composited windows), clipped to the screen;
    * null when nothing of it is on screen.
@@ -139,6 +166,43 @@ export function openX11(displayName?: string): X11 | null {
       };
     };
 
+    const childrenOf = (w: number): number[] => {
+      const r = [0], parent = [0], list: unknown[] = [null], n = [0];
+      if (!XQueryTree(dpy, w, r, parent, list, n) || !list[0]) return [];
+      try {
+        const b = bytes(list[0], n[0] * 8);
+        return Array.from({ length: n[0] }, (_, i) => Number(b.readBigUInt64LE(i * 8)));
+      } finally {
+        XFree(list[0]);
+      }
+    };
+    /** XWindowAttributes on x86-64: x, y, width, height, border_width at 0..16; map_state at 92; override_redirect at 120. */
+    const attributes = (w: number) => {
+      const a = Buffer.alloc(136);
+      if (!XGetWindowAttributes(dpy, w, a)) return null;
+      const border = a.readInt32LE(16);
+      return {
+        x: a.readInt32LE(0), y: a.readInt32LE(4), width: a.readInt32LE(8) + 2 * border, height: a.readInt32LE(12) + 2 * border,
+        viewable: a.readInt32LE(92) === 2, overrideRedirect: a.readInt32LE(120) !== 0,
+      };
+    };
+    const managed = (w: number) => Array.isArray(property(w, "WM_STATE", "longs"));
+    /** The app's window in a top-level: itself, or the first window with WM_STATE a few levels down (ICCCM). */
+    const clientOf = (top: number): number => {
+      if (managed(top)) return top;
+      let level = [top];
+      for (let depth = 0; depth < 3 && level.length && level.length <= 64; depth++) {
+        const next: number[] = [];
+        for (const w of level) for (const c of childrenOf(w)) { if (managed(c)) return c; next.push(c); }
+        level = next;
+      }
+      return top;
+    };
+    const longs4 = (w: number, name: string) => {
+      const v = property(w, name, "longs");
+      return Array.isArray(v) && v.length >= 4 ? v.slice(0, 4) : null; // left, right, top, bottom
+    };
+
     return {
       hasCompositor(screen = 0) {
         if (!open) return true;
@@ -207,6 +271,42 @@ export function openX11(displayName?: string): X11 | null {
           if (!w) continue;
           const cls = property(id, "WM_CLASS", "string");
           out.push({ ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "" });
+        }
+        return out;
+      },
+
+      stack() {
+        if (!open) return [];
+        const out: StackedWindow[] = [];
+        for (const top of childrenOf(root)) {
+          const a = attributes(top);
+          if (!a || !a.viewable || a.width <= 1 || a.height <= 1) continue;
+          const client = clientOf(top);
+          const pid = property(client, "_NET_WM_PID", "longs") ?? (client !== top ? property(top, "_NET_WM_PID", "longs") : null);
+          const title = property(client, "_NET_WM_NAME", "string") ?? property(client, "WM_NAME", "string");
+          const cls = property(client, "WM_CLASS", "string");
+          const frame: Rect = { x: a.x, y: a.y, width: a.width, height: a.height };
+          let inner = frame;
+          if (client !== top) {
+            const r = [0], gx = [0], gy = [0], w = [0], h = [0], b = [0], d = [0], ax = [0], ay = [0], child = [0];
+            if (XGetGeometry(dpy, client, r, gx, gy, w, h, b, d) && XTranslateCoordinates(dpy, client, root, 0, 0, ax, ay, child)) {
+              inner = { x: ax[0], y: ay[0], width: w[0], height: h[0] };
+            }
+          }
+          const ext = longs4(client, "_NET_FRAME_EXTENTS");
+          const outer = ext && client !== top
+            ? { x: inner.x - ext[0], y: inner.y - ext[2], width: inner.width + ext[0] + ext[1], height: inner.height + ext[2] + ext[3] }
+            : frame;
+          // GTK's client-side decorations draw a transparent shadow inside the window: it covers nothing.
+          const shadow = longs4(client, "_GTK_FRAME_EXTENTS");
+          const seen = shadow
+            ? { x: inner.x + shadow[0], y: inner.y + shadow[2], width: Math.max(0, inner.width - shadow[0] - shadow[1]), height: Math.max(0, inner.height - shadow[2] - shadow[3]) }
+            : frame;
+          out.push({
+            id: top, client, pid: Array.isArray(pid) ? pid[0] : null, title: typeof title === "string" ? title : "",
+            wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "",
+            ...seen, outer, overrideRedirect: a.overrideRedirect,
+          });
         }
         return out;
       },
