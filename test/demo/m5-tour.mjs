@@ -26,7 +26,7 @@ const shot = name => execFileSync("import", ["-window", "root", path.join(out, `
 const gs = (...a) => execFileSync("gsettings", a, { env }).toString().trim();
 
 // The "microphone": what the user says, with pauses.
-const clip = name => sherpa.readWave(path.join(voiceDir, "clips", `${name}.wav`)).samples;
+const clip = name => sherpa.readWave(path.join(root, "test/fixtures/voice", `${name}.wav`)).samples;
 const silence = s => new Float32Array(Math.round(16000 * s));
 const timeline = [silence(4), clip("dnd"), silence(4.5), clip("bigger"), silence(30)];
 const mic = new Float32Array(timeline.reduce((n, p) => n + p.length, 0));

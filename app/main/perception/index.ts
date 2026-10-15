@@ -119,7 +119,7 @@ export class Perception {
       : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true }) : "The focused window exposes no accessibility information; use the screenshot.";
     let capture: Capture | null = null;
     // While a password prompt has focus anywhere on screen, no screenshots at all.
-    const active = opts.image && this.o.x11 && !seen.blocked ? this.o.x11.activeWindow() : null;
+    const active = opts.image && this.o.x11 && !seen.blocked ? this.o.x11.focusWindow() ?? this.o.x11.activeWindow() : null;
     if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) {
       return { ...seen, text: `${text}\n(No screenshot: a password prompt is open, so Ember looks away until it's done.)`, capture: null };
     }

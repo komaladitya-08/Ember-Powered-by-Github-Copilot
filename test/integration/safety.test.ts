@@ -181,7 +181,7 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("safety on h
       confirmer,
       cursor: {
         borrow: new CursorBorrow(xinput), findWindow: t => xinput.findWindow(t), setBorrowing: () => undefined,
-        activeWindow: () => { const w = x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
+        activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
       },
     }, settings), { id: "k1", goal: "Select all the text in the quarterly report", target: { title: "Quarterly report - Viewer" } });
     const result = await worker.run(new AbortController().signal);

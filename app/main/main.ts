@@ -560,7 +560,8 @@ function start(): void {
       cursor: borrow && xinput ? {
         borrow,
         findWindow: title => xinput.findWindow(title),
-        activeWindow: () => { const w = x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
+        // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
+        activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
         setBorrowing: state => {
           overlay?.setBorrowing(state === "active");
           setState({ status: state === "active" ? "Using your mouse: move it to take over" : state === "waiting" ? "Waiting until you let go of the mouse…" : null });
