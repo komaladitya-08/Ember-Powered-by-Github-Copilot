@@ -188,15 +188,22 @@ export class Rig {
   }
 
   /**
-   * No passing motion: no hop, fidget or blink, no gesture or emote just started, and the
-   * face and eyes have come to rest. Renderers may then draw less often. (Steady motion,
-   * like talking or a waving hand, is the renderer's call.)
+   * How much passing motion there is, so a renderer can draw less often when little moves:
+   * "brisk" (a hop, a fresh gesture or emote, a fast change of face or gaze), "gentle" (a
+   * blink, an idle fidget, springs still settling) or "still". Steady motion, like talking
+   * or a waving hand, is the renderer's call.
    */
+  get motion(): "brisk" | "gentle" | "still" {
+    const look = Math.abs(this.lookVel.x) + Math.abs(this.lookVel.y);
+    const face = Math.max(...KEYS.map(k => Math.abs(this.vel[k])));
+    if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || look > 1.5 || face > 1.5) return "brisk";
+    if (this.fidget || this.blinkT >= 0 || look > 0.05 || face > 0.05) return "gentle";
+    return "still";
+  }
+
+  /** No passing motion at all (see `motion`). */
   get settled(): boolean {
-    if (this.hopY !== 0 || this.fidget || this.blinkT >= 0) return false;
-    if (this.gestureAge < 0.8 || this.emoteAge < 0.8) return false;
-    if (Math.abs(this.lookVel.x) + Math.abs(this.lookVel.y) > 0.05) return false;
-    return KEYS.every(k => Math.abs(this.vel[k]) < 0.05);
+    return this.motion === "still";
   }
 
   setGesture(g: Gesture): void {

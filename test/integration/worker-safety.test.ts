@@ -17,6 +17,8 @@ import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { Presenter } from "../../app/main/agent/presenter";
 import { TaskManager } from "../../app/main/agent/tasks";
+import { CursorBorrow } from "../../app/main/hands/borrow";
+import type { XInput } from "../../app/main/hands/input";
 import { PolicyEngine, type Grant } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 import { SettingsStore } from "../../app/main/settings";
@@ -67,7 +69,7 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
   const live = new Map(nodes.map(n => [n.id, { ...n, states: n.states ?? ["enabled", "sensitive"] }]));
   const window = { app: "testapp", pid: 1, name: o.title ?? "Test Window", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
   const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: { x: 10, y: 10 * n.id, width: 60, height: 20 } }));
-  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: null }; };
+  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: { x: 10, y: 10 * n.id, width: 60, height: 20 } }; };
   const perception = {
     perceive: async () => ({ window, x11Window: null, nodes: axNodes(), blocked: false, ms: 0, capture: null,
       text: `<screen untrusted="true">\n${axNodes().map(n => `[${n.id}] ${n.role} ${JSON.stringify(n.name)}`).join("\n")}\n</screen>` }),
@@ -84,7 +86,7 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
 
 function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
   grants?: Record<string, Grant>; confirmer?: Confirmer; flyTo?: WorkerDeps["flyTo"]; limits?: WorkerDeps["limits"]; target?: { title: string; app?: string };
-  progress?: (s: string) => void; id?: string;
+  progress?: (s: string) => void; id?: string; cursor?: WorkerDeps["cursor"]; clipboard?: WorkerDeps["clipboard"];
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
@@ -101,6 +103,8 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     flyTo: o.flyTo ?? (() => undefined),
     onProgress: o.progress ?? (() => undefined),
     limits: o.limits,
+    cursor: o.cursor,
+    clipboard: o.clipboard,
   } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" } });
 }
 
@@ -243,5 +247,37 @@ describe("screen text reaches the model only as quoted, untrusted data", () => {
     expect(context![1]).toContain("NOTE FROM THE USER");
     // Outside the wrapper there is only the task itself.
     expect(prompt.replace(context![0], "")).not.toContain("NOTE FROM THE USER");
+  });
+});
+
+describe("text the keyboard can't type", () => {
+  it("is pasted into an app that only takes typed input, and the user's clipboard comes back", async () => {
+    scripts.set("Write Café", m => steps(m) === 0 ? { tool: { name: "perceive_window", args: {} } } : steps(m) === 1 ? { tool: { name: "type_text", args: { id: 3, text: "Café au lait", mode: "insert" } } } : { tool: { name: "finish_task", args: { success: true, summary: "written" } } });
+    const screen = fakeScreen([{ id: 3, role: "text", name: "Note" }]);
+    screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+    const keys: string[] = [];
+    let at = { x: 5, y: 5 };
+    const x: XInput = {
+      pointer: () => ({ ...at }), pointerState: () => ({ ...at, mask: 0 }), move: (px: number, py: number) => { at = { x: px, y: py }; }, button: () => undefined,
+      keysym: () => true, keycode: () => undefined, keysymOf: n => ({ Control_L: 0xffe3, v: 0x76, End: 0xff57 } as Record<string, number>)[n] ?? 0x61,
+      keycodeOf: sym => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
+      findWindow: () => 1, activate: () => undefined, sync: () => undefined, close: () => undefined,
+    } as unknown as XInput;
+    const borrow = new CursorBorrow(x);
+    const realBorrow = borrow.borrow.bind(borrow);
+    borrow.borrow = (fn, o) => realBorrow(hand => fn({ ...hand, keys: async k => { keys.push(k); } }), { ...o, idleMs: 0 });
+    let clip = "the user's own clipboard";
+    const pasted: string[] = [];
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 });
+    confirmer.ask = async () => "once";
+    const r = await makeWorker(screen, "Write Café", {
+      confirmer,
+      cursor: { borrow, findWindow: () => 1, setBorrowing: () => undefined },
+      clipboard: { readText: async () => clip, writeText: async t => { clip = t; pasted.push(t); } },
+    }).run(new AbortController().signal);
+    expect(r.success).toBe(true);
+    expect(keys).toContain("ctrl+v");
+    expect(pasted[0]).toBe("Café au lait");
+    expect(clip).toBe("the user's own clipboard");
   });
 });

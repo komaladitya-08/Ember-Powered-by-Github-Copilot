@@ -66,6 +66,11 @@ export interface WorkerDeps {
     activeWindow?: () => { app: string; title: string } | null;
   };
   onUsage?: (input: number, output: number) => void;
+  /**
+   * The user's clipboard (their screen only): text the keyboard can't type (accents, other
+   * layouts, long text) is pasted instead, and the clipboard is put back right after.
+   */
+  clipboard?: { readText(): Promise<string>; writeText(text: string): Promise<void> };
   /** Limits on one task (defaults: 150 tool calls, 20 minutes). */
   limits?: { maxSteps?: number; maxMs?: number };
 }
@@ -539,13 +544,21 @@ export class Worker {
 
   /** Tier 3: borrow the mouse (and keyboard) for one action, with the user's OK. */
   private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace"): Promise<ToolResultObject> {
-    if (kind === "cursor_text" && !typeableText(value ?? "")) {
+    // On the user's screen, text the keyboard can't type (or a lot of it) goes in by paste; on the desk it is typed.
+    const paste = kind === "cursor_text" && !this.place && !!this.d.clipboard && (!typeableText(value ?? "") || (value ?? "").length > 200);
+    if (kind === "cursor_text" && !paste && !typeableText(value ?? "")) {
       return fail("This app only takes typed text, and Ember can only type plain ASCII letters, digits and punctuation with the keyboard. Tell the user in finish_task.");
     }
     const element = { role: node.role, name: node.name || this.labels.get(id) || "" };
     const verdict = await this.authorize({ taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value, ...(kind === "cursor_text" ? { mode, currentText: node.text } : {}) });
     if (verdict) return verdict;
-    const b = node.bounds!;
+    // Where it is now: the window may have moved or scrolled while the user decided.
+    const live = await this.sidecar.readElement(id).catch(() => null);
+    if (this.halted) return STOPPED();
+    if (!live?.bounds || live.role !== node.role || (live.name || this.labels.get(id) || "") !== element.name) {
+      return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
+    }
+    const b = live.bounds;
     const cx = b.x + Math.min(b.width / 2, 120), cy = b.y + b.height / 2;
     return this.withCursor(kind, element, async hand => {
       await hand.glideTo(cx, cy);
@@ -554,9 +567,23 @@ export class Worker {
         // Only "replace" selects what is there; append goes to the end, insert types where the click put the caret.
         if (mode === "replace") await hand.keys("ctrl+a");
         else if (mode === "append") await hand.keys("ctrl+End");
-        await hand.type(value ?? "");
+        if (paste) await this.pasteText(hand, value ?? "");
+        else await hand.type(value ?? "");
       }
     }, id);
+  }
+
+  /** Puts the text on the clipboard, pastes it, and gives the user's clipboard back (text only; anything else in it is lost). */
+  private async pasteText(hand: Hand, text: string): Promise<void> {
+    const cb = this.d.clipboard!;
+    const before = await cb.readText();
+    await cb.writeText(text);
+    try {
+      await hand.keys("ctrl+v");
+      await new Promise(r => setTimeout(r, 250)); // the app reads the clipboard after the key
+    } finally {
+      await cb.writeText(before);
+    }
   }
 
   private async pressKeys(keys: string): Promise<ToolResultObject> {

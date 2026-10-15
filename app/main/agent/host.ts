@@ -40,6 +40,8 @@ export interface Hands {
   onDesk?: WorkerDeps["onDesk"];
   /** Tier 3 (borrowing the user's mouse), when XTest is available. */
   cursor?: WorkerDeps["cursor"];
+  /** The user's clipboard, for pasting text the keyboard can't type. */
+  clipboard?: WorkerDeps["clipboard"];
 }
 
 export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
@@ -260,6 +262,7 @@ export class AgentHost {
           lease: (key, owner, signal) => this.tasks!.lease(key, owner, signal),
           flyTo: hands.flyTo,
           cursor: hands.cursor,
+          clipboard: hands.clipboard,
           pointer: hands.pointer,
           desk: hands.desk,
           onDesk: hands.onDesk,

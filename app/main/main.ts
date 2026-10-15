@@ -4,7 +4,7 @@
  * hands and voice, and the wiring between them.
  */
 
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -743,6 +743,7 @@ function start(): void {
         return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
+      clipboard: { readText: () => clipboard.readText(), writeText: t => clipboard.writeText(t) },
       desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {
         sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,

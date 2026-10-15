@@ -1,7 +1,9 @@
 /**
  * Overlay renderer: draws Ember (any of the four characters) where the main
  * process says it is, plus its reasoning bubble, status pill and task cards.
- * Only redraws the area around Ember, and only as often as it needs to: every
+ * Ember is drawn on a small canvas that moves with it (a full-screen canvas
+ * would ship a screen-sized bitmap to the compositor every frame), and only as
+ * often as it needs to be: every
  * frame while Ember moves or changes expression, ~30 fps while it talks or its
  * hands are busy, ~15 fps while it rests, ~8 fps while it dozes, and not at all
  * while it is hidden or on another display.
@@ -46,7 +48,10 @@ let emotion: Emotion = "neutral";
 /** The gesture field as last received: a gesture plays once, when it changes. */
 let gestureSeen: Gesture | null | undefined;
 let pose: Pose | null = null;
-let lastDirty: Rect | null = null;
+/** The stage canvas: its size in CSS px and where it sits. */
+let stage = { width: 0, height: 0, dpr: 0 };
+let stageAt: { x: number; y: number } | null = null;
+let stageShown = false;
 /** Where Ember and the cursor were at the last drawn frame. */
 let drawnAt: { ember: { x: number; y: number }; cursor: { x: number; y: number } } | null = null;
 let lastInteractive = "";
@@ -186,15 +191,22 @@ function isHere(f: OverlayFrame | null): f is OverlayFrame {
 
 function fit(): void {
   viewport = { width: window.innerWidth, height: window.innerHeight };
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.round(viewport.width * dpr), h = Math.round(viewport.height * dpr);
-  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; lastDirty = null; }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   interactiveDirty = true;
   requestDraw();
 }
 window.addEventListener("resize", fit);
-fit();
+
+/** Room for Ember at this size: hands, hops, flames and the emote over its head. */
+function stageFor(size: number): { width: number; height: number; padX: number; padTop: number } {
+  const pad = size * 1.7;
+  return { width: Math.ceil(pad * 2), height: Math.ceil(pad * 2.25), padX: pad, padTop: pad * 1.25 };
+}
+
+function showStage(on: boolean): void {
+  if (on === stageShown) return;
+  stageShown = on;
+  canvas.style.visibility = on ? "visible" : "hidden";
+}
 
 function reportInteractive(): void {
   if (!interactiveDirty) return;
@@ -227,9 +239,6 @@ function draw(now: number): void {
   const size = settings?.size ?? 60;
   const scale = size / 100;
 
-  if (lastDirty) ctx.clearRect(lastDirty.x, lastDirty.y, lastDirty.width, lastDirty.height);
-  lastDirty = null;
-
   const fr = frame;
   const here = isHere(fr);
   const showBubble = here && !!state?.bubble.visible;
@@ -251,20 +260,36 @@ function draw(now: number): void {
     const len = Math.hypot(dx, dy) || 1;
     rig.setAim(aiming ? { x: dx / len, y: dy / len } : null);
     pose = rig.update(dt);
-    ctx.save();
-    ctx.translate(lx, ly);
+
+    const box = stageFor(size);
+    const dpr = window.devicePixelRatio || 1;
+    if (box.width !== stage.width || box.height !== stage.height || dpr !== stage.dpr) {
+      stage = { width: box.width, height: box.height, dpr };
+      canvas.width = Math.round(box.width * dpr);
+      canvas.height = Math.round(box.height * dpr);
+      canvas.style.width = `${box.width}px`;
+      canvas.style.height = `${box.height}px`;
+    }
+    // Whole pixels for the canvas (no resampling blur); the fraction goes into the drawing.
+    const ox = Math.round(lx - box.padX), oy = Math.round(ly - box.padTop);
+    if (stageAt?.x !== ox || stageAt.y !== oy) {
+      stageAt = { x: ox, y: oy };
+      canvas.style.transform = `translate(${ox}px, ${oy}px)`;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, box.width, box.height);
+    ctx.translate(lx - ox, ly - oy);
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
-    ctx.restore();
-    const pad = size * 1.7;
-    lastDirty = { x: lx - pad, y: ly - pad * 1.25, width: pad * 2, height: pad * 2.25 };
+    showStage(true);
     if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size)) interactiveDirty = true;
 
-    const urgent = moving || looking || !rig.settled;
-    const lively = BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;
+    const urgent = moving || looking || rig.motion === "brisk";
+    const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;
     requestDraw(urgent ? 0 : lively ? LIVELY_MS : rig.asleep ? DOZING_MS : RESTING_MS);
   } else {
-    // Hidden or on another display: everything is cleared above; sleep until a frame brings Ember here.
+    // Hidden or on another display: sleep until a frame brings Ember here.
+    showStage(false);
     drawnAt = null;
   }
   bubble.setVisible(showBubble);
