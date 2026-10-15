@@ -1,5 +1,5 @@
 /**
- * Speech models Ember downloads on first use (about 120 MB), each pinned to a
+ * Speech models Ember downloads on first use (about 126 MB), each pinned to a
  * SHA-256, into ~/.config/ember/models. Nothing is used until it verifies.
  */
 

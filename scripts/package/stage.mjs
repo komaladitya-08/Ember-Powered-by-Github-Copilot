@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -22,24 +23,25 @@ const app = path.join(out, "ember");
 const resources = path.join(app, "resources");
 const rel = p => path.relative(root, p);
 
-if (!fs.existsSync(path.join(root, "dist/app/main.cjs"))) throw new Error("build the app first (npm run build)");
+// main.cjs and the desk helper it starts beside itself (desk-agent.cjs, run as plain Node).
+for (const f of ["main.cjs", "desk-agent.cjs"]) if (!fs.existsSync(path.join(root, "dist/app", f))) throw new Error(`build the app first (npm run build): dist/app/${f} is missing`);
 
 // The production packages to bundle: Linux x64 glibc builds only.
 // tslib is only @emnapi's (sharp's wasm fallback).
 const SKIP = [/linuxmusl/, /@img[\\/]sharp-wasm32/, /@emnapi/, /node_modules[\\/]tslib$/];
 const prod = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], { cwd: root, encoding: "utf8" })
   .trim().split("\n").filter(p => p !== root && !SKIP.some(r => r.test(p)));
-// The RPM's License: tag must name every bundled package's licence (checked before anything is staged).
+// The RPM's License: tag must name every bundled package's licence, and those of the libraries a package
+// says it bundles (sharp-libvips, in its README.md): checked before anything is staged (licences.mjs).
 const licenseOf = src => {
   const p = JSON.parse(fs.readFileSync(path.join(src, "package.json"), "utf8"));
   return { p, lic: typeof p.license === "string" ? p.license : (p.licenses ?? []).map(l => l.type ?? l).join(" OR ") };
 };
-const spdx = expr => String(expr ?? "").split(/\s+(?:AND|OR|WITH)\s+|[()\s]+/).filter(Boolean);
-const specLicense = spdx(/^License:\s*(.+)$/m.exec(fs.readFileSync(path.join(root, "packaging/rpm/ember.spec"), "utf8"))?.[1]);
-const uncovered = prod.flatMap(src => {
+const uncovered = uncoveredLicences(prod.map(src => {
   const { p, lic } = licenseOf(src);
-  return (spdx(lic).length ? spdx(lic) : ["(none)"]).filter(id => !specLicense.includes(id)).map(id => `${p.name} (${id})`);
-});
+  const readme = path.join(src, "README.md");
+  return { name: p.name, license: lic, readme: fs.existsSync(readme) ? fs.readFileSync(readme, "utf8") : null };
+}), specLicenceIds(fs.readFileSync(path.join(root, "packaging/rpm/ember.spec"), "utf8")));
 if (uncovered.length) throw new Error(`packaging/rpm/ember.spec "License:" doesn't cover ${uncovered.join(", ")}: add the licence there`);
 
 // Only this script's folders are replaced; built packages beside them stay until rebuilt.

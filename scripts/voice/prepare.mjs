@@ -7,9 +7,10 @@ import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
 const dir = path.resolve(args.find(a => !a.startsWith("--")) ?? path.join(root, ".cache/voice"));
 const makeClips = args.includes("--clips");

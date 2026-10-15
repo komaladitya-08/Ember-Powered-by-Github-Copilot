@@ -4,12 +4,13 @@
  *
  *   node eval/run.mjs                      per-PR tier: scripted model, every task once
  *   node eval/run.mjs --live --repeat 3    nightly tier: a real model, pass^3
- *   options: --only <id,id>  --tag <tag>  --out <dir>  --no-tasks  --no-gates
+ *   options: --only <id,id>  --tag <tag>  --out <dir>  --no-tasks  --no-gates  --keep (each attempt's temporary folder)
  * The live tier needs EMBER_EVAL_MODEL and either a GitHub token (COPILOT_GITHUB_TOKEN,
  * GH_TOKEN) or EMBER_EVAL_PROVIDER_URL (+ EMBER_EVAL_API_KEY) for an OpenAI-compatible endpoint.
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TaskSchema, type Task } from "./schema";
 import { Runner, type Outcome } from "./runner";
@@ -92,8 +93,10 @@ async function main(): Promise<number> {
     provider: live && providerUrl ? { type: "openai", baseUrl: providerUrl, apiKey: process.env.EMBER_EVAL_API_KEY } : undefined,
     gitHubToken: live && !providerUrl ? process.env.COPILOT_GITHUB_TOKEN ?? process.env.GH_TOKEN : undefined,
     vision: live,
+    keep: flag("keep"),
   });
   const outcomes: Outcome[] = [];
+  if (flag("keep")) say(`Keeping each attempt's folder (--keep): ${path.join(os.tmpdir(), "ember-eval-<task>-…")}. Delete them when done: they hold the audit log and the app's files.`);
   if (tasks.length) {
     await runner.start();
     say(`Ember task suite: ${tasks.length} tasks, ${live ? `live model ${model}, pass^${repeat}` : "scripted model"}`);

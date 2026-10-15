@@ -230,5 +230,6 @@ describe("checks", () => {
     expect((await runCheck({ file: "{tmp}/n.txt", equals: "Hello" }, c)).ok).toBe(false);
     expect((await runCheck({ file: "{tmp}/Reports", exists: true }, c)).ok).toBe(true);
     expect((await runCheck({ file: "{tmp}/missing", exists: false }, c)).ok).toBe(true);
+    fs.rmSync(d, { recursive: true, force: true });
   });
 });

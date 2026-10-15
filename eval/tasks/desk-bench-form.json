@@ -36,7 +36,8 @@
         "id": {
           "find": "^text \"Name\""
         },
-        "text": "Grace Hopper"
+        "text": "Grace Hopper",
+        "mode": "replace"
       }
     },
     {

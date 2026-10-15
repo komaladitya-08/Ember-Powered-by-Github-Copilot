@@ -7,7 +7,7 @@ The agent loop runs on the GitHub Copilot SDK. First platform: RHEL 8.4 (GNOME o
 Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8):
 
 ```bash
-sudo dnf install ./ember-0.1.0-1.x86_64.rpm ./ember-voice-models-0.1.0-1.noarch.rpm
+sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm ./ember-voice-models-0.1.0-1.el8.noarch.rpm
 ember doctor               # checks this computer and explains anything to fix
 ```
 

@@ -329,7 +329,7 @@ Glint"). The choice is stored in `~/.config/ember/settings.json` with size and v
 ### 4.9 Sessions: one conductor, one worker per task
 
 ```
- voice / text ─▶ Conductor session ("Ember")      long-lived, resumed on restart, fast model
+ voice / text ─▶ Conductor session ("Ember")      lasts one run of Ember, fast model
                   tools: start_task · steer_task · cancel_task · list_tasks
                          look_at_screen · point_at · ask_user · set_appearance
                         │
@@ -346,7 +346,8 @@ Glint"). The choice is stored in `~/.config/ember/settings.json` with size and v
   utterance, answers questions itself (it can look at the screen), runs Guide mode itself (that's a
   conversation with you), and turns requests to *do* something into `start_task` calls. It never
   holds screenshots for long tasks, so its context stays small and replies stay fast. It uses
-  infinite sessions (automatic compaction) and is resumed by ID on restart.
+  infinite sessions (automatic compaction). It lasts one run of Ember: a reconnect resumes it by ID, quitting
+  deletes it, and one left by a crash is deleted at the next start (never resumed).
 - **Workers:** each task gets its own Copilot session with the computer-use tools, a vision model
   and its own context. Separate sessions run truly in parallel, so you can keep talking to Ember
   while two tasks run. Progress events drive that task's card and mini-Ember; when it finishes, the
@@ -429,7 +430,7 @@ upstream nut.js (not on public npm), ydotool (AGPL), GPL projects above (referen
 | Milestone | Scope | Done when |
 |---|---|---|
 | **M0 Spike (X11)** | Electron overlay on RHEL 8/9 "GNOME on Xorg"; buddy follows cursor; bubble; clicky flight; overlay hides during capture | Smooth on a dual-monitor Xorg box; Electron 44 + Copilot runtime start on RHEL 8.10 |
-| **M1 Brain** | Conductor session (resumed on restart), auth check, model picker, stream intent/reasoning into the bubble; text box; character picker in settings | "What's on my screen?" answered from a screenshot |
+| **M1 Brain** | Conductor session (resumed on reconnect, deleted on quit), auth check, model picker, stream intent/reasoning into the bubble; text box; character picker in settings | "What's on my screen?" answered from a screenshot |
 | **M2 Hands (X11)** | TaskManager + one worker session per task; pyatspi sidecar + set-of-marks; robotjs + ghost-cursor glide; click/type/keys/scroll/open_app; verify loop; Esc abort | "Open gedit and write a haiku" done visibly, with no shell |
 | **M3 Guide + Voice** | `point_at`, highlight, `wait_for_user_click`; "Hey Ember" KWS + VAD + streaming ASR (WASM sherpa-onnx), follow-up window, barge-in; focused-window snapshot | "Hey Ember, show me how to change the wallpaper"; first action < ~5 s after speaking |
 | **M3b Alongside you** | Action router tiers 0–3; background AT-SPI actions; Xvnc desk with mini-view; lease manager; parallel sessions | Ember flips Settings switches in a background window while you type in another app, untouched |

@@ -32,6 +32,12 @@ const python = pickPython();
 const available = !!process.env.DISPLAY && spawnSync(python, ["-c", "import pyatspi, gi"], { stdio: "ignore" }).status === 0;
 const required = process.env.EMBER_ATSPI_TEST === "1";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+/**
+ * The simulated user answers 20 ms after a question shows. Ember's own Confirmer ignores clicks in a
+ * question's first moments and pauses between questions (against double-clicks), so here a question
+ * takes an answer at once.
+ */
+const userTiming = { timeoutMs: 30_000, armMs: 0, gapMs: 0 };
 
 type Msg = { role: string; content: unknown };
 const text = (m: Msg) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content));
@@ -80,8 +86,8 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
         }
         if (step === 0) return { reasoning: "Read the window first.", tool: { name: "perceive_window", args: {} } };
         if (step === 1) return { reasoning: "Night Light is the switch.", tool: { name: "toggle", args: { id: idOf(messages, /^toggle button/), on: true } } };
-        if (step === 2) return { tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace" } } };
-        if (step === 3) return { tool: { name: "type_text", args: { id: idOf(messages, /^password text/), text: "hunter2" } } };
+        if (step === 2) return { tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace", mode: "replace" } } };
+        if (step === 3) return { tool: { name: "type_text", args: { id: idOf(messages, /^password text/), text: "hunter2", mode: "replace" } } };
         if (step === 4) return { tool: { name: "choose_option", args: { id: idOf(messages, /^combo box "Theme"/), option: "Dark" } } };
         if (step === 5) return { tool: { name: "click", args: { id: idOf(messages, /^push button "Save"/) } } };
         if (step === 6) return { tool: { name: "finish_task", args: { success: true, summary: "Night Light is on, the name is filled in and saved. I left the password for you." } } };
@@ -108,6 +114,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     bench?.kill();
     await client?.stop();
     await mock?.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("guides: points at the control and waits until the user clicks it", async () => {
@@ -163,7 +170,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     const confirmer: Confirmer = new Confirmer(p => {
       const actions = p.bubble?.actions ?? [];
       if (actions.length) { asked.push(p.bubble!.thought); setTimeout(() => confirmer.answer(actions[0].id), 20); }
-    });
+    }, userTiming);
     const home = xinput!.pointer();
     const borrowing: string[] = [];
     const audit = new AuditLog(path.join(dir, "audit-t3"));
@@ -179,12 +186,12 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
       lease: async () => () => undefined,
       flyTo: () => undefined,
       onProgress: () => undefined,
-      cursor: { borrow: new CursorBorrow(xinput!), findWindow: t => xinput!.findWindow(t), setBorrowing: on => borrowing.push(on) },
+      cursor: { borrow: new CursorBorrow(xinput!), findWindow: (t, pid) => xinput!.findWindow(t, pid), setBorrowing: on => borrowing.push(on) },
     }, { id: "w2", goal: "Click the sketch pad, then save with ctrl+s", target: { title: "Ember Test Bench" } });
     const result = await worker.run(new AbortController().signal);
     await worker.dispose();
     expect(result).toEqual({ success: true, summary: "Clicked the pad and saved." });
-    expect(asked).toEqual(["Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?", "Borrow your keyboard to press ctrl+s in gtk3_bench.py?"]);
+    expect(asked).toEqual(["Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?", "Borrow your keyboard to press ctrl+s on “Save” push button in gtk3_bench.py?"]);
     await new Promise(r => setTimeout(r, 300));
     const mine = events.slice(before);
     expect(mine).toEqual(expect.arrayContaining([
@@ -216,7 +223,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
         asked.push(p.bubble!.thought);
         setTimeout(() => confirmer.answer(actions[0].id), 20);
       }
-    });
+    }, userTiming);
     const focus: unknown[] = [];
     const worker = new Worker({
       client, log: quiet, model: "mock-model", vision: false,

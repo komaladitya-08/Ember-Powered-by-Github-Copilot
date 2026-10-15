@@ -44,6 +44,15 @@ const wilson = (k: number, n: number): [number, number] => {
 };
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** Missed wakes, target < 5 %: judged on the 95 % interval, not the point estimate (0 of 3 clips proves nothing). */
+export function missedWakesStatus(missed: number, clips: number): GateResult["status"] {
+  if (!clips) return "not-measured";
+  const [lo, hi] = wilson(missed, clips);
+  return hi < 0.05 ? "pass" : lo >= 0.05 ? "fail" : "not-measured";
+}
+/** The fewest clips, none missed, for missedWakesStatus to pass. */
+export const MISSED_WAKES_MIN_CLIPS = (() => { let n = 1; while (missedWakesStatus(0, n) !== "pass") n++; return n; })();
+
 /** How long one mouse trial may take to end before it counts as a failure (the targets are 100 and 300 ms). */
 export const TRIAL_DEADLINE_MS = 2000;
 export const TIMED_OUT = Symbol("timed out");
@@ -234,7 +243,8 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       const lead = (s: Float32Array) => { const a = new Float32Array(s.length + 9600); a.set(s, 9600); return a; };
       const pos = ["Hey Ember, turn on night light.", "Hey Ember, what's on my screen?", "Hey Ember, make the text bigger.", "Hey Ember.", "Hey Ember, open the files app."];
       const neg = ["I remember the September weather was nice.", "Let's meet at the station after lunch.", "Hey, remember to call Amber.", "December embers glow in the fireplace.", "Can you hand me the member list?"];
-      for (const speed of [0.9, 1.0, 1.15]) for (let r = 0; r < 4; r++) {
+      // 3 speeds × 5 renderings × 5 phrases: with the test clips, enough for the gate's 95 % bound to get under 5 %.
+      for (const speed of [0.9, 1.0, 1.15]) for (let r = 0; r < 5; r++) {
         for (const p of pos) positives.push(lead(tts.generate({ text: p, sid: 0, speed }).samples));
         for (const p of neg) negatives.push(lead(tts.generate({ text: p, sid: 0, speed }).samples));
       }
@@ -249,8 +259,10 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
     const missRate = missed / positives.length;
     const [lo, hi] = wilson(missed, positives.length);
     add({ id: "missed-wakes", name: "Missed wakes", target: "< 5 %", blocking: false,
-      value: `${(missRate * 100).toFixed(1)} % (${missed}/${positives.length}; 95 % CI ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)} %)`,
-      status: missRate < 0.05 ? "pass" : "fail", note: `${corpus}; synthesized speech (new renderings every run), not real voices` });
+      value: `${(missRate * 100).toFixed(1)} % (${missed}/${positives.length}; 95 % CI ${(lo * 100).toFixed(1)}–${(hi * 100).toFixed(1)} %)`,
+      status: missedWakesStatus(missed, positives.length),
+      note: `${corpus}; synthesized speech (new renderings every run), not real voices`
+        + (missedWakesStatus(missed, positives.length) === "not-measured" ? `; too few clips to tell: it passes when the 95 % upper bound is under 5 % (${MISSED_WAKES_MIN_CLIPS} clips with none missed)` : "") });
     add({ id: "false-wakes", name: "False wakes", target: "< 0.5 per hour (office-noise corpus)", blocking: false, value: `${falseWakes}/${negatives.length} non-wake clips${flickers ? ` (+${flickers} taken back at once)` : ""}`,
       status: "not-measured", note: "no office-noise corpus here; counted on near-miss phrases (“remember”, “embers”, “member”) instead" });
     // Idle listening: a minute of quiet room noise.

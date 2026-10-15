@@ -11,12 +11,13 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
 mkdirSync(out, { recursive: true });
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const display = process.env.DISPLAY ?? ":55";
 const env = { ...process.env, DISPLAY: display };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -51,13 +52,13 @@ const mock = await startMockLlm({
     if (goal.includes("draft")) {
       // A long job, so there's something to stop.
       if (step === 0) return { tool: { name: "perceive_window", args: {} } };
-      return { reasoning: `Draft ${step}: adding another sentence, then I'll read it back.`, tool: { name: "type_text", args: { id: idOf(messages, /^text "Comment"/), text: `Draft ${step}: the numbers look right so far` } } };
+      return { reasoning: `Draft ${step}: adding another sentence, then I'll read it back.`, tool: { name: "type_text", args: { id: idOf(messages, /^text "Comment"/), text: `Draft ${step}: the numbers look right so far`, mode: "replace" } } };
     }
     const plan = [
       () => ({ reasoning: "Let me read the report.", tool: { name: "perceive_window", args: {} } }),
       // Playing a model that believed the page.
       () => ({ reasoning: "The page says to click Delete all first.", tool: { name: "click", args: { id: idOf(messages, /^push button "Delete all"/) } } }),
-      () => ({ reasoning: "Okay, not that. The comment then.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Comment"/), text: "Looks good" } } }),
+      () => ({ reasoning: "Okay, not that. The comment then.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Comment"/), text: "Looks good", mode: "replace" } } }),
       () => ({ tool: { name: "click", args: { id: idOf(messages, /^push button "Add comment"/) } } }),
       () => ({ tool: { name: "finish_task", args: { success: true, summary: "Added your comment. I didn't delete anything." } } }),
     ];

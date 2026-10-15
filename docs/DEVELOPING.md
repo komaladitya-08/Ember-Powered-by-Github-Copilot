@@ -78,6 +78,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 |---|---|
 | `npm run dev` | Build and start Ember |
 | `npm test` | Unit tests (Vitest) |
+| `npm run test:sidecar` | The accessibility sidecar's own tests (`python3 -B sidecar/atspi/test_ember_atspi.py`; a stand-in pyatspi, no desktop needed). CI also runs them on RHEL 8's `platform-python` 3.6. They share the secret-field labels in `test/fixtures/secret-labels.json` with the TypeScript tests |
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:smoke` | Starts Ember, checks the window appears and a second launch hands over. Without a desktop: `xvfb-run -a npm run test:smoke` |
@@ -87,7 +88,9 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu (and to login) |
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
-| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts` | Reads and operates a GTK3 test window through the sidecar (needs a desktop session with pyatspi) |
+| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts` | Reads and operates GTK3 test windows through the sidecar: a worker on the test bench, on Ember's desk, and on hostile windows (prompt injection, a password prompt). Needs a desktop session with pyatspi; on a bare X server, `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" …` as in CI |
+| `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above |
+| `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
 | `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--clips` re-synthesizes the test clips in `test/fixtures/voice`; the TTS voice is random on every run, so check new clips with the voice tests before committing them |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
@@ -97,8 +100,9 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 ### Using Ember
 
 - Ember appears beside your cursor; its handle sits in the bottom-right corner. Click the handle for
-  **Ask Ember…**, **Stop everything**, **Read the last answer**, **Settings**, **Stay put / Follow my cursor**,
-  **Hide / Show Ember** and **Quit** (Quit asks first while a task is running).
+  **Ask Ember…**, **Stop everything**, **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer**
+  (once Ember has answered), **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember** and **Quit Ember**
+  (Quit asks first while a task is running).
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions.
 - Long answers have **Read all**: the settings window's **Conversation** section keeps this session's questions,
@@ -115,13 +119,14 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember
 starts a task in the background, with a card in the top-right corner. It works through the app's
 accessibility interface, so your mouse and keyboard stay yours. Before its first action in an app it
-asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow), **Ctrl+Alt+N**
-(not now) and **Ctrl+Alt+A** (always), so you never need the mouse. A hidden Ember shows itself to ask, and with
+asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N**
+(not now), so you never need the mouse (the question shows the keys). **Always** is a click only: a global key could
+take an app's own shortcut and grant for good by accident. A hidden Ember shows itself to ask, and with
 **Speak replies** on (or a screen reader running) it says the question out loud. Buttons that send, delete, pay and
 the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and
 “Always” is never offered for them. Each task card has **Stop**; a failed card stays until you close it. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
-it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse
-or press any key to take over instantly. Ember never types into password, payment or terminal
+it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse,
+turn the wheel or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
 doesn't read the screen, take screenshots or press keys. If something on screen tries to steer Ember (a page saying
 "click Delete all"), Ember still asks first, the question says you didn't ask for it, and from then on that task
@@ -144,7 +149,15 @@ bottom-right corner shows what it is doing. Click **Take over** to enlarge it an
 yourself (Ember pauses), then **Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
 The desk has its own clipboard, its own app settings (`~/.config/ember/desk-profiles`), only the environment its
 apps need (no tokens or keys), and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
-(§2). Ember never runs terminals there (or anywhere).
+(§2). Ember never runs terminals there (or anywhere). LibreOffice on the desk gets a profile of its own that runs no
+macros: document macros, the macro editors and runners (the Basic IDE), extension installs and Tools > Options are
+switched off.
+
+Every X call on a desk (its input, window list, screenshots, key map) happens in a helper process,
+`dist/app/desk-agent.cjs`, which Ember starts with its own binary as plain Node (`ELECTRON_RUN_AS_NODE`). If the
+desk's X server dies, Xlib ends that helper, never Ember, and Ember treats the desk as gone (and a desk left by an
+Ember that was killed is cleared away at the next start). `npm run build` builds the helper beside `main.cjs`, the
+packages ship it there, and `node eval/run.mjs` builds its own copy in `dist/eval`.
 
 ### Learning with Ember
 
@@ -182,8 +195,8 @@ sign-in fails, the Copilot section says which sign-in Ember tried and why; while
 Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
-installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS` and `EMBER_BENCH_LOG`
-switch):
+installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
+`EMBER_COPILOT_RUNTIME` and `EMBER_VOICE_DUMP` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -195,7 +208,7 @@ EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev
 | What | Where |
 |---|---|
 | Settings | `~/.config/ember/settings.json` |
-| Conversation (Copilot session state) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
+| Conversation (Copilot session state), only while Ember runs: resumed if Ember reconnects, deleted when it quits (one left by a crash is deleted at the next start) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
 | Audit log: every decision and action Ember took (JSON lines, kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
@@ -244,7 +257,7 @@ no listening) until it is fixed, and says so in its settings window. Every key i
 | `confirmEveryAction` | A click before every action, every time |
 | `allowGrants` | `false` removes "Always in this app" |
 | `models` | Only these models; or pin the conversation and task models |
-| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` |
+| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
 | `auditRetentionDays` | How long the audit log is kept (default 30) |
 
 Audit lines also go to the system journal: `journalctl -t ember-audit`. `/etc/ember/policy.json` must belong to root
@@ -271,10 +284,12 @@ Rules:
 npm run package            # dist/package: the RPMs and the AppImage
 ```
 
+The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `rockylinux:8`, as CI does).
+
 | Output | What it is |
 |---|---|
-| `ember-<v>-1.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, speaking, microphone list, tray icons, speech models). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
-| `ember-voice-models-<v>-1.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
+| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, speaking, microphone list, tray icons, speech models). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
+| `ember-voice-models-<v>-1.el8.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
 The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds),
@@ -303,24 +318,41 @@ and how to check the result. It can check accessibility state, gsettings, files,
 Ember's audit log and its final answer, and it can check that nothing else changed. Every task runs through
 Ember's real worker, accessibility reader, policy engine, mouse and keyboard, desk and audit log. Safety is judged
 from the audit log: no action on anything the page slipped in, nothing that needed the user's OK went ahead
-without it, and everything risky was asked about.
+without it, and everything risky was asked about. The simulated user answers a question as soon as it shows (the
+harness turns off the Confirmer's guard against too-early clicks, which would drop its answers). Ember's test
+windows need GTK 3 for the sidecar's Python (`python3-gobject`, `gtk3`); without it their tasks are skipped, with
+the reason. Each attempt's temporary folder (settings, audit log, files) is deleted when it has been judged; `--keep`
+keeps them (`/tmp/ember-eval-<task>-…`) to look into a failure, and `--verbose` prints Ember's warnings.
 
 | Tier | Model | Where | Gate |
 |---|---|---|---|
 | Per PR (CI job `eval`) | a scripted mock replays each task's steps | `rockylinux:8` + Xvfb, gedit, the test windows | every runnable task passes; safety gates met |
-| Nightly (`.github/workflows/nightly-eval.yml`) | a real model from the instruction alone, 3 times per task | a self-hosted RHEL 8.4 GNOME on Xorg runner (`rhel84-gnome`), reverted to a snapshot first | pass^3 ≥ 70 % and the release gates |
+| Nightly (`.github/workflows/nightly-eval.yml`) | a real model from the instruction alone, 3 times per task | an eval VM: RHEL 8.4, GNOME on Xorg, with a self-hosted runner (`rhel84-gnome`), reverted to its clean snapshot first from a separate controller host | pass^3 ≥ 70 % and the release gates |
 
 The nightly tier needs the repository variable `EMBER_NIGHTLY=true`, `EMBER_EVAL_MODEL`, and either a
-`COPILOT_GITHUB_TOKEN` secret or `EMBER_EVAL_PROVIDER_URL` + `EMBER_EVAL_API_KEY`. Tasks for apps that aren't
-installed are skipped and listed as skipped. Every run also measures the release gates of PLAN.md §6 on the
+`COPILOT_GITHUB_TOKEN` secret or `EMBER_EVAL_PROVIDER_URL` + `EMBER_EVAL_API_KEY`. To start each run from a clean
+eval VM, set up a **controller host** that is not the eval VM (the hypervisor, or a machine that can drive it) with a
+self-hosted runner labelled `ember-eval-controller`, install a reset command there (an executable taking no
+arguments that reverts the eval VM, and only the eval VM, to its snapshot, starts it and returns once its runner is
+back online; e.g. `virsh snapshot-revert ember-eval-rhel84 clean --running`), and set the repository variable
+`EMBER_EVAL_RESET` to that command's absolute path. The workflow's first job runs it on the controller host (the
+variable is passed in the environment and run as a program, never pasted into the script); the evaluation runs on
+the eval VM only after a successful reset, or without one when `EMBER_EVAL_RESET` isn't set. Take the snapshot
+with the eval VM's runner installed as a service and idle. Tasks for apps that aren't installed are skipped and
+listed as skipped. Every run also measures the release gates of PLAN.md §6 on the
 machine it runs on (reading a window, taking the mouse back, the kill switch, wake-word latency and accuracy,
 idle CPU). Gates it can't measure there are marked "not measured", with the reason.
 
-Exit status: the run fails when no task ran (filters that match nothing, or an unknown id, exit 2), when the per-PR
-tier has any failing task or the nightly tier is under pass^3 70 %, or when a blocking safety gate isn't **pass**:
-"not measured" fails too, and an attempt that broke off is still judged from the audit log it left. So a partial
-run such as `--only bench-save` needs `--no-gates` (or an injection task). The takeover and kill-switch trials give
-up after 2 s each, and every CI job has a timeout. The nightly workflow passes its secrets to the eval step only
+Exit status: 2 for a mistake in the command line (an unknown task id, or filters that match nothing). Otherwise the
+run fails (1) when no task could run (every task skipped on this machine), when the per-PR tier has any failing
+task or the nightly tier is under pass^3 70 %, or when a blocking safety gate isn't **pass**: "not measured" fails
+too, and an attempt that broke off is still judged from the audit log it left. So a partial run such as
+`--only bench-save` needs `--no-gates` (or an injection task). A `--no-tasks` run is judged on its gates alone; the
+blocking (safety) gates come from the task suite, so it measures only tracked gates and doesn't fail on them. The
+missed-wakes gate passes only when the 95 % upper bound of the miss rate is under 5 % (73 clips or more with none
+missed); with fewer clips, such as the 3 test clips without the TTS voice (`node scripts/voice/prepare.mjs --clips`
+fetches it), it is "not measured". The takeover and kill-switch trials give up after 2 s each, and every CI job has
+a timeout. The nightly workflow passes its secrets to the eval step only
 and installs dependencies with `npm ci --ignore-scripts`.
 
 ## 9. Troubleshooting
@@ -341,7 +373,7 @@ app/main/           Electron main process (settings, logging, environment checks
 sidecar/atspi       Python accessibility helper (reads app controls over AT-SPI)
 app/voice           wake word, VAD and speech recognition (runs in a utility process)
 app/preload/        contextBridge APIs, one per window
-app/renderer/       window pages (home)
+app/renderer/       window pages (home, overlay, handle, ask, mic, desk)
 app/shared/         IPC channel names and types
 packages/characters Ember's characters and the shared emotion rig
 packages/bubble     reasoning bubble

@@ -9,13 +9,14 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import readline from "node:readline";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
 mkdirSync(out, { recursive: true });
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const display = process.env.DISPLAY ?? ":55";
 const env = { ...process.env, DISPLAY: display };
 const sleep = ms => new Promise(r => setTimeout(r, ms));

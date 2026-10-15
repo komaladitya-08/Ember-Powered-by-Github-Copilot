@@ -12,11 +12,16 @@ Version:        %{ember_version}
 Release:        1%{?dist}
 Summary:        A cursor companion that works visibly in your apps, powered by GitHub Copilot
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
-# LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0), libvips
-# (LGPL-3.0-or-later), semver (ISC), koffi, zod and the Copilot SDK and runtime (MIT). The texts are in
-# /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html (stage.mjs fails if a bundled
-# package's licence is missing here).
-License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later
+# LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0), semver
+# (ISC), koffi, zod and the Copilot SDK and runtime (MIT), and libvips (LGPL-3.0-or-later) with the
+# libraries @img/sharp-libvips bundles: cairo (MPL-1.1), aom, libarchive and libimagequant (BSD-2-Clause;
+# aom also grants the AOMedia Patent License 1.0), highway and libwebp (BSD-3-Clause), mozjpeg (IJG,
+# BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
+# (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
+# The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
+# a bundled package's licence, or a library one declares it bundles, is missing here
+# (scripts/package/licences.mjs).
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64
@@ -50,7 +55,7 @@ Requires:       ember = %{version}-%{release}
 
 %description voice-models
 The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Hey Ember". With this package Ember doesn't download them (about 125 MB).
+for "Hey Ember". With this package Ember doesn't download them (about 126 MB).
 Everything runs on this computer.
 %endif
 
@@ -102,11 +107,13 @@ fi
 %{_datadir}/applications/ember.desktop
 %{_datadir}/icons/hicolor/scalable/apps/ember.svg
 %{_datadir}/icons/hicolor/256x256/apps/ember.png
+%dir %{_docdir}/ember
 %doc %{_docdir}/ember/policy.example.json
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}
 %files voice-models
+%dir %{_datadir}/ember
 %{_datadir}/ember/voice-models
 %endif
 

@@ -147,11 +147,11 @@ describe("the launchers", () => {
   const launcher = fs.readFileSync(path.resolve("packaging/ember"), "utf8");
   const appRun = /<<'RUN'\n([\s\S]*?)\nRUN\n/.exec(fs.readFileSync(path.resolve("scripts/package/appimage.sh"), "utf8"))![1];
   it("run `ember doctor` without Chromium's sandbox only as root (it shows no web content)", () => {
-    expect(run(launcher, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --no-sandbox");
-    expect(run(launcher, ["doctor"], 0, ":0")).toBe("--doctor --ozone-platform=x11 --no-sandbox");
-    expect(run(launcher, ["doctor"], 1000)).toBe("--doctor --ozone-platform=headless");
+    expect(run(launcher, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
+    expect(run(launcher, ["doctor"], 0, ":0")).toBe("--doctor --ozone-platform=x11 --disable-gpu --no-sandbox");
+    expect(run(launcher, ["doctor"], 1000)).toBe("--doctor --ozone-platform=headless --disable-gpu");
     expect(run(launcher, [], 0, ":0")).toBe("--ozone-platform=x11");
-    expect(run(appRun, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --no-sandbox");
+    expect(run(appRun, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
     const noUserNs = (() => { try { return fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim() === "0"; } catch { return true; } })();
     expect(run(appRun, ["doctor"], 1000).includes("--no-sandbox")).toBe(noUserNs);
   });

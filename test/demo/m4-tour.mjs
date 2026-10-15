@@ -10,13 +10,14 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import readline from "node:readline";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
 mkdirSync(out, { recursive: true });
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const display = process.env.DISPLAY ?? ":55";
 const env = { ...process.env, DISPLAY: display };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -59,8 +60,8 @@ const mock = await startMockLlm({
     const plan = [
       () => ({ reasoning: "First I'll read the window to see its controls.", tool: { name: "perceive_window", args: {} } }),
       () => ({ reasoning: "The switch next to the Night Light label is the one to turn on.", tool: { name: "toggle", args: { id: idOf(messages, /^toggle button/), on: true } } }),
-      () => ({ reasoning: "Now the name goes in the Name box.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace" } } }),
-      () => ({ reasoning: "There's a password box too. Let me see if I should fill it.", tool: { name: "type_text", args: { id: idOf(messages, /^password text/), text: "hunter2" } } }),
+      () => ({ reasoning: "Now the name goes in the Name box.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace", mode: "replace" } } }),
+      () => ({ reasoning: "There's a password box too. Let me see if I should fill it.", tool: { name: "type_text", args: { id: idOf(messages, /^password text/), text: "hunter2", mode: "replace" } } }),
       () => ({ reasoning: "Right, passwords are for them. Theme next: Dark.", tool: { name: "choose_option", args: { id: idOf(messages, /^combo box "Theme"/), option: "Dark" } } }),
       () => ({ reasoning: "Everything's set, so I'll press Save.", tool: { name: "click", args: { id: idOf(messages, /^push button "Save"/) } } }),
       () => ({ tool: { name: "finish_task", args: { success: true, summary: "Night Light is on, your name is in, the theme is Dark and it's saved. I left the password for you." } } }),

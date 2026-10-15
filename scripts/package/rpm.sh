@@ -1,6 +1,7 @@
 #!/bin/bash
-# Builds dist/package/ember-<version>-1.x86_64.rpm (and ember-voice-models-... when the
-# speech models were staged) with rpmbuild, from the folder stage.mjs made.
+# Builds dist/package/ember-<version>-1<dist>.x86_64.rpm (and ember-voice-models-<version>-1<dist>.noarch.rpm
+# when the speech models were staged) with rpmbuild, from the folder stage.mjs made. <dist> is the build
+# machine's %{?dist}: ".el8" on RHEL 8 and its rebuilds (ember-0.1.0-1.el8.x86_64.rpm), as in CI.
 # Needs rpmbuild (dnf install rpm-build). usage: scripts/package/rpm.sh
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)

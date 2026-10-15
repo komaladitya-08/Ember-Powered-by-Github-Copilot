@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -33,8 +33,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Accessibility sidecar self-test (stand-in pyatspi, no desktop)
+        run: npm run test:sidecar
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -64,10 +66,10 @@ jobs:
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject
           useradd -m ci
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -75,6 +77,8 @@ jobs:
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28 and check every binary
         run: scripts/rebuild-el8.sh --here
+      - name: Accessibility sidecar self-test on RHEL 8's platform-python (3.6), which installed Ember runs it with
+        run: /usr/libexec/platform-python -B sidecar/atspi/test_ember_atspi.py
       - run: npm run build
       - name: Launch smoke test as a normal user (sandbox on)
         run: |
@@ -98,10 +102,10 @@ jobs:
           dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -125,9 +129,20 @@ jobs:
           rpm -q --requires ember | grep -v rpmlib
           stat -c '%A %U %n' /opt/ember/chrome-sandbox | grep -q '^-rwsr-xr-x root'
           test -x /usr/bin/ember && test -f /usr/share/applications/ember.desktop
+          # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
+          test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
+          ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'
+      - name: The bundled licences are installed, and marked as licence files
+        run: |
+          test -s /opt/ember/THIRD_PARTY_NOTICES
+          rpm -qL ember | grep -qx /opt/ember/THIRD_PARTY_NOTICES
+          rpm -qL ember | grep -q 'sharp-libvips-linux-x64/README.md$'
+          rpm -ql ember | grep -qx /usr/share/doc/ember
       - name: ember doctor (no display, then on a display)
         run: |
           sudo -u ci env HOME=/home/ci ember doctor || true
+          # Without a display the check-up starts no GPU, so Chromium prints no GL errors over the report.
+          if { sudo -u ci env HOME=/home/ci ember doctor 2>&1 || true; } | grep -E 'ANGLE|eglInitialize|GPU process'; then exit 1; fi
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Sandbox'
       - name: The installed Ember starts and shows its window (as a normal user)
@@ -137,7 +152,7 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ember-packages
           path: |
@@ -162,10 +177,10 @@ jobs:
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject gedit dconf gsettings-desktop-schemas
           useradd -m ci
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -174,7 +189,7 @@ jobs:
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -184,7 +199,7 @@ jobs:
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci \
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs --out dist/eval
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ember-eval

@@ -8,7 +8,7 @@
  * Safety is judged from Ember's own audit log, not from what the model says.
  */
 
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, execFile, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +17,7 @@ import { AtspiSidecar } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { AuditLog, type AuditEntry } from "../../app/main/policy/audit";
-import { Confirmer } from "../../app/main/agent/confirm";
+import { Confirmer, type ConfirmerTiming } from "../../app/main/agent/confirm";
 import { Presenter } from "../../app/main/agent/presenter";
 import { Worker, type WorkerDeps, type WorkerResult } from "../../app/main/agent/worker";
 import { SettingsStore, CONSENT_VERSION } from "../../app/main/settings";
@@ -44,6 +44,8 @@ export interface RunnerOptions {
   provider?: ProviderConfig;
   gitHubToken?: string;
   vision?: boolean;
+  /** Keep each attempt's temporary folder (its settings, audit log, app files) to look into a failure. */
+  keep?: boolean;
 }
 
 export interface SafetyFindings {
@@ -88,6 +90,30 @@ const gsettings = (...args: string[]) => new Promise<string>((resolve, reject) =
 
 type Msg = { role: string; content: unknown };
 const textOf = (m: Msg) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content));
+
+/**
+ * How the simulated user answers Ember's questions. Ember's own Confirmer ignores a click in a question's
+ * first half second and pauses between questions (against double-clicks); the simulated user answers
+ * SIMULATED_ANSWER_MS after a question shows, so here a question takes an answer as soon as it shows.
+ * (With the app's defaults every answer would be dropped and each question would expire as "no".)
+ */
+export const SIMULATED_USER_TIMING = { timeoutMs: 30_000, armMs: 0, gapMs: 0 } as const satisfies ConfirmerTiming;
+export const SIMULATED_ANSWER_MS = 30;
+
+/** A Confirmer answered the way the task's user answers (recording each question in `questions`). */
+export function simulatedUser(task: Task, questions: string[]): Confirmer {
+  const confirmer: Confirmer = new Confirmer(p => {
+    const actions = p.bubble?.actions ?? [];
+    if (!actions.length) return;
+    const prompt = p.bubble!.thought;
+    questions.push(prompt);
+    const rule = task.user.answers.find(a => new RegExp(a.prompt, "i").test(prompt));
+    const answer = rule?.answer ?? task.user.answer;
+    const id = answer === "deny" ? "deny" : answer === "always" && actions.some(a => a.id.endsWith(":always")) ? "always" : "once";
+    setTimeout(() => confirmer.answer(actions.find(a => a.id.endsWith(`:${id}`))!.id), SIMULATED_ANSWER_MS);
+  }, SIMULATED_USER_TIMING);
+  return confirmer;
+}
 
 /** The mock model's side of a scripted task: replays the script, resolving {find} against the latest screen read. */
 export function scriptedReply(task: Task, messages: Msg[]): { tool?: { name: string; args: Record<string, unknown> }; text?: string } {
@@ -163,6 +189,9 @@ export class Runner {
   private mock: { baseUrl: string; close(): Promise<void> } | null = null;
   private current: Task | null = null;
   private calls = 0;
+  private copilotDir: string | null = null;
+  /** Why the test windows (GTK 3 on Python) can't run here, or null if they can; probed once. */
+  private gtkMissing: string | null | undefined;
 
   constructor(private o: RunnerOptions) {
     this.sidecar = new AtspiSidecar(path.join(o.root, "sidecar/atspi/ember_atspi.py"), o.log.child("atspi"), o.python);
@@ -182,8 +211,9 @@ export class Runner {
         },
       });
     }
+    this.copilotDir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-eval-copilot-"));
     this.client = new CopilotClient({
-      mode: "empty", baseDirectory: fs.mkdtempSync(path.join(os.tmpdir(), "ember-eval-copilot-")), useLoggedInUser: false,
+      mode: "empty", baseDirectory: this.copilotDir, useLoggedInUser: false,
       ...(this.o.gitHubToken ? { gitHubToken: this.o.gitHubToken } : {}),
       connection: RuntimeConnection.forStdio({ path: this.o.runtimePath }),
       env: { ...process.env, NO_PROXY: [process.env.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(","), no_proxy: [process.env.no_proxy, "127.0.0.1", "localhost"].filter(Boolean).join(",") },
@@ -197,6 +227,19 @@ export class Runner {
     await this.mock?.close();
     this.xinput?.close();
     this.x11?.close();
+    // The runtime's session store holds the tasks' conversations: nothing is left in /tmp.
+    if (this.copilotDir) fs.rmSync(this.copilotDir, { recursive: true, force: true });
+    this.copilotDir = null;
+  }
+
+  /** The test windows are GTK 3 apps on the sidecar's Python: without PyGObject's Gtk they can't start. */
+  private gtkProblem(): string | null {
+    if (this.gtkMissing === undefined) {
+      const r = spawnSync(this.o.python, ["-c", "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk"], { encoding: "utf8", timeout: 30_000 });
+      const why = (r.stderr ?? "").trim().split("\n").at(-1) || r.error?.message || `exit ${r.status}`;
+      this.gtkMissing = r.status === 0 ? null : `the test windows need GTK 3 for ${this.o.python} (python3-gobject, gtk3): ${why}`;
+    }
+    return this.gtkMissing;
   }
 
   /** Why a task can't run on this machine, if it can't. */
@@ -205,6 +248,9 @@ export class Runner {
     if ("editor" in task.app && !EDITORS.some(which)) return "no plain text editor installed (gedit, mousepad, pluma, xed)";
     if (task.hands.includes("desk") && !DeskManager.available().ok) return "Ember's desk needs Xvfb, xauth and dbus-daemon";
     if (task.hands.includes("cursor") && !this.xinput) return "no XTest";
+    // Ember's test windows (gtk3_bench.py, gtk3_hostile.py), started directly or from a launcher the task sets up.
+    const testWindow = "fixture" in task.app || JSON.stringify(task.setup).includes("{python}");
+    if (testWindow) { const why = this.gtkProblem(); if (why) return why; }
     if (this.o.mode === "scripted" && !task.script.length) return "no script for the per-PR tier";
     return null;
   }
@@ -289,16 +335,7 @@ export class Runner {
       const settings = new SettingsStore(path.join(tmp, "settings.json"));
       settings.load();
       settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, grants: Object.fromEntries(task.user.grants.map(g => [g.toLowerCase(), "act" as const])) });
-      const confirmer: Confirmer = new Confirmer(p => {
-        const actions = p.bubble?.actions ?? [];
-        if (!actions.length) return;
-        const prompt = p.bubble!.thought;
-        questions.push(prompt);
-        const rule = task.user.answers.find(a => new RegExp(a.prompt, "i").test(prompt));
-        const answer = rule?.answer ?? task.user.answer;
-        const id = answer === "deny" ? "deny" : answer === "always" && actions.some(a => a.id.endsWith(":always")) ? "always" : "once";
-        setTimeout(() => confirmer.answer(actions.find(a => a.id.endsWith(`:${id}`))!.id), 30);
-      }, 30_000);
+      const confirmer = simulatedUser(task, questions);
       const xinput = this.xinput;
       if (task.hands.includes("desk")) desk = new DeskManager(this.o.log.child("desk"), { handOff: path.join(tmp, "Ember"), ...(process.env.EMBER_BENCH_LOG ? { env: { EMBER_BENCH_LOG: process.env.EMBER_BENCH_LOG } } : {}) });
       const deps: WorkerDeps = {
@@ -326,7 +363,7 @@ export class Runner {
         onUsage: (i, o) => { usage.input += i; usage.output += o; },
         pointer: xinput ? () => xinput.pointerState() : undefined,
         cursor: task.hands.includes("cursor") && xinput ? {
-          borrow: new CursorBorrow(xinput), findWindow: t => xinput.findWindow(t), setBorrowing: () => undefined,
+          borrow: new CursorBorrow(xinput), findWindow: (t, pid) => xinput.findWindow(t, pid), setBorrowing: () => undefined,
           activeWindow: () => { const w = this.x11?.focusWindow() ?? this.x11?.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
         } : undefined,
         desk: desk ? async () => (place ??= await openDeskPlace(desk!, { sidecarScript: path.join(this.o.root, "sidecar/atspi/ember_atspi.py"), log: this.o.log.child("desk"), neverLook: () => [], profiles: path.join(tmp, "profiles") })) : undefined,
@@ -372,6 +409,9 @@ export class Runner {
       desk?.stop();
       for (const [schema, key, value] of restore) if (value) await gsettings("set", schema, key, value).catch(() => undefined);
       await sleep(300);
+      // The attempt's files (its settings, audit log, the app's files, Ember's desk hand-off) are judged by now.
+      if (this.o.keep) this.o.log.warn("eval.kept", { task: task.id, dir: tmp });
+      else fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
 

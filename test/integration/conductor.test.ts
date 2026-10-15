@@ -7,6 +7,7 @@ import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { Conductor } from "../../app/main/agent/conductor";
+import { AgentHost } from "../../app/main/agent/host";
 import { Presenter } from "../../app/main/agent/presenter";
 import { locateRuntime } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
@@ -33,9 +34,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await client?.stop();
   await mock?.close();
+  // The runtime's store holds the conversations' text: nothing is left behind in /tmp.
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>) {
+function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: { resume?: string | null } = {}) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const conductor = new Conductor({
@@ -47,6 +50,7 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
     model: "mock-model",
     provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
     describeScreen,
+    resume: o.resume,
   });
   return { conductor, settings };
 }
@@ -124,18 +128,81 @@ describe("conductor on the real Copilot runtime", () => {
     await second.conductor.stop();
   }, 60000);
 
-  it("resumes the same conversation after a restart", async () => {
+  it("resumes the conversation on a reconnect within the run, and starts a new one (deleting the old) after a restart", async () => {
     const states: Partial<EmberState>[] = [];
     const first = makeConductor(states);
     await first.conductor.start();
-    // Only a conversation with at least one turn is kept by the runtime.
-    await first.conductor.ask("remember this");
+    await first.conductor.ask("remember the word pineapple");
     await idle(states, 0);
-    const id = first.conductor.sessionId;
+    const id = first.conductor.sessionId!;
     await first.conductor.stop();
-    const second = makeConductor([]);
+    // A reconnect within the same run of Ember resumes it.
+    const again = makeConductor([], undefined, { resume: id });
+    await again.conductor.start();
+    expect(again.conductor.sessionId).toBe(id);
+    // Ember went away without deleting it (a crash): the next run deletes it, never resumes it.
+    await again.conductor.stop();
+    const later: Partial<EmberState>[] = [];
+    const second = makeConductor(later);
     await second.conductor.start();
-    expect(second.conductor.sessionId).toBe(id);
+    expect(second.conductor.sessionId).not.toBe(id);
+    expect((await client.listSessions()).map(s => s.sessionId)).not.toContain(id);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "agent.json"), "utf8")).conductorSessionId).toBe(second.conductor.sessionId);
+    // The model doesn't see the earlier exchange.
+    const before = mock.requests.length;
+    await second.conductor.ask("what word did I ask you to remember?");
+    await idle(later, 0);
+    const seen = mock.requests.slice(before).flatMap(r => r.messages).map(m => JSON.stringify(m.content));
+    expect(seen.join("\n")).toContain("what word did I ask you to remember?");
+    expect(seen.join("\n")).not.toContain("pineapple");
     await second.conductor.stop();
   }, 60000);
+});
+
+describe("the conversation lasts one run of Ember (host on the real runtime)", () => {
+  it("is kept across a reconnect, deleted when Ember quits, and new after the next start", async () => {
+    const userData = fs.mkdtempSync(path.join(dir, "host-"));
+    const settings = new SettingsStore(path.join(userData, "settings.json"));
+    settings.load();
+    const states: Partial<EmberState>[] = [];
+    const host = new AgentHost({
+      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      log: createLogger({ dir: path.join(userData, "logs") }),
+      setState: p => states.push(p), onStatus: () => undefined,
+      provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
+    });
+    // The sessions in the host's store (read while the host's own runtime is stopped).
+    const stored = async () => {
+      const store = new CopilotClient({
+        mode: "empty", baseDirectory: path.join(userData, "copilot"), useLoggedInUser: false,
+        connection: RuntimeConnection.forStdio({ path: locateRuntime({ appPath: process.cwd() }).path }),
+        env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
+      });
+      await store.start();
+      try { return (await store.listSessions()).map(s => s.sessionId); } finally { await store.stop(); }
+    };
+    try {
+      expect(await host.start(null)).toBe("ready");
+      await host.ask("remember the word pineapple");
+      await idle(states, 0);
+      const id = host.conductor!.sessionId!;
+      // A reconnect within the run (the runtime restarted, the network came back) resumes it.
+      expect(await host.start(null)).toBe("ready");
+      expect(host.conductor!.sessionId).toBe(id);
+      // Quitting deletes it.
+      await host.stop();
+      expect(await stored()).not.toContain(id);
+      // The next start is a new conversation: the model doesn't see the earlier exchange.
+      expect(await host.start(null)).toBe("ready");
+      expect(host.conductor!.sessionId).not.toBe(id);
+      const from = states.length, before = mock.requests.length;
+      await host.ask("what word did I ask you to remember?");
+      await idle(states, from);
+      const seen = mock.requests.slice(before).flatMap(r => r.messages).map(m => JSON.stringify(m.content)).join("\n");
+      expect(seen).toContain("what word did I ask you to remember?");
+      expect(seen).not.toContain("pineapple");
+    } finally {
+      await host.stop();
+    }
+  }, 90000);
 });
