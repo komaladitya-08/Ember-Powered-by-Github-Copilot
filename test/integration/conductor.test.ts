@@ -95,9 +95,27 @@ describe("conductor on the real Copilot runtime", () => {
     await conductor.stop();
   }, 60000);
 
-  it("resumes the same conversation after a restart", async () => {
+  it("forgets the conversation on sign-out, so the next start is fresh", async () => {
     const first = makeConductor([]);
     await first.conductor.start();
+    const id = first.conductor.sessionId!;
+    await first.conductor.forget();
+    expect(fs.existsSync(path.join(dir, "agent.json"))).toBe(false);
+    const ids = (await client.listSessions()).map(s => s.sessionId);
+    expect(ids).not.toContain(id);
+    const second = makeConductor([]);
+    await second.conductor.start();
+    expect(second.conductor.sessionId).not.toBe(id);
+    await second.conductor.stop();
+  }, 60000);
+
+  it("resumes the same conversation after a restart", async () => {
+    const states: Partial<EmberState>[] = [];
+    const first = makeConductor(states);
+    await first.conductor.start();
+    // Only a conversation with at least one turn is kept by the runtime.
+    await first.conductor.ask("remember this");
+    await idle(states, 0);
     const id = first.conductor.sessionId;
     await first.conductor.stop();
     const second = makeConductor([]);

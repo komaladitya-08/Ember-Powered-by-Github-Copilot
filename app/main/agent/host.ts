@@ -140,6 +140,12 @@ export class AgentHost {
     await this.conductor.ask(text);
   }
 
+  /** Sign-out: the conversation belongs to the account that had it, so it is deleted. */
+  async forgetConversation(): Promise<void> {
+    await this.conductor?.forget();
+    this.o.log.info("agent.conversation_forgotten");
+  }
+
   async stop(): Promise<void> {
     await this.conductor?.stop();
     this.conductor = null;
