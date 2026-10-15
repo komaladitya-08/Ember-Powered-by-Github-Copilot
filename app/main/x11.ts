@@ -35,6 +35,12 @@ export interface X11 {
   pointer(): { x: number; y: number } | null;
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
   activeWindow(): X11Window | null;
+  /**
+   * Every top-level window (from _NET_CLIENT_LIST, or the window tree when no
+   * window manager publishes one), with its class. Used to black out private
+   * windows even when they expose nothing over accessibility.
+   */
+  clientWindows(): (X11Window & { wmClass: string })[];
   /** A rectangle of the screen as BGRA pixels (includes composited windows). */
   capture(x: number, y: number, width: number, height: number): X11Image | null;
   close(): void;
@@ -62,6 +68,8 @@ export function openX11(displayName?: string): X11 | null {
     const XGetWindowProperty = lib.func("int XGetWindowProperty(void *dpy, unsigned long w, unsigned long prop, long offset, long length, int del, unsigned long reqType, _Out_ unsigned long *actualType, _Out_ int *actualFormat, _Out_ unsigned long *nitems, _Out_ unsigned long *bytesAfter, _Out_ void **data)");
     const XGetGeometry = lib.func("int XGetGeometry(void *dpy, unsigned long d, _Out_ unsigned long *root, _Out_ int *x, _Out_ int *y, _Out_ unsigned int *w, _Out_ unsigned int *h, _Out_ unsigned int *border, _Out_ unsigned int *depth)");
     const XTranslateCoordinates = lib.func("int XTranslateCoordinates(void *dpy, unsigned long src, unsigned long dest, int sx, int sy, _Out_ int *dx, _Out_ int *dy, _Out_ unsigned long *child)");
+    const XQueryTree = lib.func("int XQueryTree(void *dpy, unsigned long w, _Out_ unsigned long *root, _Out_ unsigned long *parent, _Out_ void **children, _Out_ unsigned int *n)");
+    const XGetWindowAttributes = lib.func("int XGetWindowAttributes(void *dpy, unsigned long w, _Out_ uint8_t *attrs)");
     const XGetImage = lib.func("EmberXImage *XGetImage(void *dpy, unsigned long d, int x, int y, unsigned int w, unsigned int h, unsigned long planeMask, int format)");
     const XDestroyImage = lib.func("int XDestroyImage(EmberXImage *image)");
     const XSync = lib.func("int XSync(void *dpy, int discard)");
@@ -101,6 +109,20 @@ export function openX11(displayName?: string): X11 | null {
       }
     };
 
+    /** Title, pid and on-screen geometry of a window. */
+    const describe = (id: number): X11Window | null => {
+      const pid = property(id, "_NET_WM_PID", "longs");
+      const title = property(id, "_NET_WM_NAME", "string") ?? property(id, "WM_NAME", "string");
+      const r = [0], gx = [0], gy = [0], w = [0], h = [0], b = [0], d = [0];
+      if (!XGetGeometry(dpy, id, r, gx, gy, w, h, b, d)) return null;
+      const ax = [0], ay = [0], child = [0];
+      XTranslateCoordinates(dpy, id, root, 0, 0, ax, ay, child);
+      return {
+        id, pid: Array.isArray(pid) ? pid[0] : null, title: typeof title === "string" ? title : "",
+        x: ax[0], y: ay[0], width: w[0], height: h[0],
+      };
+    };
+
     return {
       hasCompositor(screen = 0) {
         if (!open) return true;
@@ -118,16 +140,34 @@ export function openX11(displayName?: string): X11 | null {
         const active = property(root, "_NET_ACTIVE_WINDOW", "longs");
         const id = Array.isArray(active) ? active[0] : 0;
         if (!id) return null;
-        const pid = property(id, "_NET_WM_PID", "longs");
-        const title = property(id, "_NET_WM_NAME", "string") ?? property(id, "WM_NAME", "string");
-        const r = [0], gx = [0], gy = [0], w = [0], h = [0], b = [0], d = [0];
-        if (!XGetGeometry(dpy, id, r, gx, gy, w, h, b, d)) return null;
-        const ax = [0], ay = [0], child = [0];
-        XTranslateCoordinates(dpy, id, root, 0, 0, ax, ay, child);
-        return {
-          id, pid: Array.isArray(pid) ? pid[0] : null, title: typeof title === "string" ? title : "",
-          x: ax[0], y: ay[0], width: w[0], height: h[0],
-        };
+        return describe(id);
+      },
+
+      clientWindows() {
+        if (!open) return [];
+        const listed = property(root, "_NET_CLIENT_LIST", "longs");
+        let ids = Array.isArray(listed) ? listed : [];
+        if (!ids.length) {
+          // No EWMH window manager: the root's mapped children are the top-level windows.
+          const r = [0], parent = [0], list: unknown[] = [null], n = [0];
+          if (XQueryTree(dpy, root, r, parent, list, n) && list[0]) {
+            try {
+              const b = bytes(list[0], n[0] * 8);
+              ids = Array.from({ length: n[0] }, (_, i) => Number(b.readBigUInt64LE(i * 8)))
+                .filter(w => { const a = Buffer.alloc(136); return XGetWindowAttributes(dpy, w, a) && a.readInt32LE(92) === 2; }); // map_state == IsViewable
+            } finally {
+              XFree(list[0]);
+            }
+          }
+        }
+        const out: (X11Window & { wmClass: string })[] = [];
+        for (const id of ids) {
+          const w = describe(id);
+          if (!w) continue;
+          const cls = property(id, "WM_CLASS", "string");
+          out.push({ ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "" });
+        }
+        return out;
       },
 
       capture(x, y, width, height) {
