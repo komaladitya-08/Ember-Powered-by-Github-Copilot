@@ -144,7 +144,7 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
       if (e.verdict === "allow") return null; // the action line that follows says it
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: e.reason };
     case "confirm":
-      return { tag: e.answer === "once" || e.answer === "always" ? "You allowed" : e.answer === "deny" ? "You said no" : "No answer", cls: e.answer === "once" || e.answer === "always" ? "ok" : "no", what };
+      return { tag: e.answer === "once" || e.answer === "always" ? "You allowed" : e.answer === "deny" ? "You said no" : e.answer === "stopped" ? "Stopped" : "No answer", cls: e.answer === "once" || e.answer === "always" ? "ok" : "no", what };
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: e.error };
     case "stop":

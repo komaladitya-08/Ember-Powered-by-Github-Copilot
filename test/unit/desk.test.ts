@@ -244,6 +244,8 @@ describe("terminals", () => {
       "flatpak enter org.gnome.gedit bash", "flatpak run org.gnome.Console",
       "'xterm'", "\\xterm", "\"/usr/bin/xterm\" -e top", "sh -c 'nohup xterm'", "bash -c \"timeout 5 xterm\"", "python3 -m idlelib", "python3 -m code",
       "env env env env env env env env env env xterm",
+      // It always opens a terminal, whatever runs in it.
+      "xdg-terminal-exec", "xdg-terminal-exec gedit", "env xdg-terminal-exec",
     ];
     for (const exec of terminals) expect(isTerminalApp(app("some.App", "Some App", exec)), exec).toBe(true);
     const fine = ["env GDK_BACKEND=x11 gimp %U", "timeout 3600 gedit", "nice -n 5 evince %U", "taskset -p 0x1 1234", "flatpak run org.gnome.Calculator",

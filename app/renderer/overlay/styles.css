@@ -1,7 +1,8 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
 body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
 /* Ember: a small canvas that moves with it (sized and placed by main.ts). */
-#stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; }
+/* Never takes a click: the task cards' buttons and the bubble's are what the user clicks, even with Ember beside them. */
+#stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
@@ -11,9 +12,9 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 }
 .status[hidden] { display: none; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 8px #ff9a3d; animation: pulse 1.2s ease-in-out infinite; }
-/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); Ember passes in front. */
+/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
 .tasks {
-  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px;
+  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
 }
 .task {
   display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;

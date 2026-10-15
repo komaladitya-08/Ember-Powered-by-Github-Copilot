@@ -15,6 +15,8 @@ export const OVERLAY = {
   handleMenu: "handle:menu",
   /** The fallback card's content height, so the card fits what it shows. */
   handleFit: "handle:fit",
+  /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
+  cards: "overlay:cards",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -70,6 +72,8 @@ export interface EmberState {
   mic?: MicState;
   /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
   avoid?: Rect[];
+  /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */
+  idle?: string;
 }
 
 export const IDLE_BUBBLE: BubbleState = {
@@ -83,6 +87,8 @@ export interface OverlayApi {
   onState(fn: (s: EmberState) => void): void;
   setInteractive(rects: Rect[]): void;
   bubbleAction(id: string): void;
+  /** The task cards' area in global DIP (null: no cards on this display). */
+  setCards(rect: Rect | null): void;
 }
 
 export interface HandleApi {

@@ -144,6 +144,7 @@ function placeTasks(): void {
   measureTasks();
 }
 
+let lastCards = "null";
 /** Where the cards' buttons are (they take clicks) and what the bubble keeps off. */
 function measureTasks(): void {
   taskRects = [...tasksEl.querySelectorAll<HTMLElement>(".task-actions:not([hidden])")].map(el => {
@@ -155,10 +156,15 @@ function measureTasks(): void {
   const extra = state?.avoid ?? [];
   avoidKey = JSON.stringify(state?.avoid ?? null);
   for (const r of extra) list.push({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height });
+  let cardsAt: Rect | null = null;
   if (tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
     list.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+    cardsAt = { x: r.x + bounds.x, y: r.y + bounds.y, width: r.width, height: r.height };
   }
+  // Ember itself keeps off the cards too (main moves it): it never sits on their Stop button.
+  const cardsKey = JSON.stringify(cardsAt);
+  if (cardsKey !== lastCards) { lastCards = cardsKey; api.setCards(cardsAt); }
   avoid = list;
   interactiveDirty = true;
   reportInteractive();

@@ -23,6 +23,8 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
+  /** The task cards on this display (global DIP). */
+  cards: Rect | null;
 }
 
 export class OverlayManager {
@@ -109,9 +111,12 @@ export class OverlayManager {
     if ("focus" in next || now !== before) {
       const f = this.state.focus;
       const size = this.settings().size;
-      // Working on a control: Ember sits just beside it (on screen). Waiting for a decision: it holds still,
-      // so its buttons don't run away from the cursor. Otherwise it follows the cursor again.
-      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? this.follower.position : null);
+      // Working on a control: Ember sits just beside it (on screen). Waiting for a decision: it holds still by
+      // the cursor (where it would be now, not wherever it was on its way), so its buttons don't run away.
+      // Otherwise it follows the cursor again.
+      const c = this.cursor();
+      const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
+      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? here() : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -140,6 +145,24 @@ export class OverlayManager {
 
   broadcastSettings(s: Settings): void {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
+  }
+
+  /** Called by IPC when a renderer reports where its task cards are. */
+  setCards(sender: Electron.WebContents, r: Rect | null): void {
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
+  }
+
+  /** What Ember keeps off: its handle and the task cards stacked above it (one area: they touch). */
+  private keepOff(): Rect | null {
+    let r = this.avoid?.() ?? null;
+    for (const o of this.overlays.values()) {
+      const c = o.cards;
+      if (!c) continue;
+      if (!r) { r = c; continue; }
+      const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
+      r = { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
+    }
+    return r;
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
@@ -200,7 +223,7 @@ export class OverlayManager {
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setIgnoreMouseEvents(true);
-    const overlay: Overlay = { win, display, interactive: [], clickThrough: true };
+    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, cards: null };
     this.overlays.set(display.id, overlay);
     // Every load (also after a crash and reload) gets the current picture.
     win.webContents.on("did-finish-load", () => {
@@ -252,7 +275,7 @@ export class OverlayManager {
     const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
     const ember = aside
       ? this.follower.step(aside, dt, true)
-      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.avoid?.() ?? null), dt);
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff()), dt);
     const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;

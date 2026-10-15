@@ -98,7 +98,8 @@ export class DeskView {
     if (!this.win || this.win.isDestroyed()) {
       const wa = screen.getPrimaryDisplay().workArea;
       const win = new BrowserWindow({
-        ...SMALL, x: wa.x + wa.width - SMALL.width - 16, y: wa.y + wa.height - SMALL.height - 80,
+        // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
+        ...SMALL, x: wa.x + 16, y: wa.y + wa.height - SMALL.height - 16,
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
         backgroundColor: "#1a0f0b",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
@@ -167,7 +168,8 @@ export class DeskView {
       const b = win.getBounds();
       const size = on ? LARGE : SMALL;
       const wa = screen.getDisplayMatching(b).workArea;
-      win.setBounds({ ...size, x: Math.max(wa.x, b.x + b.width - size.width), y: Math.max(wa.y, b.y + b.height - size.height) });
+      // Grows up and to the right from its bottom-left corner, staying on screen.
+      win.setBounds({ ...size, x: Math.max(wa.x, Math.min(b.x, wa.x + wa.width - size.width)), y: Math.max(wa.y, b.y + b.height - size.height) });
       if (on) win.focus();
     }
     // Always, so the view never shows the wrong button (e.g. after it was reopened).

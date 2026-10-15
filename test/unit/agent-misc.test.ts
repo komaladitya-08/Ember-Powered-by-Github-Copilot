@@ -90,6 +90,10 @@ describe("startup errors", () => {
   it("explains policy, auth and seat problems in plain words", () => {
     expect(explainStartError(new Error("Failed to load models: access denied by Copilot policy"))).toMatch(/Copilot CLI policy/);
     expect(explainStartError(new Error("401 Unauthorized"))).toMatch(/Sign in again/);
+    // Electron's own network and certificate errors (net.fetch) read as such, not as "net::ERR_…".
+    expect(explainStartError(new Error("net::ERR_INTERNET_DISCONNECTED"))).toMatch(/can't reach GitHub/);
+    expect(explainStartError(new Error("net::ERR_PROXY_CONNECTION_FAILED"))).toMatch(/can't reach GitHub/);
+    expect(explainStartError(new Error("net::ERR_CERT_AUTHORITY_INVALID"))).toMatch(/certificate/);
     expect(explainStartError(new Error("spawn ENOENT"))).toMatch(/Reinstall/);
   });
 });

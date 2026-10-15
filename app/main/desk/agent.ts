@@ -73,7 +73,8 @@ export class DeskAgent {
    * `timeoutMs`: how long one call may take before the helper counts as hung.
    */
   static start(script: string, env: NodeJS.ProcessEnv, o: { timeoutMs?: number; startMs?: number } = {}): Promise<DeskAgent> {
-    const agent = new DeskAgent(script, env, o.timeoutMs ?? 3000);
+    // Ember's main thread waits for each call: a hung desk must be given up on quickly (calls take ~0.3 ms).
+    const agent = new DeskAgent(script, env, o.timeoutMs ?? 1000);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { agent.stop(); reject(new Error("Ember's desk helper didn't start")); }, o.startMs ?? 15_000);
       const off = agent.onExit(why => { clearTimeout(timer); reject(new Error(why)); });

@@ -38,7 +38,7 @@ import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
-import { AgentHost, gitHubReachable, type Hands } from "./agent/host";
+import { AgentHost, explainStartError, gitHubReachable, type Hands } from "./agent/host";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -366,8 +366,9 @@ function start(): void {
     showHome();
     sendToHome(IPC.focusSection, "conversation");
   };
-  /** Settings, at the Copilot section when that's what needs doing. */
+  /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
+    if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     showHome();
     const phase = agent?.getStatus().phase;
     if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
@@ -558,6 +559,13 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && /^https:\/\/github\.com\//.test(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
+  /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"). */
+  const signInError = (err: unknown): string => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
+    if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
+    return explainStartError(err, { online: net.isOnline() });
+  };
   /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
@@ -614,7 +622,7 @@ function start(): void {
       currentToken = token;
       await connected(await agent?.start(token, "stored"), kept ? undefined : "Signed in. No keyring is available, so you'll need to sign in again next time.");
     } catch (err) {
-      if (!ac.signal.aborted) say({ state: "error", message: err instanceof Error ? err.message : String(err) });
+      if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
@@ -648,6 +656,10 @@ function start(): void {
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
 
   const isRect = (r: unknown): r is Rect => !!r && typeof r === "object" && ["x", "y", "width", "height"].every(k => Number.isFinite((r as Record<string, unknown>)[k]));
+  ipcMain.on(OVERLAY.cards, (event, rect: unknown) => {
+    if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
+    overlay.setCards(event.sender, rect);
+  });
   ipcMain.on(OVERLAY.interactive, (event, rects: unknown) => {
     if (!overlay?.owns(event.sender) || !Array.isArray(rects) || rects.length > 32 || !rects.every(isRect)) return;
     overlay.setInteractive(event.sender, rects);
@@ -701,7 +713,12 @@ function start(): void {
           // Settings stays open at Copilot; Ember says hello once it closes, not over it.
           sendToHome(IPC.focusSection, "copilot");
           if (homeOpen()) { greetOnClose = true; return; }
-        } else if (home && !home.isDestroyed()) home.close();
+        } else if (home && !home.isDestroyed()) {
+          // Hello once the window has gone (Ember is still waiting beside it until then).
+          greetOnClose = true;
+          home.close();
+          return;
+        }
         greet();
       }, 500);
     }
@@ -904,7 +921,11 @@ function start(): void {
       onAnswer: text => { if (settings.get().speak || screenReaderOn()) voice?.speak(plainText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
-      onStatus: status => broadcast(IPC.agentStatusChanged, status),
+      onStatus: status => {
+        broadcast(IPC.agentStatusChanged, status);
+        // The handle says why Ember can't answer yet, instead of "Ready".
+        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : "Not connected" });
+      },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       onTaskFinished: t => {
         if (settings.get().speak || screenReaderOn()) voice?.speak(t.text);

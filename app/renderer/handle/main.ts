@@ -73,12 +73,12 @@ api.onState(s => {
   if (!fallback) {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || "Ready");
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
     return;
   }
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks);
-  const text = cardText(b, name, s.status, task?.title);
+  const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;

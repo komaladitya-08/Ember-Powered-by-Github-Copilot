@@ -170,7 +170,7 @@ const WRAPPERS: Record<string, { value?: string; long?: string[]; positional?: n
   flock: { value: "Ew", long: ["conflict-exit-code", "timeout", "wait"], positional: 1 },
   "systemd-cat": { value: "tp", long: ["identifier", "priority", "stderr-priority", "level-prefix"] },
   firejail: {}, torsocks: {}, proxychains: {}, proxychains4: {}, "prime-run": {}, primusrun: {}, optirun: {}, vglrun: { value: "dc" }, gamemoderun: {}, mangohud: {},
-  "xdg-terminal-exec": {},
+  // (Not xdg-terminal-exec: it always opens a terminal, whatever it runs in it, so it is a terminal itself.)
 };
 /**
  * Programs that run commands Ember can't follow, or as someone else: never started. (systemd-run
