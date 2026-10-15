@@ -13,6 +13,8 @@ export const OVERLAY = {
   interactive: "overlay:interactive",
   bubbleAction: "overlay:bubble-action",
   handleMenu: "handle:menu",
+  /** The fallback card's content height, so the card fits what it shows. */
+  handleFit: "handle:fit",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -24,6 +26,8 @@ export interface OverlayInit {
   settings: Settings;
   /** True when this window is the small fallback buddy (no compositor). */
   fallback: boolean;
+  /** Ember's handle in global DIP when it is on this display (the bubble keeps off it), else null. */
+  handle?: Rect | null;
 }
 
 export interface OverlayFrame {
@@ -64,6 +68,8 @@ export interface EmberState {
   gesture?: Gesture | null;
   /** Microphone: off, waiting for "Hey Ember", or hearing a request. */
   mic?: MicState;
+  /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
+  avoid?: Rect[];
 }
 
 export const IDLE_BUBBLE: BubbleState = {
@@ -85,4 +91,6 @@ export interface HandleApi {
   onInit(fn: (i: OverlayInit) => void): void;
   openMenu(): void;
   bubbleAction(id: string): void;
+  /** Fallback card only: the height its content needs. */
+  fit(height: number): void;
 }

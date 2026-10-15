@@ -218,7 +218,10 @@ function start(): void {
   let greetOnClose = false;
   const stepAside = () => {
     const h = home && !home.isDestroyed() && home.isVisible() && !home.isMinimized() && home.isFocused() ? home : null;
-    overlay?.stepAside(h ? h.getBounds() : null);
+    const r = h ? h.getBounds() : null;
+    overlay?.stepAside(r);
+    // The bubble keeps off the window too.
+    if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(r ? [r] : [])) showState({ avoid: r ? [r] : [] });
   };
   const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
@@ -544,6 +547,10 @@ function start(): void {
     await agent?.start(null);
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
+  /** The page of the sign-in under way, opened again on request (GitHub's own pages only). */
+  let signInPage: string | null = null;
+  const openSignInPage = () => { if (signInPage && /^https:\/\/github\.com\//.test(signInPage)) void shell.openExternal(signInPage); };
+  ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
   /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
@@ -586,7 +593,8 @@ function start(): void {
       if (ac.signal.aborted) return;
       say({ state: "code", userCode: code.userCode, verificationUri: code.verificationUri });
       // Only GitHub's own page is ever opened.
-      if (/^https:\/\/github\.com\//.test(code.verificationUri)) void shell.openExternal(code.verificationUri);
+      signInPage = code.verificationUri;
+      openSignInPage();
       const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal });
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
@@ -652,6 +660,9 @@ function start(): void {
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
     if (handle && event.sender === handle.win.webContents) showMenu();
+  });
+  ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
+    if (handle && event.sender === handle.win.webContents && typeof height === "number") handle.fit(height);
   });
 
   settings.onChange((s) => {

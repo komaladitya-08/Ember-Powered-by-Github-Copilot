@@ -72,21 +72,26 @@ api.onState(s => {
   mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : "";
   if (!fallback) {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
-    const said = b.visible ? (b.title === name ? b.thought : b.title) : "";
-    $("line").textContent = s.status ?? (said || "Ready");
+    const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || "Ready");
     return;
   }
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
-  const text = cardText(b, name, s.status);
+  const task = cardTask(s.tasks);
+  const text = cardText(b, name, s.status, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;
   // While it streams, the newest lines show; once done, it reads (and scrolls) from the start.
   if (b.streaming) thoughtEl.scrollTop = thoughtEl.scrollHeight;
   else if (wasStreaming) thoughtEl.scrollTop = 0;
+  // The fade at the top only when the start has really scrolled away.
+  thoughtEl.dataset.overflow = String(b.streaming && thoughtEl.scrollHeight > thoughtEl.clientHeight + 1);
   wasStreaming = b.visible && b.streaming;
   document.body.dataset.mood = b.visible ? b.mood : "idle";
-  const step = b.visible ? b.step : null;
+  document.body.classList.toggle("streaming", b.visible && b.streaming);
+  // A step the task row already shows isn't repeated.
+  const step = b.visible && b.step !== task?.detail ? b.step : null;
   $("step").hidden = !step;
   $("step").textContent = step ?? "";
 
@@ -95,7 +100,6 @@ api.onState(s => {
   $("actions").hidden = actions.length === 0;
   buttons($("actions"), actions, a => a.label);
 
-  const task = cardTask(s.tasks);
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;

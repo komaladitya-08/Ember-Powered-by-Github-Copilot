@@ -131,6 +131,7 @@ export class OverlayManager {
     this.borrowing = on;
   }
 
+  private lastHandleCheck = 0;
   private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
 
   getState(): EmberState {
@@ -153,7 +154,19 @@ export class OverlayManager {
   }
 
   private initFor(o: Overlay): OverlayInit {
-    return { displayId: o.display.id, bounds: o.display.bounds, settings: this.settings(), fallback: false };
+    const h = this.avoid?.() ?? null;
+    const b = o.display.bounds;
+    const here = !!h && h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
+    return { displayId: o.display.id, bounds: b, settings: this.settings(), fallback: false, handle: here ? h : null };
+  }
+
+  /** The handle moved (another screen layout): every overlay is told where it is now. */
+  private handleAt = "";
+  private checkHandle(): void {
+    const at = JSON.stringify(this.avoid?.() ?? null);
+    if (at === this.handleAt) return;
+    this.handleAt = at;
+    for (const o of this.overlays.values()) if (!o.win.isDestroyed() && !o.win.webContents.isLoading()) o.win.webContents.send(OVERLAY.init, this.initFor(o));
   }
 
   private create(display: Display): void {
@@ -228,6 +241,7 @@ export class OverlayManager {
     const now = Date.now();
     const dt = (now - this.last) / 1000;
     this.last = now;
+    if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
     const s = this.settings();

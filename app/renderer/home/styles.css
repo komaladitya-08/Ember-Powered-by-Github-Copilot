@@ -137,20 +137,22 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* ── First run: only the welcome, the character picker and Start ── */
 body.first-run .after-setup { display: none !important; }
 
-/* ── Section links: one compact row that stays at the top (scrolls sideways when the window is narrow) ── */
+/* ── Section links: one compact row that stays at the top; in a narrow window it wraps and scrolls away ── */
 .jump {
-  position: sticky; top: 0; z-index: 2; margin: -10px -24px 0; padding: 8px 24px;
-  display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin;
+  margin: -10px -24px 0; padding: 8px 24px;
+  display: flex; flex-wrap: wrap; gap: 2px 0;
   background: var(--bg); border-bottom: 1px solid var(--line);
 }
+@media (min-width: 640px) { .jump { position: sticky; top: 0; z-index: 2; } }
 .jump a {
-  flex: none; padding: 4px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px;
+  flex: none; padding: 4px 8px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px;
   border: 1px solid transparent;
 }
 .jump a:hover { color: var(--fg); background: var(--panel); }
 .jump a[aria-current="true"] { color: var(--fg); background: var(--panel); border-color: var(--line); }
 .jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 h2, summary { scroll-margin-top: 64px; }
+@media (max-width: 639px) { h2, summary { scroll-margin-top: 16px; } }
 #agree { scroll-margin: 120px; }
 
 /* ── Folded sections (What Ember did, Setup check, About) ── */
@@ -180,3 +182,4 @@ h2, summary { scroll-margin-top: 64px; }
 html.calm *, html.calm *::before { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 @media (prefers-reduced-motion: reduce) { .fold > summary::before { transition: none; } }
 .managed-tag { color: var(--muted); font-size: 12px; }
+.sign-in-msg .wait { flex-basis: 100%; }

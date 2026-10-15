@@ -499,7 +499,10 @@ function showSection(section: string): void {
   target.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
   target.focus({ preventScroll: true });
   markCurrent(section);
+  // The scroll this starts (and a page too short to bring the section to the top) doesn't move the mark.
+  pinnedUntil = performance.now() + 900;
 }
+let pinnedUntil = 0;
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
 window.ember.onFocusSection(showSection);
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
@@ -519,7 +522,7 @@ function markCurrent(section: string): void {
 // While scrolling: the link of the section at the top is marked.
 let scrollQueued = false;
 window.addEventListener("scroll", () => {
-  if (scrollQueued) return;
+  if (scrollQueued || performance.now() < pinnedUntil) return;
   scrollQueued = true;
   requestAnimationFrame(() => {
     scrollQueued = false;

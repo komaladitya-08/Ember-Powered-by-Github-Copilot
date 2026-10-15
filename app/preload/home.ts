@@ -26,6 +26,7 @@ const api: EmberHomeApi = {
   activity: () => ipcRenderer.invoke(IPC.activity),
   retrySignIn: () => ipcRenderer.invoke(IPC.agentRetry),
   cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),
+  openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage),
   conversation: () => ipcRenderer.invoke(IPC.conversation),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),

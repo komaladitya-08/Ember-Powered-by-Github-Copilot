@@ -42,7 +42,8 @@ let settings: Settings | null = null;
 let bounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
 let viewport = { width: window.innerWidth, height: window.innerHeight };
 let frame: OverlayFrame | null = null;
-let state: EmberState | null = null;
+/** `avoid`: windows the bubble should keep off (global DIP), when main sends them. */
+let state: (EmberState & { avoid?: Rect[] }) | null = null;
 let emotion: Emotion = "neutral";
 /** The gesture field as last received: a gesture plays once, when it changes. */
 let gestureSeen: Gesture | null | undefined;
@@ -59,8 +60,9 @@ let interactiveDirty = true;
 let bubbleShown = false;
 /** Ember's handle in the corner, in this overlay's coordinates (null: not on this display). */
 let handleRect: Rect | null = null;
-/** What the bubble keeps off: the handle and the task cards. */
+/** What the bubble keeps off: the handle, the task cards, and any windows main names. */
 let avoid: Rect[] = [];
+let avoidKey = "null";
 
 function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
@@ -96,7 +98,7 @@ api.onFrame(f => {
   // Resting: come back at once when Ember or the cursor moves.
   if (!drawnAt || moved(f.ember, drawnAt.ember, 0.05) || moved(f.cursor, drawnAt.cursor, 0.5)) requestDraw();
 });
-api.onState(s => {
+api.onState((s: EmberState & { avoid?: Rect[] }) => {
   state = s;
   const g = s.gesture ?? null;
   const fresh = g !== gestureSeen;
@@ -129,6 +131,7 @@ api.onState(s => {
   if (statusText.textContent !== (s.status ?? "")) statusText.textContent = s.status ?? "";
   // Cards sit at a fixed place, so their buttons are measured only when the cards change.
   if (renderTasks(s.tasks)) measureTasks();
+  else if (JSON.stringify(s.avoid ?? null) !== avoidKey) measureTasks();
   requestDraw();
 });
 
@@ -148,6 +151,10 @@ function measureTasks(): void {
     return { x: r.x - 4, y: r.y - 4, width: r.width + 8, height: r.height + 8 };
   });
   const list: Rect[] = handleRect ? [handleRect] : [];
+  // Windows main asks the bubble to keep off (the settings window while it is open), in global DIP.
+  const extra = state?.avoid ?? [];
+  avoidKey = JSON.stringify(state?.avoid ?? null);
+  for (const r of extra) list.push({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height });
   if (tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
     list.push({ x: r.x, y: r.y, width: r.width, height: r.height });

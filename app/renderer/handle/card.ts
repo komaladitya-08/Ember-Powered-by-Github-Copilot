@@ -19,11 +19,14 @@ const KIND: Record<BubbleMood, string> = {
  * The card's bold line and the text under it. An answer's title is the
  * character's name, already shown above the line, so the line names what it is
  * ("Answer", "Problem") and the words go in the text area, never in the line.
+ * The same goes for a title that is the task shown on the card's task row.
  */
-export function cardText(b: BubbleState, name: string, status: string | null): { line: string; thought: string } {
+export function cardText(b: BubbleState, name: string, status: string | null, taskTitle?: string): { line: string; thought: string } {
   if (!b.visible) return { line: status ?? "Ready", thought: "" };
   const title = b.title.trim();
-  const line = title && title !== name ? title : b.mood === "idle" && b.streaming ? "Answering…" : KIND[b.mood];
+  // The task's title is already on its row at the bottom of the card: the line says what Ember is doing instead.
+  const said = title && title !== name && title !== taskTitle;
+  const line = said ? title : b.mood === "idle" && b.streaming ? "Answering…" : KIND[b.mood];
   return { line, thought: b.thought };
 }
 

@@ -25,6 +25,8 @@ export const IPC = {
   /** "Check again": look for a sign-in once more and reconnect. */
   agentRetry: "agent:retry",
   cancelSignIn: "agent:cancel-sign-in",
+  /** Opens GitHub's device page for the sign-in code shown (only https://github.com/…). */
+  openSignInPage: "agent:open-sign-in-page",
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
   /** Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"). */
@@ -122,6 +124,8 @@ export interface EmberHomeApi {
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   cancelSignIn(): Promise<void>;
+  /** Opens GitHub's page where the sign-in code is entered (again). */
+  openSignInPage(): Promise<void>;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
