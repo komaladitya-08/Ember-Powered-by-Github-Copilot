@@ -21,6 +21,8 @@ export interface AxNode {
   bounds: Bounds | null;
   actions?: string[];
   text?: string;
+  /** Selected text, for the focused text element only (never for passwords). */
+  selection?: string;
   value?: number;
   editable?: boolean;
 }

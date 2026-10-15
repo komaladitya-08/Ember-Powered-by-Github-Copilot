@@ -9,6 +9,8 @@ import { createRequire } from "node:module";
 
 export interface XInput {
   pointer(): { x: number; y: number } | null;
+  /** Pointer position plus button/modifier mask (Button1Mask = 256). */
+  pointerState(): { x: number; y: number; mask: number } | null;
   move(x: number, y: number): void;
   button(button: number, down: boolean): void;
   /** Presses or releases an X keysym; false if the keyboard has no key for it. */
@@ -113,6 +115,11 @@ export function openXInput(displayName?: string): XInput | null {
         if (!open) return null;
         const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
         return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0] } : null;
+      },
+      pointerState() {
+        if (!open) return null;
+        const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
+        return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0], mask: m[0] } : null;
       },
       move(x, y) {
         XTestFakeMotionEvent(dpy, -1, Math.round(x), Math.round(y), 0);

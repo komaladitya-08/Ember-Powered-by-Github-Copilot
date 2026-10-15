@@ -62,6 +62,14 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
       respond: (messages: Msg[]) => {
         const results = messages.filter(m => m.role === "tool");
         const step = results.length;
+        if (text(messages.find(m => m.role === "user")!).includes("Show me how")) {
+          // Guide: point at the switch, wait for the user, then finish.
+          if (step === 0) return { tool: { name: "perceive_window", args: {} } };
+          if (step === 1) return { tool: { name: "point_at", args: { id: idOf(messages, /^toggle button/), say: "Turn on this switch" } } };
+          if (step === 2) return { tool: { name: "wait_for_click", args: { id: idOf(messages, /^toggle button/), timeoutSeconds: 20 } } };
+          if (step === 3) return { tool: { name: "finish_task", args: { success: true, summary: "You turned on Night Light yourself." } } };
+          return { text: "Done." };
+        }
         if (text(messages.find(m => m.role === "user")!).includes("sketch pad")) {
           // Tier 3: the pad has no accessible actions, so a click escalates to the user's mouse.
           if (step === 0) return { tool: { name: "perceive_window", args: {} } };
@@ -101,6 +109,49 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     await client?.stop();
     await mock?.close();
   });
+
+  it("guides: points at the control and waits until the user clicks it", async () => {
+    const xinput = openXInput()!;
+    const settings = new SettingsStore(path.join(dir, "settings-guide.json"));
+    settings.load();
+    const states: Partial<EmberState>[] = [];
+    const focus: unknown[] = [];
+    const before = events.length;
+    // Make sure Night Light starts off.
+    const r = await sidecar.readWindow({ title: "Ember Test Bench" });
+    const sw = r.nodes.find(n => n.role === "toggle button")!;
+    if (sw.states.includes("checked")) await sidecar.doAction(sw.id, "toggle");
+    const worker = new Worker({
+      client, log: quiet, model: "mock-model", vision: false,
+      provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
+      workDir: path.join(dir, "empty"),
+      perception: new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1280, height: 800 }), log: quiet }),
+      sidecar, policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}) }),
+      confirmer: new Confirmer(() => undefined), audit: new AuditLog(path.join(dir, "audit-guide")), settings,
+      presenter: new Presenter(p => states.push(p)),
+      lease: async () => () => undefined,
+      flyTo: b => {
+        focus.push(b);
+        if (!b) return;
+        // The user sees Ember pointing and clicks the control themselves (real X input).
+        setTimeout(() => {
+          const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+          xinput.move(cx, cy);
+          setTimeout(() => { xinput.button(1, true); setTimeout(() => xinput.button(1, false), 150); }, 300);
+        }, 800);
+      },
+      onProgress: () => undefined,
+      pointer: () => xinput.pointerState(),
+    }, { id: "g1", goal: "Show me how to turn on Night Light", target: { title: "Ember Test Bench" }, mode: "guide" });
+    const result = await worker.run(new AbortController().signal);
+    await worker.dispose();
+    expect(result).toEqual({ success: true, summary: "You turned on Night Light yourself." });
+    expect(states.some(s => s.bubble?.mood === "guiding" && s.bubble.thought === "Turn on this switch" && s.gesture === "point")).toBe(true);
+    expect(events.slice(before)).toContainEqual(expect.objectContaining({ event: "toggled", name: "Night Light", active: true }));
+    // A guide never acts itself: only point/user_clicked entries, no toggles by Ember.
+    expect(worker.tools().map(t => t.name).sort()).toEqual(["finish_task", "list_windows", "perceive_window", "point_at", "report_progress", "switch_window", "wait_for_click"]);
+    xinput.close();
+  }, 120_000);
 
   it("borrows the mouse when accessibility can't do it, with the user's OK, and gives it back", async () => {
     const xinput = openXInput();
@@ -148,6 +199,10 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
   }, 120_000);
 
   it("does the task, asks before acting in a new app, and refuses the password field", async () => {
+    // Earlier tests may have left Night Light on; this one turns it on itself.
+    const fresh = await sidecar.readWindow({ title: "Ember Test Bench" });
+    const nightLight = fresh.nodes.find(n => n.role === "toggle button")!;
+    if (nightLight.states.includes("checked")) await sidecar.doAction(nightLight.id, "toggle");
     const states: Partial<EmberState>[] = [];
     const settings = new SettingsStore(path.join(dir, "settings.json"));
     settings.load();

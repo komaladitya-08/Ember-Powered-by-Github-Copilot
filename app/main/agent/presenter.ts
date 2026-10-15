@@ -5,6 +5,7 @@
  */
 
 import type { EmberState } from "../../shared/overlay";
+import type { Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
@@ -17,6 +18,8 @@ export const TOOL_STEPS: Record<string, string> = {
   describe_screen: "Looking at your screen",
   start_task: "Starting a task",
   perceive_window: "Reading the window",
+  point_at: "Showing you",
+  wait_for_click: "Waiting for your click",
   list_windows: "Looking at your windows",
   switch_window: "Switching windows",
   click: "Clicking",
@@ -30,6 +33,15 @@ export const TOOL_STEPS: Record<string, string> = {
   scroll: "Scrolling (your mouse)",
   report_progress: "Updating you",
   finish_task: "Wrapping up",
+};
+
+/** What Ember's body does during each tool. */
+export const TOOL_GESTURES: Record<string, Gesture> = {
+  describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
+  click: "tap", toggle: "tap", choose_option: "tap", set_value: "tap", change_setting: "tap", open_app: "tap", scroll: "tap",
+  type_text: "type", press_keys: "type",
+  point_at: "point", wait_for_click: "point",
+  set_appearance: "wave", start_task: "thumbsUp", show_me: "point",
 };
 
 export class Presenter {
@@ -72,6 +84,17 @@ export class Presenter {
     });
   }
 
+  /** Guide mode: Ember points at something and says what to do; it stays until the next step. */
+  guide(say: string, step: string): void {
+    this.cancelHide();
+    this.answering = false;
+    this.apply({
+      emotion: "happy", talking: true, gesture: "point",
+      bubble: { visible: true, mood: "guiding", title: this.name(), thought: say, step, streaming: false, actions: [] },
+    });
+    this.timers.set(() => this.apply({ talking: false }), 1200);
+  }
+
   /** A worker started on a task: its bubble is titled with the task (this presenter's name). */
   taskStarted(): void {
     this.cancelHide();
@@ -110,11 +133,16 @@ export class Presenter {
         const name = String(d.toolName ?? "");
         this.answering = false;
         this.thoughtBreak = true;
-        this.apply({ emotion: "focused", talking: false, bubble: { ...this.state.bubble, visible: true, mood: "acting", step: TOOL_STEPS[name] ?? name, streaming: true } });
+        // While guiding, the instruction stays up (Ember is waiting for the user, not working).
+        const guiding = name === "wait_for_click" || name === "point_at";
+        this.apply({
+          emotion: guiding ? "happy" : "focused", talking: false, gesture: TOOL_GESTURES[name] ?? "rest",
+          bubble: { ...this.state.bubble, visible: true, mood: guiding ? "guiding" : "acting", step: TOOL_STEPS[name] ?? name, streaming: !guiding },
+        });
         break;
       }
       case "tool.execution_complete":
-        if (d.success === false) this.apply({ emotion: "confused", bubble: { ...this.state.bubble, step: null } });
+        if (d.success === false) this.apply({ emotion: "confused", gesture: "scratch", bubble: { ...this.state.bubble, step: null } });
         else this.apply({ bubble: { ...this.state.bubble, step: null } });
         break;
       case "assistant.message":

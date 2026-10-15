@@ -4,7 +4,7 @@
  * Only redraws the area around Ember each frame; the rest stays transparent.
  */
 
-import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
+import { Rig, FACTORIES, type Character, type Emotion, type Gesture } from "@ember/characters";
 import { ReasoningBubble } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
@@ -18,6 +18,7 @@ const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
+let gesture: Gesture = "rest";
 
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 const rig = new Rig();
@@ -40,7 +41,8 @@ api.onSettings(applySettings);
 api.onFrame(f => { frame = f; });
 api.onState(s => {
   state = s;
-  if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
+  if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion, s.gesture ? { gesture: s.gesture } : {}); gesture = s.gesture ?? gesture; }
+  else if (s.gesture && s.gesture !== gesture) { gesture = s.gesture; rig.setGesture(s.gesture); }
   rig.setTalking(s.talking);
   const b = s.bubble;
   bubble.setMood(b.mood);
@@ -104,9 +106,15 @@ function draw(now: number): void {
   if (frame) {
     const lx = frame.ember.x - bounds.x, ly = frame.ember.y - bounds.y;
     rig.setPosition(lx / scale, ly / scale, dt);
-    const dx = frame.cursor.x - frame.ember.x, dy = frame.cursor.y - frame.ember.y;
+    // Look at the control Ember is working on, else at the cursor; point at it while acting or guiding.
+    const f = state?.focus;
+    const target = f ? { x: f.x + f.width / 2, y: f.y + f.height / 2 } : frame.cursor;
+    const dx = target.x - frame.ember.x, dy = target.y - frame.ember.y;
     const d = Math.max(80, Math.hypot(dx, dy));
     rig.lookAt(dx / d * 1.3, dy / d * 1.3);
+    const aiming = !!f && (gesture === "point" || gesture === "tap" || gesture === "type");
+    const len = Math.hypot(dx, dy) || 1;
+    rig.setAim(aiming ? { x: dx / len, y: dy / len } : null);
     const pose = rig.update(dt);
     if (here) {
       ctx.save();

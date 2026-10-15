@@ -67,7 +67,7 @@ describe("conductor on the real Copilot runtime", () => {
     await conductor.ask("hello Ember");
     await idle(states, 0);
     const last = mock.requests[mock.requests.length - 1];
-    expect(last.tools.sort()).toEqual(["describe_screen", "set_appearance", "start_task"]);
+    expect(last.tools.sort()).toEqual(["describe_screen", "set_appearance", "show_me", "start_task"]);
     await conductor.stop();
   }, 60000);
 

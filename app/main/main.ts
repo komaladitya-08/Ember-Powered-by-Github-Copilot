@@ -18,7 +18,7 @@ import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { openX11 } from "./x11";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
-import { Perception } from "./perception";
+import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
@@ -179,7 +179,7 @@ function start(): void {
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     Menu.buildFromTemplate([
-      { label: "Ask Ember…\tCtrl+Alt+Space", click: () => askWindow.show(overlay?.position ?? null) },
+      { label: "Ask Ember…\tCtrl+Alt+Space", click: openAsk },
       { label: "Stop", enabled: agent?.getStatus().phase === "ready", click: () => { void agent?.abortAll(); } },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: voice.isMuted ? "Unmute microphone\tCtrl+Alt+M" : "Mute microphone\tCtrl+Alt+M", click: toggleMute }]
@@ -199,6 +199,11 @@ function start(): void {
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
+  /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
+  let callContext: Promise<QuickContext | null> = Promise.resolve(null);
+  const captureContext = () => { callContext = perception ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
+  const askEmber = async (text: string) => agent?.ask(text, await callContext);
+  const openAsk = () => { captureContext(); askWindow.show(overlay?.position ?? null); };
   let lastAskByVoice = false;
   const toggleMute = () => {
     if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
@@ -214,6 +219,7 @@ function start(): void {
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
       case "wake":
+        captureContext();
         voice?.hush();
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
@@ -228,7 +234,8 @@ function start(): void {
       case "utterance":
         lastAskByVoice = true;
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms });
-        void agent?.ask(e.text);
+        // A follow-up (no wake word) keeps the context from the last call.
+        void askEmber(e.text);
         break;
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
@@ -295,7 +302,7 @@ function start(): void {
     if (!askWindow.owns(event.sender) || typeof text !== "string") return;
     askWindow.hide();
     lastAskByVoice = false;
-    void agent?.ask(text.slice(0, 2000));
+    void askEmber(text.slice(0, 2000));
   });
   ipcMain.on(IPC.askClose, event => { if (askWindow.owns(event.sender)) askWindow.hide(); });
 
@@ -369,7 +376,7 @@ function start(): void {
     handle = new HandleWindow(() => settings.get(), !compositing);
 
     if (!globalShortcut.register("Control+Alt+E", showHome)) log.warn("shortcut.unavailable", { accel: "Control+Alt+E" });
-    if (!globalShortcut.register("Control+Alt+Space", () => askWindow.show(overlay?.position ?? null))) {
+    if (!globalShortcut.register("Control+Alt+Space", openAsk)) {
       log.warn("shortcut.unavailable", { accel: "Control+Alt+Space" });
     }
 
@@ -420,6 +427,7 @@ function start(): void {
         // Ember's own windows (ask box, settings) are not a task's target.
         return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
       },
+      pointer: xinput ? () => xinput.pointerState() : undefined,
       cursor: borrow && xinput ? {
         borrow,
         findWindow: title => xinput.findWindow(title),
@@ -473,7 +481,7 @@ function start(): void {
     if (process.env.EMBER_TEST_HOOKS === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
       };
     }
   });

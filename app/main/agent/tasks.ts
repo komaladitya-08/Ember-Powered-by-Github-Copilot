@@ -55,12 +55,12 @@ export class TaskManager {
 
   constructor(private d: TaskManagerDeps) {}
 
-  start(goal: string): Task {
+  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide" } = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null };
     this.tasks.set(id, task);
-    const target = this.d.currentWindow() ?? {};
-    this.queue.push({ task, spec: { id, goal, target } });
+    const target = opts.target ?? this.d.currentWindow() ?? {};
+    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do" } });
     this.d.log.info("task.queued", { id, goal: task.title, target: target.title });
     this.pump();
     this.publish();

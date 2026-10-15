@@ -1,6 +1,6 @@
 /** Messages between the main process and the overlay / handle renderers. */
 
-import type { Emotion } from "@ember/characters";
+import type { Emotion, Gesture } from "@ember/characters";
 import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
 import type { MicState } from "./voice";
@@ -58,6 +58,8 @@ export interface EmberState {
   status: string | null;
   /** The control Ember is working on (global DIP): Ember flies beside it and it glows. */
   focus?: Rect | null;
+  /** A body gesture to play (pointing at the control, typing, thumbs up…). */
+  gesture?: Gesture | null;
   /** Microphone: off, waiting for "Hey Ember", or hearing a request. */
   mic?: MicState;
 }

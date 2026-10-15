@@ -71,3 +71,21 @@ describe("Presenter", () => {
     expect(last()).toMatchObject({ emotion: "neutral", bubble: { title: "Stopped" } });
   });
 });
+
+describe("Presenter gestures and guiding", () => {
+  it("plays a gesture for each kind of tool", () => {
+    const { p, last } = setup();
+    p.event({ type: "tool.execution_start", data: { toolName: "type_text" } });
+    expect(last().gesture).toBe("type");
+    p.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
+    expect(last().gesture).toBe("chin");
+    p.event({ type: "tool.execution_complete", data: { success: false } });
+    expect(last().gesture).toBe("scratch");
+  });
+
+  it("shows a guide step with its instruction and points", () => {
+    const { p, last } = setup();
+    p.guide("Click Display", "Step 2");
+    expect(last()).toMatchObject({ gesture: "point", talking: true, bubble: { mood: "guiding", thought: "Click Display", step: "Step 2", visible: true } });
+  });
+});
