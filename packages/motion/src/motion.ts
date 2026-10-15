@@ -3,7 +3,7 @@
  * flight it takes to a target (ported from clicky's overlay animation, MIT).
  */
 
-import type { Point } from "./flame";
+export interface Point { x: number; y: number }
 
 /** Where Ember rests relative to the cursor tip (below-right, out of the way). */
 export const FOLLOW_OFFSET: Point = { x: 30, y: 34 };

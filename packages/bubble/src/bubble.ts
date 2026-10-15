@@ -6,8 +6,22 @@
  * look instead of following a page theme.
  */
 
-import { MOOD_LABEL, type Mood } from "./moods";
-import type { Point } from "./flame";
+export interface Point { x: number; y: number }
+
+/** What the agent is doing; drives the chip colour and label. */
+export type BubbleMood =
+  | "idle" | "listening" | "thinking" | "acting" | "guiding" | "attention" | "error" | "done";
+
+export const BUBBLE_LABEL: Record<BubbleMood, string> = {
+  idle: "Ready",
+  listening: "Listening",
+  thinking: "Thinking",
+  acting: "Working",
+  guiding: "Showing you",
+  attention: "Needs you",
+  error: "Stuck",
+  done: "Done",
+};
 
 const STYLE_ID = "ember-bubble-style";
 
@@ -113,9 +127,9 @@ export class ReasoningBubble {
     this.setMood("idle");
   }
 
-  setMood(mood: Mood): void {
+  setMood(mood: BubbleMood): void {
     this.root.dataset.mood = mood;
-    this.chipText.textContent = MOOD_LABEL[mood];
+    this.chipText.textContent = BUBBLE_LABEL[mood];
   }
 
   setTitle(text: string): void {

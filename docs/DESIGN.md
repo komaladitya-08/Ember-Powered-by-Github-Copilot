@@ -1,45 +1,58 @@
 # Ember — visual design
 
-Ember is a small living flame that rides beside the cursor. The look takes its
-inspiration from the fire spirit idea (the product is named after Ember from
-Pixar's *Elemental*), but it is an **original design**: no face, no character
-likeness and no film assets, so the product never imitates the film's character.
+Ember is a small, expressive companion that rides beside the cursor. The idea comes
+from the living fire spirit (the product is named after Ember from Pixar's *Elemental*),
+but every character is an **original design** with no film assets or likeness.
 
-## Principles
+The first direction, a particle flame with no face, was retired because it could not
+show expressions.
 
-- **The flame is the status light.** Colour, height, flicker and sparks say what
-  the agent is doing before you read anything.
-- **Its thinking is always written down.** The bubble under the flame shows the state, a
-  one-line intent, the streaming thought (last three lines) and the current step with its "why".
-- **Readable over any app.** A faint dark halo sits under the flame and the bubble
-  is smoked glass, so both read over white and dark windows alike.
-- **Cheap to draw.** Canvas 2D with additive blending; no WebGL, so it runs on
-  RHEL VMs and remote sessions without a GPU. Honours `prefers-reduced-motion`.
+## Characters
 
-## Moods
+All four ship in the app and are chosen in setup, settings, the handle menu, or by voice.
+They share one emotion rig, so switching never changes behaviour.
 
-| Mood | Look | Driven by |
+| Character | Look | Signature |
 |---|---|---|
-| Ready (`idle`) | Warm orange flame, gentle flicker | no turn running |
-| Listening | Brighter and taller; rings pulse with the voice level | push-to-talk key down |
-| Thinking | Golden-white; sparks orbit the core | `assistant.reasoning_delta` |
-| Working (`acting`) | Intense; leaves an ember trail while flying; spark burst on each click | `tool.execution_start` |
-| Showing you (`guiding`) | Parks beside the target and rings it with small flames | `point_at` tool |
-| Needs you (`attention`) | Violet, fast flicker; bubble shows buttons | `onPreToolUse` → ask, `permission.requested` |
-| Stuck (`error`) | Dim deep red, guttering, smoke | `tool.execution_complete` with `success: false` |
-| Done | White-gold flare and spark shower, then back to Ready | `session.idle` after a successful turn |
+| **Cinder** (default) | Coal critter with glowing cracks, ember eyes, flame tuft, two floating mitten hands | Hands act: wave, cup an ear, point at targets, type, thumbs-up |
+| **Wisp** | Living flame with a face | Flame height and colour carry the mood |
+| **Glassling** | Squishy drop of molten glass with bubbles inside | Jiggles; cools from amber to pale blue when sad |
+| **Glint** | Two glowing eyes and a spark | Most legible at cursor size; least distracting |
 
-## Motion
+## The rig (`packages/characters/src/rig.ts`)
 
-- **Follow:** spring (stiffness 190, damping 24) to cursor + (30, 34) px.
-- **Flight:** quadratic-bezier arc, 0.6–1.4 s by distance, up to 80 px lift,
-  smoothstep easing (ported from clicky, MIT). Ember leads; the real cursor follows
-  ~10% behind on a human-like path (ghost-cursor in the app).
-- **Click:** spark burst + ring at the click point; the cursor dips to 84 %.
+- **12 emotions**, each a set of face parameters on springs (eyes, lids, pupils, brows,
+  mouth, blush, squash, tilt, energy, heat), plus an emote and a gesture.
+- **Always alive:** breathing, blinks (sometimes double), saccades and gaze at the pointer,
+  hops with landing squash, a talking mouth flap, idle fidgets (glance, yawn, hop), optional sleep.
+- **Emotes** are outlined so they read on any background: `…` thinking, `?` confused,
+  `!` surprised, `zzz` sleepy, sparkles proud, sweat drop worried.
+
+| Emotion | Shown when |
+|---|---|
+| Ready (`neutral`) | Resting beside your cursor |
+| Happy | "Hey Ember!" |
+| Listening | Wake word heard |
+| Thinking | Model is reasoning |
+| Focused | Working in an app |
+| Curious | Showing you where to click |
+| Surprised | Something unexpected popped up |
+| Confused | Can't find something |
+| Needs you (`worried`) | Asking before a risky step |
+| Sorry (`sad`) | A step failed |
+| Proud | Task done |
+| Sleepy | Nothing to do for a while |
+
+## Bubble and motion
+
+- **Reasoning bubble** (`packages/bubble`): smoked glass, always dark so it reads over any
+  app; state chip, one-line intent, streaming thought (last three lines), current step
+  with its reason, and buttons when Ember needs a decision.
+- **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
+  distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
+- **Mini-Embers** mark tasks running in background windows or on Ember's desk.
 
 ## Code
 
-`src/overlay/ember/`: `flame.ts` (renderer), `bubble.ts` (reasoning bubble),
-`motion.ts` (follow spring, flight), `moods.ts` (palettes and parameters).
-`demo/playground/` drives them over a simulated GNOME desktop:
-`npm install && npm run build:playground` → `dist/ember-playground.html`.
+`packages/characters` (rig, renderers), `packages/bubble`, `packages/motion`.
+The interactive prototype is `demo/character-lab` (`npm run build:lab`).

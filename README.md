@@ -4,7 +4,12 @@ A small, expressive companion that lives next to your cursor, listens for "Hey E
 and does the work in your real apps where you can watch, without taking over your mouse.
 The agent loop runs on the GitHub Copilot SDK. First platform: RHEL 8.4 (GNOME on Xorg).
 
-- **[PLAN.md](PLAN.md)**: the frozen v1 plan and task list
+```bash
+npm ci && npm run dev      # needs Node 22 and npm 11, see docs/DEVELOPING.md
+```
+
+- **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress
+- [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4)
 - [docs/RESEARCH.md](docs/RESEARCH.md): background research and evidence
-- [docs/DESIGN.md](docs/DESIGN.md): visual design
-- `demo/character-lab`, `demo/playground`: interactive prototypes (`npm install && npm run build:lab`)
+- [docs/DESIGN.md](docs/DESIGN.md): characters, emotions and motion
+- `demo/character-lab`: interactive character prototype (`npm run build:lab`)

@@ -1,0 +1,35 @@
+:root {
+  --bg: #16100d;
+  --panel: #1f1713;
+  --line: #34271f;
+  --fg: #f6ece5;
+  --muted: #b3a197;
+  --ok: #7ccf8a;
+  --warn: #f2c14e;
+  --fail: #ff6b57;
+  --accent: #ff8a3d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif;
+}
+.home { max-width: 680px; margin: 0 auto; padding: 22px 24px 32px; display: grid; gap: 22px; }
+.hero { display: flex; align-items: center; gap: 16px; }
+#buddy { width: 132px; height: 132px; flex: none; border-radius: 18px; background: radial-gradient(circle at 50% 35%, #2b1d17, #120c0a 75%); }
+h1 { margin: 0; font-size: 34px; letter-spacing: -0.01em; }
+.hero-text p { margin: 2px 0 0; color: var(--muted); max-width: 46ch; }
+h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.checks li { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; padding: 11px 14px; }
+.checks li + li { border-top: 1px solid var(--line); }
+.pill { grid-row: span 2; align-self: start; margin-top: 2px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.pill.ok { color: #0f2914; background: var(--ok); }
+.pill.warn { color: #2b2006; background: var(--warn); }
+.pill.fail { color: #2b0b06; background: var(--fail); }
+.check-label { font-weight: 700; }
+.check-detail { color: var(--muted); overflow-wrap: anywhere; }
+.facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: 13px; }

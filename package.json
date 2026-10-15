@@ -1,17 +1,44 @@
 {
   "name": "ember",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Ember: a cursor-companion agent that works visibly in your real apps, powered by the GitHub Copilot SDK.",
   "license": "MIT",
+  "author": "komaladitya-08",
   "type": "module",
+  "main": "dist/app/main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "build:playground": "node scripts/build-demo.mjs playground",
+    "build": "node scripts/build-app.mjs",
+    "dev": "node scripts/build-app.mjs && electron .",
+    "start": "electron .",
     "build:lab": "node scripts/build-demo.mjs character-lab",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:smoke": "node test/smoke/launch.mjs",
+    "check:symvers": "scripts/check-symvers.sh node_modules",
+    "rebuild:el8": "scripts/rebuild-el8.sh"
+  },
+  "ember": {
+    "nativeModules": []
+  },
+  "dependencies": {
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "esbuild": "0.25.10",
-    "typescript": "5.9.3"
-  }
+    "@electron/rebuild": "4.2.0",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.0",
+    "electron": "44.5.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.2"
+  },
+  "packageManager": "npm@11.6.2"
 }

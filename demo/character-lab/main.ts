@@ -4,12 +4,9 @@
  * to work in a background window while "you" keep typing.
  */
 
-import { Rig, PRESETS, type Emotion, type Gesture } from "./rig";
-import { FACTORIES } from "./characters";
-import type { Character } from "./draw";
-import { ReasoningBubble } from "../../src/overlay/ember/bubble";
-import { arcFlight, Spring2D } from "../../src/overlay/ember/motion";
-import type { Mood } from "../../src/overlay/ember/moods";
+import { Rig, PRESETS, FACTORIES, type Emotion, type Gesture, type Character } from "@ember/characters";
+import { ReasoningBubble, type BubbleMood } from "@ember/bubble";
+import { arcFlight, Spring2D } from "@ember/motion";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -249,7 +246,7 @@ function flyTo(to: { x: number; y: number }, signal: AbortSignal): Promise<void>
   });
 }
 
-const MOOD_OF: Partial<Record<Emotion, Mood>> = {
+const MOOD_OF: Partial<Record<Emotion, BubbleMood>> = {
   neutral: "idle", happy: "idle", listening: "listening", thinking: "thinking", focused: "acting",
   curious: "guiding", worried: "attention", sad: "error", proud: "done", surprised: "listening",
 };

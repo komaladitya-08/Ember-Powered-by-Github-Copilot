@@ -94,7 +94,8 @@ app/preload/       contextBridge APIs per window
 app/renderer/      overlay, settings, desk-view, audio (hidden)
 app/utility/       voice worker (sherpa-onnx WASM)
 packages/characters/  rig + Cinder, Wisp, Glassling, Glint (from demo/character-lab)
-packages/bubble/      reasoning bubble (from src/overlay/ember)
+packages/bubble/      reasoning bubble
+packages/motion/      follow spring and flight path
 sidecar/atspi/     Python 3.6 JSON-RPC server (pyatspi)
 desk/agent/        desk-agent process
 test/              unit, integration (Xvfb), tasks/ (agent task suite), fixtures/
@@ -296,3 +297,12 @@ wake-word protections (second-stage check, self-mute, speaker-output rejection).
 4. Desk under a separate Unix user; SDK sub-agent verifier inside workers
 5. macOS, then Windows
 6. SSH (design kept in `docs/RESEARCH.md` §9)
+
+---
+
+## 10. Progress
+
+| Milestone | Status | Notes |
+|---|---|---|
+| M0 Foundations | **Done 2026-10-15** | Electron **44.5.0** and npm **11.6.2** pinned (npm 10 crashes on the test tools). App starts and hands over to a running instance on Oracle Linux 8.4 as a normal user with the Chromium sandbox on. The EL8 native-rebuild path (M0.4) is exercised in CI; it could not complete in the development sandbox because `www.electronjs.org` (Electron headers) is blocked there. |
+
