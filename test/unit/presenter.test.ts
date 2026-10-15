@@ -150,3 +150,71 @@ describe("friendlyError", () => {
     expect(friendlyError("Something odd {\"x\":1}")).toBe("Copilot reported a problem: Something odd");
   });
 });
+
+describe("Presenter: review round 2", () => {
+  it("a restart doesn't keep a notice or an error on screen forever", () => {
+    const { p, last } = setup();
+    p.notice({ title: "I can't reach Copilot", text: "Ember can't reach GitHub right now." });
+    vi.advanceTimersByTime(5000);
+    p.reset(); // a retry restarts the brain
+    vi.advanceTimersByTime(8000);
+    expect(last()).toMatchObject({ bubble: { visible: false } });
+  });
+
+  it("the final answer is the message's own text, even when a second question cut the stream short", () => {
+    vi.useFakeTimers();
+    const said: string[] = [];
+    const p = new Presenter(() => undefined, undefined, () => "Ember", { current: null }, t => said.push(t));
+    p.userPrompt("first");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "AAA first answer " } });
+    p.event({ type: "user.message", data: {} }); // the second question, queued while the first streams
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "is long." } });
+    p.event({ type: "assistant.message", data: { content: "AAA first answer is long." } });
+    expect(said).toEqual(["AAA first answer is long."]);
+    // A message that only calls tools is no answer.
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.message", data: { content: "", toolRequests: [{}] } });
+    expect(said).toHaveLength(1);
+  });
+
+  it("a turn ending while someone else has the bubble leaves it alone", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const owner: { current: object | null } = { current: null };
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", owner);
+    p.userPrompt("hi");
+    owner.current = {}; // main's "Listening…", or a task's step
+    const n = states.length;
+    p.event({ type: "session.idle", data: { aborted: true } });
+    expect(states.slice(n)).toEqual([]);
+    expect(p.busy).toBe(false);
+  });
+
+  it("quiet after the kill switch until the next request", () => {
+    const { p, states, last } = setup();
+    p.userPrompt("hi");
+    p.quiet();
+    const n = states.length;
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "late" } });
+    p.event({ type: "tool.execution_complete", data: { success: false } });
+    expect(states.slice(n)).toEqual([]);
+    p.userPrompt("again");
+    expect(last().bubble?.title).toBe("Thinking…");
+  });
+
+  it("errors from the organisation's endpoint and content filters get their own words", async () => {
+    const { friendlyError } = await import("../../app/main/agent/presenter");
+    const cases: [string, string | undefined, { statusCode?: number; provider?: boolean }, RegExp][] = [
+      ["400 The response was filtered due to the prompt triggering Azure OpenAI's content management policy.", "query", { statusCode: 400 }, /content filter/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's AI endpoint refused/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's AI endpoint refused/],
+      ["Request failed: 401 Unauthorized", undefined, {}, /sign in again/],
+      ["Forbidden", undefined, { statusCode: 403 }, /organisation policy or a missing Copilot seat/],
+      ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's AI endpoint/],
+      ["Failed to get response from the AI model; retried 5 times. Last error: 429 Rate limit reached", "rate_limit", { statusCode: 429 }, /usage limit/],
+      ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /too much/],
+      ["Resource not found on provider at http://x/v1 (HTTP 404).", "query", { statusCode: 404, provider: true }, /model I'm set to use/],
+    ];
+    for (const [raw, type, ctx, want] of cases) expect(friendlyError(raw, type, ctx), raw).toMatch(want);
+  });
+});

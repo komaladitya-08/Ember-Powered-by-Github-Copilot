@@ -16,6 +16,7 @@ import { startMockLlm } from "../mock-llm/server.mjs";
 import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { Presenter } from "../../app/main/agent/presenter";
+import { electronClipboard } from "../../app/main/agent/clipboard";
 import { TaskManager } from "../../app/main/agent/tasks";
 import { CursorBorrow } from "../../app/main/hands/borrow";
 import type { XInput } from "../../app/main/hands/input";
@@ -61,15 +62,16 @@ afterAll(async () => {
   await mock?.close();
 });
 
-interface FakeNode { id: number; role: string; name: string; states?: string[] }
+interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; bounds?: { x: number; y: number; width: number; height: number } }
 
 /** A pretend window and accessibility helper that log every action (and when it happened). */
 function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string } = {}) {
   const log: { t: number; what: string }[] = [];
   const live = new Map(nodes.map(n => [n.id, { ...n, states: n.states ?? ["enabled", "sensitive"] }]));
   const window = { app: "testapp", pid: 1, name: o.title ?? "Test Window", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
-  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: { x: 10, y: 10 * n.id, width: 60, height: 20 } }));
-  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: { x: 10, y: 10 * n.id, width: 60, height: 20 } }; };
+  const boundsOf = (n: FakeNode) => n.bounds ?? { x: 10, y: 10 * n.id, width: 60, height: 20 };
+  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.text !== undefined ? { text: n.text } : {}) }));
+  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.text !== undefined ? { text: n.text } : {}) }; };
   const perception = {
     perceive: async () => ({ window, x11Window: null, nodes: axNodes(), blocked: false, ms: 0, capture: null,
       text: `<screen untrusted="true">\n${axNodes().map(n => `[${n.id}] ${n.role} ${JSON.stringify(n.name)}`).join("\n")}\n</screen>` }),
@@ -87,11 +89,12 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
 function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
   grants?: Record<string, Grant>; confirmer?: Confirmer; flyTo?: WorkerDeps["flyTo"]; limits?: WorkerDeps["limits"]; target?: { title: string; app?: string };
   progress?: (s: string) => void; id?: string; cursor?: WorkerDeps["cursor"]; clipboard?: WorkerDeps["clipboard"];
+  desk?: WorkerDeps["desk"]; model?: string | null;
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
   return new Worker({
-    client, log: quiet, model: "mock-model", vision: false,
+    client, log: quiet, model: o.model === undefined ? "mock-model" : o.model, vision: false,
     provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
     workDir: path.join(dir, "empty"),
     perception: screen.perception, sidecar: screen.sidecar,
@@ -105,6 +108,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     limits: o.limits,
     cursor: o.cursor,
     clipboard: o.clipboard,
+    desk: o.desk,
   } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" } });
 }
 
@@ -250,34 +254,229 @@ describe("screen text reaches the model only as quoted, untrusted data", () => {
   });
 });
 
-describe("text the keyboard can't type", () => {
-  it("is pasted into an app that only takes typed input, and the user's clipboard comes back", async () => {
-    scripts.set("Write Café", m => steps(m) === 0 ? { tool: { name: "perceive_window", args: {} } } : steps(m) === 1 ? { tool: { name: "type_text", args: { id: 3, text: "Café au lait", mode: "insert" } } } : { tool: { name: "finish_task", args: { success: true, summary: "written" } } });
-    const screen = fakeScreen([{ id: 3, role: "text", name: "Note" }]);
+/** A pretend X display: logs clicks and keys. `onActivate` runs when a borrow brings the window to the front. */
+function fakeX(o: { log?: string[]; onActivate?: () => void; dead?: boolean } = {}) {
+  let at = { x: 5, y: 5 };
+  const syms: Record<string, number> = { Control_L: 0xffe3, Shift_L: 0xffe1, Alt_L: 0xffe9, v: 0x76, s: 0x73, a: 0x61, End: 0xff57, Delete: 0xffff };
+  const live = <T>(f: T): T => (o.dead ? ((() => { throw new Error("the desk's display is gone"); }) as T) : f);
+  return {
+    pointer: () => ({ ...at }), pointerState: () => ({ ...at, mask: 0 }), move: live((px: number, py: number) => { at = { x: px, y: py }; }),
+    button: live((b: number, down: boolean) => { o.log?.push(`button ${b} ${down ? "down" : "up"}`); }),
+    keysym: live((sym: number, down: boolean) => { o.log?.push(`key ${sym} ${down ? "down" : "up"}`); return true; }),
+    keycode: () => undefined, keysymOf: (n: string) => syms[n] ?? 0x61, keycodeOf: (sym: number) => sym % 200 + 8, needsShift: () => false,
+    keysDown: () => [], activeWindow: () => 2, focusedWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
+    findWindow: () => 1, activate: live(() => { o.onActivate?.(); }), sync: () => undefined, releaseAll: () => undefined, close: () => undefined,
+  } as unknown as XInput;
+}
+
+/** A borrow that starts at once and records keys instead of pressing them (`onKey` plays the app's part). */
+function quickBorrow(x: XInput, onKey: (k: string) => void = () => undefined) {
+  const borrow = new CursorBorrow(x);
+  const real = borrow.borrow.bind(borrow);
+  borrow.borrow = (fn, o) => real(hand => fn({ ...hand, keys: async k => { onKey(k); } }), { ...o, idleMs: 0 });
+  return borrow;
+}
+
+/** The user's clipboard as Electron 44 has it: items with several formats. */
+function fakeClipboard(initial: Record<string, unknown>[]) {
+  class Item { constructor(readonly data: Record<string, unknown>) {} get types() { return Object.keys(this.data); } async getType(t: string) { return this.data[t]; } }
+  const state = { board: initial.map(d => new Item(d)), restoredAt: 0 };
+  const cb = electronClipboard<Item>({
+    read: async () => state.board,
+    write: async items => { state.board = items; state.restoredAt = Date.now(); },
+    writeText: async t => { state.board = [new Item({ "text/plain": t })]; },
+    clear: () => { state.board = []; state.restoredAt = Date.now(); },
+  }, Item as unknown as new (d: Record<string, never>) => Item);
+  const text = () => String(state.board[0]?.data["text/plain"] ?? "");
+  return { cb, state, text };
+}
+
+const typeInto = (goal: string, args: Record<string, unknown>) => scripts.set(goal, m => steps(m) === 0 ? { tool: { name: "perceive_window", args: {} } }
+  : steps(m) === 1 ? { tool: { name: "type_text", args } } : { tool: { name: "finish_task", args: { success: true, summary: "written" } } });
+const lastToolResult = (goal: string) => {
+  const req = [...mock.requests].reverse().find(r => text(r.messages.find(m => m.role === "user")!).includes(goal) && r.messages.some(m => m.role === "tool"))!;
+  return req.messages.filter(m => m.role === "tool").map(text)[1] ?? "";
+};
+const yes = () => { const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 }); c.ask = async () => "once"; return c; };
+
+describe("text into apps that only take typed input (the user's screen)", () => {
+  it("is pasted whatever the keyboard layout; the whole clipboard comes back only once the text is in the field", async () => {
+    typeInto("Write Hello", { id: 3, text: "Hello, world", mode: "replace" });
+    const screen = fakeScreen([{ id: 3, role: "text", name: "Note", text: "old note" }]);
     screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+    const clip = fakeClipboard([{ "text/plain": "my password", "text/html": "<b>my password</b>", "image/png": new Blob([new Uint8Array([7])]) }]);
     const keys: string[] = [];
-    let at = { x: 5, y: 5 };
-    const x: XInput = {
-      pointer: () => ({ ...at }), pointerState: () => ({ ...at, mask: 0 }), move: (px: number, py: number) => { at = { x: px, y: py }; }, button: () => undefined,
-      keysym: () => true, keycode: () => undefined, keysymOf: (n: string) => ({ Control_L: 0xffe3, v: 0x76, End: 0xff57 } as Record<string, number>)[n] ?? 0x61,
-      keycodeOf: (sym: number) => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, focusedWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
-      findWindow: () => 1, activate: () => undefined, sync: () => undefined, close: () => undefined,
-    } as unknown as XInput;
-    const borrow = new CursorBorrow(x);
-    const realBorrow = borrow.borrow.bind(borrow);
-    borrow.borrow = (fn, o) => realBorrow(hand => fn({ ...hand, keys: async k => { keys.push(k); } }), { ...o, idleMs: 0 });
-    let clip = "the user's own clipboard";
-    const pasted: string[] = [];
-    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 });
-    confirmer.ask = async () => "once";
-    const r = await makeWorker(screen, "Write Café", {
-      confirmer,
-      cursor: { borrow, findWindow: () => 1, setBorrowing: () => undefined },
-      clipboard: { readText: async () => clip, writeText: async t => { clip = t; pasted.push(t); } },
+    let landedAt = 0;
+    // A slow app: the paste shows up 600 ms after Ctrl+V.
+    const borrow = quickBorrow(fakeX(), k => {
+      keys.push(k);
+      if (k === "Delete") screen.live.get(3)!.text = "";
+      if (k === "ctrl+v") { const t = clip.text(); setTimeout(() => { screen.live.get(3)!.text = t; landedAt = Date.now(); }, 600); }
+    });
+    const pendingWhenWaiting: number[] = [];
+    const r = await makeWorker(screen, "Write Hello", {
+      confirmer: yes(), clipboard: clip.cb,
+      cursor: { borrow, findWindow: () => 1, setBorrowing: s => { if (s === "waiting") pendingWhenWaiting.push(borrow.pending); } },
     }).run(new AbortController().signal);
     expect(r.success).toBe(true);
-    expect(keys).toContain("ctrl+v");
-    expect(pasted[0]).toBe("Café au lait");
-    expect(clip).toBe("the user's own clipboard");
+    expect(keys).toEqual(["ctrl+a", "Delete", "ctrl+v"]);
+    expect(screen.live.get(3)!.text).toBe("Hello, world");
+    expect(clip.state.restoredAt).toBeGreaterThanOrEqual(landedAt);
+    expect(clip.state.board[0].types).toEqual(["text/plain", "text/html", "image/png"]);
+    expect(clip.text()).toBe("my password");
+    // The status line could say "Waiting until you let go of the mouse…" (the borrow was asked for first).
+    expect(pendingWhenWaiting).toEqual([1]);
+  });
+
+  it("a paste that never shows up is reported, and an empty clipboard stays empty", async () => {
+    typeInto("Write Bonjour", { id: 3, text: "Bonjour", mode: "append" });
+    const screen = fakeScreen([{ id: 3, role: "text", name: "Note", text: "" }]);
+    screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+    const clip = fakeClipboard([]);
+    const keys: string[] = [];
+    await makeWorker(screen, "Write Bonjour", {
+      confirmer: yes(), clipboard: clip.cb, cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined },
+    }).run(new AbortController().signal);
+    expect(keys).toEqual(["ctrl+End", "ctrl+v"]);
+    expect(lastToolResult("Write Bonjour")).toMatch(/didn't show up in the field/);
+    expect(clip.state.board).toEqual([]);
+  });
+
+  it("“insert” never clicks (that would move the caret): it types at the caret, or refuses when the field doesn't have the keyboard", async () => {
+    const log: string[] = [];
+    for (const [goal, focused] of [["Insert Merci unfocused", false], ["Insert Merci focused", true]] as const) {
+      typeInto(goal, { id: 3, text: "Merci", mode: "insert" });
+      const screen = fakeScreen([{ id: 3, role: "text", name: "Note", text: "Dear Ana", states: ["enabled", "sensitive", ...(focused ? ["focused"] : [])] }]);
+      screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+      const clip = fakeClipboard([{ "text/plain": "mine" }]);
+      const keys: string[] = [];
+      await makeWorker(screen, goal, {
+        confirmer: yes(), clipboard: clip.cb,
+        cursor: { borrow: quickBorrow(fakeX({ log }), k => { keys.push(k); if (k === "ctrl+v") screen.live.get(3)!.text = "Dear Merci Ana"; }), findWindow: () => 1, setBorrowing: () => undefined },
+      }).run(new AbortController().signal);
+      if (focused) {
+        expect(keys).toEqual(["ctrl+v"]);
+        expect(lastToolResult(goal)).toMatch(/^Done/);
+      } else {
+        expect(keys).toEqual([]);
+        expect(lastToolResult(goal)).toMatch(/can't put the caret/);
+      }
+      expect(clip.text()).toBe("mine");
+    }
+    expect(log.filter(l => l.startsWith("button"))).toEqual([]);
+  });
+
+  it("an element scrolled out of its window while Ember waited for its turn isn't clicked", async () => {
+    typeInto("Write Hallo", { id: 3, text: "Hallo", mode: "replace" });
+    const screen = fakeScreen([{ id: 3, role: "text", name: "Note", text: "" }]);
+    screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+    const log: string[] = [];
+    const keys: string[] = [];
+    const borrow = quickBorrow(fakeX({ log }), k => keys.push(k));
+    await makeWorker(screen, "Write Hallo", {
+      confirmer: yes(), clipboard: fakeClipboard([]).cb,
+      // While Ember waits for the user to be still, the list scrolls: the field is now below the window.
+      cursor: { borrow, findWindow: () => 1, setBorrowing: s => { if (s === "waiting") screen.live.get(3)!.bounds = { x: 10, y: 900, width: 60, height: 20 }; } },
+    }).run(new AbortController().signal);
+    expect(lastToolResult("Write Hallo")).toMatch(/outside its window/);
+    expect(log.filter(l => l.startsWith("button"))).toEqual([]);
+    expect(keys).toEqual([]);
+  });
+});
+
+describe("Ember's desk", () => {
+  let dataHome: string;
+  let savedDataHome: string | undefined;
+  beforeAll(() => {
+    // An app to open on the desk.
+    dataHome = fs.mkdtempSync(path.join(os.tmpdir(), "ember-apps-"));
+    fs.mkdirSync(path.join(dataHome, "applications"));
+    fs.writeFileSync(path.join(dataHome, "applications", "scribble.desktop"), "[Desktop Entry]\nType=Application\nName=Scribble\nExec=scribble\n");
+    savedDataHome = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = dataHome;
+  });
+  afterAll(() => { if (savedDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = savedDataHome; });
+
+  /** A pretend desk with one app window, which appears once the app is opened. */
+  function fakeDesk(o: { inControl?: () => boolean; log?: string[]; onActivate?: () => void; dead?: boolean } = {}) {
+    const screen = fakeScreen([{ id: 1, role: "push button", name: "Apply" }, { id: 3, role: "text", name: "Doc" }], { title: "Scribble" });
+    let opened = false;
+    const win = { app: "scribble", pid: 4242, name: "Scribble", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
+    const perception = { ...screen.perception, windows: async () => (opened ? [win] : []) };
+    const place = {
+      info: { handOff: dir }, perception, sidecar: screen.sidecar, input: fakeX({ log: o.log, onActivate: o.onActivate, dead: o.dead }),
+      userInControl: o.inControl ?? (() => false), dead: false, onDead: () => undefined, close: () => undefined,
+      open: () => { opened = true; return 4242; },
+    };
+    return { place, screen };
+  }
+  const onDesk = (goal: string, then: Reply[]) => scripts.set(goal, m => steps(m) === 0 ? { tool: { name: "open_on_desk", args: { name: "Scribble" } } }
+    : steps(m) === 1 ? { tool: { name: "perceive_window", args: {} } } : then[steps(m) - 2] ?? { tool: { name: "finish_task", args: { success: true, summary: "done" } } });
+
+  it("“Take over” stops Ember's input on the desk at once, also a borrow already under way", async () => {
+    onDesk("Save on the desk", [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
+    let user = false;
+    const log: string[] = [];
+    // The user clicks "Take over" just as Ember's borrow brings the window to the front.
+    const desk = fakeDesk({ inControl: () => user, log, onActivate: () => { user = true; } });
+    await makeWorker(desk.screen, "Save on the desk", { desk: async () => desk.place as never }).run(new AbortController().signal);
+    const results = [...mock.requests].reverse().find(r => text(r.messages.find(m => m.role === "user")!).includes("Save on the desk"))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[2]).toMatch(/took over your desk/);
+    expect(log.filter(l => l.startsWith("key"))).toEqual([]);
+  });
+
+  it("a click waiting its turn isn't made once the user has taken over, and nothing is opened under their hands", async () => {
+    onDesk("Apply on the desk", [{ tool: { name: "click", args: { id: 1 } } }]);
+    let user = false;
+    const desk = fakeDesk({ inControl: () => user });
+    const read = desk.screen.sidecar.readElement;
+    // The user takes over while Ember flies to the button.
+    desk.screen.sidecar.readElement = async (id: number) => { setTimeout(() => { user = true; }, 100); return read(id); };
+    await makeWorker(desk.screen, "Apply on the desk", { desk: async () => desk.place as never }).run(new AbortController().signal);
+    expect(desk.screen.log.filter(e => e.what.startsWith("doAction"))).toEqual([]);
+
+    onDesk("Open while they work", []);
+    const busy = fakeDesk({ inControl: () => true });
+    let opened = false;
+    busy.place.open = () => { opened = true; return 4242; };
+    await makeWorker(busy.screen, "Open while they work", { desk: async () => busy.place as never }).run(new AbortController().signal);
+    expect(opened).toBe(false);
+    const results = [...mock.requests].reverse().find(r => text(r.messages.find(m => m.role === "user")!).includes("Open while they work"))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[0]).toMatch(/taken over your desk/);
+  });
+
+  it("two tasks on one desk take turns with its keyboard; a new desk after one died gets its own", async () => {
+    const log: string[] = [];
+    const desk = fakeDesk({ log });
+    for (const g of ["Save A on the desk", "Save B on the desk"]) onDesk(g, [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }, { tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
+    await Promise.all(["Save A on the desk", "Save B on the desk"].map(g => makeWorker(desk.screen, g, { desk: async () => desk.place as never }).run(new AbortController().signal)));
+    const keys = log.filter(l => l.startsWith("key"));
+    expect(keys).toHaveLength(16);
+    // Never two combinations at once: at most Ctrl and S are down together.
+    let held = 0;
+    for (const k of keys) { held += k.endsWith("down") ? 1 : -1; expect(held).toBeLessThanOrEqual(2); }
+
+    // The first desk dies mid-task; the next open_on_desk gets a new desk, and its keyboard works.
+    const dead = fakeDesk({ dead: true });
+    const fresh: string[] = [];
+    const next = fakeDesk({ log: fresh });
+    let desks = 0;
+    scripts.set("Save after the desk died", m => [
+      { tool: { name: "open_on_desk", args: { name: "Scribble" } } }, { tool: { name: "perceive_window", args: {} } },
+      { tool: { name: "press_keys", args: { keys: "ctrl+s" } } },
+      { tool: { name: "open_on_desk", args: { name: "Scribble" } } }, { tool: { name: "perceive_window", args: {} } },
+      { tool: { name: "press_keys", args: { keys: "ctrl+s" } } },
+    ][steps(m)] ?? { tool: { name: "finish_task", args: { success: true, summary: "saved" } } });
+    await makeWorker(dead.screen, "Save after the desk died", { desk: async () => (desks++ === 0 ? dead.place : next.place) as never }).run(new AbortController().signal);
+    expect(fresh.filter(l => l.startsWith("key"))).toHaveLength(4);
+  });
+});
+
+describe("models", () => {
+  it("a task never runs on the runtime's default model", async () => {
+    const before = mock.requests.length;
+    const r = await makeWorker(fakeScreen([APPLY]), "No model", { model: null }).run(new AbortController().signal);
+    expect(r.success).toBe(false);
+    expect(mock.requests.length).toBe(before);
   });
 });

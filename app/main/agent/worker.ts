@@ -15,6 +15,8 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
+import { within } from "./conductor";
+import { asPasteClipboard, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { TOOL_STEPS, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
@@ -68,10 +70,11 @@ export interface WorkerDeps {
   };
   onUsage?: (input: number, output: number) => void;
   /**
-   * The user's clipboard (their screen only): text the keyboard can't type (accents, other
-   * layouts, long text) is pasted instead, and the clipboard is put back right after.
+   * The user's clipboard (their screen only): text for a field Ember types into with the borrowed
+   * keyboard is pasted (any keyboard layout, accents, long text), and the clipboard is put back
+   * once the text is in the field.
    */
-  clipboard?: { readText(): Promise<string>; writeText(text: string): Promise<void> };
+  clipboard?: PasteClipboard | TextClipboard;
   /** Limits on one task (defaults: 150 tool calls, 20 minutes). */
   limits?: { maxSteps?: number; maxMs?: number };
 }
@@ -99,6 +102,10 @@ const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 
 /** After Stop, a turn that doesn't wind down within this long is left behind. */
 const STOP_GRACE_MS = 2000;
+/** How long a pasted text gets to show up in its field before the user's clipboard goes back. */
+const PASTE_WAIT_MS = 2000;
+/** The sidecar reads at most this much of a field's text. */
+const TEXT_READ_LIMIT = 2000;
 
 /** One borrow per desk: every task's desk input waits its turn there (a desk has one keyboard and pointer). */
 const deskBorrows = new WeakMap<DeskPlace, CursorBorrow>();
@@ -145,10 +152,14 @@ export class Worker {
   private tainted = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
+  private frame: Bounds | null = null;
+  private clipboard: PasteClipboard | null;
 
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
     this.target = { ...spec.target };
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
+    this.clipboard = d.clipboard ? asPasteClipboard(d.clipboard) : null;
   }
 
   private get perception() { return this.place?.perception ?? this.d.perception; }
@@ -173,6 +184,7 @@ export class Worker {
     this.known = new Map();
     this.labels = new Map();
     this.window = { app: "", name: "" };
+    this.frame = null;
     this.d.onDesk?.(place);
   }
 
@@ -195,26 +207,37 @@ export class Worker {
   /**
    * One tool: arguments are checked against the schema here (the runtime does not
    * enforce it), the step limit is counted, and nothing runs once the task is stopped or finished.
+   * Tools run one at a time, in the order called (the runtime may call several at once): two actions
+   * or questions of one task never overlap.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   private tool<S extends z.ZodType>(name: string, description: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>): Tool<any> {
     const maxSteps = this.d.limits?.maxSteps ?? 150;
     return defineTool(name, {
       description, parameters, skipPermission: true, defer: "never",
-      handler: async (raw: unknown) => {
-        if (this.halted) return STOPPED();
-        if (this.result) return denied("The task is already finished. Stop now.");
-        if (++this.steps > maxSteps) {
-          this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
-          return STOPPED();
-        }
-        const parsed = parameters.safeParse(raw ?? {});
-        if (!parsed.success) {
-          return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
-        }
-        return handler(parsed.data);
+      handler: (raw: unknown) => {
+        const run = this.toolTurn.then(() => this.runTool(name, parameters, handler, raw, maxSteps));
+        this.toolTurn = run.catch(() => undefined);
+        return run;
       },
     });
+  }
+
+  /** The tool call in progress (or queued last): the next one waits for it. */
+  private toolTurn: Promise<unknown> = Promise.resolve();
+
+  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+    if (this.halted) return STOPPED();
+    if (this.result) return denied("The task is already finished. Stop now.");
+    if (++this.steps > maxSteps) {
+      this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
+      return STOPPED();
+    }
+    const parsed = parameters.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
+    }
+    return handler(parsed.data);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -271,11 +294,13 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
+          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
             // Stopped while the desk started: nothing is opened (and the desk view isn't shown for a task that is gone).
             if (this.isOver) throw new BorrowStopped();
+            // The user is working on the desk: nothing is opened under their hands.
+            if (place.userInControl()) throw new UserTookOver(0);
             this.setPlace(place);
             // The app's window is the one from the process just started, or else whichever window is new.
             const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
@@ -294,7 +319,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return denied("Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.");
+          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", app.name, async () => {
             if (this.isOver) throw new BorrowStopped();
             this.setPlace(null);
@@ -348,6 +373,8 @@ export class Worker {
     const d = this.d;
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
     if (signal.aborted) return { success: false, summary: "Stopped.", stopped: true };
+    // Never the runtime's default model: it may be one the administrator didn't allow.
+    if (!d.model) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
@@ -359,7 +386,7 @@ export class Worker {
       const tools = this.tools();
       const config = hardenedSessionConfig({
         sessionId: `ember-task-${this.spec.id}`,
-        model: d.model ?? undefined,
+        model: d.model,
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage() : workerSystemMessage(),
@@ -427,7 +454,8 @@ export class Worker {
   }
 
   async dispose(): Promise<void> {
-    await this.session?.disconnect().catch(() => undefined);
+    // A hung runtime isn't waited for.
+    if (this.session) await within(this.session.disconnect().catch(() => undefined), 3000);
   }
 
   /** Guide mode: done when the user presses inside the element, the element changes, or the window does. */
@@ -478,6 +506,7 @@ export class Worker {
       return fail(`No open window has ${q(expectTitle, 100)} in its title. Use list_windows and pick one of those titles.`);
     }
     this.window = { app: p.window.app, name: p.window.name };
+    this.frame = p.window.bounds;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
@@ -539,7 +568,7 @@ export class Worker {
 
   /** Policy check, confirmation, lease, motion, action, audit: the one path every window action takes. */
   private async act(kind: ActionKind, id: number, value: string | undefined, run: () => Promise<ActionResult>, mode?: TextMode): Promise<ToolResultObject> {
-    if (this.place?.userInControl()) return denied("The user has taken over your desk. Wait for them, or finish the task saying where you got to.");
+    if (this.place?.userInControl()) return this.deskTaken(kind);
     const f = await this.fresh(id);
     if (!("node" in f)) return f;
     const { node, element } = f;
@@ -566,6 +595,8 @@ export class Worker {
       if (node.bounds) this.fly(node.bounds);
       await new Promise(r => setTimeout(r, 350)); // let Ember arrive, so the user sees where it acts
       if (this.isOver) return STOPPED();
+      // The user may have taken over the desk while Ember waited for the question, the window or its turn.
+      if (this.place?.userInControl()) return this.deskTaken(kind, element);
       const res = await run();
       if (res.after) this.known.set(id, { ...node, name: res.after.name, states: res.after.states, bounds: res.after.bounds ?? node.bounds });
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok, ...auditValue(req), after: { states: res.after.states, selected: res.after.selected } });
@@ -592,9 +623,10 @@ export class Worker {
 
   /** Tier 3: borrow the mouse (and keyboard) for one action, with the user's OK. */
   private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace"): Promise<ToolResultObject> {
-    // On the user's screen, text the keyboard can't type (or a lot of it) goes in by paste; on the desk it is typed.
-    const paste = kind === "cursor_text" && !this.place && !!this.d.clipboard && (!typeableText(value ?? "") || (value ?? "").length > 200);
-    if (kind === "cursor_text" && !paste && !typeableText(value ?? "")) {
+    const text = value ?? "";
+    // On the user's screen, text goes in by paste: typed keys depend on their keyboard layout (and Caps Lock). On the desk it is typed.
+    const paste = kind === "cursor_text" && !this.place && !!this.clipboard;
+    if (kind === "cursor_text" && !paste && !typeableText(text)) {
       return fail("This app only takes typed text, and Ember can only type plain ASCII letters, digits and punctuation with the keyboard. Tell the user in finish_task.");
     }
     const element = { role: node.role, name: node.name || this.labels.get(id) || "" };
@@ -606,40 +638,81 @@ export class Worker {
     if (!live?.bounds || live.role !== node.role || (live.name || this.labels.get(id) || "") !== element.name) {
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
-    const b = live.bounds;
-    const cx = b.x + Math.min(b.width / 2, 120), cy = b.y + b.height / 2;
     return this.withCursor(kind, element, async hand => {
-      await hand.glideTo(cx, cy);
-      await hand.click();
+      // And where it is once its window is in front (Ember may have waited seconds for its turn and for the user to be still).
+      const spot = this.landingSpot(id, node, element, await this.sidecar.readElement(id).catch(() => null));
+      if (kind === "cursor_text" && mode === "insert") {
+        // A click would move the caret: "insert" goes where the caret already is, in the field that has the keyboard.
+        if (!spot.focused) throw new Error(`Ember can't put the caret in the right place in element ${id} with the mouse. Use mode "append" or "replace", or ask the user to click where the text should go.`);
+      } else {
+        await hand.glideTo(spot.x, spot.y);
+        await hand.click();
+      }
       if (kind === "cursor_text") {
-        // Only "replace" selects what is there; append goes to the end, insert types where the click put the caret.
-        if (mode === "replace") await hand.keys("ctrl+a");
+        // "replace" clears what is there first; append goes to the end.
+        if (mode === "replace") { await hand.keys("ctrl+a"); await hand.keys("Delete"); }
         else if (mode === "append") await hand.keys("ctrl+End");
-        if (paste) await this.pasteText(hand, value ?? "");
-        else await hand.type(value ?? "");
+        if (paste) await this.pasteText(hand, text, () => this.holds(id, text, mode));
+        else await hand.type(text);
       }
     }, id);
   }
 
-  /** Puts the text on the clipboard, pastes it, and gives the user's clipboard back (text only; anything else in it is lost). */
-  private async pasteText(hand: Hand, text: string): Promise<void> {
-    const cb = this.d.clipboard!;
-    const before = await cb.readText();
+  /** Where to click an element now, or an error if it changed, has no position, or lies outside its window (scrolled away). */
+  private landingSpot(id: number, node: AxNode, element: { role: string; name: string }, now: ElementInfo | null): { x: number; y: number; focused: boolean } {
+    if (!now?.bounds || now.role !== node.role || (now.name || this.labels.get(id) || "") !== element.name) {
+      throw new Error(`Element ${id} moved or changed before Ember could reach it, so nothing was done. Call perceive_window and try again.`);
+    }
+    const b = now.bounds;
+    const x = b.x + Math.min(b.width / 2, 120), y = b.y + b.height / 2;
+    const f = this.frame;
+    if (f && (x < f.x || y < f.y || x >= f.x + f.width || y >= f.y + f.height)) {
+      throw new Error(`Element ${id} is outside its window now (scrolled away, or the window moved), so nothing was done. Call perceive_window and try again.`);
+    }
+    return { x, y, focused: now.states.includes("focused") };
+  }
+
+  /** Does field `id` hold `text` now (null: its text can't be read)? Spacing is ignored (single-line fields drop line breaks). */
+  private async holds(id: number, text: string, mode: TextMode): Promise<boolean | null> {
+    const e = await this.sidecar.readElement(id).catch(() => null);
+    if (!e || e.secret || e.text === undefined) return null;
+    const squash = (s: string) => s.replace(/\s+/g, "");
+    const has = mode === "replace" ? squash(e.text) === squash(text) : squash(e.text).includes(squash(text));
+    // Only the start of a long field is read: text added further on can't be seen.
+    return has ? true : e.text.length >= TEXT_READ_LIMIT ? null : false;
+  }
+
+  /**
+   * Puts the text on the clipboard, pastes it, and gives the user's clipboard back exactly (every format, or
+   * empty) only once the text is in the field: a slow app would otherwise paste the user's own clipboard.
+   */
+  private async pasteText(hand: Hand, text: string, landed: () => Promise<boolean | null>): Promise<void> {
+    const cb = this.clipboard!;
+    const saved = await cb.save();
     await cb.writeText(text);
+    let arrived: boolean | null;
     try {
       await hand.keys("ctrl+v");
     } finally {
-      // The app reads the clipboard after the key (even if Ember stopped right after sending it): only then is it given back.
-      await new Promise(r => setTimeout(r, 250));
-      await cb.writeText(before);
+      // Even if Ember stopped right after the key: the app reads the clipboard when it gets to it.
+      const t0 = Date.now();
+      for (;;) {
+        arrived = await landed();
+        if (arrived === true || Date.now() - t0 >= PASTE_WAIT_MS) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      await cb.restore(saved);
     }
+    if (arrived === false) throw new Error("The pasted text didn't show up in the field (the app may be busy), so it's unknown whether it went in. Call perceive_window to check before trying again.");
   }
 
   private async pressKeys(keys: string): Promise<ToolResultObject> {
     // Keys go to whatever has focus in the window: the policy decides on that element (never a password field).
     const seen = await this.perception.read(this.target).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (seen?.blocked) return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
+    if (seen?.blocked) {
+      return this.refuse("keys", "private window (never-look list or a password prompt)", "This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.", { value: keys });
+    }
     const focus = seen ? focusedElement(seen.nodes) : null;
     const element = focus ? { role: focus.role, name: focus.name } : undefined;
     const verdict = await this.authorize({ taskId: this.spec.id, kind: "keys", app: this.window.app, window: this.window.name, element, value: keys });
@@ -660,6 +733,22 @@ export class Worker {
     });
   }
 
+  /** A hand that checks `check` before every move, click, key and few typed characters. */
+  private guardedHand(hand: Hand, check: () => void): Hand {
+    return {
+      ...hand,
+      glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
+      click: async b => { check(); await hand.click(b); },
+      keys: async k => { check(); await hand.keys(k); },
+      type: async t => {
+        // All or nothing: text the keyboard layout can't type is refused before the first key (then typed a few letters at a time).
+        if ("checkTyping" in hand && typeof hand.checkTyping === "function") hand.checkTyping(t);
+        for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); }
+      },
+      scroll: async (dir, n) => { check(); await hand.scroll(dir, n); },
+    };
+  }
+
   private async withCursor(kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
     if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId);
@@ -671,18 +760,9 @@ export class Worker {
       this.d.audit.write({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
       return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
-    const guarded = (hand: Hand): Hand => {
-      const check = () => {
-        if (this.isOver) throw new BorrowStopped();
-        if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
-      };
-      return {
-        ...hand,
-        glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
-        click: async b => { check(); await hand.click(b); },
-        keys: async k => { check(); await hand.keys(k); },
-        type: async t => { for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); } },
-      };
+    const check = () => {
+      if (this.isOver) throw new BorrowStopped();
+      if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
     };
     // Exactly the window the user approved, or nothing: no known window, or a title several windows share (or none), is refused.
     if (!this.window.name) return fail("Ember doesn't know which window to use yet. Call perceive_window first.");
@@ -691,14 +771,16 @@ export class Worker {
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     // Stopped while waiting for another task's window: the approved borrow never starts.
     if (this.isOver) { release(); return STOPPED(); }
+    // Asked for first, so the status sees it waiting ("Waiting until you let go of the mouse…").
+    const borrowed = c.borrow.borrow(hand => fn(this.guardedHand(hand, check)), {
+      window: win,
+      signal: this.overSignal,
+      onStart: () => c.setBorrowing("active"),
+    });
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
     try {
-      await c.borrow.borrow(hand => fn(guarded(hand)), {
-        window: win,
-        signal: this.overSignal,
-        onStart: () => c.setBorrowing("active"),
-      });
+      await borrowed;
       const after = verifyId !== undefined ? await this.sidecar.readElement(verifyId).catch(() => null) : null;
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 3 });
       return done(`Done with the user's mouse, which is back where it was.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
@@ -718,26 +800,21 @@ export class Worker {
 
   /** Tier 2: full mouse and keyboard on Ember's own desk (the user's input is never touched). */
   private async onDeskInput(place: DeskPlace, kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
-    if (place.userInControl()) return denied("The user has taken over your desk. Wait for them, or finish the task saying where you got to.");
+    if (place.userInControl()) return this.deskTaken(kind, element);
     if (!this.window.name) return fail("Ember doesn't know which window on its desk to use yet. Call perceive_window first.");
     const release = await this.d.lease(`desk:${this.window.name}`, this.spec.id, this.overSignal);
     if (this.isOver) { release(); return STOPPED(); }
     // One keyboard and pointer per desk: every task's desk input goes through the same queue.
     const deskBorrow = deskBorrowFor(place);
-    const guarded = (hand: Hand): Hand => {
-      const check = () => { if (this.isOver) throw new BorrowStopped(); };
-      return {
-        ...hand,
-        glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
-        click: async b => { check(); await hand.click(b); },
-        keys: async k => { check(); await hand.keys(k); },
-        type: async t => { check(); await hand.type(t); },
-      };
+    // Taking over the desk ("Take over" in its view) stops Ember's input there at once, also a borrow that waited its turn.
+    const check = () => {
+      if (this.isOver) throw new BorrowStopped();
+      if (place.userInControl()) throw new UserTookOver(0);
     };
     const win = place.input.findWindow(this.window.name, this.target.pid);
     if (!win) { release(); return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window."); }
     try {
-      await deskBorrow.borrow(hand => fn(guarded(hand)), { idleMs: 0, window: win, signal: this.overSignal });
+      await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check)); }, { idleMs: 0, window: win, signal: this.overSignal });
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2 });
       return done(`Done on your desk.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
@@ -763,10 +840,25 @@ export class Worker {
       return done(text);
     } catch (err) {
       if (err instanceof BorrowStopped) return STOPPED();
+      if (err instanceof UserTookOver) return this.deskTaken(kind);
       const msg = err instanceof Error ? err.message : String(err);
       this.d.audit.write({ event: "action", task: this.spec.id, kind, value, ok: false, error: msg });
       return fail(msg);
     }
+  }
+
+  /** A refusal Ember makes itself (not the policy engine): written to the audit log like the policy's, then told to the model. */
+  private refuse(kind: ActionKind, reason: string, text: string, o: { app?: string; element?: { role: string; name: string }; value?: string; never?: boolean } = {}): ToolResultObject {
+    this.d.audit.write({
+      event: "decision", task: this.spec.id, kind, app: o.app ?? this.window.app, window: this.window.name,
+      ...(o.element ? { element: o.element } : {}), ...(o.value !== undefined ? { value: o.value.slice(0, 120) } : {}),
+      ...(o.never === false ? {} : { tier: "never" }), verdict: "deny", reason,
+    });
+    return denied(text);
+  }
+
+  private deskTaken(kind: ActionKind, element?: { role: string; name: string }): ToolResultObject {
+    return this.refuse(kind, "the user has taken over Ember's desk", "The user has taken over your desk. Wait for them, or finish the task saying where you got to.", { element, never: false });
   }
 
   /** null when the action may go ahead; otherwise the tool result to return. */

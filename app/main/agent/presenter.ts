@@ -50,7 +50,8 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is )?(disposed|closed|lost|refused)|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
-  return short ? `Copilot reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : "Copilot reported a problem.";
+  const who = ctx.provider ? "The AI endpoint" : "Copilot";
+  return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
 }
 
 /**
@@ -295,7 +296,7 @@ export class Presenter {
         const aborted = d.aborted === true;
         // Someone else has the bubble now (a task, a question, main's "Listening…"): the turn ends quietly.
         if (this.owner.current !== this && this.owner.current !== null) {
-          this.state = { ...this.state, talking: false, bubble: { ...this.state.bubble, streaming: false } };
+          this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...this.state.bubble, streaming: false } };
           this.answering = false;
           break;
         }

@@ -104,3 +104,50 @@ describe("runtime", () => {
     expect(locateRuntime({ appPath: "/nowhere", env: { EMBER_COPILOT_RUNTIME: fake } }).path).toBe(fake);
   });
 });
+
+describe("review round 2", () => {
+  it("with no model that has vision, tasks get an allowed model anyway (never the runtime's default)", () => {
+    const text = [{ id: "text-big" }, { id: "text-mini" }];
+    expect(chooseModels(text)).toEqual({ conductor: "text-mini", worker: "text-mini" });
+    expect(chooseModels(text, { worker: "text-big" })).toEqual({ conductor: "text-mini", worker: "text-big" });
+  });
+
+  it("cancelling the sign-in while it waits fetches nothing more and returns no token", async () => {
+    const ac = new AbortController();
+    let fetches = 0;
+    const fetch = async () => { fetches++; return { ok: true, status: 200, json: async () => ({ access_token: "gho_" + "y".repeat(36) }) }; };
+    const poll = pollDeviceFlow(fetch, "cid", { deviceCode: "d", userCode: "u", verificationUri: "https://github.com/login/device", expiresIn: 900, interval: 5 },
+      { signal: ac.signal, sleep: async () => { ac.abort(); } });
+    await expect(poll).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetches).toBe(0);
+  });
+
+  it("the clipboard comes back exactly: every format, and empty stays empty", async () => {
+    const { electronClipboard, asPasteClipboard } = await import("../../app/main/agent/clipboard");
+    class Item { constructor(readonly data: Record<string, unknown>) {} get types() { return Object.keys(this.data); } async getType(t: string) { return this.data[t]; } }
+    let board: Item[] = [new Item({ "text/plain": "secret", "text/html": "<b>secret</b>", "image/png": new Blob([new Uint8Array([1, 2, 3])]) })];
+    let cleared = 0;
+    const cb = electronClipboard<Item>({
+      read: async () => board, write: async items => { board = items; }, writeText: async t => { board = [new Item({ "text/plain": t })]; }, clear: () => { board = []; cleared++; },
+    }, Item as unknown as new (d: Record<string, never>) => Item);
+    const saved = await cb.save();
+    await cb.writeText("pasted");
+    expect(board[0].data).toEqual({ "text/plain": "pasted" });
+    await cb.restore(saved);
+    expect(board[0].types).toEqual(["text/plain", "text/html", "image/png"]);
+    expect(await (board[0].data["image/png"] as Blob).arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer);
+    board = [];
+    const empty = await cb.save();
+    await cb.writeText("pasted");
+    await cb.restore(empty);
+    expect(board).toEqual([]);
+    expect(cleared).toBe(1);
+    // The older text-only wiring still works.
+    let text = "mine";
+    const old = asPasteClipboard({ readText: async () => text, writeText: async t => { text = t; } });
+    const s = await old.save();
+    await old.writeText("x");
+    await old.restore(s);
+    expect(text).toBe("mine");
+  });
+});

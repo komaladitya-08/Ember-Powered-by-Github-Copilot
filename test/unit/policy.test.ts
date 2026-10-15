@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
+import { PolicyEngine, canonicalKeys, type ActionRequest } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 
 const engine = (grants: Record<string, "observe" | "act"> = {}, now = () => 0) =>
@@ -171,5 +171,40 @@ describe("audit journal copy", () => {
     const { journalLine } = await import("../../app/main/policy/audit");
     const out = JSON.parse(journalLine(JSON.stringify({ event: "task", goal: "email my therapist", window: "Re: biopsy results", kind: "click" })));
     expect(out).toEqual({ event: "task", goalChars: 18, windowChars: 18, kind: "click" });
+  });
+});
+
+describe("policy: key combinations however they are spelled (review round 2)", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }) });
+  const keys = (value: string, onDesk = false) => e.decide({ taskId: `k-${Math.random()}`, kind: "keys", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value, onDesk });
+
+  it.each([
+    "alt+ctrl+f2", "alt+ctrl+t", "alt+ctrl+delete", "alt+ctrl+backspace", "shift+ctrl+alt+t", "Ctrl + Alt + Del", "control+alt+F7",
+    "Super_L", "super_r", "ctrl+super+d", "win+d", "super", "meta+l", "Hyper_L", "XF86PowerOff", "XF86LogOff", "XF86AudioMute",
+    "Print", "alt+Print", "alt+Sys_Req", "alt+F2", "alt+shift+F1", "ctrl+alt+Tab", "ctrl+alt+l", "ctrl+alt+Up",
+    // Ember's own shortcuts: a task never answers its own question, stops, hides or opens Ember.
+    "ctrl+alt+y", "alt+ctrl+n", "ctrl+alt+a", "ctrl+alt+x", "ctrl+alt+space", "ctrl+alt+e", "ctrl+alt+m", "ctrl+alt+End", "Control+Alt+Y", "ctrl+shift+alt+y",
+  ])("%s is never pressed, on the user's screen or the desk", k => {
+    expect(keys(k).verdict).toBe("deny");
+    expect(keys(k, true).verdict).toBe("deny");
+  });
+
+  it.each(["hyper+x", "altgr+e", "ctrl+alt t"])("%s (a combination Ember's keyboard doesn't know) is refused", k => {
+    expect(keys(k).verdict).toBe("deny");
+  });
+
+  it.each([
+    ["Ctrl+S", "allow"], ["ctrl+End", "allow"], ["ctrl+PageDown", "allow"], ["control+z", "allow"], ["Tab", "allow"],
+    ["shift+ctrl+delete", "confirm"], ["Alt+F4", "confirm"], ["ctrl+Q", "confirm"], ["ctrl+k", "confirm"], ["shift+alt+s", "confirm"],
+  ])("on the desk, %s is %s whatever the spelling", (k, verdict) => {
+    expect(keys(k, true).verdict).toBe(verdict);
+  });
+
+  it("one spelling for every way of writing a combination", () => {
+    expect(canonicalKeys("Alt + Ctrl + Del")).toBe("ctrl+alt+delete");
+    expect(canonicalKeys("shift+ctrl+alt+T")).toBe("ctrl+alt+shift+t");
+    expect(canonicalKeys("cmd+space")).toBe("super+space");
+    expect(canonicalKeys("ctrl++")).toBe("ctrl+plus");
+    expect(canonicalKeys("hyper+x")).toBeNull();
   });
 });

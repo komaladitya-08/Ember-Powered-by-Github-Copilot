@@ -2,6 +2,10 @@
  * The conductor: Ember's one long-lived Copilot session. It hears every
  * request, answers directly, changes Ember's look, and (from M4) hands tasks
  * to worker sessions. It never receives screenshots, so it stays fast.
+ *
+ * The conversation lasts one run of Ember: a reconnect within the run resumes
+ * it, and quitting deletes it. One left behind by a run that crashed is
+ * deleted at the next start, never resumed.
  */
 
 import fs from "node:fs";
@@ -19,8 +23,10 @@ export interface ConductorDeps {
   settings: SettingsStore;
   presenter: Presenter;
   log: Logger;
-  /** JSON file remembering the conductor's session id between runs. */
+  /** JSON file with the conductor's session id (so one left by a crash is deleted at the next start). */
   stateFile: string;
+  /** This run's conversation, to resume after a reconnect (null or absent: a new one). */
+  resume?: string | null;
   /** An empty directory: the session's working directory. */
   workDir: string;
   model: string | null;
@@ -183,7 +189,8 @@ export class Conductor {
     const d = this.deps;
     fs.mkdirSync(d.workDir, { recursive: true });
     const state = readAgentState(d.stateFile);
-    const saved = state.conductorSessionId ?? null;
+    // Anything saved but this run's own conversation was left by a run that crashed (or forgotten while disconnected).
+    const leftovers = [...new Set([...(state.forget ?? []), ...(state.conductorSessionId && state.conductorSessionId !== d.resume ? [state.conductorSessionId] : [])])];
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
@@ -192,12 +199,12 @@ export class Conductor {
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
     });
-    if (saved) {
+    if (d.resume) {
       try {
-        this.session = await d.client.resumeSession(saved, config);
-        d.log.info("conductor.resumed", { sessionId: saved });
+        this.session = await d.client.resumeSession(d.resume, config);
+        d.log.info("conductor.resumed", { sessionId: d.resume });
       } catch (err) {
-        d.log.warn("conductor.resume_failed", { sessionId: saved, err });
+        d.log.warn("conductor.resume_failed", { sessionId: d.resume, err });
       }
     }
     if (!this.session) {
@@ -206,10 +213,10 @@ export class Conductor {
       writeAgentState(d.stateFile, { conductorSessionId: sessionId });
       d.log.info("conductor.created", { sessionId });
     }
-    // Conversations forgotten while Copilot wasn't connected (signed out from an error) go now.
-    if (state.forget?.length) {
-      await within(Promise.all(state.forget.map(id => d.client.deleteSession(id).catch(err => d.log.warn("conductor.delete_failed", { err })))), 5000);
+    if (leftovers.length) {
+      await within(Promise.all(leftovers.map(id => d.client.deleteSession(id).catch(err => d.log.warn("conductor.delete_failed", { err })))), 5000);
       writeAgentState(d.stateFile, { forget: undefined });
+      d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
     }
     const tools = await verifySessionTools(this.session, this.toolNames);
     d.log.info("conductor.tools", { tools });
@@ -271,15 +278,18 @@ export class Conductor {
   }
 
   /**
-   * Forget the conversation: delete it from the runtime's store and drop the
-   * saved id, so the next start begins a fresh one (e.g. after sign-out, so
-   * another account never resumes this one's conversation).
+   * Forget the conversation: delete it from the runtime's store (within `ms`)
+   * and drop the saved id, so the next start begins a fresh one (on quit, and
+   * after sign-out, so another account never resumes this one's conversation).
    */
-  async forget(): Promise<void> {
+  async forget(ms = 5000): Promise<void> {
     const id = this.session?.sessionId ?? readAgentState(this.deps.stateFile).conductorSessionId;
-    await this.stop();
-    const deleted = id ? await within(this.deps.client.deleteSession(id).then(() => true, err => { this.deps.log.warn("conductor.delete_failed", { err }); return false; }), 5000) : true;
-    // Not deleted now (the runtime didn't answer): it goes at the next start.
+    const work = (async () => {
+      await this.stop();
+      return id ? this.deps.client.deleteSession(id).then(() => true, err => { this.deps.log.warn("conductor.delete_failed", { err }); return false; }) : true;
+    })();
+    const deleted = await within(work, ms);
+    // Not deleted in time (the runtime didn't answer): it goes at the next start.
     forgetSavedConversation(this.deps.stateFile, deleted === true);
   }
 }

@@ -209,3 +209,69 @@ describe("Confirmer keyboard answers and borrowing", () => {
     expect(changes).toEqual([1, null]);
   });
 });
+
+describe("review round 2: stopping and questions", () => {
+  const ask = (c: Confirmer) => c.ask({ title: "May I?", context: "Tidy the desktop", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+
+  it("“Not now” (or no answer) leaves Ember idle, not working", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, timeoutMs: 50 });
+    const q = ask(c);
+    expect(c.answerKey("deny")).toBe(true);
+    await q;
+    expect(shown.at(-1)).toMatchObject({ emotion: "neutral", bubble: { mood: "idle", thought: "Okay, I won't." } });
+    await ask(c); // expires
+    expect(shown.at(-1)).toMatchObject({ emotion: "neutral", bubble: { mood: "idle" } });
+    const yes = ask(c);
+    expect(c.answerKey("primary")).toBe(true);
+    await yes;
+    expect(shown.at(-1)).toMatchObject({ emotion: "focused", bubble: { mood: "acting" } });
+  });
+
+  it("the question names the keys that answer it", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" });
+    const q = ask(c);
+    expect(shown[0].bubble?.step).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    c.cancelAll();
+    await q;
+    const plain = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0 });
+    const q2 = ask(plain);
+    expect(shown.at(-1)?.bubble?.step).toBeNull();
+    plain.cancelAll();
+    await q2;
+  });
+
+  it("says “stopped”, once: never “cancelled”", async () => {
+    const { taskOutcome } = await import("../../app/main/agent/tasks");
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({
+      log: quiet, makeWorker: () => fakeWorker(() => new Promise(() => undefined)), maxRunning: 0,
+      currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined,
+    });
+    const t = tm.start("Tidy the desktop");
+    tm.cancel(t.id);
+    expect(t.result?.summary).toBe("Stopped before it started.");
+    expect(taskOutcome(t)).toBe("Tidy the desktop: stopped before it started.");
+    expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "Stopped.", stopped: true } })).toBe("Tidy: stopped.");
+    expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "You took the mouse back at step 3." } })).toBe("Tidy: stopped. You took the mouse back at step 3.");
+    expect(taskOutcome({ title: "Tidy", status: "done", result: { success: true, summary: "Moved 3 files." } })).toBe("Tidy: done. Moved 3 files.");
+  });
+
+  it("a closed manager's cards never come back", async () => {
+    vi.useFakeTimers();
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({
+      log: quiet, makeWorker: () => fakeWorker(async () => ({ success: true, summary: "ok" })), cardMs: 100,
+      currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0,
+    });
+    tm.start("one");
+    await vi.advanceTimersByTimeAsync(10);
+    tm.close();
+    expect(cards.at(-1)).toEqual([]);
+    const n = cards.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(cards.length).toBe(n);
+    vi.useRealTimers();
+  });
+});

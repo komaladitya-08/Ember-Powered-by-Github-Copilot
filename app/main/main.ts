@@ -4,7 +4,7 @@
  * hands and voice, and the wiring between them.
  */
 
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -38,7 +38,8 @@ import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
-import { AgentHost, type Hands } from "./agent/host";
+import { AgentHost, gitHubReachable, type Hands } from "./agent/host";
+import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { plainText } from "./agent/presenter";
@@ -438,9 +439,11 @@ function start(): void {
   const captureContext = () => { callContext = perception && consented() ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
+    // A Stop while the screen is read (or the brain connects) drops the request.
+    const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 1.5 s.
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 1500))]);
-    return agent?.ask(text, context)?.catch(err => log.error("ask.failed", { err }));
+    return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
   };
   const openAsk = () => {
     if (!consented()) { showHome(); return; }
@@ -498,6 +501,8 @@ function start(): void {
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         voice?.hush();
+        // The bubble is main's now: an answer's leftover hide timer mustn't blank "Listening…".
+        agent?.claimBubble();
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
@@ -505,10 +510,12 @@ function start(): void {
         if (!e.on) setState({ status: null });
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
         // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…").
+        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) agent?.claimBubble();
         if (!e.on && e.reason === "timeout") setState(e.window === "wake" || lastState.bubble.mood === "listening" ? { emotion: "neutral", bubble: IDLE_BUBBLE } : { emotion: "neutral" });
         if (!e.on && e.reason === "rejected") setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
         break;
       case "speech":
+        if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
       case "utterance":
@@ -568,6 +575,11 @@ function start(): void {
     signInAbort?.abort();
     signInAbort = ac;
     const say = (p: SignInProgress) => { if (signInAbort === ac) progress(p); };
+    /** Signed in only when Copilot actually connected; otherwise what went wrong. */
+    const connected = async (phase: string | undefined, note?: string) => {
+      if (phase === "ready") say({ state: "done", message: note });
+      else say({ state: "error", message: agent?.getStatus().detail ?? "Copilot didn't connect." });
+    };
     const clientId = process.env.EMBER_GITHUB_CLIENT_ID;
     if (!clientId) {
       // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart).
@@ -578,8 +590,7 @@ function start(): void {
         if (ac.signal.aborted) return;
         if (found && found.token !== before) {
           currentToken = found.token;
-          await agent?.start(found.token, found.source);
-          say({ state: "done" });
+          await connected(await agent?.start(found.token, found.source));
           return;
         }
         await new Promise(r => setTimeout(r, 3000));
@@ -601,8 +612,7 @@ function start(): void {
       const kept = tokens?.save(token) ?? false;
       if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
       currentToken = token;
-      await agent?.start(token, "stored");
-      say({ state: "done", message: kept ? undefined : "Signed in. No keyring is available, so you'll need to sign in again next time." });
+      await connected(await agent?.start(token, "stored"), kept ? undefined : "Signed in. No keyring is available, so you'll need to sign in again next time.");
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: err instanceof Error ? err.message : String(err) });
     }
@@ -698,10 +708,15 @@ function start(): void {
     wasOnboarded = s.onboarded;
   });
 
-  app.on("will-quit", () => {
+  // Quitting waits (up to 3 s) for the brain to stop: that is when this run's conversation is deleted.
+  let brainStopped = false;
+  app.on("will-quit", e => {
     globalShortcut.unregisterAll();
     overlay?.stop();
-    void agent?.stop();
+    if (brainStopped || !agent) return;
+    brainStopped = true;
+    e.preventDefault();
+    void Promise.race([agent.stop(), new Promise(r => setTimeout(r, 3000))]).catch(() => undefined).finally(() => app.exit(0));
   });
 
   void app.whenReady().then(() => {
@@ -812,6 +827,7 @@ function start(): void {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       blocked: () => borrowRef?.driving ?? false,
       onChange: questionChanged,
+      keyHint: questionKeyHint,
     });
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
     const xinput = x11 ? openXInput() : null;
@@ -854,7 +870,8 @@ function start(): void {
         return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
-      clipboard: { readText: () => clipboard.readText(), writeText: t => clipboard.writeText(t) },
+      // Every format the user had on the clipboard comes back after a paste, not just text.
+      clipboard: electronClipboard(clipboard, ClipboardItem),
       desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {
         sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
@@ -885,11 +902,12 @@ function start(): void {
       onStatus: status => broadcast(IPC.agentStatusChanged, status),
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       onTaskFinished: t => {
-        const text = `${t.title}: ${t.status === "done" ? "done" : t.status === "cancelled" ? "stopped" : "didn't work"}. ${t.summary}`;
-        if (settings.get().speak || screenReaderOn()) voice?.speak(text);
+        if (settings.get().speak || screenReaderOn()) voice?.speak(t.text);
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),
+      // "Not authenticated" while GitHub can't be reached is a network problem, not a bad sign-in.
+      reachable: gitHubReachable((url, init) => net.fetch(url, init)),
     });
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;
@@ -899,7 +917,8 @@ function start(): void {
       const found = provider ? null : await resolveToken(tokens);
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       currentToken = found?.token ?? null;
-      await agent?.start(currentToken, found?.source);
+      // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember.
+      await agent?.start(currentToken, found?.source, "auto");
     };
     void startBrain();
     settings.onChange(() => { void startBrain(); });
@@ -937,7 +956,7 @@ function start(): void {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
-        showMenu, state: () => lastState, questionKeyHint,
+        showMenu, state: () => lastState,
       };
     }
   };

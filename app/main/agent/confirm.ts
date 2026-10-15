@@ -9,7 +9,8 @@
  * and the next question appears only after a short gap, so the second click of
  * a double-click never approves it. While Ember borrows the mouse, nothing is
  * answered at all (a borrowed click must never approve anything). Keyboard
- * users answer with shortcuts (main registers them while a question is up).
+ * users answer with shortcuts (main registers them while a question is up,
+ * and the bubble names them).
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
@@ -36,6 +37,8 @@ export interface ConfirmerTiming {
   blocked?: () => boolean;
   /** A question appeared (or the last one went away): for keyboard shortcuts, speaking it, showing Ember. */
   onChange?: (q: { n: number; question: Question } | null) => void;
+  /** The keys that answer a question, shown under it (e.g. "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"). */
+  keyHint?: () => string | undefined;
 }
 
 export class Confirmer {
@@ -49,6 +52,7 @@ export class Confirmer {
   private now: () => number;
   private blocked: () => boolean;
   private onChange: ConfirmerTiming["onChange"];
+  private keyHint: ConfirmerTiming["keyHint"];
 
   constructor(private show: (patch: Partial<EmberState>) => void, timing: number | ConfirmerTiming = {}) {
     const t = typeof timing === "number" ? { timeoutMs: timing } : timing;
@@ -58,6 +62,7 @@ export class Confirmer {
     this.now = t.now ?? Date.now;
     this.blocked = t.blocked ?? (() => false);
     this.onChange = t.onChange;
+    this.keyHint = t.keyHint;
   }
 
   /**
@@ -114,7 +119,7 @@ export class Confirmer {
     p.shownAt = this.now();
     p.timer = setTimeout(() => this.finish(p, null), this.timeoutMs);
     const bubble: BubbleState = {
-      visible: true, mood: "attention", title: p.q.title, thought: p.q.prompt, step: null, streaming: false,
+      visible: true, mood: "attention", title: p.q.title, thought: p.q.prompt, step: this.keyHint?.() || null, streaming: false,
       actions: p.q.options.map(o => ({ id: `q${p.n}:${o.id}`, label: o.label, primary: o.primary })),
     };
     this.show({ emotion: "curious", talking: false, bubble });
@@ -130,7 +135,9 @@ export class Confirmer {
     this.queue = this.queue.filter(x => x !== p);
     if (wasCurrent) {
       this.current = null;
-      this.show({ emotion: answer && answer !== "deny" ? "focused" : "neutral", bubble: { visible: true, mood: "acting", title: p.q.context ?? p.q.title, thought: answer && answer !== "deny" ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [] } });
+      // "Not now" (or no answer) leaves Ember idle, not still working.
+      const yes = !!answer && answer !== "deny";
+      this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [] } });
     }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);

@@ -10,6 +10,7 @@
  */
 
 import { isNeverLook, isSecretLabel } from "../perception/elements";
+import { parseCombo } from "../hands/borrow";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -124,23 +125,59 @@ const ACTIVATING_ROLES = /button|link|menu item|check box|radio|toggle|switch|ta
 const ACTIVATE_KEY = /^((shift|ctrl|alt)\+)?(return|enter|kp_enter|space)$|^ctrl\+(m|j)$/;
 /** Alt+letter presses whichever control has that underlined letter: Ember can't tell which. */
 const MNEMONIC_KEY = /^alt\+(shift\+)?[a-z0-9]$/;
+const MODIFIER_NAMES: Record<string, string> = { Control_L: "ctrl", Alt_L: "alt", Shift_L: "shift", Super_L: "super" };
+const MODIFIER_ORDER = ["ctrl", "alt", "shift", "super"];
+/** Other names people (and models) give the logo key. */
+const LOGO_KEY = /^\s*(win|windows|cmd|command|logo|mod4)\s*$/i;
+
+/**
+ * One spelling for a key combination, the way Ember's keyboard will press it (parseCombo): modifiers
+ * in a fixed order (ctrl, alt, shift, super) and the key's own name in lower case, so "Alt + Ctrl + Del"
+ * is "ctrl+alt+delete" and "Super_L" is "super_l". null when Ember's keyboard wouldn't understand it.
+ */
+export function canonicalKeys(keys: string): string | null {
+  try {
+    const { modifiers, key } = parseCombo(keys.split("+").map(t => (LOGO_KEY.test(t) ? "super" : t)).join("+"));
+    if (/\s/.test(key)) return null;
+    const mods = [...new Set(modifiers.map(m => MODIFIER_NAMES[m] ?? m.toLowerCase()))].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
+    return [...mods, key.toLowerCase()].join("+");
+  } catch {
+    return null;
+  }
+}
+
+/** @deprecated canonicalKeys (kept for callers that want a string either way). */
+export function normalizeKeys(keys: string): string {
+  return canonicalKeys(keys) ?? keys.toLowerCase().replace(/\s+/g, "");
+}
+
+/**
+ * Keys only the user presses (`k` from canonicalKeys): the logo key with anything, power, media and
+ * screenshot keys, virtual consoles, the run dialog, terminals, locking and logging out, switching
+ * workspaces, and Ember's own shortcuts (Ctrl+Alt+Y/N/A/X/Space/E/M/End), so a task can never answer
+ * its own question or stop, hide or reconfigure Ember. Shift doesn't change that.
+ */
+export function isSystemKey(k: string): boolean {
+  const parts = k.split("+");
+  const key = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1));
+  if (mods.has("super") || /^(super|meta|hyper)(_[lr])?$/.test(key)) return true;
+  if (/^xf86/.test(key) || /^(print|sys_req|sysrq)$/.test(key)) return true;
+  const ctrlAlt = mods.has("ctrl") && mods.has("alt");
+  if (ctrlAlt && /^f\d{1,2}$/.test(key)) return true;
+  if (mods.has("alt") && !mods.has("ctrl") && /^f[12]$/.test(key)) return true;
+  return ctrlAlt && /^(backspace|delete|tab|t|l|up|down|left|right|y|n|a|x|space|e|m|end)$/.test(key);
+}
+
+const canonicalSet = (list: string[]) => new Set(list.map(k => canonicalKeys(k) ?? k));
 /** Shortcuts that only move, select, copy, paste, undo, format, search or zoom: fine on Ember's desk. */
-const SAFE_COMBOS = new Set(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+z", "ctrl+y", "ctrl+shift+z", "ctrl+b", "ctrl+i", "ctrl+u",
+const SAFE_COMBOS = canonicalSet(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+z", "ctrl+y", "ctrl+shift+z", "ctrl+b", "ctrl+i", "ctrl+u",
   "ctrl+f", "ctrl+g", "ctrl+h", "ctrl+s", "ctrl+shift+s", "ctrl+n", "ctrl+t", "ctrl+l", "ctrl+o", "ctrl+home", "ctrl+end", "ctrl+left", "ctrl+right",
   "ctrl+up", "ctrl+down", "ctrl+shift+left", "ctrl+shift+right", "ctrl+shift+home", "ctrl+shift+end", "ctrl+backspace", "ctrl+plus", "ctrl+minus",
   "ctrl+equal", "ctrl+0", "ctrl+tab", "ctrl+shift+tab", "ctrl+prior", "ctrl+next", "ctrl+pageup", "ctrl+pagedown"]);
 /** Shortcuts that delete, send, close or quit, whatever has focus. */
-const DESTRUCTIVE_KEYS = new Set(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
+const DESTRUCTIVE_KEYS = canonicalSet(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
   "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
-/** Desktop-level shortcuts (virtual terminals, the run dialog, the shell): never pressed by Ember. */
-const SYSTEM_KEYS = /^(ctrl\+alt\+(f\d+|backspace|delete|del|t|l)|alt\+f[12]|super(\+.*)?|meta(\+.*)?|alt\+sysrq.*|ctrl\+alt\+tab)$/;
-
-/** "Ctrl + Shift + Del" → "ctrl+shift+delete": one spelling for matching. */
-export function normalizeKeys(keys: string): string {
-  const alias: Record<string, string> = { control: "ctrl", del: "delete", enter: "return", esc: "escape", win: "super", cmd: "super" };
-  return keys.toLowerCase().split("+").map(k => k.trim()).filter(Boolean).map(k => alias[k] ?? k).join("+");
-}
-
 const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
 const words = (s: string) => normalizeLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
 /** Rough stem, so "deleting", "deleted" and "delete" match. */
@@ -240,7 +277,7 @@ export class PolicyEngine {
         return null;
       }
       case "keys": {
-        const k = normalizeKeys(r.value ?? "");
+        const k = canonicalKeys(r.value ?? "") ?? "";
         if (DESTRUCTIVE_KEYS.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button.
@@ -273,7 +310,11 @@ export class PolicyEngine {
     if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "select" || r.kind === "value" || r.kind === "keys") && r.element && isSecretField(r.element.name)) {
       return never("this looks like a password or payment field");
     }
-    if (r.kind === "keys" && SYSTEM_KEYS.test(normalizeKeys(r.value ?? ""))) return never("desktop shortcuts (terminals, the run dialog, switching sessions) are for the user only");
+    if (r.kind === "keys") {
+      const k = canonicalKeys(r.value ?? "");
+      if (!k) return never("Ember's keyboard doesn't know that key combination");
+      if (isSystemKey(k)) return never("desktop shortcuts (the logo key, terminals, the run dialog, switching sessions) and Ember's own shortcuts are for the user only");
+    }
 
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt };
     if (this.o.actionsAllowed && !this.o.actionsAllowed()) return never("your organisation has turned off Ember acting in apps");
