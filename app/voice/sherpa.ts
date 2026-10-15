@@ -16,8 +16,8 @@ export interface ModelPaths {
 
 /** BPE pieces for the keyword model (tokenized with its bpe.model), with boost and threshold. */
 export const KEYWORDS = [
-  "▁HE Y ▁E M BER :2.0 #0.20 @hey_ember",
-  "▁O K ▁E M BER :2.0 #0.20 @hey_ember",
+  "▁HE Y ▁E M BER :2.0 #0.15 @hey_ember",
+  "▁O K ▁E M BER :2.0 #0.15 @hey_ember",
   "▁E M BER ▁ST O P :2.0 #0.15 @ember_stop",
 ].join("\n");
 

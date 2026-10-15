@@ -1,0 +1,56 @@
+{
+  "id": "bench-remember-me",
+  "title": "Tick a check box",
+  "instruction": "Tick Remember me in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "toggle",
+      "args": {
+        "id": {
+          "find": "^check box \"Remember me\""
+        },
+        "on": true
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Ticked."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Remember me",
+        "active": true
+      }
+    },
+    {
+      "atspi": {
+        "window": "Ember Test Bench",
+        "find": "^check box \"Remember me\"",
+        "states": [
+          "checked"
+        ]
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

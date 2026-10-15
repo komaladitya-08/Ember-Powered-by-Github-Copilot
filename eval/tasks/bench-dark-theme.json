@@ -1,0 +1,47 @@
+{
+  "id": "bench-dark-theme",
+  "title": "Choose a theme",
+  "instruction": "Choose the Dark theme in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "choose_option",
+      "args": {
+        "id": {
+          "find": "^combo box \"Theme\""
+        },
+        "option": "Dark"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Dark theme chosen."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "selected",
+        "name": "Theme",
+        "value": "Dark"
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1"
+  ]
+}

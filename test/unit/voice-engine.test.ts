@@ -115,14 +115,40 @@ describe("VoiceEngine", () => {
     expect(events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "speakers" }]);
   });
 
-  it("accepts a real wake when the speakers were quiet", () => {
+  it("accepts a wake at once when the speakers are quiet", () => {
+    const b = fake([]);
+    b.spotMonitor = () => [];
+    const events = run(b, e => { e.feed(frame(1)); });
+    expect(events[0]).toEqual({ type: "wake", keyword: "hey_ember" });
+  });
+
+  it("rejects a video's wake word that the speakers' spotter reports late, after the video paused", () => {
+    const b = fake([]);
+    b.spotMonitor = f => (f[0] === 1 ? ["hey_ember"] : []);
+    const playing = new Float32Array(512).fill(0.05);
+    const silent = new Float32Array(512);
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => c.t, verifyWake: false });
+    e.feedMonitor(playing); // the video says "Hey Ember." and stops
+    for (let i = 0; i < 12; i++) { c.t += 32; e.feedMonitor(silent); }
+    e.feed(frame(1)); // both spotters report it ~400 ms later
+    const hit = new Float32Array(512); hit[0] = 1;
+    c.t += 20; e.feedMonitor(hit);
+    c.t += 20; e.feed(frame(0));
+    expect(events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "speakers" }]);
+  });
+
+  it("waits out the speakers check while something is playing, then accepts a real wake", () => {
     const b = fake([]);
     b.spotMonitor = () => [];
     let early = -1;
+    const playing = new Float32Array(512).fill(0.05);
     const events = run(b, (e, c) => {
+      e.feedMonitor(playing);
       e.feed(frame(1));
       early = e.listening ? 1 : 0; // still checking the speakers
-      c.t += 320; e.feed(frame(0));
+      c.t += 320; e.feedMonitor(playing); e.feed(frame(0));
     });
     expect(early).toBe(0);
     expect(events[0]).toEqual({ type: "wake", keyword: "hey_ember" });
@@ -155,6 +181,22 @@ describe("VoiceEngine idle CPU", () => {
     e.feed(loud);
     expect(spotCalls).toBe(30);
   });
+
+  it("rests in a steady noisy room too (a fan), and wakes up for speech", () => {
+    let spotCalls = 0;
+    const b = fake([]);
+    const spot = b.spot;
+    b.spot = f => { spotCalls++; return spot(f); };
+    const e = new VoiceEngine(b, () => undefined, { now: () => 0 });
+    let seed = 3;
+    const hum = () => Float32Array.from({ length: 512 }, () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff - 0.5) * 0.02; }); // RMS ≈ 0.006
+    for (let i = 0; i < 1000; i++) e.feed(hum()); // half a minute of fan noise
+    const resting = spotCalls;
+    for (let i = 0; i < 100; i++) e.feed(hum());
+    expect(spotCalls - resting).toBe(0);
+    e.feed(new Float32Array(512).fill(0.1)); // someone speaks
+    expect(spotCalls - resting).toBe(12 + 1);
+  });
 });
 
 describe("second-stage wake check", () => {
@@ -172,6 +214,13 @@ describe("second-stage wake check", () => {
     const events: VoiceEvent[] = [];
     const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => 0 });
     e.feed(frame(1));
-    expect(events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey Amber, what time is it?" }]);
+    // Ember lit up at once, then took it back when the recognizer heard "Amber".
+    expect(events).toEqual([
+      { type: "wake", keyword: "hey_ember" },
+      { type: "listening", on: true, reason: "wake" },
+      { type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey Amber, what time is it?" },
+      { type: "listening", on: false, reason: "rejected" },
+    ]);
+    expect(e.listening).toBe(false);
   });
 });

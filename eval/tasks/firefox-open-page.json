@@ -1,0 +1,28 @@
+{
+  "id": "firefox-open-page",
+  "title": "Opens a page in Firefox",
+  "instruction": "Open example.com in Firefox.",
+  "app": {
+    "command": [
+      "firefox",
+      "--new-instance",
+      "--profile",
+      "{tmp}/ff",
+      "about:blank"
+    ],
+    "window": "Mozilla Firefox"
+  },
+  "expect": [
+    {
+      "atspi": {
+        "window": "Example Domain",
+        "find": "^document"
+      }
+    }
+  ],
+  "tags": [
+    "firefox",
+    "live-only"
+  ],
+  "timeout": 180
+}

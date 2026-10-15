@@ -404,7 +404,10 @@ export class Worker {
 
   private async perceive(image: boolean): Promise<ToolResultObject> {
     const p = await this.perception.perceive({ image, scope: "window", target: this.target });
-    if (p.blocked) return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
+    if (p.blocked) {
+      this.d.audit.write({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
+      return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
+    }
     if (!p.window) return fail("That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
     this.window = { app: p.window.app, name: p.window.name };
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined };
@@ -494,7 +497,10 @@ export class Worker {
     const c = this.d.cursor;
     // A password or authentication prompt has the keyboard: those are the user's alone (M8.3).
     const authPrompt = () => { const w = c.activeWindow?.(); return !!w && isSecurityWindow(w); };
-    if (authPrompt()) return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+    if (authPrompt()) {
+      this.d.audit.write({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
+      return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+    }
     const guarded = (hand: Hand): Hand => {
       const check = () => { if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped"); };
       return {

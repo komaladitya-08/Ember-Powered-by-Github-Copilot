@@ -293,6 +293,8 @@ function start(): void {
     setTimeout(() => setState({ bubble: IDLE_BUBBLE }), 3000);
   };
   let lastAskByVoice = false;
+  /** What Ember showed before a wake, put back if the wake turns out to be another word. */
+  let beforeWake: Pick<EmberState, "emotion" | "bubble"> | null = null;
   const toggleMute = () => {
     if (!voice || !(settings.get().wakeWord && settings.get().voice.consent)) return;
     voice.setMuted(!voice.isMuted);
@@ -307,6 +309,7 @@ function start(): void {
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
       case "wake":
+        beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         voice?.hush();
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
@@ -314,7 +317,9 @@ function start(): void {
       case "listening":
         if (e.on && e.reason === "follow-up") setState({ emotion: "listening", status: "Listening for a follow-up…" });
         if (!e.on) setState({ status: null });
+        // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
         if (!e.on && e.reason === "timeout") setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        if (!e.on && e.reason === "rejected") setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
         break;
       case "speech":
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });

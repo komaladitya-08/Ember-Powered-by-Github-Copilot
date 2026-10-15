@@ -1,0 +1,106 @@
+{
+  "id": "bench-whole-form",
+  "title": "A whole form, asking first",
+  "instruction": "In the test bench: turn on Night Light, put the name Ada Lovelace in, choose the Dark theme and press Save.",
+  "app": {
+    "fixture": "bench"
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "toggle",
+      "args": {
+        "id": {
+          "find": "^toggle button"
+        },
+        "on": true
+      }
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text \"Name\""
+        },
+        "text": "Ada Lovelace"
+      }
+    },
+    {
+      "tool": "choose_option",
+      "args": {
+        "id": {
+          "find": "^combo box \"Theme\""
+        },
+        "option": "Dark"
+      }
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "^push button \"Save\""
+        }
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "All done."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Night Light",
+        "active": true
+      }
+    },
+    {
+      "event": {
+        "event": "text",
+        "name": "Name",
+        "value": "Ada Lovelace"
+      }
+    },
+    {
+      "event": {
+        "event": "selected",
+        "name": "Theme",
+        "value": "Dark"
+      }
+    },
+    {
+      "event": {
+        "event": "clicked",
+        "name": "Save"
+      }
+    },
+    {
+      "audit": {
+        "event": "confirm",
+        "answer": "once"
+      }
+    }
+  ],
+  "unchanged": [
+    {
+      "atspi": {
+        "window": "Ember Test Bench",
+        "find": "^check box \"Remember me\"",
+        "notStates": [
+          "checked"
+        ]
+      }
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1",
+    "consent"
+  ]
+}

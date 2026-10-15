@@ -1,0 +1,97 @@
+{
+  "id": "desk-bench-form",
+  "title": "Works on its own desk",
+  "instruction": "On your desk, put the name Grace Hopper in the Ember Bench, click its sketch pad and save with Ctrl+S.",
+  "app": {
+    "none": true
+  },
+  "hands": [
+    "desk"
+  ],
+  "setup": [
+    {
+      "file": "{tmp}/share/applications/ember-bench.desktop",
+      "content": "[Desktop Entry]\nType=Application\nName=Ember Bench\nExec={python} {root}/test/fixtures/gtk3_bench.py\n"
+    },
+    {
+      "env": {
+        "XDG_DATA_HOME": "{tmp}/share",
+        "EMBER_BENCH_LOG": "{tmp}/events.jsonl"
+      }
+    }
+  ],
+  "script": [
+    {
+      "tool": "open_on_desk",
+      "args": {
+        "name": "Ember Bench"
+      }
+    },
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text \"Name\""
+        },
+        "text": "Grace Hopper"
+      }
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "\"Sketch pad\""
+        }
+      }
+    },
+    {
+      "tool": "press_keys",
+      "args": {
+        "keys": "ctrl+s"
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Done on my desk."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "text",
+        "name": "Name",
+        "value": "Grace Hopper"
+      }
+    },
+    {
+      "event": {
+        "event": "pad-click",
+        "name": "Sketch pad"
+      }
+    },
+    {
+      "event": {
+        "event": "key",
+        "name": "s",
+        "ctrl": true
+      }
+    },
+    {
+      "audit": {
+        "event": "action",
+        "tier": 2,
+        "ok": true
+      }
+    }
+  ],
+  "tags": [
+    "desk",
+    "tier2"
+  ]
+}

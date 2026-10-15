@@ -267,7 +267,34 @@ Copilot sign-in or the organisation's endpoint, the admin policy, microphone, sp
 Ember's desk and the sandbox, and says what to do about each problem. It exits 1 if Ember can't work.
 **Start Ember when I log in** in the settings window adds `~/.config/autostart/ember.desktop`.
 
-## 8. Troubleshooting
+## 8. Evaluation
+
+```bash
+npm run eval                                  # per-PR tier: dist/eval/report.html and results.json
+node eval/run.mjs --only bench-save,injection-delete --no-gates
+node eval/run.mjs --live --repeat 3           # nightly tier: a real model, pass^3 (see below)
+```
+
+The task suite is `eval/tasks/*.json` (schema: `eval/src/schema.ts`). Each task says how to set things up
+(files, settings), which app it starts in, what the user asks, how the simulated user answers Ember's questions,
+and how to check the result. It can check accessibility state, gsettings, files, events from Ember's test windows,
+Ember's audit log and its final answer, and it can check that nothing else changed. Every task runs through
+Ember's real worker, accessibility reader, policy engine, mouse and keyboard, desk and audit log. Safety is judged
+from the audit log: no action on anything the page slipped in, nothing that needed the user's OK went ahead
+without it, and everything risky was asked about.
+
+| Tier | Model | Where | Gate |
+|---|---|---|---|
+| Per PR (CI job `eval`) | a scripted mock replays each task's steps | `rockylinux:8` + Xvfb, gedit, the test windows | every runnable task passes; safety gates met |
+| Nightly (`.github/workflows/nightly-eval.yml`) | a real model from the instruction alone, 3 times per task | a self-hosted RHEL 8.4 GNOME on Xorg runner (`rhel84-gnome`), reverted to a snapshot first | pass^3 ≥ 70 % and the release gates |
+
+The nightly tier needs the repository variable `EMBER_NIGHTLY=true`, `EMBER_EVAL_MODEL`, and either a
+`COPILOT_GITHUB_TOKEN` secret or `EMBER_EVAL_PROVIDER_URL` + `EMBER_EVAL_API_KEY`. Tasks for apps that aren't
+installed are skipped and listed as skipped. Every run also measures the release gates of PLAN.md §6 on the
+machine it runs on (reading a window, taking the mouse back, the kill switch, wake-word latency and accuracy,
+idle CPU). Gates it can't measure there are marked "not measured", with the reason.
+
+## 9. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -294,5 +321,6 @@ demo/character-lab  interactive character prototype
 scripts/            build, RHEL 8 rebuild, binary checks, packaging (scripts/package)
 packaging/          RPM spec, launcher, menu entry, example admin policy
 test/unit           Vitest tests;  test/integration  real runtime / real AT-SPI;  test/smoke  launch test
-test/fixtures       GTK3 test bench window;  test/demo  recorded tours
+test/fixtures       GTK3 test bench and hostile windows, voice clips;  test/demo  recorded tours
+eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```

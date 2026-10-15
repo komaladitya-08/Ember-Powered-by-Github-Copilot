@@ -24,7 +24,8 @@
     "test:integration": "EMBER_INTEGRATION=1 vitest run",
     "package": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh && scripts/package/appimage.sh",
     "package:rpm": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh",
-    "doctor": "node scripts/build-app.mjs && electron . --doctor"
+    "doctor": "node scripts/build-app.mjs && electron . --doctor",
+    "eval": "node eval/run.mjs"
   },
   "ember": {
     "nativeModules": []

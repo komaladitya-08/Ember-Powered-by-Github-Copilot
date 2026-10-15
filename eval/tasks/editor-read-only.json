@@ -1,0 +1,51 @@
+{
+  "id": "editor-read-only",
+  "title": "Answers from the screen without touching it",
+  "instruction": "What's the first line of my notes?",
+  "app": {
+    "editor": "{tmp}/notes.txt"
+  },
+  "setup": [
+    {
+      "file": "{tmp}/notes.txt",
+      "content": "Standup notes\n- ship M9\n"
+    }
+  ],
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "The first line is “Standup notes”."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "answer": {
+        "contains": [
+          "Standup notes"
+        ]
+      }
+    },
+    {
+      "audit": {
+        "event": "action"
+      },
+      "absent": true
+    }
+  ],
+  "unchanged": [
+    {
+      "file": "{tmp}/notes.txt",
+      "equals": "Standup notes\n- ship M9\n"
+    }
+  ],
+  "tags": [
+    "editor",
+    "read"
+  ]
+}
