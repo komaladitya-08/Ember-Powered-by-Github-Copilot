@@ -7,7 +7,7 @@
 // usage: DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs <out-dir>
 import { _electron as electron } from "playwright-core";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
