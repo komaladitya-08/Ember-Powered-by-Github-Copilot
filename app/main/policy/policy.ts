@@ -23,6 +23,8 @@ export interface ActionRequest {
   element?: { role: string; name: string };
   /** For text: what will be typed; for settings: the new value. */
   value?: string;
+  /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
+  onDesk?: boolean;
 }
 
 export interface Decision {
@@ -96,6 +98,14 @@ export class PolicyEngine {
 
     if (!this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt };
 
+    const risky = (r.kind === "click" || r.kind === "toggle" || r.kind === "cursor_click") && !!r.element && RISKY.test(r.element.name);
+    if (r.onDesk) {
+      // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
+      // Hard-to-undo buttons are still confirmed.
+      if (risky) return { tier: "confirm", verdict: "confirm", reason: "this action may be hard to undo or visible to others", prompt: `${prompt.replace(/\?$/, "")} (on my desk)?`, risky: true };
+      return { tier: "reversible", verdict: "allow", reason: "on Ember's desk", prompt };
+    }
+
     // Anything with the borrowed mouse or keyboard is confirmed every time (PLAN.md §5).
     if (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll") {
       return { tier: "confirm", verdict: "confirm", reason: "Ember needs your mouse or keyboard for this", prompt, risky: true };
@@ -105,7 +115,6 @@ export class PolicyEngine {
     if (r.kind === "open_app" || r.kind === "setting") return { tier: "reversible", verdict: "allow", reason: "easy to undo", prompt };
 
     const grant = this.o.grants()[r.app.toLowerCase()];
-    const risky = (r.kind === "click" || r.kind === "toggle") && r.element && RISKY.test(r.element.name);
     if (risky) return { tier: "confirm", verdict: "confirm", reason: "this action may be hard to undo or visible to others", prompt, needsGrant: grant !== "act", risky: true };
     if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${r.app}`, prompt };
     return {

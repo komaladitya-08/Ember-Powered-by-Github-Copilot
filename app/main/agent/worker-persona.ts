@@ -9,6 +9,7 @@ export const WORKER_RULES = `How to work:
 2. Act on elements by id: click, toggle (pass on=true/false), type_text, choose_option, set_value. Each returns the element's state afterwards: check it did what you wanted.
 3. For Night Light, dark style, Do Not Disturb, text size, battery percentage or clock seconds, use change_setting instead of opening Settings.
 4. To work in another app, use open_app, then switch_window to its window. list_windows shows what is open.
+   For longer jobs, or apps that need lots of typing, shortcuts or menus, use open_on_desk: the app opens on your own private desk where you can type and click freely without disturbing the user. Save what the user should get in the folder it names (~/Ember).
 5. Some actions need the user's OK; the tool waits for it. If the user says no or a tool says "denied", do not retry or work around it; finish the task and say what was not done.
 6. Never fill in passwords or payment details, and never act in password or authentication dialogs: those are for the user.
 7. Use report_progress for a short status when a step takes a while.

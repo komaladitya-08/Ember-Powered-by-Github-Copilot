@@ -30,6 +30,7 @@ Later milestones also use these (safe to install now):
 
 ```bash
 sudo dnf install -y python3-pyatspi python3-gobject speech-dispatcher speech-dispatcher-espeak-ng pulseaudio-utils bzip2
+sudo dnf install -y metacity   # optional: a window manager for Ember's desk (Xvfb and xauth are above)
 ```
 
 ## 3. Install Node 22 and npm 11
@@ -113,6 +114,16 @@ or press any key to take over instantly. Ember never types into password, paymen
 fields and never acts in authentication windows. **Stop** in the handle menu cancels every task. Apps you chose "Always" for
 are listed under `grants` in `settings.json`.
 
+### Ember's desk
+
+Say "on your desk" (or ask for a long typing job) and Ember opens the app on its own private,
+invisible display instead of yours. There it can use a full mouse and keyboard without
+borrowing yours, so you keep working undisturbed. A small **Ember's desk** window in the
+bottom-right corner shows what it is doing. Click **Take over** to enlarge it and use the desk
+yourself (Ember pauses), then **Hand back**. Files Ember makes there go to `~/Ember`. The desk
+has its own clipboard and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
+(§2). Ember never runs terminals there.
+
 ### Learning with Ember
 
 Ask “show me how to …” (or “where is …”) and Ember guides instead of doing it. It flies to each
@@ -163,6 +174,8 @@ EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
 | Audit log: every decision and action Ember took (JSON lines, kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
+| What Ember made on its desk | `~/Ember/` |
+| App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 
 Environment variables for development:
 

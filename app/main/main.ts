@@ -28,6 +28,9 @@ import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
 import { CursorBorrow } from "./hands/borrow";
+import { DeskManager } from "./desk/desk";
+import { openDeskPlace, type DeskPlace } from "./desk/place";
+import { DeskView } from "./desk/view";
 import { AgentHost, type Hands } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -152,9 +155,11 @@ function start(): void {
 
   let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
   let confirmer: Confirmer | null = null;
+  // While the user works on Ember's desk, the task cards stay out of the enlarged view's way.
+  let deskInControl = false;
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
-    overlay?.setState(next);
+    overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
   };
   // While Ember is asking the user something, nothing else may replace the question
@@ -418,6 +423,15 @@ function start(): void {
     if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
     app.on("will-quit", () => xinput?.close());
     const borrow = xinput ? new CursorBorrow(xinput) : null;
+    // Ember's desk: started the first time a task needs it, torn down when Ember quits.
+    const deskManager = new DeskManager(log.child("desk"));
+    const deskView = new DeskView(log.child("desk-view"), on => {
+      deskInControl = on;
+      overlay?.setState({ tasks: on ? [] : lastState.tasks });
+    });
+    let deskPlace: Promise<DeskPlace> | null = null;
+    let deskHide: NodeJS.Timeout | null = null;
+    app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager.stop(); });
     const hands: Hands | undefined = x11 ? {
       perception, sidecar, audit, confirmer,
       policy: new PolicyEngine({ neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants }),
@@ -428,6 +442,16 @@ function start(): void {
         return w && w.pid !== process.pid ? { pid: w.pid ?? undefined, title: w.title } : null;
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
+      desk: DeskManager.available().ok ? () => (deskPlace ??= openDeskPlace(deskManager, {
+        sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
+        profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
+      }).catch(err => { deskPlace = null; throw err; })) : undefined,
+      onDesk: place => {
+        if (deskHide) clearTimeout(deskHide);
+        if (place) deskView.show(place);
+        // Keep the view up a little after the work ends, so the user sees the result.
+        else deskHide = setTimeout(() => { if (!deskView.userInControl) deskView.hide(); }, 10_000);
+      },
       cursor: borrow && xinput ? {
         borrow,
         findWindow: title => xinput.findWindow(title),
@@ -481,7 +505,7 @@ function start(): void {
     if (process.env.EMBER_TEST_HOOKS === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
       };
     }
   });

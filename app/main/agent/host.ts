@@ -30,6 +30,8 @@ export interface Hands {
   flyTo: (bounds: Bounds | null) => void;
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   pointer?: WorkerDeps["pointer"];
+  desk?: WorkerDeps["desk"];
+  onDesk?: WorkerDeps["onDesk"];
   /** Tier 3 (borrowing the user's mouse), when XTest is available. */
   cursor?: WorkerDeps["cursor"];
 }
@@ -150,6 +152,8 @@ export class AgentHost {
           flyTo: hands.flyTo,
           cursor: hands.cursor,
           pointer: hands.pointer,
+          desk: hands.desk,
+          onDesk: hands.onDesk,
           onProgress: progress,
           onUsage: (i, o) => this.recordUsage(i, o),
         }, spec),

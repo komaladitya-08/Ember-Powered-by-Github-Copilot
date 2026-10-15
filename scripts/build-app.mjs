@@ -7,7 +7,7 @@ const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: root.pathname };
 
-const pages = ["home", "overlay", "handle", "ask", "mic"];
+const pages = ["home", "overlay", "handle", "ask", "mic", "desk"];
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
