@@ -6,6 +6,7 @@
 
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, net, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, type SettingsPatch } from "./settings";
@@ -16,6 +17,8 @@ import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/over
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { openX11 } from "./x11";
+import { AtspiSidecar, pickPython } from "./perception/sidecar";
+import { Perception } from "./perception";
 import { AskWindow } from "./ask";
 import { AgentHost } from "./agent/host";
 import { locateRuntime } from "./agent/runtime";
@@ -44,6 +47,26 @@ if (!app.requestSingleInstanceLock()) {
   start();
 }
 
+let pyatspiPresent: boolean | null = null;
+
+/** Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? */
+function probeAccessibility(): { enabled: boolean | null; pyatspi: boolean } {
+  let enabled: boolean | null = null;
+  try {
+    const out = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
+    enabled = out.trim() === "true";
+  } catch { /* no gsettings (not GNOME) */ }
+  if (pyatspiPresent === null) {
+    try {
+      execFileSync(pickPython(), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
+      pyatspiPresent = true;
+    } catch {
+      pyatspiPresent = false;
+    }
+  }
+  return { enabled, pyatspi: pyatspiPresent };
+}
+
 function readEnvironment(): EnvReport {
   let osRelease: string | null = null;
   try { osRelease = fs.readFileSync("/etc/os-release", "utf8"); } catch { /* not Linux */ }
@@ -55,6 +78,7 @@ function readEnvironment(): EnvReport {
     versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
     platform: process.platform,
     arch: process.arch,
+    accessibility: process.platform === "linux" ? probeAccessibility() : undefined,
   });
 }
 
@@ -101,6 +125,12 @@ function start(): void {
     logFile: log.file,
   })));
   ipcMain.handle(IPC.updateSettings, guard((patch: SettingsPatch) => settings.update(patch)));
+  ipcMain.handle(IPC.applyFix, guard((fix: string) => {
+    if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
+    execFileSync("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
+    log.info("fix.applied", { fix });
+    return readEnvironment();
+  }));
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
   });
@@ -152,6 +182,11 @@ function start(): void {
   // ───── Copilot brain ─────
   const askWindow = new AskWindow();
   let agent: AgentHost | null = null;
+  let perception: Perception | null = null;
+  // Packaged builds ship the sidecar under resources/; development runs it from the repo.
+  const sidecarScript = () => app.isPackaged
+    ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
+    : path.join(app.getAppPath(), "sidecar", "atspi", "ember_atspi.py");
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
   let signInAbort: AbortController | null = null;
@@ -274,8 +309,31 @@ function start(): void {
       : undefined;
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
+    // Perception: the accessibility sidecar (text) and X11 capture (images).
+    const sidecar = new AtspiSidecar(sidecarScript(), log.child("atspi"));
+    app.on("will-quit", () => sidecar.stop());
+    perception = new Perception({
+      sidecar, x11, log: log.child("perception"),
+      neverLook: () => settings.get().privacy.neverLook,
+      screenBounds: () => {
+        const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+        const all = screen.getAllDisplays().map(d => d.bounds);
+        const x0 = Math.min(...all.map(b => b.x)), y0 = Math.min(...all.map(b => b.y));
+        const x1 = Math.max(...all.map(b => b.x + b.width)), y1 = Math.max(...all.map(b => b.y + b.height));
+        return { x: x0 * scale, y: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
+      },
+      // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
+      hideOverlay: async () => {
+        const hw = handle?.win && !handle.win.isDestroyed() ? handle.win : null;
+        hw?.setOpacity(0);
+        const restore = overlay ? await overlay.hideForCapture() : await new Promise<() => void>(r => setTimeout(() => r(() => {}), 60));
+        return () => { restore(); if (hw && !hw.isDestroyed()) hw.setOpacity(1); };
+      },
+    });
+    const seeing = perception;
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider,
+      describeScreen: () => seeing.describe(),
       onStatus: status => broadcast(IPC.agentStatusChanged, status),
     });
     void (async () => {
@@ -296,7 +354,7 @@ function start(): void {
     if (process.env.EMBER_TEST_HOOKS === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
+        agent: () => agent, perception: () => perception, ask: (text: string) => agent?.ask(text), showAsk: () => askWindow.show(overlay?.position ?? null),
       };
     }
   });

@@ -32,6 +32,8 @@ export interface HostOptions {
   log: Logger;
   setState: (patch: Partial<EmberState>) => void;
   onStatus: (s: AgentStatus) => void;
+  /** Text description of the user's screen, for the conductor's describe_screen tool. */
+  describeScreen?: () => Promise<string>;
   /** Tests and offline demos: talk to an OpenAI-compatible server instead of Copilot. */
   provider?: ProviderConfig;
 }
@@ -103,7 +105,7 @@ export class AgentHost {
         client, settings: this.o.settings, presenter, log: this.o.log.child("conductor"),
         stateFile: path.join(this.o.userData, "agent.json"),
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-        model: choice.conductor, provider: this.o.provider,
+        model: choice.conductor, provider: this.o.provider, describeScreen: this.o.describeScreen,
         onUsage: (i, o) => this.recordUsage(i, o),
       });
       await this.conductor.start();

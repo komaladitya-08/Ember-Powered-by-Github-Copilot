@@ -29,6 +29,7 @@
   "dependencies": {
     "@github/copilot-sdk": "1.0.21",
     "koffi": "3.2.1",
+    "sharp": "0.35.5",
     "zod": "4.3.6"
   },
   "devDependencies": {

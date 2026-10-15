@@ -48,7 +48,8 @@ jobs:
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
-            xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
+            xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
+            python3-pyatspi python3-gobject
           useradd -m ci
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,3 +64,7 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
+      - name: Screen reading on RHEL 8's Python 3.6 (AT-SPI sidecar against a GTK3 window)
+        run: |
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
+            dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/perception.test.ts

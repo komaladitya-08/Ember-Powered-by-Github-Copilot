@@ -21,6 +21,10 @@ export const SettingsSchema = z.object({
   wakeWord: z.boolean().default(true),
   /** Onboarding finished (consent given, character picked). */
   onboarded: z.boolean().default(false),
+  /** Apps and windows Ember must never read or capture (matched case-insensitively against app name and title). */
+  privacy: z.object({
+    neverLook: z.array(z.string().max(100)).max(100).default(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]),
+  }).default({ neverLook: ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"] }),
   /** Preferred Copilot models; null lets Ember choose. */
   models: z.object({
     conductor: z.string().nullable().default(null),

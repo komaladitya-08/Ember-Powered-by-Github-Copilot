@@ -69,6 +69,12 @@ export const BUBBLE_CSS = `
 }
 .eb-thought:empty { display: none; }
 .ember-bubble[data-mood="idle"] .eb-thought, .ember-bubble[data-mood="done"] .eb-thought { font-style: normal; color: #fbeee3; }
+/* A finished answer reads from its start: up to six lines, fading out if longer. */
+.ember-bubble:is([data-mood="idle"], [data-mood="done"]):not([data-streaming="true"]) .eb-thought {
+  max-height: calc(1.4em * 6); justify-content: flex-start;
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
+  mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
+}
 .eb-thought span::after { content: ""; display: inline-block; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); opacity: 0; }
 .ember-bubble[data-streaming="true"] .eb-thought span::after { opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
 .eb-step { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 220, 190, 0.12); }

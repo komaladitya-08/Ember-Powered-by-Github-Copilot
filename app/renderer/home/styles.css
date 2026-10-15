@@ -30,6 +30,8 @@ h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.1em; text-transform: u
 .pill.fail { color: #2b0b06; background: var(--fail); }
 .check-label { font-weight: 700; }
 .check-detail { color: var(--muted); overflow-wrap: anywhere; }
+.checks .check-fix { grid-column: 2; justify-self: start; margin-top: 6px; padding: 5px 12px; font-size: 13px; }
+.checks .check-fix:disabled { opacity: 0.5; cursor: default; }
 .facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: 13px; }

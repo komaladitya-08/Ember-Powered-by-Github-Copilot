@@ -83,7 +83,7 @@ try {
   // The Copilot section in settings.
   await app.evaluate(() => globalThis.__ember.showHome());
   await sleep(2500);
-  const home = app.windows().find(w => w.url().includes("/home/"));
+  const home = app.windows().find(w => w.url().includes("/renderer/home/"));
   await home?.evaluate(() => document.getElementById("copilot-h")?.scrollIntoView());
   await sleep(800);
   shot("05-settings-copilot");

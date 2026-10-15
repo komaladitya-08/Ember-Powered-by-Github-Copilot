@@ -10,6 +10,7 @@ import { IDLE_BUBBLE } from "../../shared/overlay";
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
 const KEEP_CHARS = 600;
+const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 
 export const TOOL_STEPS: Record<string, string> = {
   set_appearance: "Changing how I look",
@@ -20,6 +21,8 @@ export const TOOL_STEPS: Record<string, string> = {
 export class Presenter {
   private answering = false;
   private answer = "";
+  /** A tool ran since the last reasoning text: the next reasoning starts a new thought. */
+  private thoughtBreak = false;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
 
@@ -63,7 +66,9 @@ export class Presenter {
         break;
       case "assistant.reasoning_delta": {
         if (this.answering) break;
-        const prev = this.state.bubble.thought.startsWith("“") ? "" : this.state.bubble.thought;
+        let prev = this.state.bubble.thought.startsWith("“") ? "" : this.state.bubble.thought;
+        if (this.thoughtBreak && prev && !/\s$/.test(prev)) prev += " ";
+        this.thoughtBreak = false;
         this.apply({ emotion: "thinking", bubble: { ...this.state.bubble, mood: "thinking", thought: (prev + String(d.deltaContent ?? "")).slice(-KEEP_CHARS), streaming: true } });
         break;
       }
@@ -79,6 +84,7 @@ export class Presenter {
       case "tool.execution_start": {
         const name = String(d.toolName ?? "");
         this.answering = false;
+        this.thoughtBreak = true;
         this.apply({ emotion: "focused", talking: false, bubble: { ...this.state.bubble, visible: true, mood: "acting", step: TOOL_STEPS[name] ?? name, streaming: true } });
         break;
       }
@@ -87,7 +93,8 @@ export class Presenter {
         else this.apply({ bubble: { ...this.state.bubble, step: null } });
         break;
       case "assistant.message":
-        if (this.answering) this.apply({ talking: false, bubble: { ...this.state.bubble, streaming: false } });
+        // The whole answer, from its start (the bubble shows the tail only while it streams).
+        if (this.answering) this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(this.answer), streaming: false } });
         break;
       case "session.error":
         this.answering = false;
