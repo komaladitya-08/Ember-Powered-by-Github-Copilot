@@ -33,8 +33,10 @@ export interface StackedWindow {
   y: number;
   width: number;
   height: number;
-  /** The window as its toolkit reports it (client plus _NET_FRAME_EXTENTS): matches accessibility frame extents. */
+  /** The window as its toolkit reports it (client plus _NET_FRAME_EXTENTS): GTK's accessibility frame extents. */
   outer: Rect;
+  /** The app's own window, without the window manager's frame: what Chromium, Electron and Qt report over accessibility. */
+  inner: Rect;
   /** Menus, tooltips and other popups the window manager doesn't manage. */
   overrideRedirect: boolean;
 }
@@ -306,7 +308,7 @@ export function openX11(displayName?: string): X11 | null {
           out.push({
             id: top, client, pid: Array.isArray(pid) ? pid[0] : null, title: typeof title === "string" ? title : "",
             wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "",
-            ...seen, outer, overrideRedirect: a.overrideRedirect,
+            ...seen, outer, inner, overrideRedirect: a.overrideRedirect,
           });
         }
         return out;

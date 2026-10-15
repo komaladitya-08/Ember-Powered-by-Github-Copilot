@@ -2,16 +2,16 @@
  * Perception: what is on the user's screen, as text (always) and as an image
  * (for workers, on request). Text comes from the accessibility tree via the
  * sidecar; images come straight from X11 with Ember hidden and private
- * windows blacked out. Every position handed out is in physical X pixels,
- * also for HiDPI apps that report logical ones (see windows.ts).
+ * windows and secret fields blacked out. Every position handed out is in
+ * physical X pixels, also for HiDPI apps that report logical ones (see windows.ts).
  */
 
 import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
-import { focusedElement, isNeverLook, isSecretNode, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
-import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds } from "./sidecar";
-import { coveringRects, matchFrame, scaleNodes, uncoveredArea } from "./windows";
+import { focusedElement, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
+import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type ReadWindowResult } from "./sidecar";
+import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { StackedWindow, X11, X11Window } from "../x11";
 import type { Logger } from "../logger";
 
@@ -23,7 +23,10 @@ export interface PerceptionOptions {
   screenBounds: () => Bounds;
   hideOverlay?: () => Promise<() => void>;
   log: Logger;
-  /** Ember's own process: its windows (the overlay, hidden while capturing) never count as covering a window. */
+  /**
+   * Ember's own process. Its windows stay out of screenshots, but the ones that take clicks
+   * (handle, desk view, ask box) hide what lies under them; the click-through overlay doesn't.
+   */
   ownPid?: number;
 }
 
@@ -43,11 +46,17 @@ export interface QuickContext {
 
 export interface Seen {
   window: AxWindow | null;
-  x11Window: X11Window | null;
+  x11Window: (X11Window & { wmClass?: string }) | null;
   nodes: AxNode[];
   blocked: boolean;
+  /** The app didn't answer in time, even when asked again (busy or hung): `nodes` are partial, or there is no window. */
+  busy: boolean;
+  /** Cut short: "nodes" at the element limit, "time" when reading took too long. */
+  truncated: "nodes" | "time" | null;
+  /** The app's other windows the user is in or must answer first (an Open dialog); private ones left out. */
+  others: OtherWindow[];
   ms: number;
-  /** Physical pixels per pixel the app reports (2 for GDK_SCALE=2); the bounds here are already physical. */
+  /** Physical pixels per pixel the app's window frame reports (2 for GDK_SCALE=2); the bounds here are already physical. */
   axScale: number;
 }
 
@@ -55,6 +64,11 @@ export interface Perceived extends Seen {
   text: string;
   capture: Capture | null;
 }
+
+/** A busy app (a file dialog listing a big folder) is asked once more after this long. */
+const BUSY_RETRY_MS = 300;
+/** Secret fields whose position is checked again once the picture is taken (they can scroll meanwhile). */
+const MAX_SECRET_RECHECK = 24;
 
 export class Perception {
   /** The overlay hide in progress: concurrent captures share it, and Ember shows again when the last one is done. */
@@ -70,36 +84,88 @@ export class Perception {
     return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack);
   }
 
-  /** A window's tree (see WindowTarget); with an empty target, the active window's. */
-  async read(target: WindowTarget, x11Window: X11Window | null = null, stack?: StackedWindow[] | null): Promise<Seen> {
+  /** On the never-look list, or a password or authentication prompt (polkit, keyring…): Ember looks away (M8.3). */
+  private isPrivate(app: string, title: string, list: string[]): boolean {
+    return isNeverLook({ app, name: title }, list) || isSecurityWindow({ app, title });
+  }
+
+  /**
+   * A window's tree (see WindowTarget); with an empty target, the active window's. `stack`: the
+   * X11 windows when the caller has them (undefined: looked up when needed).
+   */
+  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null): Promise<Seen> {
     const t0 = Date.now();
     const params = target.pid != null && target.path ? { pid: target.pid, path: target.path }
       : target.pid != null || target.title ? { ...(target.pid != null ? { pid: target.pid } : {}), ...(target.title ? { title: target.title } : {}) }
       : target.path ? null // a path means nothing without its process
       : {};
-    const res = params ? await this.o.sidecar.readWindow(params) : { window: null, nodes: [] as AxNode[], ms: 0 };
+    const list = this.o.neverLook().filter(i => i.trim());
+    // Never-look apps are known by their X11 class too (an Electron app's accessibility name is only
+    // "electron"): those processes aren't read at all.
+    if (list.length && stack === undefined) stack = this.stackNow();
+    const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ...(list.length ? { neverLook: list, skipPids } : {}) })
+      : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
+    let res = await ask();
+    if (res.busy) {
+      await new Promise(r => setTimeout(r, BUSY_RETRY_MS));
+      const again = await ask();
+      // The second answer, unless the app answered even less of it.
+      if (!again.busy || again.nodes.length >= res.nodes.length) res = again;
+    }
     const window = res.window;
-    // Never-look apps, and password or authentication prompts (polkit, keyring…): Ember looks away (M8.3).
-    const blocked = !!window && (isNeverLook(window, this.o.neverLook()) || isSecurityWindow(window))
-      || (!window && !!x11Window && (isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()) || isSecurityWindow(x11Window)));
+    const match = window && stack ? matchFrame(window, stack) : null;
+    const blocked = !!res.blocked
+      || !!window && this.isPrivate(window.app, window.name, list)
+      || !!match && this.isPrivate(match.window.wmClass, match.window.title, list)
+      || !!x11Window && this.isPrivate(x11Window.wmClass ?? "", x11Window.title, list);
+    const none = { busy: false, truncated: null, others: [], axScale: 1 };
     if (blocked) {
       // A private window's title goes no further than this (not to the model, not to the logs).
-      return { window: window && { ...window, name: "" }, x11Window: x11Window && { ...x11Window, title: "" }, nodes: [], blocked, ms: Date.now() - t0, axScale: 1 };
+      return { ...none, window: window && { ...window, name: "" }, x11Window: x11Window && { ...x11Window, title: "" }, nodes: [], blocked, ms: Date.now() - t0 };
     }
-    const k = window ? this.axScale(window, stack) : 1;
-    if (k !== 1) this.o.sidecar.scaleElements(res.nodes.map(n => n.id), k);
+    if (!window) return { ...none, window, x11Window, nodes: [], blocked, busy: !!res.busy, ms: Date.now() - t0 };
+    const k = this.frameScale(window, stack, match);
+    const frame = window.bounds && scaleBounds(window.bounds, k);
+    // Element by element: Chromium's web contents report physical pixels inside a frame that reports logical ones.
+    const each = k !== 1 ? elementScales(res.nodes, k, frame) : null;
+    if (each) {
+      const groups = new Map<number, number[]>();
+      for (const [id, s] of each) if (s !== 1) groups.set(s, [...groups.get(s) ?? [], id]);
+      for (const [s, ids] of groups) this.o.sidecar.scaleElements(ids, s);
+    }
+    const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
-      window: window && window.bounds && k !== 1 ? { ...window, bounds: scaleBounds(window.bounds, k) } : window,
-      x11Window, nodes: scaleNodes(res.nodes, k), blocked, ms: Date.now() - t0, axScale: k,
+      window: { ...window, bounds: frame }, x11Window, nodes, blocked, busy: !!res.busy,
+      truncated: res.slow ? "time" : res.truncated ? "nodes" : null,
+      others: (res.others ?? []).filter(w => !this.isPrivate(window.app, w.name, list)),
+      ms: Date.now() - t0, axScale: k,
     };
   }
 
   /**
-   * Physical pixels per pixel this window's app reports: its X11 top-level's size over its
+   * Fields the sidecar didn't know were secret (a revealed password beside its "Show password"
+   * toggle, an unnamed field under a "Card number" label): their contents are dropped here, and
+   * the sidecar is told, so nothing is typed into them either.
+   */
+  private async withSecrets(nodes: AxNode[]): Promise<AxNode[]> {
+    const secret = secretIds(nodes);
+    const fresh = nodes.filter(n => secret.has(n.id) && !n.secret).map(n => n.id);
+    if (!fresh.length) return nodes;
+    await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
+    return nodes.map(n => {
+      if (!secret.has(n.id) || n.secret) return n;
+      const { text: _text, selection: _selection, value: _value, ...rest } = n;
+      return { ...rest, secret: true };
+    });
+  }
+
+  /**
+   * Physical pixels per pixel this window's frame reports: its X11 top-level's size over its
    * accessibility frame's (HiDPI apps report logical pixels). From `stack` when given, else
    * remembered per app for a while.
    */
-  private axScale(window: AxWindow, stack?: StackedWindow[] | null): number {
+  private frameScale(window: AxWindow, stack?: StackedWindow[] | null, match?: FrameMatch | null): number {
     const key = window.pid != null ? `pid:${window.pid}` : `title:${window.name}`;
     const now = Date.now();
     if (!stack) {
@@ -107,8 +173,9 @@ export class Perception {
       if (known && known.until > now) return known.k;
       stack = this.stackNow();
       if (!stack) return 1;
+      match = undefined;
     }
-    const match = matchFrame(window, stack);
+    if (match === undefined) match = matchFrame(window, stack);
     const k = match?.scale ?? 1;
     if (k !== 1 && this.scales.get(key)?.k !== k) this.o.log.info("perception.hidpi", { pid: window.pid, scale: Math.round(k * 100) / 100 });
     this.scales.delete(key);
@@ -129,17 +196,17 @@ export class Perception {
   }
 
   /** Where the window read in `seen` is in the stack (null when it can't be found there). */
-  private locate(seen: Seen, stack: StackedWindow[]): { index: number; rect: Bounds } | null {
+  private locate(seen: Seen, stack: StackedWindow[]): { index: number; rect: Bounds; pid: number | null } | null {
     if (seen.window) {
       // Its bounds are physical already, so it matches at scale 1.
       const m = matchFrame(seen.window, stack);
-      return m && { index: m.index, rect: { x: m.window.x, y: m.window.y, width: m.window.width, height: m.window.height } };
+      return m && { index: m.index, rect: { x: m.window.x, y: m.window.y, width: m.window.width, height: m.window.height }, pid: m.window.pid };
     }
     const w = seen.x11Window;
     const index = w ? stack.findIndex(s => s.client === w.id || s.id === w.id) : -1;
     if (index < 0) return null;
     const s = stack[index];
-    return { index, rect: { x: s.x, y: s.y, width: s.width, height: s.height } };
+    return { index, rect: { x: s.x, y: s.y, width: s.width, height: s.height }, pid: s.pid };
   }
 
   /**
@@ -186,26 +253,30 @@ export class Perception {
     if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!seen.window) {
+      if (seen.busy) return BUSY_APP;
       const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
       return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}`;
     }
     const focus = focusedElement(seen.nodes);
     const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
     const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
-    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine] })}`;
+    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}`;
   }
 
   /**
    * For workers: elements with bounds, plus an optional marked screenshot. A window
-   * screenshot shows only that window: whatever other windows cover of it is blacked out.
+   * screenshot shows only that window: whatever other windows cover of it is blacked
+   * out, and so are secret fields (they get no mark either).
    */
   async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
-    const stack = opts.image ? this.stackNow() : null;
+    const stack = opts.image ? this.stackNow() : undefined;
     const seen = opts.target ? await this.read(opts.target, null, stack) : await this.focused(stack);
     const text = seen.blocked
       ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
-      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true }) : "The focused window exposes no accessibility information; use the screenshot.";
+      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, header: othersLine(seen) }) + notes(seen)
+      : seen.busy ? BUSY_APP
+      : "The focused window exposes no accessibility information; use the screenshot.";
     if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
     const x11 = this.o.x11;
@@ -213,20 +284,23 @@ export class Perception {
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
+    const shell = await this.shellOverlays();
+    if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
-    // A window: blacked out wherever other apps' windows lie on top of it (the stacking order says which).
-    const ignore = [this.o.ownPid ?? process.pid, seen.window?.pid ?? seen.x11Window?.pid];
+    // A window: blacked out wherever other windows lie on top of it (the stacking order says which).
+    const own = this.o.ownPid ?? process.pid;
     const covering = (s: StackedWindow[] | null): Bounds[] | null => {
       const at = s && this.locate(seen, s);
-      return at ? coveringRects(s!, at.index, at.rect, ignore) : null;
+      return at ? coveringRects(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : null;
     };
     let covers: Bounds[] = [];
     if (windowScope) {
       const at = stack && this.locate(seen, stack);
       if (!at) return noShot("Ember couldn't find the window on screen, so it can't tell what covers it");
       rect = at.rect;
-      covers = coveringRects(stack!, at.index, rect, ignore);
+      covers = coveringRects(stack!, at.index, rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own);
       if (uncoveredArea(rect, covers) <= 0.01 * rect.width * rect.height) return noShot("the window is covered by other windows");
     }
     const mask = await this.privateWindows(stack);
@@ -235,18 +309,21 @@ export class Perception {
       this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
       return noShot("Ember couldn't check for private windows");
     }
+    const secrets = seen.nodes.filter(n => n.secret && n.bounds);
     let coveredAfter = false;
     const capture = await captureRect(x11, rect, {
-      mask: [...mask, ...covers],
-      // Windows can move or open while the picture is taken: black out where they are afterwards too.
+      mask: [...mask, ...covers, ...shell.masks, ...secrets.map(n => pad(n.bounds!))],
+      // Windows can move or open, and fields scroll, while the picture is taken: black out where they are afterwards too.
       maskAfter: async () => {
         const now = this.stackNow();
         const priv = await this.privateWindows(now);
-        if (priv === null || !windowScope) return priv;
+        if (priv === null) return null;
+        const fields = await this.whereNow(secrets);
+        if (!windowScope) return [...priv, ...fields];
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
-        return [...priv, ...after];
+        return [...priv, ...fields, ...after];
       },
       hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes, origin, scale, w, h) : null,
@@ -254,6 +331,29 @@ export class Perception {
     if (!capture) return noShot("the window is off screen, or the screen couldn't be captured safely");
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
     return { ...seen, text: text + note, capture };
+  }
+
+  /** Where these (secret) fields are now, padded; the ones that can't be read again keep their old place. */
+  private async whereNow(fields: AxNode[]): Promise<Bounds[]> {
+    return Promise.all(fields.slice(0, MAX_SECRET_RECHECK).map(async n => {
+      const now = await this.o.sidecar.readElement(n.id).catch(() => null);
+      return pad(now?.bounds ?? n.bounds!);
+    }));
+  }
+
+  /** GNOME Shell's dialogs and notifications now (best effort: nothing is known when the check fails). */
+  private async shellOverlays(): Promise<{ dialog: boolean; masks: Bounds[] }> {
+    try {
+      return shellCovers((await this.o.sidecar.shellOverlays()).overlays);
+    } catch (err) {
+      this.o.log.warn("perception.shell_check_failed", { err });
+      return { dialog: false, masks: [] };
+    }
+  }
+
+  /** Is a GNOME Shell system dialog (a polkit or keyring password prompt, most likely) on screen? */
+  async systemDialogOpen(): Promise<boolean> {
+    return (await this.shellOverlays()).dialog;
   }
 
   /** Hides Ember for a capture. Concurrent captures share one hide; the last one to finish shows Ember again. */
@@ -280,32 +380,36 @@ export class Perception {
     };
   }
 
-  /** Visible windows (app, title, physical bounds), never-look ones left out. */
+  /** Visible windows (app, title, physical bounds), never-look ones (by app, title or X11 class) left out. */
   async windows(): Promise<AxWindow[]> {
     const { windows } = await this.o.sidecar.listWindows();
-    const shown = windows.filter(w => !isNeverLook(w, this.o.neverLook()));
-    const stack = shown.some(w => w.bounds) ? this.stackNow() : null;
-    return shown.map(w => {
-      const k = w.bounds && stack ? this.axScale(w, stack) : 1;
-      return k !== 1 ? { ...w, bounds: scaleBounds(w.bounds!, k) } : w;
+    const list = this.o.neverLook().filter(i => i.trim());
+    const stack = list.length || windows.some(w => w.bounds) ? this.stackNow() : null;
+    const privatePids = new Set(list.length && stack ? stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid) : []);
+    return windows.flatMap(w => {
+      const m = stack && w.bounds ? matchFrame(w, stack) : null;
+      if (isNeverLook(w, list) || (w.pid != null && privatePids.has(w.pid)) || (m && isNeverLook({ app: m.window.wmClass, name: m.window.title }, list))) return [];
+      const k = w.bounds && stack ? this.frameScale(w, stack, m) : 1;
+      return [k !== 1 ? { ...w, bounds: scaleBounds(w.bounds!, k) } : w];
     });
   }
 
-  /** Bounds of every visible window on the never-look list (blacked out in screenshots). */
   /**
-   * Both sources are used: X11 sees every top-level window (even apps that expose
-   * nothing over accessibility, e.g. started before it was turned on), AT-SPI
-   * knows app names. null means neither could be listed: the caller must not
-   * capture (fail closed) while anything is on the never-look list.
+   * Bounds of every visible window on the never-look list (blacked out in screenshots), whole
+   * frames, title bars included. Both sources are used: X11 sees every top-level window (even apps
+   * that expose nothing over accessibility, e.g. started before it was turned on), AT-SPI knows
+   * app names. null means neither could be listed: the caller must not capture (fail closed)
+   * while anything is on the never-look list.
    */
   async privateWindows(stack?: StackedWindow[] | null): Promise<Bounds[] | null> {
     const list = this.o.neverLook();
     if (!list.some(i => i.trim())) return [];
-    // From X11: whole frames, so the title bar (which shows the title) is covered too.
+    const frame = (w: StackedWindow): Bounds => ({ x: w.x, y: w.y, width: w.width, height: w.height });
+    let s: StackedWindow[] | null = null;
     let x11: Bounds[] | null = null;
     try {
-      const s = stack ?? (this.o.x11 ? this.o.x11.stack() : null);
-      x11 = s && s.filter(w => isNeverLook({ app: w.wmClass, name: w.title }, list)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
+      s = stack ?? (this.o.x11 ? this.o.x11.stack() : null);
+      x11 = s && s.filter(w => isNeverLook({ app: w.wmClass, name: w.title }, list)).map(frame);
     } catch (err) {
       this.o.log.warn("perception.x11_windows_failed", { err });
     }
@@ -313,8 +417,10 @@ export class Perception {
     try {
       const { windows } = await this.o.sidecar.listWindows();
       atspi = windows.filter(w => w.bounds && isNeverLook(w, list)).map(w => {
-        const k = this.scales.get(w.pid != null ? `pid:${w.pid}` : `title:${w.name}`)?.k ?? 1;
-        return scaleBounds(w.bounds!, k);
+        // Its X11 window when it can be found (the whole frame, in physical pixels), else its own report, scaled.
+        const m = s && matchFrame(w, s);
+        if (m) return frame(m.window);
+        return scaleBounds(w.bounds!, this.scales.get(w.pid != null ? `pid:${w.pid}` : `title:${w.name}`)?.k ?? 1);
       });
     } catch (err) {
       this.o.log.warn("perception.atspi_windows_failed", { err });
@@ -322,4 +428,25 @@ export class Perception {
     if (x11 === null && atspi === null) return null;
     return [...(x11 ?? []), ...(atspi ?? [])];
   }
+}
+
+const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
+
+/** A secret field's rectangle, a little larger: its border and focus ring go too. */
+const pad = (b: Bounds): Bounds => ({ x: b.x - 3, y: b.y - 3, width: b.width + 6, height: b.height + 6 });
+
+/** The app's other windows (an Open dialog over the window read), for the header inside the <screen> wrapper. */
+function othersLine(seen: Seen): string[] {
+  if (!seen.others.length) return [];
+  const list = seen.others.map(w => `${quoteUntrusted(w.name || "(untitled)", 80)} (${[screenWord(w.role), w.modal ? "modal" : "", w.active ? "the user is in it" : ""].filter(Boolean).join(", ")})`);
+  return [`Also open in this app: ${list.join("; ")}. To work there, switch to it by its title.`];
+}
+
+/** What Ember says about a read that is incomplete (after the <screen> wrapper: these are Ember's words). */
+function notes(seen: Seen): string {
+  const out: string[] = [];
+  if (seen.busy) out.push("(The app was busy and stopped answering partway, so this list may be incomplete. Try again in a moment.)");
+  if (seen.truncated === "nodes") out.push(`(The window has more elements than Ember reads at once; only the first ${seen.nodes.length} are listed. Scroll to the part you need, open it, or work in a smaller window, then look again.)`);
+  if (seen.truncated === "time") out.push("(Reading the window took too long, so only part of it is listed. Scroll to the part you need or close what you don't need, then look again.)");
+  return out.length ? `\n${out.join("\n")}` : "";
 }

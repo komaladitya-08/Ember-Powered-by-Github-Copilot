@@ -12,6 +12,7 @@ import type { Logger } from "../../app/main/logger";
 const FAKE = `
 const readline = require("node:readline");
 let stuck = false;
+let remembered = [];
 const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
@@ -27,6 +28,10 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       process.stdout.write('{"jsonrpc": "2.0", "id": 999999, "result": NaN}\\n');
       return ok("after noise");
     case "fail": return send({ jsonrpc: "2.0", id: req.id, error: { message: "no such element" } });
+    case "remember_secrets": remembered = req.params.keys; return ok({ count: remembered.length });
+    case "remembered": return ok(remembered);
+    case "read_window": return ok({ window: null, nodes: [], ms: 1, secretKeys: [[":1.42", "/org/a11y/atspi/accessible/" + req.params.n]] });
+    case "mark_secret": return ok({ keys: req.params.ids.map(id => [":1.7", "/x/" + id]) });
     case "read_element": return ok({ role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } });
     case "do_action": {
       const info = { role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } };
@@ -128,6 +133,17 @@ describe("AtspiSidecar", () => {
     expect((await s.readElement(6)).bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
     const r = await s.doAction(5);
     expect([r.before?.bounds, r.after.bounds]).toEqual([{ x: 20, y: 40, width: 60, height: 80 }, { x: 20, y: 40, width: 60, height: 80 }]);
+  });
+
+  it("hands the secret fields earlier helpers knew to every new one, before anything else", async () => {
+    const { s } = sidecar();
+    expect(await s.request("remembered")).toEqual([]);
+    const r = await s.readWindow({ n: 5 } as never);
+    expect(r).not.toHaveProperty("secretKeys");
+    await s.markSecret([9]);
+    await s.markSecret([]);
+    expect(await failure(s.request("die"))).toMatch(/stopped/);
+    expect(await s.request("remembered")).toEqual([[":1.42", "/org/a11y/atspi/accessible/5"], [":1.7", "/x/9"]]);
   });
 
   it("runs Python with UTF-8 stdio and gives every helper its own id range", async () => {

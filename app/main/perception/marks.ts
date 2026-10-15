@@ -1,4 +1,4 @@
-/** Set-of-marks: numbered boxes over interactive elements, drawn as SVG on the screenshot. */
+/** Set-of-marks: numbered boxes over interactive elements, drawn as SVG on the screenshot (never on secret fields, which are blacked out). */
 
 import type { AxNode, Bounds } from "./sidecar";
 
@@ -11,7 +11,7 @@ const esc = (s: string) => s.replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;"
 export function marksSvg(nodes: AxNode[], origin: Bounds, scale: number, width: number, height: number): string {
   const parts: string[] = [];
   for (const n of nodes) {
-    if (!n.bounds || !MARKABLE.has(n.role) || n.role === "password text") continue;
+    if (!n.bounds || !MARKABLE.has(n.role) || n.role === "password text" || n.secret) continue;
     const x = (n.bounds.x - origin.x) * scale, y = (n.bounds.y - origin.y) * scale;
     const w = n.bounds.width * scale, h = n.bounds.height * scale;
     if (x + w < 0 || y + h < 0 || x > width || y > height) continue;

@@ -500,7 +500,8 @@ export class Worker {
       this.d.audit.write({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
     }
-    if (!p.window) return fail("That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
+    // A busy app (a file dialog listing a big folder) isn't a closed one: the model is told to try again.
+    if (!p.window) return fail(p.busy ? p.text : "That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
     // Never fall back to whatever the user is looking at: a title that matches nothing is an error.
     if (expectTitle && !p.window.name.toLowerCase().includes(expectTitle.toLowerCase())) {
       return fail(`No open window has ${q(expectTitle, 100)} in its title. Use list_windows and pick one of those titles.`);
@@ -759,6 +760,11 @@ export class Worker {
     if (authPrompt()) {
       this.d.audit.write({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
       return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+    }
+    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
+    if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
+      this.d.audit.write({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "a system dialog is open" });
+      return denied("A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
       if (this.isOver) throw new BorrowStopped();

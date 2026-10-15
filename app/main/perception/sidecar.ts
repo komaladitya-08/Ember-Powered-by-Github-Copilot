@@ -4,7 +4,8 @@
  * answers one request at a time, so a request that doesn't come back in time
  * holds up every other one: that process is killed, and the next request
  * starts a fresh one (as after any exit or crash). Element ids are only valid
- * in the process that issued them.
+ * in the process that issued them; what it knows about secret fields is kept
+ * here too and handed to every new process.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -43,12 +44,26 @@ export interface AxWindow {
   bounds: Bounds | null;
 }
 
+/** Another window of the app read: one the user is in, or must answer first (an Open dialog). */
+export interface OtherWindow { name: string; role: string; active: boolean; modal: boolean }
+
 export interface ReadWindowResult {
   window: AxWindow | null;
   nodes: AxNode[];
+  /** Cut short: at maxNodes elements, or because reading took too long. */
   truncated?: boolean;
+  /** It was the time (the app answered, slowly). */
+  slow?: boolean;
+  /** The app stopped answering (busy or hung): the tree is partial, or there is no window at all. */
+  busy?: boolean;
+  /** On the never-look list (by app name, title or process): not read. */
+  blocked?: boolean;
+  others?: OtherWindow[];
   ms: number;
 }
+
+/** Something GNOME Shell draws over the windows (a system dialog, a notification), in physical pixels. */
+export interface ShellOverlay { role: string; name: string; text: string; bounds: Bounds | null }
 
 /** An element as it is right after an action (for verification). */
 export interface ElementInfo {
@@ -93,12 +108,20 @@ interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; t
 /** One sidecar process and the requests waiting on it. */
 interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean }
 
+/** A secret field's accessible: its app's bus name and its object path. */
+type SecretKey = [string, string];
+
 export class AtspiSidecar {
   private helper: Helper | null = null;
   private nextId = 1;
   /** Elements of HiDPI windows: physical pixels per pixel the app reports (see scaleElements). */
   private scales = new Map<number, number>();
   private scaled: number[][] = [];
+  /**
+   * Fields known to hold secrets. GTK's "Show password" turns a password field into a plain entry;
+   * the sidecar remembers that it was one, and so does this list, for whichever process comes next.
+   */
+  private secrets = new Map<string, SecretKey>();
 
   /** `env`: the environment of the desktop to read (Ember's desk has its own display and bus). */
   constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env) {}
@@ -130,7 +153,21 @@ export class AtspiSidecar {
       this.log.warn("sidecar.stdin_error", { err });
       this.retire(h, "accessibility helper stopped", "SIGKILL");
     });
+    // Before anything else it is asked: the secret fields earlier processes knew (its answer isn't needed).
+    if (this.secrets.size) child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params: { keys: [...this.secrets.values()] } }) + "\n");
     return h;
+  }
+
+  /** Keeps secret fields' keys (the most recent few thousand). */
+  private remember(keys: unknown): void {
+    if (!Array.isArray(keys)) return;
+    for (const k of keys) {
+      if (!Array.isArray(k) || k.length !== 2 || typeof k[0] !== "string" || typeof k[1] !== "string") continue;
+      const key = `${k[0]} ${k[1]}`;
+      this.secrets.delete(key);
+      this.secrets.set(key, [k[0], k[1]]);
+    }
+    while (this.secrets.size > 4096) this.secrets.delete(this.secrets.keys().next().value!);
   }
 
   private answer(h: Helper, line: string): void {
@@ -200,10 +237,25 @@ export class AtspiSidecar {
 
   status(): Promise<SidecarStatus> { return this.request("status"); }
   listWindows(): Promise<{ windows: AxWindow[] }> { return this.request("list_windows"); }
-  /** `pid` and `path` together name one window (no other is read if it is gone). */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number } = {}): Promise<ReadWindowResult> {
-    return this.request("read_window", params);
+  /**
+   * `pid` and `path` together name one window (no other is read if it is gone). A window whose app
+   * or title matches `neverLook`, or whose process is in `skipPids`, is found but not read.
+   */
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[] } = {}): Promise<ReadWindowResult> {
+    return this.request<ReadWindowResult & { secretKeys?: unknown }>("read_window", params).then(({ secretKeys, ...r }) => {
+      this.remember(secretKeys);
+      return r;
+    });
   }
+
+  /** These elements (from the last few reads) hold secrets: the sidecar refuses to type into them from now on. */
+  markSecret(ids: number[]): Promise<void> {
+    if (!ids.length) return Promise.resolve();
+    return this.request<{ keys?: unknown }>("mark_secret", { ids }).then(r => this.remember(r.keys));
+  }
+
+  /** What GNOME Shell shows over the windows right now (none without GNOME Shell). */
+  shellOverlays(): Promise<{ overlays: ShellOverlay[] }> { return this.request("shell_overlays"); }
 
   // Tier 1 actions on element ids from a previous readWindow.
   readElement(id: number): Promise<ElementInfo> { return this.request<ElementInfo>("read_element", { id }).then(e => this.physical(id, e)); }

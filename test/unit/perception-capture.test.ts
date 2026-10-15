@@ -11,7 +11,7 @@ const SCREEN = { width: 300, height: 200 };
 
 /** A top-level window in a pretend stack. */
 const top = (id: number, pid: number | null, r: Bounds, title = ""): StackedWindow =>
-  ({ id, client: id, pid, title, wmClass: "app", ...r, outer: r, overrideRedirect: false });
+  ({ id, client: id, pid, title, wmClass: "app", ...r, outer: r, inner: r, overrideRedirect: false });
 
 /** A pretend X server: a grey screen, clipped like the real x11.capture. */
 function fakeX11(onCapture: () => void = () => undefined, stack: StackedWindow[] = []): X11 {

@@ -28,6 +28,13 @@ try:
     import pyatspi
 except ImportError:  # reported per request; the self-test runs without it
     pyatspi = None
+Atspi = None
+if pyatspi is not None:
+    try:
+        # libatspi itself (pyatspi loaded it): states and extents straight from it take half the time.
+        from gi.repository import Atspi
+    except Exception:
+        pass
 
 VERSION = 3
 # Deep enough for GTK 3.22's gedit, whose text view sits 15 levels down under fillers and panels.
@@ -45,6 +52,12 @@ STARTUP_TIMEOUT_MS = 1000
 SLOW_APP_S = 0.7
 STRIKES_WITHIN_S = 60.0
 HUNG_FOR_S = 30.0
+# A read stops after this long with what it has (Ember gives up on the helper after 5 s, and a
+# partial answer now beats a complete one too late). Looking for the window gets about as long,
+# and the whole answer should be there within READ_TOTAL_S.
+READ_BUDGET_S = 1.5
+FIND_BUDGET_S = 2.0
+READ_TOTAL_S = 3.0
 
 # GTK reports this position for widgets that have none.
 INT_MIN = -2147483648
@@ -55,43 +68,87 @@ SKIP_ROLES = {"filler", "panel", "section", "redundant object", "glass pane", "l
 INTERESTING_STATES = ("focused", "checked", "selected", "expanded", "collapsed", "pressed", "editable",
                       "multi line", "sensitive", "enabled", "focusable", "active")
 # Controls worth listing actions for (the rest are only read). Keep in step with INTERACTIVE in elements.ts.
+# Rows and cells (hundreds in a file dialog) are not asked: their actions are looked up when one is used.
 INTERACTIVE_ROLES = frozenset([
     "push button", "toggle button", "check box", "radio button", "combo box", "text", "entry", "password text",
     "spin button", "slider", "menu item", "menu", "link", "page tab", "list item", "table cell", "check menu item",
     "radio menu item", "tree item", "switch", "icon", "table column header", "column header", "table row header",
     "row header", "terminal", "document text", "paragraph"])
+LAZY_ACTION_ROLES = frozenset(["list item", "table cell", "tree item", "table column header", "column header",
+                               "table row header", "row header"])
 TEXT_ROLES = frozenset(["text", "entry", "password text", "terminal", "paragraph", "document text", "spin button",
                         "combo box"])
 VALUE_ROLES = frozenset(["slider", "spin button", "scroll bar", "progress bar", "level bar", "dial"])
 # Input fields, whose name or label can make their contents secret (documents and terminals are not judged
 # by name). Keep in step with FIELD_ROLES in elements.ts.
 FIELD_ROLES = frozenset(["text", "entry", "password text", "spin button", "combo box"])
+# Text that labels a control: GTK's and Qt's labels, Chromium's plain text. Keep in step with LABEL_ROLES in elements.ts.
+LABEL_ROLES = frozenset(["label", "static", "caption"])
 
 # Labels of fields whose contents never leave this process (passwords, payment and bank details,
-# one-time codes, keys). Keep in step with SECRET_LABEL in app/main/perception/elements.ts.
-SECRET_LABEL = re.compile(
-    r"\b(pass(word|phrase|code)|passwd|passwort|kennwort|mot de passe|contrase(n|ñ)a|senha|pin( ?code)?"
-    r"|card ?(number|no)|credit ?card|cvv2?|cvc2?|csc|security code|card verification|expir(y|ation)"
-    r"|iban|routing number|account number|sort code|one[- ]time (code|password|pin)|otp|2fa|two[- ]factor|totp"
-    r"|verification code|auth(entication)? code|recovery (code|key)|secret|private key"
-    r"|(api|access|auth|bearer) ?(key|token)|ssn|social security)\b")
+# one-time codes, keys), in the languages Ember's users are likely to meet. The same lists as
+# SECRET_WORDS and SECRET_ANYWHERE in app/main/perception/elements.ts (a unit test checks): each entry
+# is a regular expression both engines read alike, matched on lowercase, NFKC-normalised text.
+SECRET_WORDS = [
+    # Passwords and PINs.
+    "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a", "senha",
+    "palavra-passe", "parola", "parolă", "clave", "lösenord", "adgangskode", "salasana", "hasło", "heslo", "geslo", "lozinka",
+    "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
+    # Cards and bank accounts.
+    "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification", "expir(y|ation)",
+    "kartennummer", "kreditkarte(nnummer)?", "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum", "num(é|e)ro de (la )?carte",
+    "cryptogramme", "date d['’]expiration", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
+    "kaartnummer", "kortnummer", "numer karty", "номер карты",
+    "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
+    "codice di (sicurezza|verifica)", "fecha de (caducidad|vencimiento|expiraci(ó|o)n)", "iban", "routing number", "account number",
+    "sort code", "kontonummer",
+    # One-time codes.
+    "one[- ]time (code|password|pin)", "otp", "2fa", "two[- ]factor", "totp", "verification code", "auth(entication)? code",
+    "recovery (code|key)", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
+    "код (подтверждения|безопасности)",
+    # Keys, network passwords and secret answers.
+    "secret", "private key", "(api|access|auth|bearer) ?(key|token)", "wi-?fi (key|password|passphrase)", "network (security )?key",
+    "wpa2? ?(key|passphrase)", "pre-?shared key", "psk", "encryption key", "security (answer|question)", "secret (answer|question)",
+    "ssn", "social security",
+]
+# The same, for scripts written without spaces between words (matched anywhere in the label).
+SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
+                   "安全码", "安全碼", "验证码", "驗證碼", "確認コード", "セキュリティコード", "認証コード"]
+SECRET_LABEL = re.compile(r"(?<!\w)(?:" + "|".join(SECRET_WORDS) + r")(?!\w)|" + "|".join(SECRET_ANYWHERE))
+
+
+def normalize_label(label):
+    """Lowercase NFKC text without invisible characters (and Turkish İ's stray dot), as labels are matched."""
+    s = unicodedata.normalize("NFKC", label)
+    s = "".join(c for c in s if unicodedata.category(c) != "Cf")
+    return s.lower().replace("\u0307", "")
 
 
 def looks_secret(label):
     """Does this field name or label say its contents are secret?"""
-    if not label:
-        return False
-    s = unicodedata.normalize("NFKC", label)
-    s = "".join(c for c in s if unicodedata.category(c) != "Cf")
-    return SECRET_LABEL.search(s.lower()) is not None
+    return bool(label) and SECRET_LABEL.search(normalize_label(label)) is not None
 
 
 # ---------------------------------------------------------------- reading one accessible
 
+STATE_NAMES = {}  # state -> its name, as pyatspi spells it ("multi line")
+
+
+def native(acc):
+    """A real libatspi accessible (not a test's stand-in), whose calls can skip pyatspi's wrappers."""
+    return Atspi is not None and isinstance(acc, Atspi.Accessible)
+
+
 def state_names(acc):
     try:
-        ss = acc.getState()
-        return [pyatspi.stateToString(s) for s in ss.getStates()]
+        states = Atspi.Accessible.get_state_set(acc).get_states() if native(acc) else acc.getState().getStates()
+        out = []
+        for s in states:
+            name = STATE_NAMES.get(s)
+            if name is None:
+                name = STATE_NAMES[s] = pyatspi.stateToString(s)
+            out.append(name)
+        return out
     except Exception:
         return []
 
@@ -103,9 +160,16 @@ def bounds_of(x, y, width, height):
     return {"x": x, "y": y, "width": width, "height": height}
 
 
+def raw_extents(acc):
+    """The element's rectangle on the desktop as the toolkit reports it; raises when it has none."""
+    if native(acc):
+        return Atspi.Component.get_extents(acc, Atspi.CoordType.SCREEN)
+    return acc.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+
+
 def extents(acc):
     try:
-        e = acc.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+        e = raw_extents(acc)
     except Exception:
         return None
     return bounds_of(e.x, e.y, e.width, e.height)
@@ -176,6 +240,19 @@ def labels_of(acc):
     return out
 
 
+def placeholder_of(acc):
+    """A field's placeholder ("Password"), from its object attributes (GTK: placeholder-text)."""
+    try:
+        attrs = acc.getAttributes()
+    except Exception:
+        return ""
+    pairs = attrs.items() if isinstance(attrs, dict) else (a.partition(":")[::2] for a in attrs or [])
+    for k, v in pairs:
+        if k in ("placeholder-text", "placeholder"):
+            return v
+    return ""
+
+
 def object_key(acc):
     """Identifies an accessible across reads: its application's bus name and object path."""
     try:
@@ -217,7 +294,7 @@ def is_secret(acc, role, name):
         return True
     if role not in FIELD_ROLES:
         return False
-    if looks_secret(name) or any(looks_secret(label) for label in labels_of(acc)):
+    if looks_secret(name) or any(looks_secret(label) for label in labels_of(acc)) or looks_secret(placeholder_of(acc)):
         SECRETS.add(key)
         return True
     return False
@@ -280,8 +357,8 @@ SNAPSHOTS = Snapshots()
 # ---------------------------------------------------------------- reading a window
 
 def node_of(acc, role, name, states, bounds):
-    """What the model is told about one element. Only controls are asked for actions, and only text
-    roles for text (each is a round trip to the app); secret fields keep their contents."""
+    """What the model is told about one element. Only controls are asked for actions (not rows and cells),
+    and only text roles for text (each is a round trip to the app); secret fields keep their contents."""
     node = {
         "role": role,
         "name": name[:200],
@@ -289,7 +366,7 @@ def node_of(acc, role, name, states, bounds):
         "bounds": bounds,
     }
     interactive = role in INTERACTIVE_ROLES
-    if interactive:
+    if interactive and role not in LAZY_ACTION_ROLES:
         acts = actions(acc)
         if acts:
             node["actions"] = acts
@@ -344,7 +421,7 @@ def ends_above(acc, i, top):
 def raw_height(acc):
     """An element's height, even when its position is unknown (GTK's tree view cells)."""
     try:
-        return acc.queryComponent().getExtents(pyatspi.DESKTOP_COORDS).height
+        return raw_extents(acc).height
     except Exception:
         return None
 
@@ -428,16 +505,42 @@ def child_indices(acc, count, clip):
 CLIP_ROLES = frozenset(["scroll pane", "viewport"])
 
 
-def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None):
+class Budget(object):
+    """The time one read may take. Between two ticks the app is asked only a few things, so a gap
+    longer than SLOW_APP_S was a call that timed out: the app is busy (or hung), and asking it more
+    would only time out again. Either way the read stops where it is."""
+
+    def __init__(self, seconds=READ_BUDGET_S):
+        self.last = time.monotonic()
+        self.until = self.last + seconds
+        self.busy = False
+        self.over = False
+
+    def tick(self):
+        """True once the read should stop (the app stopped answering, or the time is up)."""
+        now = time.monotonic()
+        if now - self.last > SLOW_APP_S:
+            self.busy = True
+        if now >= self.until:
+            self.over = True
+        self.last = now
+        return self.busy or self.over
+
+
+def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
-    if len(out) >= max_nodes or depth > max_depth:
+    budget = budget or Budget()
+    if len(out) >= max_nodes or depth > max_depth or budget.tick():
         return False
     states = state_names(acc)
     if "showing" not in states or "visible" not in states:
         # Invisible elements are a known prompt-injection channel; never report them.
         return False
-    role = acc.getRoleName()
-    name = (acc.name or "").strip()
+    try:
+        role = acc.getRoleName()
+        name = (acc.name or "").strip()
+    except Exception:
+        return False
     my_id = parent_id
     listed = role not in SKIP_ROLES or bool(name)
     bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES else None
@@ -450,6 +553,8 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None):
         my_id = node["id"]
     if depth == 0 or role in CLIP_ROLES:
         clip = clip_to(clip, bounds)
+    if budget.tick():
+        return True
     try:
         count = acc.childCount
     except Exception:
@@ -457,12 +562,12 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None):
     long_list = count > MAX_CHILDREN
     shown, misses = False, 0
     for i in child_indices(acc, count, clip):
-        if len(out) >= max_nodes:
+        if len(out) >= max_nodes or budget.tick():
             break
         child = child_at(acc, i)
         if child is None:
             continue
-        on_screen = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip)
+        on_screen = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
         if long_list:
             # Past the rows on screen: the rest of a long list is scrolled away too.
             shown, misses = (True, 0) if on_screen else (shown, misses + 1 if shown else 0)
@@ -471,27 +576,31 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None):
     return True
 
 
-def left_label(node, labels):
-    """The label just left of an unnamed control on the same row (the rule inferLabels in elements.ts uses)."""
+def nearby_label(node, labels):
+    """The label of an unnamed control: on its row to its left, else just above it and starting where
+    it starts (the rule inferLabels in elements.ts uses)."""
     b = node["bounds"]
     cy = b["y"] + b["height"] / 2.0
-    best, best_gap = None, None
+    left, left_gap, above, above_gap = None, None, None, None
     for lab in labels:
         lb = lab["bounds"]
-        ly = lb["y"] + lb["height"] / 2.0
         gap = b["x"] - (lb["x"] + lb["width"])
-        if abs(ly - cy) < max(12, b["height"] / 2.0) and -4 <= gap < 320 and (best is None or gap < best_gap):
-            best, best_gap = lab["name"], gap
-    return best
+        if abs(lb["y"] + lb["height"] / 2.0 - cy) < max(12, b["height"] / 2.0) and -4 <= gap < 320 \
+                and (left is None or gap < left_gap):
+            left, left_gap = lab["name"], gap
+        up = b["y"] - (lb["y"] + lb["height"])
+        if -4 <= up < 24 and abs(lb["x"] - b["x"]) <= 16 and (above is None or up < above_gap):
+            above, above_gap = lab["name"], up
+    return left if left is not None else above
 
 
 def redact_by_layout(nodes, accessible_of):
-    """Unnamed text fields next to a "Password" or "Card number" label: their contents are secret too."""
-    labels = [n for n in nodes if n["role"] == "label" and n["name"] and n["bounds"]]
+    """Unnamed text fields next to or under a "Password" or "Card number" label: their contents are secret too."""
+    labels = [n for n in nodes if n["role"] in LABEL_ROLES and n["name"] and n["bounds"]]
     for n in nodes:
         if n["role"] not in FIELD_ROLES or n["name"] or not n["bounds"] or n.get("secret"):
             continue
-        if looks_secret(left_label(n, labels)):
+        if looks_secret(nearby_label(n, labels)):
             for k in ("text", "selection", "value"):
                 n.pop(k, None)
             n["secret"] = True
@@ -502,6 +611,7 @@ def redact_by_layout(nodes, accessible_of):
 
 HUNG = {}  # pid -> time.monotonic() until which the app is skipped
 STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one)
+SLOW_NOW = set()  # apps that timed out during the current request: not asked again before the next one
 
 
 def is_hung(pid):
@@ -541,6 +651,7 @@ def note_answer(pid, t0, ok):
         answered(pid)
     elif time.monotonic() - t0 > SLOW_APP_S:
         timed_out(pid)
+        SLOW_NOW.add(pid)
 
 
 def process_id(app):
@@ -550,15 +661,18 @@ def process_id(app):
         return None
 
 
-def frames(only_pid=None, skip_pid=None):
+def frames(only_pid=None, skip_pid=None, until=None):
     """(app, pid, window) for every top-level window. The process id is checked before an app is
-    asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for."""
+    asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for.
+    Past `until` (time.monotonic()), busy apps took the time already: the rest wait for the next request."""
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
     except Exception:
         return
     for a in range(napps):
+        if until is not None and time.monotonic() > until:
+            return
         try:
             app = desktop.getChildAtIndex(a)
         except Exception:
@@ -570,7 +684,7 @@ def frames(only_pid=None, skip_pid=None):
             continue
         if skip_pid is not None and pid == skip_pid:
             continue
-        if only_pid is None and is_hung(pid):
+        if only_pid is None and is_hung(pid) or pid in SLOW_NOW:
             continue
         t0 = time.monotonic()
         wins, ok = [], True
@@ -595,6 +709,8 @@ def frames(only_pid=None, skip_pid=None):
 
 def window_facts(pid, win):
     """(lowercase name, states) of a window; a timed-out answer is a strike against its app."""
+    if pid in SLOW_NOW:
+        return "", []
     t0 = time.monotonic()
     states = state_names(win)  # [] when the call failed: every window has some state
     try:
@@ -613,22 +729,26 @@ def window_path(win):
         return None
 
 
-def describe_window(app, pid, win):
-    states = state_names(win)
-    return {
-        "app": app.name or "",
-        "pid": pid,
-        "path": window_path(win),
-        "name": win.name or "",
-        "role": win.getRoleName(),
-        "active": "active" in states,
-        "bounds": extents(win),
-    }
+def describe_window(app, pid, win, budget=None):
+    """The window for the client. Each answer is guarded: a busy app's window is described as far as it answers."""
+    out = {"app": "", "pid": pid, "path": window_path(win), "name": "", "role": "", "active": False, "bounds": None}
+    budget = budget or Budget()
+    asks = (("active", lambda: "active" in state_names(win)), ("app", lambda: app.name or ""),
+            ("name", lambda: win.name or ""), ("role", win.getRoleName), ("bounds", lambda: extents(win)))
+    for key, ask in asks:
+        try:
+            out[key] = ask()
+        except Exception:
+            pass
+        if budget.tick():
+            break
+    return out
 
 
 def list_windows(params):
+    SLOW_NOW.clear()
     out = []
-    for app, pid, win in frames():
+    for app, pid, win in frames(until=time.monotonic() + FIND_BUDGET_S):
         _, states = window_facts(pid, win)
         if "showing" in states or "active" in states:
             out.append(describe_window(app, pid, win))
@@ -659,7 +779,7 @@ def best_window(found, pid, title):
     return best, best_score
 
 
-def find_window(params):
+def find_window(params, until=None):
     """The window to read: by pid and path (exactly that window), by pid and/or title (see
     best_window), or with none of them, the active window. With a pid, only that app is asked
     first; other apps' windows can at most score 9."""
@@ -668,42 +788,186 @@ def find_window(params):
     path = params.get("path")
     if pid is not None and path:
         # One particular window: that one, or none (never another window in its place).
-        for app, apid, win in frames(only_pid=pid):
+        for app, apid, win in frames(only_pid=pid, until=until):
             if window_path(win) == path:
                 return app, apid, win
         return None
     if pid is None and not title:
-        for app, apid, win in frames():
+        for app, apid, win in frames(until=until):
             if "active" in window_facts(apid, win)[1]:
                 return app, apid, win
         return None
     if pid is not None:
-        best, score = best_window(frames(only_pid=pid), pid, title)
+        best, score = best_window(frames(only_pid=pid, until=until), pid, title)
         if not title or score >= 10:
             return best
-        other, other_score = best_window(frames(skip_pid=pid), pid, title)
+        other, other_score = best_window(frames(skip_pid=pid, until=until), pid, title)
         return other if other_score > score else best
-    return best_window(frames(), None, title)[0]
+    return best_window(frames(until=until), None, title)[0]
+
+
+def never_looked(window, params):
+    """Is this window on the user's never-look list (by app name or title, or by process, which Ember
+    found by the window's X11 class)? Then it is not read at all."""
+    if window["pid"] is not None and window["pid"] in (params.get("skipPids") or []):
+        return True
+    hay = ("%s %s" % (window["app"], window["name"])).lower()
+    return any(t.strip() and t.strip().lower() in hay for t in params.get("neverLook") or [])
+
+
+def other_windows(pid, win, budget):
+    """The app's other windows the user is in or must answer first (an Open dialog over the main window)."""
+    out = []
+    path = window_path(win)
+    for _app, apid, other in frames(only_pid=pid):
+        if len(out) >= 5 or budget.tick():
+            break
+        if window_path(other) == path:
+            continue
+        states = state_names(other)
+        if "showing" not in states or not ("active" in states or "modal" in states):
+            continue
+        try:
+            out.append({"name": other.name or "", "role": other.getRoleName(), "active": "active" in states,
+                        "modal": "modal" in states})
+        except Exception:
+            pass
+    return out
 
 
 def read_window(params):
     t0 = time.time()
-    found = find_window(params)
+    SLOW_NOW.clear()
+    found = find_window(params, time.monotonic() + FIND_BUDGET_S)
     if found is None:
-        return {"window": None, "nodes": [], "ms": int((time.time() - t0) * 1000)}
+        # A window that didn't answer in time is busy (a file dialog listing a big folder), not gone.
+        asked = params.get("pid")
+        busy = asked in SLOW_NOW if asked is not None else bool(SLOW_NOW)
+        return {"window": None, "nodes": [], "busy": busy, "ms": int((time.time() - t0) * 1000)}
     app, pid, win = found
+    budget = Budget(max(0.3, min(READ_BUDGET_S, READ_TOTAL_S - (time.time() - t0))))
+    window = describe_window(app, pid, win, budget)
+    if pid in SLOW_NOW:
+        budget.busy = True
+    if never_looked(window, params):
+        return {"window": window, "nodes": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
     SNAPSHOTS.begin()
     nodes = []
     max_nodes = int(params.get("maxNodes", MAX_NODES))
-    walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None)
+    if not budget.busy:
+        walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None, None, budget)
+        budget.tick()  # the last element asked may have been the one that timed out
     latest = SNAPSHOTS.latest()
     redact_by_layout(nodes, lambda nid: latest.get(nid))
-    return {
-        "window": describe_window(app, pid, win),
+    others = [] if budget.busy or pid is None else other_windows(pid, win, Budget(0.3))
+    if budget.busy and pid not in SLOW_NOW:
+        timed_out(pid)
+    keys = set(object_key(latest.get(n["id"])) for n in nodes if n.get("secret"))
+    out = {
+        "window": window,
         "nodes": nodes,
-        "truncated": len(nodes) >= max_nodes,
+        "truncated": len(nodes) >= max_nodes or budget.over,
+        "others": others,
+        "secretKeys": [list(k) for k in keys if k is not None],
         "ms": int((time.time() - t0) * 1000),
     }
+    if budget.busy:
+        out["busy"] = True
+    elif budget.over:
+        out["slow"] = True
+    return out
+
+
+def remember_secrets(params):
+    """Secret fields an earlier helper process knew (Ember hands them over when it starts a new one)."""
+    for key in params.get("keys") or []:
+        if isinstance(key, list) and len(key) == 2:
+            SECRETS.add((key[0], key[1]))
+    return {"count": len(SECRETS.keys)}
+
+
+def mark_secret(params):
+    """Elements Ember found to hold secrets (a field beside a "Show password" toggle): nothing is typed into them."""
+    keys = []
+    for nid in params.get("ids") or []:
+        try:
+            key = object_key(SNAPSHOTS.get(int(nid)))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if key is not None:
+            SECRETS.add(key)
+            keys.append(list(key))
+    return {"keys": keys}
+
+
+# GNOME Shell draws its own dialogs (polkit, keyring, end session) and notifications inside its stage
+# window: X11 doesn't see them as windows, but they are in every screenshot.
+SHELL_ROLES = frozenset(["dialog", "alert", "notification", "file chooser"])
+# They sit a few levels under the stage (its UI group, the modal dialog group or the message tray).
+SHELL_DEPTH = 6
+
+
+def shell_overlays(params):
+    """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
+    text (for the password-prompt check). Empty without GNOME Shell."""
+    out = []
+    desktop = pyatspi.Registry.getDesktop(0)
+    try:
+        napps = desktop.childCount
+    except Exception:
+        return {"overlays": out}
+    budget = Budget(0.4)
+    for a in range(napps):
+        app = child_at(desktop, a)
+        try:
+            if app is None or (app.name or "") != "gnome-shell":
+                continue
+        except Exception:
+            continue
+        stack = [(app, 0)]
+        seen = 0
+        while stack and seen < 400 and not budget.tick():
+            acc, depth = stack.pop()
+            seen += 1
+            states = state_names(acc)
+            if depth > 0 and ("showing" not in states or "visible" not in states):
+                continue
+            try:
+                role = acc.getRoleName()
+            except Exception:
+                continue
+            if role in SHELL_ROLES:
+                words = []
+                shell_text(acc, words, 0)
+                out.append({"role": role, "name": (acc.name or "")[:200], "text": " ".join(words)[:400],
+                            "bounds": extents(acc)})
+                continue
+            if depth < SHELL_DEPTH:
+                try:
+                    count = min(acc.childCount, 60)
+                except Exception:
+                    count = 0
+                for i in range(count - 1, -1, -1):
+                    child = child_at(acc, i)
+                    if child is not None:
+                        stack.append((child, depth + 1))
+    return {"overlays": out}
+
+
+def shell_text(acc, words, depth):
+    """The names of what a shell dialog shows ("Authentication Required", "Password")."""
+    if depth > 6 or len(words) > 20:
+        return
+    try:
+        if acc.name:
+            words.append(acc.name.strip())
+        count = min(acc.childCount, 30)
+    except Exception:
+        return
+    for i in range(count):
+        child = child_at(acc, i)
+        if child is not None:
+            shell_text(child, words, depth + 1)
 
 
 def status(params):
@@ -906,6 +1170,9 @@ METHODS = {
     "status": status,
     "list_windows": list_windows,
     "read_window": read_window,
+    "remember_secrets": remember_secrets,
+    "mark_secret": mark_secret,
+    "shell_overlays": shell_overlays,
     "read_element": read_element,
     "do_action": do_action,
     "set_text": set_text,

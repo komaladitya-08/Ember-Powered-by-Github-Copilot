@@ -15,6 +15,8 @@ import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Field labels and whether they are secret: the same table the TypeScript tests read.
+LABELS = os.path.join(HERE, "..", "..", "test", "fixtures", "secret-labels.json")
 
 # A stand-in pyatspi, so the real one (and a desktop) are never needed.
 FAKE = types.ModuleType("pyatspi")
@@ -147,6 +149,9 @@ class Acc(object):
     def getRelationSet(self):
         return [Relation(FAKE.RELATION_LABELLED_BY, self.labelled_by)] if self.labelled_by else []
 
+    def getAttributes(self):
+        return ["placeholder-text:%s" % self.placeholder] if getattr(self, "placeholder", None) else []
+
     @property
     def childCount(self):
         return len(self.kids)
@@ -166,6 +171,38 @@ class Secrets(unittest.TestCase):
             self.assertTrue(e.looks_secret(label), label)
         for label in ["Name", "Spinner", "Pinned items", "Search", "Compass", "Bypass", "Subject", "", None]:
             self.assertFalse(e.looks_secret(label), label)
+
+    @unittest.skipUnless(os.path.exists(LABELS), "the repository's test table is not here")
+    def test_secret_labels_in_many_languages(self):
+        with open(LABELS, encoding="utf-8") as f:
+            table = json.load(f)
+        for label in table["secret"]:
+            self.assertTrue(e.looks_secret(label), label)
+        for label in table["plain"]:
+            self.assertFalse(e.looks_secret(label), label)
+
+    def test_placeholder_says_password(self):
+        field = Acc("entry", "", text="hunter2")
+        field.placeholder = "Password"
+        self.assertTrue(e.node_of(field, "entry", "", field.states, None).get("secret"))
+        self.assertEqual(field.reads, 0)
+
+    def test_secret_fields_known_to_an_earlier_helper(self):
+        # Revealed before this process ever saw it as a password field: Ember hands over what it knew.
+        pw = Acc("text", "Key", text="revealedBeforeRead")
+        self.assertFalse(e.is_secret(pw, "text", "Key"))
+        e.remember_secrets({"keys": [[pw.app.bus_name, pw.path], "junk", [1]]})
+        self.assertTrue(e.is_secret(pw, "text", "Key"))
+        self.assertRaises(PermissionError, e.refuse_secret, pw)
+
+    def test_fields_ember_found_secret(self):
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SNAPSHOTS.begin()
+        field = Acc("entry", "Key", text="revealed")
+        nid = e.SNAPSHOTS.add(field)
+        out = e.mark_secret({"ids": [nid, 999999]})
+        self.assertEqual(out["keys"], [[field.app.bus_name, field.path]])
+        self.assertRaises(PermissionError, e.refuse_secret, field)
 
     def test_password_fields_stay_secret_after_show_password(self):
         pw = Acc("password text", text="hunter2")
@@ -209,6 +246,21 @@ class Secrets(unittest.TestCase):
         # Remembered: a later read_element or set_text knows too.
         self.assertTrue(e.node_info(field).get("secret"))
         self.assertRaises(PermissionError, e.refuse_secret, field)
+
+    def test_unnamed_field_under_a_secret_label(self):
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SNAPSHOTS.begin()
+        # Chromium's plain text above the field it labels.
+        label = Acc("static", "Card number", bounds=(16, 264, 152, 30))
+        field = Acc("entry", "", bounds=(16, 295, 359, 43), text="4000123412341234")
+        far = Acc("static", "Card number", bounds=(400, 200, 152, 30))
+        other = Acc("entry", "", bounds=(16, 400, 359, 43), text="Ada")
+        root = Acc("frame", "Pay", bounds=(0, 0, 800, 600), kids=[label, field, far, other])
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        e.redact_by_layout(nodes, e.SNAPSHOTS.latest().get)
+        entries = [n for n in nodes if n["role"] == "entry"]
+        self.assertEqual([n.get("text") for n in entries], [None, "Ada"])
 
 
 class Reading(unittest.TestCase):
@@ -275,6 +327,49 @@ class Reading(unittest.TestCase):
         e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
         names = [n["name"] for n in nodes if n["role"] == "list item"]
         self.assertEqual(names, ["row %d" % i for i in range(25)])
+
+    def test_rows_and_cells_are_not_asked_for_actions(self):
+        cell = Acc("table cell", "file001.txt", acts=["activate"])
+        item = Acc("list item", "Row 1", acts=["click"])
+        nodes = []
+        e.walk(Acc("frame", "W", kids=[cell, item]), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual((cell.asked_actions, item.asked_actions), (0, 0))
+
+    def test_a_read_stops_when_the_app_stops_answering(self):
+        class Stuck(Acc):
+            def getState(self):
+                time.sleep(0.05)  # a call that timed out
+                return States([])
+        old = e.SLOW_APP_S
+        e.SLOW_APP_S = 0.03
+        try:
+            later = [Acc("push button", "After %d" % i) for i in range(20)]
+            root = Acc("frame", "W", kids=[Acc("push button", "Before"), Stuck("push button", "Stuck")] + later)
+            budget = e.Budget()
+            nodes = []
+            e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        finally:
+            e.SLOW_APP_S = old
+        self.assertTrue(budget.busy)
+        self.assertEqual([n["name"] for n in nodes], ["W", "Before"])
+        self.assertEqual(sum(a.child_reads for a in later), 0)
+
+    def test_a_read_stops_at_its_deadline(self):
+        root = Acc("frame", "W", kids=[Acc("push button", "B%d" % i) for i in range(50)])
+        budget = e.Budget(0)
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertTrue(budget.over and not budget.busy)
+        self.assertLess(len(nodes), 50)
+
+    def test_an_element_that_fails_to_answer_is_skipped(self):
+        class Broken(Acc):
+            def getRoleName(self):
+                raise RuntimeError("timeout from dbind")
+        nodes = []
+        e.walk(Acc("frame", "W", kids=[Broken("push button", "X"), Acc("push button", "OK")]), 0, nodes,
+               e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([n["name"] for n in nodes], ["W", "OK"])
 
     def test_actions_only_for_controls(self):
         label = Acc("label", "Hello", acts=["click"])
@@ -384,6 +479,7 @@ class Windows(unittest.TestCase):
     def setUp(self):
         e.HUNG.clear()
         e.STRIKES.clear()
+        e.SLOW_NOW.clear()
         self.mail = self.AppNode(10, [Acc("frame", "Inbox - Mail", states=("showing",)),
                                       Acc("frame", "Compose - Mail", states=("showing", "active"))])
         self.notes = self.AppNode(20, [Acc("frame", "notes.txt - Text Editor", states=("showing",))])
@@ -452,6 +548,83 @@ class Windows(unittest.TestCase):
             self.assertFalse(e.is_hung(20))
         finally:
             e.SLOW_APP_S = old
+
+    def test_a_busy_window_is_busy_not_gone(self):
+        class Slow(Acc):
+            """Every call times out (the stand-in takes a little longer than SLOW_APP_S, set short here)."""
+            def getState(self):
+                time.sleep(0.05)
+                return States([])
+
+            @property
+            def name(self):
+                time.sleep(0.05)
+                return ""
+
+            @name.setter
+            def name(self, value):
+                pass
+        old = e.SLOW_APP_S
+        e.SLOW_APP_S = 0.03
+        try:
+            self.mail.wins.append(Slow("dialog", "Open File"))
+            out = e.read_window({"title": "Open File"})
+            self.assertIsNone(out["window"])
+            self.assertTrue(out["busy"])
+            # Busy while being read: what it answered so far, flagged, and a strike against it.
+            self.mail.wins.pop()
+            self.mail.wins[1].states.append("visible")
+            self.mail.wins[1].kids = [Acc("push button", "Send"), Slow("push button", "Attach")]
+            out = e.read_window({"pid": 10, "title": "Compose - Mail"})
+            self.assertTrue(out["busy"])
+            self.assertEqual([n["name"] for n in out["nodes"]], ["Compose - Mail", "Send"])
+            self.assertIn(10, e.STRIKES)
+        finally:
+            e.SLOW_APP_S = old
+
+    def test_never_look_windows_are_not_read(self):
+        notes = self.notes.wins[0]
+        notes.kids = [Acc("text", "", text="my diary")]
+        out = e.read_window({"pid": 20, "neverLook": ["text editor"]})
+        self.assertTrue(out["blocked"])
+        self.assertEqual(out["nodes"], [])
+        self.assertEqual(notes.child_reads, 0)
+        # By process: Ember found it by the window's X11 class.
+        self.assertTrue(e.read_window({"pid": 20, "neverLook": ["keepassxc"], "skipPids": [20]})["blocked"])
+        self.assertNotIn("blocked", e.read_window({"pid": 20, "neverLook": ["keepassxc"]}))
+
+    def test_the_apps_other_windows_are_named(self):
+        dialog = Acc("file chooser", "Open File", states=("showing", "active", "modal"))
+        self.mail.wins.append(dialog)
+        self.mail.wins[1].states.remove("active")
+        out = e.read_window({"pid": 10, "path": self.mail.wins[1].path})
+        self.assertEqual(out["window"]["name"], "Compose - Mail")
+        self.assertEqual(out["others"], [{"name": "Open File", "role": "file chooser", "active": True, "modal": True}])
+
+    def test_secret_fields_are_reported_for_ember_to_keep(self):
+        pw = Acc("password text", "", text="hunter2")
+        self.notes.wins[0].states.append("visible")
+        self.notes.wins[0].kids = [pw]
+        out = e.read_window({"pid": 20})
+        self.assertEqual(out["secretKeys"], [[pw.app.bus_name, pw.path]])
+
+    def test_gnome_shell_dialogs_and_notifications(self):
+        self.assertEqual(e.shell_overlays({}), {"overlays": []})
+        prompt = Acc("dialog", "", bounds=(400, 300, 480, 260),
+                     kids=[Acc("label", "Authentication Required"), Acc("password text", "Password")])
+        banner = Acc("notification", "", bounds=(500, 0, 400, 80), kids=[Acc("label", "New mail")])
+        hidden = Acc("notification", "", states=("visible",), bounds=(0, 0, 10, 10))
+        stage = Acc("window", "", kids=[Acc("panel", "Top bar"), prompt, banner, hidden])
+        shell = self.AppNode(99, [stage])
+        shell.name = "gnome-shell"
+        shell.getRoleName = lambda: "application"
+        shell.getState = lambda: States([])
+        self.desktop.kids.append(shell)
+        out = e.shell_overlays({})["overlays"]
+        self.assertEqual([(o["role"], o["bounds"]) for o in out],
+                         [("dialog", {"x": 400, "y": 300, "width": 480, "height": 260}),
+                          ("notification", {"x": 500, "y": 0, "width": 400, "height": 80})])
+        self.assertIn("Authentication Required", out[0]["text"])
 
     def test_one_broken_app_does_not_break_the_list(self):
         class Broken(self.AppNode):

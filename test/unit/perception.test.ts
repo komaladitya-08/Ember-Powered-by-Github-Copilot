@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { inferLabels, serializeElements, isNeverLook, focusedElement, isSecretLabel, screenWord } from "../../app/main/perception/elements";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { inferLabels, serializeElements, isNeverLook, focusedElement, isSecretLabel, screenWord, secretIds, SECRET_WORDS, SECRET_ANYWHERE } from "../../app/main/perception/elements";
 import { marksSvg } from "../../app/main/perception/marks";
 import { bgraToRgba, maskRect, imageToScreen, type Capture } from "../../app/main/perception/capture";
 import { pickPython, type AxNode, type AxWindow } from "../../app/main/perception/sidecar";
 import { inspectEnvironment } from "../../app/main/environment";
+
+/** Field labels and whether they are secret (the sidecar's self-test reads the same table). */
+const labels = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/secret-labels.json"), "utf8")) as { secret: string[]; plain: string[] };
+const python = ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0);
 
 const node = (id: number, role: string, name: string, bounds: AxNode["bounds"], extra: Partial<AxNode> = {}): AxNode => ({
   id, parent: 0, depth: 1, role, name, states: ["enabled", "sensitive", "showing", "visible"], bounds, ...extra,
@@ -81,9 +88,36 @@ describe("secret fields", () => {
     expect(out).toContain('[7] text "Name" (showing, visible) text="Ada"');
     expect(out).toContain('[8] push button "Show password" (showing, visible)');
   });
-  it("recognises secret labels, not look-alikes", () => {
-    for (const s of ["Password", "Passwort", "IBAN", "Security code", "One-time code", "API key", "Pass\u200bword", "ＰＩＮ"]) expect(isSecretLabel(s), s).toBe(true);
-    for (const s of ["Name", "Pinned", "Spinner", "Bypass", "Compass", ""]) expect(isSecretLabel(s), s).toBe(false);
+  it("recognises secret labels in many languages, not look-alikes", () => {
+    for (const s of labels.secret) expect(isSecretLabel(s), s).toBe(true);
+    for (const s of labels.plain) expect(isSecretLabel(s), s).toBe(false);
+  });
+  it.skipIf(!python)("uses the same label lists as the sidecar", () => {
+    const script = `
+import sys, types, json
+sys.modules["pyatspi"] = types.ModuleType("pyatspi")
+sys.path.insert(0, ${JSON.stringify(path.resolve("sidecar/atspi"))})
+import ember_atspi as e
+print(json.dumps([e.SECRET_WORDS, e.SECRET_ANYWHERE]))
+`;
+    const r = spawnSync(python!, ["-c", script], { encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([SECRET_WORDS, SECRET_ANYWHERE]);
+  });
+  it("finds a secret field's label above it, and a revealed password by its Show toggle", () => {
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const nodes = [
+      node(1, "static", "Card number", at(10, 10, 90, 18)),
+      node(2, "entry", "", at(10, 30), { text: "4000123412341234" }),
+      node(3, "entry", "", at(10, 80), { text: "hunter2" }),
+      node(4, "check box", "Show password", at(10, 108, 120, 20)),
+      node(5, "entry", "Key", at(10, 150), { text: "revealed" }),
+      node(6, "push button", "Reveal", at(170, 150, 60, 24)),
+      node(7, "entry", "Search", at(10, 200), { text: "cats" }),
+      node(8, "push button", "Show all", at(170, 200, 60, 24)),
+    ];
+    expect(inferLabels(nodes).get(2)).toBe("Card number");
+    expect([...secretIds(nodes)].sort()).toEqual([2, 3, 5]);
   });
 });
 

@@ -113,7 +113,7 @@ const SECURITY_WINDOW = /\b(authenticat(e|ion) (is )?required|polkit|sudo|unlock
 export function isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean {
   // GNOME Shell draws its own password prompts (polkit, keyring) in its own window: while it has the
   // keyboard, Ember treats it as one (it never acts in the shell anyway).
-  return SECURITY_WINDOW.test(normalizeLabel(`${w.app ?? ""} ${w.title ?? w.name ?? ""}`)) || /polkit|gcr-prompter|pinentry|ssh-askpass|^gnome-shell$/i.test(w.app ?? "");
+  return SECURITY_WINDOW.test(normalizeLabel(`${w.app ?? ""} ${w.title ?? w.name ?? ""}`)) || /polkit|gcr-prompter|pinentry|ssh-askpass|(^|\s)gnome-shell(\s|$)/i.test(w.app ?? "");
 }
 
 export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(s.normalize("NFKC").replace(/[\p{Cf}\u00ad]/gu, "").toLowerCase());
