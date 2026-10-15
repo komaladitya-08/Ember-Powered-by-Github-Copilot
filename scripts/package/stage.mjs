@@ -8,6 +8,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -21,8 +22,8 @@ if (!fs.existsSync(path.join(root, "dist/app/main.cjs"))) throw new Error("build
 for (const d of ["ember", "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 
-// 1. Electron itself, as "ember".
-const electronDist = path.join(root, "node_modules/electron/dist");
+// 1. Electron itself, as "ember". Requiring the package downloads the binary if npm ci didn't.
+const electronDist = path.dirname(createRequire(import.meta.url)("electron"));
 fs.cpSync(electronDist, app, { recursive: true, verbatimSymlinks: true });
 fs.renameSync(path.join(app, "electron"), path.join(app, "ember"));
 fs.rmSync(path.join(resources, "default_app.asar"), { force: true });
