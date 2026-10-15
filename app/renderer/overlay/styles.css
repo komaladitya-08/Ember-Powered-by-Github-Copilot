@@ -1,0 +1,24 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
+body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; }
+#bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.status {
+  position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
+  background: rgba(26, 15, 11, 0.9); color: #fbeee3; border: 1px solid rgba(255, 154, 61, 0.45);
+  font-weight: 700; font-size: 12px; box-shadow: 0 0 18px rgba(255, 138, 42, 0.25);
+}
+.status[hidden] { display: none; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 8px #ff9a3d; animation: pulse 1.2s ease-in-out infinite; }
+.tasks { position: absolute; top: 40px; right: 16px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; }
+.task {
+  display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
+  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.task b { font-size: 13px; }
+.task span { color: rgba(251, 238, 227, 0.72); font-size: 12px; }
+.task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
+.task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
+.task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .status i { animation: none; } }

@@ -17,6 +17,17 @@
       </div>
     </header>
 
+    <section class="pick" aria-labelledby="pick-h">
+      <h2 id="pick-h">Your Ember</h2>
+      <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
+      <div class="pick-row">
+        <label for="size">Size <output id="size-out">60 px</output></label>
+        <input type="range" id="size" min="36" max="110" step="2" value="60">
+        <button type="button" id="start" class="start" hidden>Start Ember</button>
+      </div>
+      <p class="hint">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
+    </section>
+
     <section aria-labelledby="checks-h">
       <h2 id="checks-h">Setup check</h2>
       <ul class="checks" id="checks"></ul>
