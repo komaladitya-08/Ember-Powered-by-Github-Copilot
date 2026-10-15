@@ -59,7 +59,8 @@ export interface WorkerDeps {
   cursor?: {
     borrow: CursorBorrow;
     /** X window id for a window title (0 if not found). */
-    findWindow: (title: string) => number;
+    /** X window id for a window title, narrowed to the process when given (0 if none or several match). */
+    findWindow: (title: string, pid?: number) => number;
     /** "waiting": for the user to be still; "active": Ember's windows stop taking clicks and the status says so. */
     setBorrowing: (state: "waiting" | "active" | "off") => void;
     /** The window with keyboard focus on the user's screen (an auth prompt there pauses Ember's input). */
@@ -463,7 +464,8 @@ export class Worker {
       return fail(`No open window has ${q(expectTitle, 100)} in its title. Use list_windows and pick one of those titles.`);
     }
     this.window = { app: p.window.app, name: p.window.name };
-    this.target = { title: p.window.name, pid: p.window.pid ?? undefined };
+    // The window's own key (process and accessible path): later reads stay on exactly this window.
+    this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
     const result: ToolResultObject = { textResultForLlm: p.text, resultType: "success" };
@@ -636,6 +638,9 @@ export class Worker {
         type: async t => { for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); } },
       };
     };
+    // Exactly the window the user approved, or nothing: a title several windows share (or none) is refused.
+    const win = this.window.name ? c.findWindow(this.window.name, this.target.pid) : 0;
+    if (this.window.name && !win) return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.halt.signal);
     // Stopped while waiting for another task's window: the approved borrow never starts.
     if (this.halted) { release(); return STOPPED(); }
@@ -644,7 +649,7 @@ export class Worker {
     this.usingCursor = true;
     try {
       await c.borrow.borrow(hand => fn(guarded(hand)), {
-        window: this.window.name ? c.findWindow(this.window.name) || undefined : undefined,
+        window: win || undefined,
         onStart: () => c.setBorrowing("active"),
       });
       const after = verifyId !== undefined ? await this.sidecar.readElement(verifyId).catch(() => null) : null;
@@ -681,8 +686,10 @@ export class Worker {
         type: async t => { check(); await hand.type(t); },
       };
     };
+    const win = this.window.name ? place.input.findWindow(this.window.name, this.target.pid) : 0;
+    if (this.window.name && !win) { release(); return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window."); }
     try {
-      await this.deskBorrow.borrow(hand => fn(guarded(hand)), { idleMs: 0, window: this.window.name ? place.input.findWindow(this.window.name) || undefined : undefined });
+      await this.deskBorrow.borrow(hand => fn(guarded(hand)), { idleMs: 0, window: win || undefined });
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2 });
       return done(`Done on your desk.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);

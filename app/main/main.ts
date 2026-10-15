@@ -769,7 +769,7 @@ function start(): void {
       onDesk: place => (place ? deskView.show(place) : deskView.leave()),
       cursor: borrow && xinput ? {
         borrow,
-        findWindow: title => xinput.findWindow(title),
+        findWindow: (title, pid) => xinput.findWindow(title, pid),
         // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
         activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; },
         setBorrowing: state => {

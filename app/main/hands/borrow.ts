@@ -134,6 +134,11 @@ export class CursorBorrow {
         throw new UserTookOver(now() - t0);
       }
     };
+    // Keys go only to the window the user approved: if another window has the keyboard (a dialog popped up,
+    // focus moved), Ember stops instead of typing into it.
+    const keyboardOnTarget = () => {
+      if (o.window && x.focusedWindow() !== o.window) throw new Error("another window has the keyboard, so Ember stopped typing");
+    };
     const press = (sym: number, down: boolean) => {
       const code = x.keycodeOf(sym);
       if (!code || !x.keysym(sym, down)) throw new Error("this keyboard layout has no key for that");
@@ -197,6 +202,7 @@ export class CursorBorrow {
       },
       keys: async combo => {
         check();
+        keyboardOnTarget();
         const { modifiers, key } = parseCombo(combo);
         const sym = x.keysymOf(key);
         if (!sym) throw new Error(`unknown key "${key}"`);
@@ -214,6 +220,7 @@ export class CursorBorrow {
       },
       type: async text => {
         const shift = x.keysymOf("Shift_L");
+        keyboardOnTarget();
         for (const ch of text) {
           check();
           const code = ch.charCodeAt(0);
@@ -245,9 +252,12 @@ export class CursorBorrow {
       previousWindow = x.activeWindow();
       expected = home;
       o.onStart?.();
-      if (o.window && o.window !== previousWindow) {
-        x.activate(o.window);
-        await sleep(150);
+      if (o.window) {
+        if (o.window !== previousWindow) x.activate(o.window);
+        // The window must really come to the front (a window manager may refuse): otherwise nothing is touched.
+        let focused = x.focusedWindow() === o.window;
+        for (let i = 0; i < 10 && !focused; i++) { await sleep(100); focused = x.focusedWindow() === o.window; }
+        if (!focused) throw new Error("the window didn't come to the front, so Ember didn't touch it");
         check();
       }
       return await fn(hand);

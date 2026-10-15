@@ -176,7 +176,7 @@ export function openX11(displayName?: string): X11 | null {
         XFree(list[0]);
       }
     };
-    /** XWindowAttributes on x86-64: x, y, width, height, border_width at 0..16; map_state at 92; override_redirect at 120. */
+    /** XWindowAttributes on x86-64: x, y, width, height, border_width at 0..16; class at 40; map_state at 92; override_redirect at 120. */
     const attributes = (w: number) => {
       const a = Buffer.alloc(136);
       if (!XGetWindowAttributes(dpy, w, a)) return null;
@@ -184,6 +184,7 @@ export function openX11(displayName?: string): X11 | null {
       return {
         x: a.readInt32LE(0), y: a.readInt32LE(4), width: a.readInt32LE(8) + 2 * border, height: a.readInt32LE(12) + 2 * border,
         viewable: a.readInt32LE(92) === 2, overrideRedirect: a.readInt32LE(120) !== 0,
+        inputOnly: a.readInt32LE(40) === 2, // draws nothing, so it covers nothing
       };
     };
     const managed = (w: number) => Array.isArray(property(w, "WM_STATE", "longs"));
@@ -280,7 +281,7 @@ export function openX11(displayName?: string): X11 | null {
         const out: StackedWindow[] = [];
         for (const top of childrenOf(root)) {
           const a = attributes(top);
-          if (!a || !a.viewable || a.width <= 1 || a.height <= 1) continue;
+          if (!a || !a.viewable || a.inputOnly || a.width <= 1 || a.height <= 1) continue;
           const client = clientOf(top);
           const pid = property(client, "_NET_WM_PID", "longs") ?? (client !== top ? property(top, "_NET_WM_PID", "longs") : null);
           const title = property(client, "_NET_WM_NAME", "string") ?? property(client, "WM_NAME", "string");

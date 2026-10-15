@@ -260,7 +260,7 @@ describe("text the keyboard can't type", () => {
     const x: XInput = {
       pointer: () => ({ ...at }), pointerState: () => ({ ...at, mask: 0 }), move: (px: number, py: number) => { at = { x: px, y: py }; }, button: () => undefined,
       keysym: () => true, keycode: () => undefined, keysymOf: (n: string) => ({ Control_L: 0xffe3, v: 0x76, End: 0xff57 } as Record<string, number>)[n] ?? 0x61,
-      keycodeOf: (sym: number) => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
+      keycodeOf: (sym: number) => sym % 200 + 8, needsShift: () => false, keysDown: () => [], activeWindow: () => 1, focusedWindow: () => 1, screenSize: () => ({ width: 1280, height: 800 }),
       findWindow: () => 1, activate: () => undefined, sync: () => undefined, close: () => undefined,
     } as unknown as XInput;
     const borrow = new CursorBorrow(x);

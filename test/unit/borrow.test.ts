@@ -212,3 +212,22 @@ describe("tier 3 policy", () => {
     expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "w", element: { role: "password text", name: "" }, value: "Return" }).verdict).toBe("deny");
   });
 });
+
+describe("keys go only to the approved window", () => {
+  it("doesn't touch a window that never comes to the front", async () => {
+    const { s, x } = fakeX();
+    x.activate = () => { s.log.push("activate refused"); };
+    const err = await new CursorBorrow(x).borrow(async hand => { await hand.click(); }, { ...fast, window: 22 }).catch(e => e);
+    expect(String(err)).toMatch(/didn't come to the front/);
+    expect(s.log).not.toContain("button 1 down");
+  });
+  it("stops typing when another window takes the keyboard", async () => {
+    const { s, x } = fakeX();
+    const err = await new CursorBorrow(x).borrow(async hand => {
+      await hand.type("ab");
+      s.active = 99; // a dialog popped up
+      await hand.type("cd");
+    }, { ...fast, window: 22 }).catch(e => e);
+    expect(String(err)).toMatch(/another window has the keyboard/);
+  });
+});
