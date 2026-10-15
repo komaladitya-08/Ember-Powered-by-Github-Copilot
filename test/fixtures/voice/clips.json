@@ -1,0 +1,11 @@
+{
+  "wake": "Hey Ember, turn on night light.",
+  "wake_pause": "Hey Ember.|Make the text bigger please.",
+  "stop": "Ember, stop!",
+  "amber": "Hey Amber, what time is it?",
+  "remember": "I remember the September weather was nice.",
+  "chat": "Let's meet at the station after lunch.",
+  "followup": "And turn on do not disturb too.",
+  "dnd": "Hey Ember, turn on do not disturb.",
+  "bigger": "And make the text a bit bigger."
+}
