@@ -1,7 +1,7 @@
 /**
- * The real recognizers (sherpa-onnx WASM) on synthesized speech. Needs the
- * models and clips from `node scripts/voice/prepare.mjs` (skipped otherwise;
- * EMBER_VOICE_TEST=1 requires them).
+ * The real recognizers (sherpa-onnx WASM) on synthesized speech: the clips in
+ * test/fixtures/voice. Needs the models from `node scripts/voice/prepare.mjs`
+ * (skipped otherwise; EMBER_VOICE_TEST=1 requires them).
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +13,8 @@ import { sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
 
 const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
-const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(dir, "clips", "wake.wav"));
+const clips = path.resolve("test/fixtures/voice");
+const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(clips, "wake.wav"));
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
 
 describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", () => {
@@ -22,7 +23,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
 
   /** Plays a clip through the engine in 32 ms frames, like the microphone would, with real time. */
   const play = (name: string, opts: { monitor?: boolean; followUp?: boolean } = {}) => {
-    const { samples } = sherpa.readWave(path.join(dir, "clips", `${name}.wav`));
+    const { samples } = sherpa.readWave(path.join(clips, `${name}.wav`));
     const events: VoiceEvent[] = [];
     let t = 0;
     const engine = new VoiceEngine(backend, e => { if (e.type !== "level" && e.type !== "speech") events.push(e); }, { now: () => t });
