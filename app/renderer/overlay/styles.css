@@ -20,6 +20,7 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 .task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
 .task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
 .task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
+.task[data-status="stopped"] { border-color: rgba(251, 238, 227, 0.3); }
 @keyframes pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .status i { animation: none; } }
 

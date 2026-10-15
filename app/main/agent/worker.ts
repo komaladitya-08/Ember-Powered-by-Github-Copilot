@@ -19,6 +19,8 @@ import type { PolicyEngine, ActionKind } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 import { inferLabels } from "../perception/elements";
 import { SETTINGS, changeSetting, findApp, launchApp, listApps, type SettingName } from "../hands/system";
+import { UserTookOver, type CursorBorrow, type Hand } from "../hands/borrow";
+import { focusedElement } from "../perception/elements";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 
@@ -41,6 +43,14 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
+  /** Tier 3, when available: borrowing the user's mouse and keyboard. */
+  cursor?: {
+    borrow: CursorBorrow;
+    /** X window id for a window title (0 if not found). */
+    findWindow: (title: string) => number;
+    /** "waiting": for the user to be still; "active": Ember's windows stop taking clicks and the status says so. */
+    setBorrowing: (state: "waiting" | "active" | "off") => void;
+  };
   onUsage?: (input: number, output: number) => void;
 }
 
@@ -51,7 +61,12 @@ export interface TaskSpec {
   target: WindowTarget & { app?: string };
 }
 
-export interface WorkerResult { success: boolean; summary: string }
+export interface WorkerResult {
+  success: boolean;
+  summary: string;
+  /** The user stopped it (took the mouse back): not a failure. */
+  stopped?: boolean;
+}
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
@@ -78,6 +93,7 @@ export class Worker {
   /** Apps the user allowed for this task only ("Allow once"). */
   private allowedApps = new Set<string>();
   private aborted = false;
+  private userTookOver = false;
 
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
     this.target = { ...spec.target };
@@ -185,6 +201,20 @@ export class Worker {
           });
         },
       }),
+      ...(this.d.cursor ? [
+        defineTool("press_keys", {
+          description: "Press a key or shortcut in the window you are working in, e.g. \"ctrl+s\", \"Return\", \"ctrl+shift+t\". Borrows the user's keyboard, so the user is asked first; prefer element tools when they work.",
+          parameters: z.object({ keys: z.string().min(1).max(40) }),
+          ...common,
+          handler: async (a: { keys: string }) => this.pressKeys(a.keys),
+        }),
+        defineTool("scroll", {
+          description: "Scroll an element (a list, document or page) up or down by a few steps. Borrows the user's mouse, so the user is asked first.",
+          parameters: z.object({ id, direction: z.enum(["up", "down", "left", "right"]), steps: z.number().int().min(1).max(30).optional() }),
+          ...common,
+          handler: async (a: { id: number; direction: "up" | "down" | "left" | "right"; steps?: number }) => this.scroll(a.id, a.direction, a.steps ?? 5),
+        }),
+      ] : []),
       defineTool("report_progress", {
         description: "Tell the user briefly how the task is going (shown on Ember's task card).",
         parameters: z.object({ text: z.string().max(200) }),
@@ -245,8 +275,9 @@ export class Worker {
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
     }
-    if (this.aborted) return { success: false, summary: "Stopped." };
-    return this.result ?? { success: false, summary: lastAnswer || "The worker stopped without a summary." };
+    if (this.aborted) return { success: false, summary: "Stopped.", stopped: true };
+    const result = this.result ?? { success: false, summary: lastAnswer || "The worker stopped without a summary." };
+    return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
   }
 
   async dispose(): Promise<void> {
@@ -283,9 +314,83 @@ export class Worker {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.d.audit.write({ event: "action", task: this.spec.id, kind, app: req.app, element: req.element, ok: false, error: msg });
-      if (msg.includes("background_unavailable")) return fail(`${msg.replace("background_unavailable: ", "")}. This can't be done without the mouse yet; tell the user in finish_task.`);
+      if (msg.includes("background_unavailable")) {
+        release();
+        // The router: tier 1 can't do it, so try tier 3 (the user's mouse), with their OK.
+        if (this.d.cursor && node.bounds && (kind === "click" || kind === "toggle" || kind === "text")) {
+          this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: "tier3", kind, role: node.role });
+          return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value);
+        }
+        return fail(`${msg.replace("background_unavailable: ", "")}. This can't be done without the mouse; tell the user in finish_task.`);
+      }
       return fail(msg);
     } finally {
+      release();
+    }
+  }
+
+  /** Tier 3: borrow the mouse (and keyboard) for one action, with the user's OK. */
+  private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string): Promise<ToolResultObject> {
+    const element = { role: node.role, name: node.name || this.labels.get(id) || "" };
+    const verdict = await this.authorize({ taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value });
+    if (verdict) return verdict;
+    const b = node.bounds!;
+    const cx = b.x + Math.min(b.width / 2, 120), cy = b.y + b.height / 2;
+    return this.withCursor(kind, element, async hand => {
+      await hand.glideTo(cx, cy);
+      await hand.click();
+      if (kind === "cursor_text") {
+        await hand.keys("ctrl+a");
+        await hand.type(value ?? "");
+      }
+    }, id);
+  }
+
+  private async pressKeys(keys: string): Promise<ToolResultObject> {
+    // Keys go to whatever has focus in the window: never a password field.
+    const seen = await this.d.perception.read(this.target).catch(() => null);
+    const focus = seen ? focusedElement(seen.nodes) : null;
+    const element = focus ? { role: focus.role, name: focus.name } : undefined;
+    const verdict = await this.authorize({ taskId: this.spec.id, kind: "keys", app: this.window.app, window: this.window.name, element, value: keys });
+    if (verdict) return verdict;
+    return this.withCursor("keys", element, hand => hand.keys(keys));
+  }
+
+  private async scroll(id: number, direction: "up" | "down" | "left" | "right", steps: number): Promise<ToolResultObject> {
+    const node = this.known.get(id);
+    if (!node?.bounds) return fail(`Element ${id} is not in your latest perceive_window (or has no position). Call perceive_window.`);
+    const element = { role: node.role, name: node.name || this.labels.get(id) || "" };
+    const verdict = await this.authorize({ taskId: this.spec.id, kind: "scroll", app: this.window.app, window: this.window.name, element, value: direction });
+    if (verdict) return verdict;
+    const b = node.bounds;
+    return this.withCursor("scroll", element, async hand => {
+      await hand.glideTo(b.x + b.width / 2, b.y + b.height / 2);
+      await hand.scroll(direction, steps);
+    });
+  }
+
+  private async withCursor(kind: ActionKind, element: { role: string; name: string } | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number): Promise<ToolResultObject> {
+    const c = this.d.cursor!;
+    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id);
+    c.setBorrowing("waiting");
+    this.d.flyTo(null); // Ember rides along with the cursor
+    try {
+      await c.borrow.borrow(fn, {
+        window: this.window.name ? c.findWindow(this.window.name) || undefined : undefined,
+        onStart: () => c.setBorrowing("active"),
+      });
+      const after = verifyId !== undefined ? await this.d.sidecar.readElement(verifyId).catch(() => null) : null;
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 3 });
+      return done(`Done with the user's mouse, which is back where it was.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
+    } catch (err) {
+      const tookOver = err instanceof UserTookOver;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: msg, ...(tookOver ? { tookOverAfterMs: err.afterMs } : {}) });
+      if (tookOver) this.userTookOver = true;
+      if (tookOver) return denied("The user took the mouse back, so you stopped. Don't try again; finish the task and say what's left.");
+      return fail(msg);
+    } finally {
+      c.setBorrowing("off");
       release();
     }
   }
@@ -315,7 +420,8 @@ export class Worker {
     const options = decision.needsGrant && req.app
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${req.app}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
-    const answer = await this.d.confirmer.ask({ title: "May I?", prompt: decision.prompt, options });
+    const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
+    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options });
     this.d.audit.write({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: answer ?? "expired" });
     if (answer === "always") {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });

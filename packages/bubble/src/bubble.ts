@@ -94,6 +94,8 @@ export const BUBBLE_CSS = `
 `;
 
 export interface BubbleAction {
+  /** Identifies the button across updates (defaults to the label). */
+  key?: string;
   label: string;
   primary?: boolean;
   onClick: () => void;
@@ -107,6 +109,8 @@ export class ReasoningBubble {
   private readonly step: HTMLDivElement;
   private readonly stepText: HTMLSpanElement;
   private readonly actions: HTMLDivElement;
+  private actionKey = "";
+  private handlers: (() => void)[] = [];
 
   constructor(host: HTMLElement) {
     if (!document.getElementById(STYLE_ID)) {
@@ -164,17 +168,27 @@ export class ReasoningBubble {
     this.stepText.textContent = text ?? "";
   }
 
+  /**
+   * Shows buttons. The same buttons are kept (not rebuilt) when only their
+   * handlers change, so a click is never lost to a re-render between
+   * mouse-down and mouse-up.
+   */
   setActions(actions: BubbleAction[] | null): void {
+    const list = actions ?? [];
+    this.handlers = list.map(a => a.onClick);
+    const key = JSON.stringify(list.map(a => [a.key ?? a.label, a.label, a.primary === true]));
+    if (key === this.actionKey) return;
+    this.actionKey = key;
     this.actions.replaceChildren();
-    this.actions.hidden = !actions?.length;
-    for (const a of actions ?? []) {
+    this.actions.hidden = !list.length;
+    list.forEach((a, i) => {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = a.label;
       if (a.primary) b.className = "eb-primary";
-      b.addEventListener("click", a.onClick);
+      b.addEventListener("click", () => this.handlers[i]?.());
       this.actions.appendChild(b);
-    }
+    });
   }
 
   setVisible(on: boolean): void {

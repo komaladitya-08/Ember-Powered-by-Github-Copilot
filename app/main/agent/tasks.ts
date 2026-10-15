@@ -138,7 +138,7 @@ export class TaskManager {
       result = { success: false, summary: `Something went wrong: ${err instanceof Error ? err.message : String(err)}` };
     }
     this.running.delete(task.id);
-    this.finish(task, abort.signal.aborted ? "cancelled" : result.success ? "done" : "failed", result);
+    this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
     const sessionId = worker.sessionId;
     await worker.dispose();
     if (sessionId) {
@@ -168,7 +168,7 @@ export class TaskManager {
     const cards: TaskCard[] = [...this.tasks.values()].map(t => ({
       id: t.id,
       title: t.title,
-      status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "failed" : t.status,
+      status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "stopped" : t.status,
       detail: t.detail,
     }));
     this.d.setCards(cards);

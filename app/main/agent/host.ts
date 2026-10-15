@@ -13,7 +13,7 @@ import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { EmberState } from "../../shared/overlay";
 import { TaskManager } from "./tasks";
-import { Worker } from "./worker";
+import { Worker, type WorkerDeps } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, Bounds } from "../perception/sidecar";
@@ -29,6 +29,8 @@ export interface Hands {
   confirmer: Confirmer;
   flyTo: (bounds: Bounds | null) => void;
   currentWindow: () => (WindowTarget & { app?: string }) | null;
+  /** Tier 3 (borrowing the user's mouse), when XTest is available. */
+  cursor?: WorkerDeps["cursor"];
 }
 
 export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
@@ -131,7 +133,7 @@ export class AgentHost {
           if (hands.confirmer.waiting) return;
           this.o.setState({
             emotion: task.status === "done" ? "proud" : task.status === "cancelled" ? "neutral" : "sad", talking: false,
-            bubble: { visible: true, mood: task.status === "done" ? "done" : "error", title: task.title, thought: task.result?.summary ?? "", step: null, streaming: false, actions: [] },
+            bubble: { visible: true, mood: task.status === "done" ? "done" : task.status === "cancelled" ? "idle" : "error", title: task.title, thought: task.result?.summary ?? "", step: null, streaming: false, actions: [] },
           });
         },
         makeWorker: (spec, progress) => new Worker({
@@ -142,6 +144,7 @@ export class AgentHost {
           presenter: new Presenter(this.o.setState, undefined, () => spec.goal.length > 40 ? spec.goal.slice(0, 39) + "…" : spec.goal),
           lease: (key, owner) => this.tasks!.lease(key, owner),
           flyTo: hands.flyTo,
+          cursor: hands.cursor,
           onProgress: progress,
           onUsage: (i, o) => this.recordUsage(i, o),
         }, spec),
