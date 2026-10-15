@@ -185,23 +185,36 @@ def list_windows(params):
 
 
 def find_window(params):
-    """The window to read: by pid, by title substring, or else the active one."""
+    """The window to read. With a pid and/or title, the best match wins: same
+    process, then exact title, then title substring, preferring the window
+    the user has active (one app often has several windows). With neither,
+    the active window."""
     pid = params.get("pid")
     title = (params.get("title") or "").lower()
-    fallback = None
+    best, best_score = None, 0
     for app, apid, win in frames():
         states = state_names(win)
-        if title:
-            if title in (win.name or "").lower():
+        name = (win.name or "").lower()
+        if pid is None and not title:
+            if "active" in states:
                 return app, apid, win
             continue
-        if pid is not None:
-            if apid == pid and ("showing" in states or fallback is None):
-                fallback = (app, apid, win)
+        score = 0
+        if pid is not None and apid == pid:
+            score += 8
+        if title and name == title:
+            score += 6
+        elif title and title in name:
+            score += 4
+        if score == 0:
             continue
         if "active" in states:
-            return app, apid, win
-    return fallback
+            score += 2
+        if "showing" in states:
+            score += 1
+        if score > best_score:
+            best, best_score = (app, apid, win), score
+    return best
 
 
 def read_window(params):
