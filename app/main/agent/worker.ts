@@ -775,9 +775,15 @@ export class Worker {
       if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
     };
     // Exactly the window the user approved, or nothing: no known window, or a title several windows share (or none), is refused.
-    if (!this.window.name) return fail("Ember doesn't know which window to use yet. Call perceive_window first.");
+    if (!this.window.name) {
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: "no window known yet" });
+      return fail("Ember doesn't know which window to use yet. Call perceive_window first.");
+    }
     const win = c.findWindow(this.window.name, this.target.pid);
-    if (!win) return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
+    if (!win) {
+      this.d.audit.write({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, tier: 3, error: "the window couldn't be told apart (none or several with that title)" });
+      return fail("Ember can't tell which window that is (none or several have that title), so it didn't use the mouse. Call perceive_window.");
+    }
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     // Stopped while waiting for another task's window: the approved borrow never starts.
     if (this.isOver) { release(); return STOPPED(); }
