@@ -52,6 +52,9 @@ STARTUP_TIMEOUT_MS = 1000
 SLOW_APP_S = 0.7
 STRIKES_WITHIN_S = 60.0
 HUNG_FOR_S = 30.0
+# Timeouts closer together than this are one episode and one strike: Ember asks a busy app once more right
+# away, and a look at a window asks it several things.
+STRIKE_GAP_S = 5.0
 # A read stops after this long with what it has (Ember gives up on the helper after 5 s, and a
 # partial answer now beats a complete one too late). Looking for the window gets about as long,
 # and the whole answer should be there within READ_TOTAL_S.
@@ -90,18 +93,24 @@ LABEL_ROLES = frozenset(["label", "static", "caption"])
 # SECRET_WORDS and SECRET_ANYWHERE in app/main/perception/elements.ts (a unit test checks): each entry
 # is a regular expression both engines read alike, matched on lowercase, NFKC-normalised text.
 SECRET_WORDS = [
-    # Passwords and PINs.
-    "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a", "senha",
-    "palavra-passe", "parola", "parolă", "clave", "lösenord", "adgangskode", "salasana", "hasło", "heslo", "geslo", "lozinka",
-    "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
-    # Cards and bank accounts.
-    "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification", "expir(y|ation)",
-    "kartennummer", "kreditkarte(nnummer)?", "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum", "num(é|e)ro de (la )?carte",
-    "cryptogramme", "date d['’]expiration", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
+    # Passwords and PINs. Words that mean something else too stand alone or in a phrase that says password
+    # ("Palabras clave" are keywords, a "Parola chiave" a keyword).
+    "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
+    "contrasenya", "senha", "palavra-passe", r"^[\s:*]*parol(a|ă)[\s:*]*$", "parolă", "parola d['’]ordine",
+    "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
+    "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", r"^[\s:*]*clave[\s:*]*$",
+    "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
+    "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
+    "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
+    # Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
+    "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification",
+    "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
+    "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum der karte", "num(é|e)ro de (la )?carte", "cryptogramme",
+    "date d['’]expiration de (la )?carte", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
     "kaartnummer", "kortnummer", "numer karty", "номер карты",
     "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
-    "codice di (sicurezza|verifica)", "fecha de (caducidad|vencimiento|expiraci(ó|o)n)", "iban", "routing number", "account number",
-    "sort code", "kontonummer",
+    "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "iban",
+    "routing number", "account number", "sort code", "kontonummer",
     # One-time codes.
     "one[- ]time (code|password|pin)", "otp", "2fa", "two[- ]factor", "totp", "verification code", "auth(entication)? code",
     "recovery (code|key)", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
@@ -472,20 +481,36 @@ def table_indices(acc, count):
     except Exception:
         return None
     heads = list(range(min(first_cell, 16)))
-    return (heads + [i for i in cells if 0 <= i < count])[:MAX_CHILDREN]
+    return heads + [i for i in cells if 0 <= i < count]
 
 
-def child_indices(acc, count, clip):
-    """Which children to read. Long lists and tables (thousands of rows) are read from the
-    first row on screen, not from the top: rows are laid out top to bottom, so a binary search
-    finds where the visible ones start. Leading children on screen (column headers) are kept."""
+def overlaps(b, clip):
+    """Does rectangle b show inside `clip`? (Yes when either has no position.)"""
+    if b is None or clip is None:
+        return True
+    return b["x"] < clip["x"] + clip["width"] and clip["x"] < b["x"] + b["width"] \
+        and b["y"] < clip["y"] + clip["height"] and clip["y"] < b["y"] + b["height"]
+
+
+def on_screen(acc, i, clip):
+    """Is child i showing, and inside `clip` (when both have a position)?"""
+    child = child_at(acc, i)
+    states = state_names(child) if child is not None else []
+    return "showing" in states and "visible" in states and overlaps(extents(child), clip)
+
+
+def child_indices(acc, count, clip, cap=MAX_CHILDREN):
+    """Which children to read (at most `cap`), and whether some on screen had to be left out.
+    Long lists and tables (thousands of rows) are read from the first row on screen, not from
+    the top: rows are laid out top to bottom, so a binary search finds where the visible ones
+    start. Leading children on screen (column headers) are kept."""
     if count <= MAX_CHILDREN:
-        return list(range(count))
+        return list(range(count)), False
     in_table = table_indices(acc, count)
     if in_table is not None:
-        return in_table
+        return in_table[:cap], len(in_table) > cap
     if clip is None:
-        return list(range(MAX_CHILDREN))
+        return list(range(min(count, cap))), cap < count and on_screen(acc, cap, clip)
     top = clip["y"]
     lead = 0
     while lead < min(count, 16) and not ends_above(acc, lead, top) and "showing" in state_names(child_at(acc, lead)):
@@ -497,8 +522,8 @@ def child_indices(acc, count, clip):
             lo = mid + 1
         else:
             hi = mid
-    rest = MAX_CHILDREN - lead
-    return list(range(lead)) + list(range(lo, min(count, lo + rest)))
+    end = min(count, lo + cap - lead)
+    return list(range(lead)) + list(range(lo, end)), end < count and on_screen(acc, end, clip)
 
 
 # Containers whose extents bound what their children show: scrolled lists stop at their edges.
@@ -508,29 +533,43 @@ CLIP_ROLES = frozenset(["scroll pane", "viewport"])
 class Budget(object):
     """The time one read may take. Between two ticks the app is asked only a few things, so a gap
     longer than SLOW_APP_S was a call that timed out: the app is busy (or hung), and asking it more
-    would only time out again. Either way the read stops where it is."""
+    would only time out again. Either way the read stops where it is. `cut` notes elements left out
+    for want of room (the node limit, a long list's row limit) rather than time."""
 
     def __init__(self, seconds=READ_BUDGET_S):
         self.last = time.monotonic()
         self.until = self.last + seconds
         self.busy = False
         self.over = False
+        self.cut = False
 
-    def tick(self):
-        """True once the read should stop (the app stopped answering, or the time is up)."""
+    def check(self):
+        """Did the app take a timeout's time to answer what it was asked since the last look? (True: stop.)"""
         now = time.monotonic()
         if now - self.last > SLOW_APP_S:
             self.busy = True
-        if now >= self.until:
-            self.over = True
         self.last = now
-        return self.busy or self.over
+        return self.busy
+
+    def tick(self):
+        """Before asking for more: True once the read should stop (the app stopped answering, or the time is
+        up, which makes the read cut short)."""
+        if self.check():
+            return True
+        if self.last >= self.until:
+            self.over = True
+        return self.over
 
 
 def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
     budget = budget or Budget()
-    if len(out) >= max_nodes or depth > max_depth or budget.tick():
+    if depth > max_depth:
+        return False
+    if len(out) >= max_nodes:
+        budget.cut = True
+        return False
+    if budget.tick():
         return False
     states = state_names(acc)
     if "showing" not in states or "visible" not in states:
@@ -553,65 +592,108 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         my_id = node["id"]
     if depth == 0 or role in CLIP_ROLES:
         clip = clip_to(clip, bounds)
-    if budget.tick():
+    if budget.check():
         return True
     try:
         count = acc.childCount
     except Exception:
         count = 0
     long_list = count > MAX_CHILDREN
+    indices, left_out = child_indices(acc, count, clip)
     shown, misses = False, 0
-    for i in child_indices(acc, count, clip):
-        if len(out) >= max_nodes or budget.tick():
-            break
+    for i in indices:
+        if len(out) >= max_nodes:
+            budget.cut = True
+            return True
+        if budget.tick():
+            return True
         child = child_at(acc, i)
         if child is None:
             continue
-        on_screen = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+        on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+        if budget.busy or budget.over:
+            return True
         if long_list:
             # Past the rows on screen: the rest of a long list is scrolled away too.
-            shown, misses = (True, 0) if on_screen else (shown, misses + 1 if shown else 0)
+            shown, misses = (True, 0) if on_screen_now else (shown, misses + 1 if shown else 0)
             if misses >= 3:
-                break
+                return True
+    if left_out:
+        # More of a long list is on screen than one read takes.
+        budget.cut = True
     return True
 
 
-def nearby_label(node, labels):
-    """The label of an unnamed control: on its row to its left, else just above it and starting where
-    it starts (the rule inferLabels in elements.ts uses)."""
+# Controls a label on their row names (a label beside a link or a button is usually a heading). Keep in step with
+# NAMED_BY_ROW in elements.ts.
+LABELLED_ROLES = FIELD_ROLES | frozenset(["check box", "radio button", "toggle button", "switch", "slider"])
+
+
+def beside(lb, b):
+    """Is the label (bounds lb) on the row of the control (bounds b), to its left? Returns the gap, or None."""
+    gap = b["x"] - (lb["x"] + lb["width"])
+    same_row = abs(lb["y"] + lb["height"] / 2.0 - (b["y"] + b["height"] / 2.0)) < max(12, b["height"] / 2.0)
+    return gap if same_row and -4 <= gap < 320 else None
+
+
+def claimed_labels(labels, controls):
+    """Labels that already name a control on their own row: they don't name a field below too (a "Password"
+    label with its field to its right says nothing about the notes field under that row)."""
+    return set(id(lab) for lab in labels if any(beside(lab["bounds"], c["bounds"]) is not None for c in controls))
+
+
+def nearby_label(node, labels, claimed=frozenset()):
+    """The label of an unnamed control: on its row to its left, else just above it and over its left part
+    (the rule inferLabels in elements.ts uses)."""
     b = node["bounds"]
-    cy = b["y"] + b["height"] / 2.0
     left, left_gap, above, above_gap = None, None, None, None
     for lab in labels:
         lb = lab["bounds"]
-        gap = b["x"] - (lb["x"] + lb["width"])
-        if abs(lb["y"] + lb["height"] / 2.0 - cy) < max(12, b["height"] / 2.0) and -4 <= gap < 320 \
-                and (left is None or gap < left_gap):
+        gap = beside(lb, b)
+        if gap is not None and (left is None or gap < left_gap):
             left, left_gap = lab["name"], gap
         up = b["y"] - (lb["y"] + lb["height"])
-        if -4 <= up < 24 and abs(lb["x"] - b["x"]) <= 16 and (above is None or up < above_gap):
+        # Above it, from a little left of where it starts (an indented field) to no further than its middle.
+        if -4 <= up < 24 and lb["x"] <= b["x"] + b["width"] / 2.0 and lb["x"] + lb["width"] >= b["x"] - 16 \
+                and id(lab) not in claimed and (above is None or up < above_gap):
             above, above_gap = lab["name"], up
     return left if left is not None else above
+
+
+def secret_by_layout(fields, labels, controls):
+    """The unnamed fields, of `fields`, next to or under a "Password" or "Card number" label."""
+    claimed = claimed_labels(labels, controls)
+    return [f for f in fields if not f["name"] and looks_secret(nearby_label(f, labels, claimed))]
 
 
 def redact_by_layout(nodes, accessible_of):
     """Unnamed text fields next to or under a "Password" or "Card number" label: their contents are secret too."""
     labels = [n for n in nodes if n["role"] in LABEL_ROLES and n["name"] and n["bounds"]]
-    for n in nodes:
-        if n["role"] not in FIELD_ROLES or n["name"] or not n["bounds"] or n.get("secret"):
-            continue
-        if looks_secret(nearby_label(n, labels)):
-            for k in ("text", "selection", "value"):
-                n.pop(k, None)
-            n["secret"] = True
-            SECRETS.add(object_key(accessible_of(n["id"])))
+    controls = [n for n in nodes if n["role"] in LABELLED_ROLES and n["bounds"]]
+    fields = [n for n in nodes if n["role"] in FIELD_ROLES and n["bounds"] and not n.get("secret")]
+    for n in secret_by_layout(fields, labels, controls):
+        for k in ("text", "selection", "value"):
+            n.pop(k, None)
+        n["secret"] = True
+        SECRETS.add(object_key(accessible_of(n["id"])))
 
 
 # ---------------------------------------------------------------- windows
 
 HUNG = {}  # pid -> time.monotonic() until which the app is skipped
-STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one)
+STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one counted)
 SLOW_NOW = set()  # apps that timed out during the current request: not asked again before the next one
+SKIPPED_NOW = set()  # hung apps the current request left out
+# The windows each app showed when it last answered (pid -> OrderedDict of path -> window): a busy or hung
+# app's windows are still listed (as busy), not dropped as if they had closed.
+KNOWN = OrderedDict()
+KNOWN_APPS = 200
+KNOWN_WINDOWS = 20
+
+
+def new_request():
+    SLOW_NOW.clear()
+    SKIPPED_NOW.clear()
 
 
 def is_hung(pid):
@@ -630,19 +712,23 @@ def mark_hung(pid):
 
 
 def timed_out(pid):
-    """A call to this app failed after a timeout: the second time in a row, it counts as hung."""
+    """A call to this app failed after a timeout: a second time in a row, a while after the first, it is hung."""
     if pid is None:
         return
     now = time.monotonic()
-    count, last = STRIKES.get(pid, (0, now))
-    count = count + 1 if now - last <= STRIKES_WITHIN_S else 1
+    count, last = STRIKES.get(pid, (0, None))
+    if last is not None and now - last < STRIKE_GAP_S:
+        return
+    count = count + 1 if last is not None and now - last <= STRIKES_WITHIN_S else 1
     STRIKES[pid] = (count, now)
     if count >= 2:
         mark_hung(pid)
 
 
 def answered(pid):
+    """The app answered: it isn't hung (any more)."""
     STRIKES.pop(pid, None)
+    HUNG.pop(pid, None)
 
 
 def note_answer(pid, t0, ok):
@@ -659,6 +745,33 @@ def process_id(app):
         return app.get_process_id()
     except Exception:
         return None
+
+
+def app_windows(app, pid):
+    """An app's top-level windows. libatspi answers a call that timed out with -1 for the count and None for a
+    window, not with an error: then the app is busy, and isn't asked more during this request.
+    (Answers prove little: libatspi may give them from its cache. window_facts asks the app.)"""
+    t0 = time.monotonic()
+    try:
+        count = app.childCount
+    except Exception:
+        count = -1
+    if count < 0:
+        note_answer(pid, t0, False)
+        return []
+    wins = []
+    for i in range(min(count, MAX_CHILDREN)):
+        t0 = time.monotonic()
+        try:
+            win = app.getChildAtIndex(i)
+        except Exception:
+            win = None
+        if win is not None:
+            wins.append(win)
+        elif time.monotonic() - t0 > SLOW_APP_S:
+            note_answer(pid, t0, False)
+            break
+    return wins
 
 
 def frames(only_pid=None, skip_pid=None, until=None):
@@ -684,27 +797,38 @@ def frames(only_pid=None, skip_pid=None, until=None):
             continue
         if skip_pid is not None and pid == skip_pid:
             continue
-        if only_pid is None and is_hung(pid) or pid in SLOW_NOW:
+        if pid in SLOW_NOW:
             continue
-        t0 = time.monotonic()
-        wins, ok = [], True
-        try:
-            count = app.childCount
-            ok = count >= 0  # libatspi answers -1 when the call timed out
-            for i in range(min(count, MAX_CHILDREN)):
-                try:
-                    win = app.getChildAtIndex(i)
-                except Exception:
-                    continue
-                if win is not None:
-                    wins.append(win)
-        except Exception:
-            ok = False
-        if not ok:
-            # (Success here proves little: libatspi may answer from its cache. window_facts asks the app.)
-            note_answer(pid, t0, False)
-        for win in wins:
+        if only_pid is None and is_hung(pid):
+            SKIPPED_NOW.add(pid)
+            continue
+        for win in app_windows(app, pid):
             yield app, pid, win
+
+
+def remember_windows(pid, windows, merge=False):
+    """What app `pid` showed when it last answered (see KNOWN): these windows, or these too (`merge`)."""
+    if pid is None:
+        return
+    known = KNOWN.pop(pid, None) if merge else None
+    known = known if known is not None else OrderedDict()
+    if not merge:
+        KNOWN.pop(pid, None)
+    for w in windows:
+        known.pop(w.get("path") or w.get("name"), None)
+        known[w.get("path") or w.get("name")] = w
+    while len(known) > KNOWN_WINDOWS:
+        known.popitem(last=False)
+    if known:
+        KNOWN[pid] = known
+    while len(KNOWN) > KNOWN_APPS:
+        KNOWN.popitem(last=False)
+
+
+def might_have(pid, title):
+    """Could this app, which didn't answer, have the window asked for? Its windows as last seen say (any, unknown)."""
+    known = KNOWN.get(pid)
+    return not known or not title or any(title in (w.get("name") or "").lower() for w in known.values())
 
 
 def window_facts(pid, win):
@@ -746,12 +870,19 @@ def describe_window(app, pid, win, budget=None):
 
 
 def list_windows(params):
-    SLOW_NOW.clear()
-    out = []
+    new_request()
+    out, asked = [], set()
     for app, pid, win in frames(until=time.monotonic() + FIND_BUDGET_S):
+        asked.add(pid)
         _, states = window_facts(pid, win)
         if "showing" in states or "active" in states:
             out.append(describe_window(app, pid, win))
+    for pid in asked - SLOW_NOW:
+        remember_windows(pid, [w for w in out if w["pid"] == pid])
+    # Apps that didn't answer this time (busy, or hung and skipped): their windows as last seen, marked busy.
+    listed = set(w["pid"] for w in out)
+    for pid in sorted(p for p in SLOW_NOW | SKIPPED_NOW if p not in listed and p in KNOWN):
+        out.extend(dict(w, active=False, busy=True) for w in KNOWN[pid].values())
     return {"windows": out}
 
 
@@ -837,18 +968,24 @@ def other_windows(pid, win, budget):
 
 def read_window(params):
     t0 = time.time()
-    SLOW_NOW.clear()
-    found = find_window(params, time.monotonic() + FIND_BUDGET_S)
+    new_request()
+    until = time.monotonic() + FIND_BUDGET_S
+    found = find_window(params, until)
     if found is None:
-        # A window that didn't answer in time is busy (a file dialog listing a big folder), not gone.
+        # A window that didn't answer in time is busy (a file dialog listing a big folder), not gone: so is
+        # one that may be in an app skipped as hung, or that the look ran out of time before reaching.
         asked = params.get("pid")
-        busy = asked in SLOW_NOW if asked is not None else bool(SLOW_NOW)
-        return {"window": None, "nodes": [], "busy": busy, "ms": int((time.time() - t0) * 1000)}
+        title = (params.get("title") or "").lower()
+        busy = time.monotonic() > until or asked in SLOW_NOW \
+            or any(might_have(p, title) for p in SLOW_NOW | SKIPPED_NOW if p != asked)
+        return {"window": None, "nodes": [], "busy": bool(busy), "ms": int((time.time() - t0) * 1000)}
     app, pid, win = found
     budget = Budget(max(0.3, min(READ_BUDGET_S, READ_TOTAL_S - (time.time() - t0))))
     window = describe_window(app, pid, win, budget)
     if pid in SLOW_NOW:
         budget.busy = True
+    elif not budget.busy and window["name"]:
+        remember_windows(pid, [window], merge=True)
     if never_looked(window, params):
         return {"window": window, "nodes": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
     SNAPSHOTS.begin()
@@ -856,7 +993,7 @@ def read_window(params):
     max_nodes = int(params.get("maxNodes", MAX_NODES))
     if not budget.busy:
         walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None, None, budget)
-        budget.tick()  # the last element asked may have been the one that timed out
+        budget.check()  # the last element asked may have been the one that timed out
     latest = SNAPSHOTS.latest()
     redact_by_layout(nodes, lambda nid: latest.get(nid))
     others = [] if budget.busy or pid is None else other_windows(pid, win, Budget(0.3))
@@ -866,7 +1003,7 @@ def read_window(params):
     out = {
         "window": window,
         "nodes": nodes,
-        "truncated": len(nodes) >= max_nodes or budget.over,
+        "truncated": budget.cut or budget.over,
         "others": others,
         "secretKeys": [list(k) for k in keys if k is not None],
         "ms": int((time.time() - t0) * 1000),
@@ -876,6 +1013,159 @@ def read_window(params):
     elif budget.over:
         out["slow"] = True
     return out
+
+
+# ---------------------------------------------------------------- secret fields a read didn't reach
+
+# A read cut short (the node limit, its time, a busy app) may not have reached every secret field, and a
+# screenshot would show what they hold. Before one is taken, every field on screen is looked for, asking
+# the rest of the window only what each element is and whether it shows; a web view's document is searched
+# by the app itself (AT-SPI's Collection: one call, in GTK's and Chromium's bridges).
+SCAN_BUDGET_S = 2.0
+SCAN_NODES = 6000
+SCAN_CHILDREN = 2000
+DOCUMENT_ROLES = frozenset(["document web", "document frame"])
+
+
+def collection_matches(acc, roles, limit=SCAN_NODES):
+    """The showing elements with these roles under acc, found by the app itself; None when it can't."""
+    if not native(acc):
+        return None
+    try:
+        wanted = [getattr(Atspi.Role, r.upper().replace(" ", "_")) for r in sorted(roles)
+                  if hasattr(Atspi.Role, r.upper().replace(" ", "_"))]
+        rule = Atspi.MatchRule.new(Atspi.StateSet.new([Atspi.StateType.SHOWING]), Atspi.CollectionMatchType.ALL, {},
+                                   Atspi.CollectionMatchType.ALL, wanted, Atspi.CollectionMatchType.ANY, [],
+                                   Atspi.CollectionMatchType.ALL, False)
+        return list(Atspi.Collection.get_matches(acc, rule, Atspi.CollectionSortOrder.CANONICAL, limit, True))
+    except Exception:
+        return None
+
+
+def scan_fields(acc, depth, found, clip, budget, seen):
+    """Collects (role, accessible) for the input fields and labels on screen under acc into found["fields"] and
+    found["labels"]; web documents searched by the app go to found["docs"] (their labels are asked for later,
+    if needed). Stops short (budget.busy, .over or .cut) rather than miss part of the window unsaid."""
+    if depth > MAX_DEPTH or budget.tick():
+        return
+    seen[0] += 1
+    if seen[0] > SCAN_NODES:
+        budget.cut = True
+        return
+    states = state_names(acc)
+    if "showing" not in states or "visible" not in states:
+        return
+    try:
+        role = acc.getRoleName()
+    except Exception:
+        return
+    if role in FIELD_ROLES:
+        found["fields"].append((role, acc))
+        return
+    if role in LABEL_ROLES:
+        found["labels"].append(acc)
+        return
+    if role in DOCUMENT_ROLES:
+        t0 = time.monotonic()
+        matches = collection_matches(acc, FIELD_ROLES)
+        if matches is not None:
+            budget.last = time.monotonic()  # one call for the whole document, not a timeout
+            budget.cut = budget.cut or len(matches) >= SCAN_NODES
+            found["fields"].extend((None, m) for m in matches)
+            found["docs"].append(acc)
+            return
+        if time.monotonic() - t0 > SLOW_APP_S:
+            budget.busy = True
+            return
+    if depth == 0 or role in CLIP_ROLES:
+        clip = clip_to(clip, extents(acc))
+    if budget.check():
+        return
+    try:
+        count = acc.childCount
+    except Exception:
+        count = 0
+    indices, left_out = child_indices(acc, count, clip, SCAN_CHILDREN)
+    budget.cut = budget.cut or left_out
+    long_list, misses = count > MAX_CHILDREN, 0
+    for i in indices:
+        if budget.busy or budget.over or budget.cut:
+            return
+        child = child_at(acc, i)
+        if child is None:
+            continue
+        if long_list and not overlaps(extents(child), clip):
+            # Rows scrolled away show nothing in the picture; a few of them in a row, and the rest are too.
+            misses += 1
+            if misses >= 3:
+                return
+            continue
+        misses = 0
+        scan_fields(child, depth + 1, found, clip, budget, seen)
+
+
+def secret_fields(params):
+    """Every secret field on screen in one window (`pid` and `path`), for blacking out in a screenshot after a
+    read that was cut short: ids and bounds (as the app reports them). `complete` is false when the window
+    couldn't be looked through in time: then nothing can be shown of it."""
+    t0 = time.time()
+    new_request()
+    pid, path = params.get("pid"), params.get("path")
+    win = None
+    if pid is not None and path:
+        for _app, _apid, w in frames(only_pid=pid, until=time.monotonic() + 1.0):
+            if window_path(w) == path:
+                win = w
+                break
+    if win is None:
+        return {"fields": [], "complete": False, "busy": pid in SLOW_NOW, "ms": int((time.time() - t0) * 1000)}
+    budget = Budget(SCAN_BUDGET_S)
+    found = {"fields": [], "labels": [], "docs": []}
+    scan_fields(win, 0, found, None, budget, [0])
+    secret, plain = [], []
+    for role, acc in found["fields"]:
+        if budget.tick():
+            break
+        try:
+            role = role or acc.getRoleName()
+            name = (acc.name or "").strip()
+        except Exception:
+            continue
+        b = extents(acc)
+        if b is None or b["width"] <= 0 or b["height"] <= 0:
+            continue
+        node = {"role": role, "name": name, "bounds": b, "acc": acc}
+        (secret if is_secret(acc, role, name) else plain).append(node)
+    if any(not n["name"] for n in plain) and not (budget.busy or budget.over):
+        labels = list(found["labels"])
+        for doc in found["docs"]:
+            labels.extend(collection_matches(doc, LABEL_ROLES) or [])
+            budget.last = time.monotonic()
+        named = []
+        for acc in labels:
+            if budget.tick():
+                break
+            try:
+                name = (acc.name or "").strip()
+            except Exception:
+                continue
+            b = extents(acc) if name else None
+            if b:
+                named.append({"name": name, "bounds": b})
+        for n in secret_by_layout(plain, named, secret + plain):
+            SECRETS.add(object_key(n["acc"]))
+            secret.append(n)
+    budget.check()
+    if budget.busy and pid not in SLOW_NOW:
+        timed_out(pid)
+    keys = set(object_key(n["acc"]) for n in secret)
+    return {
+        "fields": [{"id": SNAPSHOTS.add(n["acc"]), "role": n["role"], "bounds": n["bounds"]} for n in secret],
+        "complete": not (budget.busy or budget.over or budget.cut),
+        "busy": budget.busy,
+        "secretKeys": [list(k) for k in keys if k is not None],
+        "ms": int((time.time() - t0) * 1000),
+    }
 
 
 def remember_secrets(params):
@@ -905,11 +1195,17 @@ def mark_secret(params):
 SHELL_ROLES = frozenset(["dialog", "alert", "notification", "file chooser"])
 # They sit a few levels under the stage (its UI group, the modal dialog group or the message tray).
 SHELL_DEPTH = 6
+# The Activities overview and the window switcher show a picture of every window, never-look ones too. The
+# overview's group of actors shows only then (Cally names an actor without an accessible name by its actor
+# name), and while the shell has the keyboard (the switcher, a menu of the top bar) an actor under the stage
+# has the focus.
+SHELL_OVERVIEW = "overviewGroup"
 
 
 def shell_overlays(params):
     """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
-    text (for the password-prompt check). Empty without GNOME Shell."""
+    text (for the password-prompt check), and "overview" while the overview or the window switcher may be
+    up. Empty without GNOME Shell."""
     out = []
     desktop = pyatspi.Registry.getDesktop(0)
     try:
@@ -925,7 +1221,7 @@ def shell_overlays(params):
         except Exception:
             continue
         stack = [(app, 0)]
-        seen = 0
+        seen, modal = 0, False
         while stack and seen < 400 and not budget.tick():
             acc, depth = stack.pop()
             seen += 1
@@ -934,12 +1230,16 @@ def shell_overlays(params):
                 continue
             try:
                 role = acc.getRoleName()
+                name = acc.name or ""
             except Exception:
                 continue
+            if depth > 1 and not modal and ("focused" in states or name == SHELL_OVERVIEW):
+                modal = True
+                out.append({"role": "overview", "name": name[:200], "text": "", "bounds": None})
             if role in SHELL_ROLES:
                 words = []
                 shell_text(acc, words, 0)
-                out.append({"role": role, "name": (acc.name or "")[:200], "text": " ".join(words)[:400],
+                out.append({"role": role, "name": name[:200], "text": " ".join(words)[:400],
                             "bounds": extents(acc)})
                 continue
             if depth < SHELL_DEPTH:
@@ -998,11 +1298,32 @@ ACTION_ALIASES = {
 }
 
 
-def node_info(acc):
-    """The element as it is now, for checking an action worked."""
+BUSY = "the app is busy (it didn't answer in time); try again in a moment"
+
+
+class ElementGone(RuntimeError):
+    """The element isn't there any more (its window closed or changed)."""
+
+
+def unreachable(nid, err, t0):
+    """Why an element couldn't be asked: its app didn't answer in time (busy), or the element is gone."""
+    msg = str(err).lower()
+    if time.monotonic() - t0 > SLOW_APP_S or "did not receive a reply" in msg or "timeout was reached" in msg:
+        return RuntimeError(BUSY)
+    return ElementGone("element %s is gone (the window changed); read the window again" % (nid if nid is not None else ""))
+
+
+def node_info(acc, nid=None):
+    """The element as it is now, for checking an action worked. Raises BUSY or ElementGone (never libatspi's own words)."""
+    t0 = time.monotonic()
     states = state_names(acc)
-    role = acc.getRoleName()
-    name = (acc.name or "").strip()
+    if "defunct" in states:
+        raise ElementGone("element %s is gone (the window changed); read the window again" % (nid if nid is not None else ""))
+    try:
+        role = acc.getRoleName()
+        name = (acc.name or "").strip()
+    except Exception as err:
+        raise unreachable(nid, err, t0)
     info = {"role": role, "name": name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
     if is_secret(acc, role, name):
@@ -1035,7 +1356,11 @@ def settle():
 def usable(nid):
     """The element behind an id, if the user could use it right now (enabled and on screen)."""
     acc = SNAPSHOTS.get(nid)
+    t0 = time.monotonic()
     states = state_names(acc)
+    # No states after a timeout's wait: the app is busy, not the element gone.
+    if not states and time.monotonic() - t0 > SLOW_APP_S:
+        raise RuntimeError(BUSY)
     if not states or "defunct" in states:
         raise RuntimeError("element %s is gone (the window changed); read the window again" % nid)
     if "sensitive" not in states and "enabled" not in states:
@@ -1053,8 +1378,22 @@ def refuse_secret(acc):
         raise PermissionError("this looks like a password or payment field; the user must fill it in")
 
 
+def after_action(acc, nid):
+    """The element after an action that worked. Gone is an answer, not an error: a Close, OK or Save button
+    closes its own dialog. So is busy (the app is still at it)."""
+    try:
+        return {"after": node_info(acc, nid)}
+    except ElementGone:
+        return {"after": None, "gone": True}
+    except RuntimeError as err:
+        if str(err) == BUSY:
+            return {"after": None, "busy": True}
+        raise
+
+
 def do_action(params):
-    acc = usable(int(params["id"]))
+    nid = int(params["id"])
+    acc = usable(nid)
     want = (params.get("action") or "click").lower()
     try:
         act = acc.queryAction()
@@ -1068,14 +1407,17 @@ def do_action(params):
             break
     if index is None:
         raise RuntimeError("background_unavailable: no '%s' action (has: %s)" % (want, ", ".join(names) or "none"))
-    before = node_info(acc)
+    before = node_info(acc, nid)
     ok = act.doAction(index)
     settle()
-    return {"ok": bool(ok), "action": names[index], "before": before, "after": node_info(acc)}
+    res = after_action(acc, nid)
+    res.update({"ok": bool(ok), "action": names[index], "before": before})
+    return res
 
 
 def set_text(params):
-    acc = usable(int(params["id"]))
+    nid = int(params["id"])
+    acc = usable(nid)
     refuse_secret(acc)
     text = params.get("text", "")
     mode = params.get("mode", "replace")
@@ -1090,7 +1432,9 @@ def set_text(params):
         offset = t.characterCount if mode == "append" else max(0, t.caretOffset)
         ok = et.insertText(offset, text, len(text))
     settle()
-    return {"ok": bool(ok), "after": node_info(acc)}
+    res = after_action(acc, nid)
+    res["ok"] = bool(ok)
+    return res
 
 
 def set_value(params):
@@ -1127,26 +1471,32 @@ def option_items(acc):
     return names
 
 
+def option_index(names, want):
+    """The option called `want`: its exact name, else the one name equal to it but for case. Never a part of
+    a name: "permanently" is not "Delete permanently" (Ember decides on the option that will be chosen)."""
+    want = want.strip()
+    if not want:
+        return None
+    if want in names:
+        return names.index(want)
+    same = [i for i, n in enumerate(names) if n.lower() == want.lower()]
+    return same[0] if len(set(names[i] for i in same)) == 1 else None
+
+
 def select_option(params):
-    acc = usable(int(params["id"]))
+    nid = int(params["id"])
+    acc = usable(nid)
     refuse_secret(acc)
     names = option_items(acc)
-    want = str(params.get("option", "")).strip().lower()
-    index = None
-    for i, n in enumerate(names):
-        if n.lower() == want:
-            index = i
-            break
+    index = option_index(names, str(params.get("option", "")))
     if index is None:
-        for i, n in enumerate(names):
-            if want and want in n.lower():
-                index = i
-                break
-    if index is None:
-        raise ValueError("no option '%s' (options: %s)" % (params.get("option"), ", ".join(names[:30])))
+        # The options themselves are app text: they are listed with list_options, not in an error.
+        raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % len(names))
     ok = acc.querySelection().selectChild(index)
     settle()
-    return {"ok": bool(ok), "option": names[index], "after": node_info(acc)}
+    res = after_action(acc, nid)
+    res.update({"ok": bool(ok), "option": names[index]})
+    return res
 
 
 def list_options(params):
@@ -1162,7 +1512,8 @@ def focus(params):
 
 
 def read_element(params):
-    return node_info(SNAPSHOTS.get(int(params["id"])))
+    nid = int(params["id"])
+    return node_info(SNAPSHOTS.get(nid), nid)
 
 
 METHODS = {
@@ -1173,6 +1524,7 @@ METHODS = {
     "remember_secrets": remember_secrets,
     "mark_secret": mark_secret,
     "shell_overlays": shell_overlays,
+    "secret_fields": secret_fields,
     "read_element": read_element,
     "do_action": do_action,
     "set_text": set_text,

@@ -69,6 +69,8 @@ export interface Perceived extends Seen {
 const BUSY_RETRY_MS = 300;
 /** Secret fields whose position is checked again once the picture is taken (they can scroll meanwhile). */
 const MAX_SECRET_RECHECK = 24;
+/** Workers see every element a read returns (the sidecar's MAX_NODES), so every id they may need is there. */
+const WORKER_LINES = 400;
 
 export class Perception {
   /** The overlay hide in progress: concurrent captures share it, and Ember shows again when the last one is done. */
@@ -274,7 +276,7 @@ export class Perception {
     const seen = opts.target ? await this.read(opts.target, null, stack) : await this.focused(stack);
     const text = seen.blocked
       ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
-      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, header: othersLine(seen) }) + notes(seen)
+      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
       : seen.busy ? BUSY_APP
       : "The focused window exposes no accessibility information; use the screenshot.";
     if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
@@ -287,6 +289,7 @@ export class Perception {
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
     if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
+    if (shell.overview) return noShot("the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed");
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
     // A window: blacked out wherever other windows lie on top of it (the stacking order says which).
@@ -310,44 +313,79 @@ export class Perception {
       return noShot("Ember couldn't check for private windows");
     }
     const secrets = seen.nodes.filter(n => n.secret && n.bounds);
+    // A read cut short (too many elements, too slow, a busy app) may not have reached every secret field: those
+    // are looked for on their own (in the app's own pixels), and without all of them there is no picture.
+    let unread: { id: number; bounds: Bounds }[] = [];
+    if (seen.truncated || seen.busy) {
+      const more = await this.unreadSecrets(seen);
+      if (typeof more === "string") return noShot(more);
+      unread = more;
+    }
+    const k = seen.axScale;
+    const blacked = [...mask, ...covers, ...shell.masks];
     let coveredAfter = false;
     const capture = await captureRect(x11, rect, {
-      mask: [...mask, ...covers, ...shell.masks, ...secrets.map(n => pad(n.bounds!))],
+      mask: [...blacked, ...secrets.map(n => pad(n.bounds!)), ...unread.flatMap(f => physical(f.bounds, k).map(pad))],
       // Windows can move or open, and fields scroll, while the picture is taken: black out where they are afterwards too.
       maskAfter: async () => {
         const now = this.stackNow();
         const priv = await this.privateWindows(now);
         if (priv === null) return null;
-        const fields = await this.whereNow(secrets);
+        const fields = [...await this.whereNow(secrets), ...await this.whereNow(unread, k)];
+        blacked.push(...priv);
         if (!windowScope) return [...priv, ...fields];
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
+        blacked.push(...after);
         return [...priv, ...fields, ...after];
       },
       hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
-      overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes, origin, scale, w, h) : null,
+      // No marks on what is blacked out (an element under another window can't be clicked either).
+      overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
     if (!capture) return noShot("the window is off screen, or the screen couldn't be captured safely");
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
     return { ...seen, text: text + note, capture };
   }
 
-  /** Where these (secret) fields are now, padded; the ones that can't be read again keep their old place. */
-  private async whereNow(fields: AxNode[]): Promise<Bounds[]> {
-    return Promise.all(fields.slice(0, MAX_SECRET_RECHECK).map(async n => {
+  /**
+   * Where these (secret) fields are now, padded; the ones that can't be read again keep their old place.
+   * `k`: their bounds are as the app reports them, at this scale (both places are blacked out).
+   */
+  private async whereNow(fields: { id: number; bounds: Bounds | null }[], k = 1): Promise<Bounds[]> {
+    const places = await Promise.all(fields.slice(0, MAX_SECRET_RECHECK).map(async n => {
       const now = await this.o.sidecar.readElement(n.id).catch(() => null);
-      return pad(now?.bounds ?? n.bounds!);
+      return physical(now?.bounds ?? n.bounds!, k).map(pad);
     }));
+    return places.flat();
+  }
+
+  /**
+   * After a read that was cut short: the window's secret fields it may not have reached, or why they can't
+   * all be known (then no picture is taken).
+   */
+  private async unreadSecrets(seen: Seen): Promise<{ id: number; bounds: Bounds }[] | string> {
+    const w = seen.window;
+    const busy = "the app is busy, so Ember can't check it for password fields; try again in a moment";
+    if (!w || w.pid == null || !w.path) return seen.busy ? busy : "Ember couldn't check the whole window for password fields";
+    try {
+      const r = await this.o.sidecar.secretFields({ pid: w.pid, path: w.path });
+      if (r.complete) return r.fields;
+      return r.busy ? busy : "the window is too big for Ember to check all of it for password fields in time; close what you don't need, or work in a smaller part of it";
+    } catch (err) {
+      this.o.log.warn("perception.secret_scan_failed", { err });
+      return "Ember couldn't check the whole window for password fields";
+    }
   }
 
   /** GNOME Shell's dialogs and notifications now (best effort: nothing is known when the check fails). */
-  private async shellOverlays(): Promise<{ dialog: boolean; masks: Bounds[] }> {
+  private async shellOverlays(): Promise<{ dialog: boolean; overview: boolean; masks: Bounds[] }> {
     try {
       return shellCovers((await this.o.sidecar.shellOverlays()).overlays);
     } catch (err) {
       this.o.log.warn("perception.shell_check_failed", { err });
-      return { dialog: false, masks: [] };
+      return { dialog: false, overview: false, masks: [] };
     }
   }
 
@@ -434,6 +472,18 @@ const BUSY_APP = "The app is busy and didn't answer (it may be loading something
 
 /** A secret field's rectangle, a little larger: its border and focus ring go too. */
 const pad = (b: Bounds): Bounds => ({ x: b.x - 3, y: b.y - 3, width: b.width + 6, height: b.height + 6 });
+
+/**
+ * Where a rectangle an app reported may be on screen: at a scale other than 1 both as reported and
+ * scaled (Chromium's pages report physical pixels inside a frame that reports logical ones).
+ */
+const physical = (b: Bounds, k: number): Bounds[] => (k === 1 ? [b] : [b, scaleBounds(b, k)]);
+
+/** Is the middle of `r` inside `b`? */
+const holds = (b: Bounds, r: Bounds) => {
+  const x = r.x + r.width / 2, y = r.y + r.height / 2;
+  return x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height;
+};
 
 /** The app's other windows (an Open dialog over the window read), for the header inside the <screen> wrapper. */
 function othersLine(seen: Seen): string[] {

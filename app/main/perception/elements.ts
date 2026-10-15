@@ -13,27 +13,46 @@ const INTERACTIVE = new Set(["push button", "toggle button", "check box", "radio
 
 /** Text that labels a control: GTK's and Qt's labels, Chromium's plain text. Keep in step with LABEL_ROLES in ember_atspi.py. */
 const LABEL_ROLES = new Set(["label", "static", "caption"]);
+/** Input fields, whose label can make their contents secret (documents and terminals are not judged by name). */
+const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
+/**
+ * Controls a label on their row names (a label beside a link or a button is usually a heading).
+ * Keep in step with LABELLED_ROLES in ember_atspi.py.
+ */
+const NAMED_BY_ROW = new Set([...FIELD_ROLES, "check box", "radio button", "toggle button", "switch", "slider"]);
 
-/** The label beside an unnamed control: on its row to its left, else just above it and starting where it starts. */
-function labelFor(b: Bounds, labels: AxNode[]): string | null {
-  const cy = b.y + b.height / 2;
+/** The gap between a label and the control to its right on the same row, or null when it isn't there. */
+function beside(lb: Bounds, b: Bounds): number | null {
+  const gap = b.x - (lb.x + lb.width);
+  const sameRow = Math.abs(lb.y + lb.height / 2 - (b.y + b.height / 2)) < Math.max(12, b.height / 2);
+  return sameRow && gap >= -4 && gap < 320 ? gap : null;
+}
+
+/**
+ * The label beside an unnamed control: on its row to its left, else just above it and over its left
+ * part (from a little left of where it starts, for an indented field, to no further than its middle).
+ * A label that already names a control on its own row (`claimed`) names nothing below it.
+ */
+function labelFor(b: Bounds, labels: AxNode[], claimed: Set<number>): string | null {
   let left: { name: string; gap: number } | null = null, above: { name: string; gap: number } | null = null;
   for (const l of labels) {
     const lb = l.bounds!;
-    const gap = b.x - (lb.x + lb.width);
-    if (Math.abs(lb.y + lb.height / 2 - cy) < Math.max(12, b.height / 2) && gap >= -4 && gap < 320 && (!left || gap < left.gap)) left = { name: l.name, gap };
+    const gap = beside(lb, b);
+    if (gap !== null && (!left || gap < left.gap)) left = { name: l.name, gap };
     const up = b.y - (lb.y + lb.height);
-    if (up >= -4 && up < 24 && Math.abs(lb.x - b.x) <= 16 && (!above || up < above.gap)) above = { name: l.name, gap: up };
+    if (up >= -4 && up < 24 && lb.x <= b.x + b.width / 2 && lb.x + lb.width >= b.x - 16 && !claimed.has(l.id) && (!above || up < above.gap)) above = { name: l.name, gap: up };
   }
   return left?.name ?? above?.name ?? null;
 }
 
 export function inferLabels(nodes: AxNode[]): Map<number, string> {
   const labels = nodes.filter(n => LABEL_ROLES.has(n.role) && n.name && n.bounds);
+  const controls = nodes.filter(n => NAMED_BY_ROW.has(n.role) && n.bounds);
+  const claimed = new Set(labels.filter(l => controls.some(c => beside(l.bounds!, c.bounds!) !== null)).map(l => l.id));
   const out = new Map<number, string>();
   for (const n of nodes) {
     if (n.name || !n.bounds || !INTERACTIVE.has(n.role)) continue;
-    const name = labelFor(n.bounds, labels);
+    const name = labelFor(n.bounds, labels, claimed);
     if (name) out.set(n.id, name);
   }
   return out;
@@ -48,17 +67,24 @@ export function inferLabels(nodes: AxNode[]): Map<number, string> {
  * alike, matched on lowercase, NFKC-normalised text.
  */
 export const SECRET_WORDS = [
-  // Passwords and PINs.
-  "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a", "senha",
-  "palavra-passe", "parola", "parolă", "clave", "lösenord", "adgangskode", "salasana", "hasło", "heslo", "geslo", "lozinka",
-  "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
-  // Cards and bank accounts.
-  "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification", "expir(y|ation)",
-  "kartennummer", "kreditkarte(nnummer)?", "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum", "num(é|e)ro de (la )?carte",
-  "cryptogramme", "date d['’]expiration", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
-  "kaartnummer", "kortnummer", "numer karty", "номер карты", "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
-  "codice di (sicurezza|verifica)", "fecha de (caducidad|vencimiento|expiraci(ó|o)n)", "iban", "routing number", "account number",
-  "sort code", "kontonummer",
+  // Passwords and PINs. Words that mean something else too stand alone or in a phrase that says password
+  // ("Palabras clave" are keywords, a "Parola chiave" a keyword).
+  "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
+  "contrasenya", "senha", "palavra-passe", "^[\\s:*]*parol(a|ă)[\\s:*]*$", "parolă", "parola d['’]ordine",
+  "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
+  "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", "^[\\s:*]*clave[\\s:*]*$",
+  "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
+  "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
+  "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
+  // Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
+  "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification",
+  "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
+  "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum der karte", "num(é|e)ro de (la )?carte", "cryptogramme",
+  "date d['’]expiration de (la )?carte", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
+  "kaartnummer", "kortnummer", "numer karty", "номер карты",
+  "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
+  "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "iban",
+  "routing number", "account number", "sort code", "kontonummer",
   // One-time codes.
   "one[- ]time (code|password|pin)", "otp", "2fa", "two[- ]factor", "totp", "verification code", "auth(entication)? code",
   "recovery (code|key)", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
@@ -80,9 +106,6 @@ const normalize = (s: string) => s.normalize("NFKC").replace(/\p{Cf}/gu, "").toL
 /** Does this field name or label say its contents are secret? */
 export const isSecretLabel = (label: string) => !!label && SECRET_LABEL.test(normalize(label));
 
-/** Input fields, whose label can make their contents secret (documents and terminals are not judged by name). */
-const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
-
 /** Is this element's text off limits (a password field, or a field labelled as secret)? */
 export function isSecretNode(n: Pick<AxNode, "role" | "name"> & { secret?: boolean }, label = ""): boolean {
   return !!n.secret || n.role === "password text" || (FIELD_ROLES.has(n.role) && (isSecretLabel(n.name) || isSecretLabel(label)));
@@ -91,9 +114,17 @@ export function isSecretNode(n: Pick<AxNode, "role" | "name"> & { secret?: boole
 /** "Show", "Reveal", "Hide password", "Passwort anzeigen": a control that shows (or hides again) a password. */
 const REVEAL = /(^|[^\p{L}])(show|reveal|unmask|hide|visibility|anzeigen|einblenden|ausblenden|afficher|masquer|mostrar|ocultar|mostra|nascondi|toon|verbergen|visa|dölj|näytä|piilota|pokaż|ukryj|zobrazit|skrýt|göster|gizle|показать|скрыть)([^\p{L}]|$)|显示|顯示|隐藏|表示/u;
 const REVEAL_ROLES = new Set(["check box", "toggle button", "switch", "push button", "check menu item"]);
-const isRevealControl = (n: AxNode) => {
+/**
+ * Fields a bare "Show" or "Reveal" beside them is about: keys, codes and PINs (a password revealed before
+ * Ember looked). A "Show" beside a search or filter field ("Anzeigen", "Afficher") shows results, not a password.
+ */
+const KEYISH = /(^|[^\p{L}])(key|code|pin|passphrase|token|schlüssel|clé|cle|chiave|llave|sleutel|nyckel|nøgle|nøkkel|klucz|ключ|код)([^\p{L}]|$)/u;
+/** A reveal toggle, and whether it names a password itself ("Show password") or is a bare word ("Show"). */
+const revealKind = (n: AxNode): "password" | "bare" | null => {
+  if (!REVEAL_ROLES.has(n.role)) return null;
   const name = normalize(n.name).trim();
-  return REVEAL_ROLES.has(n.role) && REVEAL.test(name) && (isSecretLabel(name) || !/\s/.test(name));
+  if (!REVEAL.test(name)) return null;
+  return isSecretLabel(name) ? "password" : /\s/.test(name) ? null : "bare";
 };
 
 /** Is control `c` where a field's reveal toggle goes: on its row from its middle to a little past it, or just below it? */
@@ -106,15 +137,19 @@ function besideField(f: Bounds, c: Bounds): boolean {
 
 /**
  * Elements whose contents are secret: password fields, fields named or labelled as secret
- * (by the label to their left or above them), and fields with a "Show password" or "Reveal"
- * control beside them, which hold a password even after it was revealed.
+ * (by the label to their left or above them), and fields beside a "Show password" toggle, or
+ * a bare "Show" or "Reveal" when the field is named like a key or code: they hold a password
+ * even after it was revealed.
  */
 export function secretIds(nodes: AxNode[], labels = inferLabels(nodes)): Set<number> {
   const out = new Set<number>();
-  const reveals = nodes.filter(n => n.bounds && isRevealControl(n));
+  const reveals = nodes.flatMap(n => { const kind = n.bounds ? revealKind(n) : null; return kind ? [{ b: n.bounds!, kind }] : []; });
   for (const n of nodes) {
-    if (isSecretNode(n, labels.get(n.id) ?? "")) out.add(n.id);
-    else if (FIELD_ROLES.has(n.role) && n.bounds && reveals.some(r => besideField(n.bounds!, r.bounds!))) out.add(n.id);
+    const label = labels.get(n.id) ?? "";
+    if (isSecretNode(n, label)) { out.add(n.id); continue; }
+    if (!FIELD_ROLES.has(n.role) || !n.bounds) continue;
+    const keyish = KEYISH.test(normalize(n.name || label));
+    if (reveals.some(r => (r.kind === "password" || keyish) && besideField(n.bounds!, r.b))) out.add(n.id);
   }
   return out;
 }
@@ -138,13 +173,33 @@ export interface SerializeOptions {
   header?: string[];
 }
 
+/** Rows and cells: many of them in a list, each one item of content rather than a control. */
+const ITEM_ROLES = new Set(["list item", "table cell", "tree item", "icon"]);
+
+/**
+ * How much an element says, for choosing what to list when there are too many: controls (3),
+ * then rows and cells (2), then text and anything named (1), then unnamed containers (0).
+ */
+function weight(n: AxNode, labels: Map<number, string>): number {
+  if (INTERACTIVE.has(n.role) && !ITEM_ROLES.has(n.role)) return 3;
+  if (ITEM_ROLES.has(n.role) && (n.name || n.text)) return 2;
+  return n.name || n.text || labels.has(n.id) || n.value !== undefined ? 1 : 0;
+}
+
 export function serializeElements(window: AxWindow, nodes: AxNode[], opts: SerializeOptions = {}): string {
   const maxLines = opts.maxLines ?? 150;
   const labels = inferLabels(nodes);
   const minDepth = Math.min(...nodes.map(n => n.depth), 0);
+  // Too many to list: what says least is left out first (unnamed containers, then text, then rows), in tree order.
+  let shown: Set<number> | null = null;
+  if (nodes.length > maxLines) {
+    const order = nodes.map((n, i) => ({ i, w: weight(n, labels) })).sort((a, b) => b.w - a.w || a.i - b.i);
+    shown = new Set(order.slice(0, maxLines).map(o => nodes[o.i].id));
+  }
   const lines: string[] = [];
+  const left = [0, 0, 0, 0];
   for (const n of nodes) {
-    if (lines.length >= maxLines) { lines.push(`… ${nodes.length - maxLines} more elements not shown`); break; }
+    if (shown && !shown.has(n.id)) { left[weight(n, labels)]++; continue; }
     const name = n.name || labels.get(n.id) || "";
     const bits = [`[${n.id}] ${screenWord(n.role)}`];
     if (name) bits.push(quote(name, 80) + (n.name ? "" : " (label)"));
@@ -160,6 +215,11 @@ export function serializeElements(window: AxWindow, nodes: AxNode[], opts: Seria
     if (n.selection && !secret) bits.push(`selected=${quote(n.selection, 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
     lines.push("  ".repeat(Math.max(0, n.depth - minDepth)) + bits.join(" "));
+  }
+  if (shown) {
+    const kinds = [[left[0], "without a name"], [left[1], "text"], [left[2], "rows or cells"], [left[3], "controls"]] as const;
+    const what = kinds.filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}`).join(", ");
+    lines.push(`… ${nodes.length - shown.size} more elements not shown (${what}${left[3] ? "" : "; every control is listed"})`);
   }
   const attrs = `app=${quote(window.app, 60)} window=${quote(window.name, 100)}`;
   return `<screen source="accessibility" ${attrs} untrusted="true">\n${[...opts.header ?? [], ...lines].join("\n")}\n</screen>`;

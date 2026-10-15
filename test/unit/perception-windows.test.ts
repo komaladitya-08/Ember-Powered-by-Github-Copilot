@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { coveringRects, elementScales, matchFrame, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
 import { Perception } from "../../app/main/perception";
-import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, ShellOverlay } from "../../app/main/perception/sidecar";
+import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, SecretFieldsResult, ShellOverlay } from "../../app/main/perception/sidecar";
 import type { StackedWindow, X11 } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
@@ -10,6 +10,8 @@ const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return q
 const top = (id: number, pid: number | null, r: Bounds, title = "", outer: Bounds = r, inner: Bounds = outer): StackedWindow =>
   ({ id, client: id + 1, pid, title, wmClass: "app", ...r, outer, inner, overrideRedirect: false });
 const axWin = (pid: number | null, name: string, bounds: Bounds | null, path?: string): AxWindow => ({ app: "app", pid, path, name, role: "frame", active: true, bounds });
+/** A menu, list or tooltip: a window the window manager doesn't manage. */
+const popup = (id: number, pid: number | null, r: Bounds): StackedWindow => ({ ...top(id, pid, r), overrideRedirect: true });
 
 describe("matchFrame", () => {
   it("finds the frame of a window at the same scale", () => {
@@ -38,6 +40,14 @@ describe("matchFrame", () => {
     const stack = [top(1, 11991, { x: 519, y: 327, width: 1522, height: 945 }, "b.txt - Mousepad")];
     const m = matchFrame(axWin(11991, "b.txt - Mousepad", { x: 259, y: 163, width: 762, height: 473 }), stack);
     expect(m?.scale).toBe(2);
+  });
+
+  it("matches a window that draws its own shadow (client-side decorations: Chrome and Firefox on GNOME)", () => {
+    // No window manager frame; the client window includes a 20 px shadow that _GTK_FRAME_EXTENTS describes.
+    const client = { x: 80, y: 60, width: 1040, height: 740 };
+    const csd = top(1, 42, { x: 100, y: 80, width: 1000, height: 700 }, "Bank - Chromium", client, client);
+    expect(matchFrame(axWin(42, "Bank - Chromium", { x: 100, y: 80, width: 1000, height: 700 }), [csd])).toMatchObject({ index: 0, scale: 1 });
+    expect(matchFrame(axWin(42, "Bank - Chromium", { x: 50, y: 40, width: 500, height: 350 }), [csd])?.scale).toBe(2);
   });
 
   it("tells an app's windows apart by place and title, and ignores popups and other shapes", () => {
@@ -86,11 +96,15 @@ describe("covering windows", () => {
     top(1, 77, { x: 0, y: 0, width: 50, height: 50 }),          // below the target: hidden by it
     top(2, 42, target),                                           // the target
     top(3, 77, { x: 150, y: 50, width: 100, height: 100 }),      // another app, on top
-    top(4, 42, { x: 10, y: 10, width: 20, height: 20 }),         // the target's own menu
+    popup(4, 42, { x: 10, y: 10, width: 20, height: 20 }),       // the target's own menu
     top(5, 999, { x: 0, y: 0, width: 4000, height: 4000 }),      // Ember's window (an untitled one takes clicks)
   ];
   it("lists what windows above the target hide of it", () => {
     expect(coveringRects(stack, 1, target, [42], 999)).toEqual([{ x: 150, y: 50, width: 50, height: 50 }, target]);
+  });
+  it("counts the app's own dialogs above it (a Find & Replace, a \"Save changes?\"), not its menus", () => {
+    const find = top(3, 42, { x: 100, y: 20, width: 300, height: 60 }, "Find & Replace");
+    expect(coveringRects([top(1, 42, target), find, popup(4, 42, { x: 0, y: 0, width: 50, height: 50 })], 0, target, [42])).toEqual([{ x: 100, y: 20, width: 100, height: 60 }]);
   });
   it("counts Ember's windows that take clicks, not its click-through overlay", () => {
     const own = (id: number, title: string) => top(id, 999, { x: 0, y: 0, width: 40, height: 40 }, title);
@@ -113,9 +127,10 @@ describe("covering windows", () => {
 function desktop(o: {
   window: AxWindow | null; nodes?: AxNode[]; stack: StackedWindow[] | (() => StackedWindow[]);
   answers?: Partial<ReadWindowResult>[]; neverLook?: string[]; active?: { pid: number | null; title: string; wmClass: string } | null;
-  shell?: ShellOverlay[] | Error; element?: (id: number) => Partial<ElementInfo>;
+  shell?: ShellOverlay[] | Error; element?: (id: number) => Partial<ElementInfo>; scan?: SecretFieldsResult | Error;
 }) {
   const calls: Record<string, unknown>[] = [];
+  const scans: unknown[] = [];
   const scaled: [number[], number][] = [];
   const marked: number[][] = [];
   const sidecar = {
@@ -132,6 +147,11 @@ function desktop(o: {
       if (o.shell instanceof Error) throw o.shell;
       return { overlays: o.shell ?? [] };
     },
+    secretFields: async (w: unknown) => {
+      scans.push(w);
+      if (o.scan instanceof Error) throw o.scan;
+      return o.scan ?? { fields: [], complete: true, ms: 1 };
+    },
   } as unknown as AtspiSidecar;
   const active = o.active ? { id: 77, x: 0, y: 0, width: 10, height: 10, ...o.active } : null;
   const x11 = {
@@ -141,7 +161,7 @@ function desktop(o: {
     capture: (x: number, y: number, width: number, height: number) => ({ x, y, width, height, bgra: Buffer.alloc(width * height * 4, 200) }),
   } as unknown as X11;
   const perception = new Perception({ sidecar, x11, neverLook: () => o.neverLook ?? [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999 });
-  return { perception, calls, scaled, marked };
+  return { perception, calls, scaled, marked, scans };
 }
 
 async function pixel(data: Buffer, x: number, y: number): Promise<number> {
@@ -235,12 +255,28 @@ describe("window screenshots", () => {
     const p = await shot([
       top(1, 77, { x: 0, y: 0, width: 300, height: 300 }),
       top(2, 42, target, "notes.txt"),
-      top(3, 42, { x: 10, y: 10, width: 50, height: 50 }),
+      popup(3, 42, { x: 10, y: 10, width: 50, height: 50 }),
       top(4, 999, { x: 0, y: 0, width: 1000, height: 1000 }, "Ember overlay"),
     ]);
     expect(await pixel(p.capture!.data, 20, 20)).toBeGreaterThan(170);
     expect(await pixel(p.capture!.data, 150, 80)).toBeGreaterThan(170);
     expect(p.text).not.toContain("covered");
+  });
+
+  it("blacks out the app's own dialog over it, and draws no marks there", async () => {
+    const nodes: AxNode[] = [
+      { id: 7, parent: null, depth: 1, role: "push button", name: "Under", states: ["enabled"], bounds: { x: 20, y: 20, width: 40, height: 20 } },
+      { id: 8, parent: null, depth: 1, role: "push button", name: "Clear", states: ["enabled"], bounds: { x: 120, y: 60, width: 40, height: 20 } },
+    ];
+    const { perception } = desktop({ window: win, nodes, stack: [top(1, 42, target, "notes.txt"), top(2, 42, { x: 0, y: 0, width: 100, height: 100 }, "Save changes?")] });
+    const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(await pixel(p.capture!.data, 40, 30)).toBeLessThan(30);
+    expect(p.text).toContain("parts covered by other windows are hidden");
+    // The number tab of a mark sits just above its element: none for the button under the dialog.
+    const { data, info } = await sharp(p.capture!.data).raw().toBuffer({ resolveWithObject: true });
+    const orange = (x: number, y: number) => data[(y * info.width + x) * info.channels] > 200 && data[(y * info.width + x) * info.channels + 2] < 100;
+    expect(orange(30, 10)).toBe(false);
+    expect(orange(130, 50)).toBe(true);
   });
 
   it("blacks out Ember's own windows that take clicks (the handle) but leaves them out of the picture", async () => {
@@ -306,6 +342,54 @@ describe("secret fields in screenshots", () => {
     const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
     expect(await pixel(p.capture!.data, 175, 32)).toBeLessThan(30);
     expect(await pixel(p.capture!.data, 175, 160)).toBeLessThan(30);
+  });
+});
+
+describe("secret fields a cut-short read didn't reach", () => {
+  // A checkout page with hundreds of links before its card fields: the read stops at its node limit.
+  const target = { x: 0, y: 0, width: 300, height: 200 };
+  const win = axWin(42, "Checkout", target, "/org/a11y/atspi/accessible/1");
+  const nodes: AxNode[] = [{ id: 1, parent: null, depth: 0, role: "frame", name: "Checkout", states: [], bounds: target }];
+  const card = { id: 50, role: "entry", bounds: { x: 20, y: 150, width: 200, height: 24 } };
+  const shot = (scan: SecretFieldsResult | Error | undefined, answer: Partial<ReadWindowResult>, window = win, axScale?: Bounds) => {
+    const d = desktop({ window, nodes, stack: [top(1, 42, axScale ?? target, "Checkout")], answers: [answer], scan });
+    return { ...d, p: d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } }) };
+  };
+
+  it("are looked for on their own and blacked out", async () => {
+    const { p, scans } = shot({ fields: [card], complete: true, ms: 5 }, { truncated: true });
+    const r = await p;
+    expect(scans).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/1" }]);
+    expect(r.capture).not.toBeNull();
+    expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
+    expect(await pixel(r.capture!.data, 120, 100)).toBeGreaterThan(170);
+  });
+
+  it("are blacked out where a HiDPI app may draw them, scaled or not", async () => {
+    const small = axWin(42, "Checkout", { x: 0, y: 0, width: 150, height: 100 }, "/org/a11y/atspi/accessible/1");
+    const r = await shot({ fields: [{ id: 50, role: "entry", bounds: { x: 10, y: 75, width: 100, height: 12 } }], complete: true, ms: 5 }, { truncated: true }, small).p;
+    expect(r.axScale).toBe(2);
+    expect(await pixel(r.capture!.data, 60, 81)).toBeLessThan(30);
+    expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
+  });
+
+  it("mean no picture when they can't all be found, and Ember says why", async () => {
+    const big = await shot({ fields: [], complete: false, ms: 2000 }, { truncated: true, slow: true }).p;
+    expect(big.capture).toBeNull();
+    expect(big.text).toContain("No screenshot: the window is too big for Ember to check all of it for password fields");
+    const busy = await shot({ fields: [], complete: false, busy: true, ms: 900 }, { busy: true }).p;
+    expect(busy.capture).toBeNull();
+    expect(busy.text).toContain("the app is busy, so Ember can't check it for password fields");
+    const failed = await shot(new Error("accessibility helper stopped"), { truncated: true }).p;
+    expect(failed.capture).toBeNull();
+    const unnamed = await shot({ fields: [], complete: true, ms: 1 }, { truncated: true }, { ...win, path: undefined }).p;
+    expect(unnamed.capture).toBeNull();
+  });
+
+  it("aren't looked for after a complete read", async () => {
+    const { p, scans } = shot(new Error("not asked"), {});
+    expect((await p).capture).not.toBeNull();
+    expect(scans).toEqual([]);
   });
 });
 
@@ -380,7 +464,7 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     .perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
 
   it("mean no picture while a system dialog is up, and blacked-out notifications", async () => {
-    expect(shellCovers([])).toEqual({ dialog: false, masks: [] });
+    expect(shellCovers([])).toEqual({ dialog: false, overview: false, masks: [] });
     expect(shellCovers([{ role: "dialog", name: "", text: "Authentication Required", bounds: null }]).dialog).toBe(true);
     const n = await shot([{ role: "notification", name: "", text: "New mail", bounds: { x: 200, y: 0, width: 100, height: 40 } }]);
     expect(await pixel(n.capture!.data, 250, 20)).toBeLessThan(30);
@@ -388,6 +472,13 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     const d = await shot([{ role: "dialog", name: "", text: "Authentication Required Password", bounds: { x: 0, y: 0, width: 50, height: 50 } }]);
     expect(d.capture).toBeNull();
     expect(d.text).toContain("a system dialog is open");
+  });
+
+  it("mean no picture while the overview or the window switcher shows every window", async () => {
+    expect(shellCovers([{ role: "overview", name: "overviewGroup", text: "", bounds: null }])).toEqual({ dialog: false, overview: true, masks: [] });
+    const o = await shot([{ role: "overview", name: "", text: "", bounds: null }]);
+    expect(o.capture).toBeNull();
+    expect(o.text).toContain("the Activities overview or the window switcher is open");
   });
 
   it("don't stop pictures when GNOME Shell isn't there or can't be asked", async () => {

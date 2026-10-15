@@ -42,6 +42,8 @@ export interface AxWindow {
   role: string;
   active: boolean;
   bounds: Bounds | null;
+  /** Listed as last seen: its app didn't answer this time (busy, or hung for a while). */
+  busy?: boolean;
 }
 
 /** Another window of the app read: one the user is in, or must answer first (an Open dialog). */
@@ -59,6 +61,16 @@ export interface ReadWindowResult {
   /** On the never-look list (by app name, title or process): not read. */
   blocked?: boolean;
   others?: OtherWindow[];
+  ms: number;
+}
+
+/** Every secret field on screen in one window (see secretFields). */
+export interface SecretFieldsResult {
+  /** Ids and bounds as the app reports them (not scaled for HiDPI). */
+  fields: { id: number; role: string; bounds: Bounds }[];
+  /** False when the window couldn't be looked through in time (too big, busy, or gone). */
+  complete: boolean;
+  busy?: boolean;
   ms: number;
 }
 
@@ -252,6 +264,17 @@ export class AtspiSidecar {
   markSecret(ids: number[]): Promise<void> {
     if (!ids.length) return Promise.resolve();
     return this.request<{ keys?: unknown }>("mark_secret", { ids }).then(r => this.remember(r.keys));
+  }
+
+  /**
+   * Every secret field on screen in the window `pid` and `path` name, looked for on their own: after a read
+   * that was cut short, before a screenshot shows what the fields it didn't reach hold.
+   */
+  secretFields(window: { pid: number; path: string }): Promise<SecretFieldsResult> {
+    return this.request<SecretFieldsResult & { secretKeys?: unknown }>("secret_fields", window).then(({ secretKeys, ...r }) => {
+      this.remember(secretKeys);
+      return r;
+    });
   }
 
   /** What GNOME Shell shows over the windows right now (none without GNOME Shell). */

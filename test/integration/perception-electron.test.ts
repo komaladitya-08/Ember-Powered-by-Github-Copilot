@@ -3,7 +3,7 @@
  * X11: a decorated window is found inside its window manager's frame, a page at
  * scale 2 keeps the physical pixels Chromium reports, and secret fields (other
  * languages, a label above the field, a password revealed before Ember looked)
- * are withheld, refused and blacked out. Needs an X11 display with an
+ * are withheld, refused and blacked out, also where a read cut short never reached them. Needs an X11 display with an
  * accessibility bus and a Python with pyatspi; skipped otherwise
  * (EMBER_ATSPI_TEST=1 requires them).
  */
@@ -36,12 +36,18 @@ const SECRETS_PAGE = `<!doctype html><title>Ember test: Secrets</title><body sty
 <script>setTimeout(() => { pw2.type = "text"; }, 300);</script></body>`;
 const LIST_PAGE = `<!doctype html><title>Ember test: List</title><body style="margin:0;font:13px sans-serif">
 <ul aria-label="Rows">${Array.from({ length: 20 }, (_, i) => `<li>Row ${i}</li>`).join("")}</ul></body>`;
+// Hundreds of links before the card fields: a read stops at its node limit before reaching them.
+const CHECKOUT_PAGE = `<!doctype html><title>Ember test: Checkout</title><body style="margin:0;padding:4px;font:9px sans-serif">
+${Array.from({ length: 6 }, (_, d) => `<div>${Array.from({ length: 80 }, (_, i) => `<a href="#${d}-${i}">L${d}.${i}</a>`).join(" ")}</div>`).join("")}
+<div style="font:16px sans-serif">Card number<br><input style="font:16px monospace;width:300px;color:#00b000" value="4111 1111 1111 1111"></div>
+<div style="font:16px sans-serif">Security code <input style="font:16px monospace;width:80px;color:#00b000" value="737"></div></body>`;
 const MAIN = `
 const { app, BrowserWindow } = require("electron");
 app.commandLine.appendSwitch("force-renderer-accessibility");
 app.whenReady().then(() => {
   const [title, html, frame] = [process.env.EMBER_TEST_TITLE, process.env.EMBER_TEST_HTML, process.env.EMBER_TEST_FRAME === "1"];
-  const w = new BrowserWindow({ width: 500, height: 360, x: 40, y: 40, title, frame });
+  const big = process.env.EMBER_TEST_BIG === "1";
+  const w = new BrowserWindow({ width: big ? 700 : 500, height: big ? 420 : 360, x: big ? 580 : 40, y: 40, title, frame });
   w.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
   w.on("page-title-updated", e => e.preventDefault());
 });
@@ -55,9 +61,11 @@ describe.skipIf(!available && !required)("Electron windows through the real side
   let perception: Perception;
   const pids: Record<string, number> = {};
 
-  const start = (title: string, html: string, frame: boolean, scale: number) => {
+  const start = (title: string, html: string, frame: boolean, scale: number, big = false) => {
+    // Chromium joins the accessibility bus only when asked: by the desktop's accessibility setting, which a bare
+    // X server (CI's dbus-run-session + xvfb-run) doesn't have, or by ACCESSIBILITY_ENABLED.
     const child = spawn(electron, ["--no-sandbox", `--force-device-scale-factor=${scale}`, dir], {
-      stdio: "ignore", env: { ...process.env, EMBER_TEST_TITLE: title, EMBER_TEST_HTML: html, EMBER_TEST_FRAME: frame ? "1" : "0" },
+      stdio: "ignore", env: { ...process.env, ACCESSIBILITY_ENABLED: "1", EMBER_TEST_TITLE: title, EMBER_TEST_HTML: html, EMBER_TEST_FRAME: frame ? "1" : "0", EMBER_TEST_BIG: big ? "1" : "0" },
     });
     apps.push(child);
   };
@@ -70,12 +78,18 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     x11 = openX11()!;
     sidecar = new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), quiet, python);
     perception = new Perception({ sidecar, x11, log: quiet, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 4000, height: 4000 }) });
-    for (let i = 0; i < 100 && Object.keys(pids).length < 2; i++) {
-      const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
-      for (const w of windows) if (w.name.startsWith("Ember test: ") && w.pid != null) pids[w.name.slice(12)] = w.pid;
-      await new Promise(r => setTimeout(r, 200));
-    }
-    if (Object.keys(pids).length < 2) throw new Error("the Electron test windows never appeared on the accessibility bus");
+    const appear = async (n: number) => {
+      for (let i = 0; i < 100 && Object.keys(pids).length < n; i++) {
+        const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
+        for (const w of windows) if (w.name.startsWith("Ember test: ") && w.pid != null) pids[w.name.slice(12)] = w.pid;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    };
+    await appear(2);
+    // Last, so it opens on top of the scale-2 window (which covers most of the screen).
+    start("Ember test: Checkout", CHECKOUT_PAGE, true, 1, true);
+    await appear(3);
+    if (Object.keys(pids).length < 3) throw new Error("the Electron test windows never appeared on the accessibility bus");
     // The page's password field is revealed shortly after it loads.
     await new Promise(r => setTimeout(r, 1000));
   }, 40_000);
@@ -96,6 +110,19 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     // The frame itself is logical, so it is scaled: it is the X11 window.
     const w = x11.stack().find(s => s.pid === pids.List)!;
     expect(seen.window?.bounds).toMatchObject({ width: w.inner.width, height: w.inner.height });
+  });
+
+  it("blacks out secret fields a cut-short read never reached", async () => {
+    const p = await perception.perceive({ image: true, scope: "window", target: { pid: pids.Checkout } });
+    expect(p.truncated).toBe("nodes");
+    expect(p.nodes.some(n => n.role === "entry")).toBe(false);
+    expect(p.capture, p.text).not.toBeNull();
+    expect(p.text).not.toContain("covered by other windows");
+    // The card number and the code are written in green: none of it may be left in the picture.
+    const { data, info } = await sharp(p.capture!.data).raw().toBuffer({ resolveWithObject: true });
+    let green = 0;
+    for (let i = 0; i < data.length; i += info.channels) if (data[i + 1] > 140 && data[i] < 90 && data[i + 2] < 90) green++;
+    expect(green).toBeLessThan(5);
   });
 
   it("finds a decorated window inside its frame, withholds secrets and blacks them out", async () => {

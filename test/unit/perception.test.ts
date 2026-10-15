@@ -62,7 +62,24 @@ describe("serializeElements", () => {
   it("truncates long trees", () => {
     const many = Array.from({ length: 30 }, (_, i) => node(i, "label", `L${i}`, null));
     const out = serializeElements(win, many, { maxLines: 10 });
-    expect(out).toContain("… 20 more elements not shown");
+    expect(out).toContain("… 20 more elements not shown (20 text; every control is listed)");
+  });
+  it("leaves out containers, text and rows before any control, and says what it left out", () => {
+    // A GTK file chooser: hundreds of cells, then the Cancel and Open buttons and the filter.
+    const nodes = [
+      node(1, "filler", "", null), node(2, "label", "Places", null),
+      ...Array.from({ length: 300 }, (_, i) => node(10 + i, "table cell", `file_${i}.txt`, null)),
+      ...Array.from({ length: 20 }, (_, i) => node(400 + i, "filler", "", null)),
+      node(500, "push button", "Cancel", null), node(501, "push button", "Open", null), node(502, "combo box", "", null),
+    ];
+    const out = serializeElements(win, nodes, { maxLines: 150 });
+    expect(out).toContain('[501] push button "Open"');
+    expect(out).toContain("[502] combo box");
+    expect(out).toContain('"file_0.txt"');
+    expect(out).toContain("… 175 more elements not shown (21 without a name, 1 text, 153 rows or cells; every control is listed)");
+    expect(out.split("\n").filter(l => /^\s*\[/.test(l))).toHaveLength(150);
+    // Every element when there's room (workers get all a read returns).
+    expect(serializeElements(win, nodes, { maxLines: 400 })).not.toContain("not shown");
   });
   it("adds bounds for workers", () => {
     expect(serializeElements(win, bench, { withBounds: true })).toContain("@10,10 60x30");
@@ -103,6 +120,35 @@ print(json.dumps([e.SECRET_WORDS, e.SECRET_ANYWHERE]))
     const r = spawnSync(python!, ["-c", script], { encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual([SECRET_WORDS, SECRET_ANYWHERE]);
+  });
+  it("takes the label above an indented field, never one that names the field on its own row", () => {
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const nodes = [
+      node(1, "static", "Password", at(8, 10, 60, 18)),
+      node(2, "entry", "", at(38, 30), { text: "indentedSecret" }),
+      node(3, "static", "Password", at(8, 80, 60, 18)),
+      node(4, "entry", "", at(80, 78), { text: "hunter2" }),
+      node(5, "entry", "", at(8, 104, 400, 60), { text: "ordinary notes", states: ["enabled", "sensitive", "multi line"] }),
+      // A link on the label's row doesn't take it: "Forgot password?" beside a card number label.
+      node(6, "static", "Card number", at(8, 180, 90, 18)),
+      node(7, "link", "What's this?", at(200, 180, 80, 18)),
+      node(8, "entry", "", at(8, 200), { text: "4111" }),
+    ];
+    const labels = inferLabels(nodes);
+    expect([labels.get(2), labels.get(4), labels.get(5), labels.get(8)]).toEqual(["Password", "Password", undefined, "Card number"]);
+    expect([...secretIds(nodes)].sort()).toEqual([2, 4, 8]);
+  });
+  it("counts a bare Show or Hide beside a field only for fields named like keys or codes", () => {
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const row = (id: number, y: number, name: string, button: string, text: string) => [
+      node(id, "entry", name, at(100, y), { text }), node(id + 1, "push button", button, at(260, y, 60, 24))];
+    const nodes = [
+      ...row(10, 0, "Suchbegriff", "Anzeigen", "Rechnung 2024"), ...row(20, 40, "Filter", "Show", "error"),
+      ...row(30, 80, "Commentaire", "Afficher", "bonjour"), node(40, "entry", "Nickname", at(100, 120), { text: "bob" }),
+      node(41, "push button", "Hide", at(160, 146, 40, 20)), ...row(50, 200, "Access code", "Show", "1234"),
+      node(60, "entry", "", at(100, 260), { text: "revealed" }), node(61, "check box", "Show password", at(100, 288, 120, 20)),
+    ];
+    expect([...secretIds(nodes)].sort((a, b) => a - b)).toEqual([50, 60]);
   });
   it("finds a secret field's label above it, and a revealed password by its Show toggle", () => {
     const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });

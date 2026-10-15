@@ -167,7 +167,7 @@ class Secrets(unittest.TestCase):
 
     def test_secret_labels(self):
         for label in ["Password", "Card number", "CVV", "IBAN", "One-time code", "PIN", "Passwort", "API key",
-                      "Security code", "Expiry date", "Pass​word", "ＰＡＳＳＷＯＲＤ"]:
+                      "Security code", "Card expiry date", "Pass​word", "ＰＡＳＳＷＯＲＤ"]:
             self.assertTrue(e.looks_secret(label), label)
         for label in ["Name", "Spinner", "Pinned items", "Search", "Compass", "Bypass", "Subject", "", None]:
             self.assertFalse(e.looks_secret(label), label)
@@ -261,6 +261,20 @@ class Secrets(unittest.TestCase):
         e.redact_by_layout(nodes, e.SNAPSHOTS.latest().get)
         entries = [n for n in nodes if n["role"] == "entry"]
         self.assertEqual([n.get("text") for n in entries], [None, "Ada"])
+
+
+    def test_labels_above_an_indented_field_but_not_one_naming_its_own_row(self):
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SNAPSHOTS.begin()
+        kids = [Acc("static", "Password", bounds=(8, 10, 60, 18)), Acc("entry", "", bounds=(38, 30, 150, 24), text="indented"),
+                Acc("static", "Password", bounds=(8, 80, 60, 18)), Acc("entry", "", bounds=(80, 78, 150, 24), text="hunter2"),
+                Acc("entry", "", bounds=(8, 104, 400, 60), text="ordinary notes"),
+                Acc("static", "Card number", bounds=(8, 180, 90, 18)), Acc("link", "What's this?", bounds=(200, 180, 80, 18)),
+                Acc("entry", "", bounds=(8, 200, 150, 24), text="4111")]
+        nodes = []
+        e.walk(Acc("frame", "Form", bounds=(0, 0, 500, 300), kids=kids), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        e.redact_by_layout(nodes, e.SNAPSHOTS.latest().get)
+        self.assertEqual([n.get("text") for n in nodes if n["role"] == "entry"], [None, None, "ordinary notes", None])
 
 
 class Reading(unittest.TestCase):
@@ -362,6 +376,48 @@ class Reading(unittest.TestCase):
         self.assertTrue(budget.over and not budget.busy)
         self.assertLess(len(nodes), 50)
 
+    def test_a_long_row_of_children_on_screen_is_cut_short(self):
+        # 450 links in one paragraph, all on screen: a read takes MAX_CHILDREN of them, and says it was cut short.
+        links = [Acc("link", "L%d" % i, bounds=(10 + (i % 45) * 20, 10 + (i // 45) * 12, 18, 10)) for i in range(450)]
+        root = Acc("frame", "Links", bounds=(0, 0, 1000, 200), kids=[Acc("section", "", bounds=(0, 0, 1000, 200), kids=links)])
+        budget = e.Budget()
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertEqual(len([n for n in nodes if n["role"] == "link"]), e.MAX_CHILDREN)
+        self.assertTrue(budget.cut)
+        # A long list scrolled to its end: every row on screen was read.
+        root, _ = self.scrolled_list(rows=1000, first=975)
+        budget = e.Budget()
+        e.walk(root, 0, [], e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertFalse(budget.cut)
+
+    def test_secret_scan_reads_only_the_rows_on_screen(self):
+        root, lst = self.scrolled_list()
+        lst.kids[2510].kids = [Acc("password text", "", bounds=(20, 302, 100, 16))]  # in row 2509, on screen
+        found = {"fields": [], "labels": [], "docs": []}
+        budget = e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(root, 0, found, None, budget, [0])
+        self.assertEqual([r for r, _ in found["fields"]], ["password text"])
+        self.assertFalse(budget.busy or budget.over or budget.cut)
+        self.assertLess(lst.child_reads, 120)
+
+    def test_cut_short_only_when_something_is_left(self):
+        kids = [Acc("push button", "B%d" % i) for i in range(4)]
+        for limit, cut in ((5, False), (4, True)):
+            budget = e.Budget()
+            e.walk(Acc("frame", "W", kids=kids), 0, [], e.MAX_DEPTH, limit, None, None, budget)
+            self.assertEqual(budget.cut, cut, limit)
+
+    def test_a_complete_read_finishing_at_its_deadline_is_not_slow(self):
+        budget = e.Budget(0.05)
+        nodes = []
+        e.walk(Acc("frame", "W", kids=[Acc("push button", "B%d" % i) for i in range(5)]), 0, nodes, e.MAX_DEPTH,
+               e.MAX_NODES, None, None, budget)
+        time.sleep(0.06)
+        budget.check()  # what read_window does after the walk
+        self.assertEqual(len(nodes), 6)
+        self.assertFalse(budget.over or budget.cut or budget.busy)
+
     def test_an_element_that_fails_to_answer_is_skipped(self):
         class Broken(Acc):
             def getRoleName(self):
@@ -454,6 +510,68 @@ class Acting(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.act_on(Acc("text", "Card number", text=""), "set_text", text="4111")
 
+    def combo(self, chosen):
+        items = [Acc("menu item", "Keep"), Acc("menu item", "Delete permanently")]
+        combo = Acc("combo box", "When done", kids=[Acc("menu", kids=items)])
+        combo.querySelection = lambda: types.SimpleNamespace(selectChild=lambda i: chosen.append(i) or True,
+                                                             isChildSelected=lambda i: False)
+        return combo
+
+    def test_an_option_by_its_full_name_only(self):
+        chosen = []
+        settle, e.settle = e.settle, lambda: None
+        try:
+            # Part of a name never chooses it: Ember judged the option it was given, not "Delete permanently".
+            with self.assertRaises(ValueError) as ctx:
+                self.act_on(self.combo(chosen), "select_option", option="permanently")
+            self.assertNotIn("Delete", str(ctx.exception))
+            self.assertEqual(chosen, [])
+            self.assertEqual(self.act_on(self.combo(chosen), "select_option", option="Keep")["option"], "Keep")
+            self.assertEqual(self.act_on(self.combo(chosen), "select_option", option="delete permanently")["option"], "Delete permanently")
+            self.assertEqual(chosen, [0, 1])
+        finally:
+            e.settle = settle
+
+    def test_a_click_that_closes_its_dialog_is_done(self):
+        close = Acc("push button", "Close", acts=["click"])
+
+        def gone():
+            raise RuntimeError("atspi_error: The object /org/a11y/atspi/accessible/7 does not exist")
+
+        def click(i):
+            close.getRoleName = gone
+            close.states = []
+            return True
+        close.queryAction = lambda: types.SimpleNamespace(nActions=1, getName=lambda i: "click", doAction=click)
+        settle, e.settle = e.settle, lambda: None
+        try:
+            res = self.act_on(close, "do_action")
+        finally:
+            e.settle = settle
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["after"])
+        self.assertTrue(res["gone"])
+
+    def test_a_busy_app_is_busy_not_gone(self):
+        slow = Acc("push button", "Send", acts=["click"])
+
+        def no_reply():
+            raise RuntimeError("Did not receive a reply. Possible causes include: the remote application did not send a reply")
+        slow.getState = no_reply
+        saved, e.SLOW_APP_S = e.SLOW_APP_S, -1.0
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(slow, "do_action")
+            self.assertEqual(str(ctx.exception), e.BUSY)
+        finally:
+            e.SLOW_APP_S = saved
+        # Reading it back: busy in Ember's words, never libatspi's own.
+        quiet = Acc("push button", "Send")
+        quiet.getRoleName = no_reply
+        with self.assertRaises(RuntimeError) as ctx:
+            self.act_on(quiet, "read_element")
+        self.assertEqual(str(ctx.exception), e.BUSY)
+
 
 class Windows(unittest.TestCase):
     class AppNode(object):
@@ -479,8 +597,9 @@ class Windows(unittest.TestCase):
     def setUp(self):
         e.HUNG.clear()
         e.STRIKES.clear()
-        e.SLOW_NOW.clear()
-        self.mail = self.AppNode(10, [Acc("frame", "Inbox - Mail", states=("showing",)),
+        e.KNOWN.clear()
+        e.new_request()
+        self.mail =self.AppNode(10, [Acc("frame", "Inbox - Mail", states=("showing",)),
                                       Acc("frame", "Compose - Mail", states=("showing", "active"))])
         self.notes = self.AppNode(20, [Acc("frame", "notes.txt - Text Editor", states=("showing",))])
         self.desktop = Acc("desktop frame", "main", kids=[self.mail, self.notes])
@@ -489,6 +608,12 @@ class Windows(unittest.TestCase):
     def name_of(self, params):
         found = e.find_window(params)
         return found[2].name if found else None
+
+    @staticmethod
+    def later(pid):
+        """As if the app's last strike was a while ago (no longer the same busy moment)."""
+        count, last = e.STRIKES[pid]
+        e.STRIKES[pid] = (count, last - e.STRIKE_GAP_S - 0.1)
 
     def test_a_window_by_its_path_or_none(self):
         compose = self.mail.wins[1]
@@ -525,7 +650,10 @@ class Windows(unittest.TestCase):
             self.assertEqual(len(e.list_windows({})["windows"]), 3)
             self.assertFalse(e.is_hung(30))  # once: maybe only busy
             e.list_windows({})
-            self.assertTrue(e.is_hung(30))  # twice in a row: hung
+            self.assertFalse(e.is_hung(30))  # asked again right away: the same busy moment
+            self.later(30)
+            e.list_windows({})
+            self.assertTrue(e.is_hung(30))  # twice in a row, a while apart: hung
             asked = hung.asked
             self.assertEqual(self.name_of({"title": "notes"}), "notes.txt - Text Editor")
             self.assertEqual(len(e.list_windows({})["windows"]), 3)
@@ -625,6 +753,129 @@ class Windows(unittest.TestCase):
                          [("dialog", {"x": 400, "y": 300, "width": 480, "height": 260}),
                           ("notification", {"x": 500, "y": 0, "width": 400, "height": 80})])
         self.assertIn("Authentication Required", out[0]["text"])
+
+    def test_shell_overview_and_switcher(self):
+        stage = Acc("window", "", states=("showing", "visible", "focused"),
+                    kids=[Acc("panel", "overviewGroup", states=("visible",)), Acc("panel", "Top bar")])
+        shell = self.AppNode(99, [stage])
+        shell.name = "gnome-shell"
+        shell.getRoleName = lambda: "application"
+        shell.getState = lambda: States([])
+        self.desktop.kids.append(shell)
+        # The overview hidden, and the stage itself holding the keyboard: an ordinary desktop.
+        self.assertEqual(e.shell_overlays({})["overlays"], [])
+        stage.kids[0].states.append("showing")
+        self.assertEqual([o["role"] for o in e.shell_overlays({})["overlays"]], ["overview"])
+        # The window switcher (or a menu of the top bar) has the keyboard.
+        stage.kids[0].states.remove("showing")
+        stage.kids.append(Acc("panel", "", states=("showing", "visible", "focused"), kids=[Acc("push button", "Files")]))
+        self.assertEqual([o["role"] for o in e.shell_overlays({})["overlays"]], ["overview"])
+
+    def test_a_window_the_app_was_too_busy_to_hand_over_is_busy(self):
+        class Busy(self.AppNode):
+            def getChildAtIndex(self, i):
+                self.asked += 1
+                time.sleep(0.05)
+                return None  # what libatspi answers when the call timed out: no error
+        old = e.SLOW_APP_S
+        e.SLOW_APP_S = 0.03
+        try:
+            busy = Busy(30, [None, None, None])
+            self.desktop.kids.append(busy)
+            out = e.read_window({"pid": 30, "title": "Open File"})
+            self.assertEqual((out["window"], out["busy"]), (None, True))
+            self.assertEqual(busy.asked, 2)  # its window count, then one window: not a timeout for each
+        finally:
+            e.SLOW_APP_S = old
+        old = e.FIND_BUDGET_S
+        e.FIND_BUDGET_S = -1.0  # the look for the window ran out of time before reaching every app
+        try:
+            self.assertTrue(e.read_window({"title": "Open File"})["busy"])
+        finally:
+            e.FIND_BUDGET_S = old
+
+    def test_an_app_that_answers_again_is_not_hung(self):
+        e.STRIKES[20] = (2, time.monotonic())
+        e.mark_hung(20)
+        self.assertEqual(self.name_of({"pid": 20}), "notes.txt - Text Editor")  # asked by its pid, it answers
+        self.assertFalse(e.is_hung(20))
+        self.assertNotIn(20, e.STRIKES)
+        self.assertEqual(len(e.list_windows({})["windows"]), 3)
+
+    def test_a_hung_apps_windows_are_busy_not_gone(self):
+        self.assertEqual(len(e.list_windows({})["windows"]), 3)
+        e.mark_hung(20)
+        asked = self.notes.asked
+        wins = e.list_windows({})["windows"]
+        self.assertEqual([(w["name"], w.get("busy", False)) for w in wins],
+                         [("Inbox - Mail", False), ("Compose - Mail", False), ("notes.txt - Text Editor", True)])
+        self.assertEqual(self.notes.asked, asked)  # not asked while hung
+        out = e.read_window({"title": "notes.txt"})
+        self.assertEqual((out["window"], out["busy"]), (None, True))
+        # A title no app had is still not found, and not busy.
+        self.assertFalse(e.read_window({"title": "Report.odt"})["busy"])
+
+    def checkout(self):
+        """A web page with 480 links before its card fields: a read stops at its node limit before them."""
+        sections = [Acc("section", "", bounds=(0, 12 * k, 900, 12), kids=[
+            Acc("link", "L%d.%d" % (k, i), bounds=(10 + i * 5, 12 * k, 4, 10)) for i in range(160)]) for k in range(3)]
+        self.card = Acc("entry", "", bounds=(10, 220, 300, 24), text="4111 1111 1111 1111")
+        self.cvv = Acc("entry", "Security code", bounds=(10, 250, 80, 24), text="737")
+        self.name = Acc("entry", "", bounds=(10, 300, 300, 24), text="Ada")
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds = (0, 0, 900, 400)
+        win.kids = [Acc("document web", "Checkout", bounds=(0, 0, 900, 400), kids=sections + [
+            Acc("static", "Card number", bounds=(10, 200, 90, 18)), self.card, self.cvv,
+            Acc("static", "Name", bounds=(10, 280, 90, 18)), self.name])]
+        return win
+
+    def test_secret_fields_a_read_did_not_reach(self):
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        win = self.checkout()
+        read = e.read_window({"pid": 20})
+        self.assertTrue(read["truncated"])
+        self.assertNotIn("Security code", [n["name"] for n in read["nodes"]])
+        out = e.secret_fields({"pid": 20, "path": win.path})
+        self.assertTrue(out["complete"])
+        self.assertEqual(sorted(f["bounds"]["y"] for f in out["fields"]), [220, 250])
+        self.assertEqual(self.card.reads + self.cvv.reads + self.name.reads, 0)  # no text is asked for
+        self.assertEqual(len(out["secretKeys"]), 2)
+        # Their positions can be asked again by id, and nothing is typed into them.
+        self.assertEqual(e.node_info(e.SNAPSHOTS.get(out["fields"][0]["id"]))["secret"], True)
+        self.assertTrue(e.is_secret(self.card, "entry", ""))
+
+    def test_web_documents_are_searched_by_the_app(self):
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        win = self.checkout()
+        doc = win.kids[0]
+        asked = []
+
+        def matches(acc, roles, limit=e.SCAN_NODES):
+            asked.append((acc.role, "entry" in roles))
+            return [self.card, self.cvv, self.name] if "entry" in roles else [doc.kids[3], doc.kids[6]]
+        saved, e.collection_matches = e.collection_matches, matches
+        try:
+            out = e.secret_fields({"pid": 20, "path": win.path})
+        finally:
+            e.collection_matches = saved
+        self.assertTrue(out["complete"])
+        self.assertEqual(sorted(f["bounds"]["y"] for f in out["fields"]), [220, 250])
+        self.assertEqual(asked, [("document web", True), ("document web", False)])
+        self.assertEqual(doc.child_reads, 0)
+
+    def test_no_secret_fields_answer_without_the_whole_window(self):
+        win = self.checkout()
+        old = e.SCAN_NODES
+        e.SCAN_NODES = 100
+        try:
+            out = e.secret_fields({"pid": 20, "path": win.path})
+        finally:
+            e.SCAN_NODES = old
+        self.assertFalse(out["complete"])
+        self.assertFalse(e.secret_fields({"pid": 20, "path": "/gone"})["complete"])
 
     def test_one_broken_app_does_not_break_the_list(self):
         class Broken(self.AppNode):

@@ -21,9 +21,10 @@ const SAME = 0.05;
 
 /**
  * The top-level window an accessibility frame belongs to: the same shape and the same place
- * once scaled, as the whole window (GTK) or as the app's own window inside the window manager's
- * frame (Chromium, Electron, Qt). Same process, or the same title when the processes differ
- * (Flatpak apps have another pid inside their sandbox); the title breaks ties between an app's windows.
+ * once scaled, as the whole window (GTK), as the app's own window inside the window manager's
+ * frame (Chromium, Electron, Qt), or as that window less the shadow it draws itself (client-side
+ * decorations: Firefox and Chrome on GNOME). Same process, or the same title when the processes
+ * differ (Flatpak apps have another pid inside their sandbox); the title breaks ties between an app's windows.
  */
 export function matchFrame(w: Pick<AxWindow, "pid" | "name" | "bounds">, stack: StackedWindow[]): FrameMatch | null {
   const b = w.bounds;
@@ -35,7 +36,7 @@ export function matchFrame(w: Pick<AxWindow, "pid" | "name" | "bounds">, stack: 
     const samePid = w.pid != null && s.pid === w.pid;
     const sameTitle = !!w.name && s.title === w.name;
     if (!samePid && !sameTitle) continue;
-    for (const o of [s.outer, s.inner]) {
+    for (const o of [s.outer, s.inner, { x: s.x, y: s.y, width: s.width, height: s.height }]) {
       const kw = o.width / b.width, kh = o.height / b.height;
       if (!(kw > 0) || Math.abs(kw - kh) > SAME * Math.max(kw, kh)) continue;
       // GDK scales are whole numbers and Qt's usually quarters: one logical pixel of rounding in
@@ -92,17 +93,18 @@ export function intersect(a: Bounds, b: Bounds): Bounds | null {
 export const OVERLAY_TITLE = "Ember overlay";
 
 /**
- * The parts of `rect` hidden by windows stacked above `index`. The target app's own
- * windows (processes in `same`: its menus and dialogs) are part of what the worker looks
- * at. Ember's own windows (process `own`) are left out of pictures, but the ones that take
- * clicks (the handle, the desk view, the ask box) do hide what lies under them; the
- * click-through overlay doesn't.
+ * The parts of `rect` hidden by windows stacked above `index`. The target app's own popups
+ * (processes in `same`: its menus, lists and tooltips, which the window manager doesn't
+ * manage) are part of what the worker looks at; its other windows (a Find dialog, a "Save
+ * changes?" prompt) hide what lies under them like anyone's. Ember's own windows (process
+ * `own`) are left out of pictures, but the ones that take clicks (the handle, the desk view,
+ * the ask box) do hide what lies under them; the click-through overlay doesn't.
  */
 export function coveringRects(stack: StackedWindow[], index: number, rect: Bounds, same: (number | null | undefined)[], own?: number): Bounds[] {
   const out: Bounds[] = [];
   for (const s of stack.slice(index + 1)) {
     const mine = own != null && s.pid === own;
-    if (mine ? s.title === OVERLAY_TITLE : s.pid != null && same.includes(s.pid)) continue;
+    if (mine ? s.title === OVERLAY_TITLE : s.overrideRedirect && s.pid != null && same.includes(s.pid)) continue;
     const r = intersect(s, rect);
     if (r) out.push(r);
   }
@@ -111,13 +113,15 @@ export function coveringRects(stack: StackedWindow[], index: number, rect: Bound
 
 /**
  * What GNOME Shell's own drawings (not X11 windows, but in every screenshot) mean for a picture:
- * a system dialog (polkit's or the keyring's password prompt, most likely) means none at all,
- * and notifications are blacked out.
+ * a system dialog (polkit's or the keyring's password prompt, most likely) means none at all, so
+ * does the Activities overview or the window switcher (pictures of every window, private ones
+ * too), and notifications are blacked out.
  */
-export function shellCovers(overlays: ShellOverlay[]): { dialog: boolean; masks: Bounds[] } {
+export function shellCovers(overlays: ShellOverlay[]): { dialog: boolean; overview: boolean; masks: Bounds[] } {
   return {
-    dialog: overlays.some(o => o.role !== "notification"),
-    masks: overlays.flatMap(o => (o.bounds && o.bounds.width > 0 && o.bounds.height > 0 ? [o.bounds] : [])),
+    dialog: overlays.some(o => o.role !== "notification" && o.role !== "overview"),
+    overview: overlays.some(o => o.role === "overview"),
+    masks: overlays.flatMap(o => (o.role !== "overview" && o.bounds && o.bounds.width > 0 && o.bounds.height > 0 ? [o.bounds] : [])),
   };
 }
 
