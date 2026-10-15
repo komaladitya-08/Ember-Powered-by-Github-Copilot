@@ -16,6 +16,7 @@ function fakeX() {
     move: (px, py) => { s.pointer = { x: px, y: py }; },
     button: (b, down) => { s.log.push(`button ${b} ${down ? "down" : "up"}`); },
     keysym: (sym, down) => { const code = sym % 200 + 8; if (down) s.keys.add(code); else s.keys.delete(code); s.log.push(`key ${sym} ${down ? "down" : "up"}`); return true; },
+    keycode: (code, down) => { if (down) s.keys.add(code); else s.keys.delete(code); s.log.push(`keycode ${code} ${down ? "down" : "up"}`); },
     keysymOf: name => ({ Control_L: 0xffe3, Shift_L: 0xffe1, Return: 0xff0d, s: 0x73 } as Record<string, number>)[name] ?? 0,
     keycodeOf: sym => sym % 200 + 8,
     needsShift: sym => sym >= 0x41 && sym <= 0x5a,
@@ -135,15 +136,66 @@ describe("CursorBorrow", () => {
     expect(s.pointer).toEqual({ x: 500, y: 400 });
   });
 
-  it("refuses to borrow twice at once", async () => {
+  it("never borrows twice at once: the second borrow waits its turn", async () => {
     const { x } = fakeX();
+    const b = new CursorBorrow(x);
+    const order: string[] = [];
+    let release!: () => void;
+    const first = b.borrow(() => new Promise<void>(r => { order.push("first"); release = () => { order.push("first done"); r(); }; }), fast);
+    await new Promise(r => setTimeout(r, 0));
+    const second = b.borrow(async () => { order.push("second"); }, fast);
+    await new Promise(r => setTimeout(r, 5));
+    expect(order).toEqual(["first"]);
+    release();
+    await first;
+    await second;
+    expect(order).toEqual(["first", "first done", "second"]);
+  });
+
+  it("Stop cancels borrows that were waiting their turn (nothing moves after Stop)", async () => {
+    const { s, x } = fakeX();
     const b = new CursorBorrow(x);
     let release!: () => void;
     const first = b.borrow(() => new Promise<void>(r => { release = r; }), fast);
     await new Promise(r => setTimeout(r, 0));
-    await expect(b.borrow(async () => undefined, fast)).rejects.toThrow(/already/);
+    const second = b.borrow(async hand => { await hand.glideTo(10, 10); await hand.click(); }, fast);
+    const secondResult = expect(second).rejects.toBeInstanceOf(BorrowStopped);
+    b.stop();
     release();
-    await first;
+    await first; // its work was already done when Stop came
+    await secondResult;
+    expect(s.log).not.toContain("button 1 down");
+  });
+
+  it("a mouse click or held button from the user is a takeover, like moving the mouse", async () => {
+    const { x } = fakeX();
+    let mask = 0;
+    x.pointerState = () => ({ ...x.pointer()!, mask });
+    const b = new CursorBorrow(x);
+    const err = await b.borrow(async hand => {
+      await hand.click(); // Ember's own click doesn't count
+      mask = 0x100; // the user presses button 1
+      await hand.click();
+    }, fast).catch(e => e);
+    expect(err).toBeInstanceOf(UserTookOver);
+  });
+
+  it("waits while the user holds a mouse button (a drag in progress)", async () => {
+    const { x } = fakeX();
+    let t = 0;
+    x.pointerState = () => ({ x: 500, y: 400, mask: 0x100 });
+    const err = await new CursorBorrow(x).borrow(async () => undefined, { idleMs: 500, idleTimeoutMs: 2000, now: () => t, sleep: async ms => { t += ms; } }).catch(e => e);
+    expect(String(err)).toMatch(/kept using/);
+  });
+});
+
+describe("parseCombo punctuation and function keys", () => {
+  it("names the keys X knows", () => {
+    expect(parseCombo("ctrl+-")).toEqual({ modifiers: ["Control_L"], key: "minus" });
+    expect(parseCombo("ctrl++")).toEqual({ modifiers: ["Control_L"], key: "plus" });
+    expect(parseCombo("ctrl+,")).toEqual({ modifiers: ["Control_L"], key: "comma" });
+    expect(parseCombo("f5")).toEqual({ modifiers: [], key: "F5" });
+    expect(parseCombo("insert")).toEqual({ modifiers: [], key: "Insert" });
   });
 });
 

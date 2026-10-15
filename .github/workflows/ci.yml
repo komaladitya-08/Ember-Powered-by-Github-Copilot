@@ -17,11 +17,15 @@ jobs:
   checks:
     name: Lint, typecheck, unit tests, build
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
         env:
@@ -45,6 +49,7 @@ jobs:
   el8:
     name: RHEL 8 compatibility (rockylinux:8)
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     container:
       image: rockylinux:8
       # Lets Chromium use its user-namespace sandbox inside the container.
@@ -60,9 +65,12 @@ jobs:
             python3-pyatspi python3-gobject
           useradd -m ci
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28 and check every binary
@@ -80,6 +88,7 @@ jobs:
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
@@ -90,9 +99,12 @@ jobs:
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28
@@ -136,6 +148,7 @@ jobs:
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
@@ -150,9 +163,12 @@ jobs:
             python3-pyatspi python3-gobject gedit dconf gsettings-desktop-schemas
           useradd -m ci
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28

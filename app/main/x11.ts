@@ -18,6 +18,9 @@ export interface X11Window {
 }
 
 export interface X11Image {
+  /** Where the image starts on the screen (the requested rectangle, clipped to the screen). */
+  x: number;
+  y: number;
   width: number;
   height: number;
   /** BGRA pixels (ZPixmap, 32 bits per pixel, little-endian), stride = width * 4. */
@@ -46,7 +49,10 @@ export interface X11 {
    * windows even when they expose nothing over accessibility.
    */
   clientWindows(): (X11Window & { wmClass: string })[];
-  /** A rectangle of the screen as BGRA pixels (includes composited windows). */
+  /**
+   * A rectangle of the screen as BGRA pixels (includes composited windows), clipped to the screen;
+   * null when nothing of it is on screen.
+   */
   capture(x: number, y: number, width: number, height: number): X11Image | null;
   close(): void;
 }
@@ -207,9 +213,16 @@ export function openX11(displayName?: string): X11 | null {
 
       capture(x, y, width, height) {
         if (!open || width <= 0 || height <= 0) return null;
+        // Any part outside the root window makes XGetImage fail with BadMatch, which Xlib's default
+        // error handler answers by exiting the process: clip to the screen first.
+        const r = [0], gx = [0], gy = [0], rw = [0], rh = [0], b = [0], d = [0];
+        if (!XGetGeometry(dpy, root, r, gx, gy, rw, rh, b, d)) return null;
+        const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
+        const x1 = Math.min(rw[0], Math.floor(x + width)), y1 = Math.min(rh[0], Math.floor(y + height));
+        if (x1 <= x0 || y1 <= y0) return null;
         XSync(dpy, 0);
         const ZPixmap = 2;
-        const img = XGetImage(dpy, root, x, y, width, height, BigInt("0xffffffffffffffff"), ZPixmap);
+        const img = XGetImage(dpy, root, x0, y0, x1 - x0, y1 - y0, BigInt("0xffffffffffffffff"), ZPixmap);
         if (!img) return null;
         try {
           const info = koffi.decode(img, XImage) as { width: number; height: number; data: unknown; bytes_per_line: number; bits_per_pixel: number };
@@ -221,7 +234,7 @@ export function openX11(displayName?: string): X11 | null {
             bgra = Buffer.alloc(stride * info.height);
             for (let row = 0; row < info.height; row++) raw.copy(bgra, row * stride, row * info.bytes_per_line, row * info.bytes_per_line + stride);
           }
-          return { width: info.width, height: info.height, bgra };
+          return { x: x0, y: y0, width: info.width, height: info.height, bgra };
         } finally {
           XDestroyImage(img);
         }

@@ -8,6 +8,7 @@ const api: DeskViewApi = {
   handBack: () => ipcRenderer.send(DESK.handBack),
   hide: () => ipcRenderer.send(DESK.hide),
   input: e => ipcRenderer.send(DESK.input, e),
+  release: () => ipcRenderer.send(DESK.release),
 };
 
 contextBridge.exposeInMainWorld("emberDesk", api);

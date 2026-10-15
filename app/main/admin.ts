@@ -74,13 +74,27 @@ const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
   confirmEveryAction: true,
 });
 
-export function loadAdminPolicy(file = process.env.EMBER_ADMIN_POLICY ?? ADMIN_POLICY_FILE): LoadedAdminPolicy {
+/**
+ * Reads the administrator's policy. `file` is /etc/ember/policy.json except in
+ * development (main passes EMBER_ADMIN_POLICY only for unpackaged builds, so a
+ * user can't point an installed Ember at a policy of their own). The system
+ * file must belong to root and be writable only by root, or Ember locks down.
+ */
+export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwned?: boolean } = {}): LoadedAdminPolicy {
   let raw: string;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { policy: AdminPolicySchema.parse({}), source: null };
     return { policy: LOCKDOWN, source: file, error: `can't read ${file}: ${(err as Error).message}` };
+  }
+  if (opts.requireRootOwned ?? file === ADMIN_POLICY_FILE) {
+    try {
+      const st = fs.statSync(file);
+      if (st.uid !== 0 || (st.mode & 0o022) !== 0) return { policy: LOCKDOWN, source: file, error: `${file} must belong to root and be writable only by root` };
+    } catch (err) {
+      return { policy: LOCKDOWN, source: file, error: `can't check ${file}: ${(err as Error).message}` };
+    }
   }
   try {
     const parsed = AdminPolicySchema.safeParse(JSON.parse(raw));

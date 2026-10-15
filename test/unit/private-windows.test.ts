@@ -47,9 +47,15 @@ sys.path.insert(0, ${JSON.stringify(path.resolve("sidecar/atspi"))})
 import ember_atspi as e
 class W:
     def __init__(self, name, states): self.name = name; self._s = states
-class App: name = "app"
-wins = [(App(), 10, W("Inbox - Mail", ["showing"])), (App(), 10, W("Compose - Mail", ["showing", "active"])), (App(), 20, W("notes.txt - Text Editor", ["showing"]))]
-e.frames = lambda: iter(wins)
+class App:
+    name = "app"
+    def __init__(self, pid, wins): self.pid = pid; self.wins = wins
+    def get_process_id(self): return self.pid
+    @property
+    def childCount(self): return len(self.wins)
+    def getChildAtIndex(self, i): return self.wins[i]
+apps = [App(10, [W("Inbox - Mail", ["showing"]), W("Compose - Mail", ["showing", "active"])]), App(20, [W("notes.txt - Text Editor", ["showing"])])]
+fake.Registry = types.SimpleNamespace(getDesktop=lambda i: types.SimpleNamespace(childCount=len(apps), getChildAtIndex=lambda j: apps[j]))
 e.state_names = lambda w: w._s
 found = e.find_window(json.loads(sys.argv[1]))
 print(found[2].name if found else "none")

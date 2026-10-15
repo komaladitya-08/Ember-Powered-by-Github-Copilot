@@ -73,3 +73,62 @@ describe("AuditLog", () => {
     expect(fs.existsSync(path.join(dir, "audit-2026-10.jsonl"))).toBe(true);
   });
 });
+
+describe("policy: review fixes (screen text can't hide risk)", () => {
+  const e = new PolicyEngine({ neverLook: () => ["keepassxc"], grants: () => ({ firefox: "act", gedit: "act" }), isTerminalApp: n => /terminal|xterm/i.test(n) });
+  const click = (name: string, window = "Page", goal = "pay invoice 4411") => e.decide({ taskId: "t", kind: "click", app: "Firefox", window, element: { role: "push button", name }, goal });
+
+  it("look-alike letters, invisible characters and typographic apostrophes don't hide a risky word", () => {
+    for (const name of ["Dеlete account", "De­lete", "Del​ete", "Ｓｅｎｄ", "Don’t Save"]) expect(click(name).verdict).toBe("confirm");
+  });
+  it("covers overwrite dialogs, trash, authorising apps and merges", () => {
+    for (const name of ["Replace", "Move to Trash", "Authorize evil-app", "Merge pull request", "Run"]) expect(click(name).verdict).toBe("confirm");
+  });
+  it("“OK” in a dialog about deleting is as risky as the deleting", () => {
+    expect(click("OK", "Delete 500 files?").verdict).toBe("confirm");
+    expect(click("OK", "About Firefox").verdict).toBe("allow");
+  });
+  it("Enter on a focused risky button is a click on it, and destructive shortcuts are asked about on the desk too", () => {
+    const keys = (value: string, element?: { role: string; name: string }, onDesk = false) =>
+      e.decide({ taskId: "k", kind: "keys", app: "Files", window: "Home", element, value, onDesk, goal: "tidy my downloads" });
+    expect(keys("Return", { role: "push button", name: "Delete all" }).prompt).toMatch(/press Return on “Delete all” push button/);
+    expect(keys("Return", { role: "push button", name: "Delete all" }).aligned).toBe(false);
+    expect(keys("shift+Delete", undefined, true).verdict).toBe("confirm");
+    expect(keys("ctrl+Return", { role: "text", name: "Message" }, true).verdict).toBe("confirm");
+    expect(keys("ctrl+s", { role: "text", name: "Doc" }, true).verdict).toBe("allow");
+  });
+  it("desktop-level shortcuts are never pressed", () => {
+    for (const k of ["ctrl+alt+F2", "alt+F2", "super", "ctrl+alt+t", "Ctrl + Alt + BackSpace"]) {
+      expect(e.decide({ taskId: "k", kind: "keys", app: "gedit", window: "w", value: k }).verdict).toBe("deny");
+    }
+  });
+  it("typed line breaks and replacing a whole document are confirmed", () => {
+    expect(e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hello\n", mode: "insert" }).verdict).toBe("confirm");
+    const doc = "line\n".repeat(50);
+    const d = e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hi", mode: "replace", currentText: doc });
+    expect(d.verdict).toBe("confirm");
+    expect(d.prompt).toMatch(/^Replace the text in/);
+    expect(e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hi", mode: "append", currentText: doc }).verdict).toBe("allow");
+  });
+  it("a risky verb must be in the request: sharing a filler word isn't enough", () => {
+    const d = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Form", element: { role: "push button", name: "Delete all my form data" }, goal: "fill in my name in the form" });
+    expect(d.aligned).toBe(false);
+    expect(d.prompt).toMatch(/You didn't ask for this/);
+    expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Form", element: { role: "push button", name: "Send" }, goal: "send the report to Ana" }).aligned).toBeUndefined();
+  });
+  it("never offers “Always” on a risky question", () => {
+    const fresh = new PolicyEngine({ neverLook: () => [], grants: () => ({}) });
+    expect(fresh.decide({ taskId: "r", kind: "click", app: "Thunderbird", window: "w", element: { role: "push button", name: "Send" }, goal: "send it" }).remember).toBe(false);
+    expect(fresh.decide({ taskId: "r", kind: "click", app: "Thunderbird", window: "w", element: { role: "push button", name: "Bold" }, goal: "x" }).remember).toBe(true);
+  });
+  it("choosing a risky option and filling secret fields by any route are covered", () => {
+    expect(e.decide({ taskId: "s", kind: "select", app: "Firefox", window: "Account", element: { role: "combo box", name: "Action" }, value: "Delete account" }).verdict).toBe("confirm");
+    expect(e.decide({ taskId: "s", kind: "value", app: "Firefox", window: "Pay", element: { role: "spin button", name: "PIN" }, value: "1234" }).verdict).toBe("deny");
+    expect(e.decide({ taskId: "s", kind: "text", app: "Firefox", window: "Login", element: { role: "text", name: "Pаssword" }, value: "x" }).verdict).toBe("deny");
+  });
+  it("launching an app on the never-look list or a terminal is refused", () => {
+    expect(e.decide({ taskId: "o", kind: "open_app", app: "KeePassXC", window: "", value: "KeePassXC" }).verdict).toBe("deny");
+    expect(e.decide({ taskId: "o", kind: "open_app", app: "XTerm", window: "", value: "XTerm" }).verdict).toBe("deny");
+    expect(e.decide({ taskId: "o", kind: "open_app", app: "Text Editor", window: "", value: "Text Editor" }).verdict).toBe("allow");
+  });
+});

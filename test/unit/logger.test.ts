@@ -27,3 +27,17 @@ describe("logger", () => {
     expect(files).toEqual(["ember.log", "ember.log.1", "ember.log.2"]);
   });
 });
+
+describe("logger robustness", () => {
+  it("never throws on circular values, BigInts or nested errors, and keeps codes", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-log-"));
+    const log = createLogger({ dir });
+    const loop: Record<string, unknown> = { a: 1 };
+    loop.self = loop;
+    const err = Object.assign(new Error("boom"), { code: "ENOSPC" });
+    expect(() => log.error("odd", { loop, big: 10n, nested: { err } })).not.toThrow();
+    const line = JSON.parse(fs.readFileSync(log.file, "utf8").trim().split("\n").at(-1)!);
+    expect(line).toMatchObject({ big: "10", loop: { a: 1, self: "[circular]" }, nested: { err: { message: "boom", code: "ENOSPC" } } });
+    expect(fs.statSync(log.file).mode & 0o077).toBe(0);
+  });
+});

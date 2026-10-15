@@ -4,10 +4,11 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const electron = createRequire(import.meta.url)("electron");
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const userData = mkdtempSync(path.join(tmpdir(), "ember-smoke-"));
 // Chromium refuses to run as root with its sandbox, and containers often block user namespaces.
 const flags = process.getuid?.() === 0 || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];

@@ -13,7 +13,8 @@ export interface ModelLike {
 
 export interface ModelChoice { conductor: string | null; worker: string | null }
 
-const FAST = [/mini/i, /haiku/i, /flash/i, /nano/i, /small/i, /fast/i];
+/** Small, quick models by name: whole words only ("gemini" is not "mini"). */
+const FAST = [/(^|[-_. ])(mini|haiku|flash|nano|small|fast|lite)($|[-_. ])/i];
 
 const enabled = (m: ModelLike) => !m.policy?.state || m.policy.state === "enabled";
 export const supportsVision = (m: ModelLike) => m.capabilities?.supports?.vision === true;

@@ -3,7 +3,9 @@
  * Plain TypeScript (no model decides scheduling): at most `maxRunning` tasks
  * run at once, the rest queue; two tasks never act in the same window at the
  * same moment (window leases); finished worker sessions are deleted after
- * ten minutes; results wait for the conductor to pick them up.
+ * ten minutes (or at once when Ember stops); results wait for the conductor
+ * to pick them up. Cards that need the user's attention (a failure) stay until
+ * dismissed.
  */
 
 import crypto from "node:crypto";
@@ -24,6 +26,7 @@ export interface Task {
   result: WorkerResult | null;
   started: number;
   finished: number | null;
+  mode?: "do" | "guide";
 }
 
 export interface TaskManagerDeps {
@@ -41,6 +44,8 @@ export interface TaskManagerDeps {
   maxRunning?: number;
   /** How long a finished worker session is kept for follow-up questions. */
   keepMs?: number;
+  /** How long finished cards stay on screen (failed ones stay until dismissed). */
+  cardMs?: number;
 }
 
 const titleOf = (goal: string) => {
@@ -55,6 +60,9 @@ export class TaskManager {
   private leases = new Map<string, { owner: string; waiters: (() => void)[] }>();
   private unreported: Task[] = [];
   private n = 0;
+  /** Finished workers' sessions waiting to be deleted, with their timers. */
+  private toDelete = new Map<string, ReturnType<typeof setTimeout>>();
+  private runs = new Set<Promise<void>>();
 
   constructor(private d: TaskManagerDeps) {}
 
@@ -64,7 +72,8 @@ export class TaskManager {
     this.tasks.set(id, task);
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do" } });
-    this.d.log.info("task.queued", { id, goal: task.title, target: target.title });
+    // The goal and window title are the user's words and screen text: the log keeps only their size.
+    this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title });
     this.pump();
     this.publish();
@@ -94,6 +103,32 @@ export class TaskManager {
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
 
+  /** The user's new instruction for a running task. */
+  async steer(id: string, text: string): Promise<boolean> {
+    const r = this.running.get(id);
+    return r ? r.worker.steer(text) : false;
+  }
+
+  /** A finished card the user closed. */
+  dismiss(id: string): void {
+    const t = this.tasks.get(id);
+    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.publish(); }
+  }
+
+  /** Waits (up to `ms`) for running workers to wind down after cancelAll(). */
+  async drain(ms: number): Promise<void> {
+    if (!this.runs.size) return;
+    await Promise.race([Promise.allSettled([...this.runs]), new Promise(r => setTimeout(r, ms))]);
+  }
+
+  /** Deletes every finished worker's session now (Ember is stopping or restarting: the timers would be lost). */
+  async flushDeletes(): Promise<void> {
+    const ids = [...this.toDelete.keys()];
+    for (const t of this.toDelete.values()) clearTimeout(t);
+    this.toDelete.clear();
+    await Promise.all(ids.map(id => this.d.deleteSession(id).catch(err => this.d.log.warn("task.delete_failed", { sessionId: id, err }))));
+  }
+
   /** Results the conductor hasn't been told about yet (each is returned once). */
   takeReports(): Task[] {
     const out = this.unreported;
@@ -101,14 +136,22 @@ export class TaskManager {
     return out;
   }
 
-  /** Exclusive use of a window for one action. */
-  async lease(key: string, owner: string): Promise<() => void> {
+  /**
+   * Exclusive use of a window for one action. If `signal` aborts while waiting,
+   * it returns at once with nothing held (the caller checks its signal and stops).
+   */
+  async lease(key: string, owner: string, signal?: AbortSignal): Promise<() => void> {
     const k = key.toLowerCase();
     for (;;) {
+      if (signal?.aborted) return () => undefined;
       const held = this.leases.get(k);
       if (!held) break;
       if (held.owner === owner) return () => undefined;
-      await new Promise<void>(resolve => held.waiters.push(resolve));
+      await new Promise<void>(resolve => {
+        const wake = () => { signal?.removeEventListener("abort", wake); resolve(); };
+        held.waiters.push(wake);
+        signal?.addEventListener("abort", wake, { once: true });
+      });
     }
     const entry = { owner, waiters: [] as (() => void)[] };
     this.leases.set(k, entry);
@@ -122,13 +165,16 @@ export class TaskManager {
     const max = this.d.maxRunning ?? 2;
     while (this.running.size < max && this.queue.length) {
       const { task, spec } = this.queue.shift()!;
-      void this.run(task, spec);
+      const run = this.run(task, spec);
+      this.runs.add(run);
+      void run.finally(() => this.runs.delete(run));
     }
   }
 
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
     const worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    task.mode = spec.mode ?? "do";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
     task.detail = "Working…";
@@ -146,8 +192,12 @@ export class TaskManager {
     const sessionId = worker.sessionId;
     await worker.dispose();
     if (sessionId) {
-      const timer = setTimeout(() => { void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err })); }, this.d.keepMs ?? 10 * 60_000);
+      const timer = setTimeout(() => {
+        this.toDelete.delete(sessionId);
+        void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
+      }, this.d.keepMs ?? 10 * 60_000);
       timer.unref?.();
+      this.toDelete.set(sessionId, timer);
     }
     this.pump();
   }
@@ -162,10 +212,11 @@ export class TaskManager {
     this.d.audit?.write({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.publish();
     this.d.onFinished?.(task);
-    // Finished cards stay on screen briefly, then go.
+    // Finished cards stay on screen briefly, then go; a failure stays until the user closes it.
+    if (status === "failed") return;
     const timer = setTimeout(() => {
       if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); }
-    }, 15_000);
+    }, this.d.cardMs ?? 15_000);
     timer.unref?.();
   }
 
@@ -175,6 +226,9 @@ export class TaskManager {
       title: t.title,
       status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "stopped" : t.status,
       detail: t.detail,
+      actions: t.status === "running" || t.status === "queued"
+        ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
+        : t.status === "failed" ? [{ id: `task:${t.id}:dismiss`, label: "Close" }] : [],
     }));
     this.d.setCards(cards);
   }

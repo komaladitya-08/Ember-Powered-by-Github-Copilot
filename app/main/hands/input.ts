@@ -3,6 +3,8 @@
  * addon). Used only while Ember borrows the cursor (tier 3), and always with a
  * way out: every step checks that the pointer is still where Ember put it and
  * that no key Ember didn't press is down, so the user can take over at once.
+ * After close() every method is a harmless no-op: the Display is freed, and
+ * touching it would crash the whole process.
  */
 
 import { createRequire } from "node:module";
@@ -15,6 +17,11 @@ export interface XInput {
   button(button: number, down: boolean): void;
   /** Presses or releases an X keysym; false if the keyboard has no key for it. */
   keysym(sym: number, down: boolean): boolean;
+  /**
+   * Presses or releases a key by keycode. Keys Ember holds are released this way: the
+   * keysym's key can change while it is down (a layout switch), the held key can't.
+   */
+  keycode(code: number, down: boolean): void;
   /** Keysym for a name like "Return", "s" or "F4" (0 when unknown). */
   keysymOf(name: string): number;
   /** Keycodes currently held down on the keyboard (by anyone). */
@@ -122,32 +129,43 @@ export function openXInput(displayName?: string): XInput | null {
         return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0], mask: m[0] } : null;
       },
       move(x, y) {
+        if (!open) return;
         XTestFakeMotionEvent(dpy, -1, Math.round(x), Math.round(y), 0);
         XFlush(dpy);
       },
       button(button, down) {
+        if (!open) return;
         XTestFakeButtonEvent(dpy, button, down ? 1 : 0, 0);
         XFlush(dpy);
       },
       keysym(sym, down) {
+        if (!open) return false;
         const code = XKeysymToKeycode(dpy, sym);
         if (!code) return false;
         XTestFakeKeyEvent(dpy, code, down ? 1 : 0, 0);
         XFlush(dpy);
         return true;
       },
+      keycode(code, down) {
+        if (!open || code < 8 || code > 255) return;
+        XTestFakeKeyEvent(dpy, code, down ? 1 : 0, 0);
+        XFlush(dpy);
+      },
       keysymOf(name) {
-        return Number(XStringToKeysym(name));
+        return Number(XStringToKeysym(name)); // needs no display
       },
       keycodeOf(sym) {
+        if (!open) return 0;
         return XKeysymToKeycode(dpy, sym);
       },
       needsShift(sym) {
+        if (!open) return false;
         const code = XKeysymToKeycode(dpy, sym);
         if (!code) return false;
         return Number(XKeycodeToKeysym(dpy, code, 0)) !== sym && Number(XKeycodeToKeysym(dpy, code, 1)) === sym;
       },
       keysDown() {
+        if (!open) return [];
         const keys = Buffer.alloc(32);
         XQueryKeymap(dpy, keys);
         const down: number[] = [];
@@ -155,16 +173,19 @@ export function openXInput(displayName?: string): XInput | null {
         return down;
       },
       activeWindow() {
+        if (!open) return 0;
         if (hasWindowManager()) return longs(root, "_NET_ACTIVE_WINDOW", 1)[0] ?? 0;
         const focus = [0], revert = [0];
         XGetInputFocus(dpy, focus, revert);
         return Number(focus[0]) > 1 ? Number(focus[0]) : 0; // 0 None, 1 PointerRoot
       },
       screenSize() {
+        if (!open) return { width: 0, height: 0 };
         const n = XDefaultScreen(dpy);
         return { width: XDisplayWidth(dpy, n), height: XDisplayHeight(dpy, n) };
       },
       findWindow(title) {
+        if (!open) return 0;
         const want = title.toLowerCase();
         const named = (w: number) => (text(w, "_NET_WM_NAME") ?? text(w, "WM_NAME") ?? "").toLowerCase().includes(want);
         for (const w of longs(root, "_NET_CLIENT_LIST", 1024)) if (named(w)) return w;
@@ -176,6 +197,7 @@ export function openXInput(displayName?: string): XInput | null {
         return 0;
       },
       activate(window) {
+        if (!open) return;
         if (!hasWindowManager()) {
           // Without a window manager, focus and raise the window ourselves.
           XRaiseWindow(dpy, window);
@@ -196,7 +218,7 @@ export function openXInput(displayName?: string): XInput | null {
         XFlush(dpy);
       },
       sync() {
-        XSync(dpy, 0);
+        if (open) XSync(dpy, 0);
       },
       close() {
         if (open) { open = false; XCloseDisplay(dpy); }

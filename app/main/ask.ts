@@ -2,14 +2,18 @@
 
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
+import { IPC, type AskContext } from "../shared/ipc";
 
 const appDir = __dirname;
-const SIZE = { width: 520, height: 58 };
+const SIZE = { width: 560, height: 92 };
 
 export class AskWindow {
   private win: BrowserWindow | null = null;
+  private context: AskContext = { sees: null, history: [] };
 
-  show(near: { x: number; y: number } | null): void {
+  /** Opens the box; `context` says what Ember will read and lists earlier questions (it can follow a moment later via setContext). */
+  show(near: { x: number; y: number } | null, context?: AskContext): void {
+    if (context) this.context = context;
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     const wa = display.workArea;
     const x = near ? near.x - SIZE.width / 2 : wa.x + (wa.width - SIZE.width) / 2;
@@ -32,13 +36,27 @@ export class AskWindow {
       });
       this.win.setAlwaysOnTop(true, "screen-saver");
       this.win.on("blur", () => this.hide());
+      // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
+      this.win.webContents.on("render-process-gone", () => { if (this.win && !this.win.isDestroyed()) this.win.destroy(); this.win = null; });
+      this.win.webContents.on("did-finish-load", () => this.sendContext());
       void this.win.loadFile(path.join(appDir, "renderer", "ask", "index.html"));
       this.win.once("ready-to-show", () => { this.win?.show(); this.win?.focus(); });
     } else {
       this.win.setBounds(bounds);
       this.win.show();
       this.win.focus();
+      this.sendContext();
     }
+  }
+
+  /** What Ember will read, once the quick look at the screen is done. */
+  setContext(context: AskContext): void {
+    this.context = context;
+    this.sendContext();
+  }
+
+  private sendContext(): void {
+    if (this.win && !this.win.isDestroyed() && !this.win.webContents.isLoading()) this.win.webContents.send(IPC.askContext, this.context);
   }
 
   hide(): void {

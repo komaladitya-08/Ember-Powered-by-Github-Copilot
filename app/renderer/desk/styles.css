@@ -3,8 +3,12 @@ body { display: flex; flex-direction: column; border: 1px solid rgba(255, 154, 6
 header { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 8px; -webkit-app-region: drag; }
 header .dot { width: 7px; height: 7px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 6px #ff9a3d; }
 #title { flex: 1; min-width: 0; color: rgba(251, 238, 227, 0.65); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hint { display: none; color: rgba(251, 238, 227, 0.8); white-space: nowrap; }
+body.control #hint { display: inline; }
 button { all: unset; -webkit-app-region: no-drag; cursor: pointer; padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255, 220, 190, 0.3); font-weight: 600; }
 button:focus-visible { outline: 2px solid #fff; }
 body.control #control { background: #b77bff; color: #1a0f0b; border-color: transparent; }
 #screen { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
+/* No picture until the first frame: an <img> without one shows a broken-image icon. */
+body:not(.live) #screen { visibility: hidden; }
 body.control #screen { cursor: crosshair; }

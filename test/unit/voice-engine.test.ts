@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ring, VoiceEngine, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { Ring, VoiceEngine, isStop, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 
 /** A scripted backend: frames are tagged by their first sample. */
 const KW = { 1: "hey_ember", 2: "ember_stop" } as Record<number, string>;
@@ -24,10 +24,10 @@ function fake(transcripts: string[]) {
 }
 const frame = (tag: number, speech = false) => { const f = new Float32Array(512); f[0] = tag; f[1] = speech ? 0.5 : 0; return f; };
 
-function run(b: VoiceBackend, script: (e: VoiceEngine, clock: { t: number }) => void) {
+function run(b: VoiceBackend, script: (e: VoiceEngine, clock: { t: number }) => void, opts: { rejectWindowMs?: number } = { rejectWindowMs: 300 }) {
   const events: VoiceEvent[] = [];
   const clock = { t: 0 };
-  const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => clock.t, rejectWindowMs: 300, verifyWake: false });
+  const e = new VoiceEngine(b, ev => { if (ev.type !== "level") events.push(ev); }, { now: () => clock.t, verifyWake: false, ...opts });
   script(e, clock);
   return events;
 }
@@ -39,6 +39,29 @@ describe("stripWake", () => {
     expect(stripWake("OK Ember: open files")).toBe("Open files");
     expect(stripWake("Ember.")).toBe("");
     expect(stripWake("Remember the milk")).toBe("Remember the milk");
+    expect(stripWake("Hey Emmer. Turn on night light.")).toBe("Turn on night light.");
+  });
+
+  it("right after a wake, drops what was said just before it (the pre-roll), as transcribed for real", () => {
+    // Recognizer output when "Hey Ember, turn on night light" followed other speech with no pause.
+    expect(stripWake("Lunch, hey Ember, turn on night light.", true)).toBe("Turn on night light.");
+    expect(stripWake("6. Hey Ember, turn on night light.", true)).toBe("Turn on night light.");
+    expect(stripWake("Ace, pay ember, turn on night light.", true)).toBe("Turn on night light.");
+    expect(stripWake("I say, amber, turn on nightlight.", true)).toBe("Turn on nightlight.");
+    expect(stripWake("Ligger, hey Emmer, turn on night light.", true)).toBe("Turn on night light.");
+    expect(stripWake("Hey Ember, call Amber.", true)).toBe("Call Amber.");
+    // Only near the start, and only whole words: a request that merely mentions "Amber" later is kept.
+    expect(stripWake("Remember the milk", true)).toBe("Remember the milk");
+    expect(stripWake("Please send the minutes of the meeting to Amber.", true)).toBe("Please send the minutes of the meeting to Amber.");
+    // Later segments (no pre-roll) only lose a wake phrase at the very start.
+    expect(stripWake("Lunch, hey Ember, turn on night light.")).toBe("Lunch, hey Ember, turn on night light.");
+  });
+});
+
+describe("isStop", () => {
+  it("is a request that is only 'stop' in other words", () => {
+    for (const t of ["Stop.", "stop!", "Stop it.", "Stop, stop.", "Cancel that.", "Never mind.", "Nevermind", "Be quiet.", "Please stop.", "Stop talking."]) expect(isStop(t), t).toBe(true);
+    for (const t of ["Stop the music.", "Don't stop.", "Cancel my meeting at three.", "Stop sharing my screen."]) expect(isStop(t), t).toBe(false);
   });
 });
 
@@ -62,11 +85,11 @@ describe("VoiceEngine", () => {
     });
     expect(events).toEqual([
       { type: "wake", keyword: "hey_ember" },
-      { type: "listening", on: true, reason: "wake" },
+      { type: "listening", on: true, reason: "wake", window: "wake" },
       { type: "speech", on: true },
       { type: "speech", on: false },
       { type: "utterance", text: "Turn on night light.", ms: 0 },
-      { type: "listening", on: false, reason: "done" },
+      { type: "listening", on: false, reason: "done", window: "wake" },
     ]);
   });
 
@@ -77,7 +100,7 @@ describe("VoiceEngine", () => {
       for (let i = 0; i < 400; i++) { c.t += 32; e.feed(frame(0)); }
     });
     expect(events.map(e => e.type)).toEqual(["wake", "listening", "speech", "speech", "listening"]);
-    expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout" });
+    expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "wake" });
   });
 
   it("stops at once on 'Ember stop', even mid-request", () => {
@@ -86,7 +109,31 @@ describe("VoiceEngine", () => {
       e.feed(frame(0, true));
       e.feed(frame(2));
     });
-    expect(events.slice(-2)).toEqual([{ type: "stop" }, { type: "listening", on: false, reason: "stop" }]);
+    expect(events.slice(-2)).toEqual([{ type: "stop" }, { type: "listening", on: false, reason: "stop", window: "wake" }]);
+  });
+
+  it("stops on 'Hey Ember, stop' (and 'never mind') without sending anything", () => {
+    for (const said of ["Hey Ember, stop.", "Hey Ember. Never mind."]) {
+      const events = run(fake([said]), (e, c) => {
+        e.feed(frame(1));
+        c.t += 32; e.feed(frame(0, true));
+        c.t += 32; e.feed(frame(0));
+      });
+      expect(events.filter(e => e.type === "utterance"), said).toEqual([]);
+      expect(events.slice(-2), said).toEqual([{ type: "stop" }, { type: "listening", on: false, reason: "stop", window: "wake" }]);
+    }
+  });
+
+  it("doesn't send words said just before the wake phrase", () => {
+    const events = run(fake(["Lunch, hey Ember, turn on night light.", "Call Amber about lunch."]), (e, c) => {
+      e.feed(frame(1));
+      c.t += 32; e.feed(frame(0, true));
+      c.t += 32; e.feed(frame(0));
+      e.followUp(8000); // the next segment has no pre-roll: only a leading wake phrase would go
+      c.t += 32; e.feed(frame(0, true));
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(events.filter(e => e.type === "utterance").map(e => e.type === "utterance" && e.text)).toEqual(["Turn on night light.", "Call Amber about lunch."]);
   });
 
   it("ignores its own voice", () => {
@@ -102,6 +149,22 @@ describe("VoiceEngine", () => {
       { type: "rejected", keyword: "hey_ember", reason: "self" },
     ]);
     expect(events.some(e => e.type === "wake")).toBe(true); // after the tail
+  });
+
+  it("waits long enough for the speakers' spotter (a video's wake reported 300 ms apart is still rejected)", () => {
+    const b = fake([]);
+    b.spotMonitor = f => (f[0] === 1 ? ["hey_ember"] : []);
+    const playing = new Float32Array(512).fill(0.05);
+    const events = run(b, (e, c) => {
+      e.feedMonitor(playing);
+      e.feed(frame(1)); // the mic's spotter first
+      for (let i = 0; i < 9; i++) { c.t += 32; e.feedMonitor(playing); e.feed(frame(0)); }
+      const hit = new Float32Array(512); hit[0] = 1;
+      e.feedMonitor(hit); // ~300 ms later from the speakers' stream
+      c.t += 32; e.feed(frame(0));
+      for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(0)); }
+    }, {});
+    expect(events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "speakers" }]);
   });
 
   it("rejects a wake word that came out of the speakers", () => {
@@ -160,8 +223,92 @@ describe("VoiceEngine", () => {
       c.t += 1000; e.feed(frame(0, true));
       c.t += 32; e.feed(frame(0));
     });
-    expect(events).toContainEqual({ type: "listening", on: true, reason: "follow-up" });
+    expect(events).toContainEqual({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
     expect(events).toContainEqual({ type: "utterance", text: "And turn on do not disturb too.", ms: 0 });
+  });
+
+  it("says a timeout ended a follow-up window, not a wake (the answer stays up)", () => {
+    const events = run(fake([]), (e, c) => {
+      e.followUp(8000);
+      for (let i = 0; i < 300; i++) { c.t += 32; e.feed(frame(0)); }
+    });
+    expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "follow-up" });
+  });
+
+  it("doesn't take Ember's own voice as a follow-up, and opens the window once it has finished", () => {
+    const b = fake(["And turn on do not disturb too."]);
+    let heardWhileSpeaking = 0;
+    const transcribe = b.transcribe;
+    b.transcribe = s => { if (speaking) heardWhileSpeaking++; return transcribe(s); };
+    let speaking = true;
+    const events = run(b, (e, c) => {
+      e.selfSpeaking(true);
+      e.followUp(8000);
+      // Ember reads out a long answer (12 s), which the mic hears.
+      for (let i = 0; i < 375; i++) { c.t += 32; e.feed(frame(0, i % 50 < 40)); }
+      e.selfSpeaking(false, 400);
+      speaking = false;
+      // The window counts from the end of the answer: 7 s later the user still has time.
+      for (let i = 0; i < 220; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(e.listening).toBe(true);
+      c.t += 32; e.feed(frame(0, true));
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(heardWhileSpeaking).toBe(0);
+    expect(events.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "And turn on do not disturb too.", ms: 0 }]);
+    expect(events.some(e => e.type === "listening" && !e.on && e.reason === "timeout")).toBe(false);
+  });
+
+  it("forgets speech the window heard when Ember starts speaking over it", () => {
+    const events = run(fake(["Here is what I found."]), (e, c) => {
+      e.followUp(8000);
+      c.t += 32; e.feed(frame(0, true)); // the speakers' first word…
+      e.selfSpeaking(true); // …and Ember says it's speaking
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0, true)); }
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(events.filter(e => e.type === "speech")).toEqual([{ type: "speech", on: true }, { type: "speech", on: false }]);
+    expect(events.some(e => e.type === "utterance")).toBe(false);
+  });
+
+  it("doesn't stay deaf if it never hears that Ember stopped speaking", () => {
+    const events = run(fake([]), (e, c) => {
+      e.selfSpeaking(true);
+      c.t += 61_000; e.feed(frame(1));
+    });
+    expect(events[0]).toEqual({ type: "wake", keyword: "hey_ember" });
+  });
+
+  it("a 'stopped speaking' while silent (hush on a wake) doesn't cut the request", () => {
+    const events = run(fake(["Hey Ember, turn on night light."]), (e, c) => {
+      e.feed(frame(1));
+      e.selfSpeaking(false, 400);
+      c.t += 32; e.feed(frame(0, true));
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(events).toContainEqual({ type: "utterance", text: "Turn on night light.", ms: 0 });
+  });
+
+  it("cancel (the kill switch) ends listening and drops a wake still being checked", () => {
+    const b = fake(["Turn on night light."]);
+    b.spotMonitor = () => [];
+    const playing = new Float32Array(512).fill(0.05);
+    const pending = run(b, (e, c) => {
+      e.feedMonitor(playing);
+      e.feed(frame(1)); // waiting out the speakers check
+      e.cancel();
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feedMonitor(playing); e.feed(frame(0, true)); }
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(pending).toEqual([]);
+    const listening = run(fake(["Turn on night light."]), (e, c) => {
+      e.feed(frame(1));
+      c.t += 32; e.feed(frame(0, true));
+      e.cancel();
+      c.t += 32; e.feed(frame(0));
+    });
+    expect(listening.slice(-1)).toEqual([{ type: "listening", on: false, reason: "stop", window: "wake" }]);
+    expect(listening.some(e => e.type === "utterance")).toBe(false);
   });
 });
 
@@ -217,9 +364,9 @@ describe("second-stage wake check", () => {
     // Ember lit up at once, then took it back when the recognizer heard "Amber".
     expect(events).toEqual([
       { type: "wake", keyword: "hey_ember" },
-      { type: "listening", on: true, reason: "wake" },
+      { type: "listening", on: true, reason: "wake", window: "wake" },
       { type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey Amber, what time is it?" },
-      { type: "listening", on: false, reason: "rejected" },
+      { type: "listening", on: false, reason: "rejected", window: "wake" },
     ]);
     expect(e.listening).toBe(false);
   });

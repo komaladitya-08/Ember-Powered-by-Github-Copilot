@@ -66,10 +66,14 @@ kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; 
 .dot[data-phase="error"] { background: var(--fail); }
 .agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn { all: unset; cursor: pointer; padding: 8px 14px; border-radius: 9px; background: var(--accent); color: #1a0f0b; font-weight: 700; }
-.btn.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+/* The border is a control's only outline: at least 3:1 against the panel (WCAG 1.4.11). */
+.btn.quiet { background: transparent; color: var(--fg); border: 1px solid #8a776b; }
+.btn.small { padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.btn:disabled { opacity: 0.5; cursor: default; }
 .btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .btn[hidden] { display: none; }
-.sign-in-msg { margin: 0; color: var(--fg); }
+.sign-in-msg { margin: 0; color: var(--fg); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sign-in-msg.error { color: #ffb3a8; }
 .sign-in-msg code { font: 700 18px ui-monospace, monospace; letter-spacing: 0.08em; color: var(--accent); }
 .sign-in-msg[hidden] { display: none; }
 .models { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; align-items: center; }
@@ -105,3 +109,27 @@ progress[hidden] { display: none; }
 .activity .what { overflow-wrap: anywhere; }
 .activity .why { display: block; color: var(--muted); font-size: 12px; }
 .login-row { margin-top: 12px; }
+
+.start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.4); }
+.start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
+.start-row .hint { margin: 0; flex-basis: 100%; }
+h3.sub { margin: 4px 0 0; font-size: 13px; color: var(--fg); }
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.plain-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
+.plain-list li.empty { color: var(--muted); justify-content: flex-start; }
+.add-row { display: flex; gap: 8px; }
+.add-row input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; background: var(--bg); color: var(--fg); border: 1px solid #8a776b; font: inherit; }
+.add-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.conversation { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 12px 14px; color: var(--muted); }
+.conversation li { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; padding: 8px 14px; }
+.conversation li + li { border-top: 1px solid var(--line); }
+.conversation .who { font-weight: 700; font-size: 12px; }
+.conversation .ember .who { color: var(--accent); }
+.conversation .task .who { color: var(--ok); }
+.conversation time { color: var(--muted); font-size: 12px; justify-self: end; }
+.conversation p { grid-column: 1 / -1; margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.activity li.day { display: block; padding: 8px 14px 4px; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--bg); }
+h2[tabindex="-1"]:focus { outline: none; }
+.models-hint { grid-column: 1 / -1; margin: 0; }

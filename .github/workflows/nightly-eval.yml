@@ -19,20 +19,25 @@ jobs:
     if: vars.EMBER_NIGHTLY == 'true'
     runs-on: [self-hosted, rhel84-gnome]
     timeout-minutes: 180
-    env:
-      EMBER_EVAL_MODEL: ${{ vars.EMBER_EVAL_MODEL }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      EMBER_EVAL_PROVIDER_URL: ${{ vars.EMBER_EVAL_PROVIDER_URL }}
-      EMBER_EVAL_API_KEY: ${{ secrets.EMBER_EVAL_API_KEY }}
     steps:
       - name: Revert the machine to its clean snapshot
         if: vars.EMBER_EVAL_RESET != ''
         run: ${{ vars.EMBER_EVAL_RESET }}
       - uses: actions/checkout@v4
-      - run: npm ci
+        with:
+          persist-credentials: false
+      # No package's install scripts run on this machine. The evaluation runs on Node and needs no Electron;
+      # koffi, sharp, esbuild and the Copilot runtime come prebuilt in their platform packages.
+      - run: npm ci --ignore-scripts
       - run: node scripts/voice/prepare.mjs
+      # The model's credentials reach this step only.
       - name: Task suite with a live model (pass^3) and release gates
         run: node eval/run.mjs --live --repeat 3 --out dist/eval
+        env:
+          EMBER_EVAL_MODEL: ${{ vars.EMBER_EVAL_MODEL }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          EMBER_EVAL_PROVIDER_URL: ${{ vars.EMBER_EVAL_PROVIDER_URL }}
+          EMBER_EVAL_API_KEY: ${{ secrets.EMBER_EVAL_API_KEY }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

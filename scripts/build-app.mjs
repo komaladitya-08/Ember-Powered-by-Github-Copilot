@@ -2,10 +2,11 @@
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages)
 import { build } from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
-const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: root.pathname };
+const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk"];
 

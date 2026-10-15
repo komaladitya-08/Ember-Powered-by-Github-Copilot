@@ -45,6 +45,8 @@ if [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 0)" = "0" ]; 
 if [ "$1" = "doctor" ]; then
   shift
   [ -z "$DISPLAY" ] && platform=--ozone-platform=headless
+  # Chromium won't start as root with its sandbox; the check-up shows no web content.
+  [ "$(id -u)" = 0 ] && sandbox=--no-sandbox
   exec "$here/ember/ember" --doctor $platform $sandbox "$@"
 fi
 exec "$here/ember/ember" $platform $sandbox "$@"

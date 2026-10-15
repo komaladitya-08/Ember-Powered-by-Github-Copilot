@@ -81,7 +81,7 @@ describe("TaskManager", () => {
 describe("Confirmer", () => {
   it("shows one question at a time and only accepts its own buttons", async () => {
     const shown: Partial<EmberState>[] = [];
-    const c = new Confirmer(p => shown.push(p), 10_000);
+    const c = new Confirmer(p => shown.push(p), { timeoutMs: 10_000, armMs: 0, gapMs: 0 });
     const q1 = c.ask({ title: "May I?", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }] });
     const q2 = c.ask({ title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }] });
     const ids = shown.at(-1)!.bubble!.actions.map(a => a.id);
@@ -90,9 +90,51 @@ describe("Confirmer", () => {
     expect(c.answer("q1:bogus")).toBe(false);
     expect(c.answer(ids[0])).toBe(true);
     await expect(q1).resolves.toBe("once");
+    await new Promise(r => setTimeout(r, 5)); // the next question follows after a (here zero) gap
     expect(shown.at(-1)!.bubble?.thought).toBe("Click “Send”?");
     c.cancelAll();
     await expect(q2).resolves.toBeNull();
+  });
+
+  it("ignores clicks in a question's first moments, and the next question waits a beat (no double-click approvals)", async () => {
+    let t = 0;
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(p => shown.push(p), { timeoutMs: 10_000, armMs: 500, gapMs: 40, now: () => t });
+    const opts = [{ id: "once", label: "Allow" }, { id: "deny", label: "Not now" }];
+    const q1 = c.ask({ title: "May I?", prompt: "Click “Next”?", options: opts });
+    const q2 = c.ask({ title: "May I?", prompt: "Borrow your mouse to click “Delete”?", options: opts });
+    expect(c.answer("q1:once")).toBe(false); // a click already on its way
+    t = 600;
+    expect(c.answer("q1:once")).toBe(true);
+    await expect(q1).resolves.toBe("once");
+    expect(c.waiting).toBe(false); // the second click of a double-click lands on nothing
+    expect(c.answer("q2:once")).toBe(false);
+    await new Promise(r => setTimeout(r, 60));
+    expect(shown.at(-1)!.bubble?.thought).toContain("Delete");
+    expect(c.answer("q2:once")).toBe(false); // just appeared
+    t = 1300;
+    expect(c.answer("q2:deny")).toBe(true);
+    await expect(q2).resolves.toBe("deny");
+  });
+
+  it("a queued question gets its full time once it is on screen, and a stopped task's question goes away", async () => {
+    vi.useFakeTimers();
+    const c = new Confirmer(() => undefined, { timeoutMs: 1000, armMs: 0, gapMs: 10 });
+    const opts = [{ id: "once", label: "Allow" }];
+    const q1 = c.ask({ title: "?", prompt: "first", options: opts });
+    const q2 = c.ask({ title: "?", prompt: "second", options: opts });
+    vi.advanceTimersByTime(990);
+    expect(c.answer("q1:once")).toBe(true);
+    await expect(q1).resolves.toBe("once");
+    vi.advanceTimersByTime(10 + 900);
+    expect(c.waiting).toBe(true); // 1.9 s after it was asked, but only 0.9 s on screen
+    const ac = new AbortController();
+    const q3 = c.ask({ title: "?", prompt: "third", options: opts }, ac.signal);
+    ac.abort();
+    await expect(q3).resolves.toBeNull();
+    vi.advanceTimersByTime(200);
+    await expect(q2).resolves.toBeNull();
+    vi.useRealTimers();
   });
 
   it("treats no answer as no", async () => {
@@ -137,7 +179,7 @@ describe("execArgv", () => {
 describe("guardWhileAsking", () => {
   it("keeps a question on screen until it is answered", async () => {
     const shown: Partial<EmberState>[] = [];
-    const confirmer = new Confirmer(p => shown.push(p));
+    const confirmer = new Confirmer(p => shown.push(p), { armMs: 0 });
     const setState = guardWhileAsking(() => confirmer.waiting, p => shown.push(p));
     const q = confirmer.ask({ title: "May I?", prompt: "Press ctrl+s?", options: [{ id: "once", label: "Allow" }] });
     const question = shown.at(-1)!.bubble!;
@@ -150,5 +192,20 @@ describe("guardWhileAsking", () => {
     await q;
     setState({ emotion: "happy" });
     expect(shown.at(-1)).toEqual({ emotion: "happy" });
+  });
+});
+
+describe("Confirmer keyboard answers and borrowing", () => {
+  it("answers by key, refuses everything while Ember holds the mouse, and reports when questions come and go", async () => {
+    let borrowing = true;
+    const changes: (number | null)[] = [];
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, blocked: () => borrowing, onChange: q => changes.push(q?.n ?? null) });
+    const q = c.ask({ title: "May I?", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    expect(c.answerKey("primary")).toBe(false); // a borrowed click or key can't approve
+    borrowing = false;
+    expect(c.answerKey("always")).toBe(false); // not offered
+    expect(c.answerKey("deny")).toBe(true);
+    await expect(q).resolves.toBe("deny");
+    expect(changes).toEqual([1, null]);
   });
 });

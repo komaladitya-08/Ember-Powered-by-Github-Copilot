@@ -117,6 +117,8 @@ export class OverlayManager {
     this.borrowing = on;
   }
 
+  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
+
   getState(): EmberState {
     return this.state;
   }
@@ -173,12 +175,23 @@ export class OverlayManager {
     win.setIgnoreMouseEvents(true);
     const overlay: Overlay = { win, display, interactive: [], clickThrough: true };
     this.overlays.set(display.id, overlay);
-    win.webContents.once("did-finish-load", () => {
+    // Every load (also after a crash and reload) gets the current picture.
+    win.webContents.on("did-finish-load", () => {
       win.webContents.send(OVERLAY.init, this.initFor(overlay));
       win.webContents.send(OVERLAY.state, this.state);
+      this.lastFrame = null;
       win.showInactive();
       win.setBounds(display.bounds); // re-apply after map; some WMs adjust on first show
       this.log.info("overlay.shown", { display: display.id, bounds: display.bounds });
+    });
+    // A crashed overlay must not leave an invisible window that swallows clicks: click-through again, then reload.
+    win.webContents.on("render-process-gone", (_e, details) => {
+      this.log.warn("overlay.renderer_gone", { display: display.id, reason: details.reason });
+      overlay.interactive = [];
+      overlay.clickThrough = true;
+      if (win.isDestroyed()) return;
+      win.setIgnoreMouseEvents(true);
+      setTimeout(() => { if (!win.isDestroyed()) win.webContents.reload(); }, 500);
     });
     win.on("closed", () => this.overlays.delete(display.id));
     void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
@@ -207,10 +220,15 @@ export class OverlayManager {
     const s = this.settings();
     const ember = this.follower.step(followTarget(cursor, s.size, display.workArea), dt);
     const frame = { ember, cursor, visible: !this.hidden };
+    // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
+    const p = this.lastFrame;
+    const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
+      && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
+    if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
 
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
-      o.win.webContents.send(OVERLAY.frame, frame);
+      if (!still) o.win.webContents.send(OVERLAY.frame, frame);
       // Hover-to-interact: only while the cursor is over something clickable.
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
       const over = !this.borrowing && contains(o.display.bounds, cursor) && o.interactive.some(r => contains(r, local));

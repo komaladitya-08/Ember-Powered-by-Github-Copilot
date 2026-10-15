@@ -16,7 +16,17 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
   border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .task b { font-size: 13px; }
-.task span { color: rgba(251, 238, 227, 0.72); font-size: 12px; }
+.task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
+.task span[hidden] { display: none; }
+/* Stop / Close: the overlay is click-through except over these (reported to the main process). */
+.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.task-actions[hidden] { display: none; }
+.task-actions button {
+  font: 600 12px/1 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; padding: 6px 11px; border-radius: 7px; cursor: pointer;
+  background: transparent; color: #fbeee3; border: 1px solid rgba(255, 220, 190, 0.6);
+}
+.task-actions button:hover { border-color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
+.task-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
 .task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
 .task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
@@ -32,6 +42,6 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
   transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease, opacity 0.2s;
   animation: focus-pulse 1.2s ease-in-out infinite;
 }
-.focus[hidden] { display: block; opacity: 0; }
+.focus[hidden] { display: block; opacity: 0; animation: none; }
 @keyframes focus-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 26, 0.18), 0 0 30px 10px rgba(255, 122, 26, 0.5); } }
 @media (prefers-reduced-motion: reduce) { .focus { animation: none; transition: none; } }

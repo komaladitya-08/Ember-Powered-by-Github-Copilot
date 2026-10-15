@@ -11,7 +11,8 @@ import { VoiceEngine, type VoiceEvent } from "./engine";
 import { sherpaBackend, type ModelPaths } from "./sherpa";
 
 type FromMain =
-  | { type: "init"; models: ModelPaths; monitor: boolean }
+  /** `dev`: an unpackaged (development) build. */
+  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean }
   | { type: "self-speaking"; on: boolean }
   | { type: "follow-up"; ms: number }
   | { type: "cancel" };
@@ -24,8 +25,8 @@ const send = (m: ToMain) => parent.postMessage(m);
 let engine: VoiceEngine | null = null;
 let monitor: ChildProcess | null = null;
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
-// Development only: EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32) for debugging.
-const dump = process.env.EMBER_VOICE_DUMP ? fs.createWriteStream(process.env.EMBER_VOICE_DUMP) : null;
+/** Development builds only (installed Ember never keeps audio): EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32). */
+let dump: fs.WriteStream | null = null;
 
 function startMonitor(): boolean {
   // Speaker output as 16 kHz mono float: whatever is playing (videos, calls).
@@ -49,6 +50,7 @@ function startMonitor(): boolean {
 parent.on("message", e => {
   const m = e.data as FromMain;
   if (m.type === "init") {
+    if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
       const backend = sherpaBackend(m.models, { monitor: m.monitor });

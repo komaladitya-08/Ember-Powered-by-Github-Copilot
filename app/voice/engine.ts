@@ -9,7 +9,8 @@
  * in one breath; the wake phrase is stripped from the transcript.
  * After Ember answers: a follow-up window where no wake word is needed.
  * While Ember itself is speaking, or when the same wake phrase is playing
- * through the speakers, wake words are ignored.
+ * through the speakers, wake words are ignored; a listening window waits
+ * until Ember has finished speaking.
  */
 
 export const SAMPLE_RATE = 16_000;
@@ -35,7 +36,8 @@ export interface VoiceBackend {
 export type VoiceEvent =
   | { type: "wake"; keyword: string }
   | { type: "stop" }
-  | { type: "listening"; on: boolean; reason: "wake" | "follow-up" | "timeout" | "done" | "stop" | "rejected" }
+  /** `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows). */
+  | { type: "listening"; on: boolean; reason: "wake" | "follow-up" | "timeout" | "done" | "stop" | "rejected"; window: "wake" | "follow-up" }
   | { type: "speech"; on: boolean }
   | { type: "level"; rms: number }
   | { type: "utterance"; text: string; ms: number }
@@ -46,7 +48,11 @@ export interface EngineOptions {
   preRoll?: number;
   /** How long to wait for speech after a wake before giving up (ms). */
   waitForSpeechMs?: number;
-  /** Speaker-output matches within this window reject a wake (ms). The speakers' own stream hears the same audio at almost the same moment. */
+  /**
+   * Speaker-output matches within this window reject a wake (ms). The speakers' own stream hears the same
+   * audio at almost the same moment, but either spotter can report it a few chunks later (measured: 150 ms
+   * let half of a video's "Hey Ember"s through). Only waited out while something is playing.
+   */
   rejectWindowMs?: number;
   /** Frames quieter than this (RMS), or than the room's own noise floor, count as silence; keyword spotting pauses in long silences. */
   silenceRms?: number;
@@ -67,12 +73,26 @@ export function heardOtherWord(transcript: string): boolean {
   return /\b(amber|ambers|remember|remembers|member|members|september|november|december|timber|number|chamber|hammer)\b/.test(t);
 }
 
-/** "Hey Ember, turn on Night Light." → "turn on Night Light." */
-export function stripWake(text: string): string {
+/** The wake phrase as the recognizer writes it ("Hey, Ember." "hey Emmer" "OK Amber"). */
+const WAKE = String.raw`((hey|hi|ok|okay|hay)[\s,.!]+)?(ember|embers|emmer|amber|member)\b[\s,.!?:;-]*`;
+const WAKE_AT_START = new RegExp(String.raw`^\s*` + WAKE, "i");
+/** Right after a wake, the pre-roll can start with the end of what was said before it: "Lunch, hey Ember, …". */
+const WAKE_IN_FIRST_WORDS = new RegExp(String.raw`^\s*(\S+\s+){0,5}?` + WAKE, "i");
+
+/**
+ * "Hey Ember, turn on Night Light." → "Turn on Night Light." With `afterWake` (the first thing heard after a
+ * wake), words said just before the wake phrase go too: nothing said before "Hey Ember" is sent anywhere.
+ */
+export function stripWake(text: string, afterWake = false): string {
   return text
-    .replace(/^\s*((hey|hi|ok|okay|hay)[\s,.!]+)?(ember|amber|embers|member)\b[\s,.!?:;-]*/i, "")
+    .replace(afterWake ? WAKE_IN_FIRST_WORDS : WAKE_AT_START, "")
     .trim()
     .replace(/^[a-z]/, c => c.toUpperCase());
+}
+
+/** "Hey Ember, stop." / "Never mind": the whole request is to stop, handled here like "Ember, stop" (never sent to the model). */
+export function isStop(text: string): boolean {
+  return /^(please[\s,]+)?(stop|cancel|never\s?mind|be quiet|quiet|hush)([\s,.!]+(stop|it|that|now|please|talking|ember))*[\s.!,]*$/i.test(text);
 }
 
 /** A fixed-length ring of recent samples. */
@@ -118,8 +138,11 @@ const MIC_REPLAY_FRAMES = 12;
 const SPEAKERS_TAIL_FRAMES = 16;
 /** Speakers silent this long before a wake can't have played "Hey Ember" (phrase + spotter delay). */
 const SPEAKERS_QUIET_MS = 1500;
+/** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks). */
+const SELF_SPEAKING_MAX_MS = 60_000;
 
-type Mode = { kind: "idle" } | { kind: "listening"; until: number; heardSpeech: boolean; reason: "wake" | "follow-up" };
+/** `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake. */
+type Mode = { kind: "idle" } | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up" };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
@@ -151,22 +174,34 @@ export class VoiceEngine {
     return this.mode.kind === "listening";
   }
 
-  /** Ember is speaking (TTS): ignore wake words until `ms` from now (plus a short tail). */
+  /**
+   * Ember is speaking (TTS): ignore wake words, and what a listening window hears, until it stops (plus a short
+   * tail). Capped, so a lost "stopped" can't deafen Ember for good. A "stopped" while silent changes nothing.
+   */
   selfSpeaking(on: boolean, tailMs = 400): void {
-    this.selfSpeakingUntil = on ? Number.POSITIVE_INFINITY : this.now() + tailMs;
+    const now = this.now();
+    if (!on) { this.selfSpeakingUntil = Math.min(this.selfSpeakingUntil, now + tailMs); return; }
+    this.selfSpeakingUntil = now + SELF_SPEAKING_MAX_MS;
+    if (this.mode.kind !== "listening") return;
+    // What the VAD heard so far is Ember's voice, or was cut by it: start afresh once Ember is done.
+    this.backend.resetVad();
+    if (this.wasSpeaking) { this.wasSpeaking = false; this.emit({ type: "speech", on: false }); }
   }
 
-  /** Listen for a follow-up without the wake word. */
+  /** Listen for a follow-up without the wake word (the window starts once Ember has finished speaking). */
   followUp(ms = 8000): void {
     if (this.mode.kind === "listening") { this.mode.until = Math.max(this.mode.until, this.now() + ms); return; }
     this.backend.resetVad();
-    this.mode = { kind: "listening", until: this.now() + ms, heardSpeech: false, reason: "follow-up" };
-    this.emit({ type: "listening", on: true, reason: "follow-up" });
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up" };
+    this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
   }
 
-  /** Stop listening for a command (e.g. the user pressed Esc). */
+  /** Stop listening for a command, and drop a wake still being checked (the kill switch, Esc). */
   cancel(): void {
-    if (this.mode.kind === "listening") this.endListening("done");
+    this.pendingWake = null;
+    this.ring.clear();
+    if (this.mode.kind === "listening") this.endListening("stop");
+    else this.backend.resetVad();
   }
 
   /** Speaker output (PulseAudio monitor), for rejecting wake words that come from videos. */
@@ -230,7 +265,7 @@ export class VoiceEngine {
     // A wake is accepted once we're sure the speakers didn't just say it.
     if (this.pendingWake) {
       const w = this.pendingWake;
-      const window = this.o.rejectWindowMs ?? 150;
+      const window = this.o.rejectWindowMs ?? 400;
       if (this.monitorHits.some(h => h.keyword === w.keyword && Math.abs(h.at - w.at) <= window)) {
         this.pendingWake = null;
         this.emit({ type: "rejected", keyword: w.keyword, reason: "speakers" });
@@ -255,6 +290,12 @@ export class VoiceEngine {
       this.ring.push(frame);
       return;
     }
+    if (now < this.selfSpeakingUntil) {
+      // Ember's own voice (echo cancellation leaves some) is not a request: the VAD isn't fed, and the
+      // window stays open until Ember has finished. Otherwise Ember answers itself, again and again.
+      this.mode.until = Math.max(this.mode.until, now + this.mode.ms);
+      return;
+    }
 
     const segments = this.backend.vad(frame);
     const speaking = this.backend.speaking();
@@ -273,8 +314,9 @@ export class VoiceEngine {
   private announceWake(keyword: string): void {
     this.emit({ type: "wake", keyword });
     this.backend.resetVad();
-    this.mode = { kind: "listening", until: this.now() + (this.o.waitForSpeechMs ?? 6000), heardSpeech: false, reason: "wake" };
-    this.emit({ type: "listening", on: true, reason: "wake" });
+    const ms = this.o.waitForSpeechMs ?? 6000;
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake" };
+    this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
   }
 
   /** Replays what was said just before (and during) the wake word, so a one-breath request isn't cut. */
@@ -287,10 +329,17 @@ export class VoiceEngine {
   private handleSegment(seg: Float32Array): void {
     if (this.mode.kind !== "listening") return;
     const t0 = this.now();
-    const text = stripWake(this.backend.transcribe(seg));
+    const text = stripWake(this.backend.transcribe(seg), this.mode.first);
+    this.mode.first = false;
     if (!text || /^[\s.,!?]*$/.test(text)) {
       // Only the wake phrase (or a cough): keep listening for the request.
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
+      return;
+    }
+    if (isStop(text)) {
+      // "Hey Ember, stop": the kill phrase in other words, handled here and never sent anywhere.
+      this.emit({ type: "stop" });
+      this.endListening("stop");
       return;
     }
     this.emit({ type: "utterance", text, ms: this.now() - t0 });
@@ -298,9 +347,10 @@ export class VoiceEngine {
   }
 
   private endListening(reason: "timeout" | "done" | "stop" | "rejected"): void {
+    const window = this.mode.kind === "listening" ? this.mode.reason : "wake";
     this.mode = { kind: "idle" };
     this.wasSpeaking = false;
     this.backend.resetVad();
-    this.emit({ type: "listening", on: false, reason });
+    this.emit({ type: "listening", on: false, reason, window });
   }
 }

@@ -2,7 +2,7 @@
 
 import type { EnvReport } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
-import type { AgentStatus } from "../main/agent/host";
+import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 
@@ -22,10 +22,20 @@ export const IPC = {
   voiceProgress: "voice:progress",
   askClose: "agent:ask-close",
   activity: "ember:activity",
+  /** "Check again": look for a sign-in once more and reconnect. */
+  agentRetry: "agent:retry",
+  cancelSignIn: "agent:cancel-sign-in",
+  conversation: "agent:conversation",
+  conversationChanged: "agent:conversation-changed",
+  /** Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"). */
+  focusSection: "ember:focus-section",
+  /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
+  askContext: "agent:ask-context",
 } as const;
 
 export interface SignInProgress {
-  state: "code" | "done" | "error" | "unavailable";
+  /** "waiting": watching for a GitHub CLI sign-in (gh auth login), no restart needed. */
+  state: "code" | "done" | "error" | "unavailable" | "waiting" | "cancelled";
   userCode?: string;
   verificationUri?: string;
   message?: string;
@@ -96,9 +106,24 @@ export interface EmberHomeApi {
   onVoiceProgress(fn: (p: { done: number; total: number }) => void): () => void;
   /** The newest audit entries, newest first. */
   activity(): Promise<ActivityEntry[]>;
+  /** Look for a sign-in again (e.g. after gh auth login) and reconnect. */
+  retrySignIn(): Promise<void>;
+  cancelSignIn(): Promise<void>;
+  /** This session's conversation (kept in memory only). */
+  conversation(): Promise<TranscriptEntry[]>;
+  onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
+  onFocusSection(fn: (section: string) => void): () => void;
+}
+
+/** What the ask box shows: where Ember will look, and the user's recent questions (newest last). */
+export interface AskContext {
+  /** e.g. "Mousepad · notes.txt · 12 words selected", or null when Ember can't read the screen. */
+  sees: string | null;
+  history: string[];
 }
 
 export interface EmberAskApi {
   ask(text: string): void;
   close(): void;
+  onContext(fn: (c: AskContext) => void): void;
 }

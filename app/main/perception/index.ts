@@ -8,7 +8,7 @@
 import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
-import { focusedElement, isNeverLook, serializeElements, inferLabels } from "./elements";
+import { focusedElement, isNeverLook, isSecretNode, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds } from "./sidecar";
 import type { X11, X11Window } from "../x11";
 import type { Logger } from "../logger";
@@ -46,6 +46,9 @@ export interface Perceived extends Seen {
 }
 
 export class Perception {
+  /** The overlay hide in progress: concurrent captures share it, and Ember shows again when the last one is done. */
+  private hidden: { count: number; restore: Promise<() => void> } | null = null;
+
   constructor(private o: PerceptionOptions) {}
 
   /** The focused window's accessibility tree (empty when blocked or unreadable). */
@@ -63,7 +66,9 @@ export class Perception {
     // Never-look apps, and password or authentication prompts (polkit, keyring…): Ember looks away (M8.3).
     const blocked = !!window && (isNeverLook(window, this.o.neverLook()) || isSecurityWindow(window))
       || (!window && !!x11Window && (isNeverLook({ app: "", name: x11Window.title }, this.o.neverLook()) || isSecurityWindow(x11Window)));
-    return { window, x11Window, nodes: blocked ? [] : res.nodes, blocked, ms: Date.now() - t0 };
+    if (!blocked) return { window, x11Window, nodes: res.nodes, blocked, ms: Date.now() - t0 };
+    // A private window's title goes no further than this (not to the model, not to the logs).
+    return { window: window && { ...window, name: "" }, x11Window: x11Window && { ...x11Window, title: "" }, nodes: [], blocked, ms: Date.now() - t0 };
   }
 
   /**
@@ -78,18 +83,22 @@ export class Perception {
     } catch {
       return null;
     }
+    const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
+    // A private window: only its process (a task started there is refused), never its title.
+    if (seen.blocked) return { target: { pid }, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!title) return null;
     const app = seen.window?.app ?? "";
-    const target = { pid: seen.window?.pid ?? seen.x11Window?.pid ?? undefined, title, app };
-    if (seen.blocked) return { target, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
+    const target = { pid, title, app };
     const focus = focusedElement(seen.nodes);
     const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
-    const q = (v: string, n: number) => JSON.stringify(v.length > n ? v.slice(0, n) + "…" : v).replace(/</g, "\\u003c");
-    const lines = [`App: ${q(app || "unknown", 60)}, window: ${q(title, 100)}.`];
-    if (focus) lines.push(`Focused: ${focus.role}${label ? ` ${q(label, 60)}` : ""}.`);
-    if (focus?.selection) lines.push(`Selected text: ${q(focus.selection, 300)}.`);
-    else if (focus?.text && focus.role !== "password text") lines.push(`Its text begins: ${q(focus.text, 120)}.`);
+    const secret = !!focus && isSecretNode(focus, label);
+    const lines = [`App: ${quoteUntrusted(app || "unknown", 60)}, window: ${quoteUntrusted(title, 100)}.`];
+    if (focus) lines.push(`Focused: ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 60)}` : ""}${secret ? " (a secret field; its contents are not shown)" : ""}.`);
+    if (focus && !secret) {
+      if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
+      else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
+    }
     return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>` };
   }
 
@@ -102,13 +111,17 @@ export class Perception {
       this.o.log.warn("perception.describe_failed", { err });
       return "Ember could not read the screen right now (the accessibility service did not answer).";
     }
-    const title = seen.window?.name || seen.x11Window?.title || "an unknown window";
-    if (seen.blocked) return `The user is in "${title}", a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    if (!seen.window) return `The focused window is "${title}", but it does not expose accessibility information, so its contents can't be read as text.`;
+    // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
+    if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
+    const title = seen.window?.name || seen.x11Window?.title || "";
+    if (!seen.window) {
+      const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
+      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}`;
+    }
     const focus = focusedElement(seen.nodes);
-    const labels = inferLabels(seen.nodes);
-    const focusLine = focus ? `Focused element: [${focus.id}] ${focus.role} "${focus.name || labels.get(focus.id) || ""}".` : "No element has keyboard focus.";
-    return [`The user is in ${seen.window.app || "an application"}, window "${title}". ${focusLine}`, serializeElements(seen.window, seen.nodes, { maxLines: 120 })].join("\n");
+    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+    const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
+    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine] })}`;
   }
 
   /** For workers: elements with bounds, plus an optional marked screenshot. */
@@ -117,29 +130,55 @@ export class Perception {
     const text = seen.blocked
       ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
       : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true }) : "The focused window exposes no accessibility information; use the screenshot.";
-    let capture: Capture | null = null;
+    if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
+    const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
+    const x11 = this.o.x11;
+    if (!x11) return noShot("screenshots aren't available on this display");
     // While a password prompt has focus anywhere on screen, no screenshots at all.
-    const active = opts.image && this.o.x11 && !seen.blocked ? this.o.x11.focusWindow() ?? this.o.x11.activeWindow() : null;
-    if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) {
-      return { ...seen, text: `${text}\n(No screenshot: a password prompt is open, so Ember looks away until it's done.)`, capture: null };
+    const active = x11.focusWindow() ?? x11.activeWindow();
+    if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    const rect = opts.scope === "window" && (seen.window?.bounds || seen.x11Window)
+      ? (seen.window?.bounds ?? { x: seen.x11Window!.x, y: seen.x11Window!.y, width: seen.x11Window!.width, height: seen.x11Window!.height })
+      : this.o.screenBounds();
+    const mask = await this.privateWindows();
+    if (mask === null) {
+      // Can't tell where private windows are, so no screenshot (fail closed).
+      this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
+      return noShot("Ember couldn't check for private windows");
     }
-    if (opts.image && this.o.x11 && !seen.blocked) {
-      const rect = opts.scope === "window" && (seen.window?.bounds || seen.x11Window)
-        ? (seen.window?.bounds ?? { x: seen.x11Window!.x, y: seen.x11Window!.y, width: seen.x11Window!.width, height: seen.x11Window!.height })
-        : this.o.screenBounds();
-      const mask = await this.privateWindows();
-      if (mask === null) {
-        // Can't tell where private windows are, so no screenshot (fail closed).
-        this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
-        return { ...seen, text: `${text}\n(No screenshot: Ember couldn't check for private windows.)`, capture: null };
-      }
-      capture = await captureRect(this.o.x11, rect, {
-        mask,
-        hideOverlay: this.o.hideOverlay,
-        overlaySvg: (scale, w, h) => seen.nodes.length ? marksSvg(seen.nodes, rect, scale, w, h) : null,
-      });
-    }
+    const capture = await captureRect(x11, rect, {
+      mask,
+      // A private window can move or open while the picture is taken: black out where they are afterwards too.
+      maskAfter: () => this.privateWindows(),
+      hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
+      overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes, origin, scale, w, h) : null,
+    });
+    if (!capture) return noShot("the window is off screen, or the screen couldn't be captured safely");
     return { ...seen, text, capture };
+  }
+
+  /** Hides Ember for a capture. Concurrent captures share one hide; the last one to finish shows Ember again. */
+  private async hideOverlay(): Promise<() => void> {
+    const h = this.hidden ??= { count: 0, restore: this.o.hideOverlay!() };
+    h.count++;
+    const release = () => {
+      if (--h.count > 0) return false;
+      if (this.hidden === h) this.hidden = null;
+      return true;
+    };
+    let restore: () => void;
+    try {
+      restore = await h.restore;
+    } catch (err) {
+      release();
+      throw err;
+    }
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      if (release()) restore();
+    };
   }
 
   /** Visible windows (app and title), never-look ones left out. */

@@ -32,9 +32,21 @@ export interface Logger {
   readonly file: string;
 }
 
-function serialize(value: unknown): unknown {
-  if (value instanceof Error) return { name: value.name, message: value.message, stack: value.stack };
-  return value;
+/** Errors anywhere in a value become plain objects (with code and cause); cycles and BigInts can't break a log line. */
+function safeLine(entry: Fields): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(entry, (_k, v: unknown) => {
+    if (typeof v === "bigint") return v.toString();
+    if (v instanceof Error) {
+      const e = v as Error & { code?: unknown; cause?: unknown };
+      return { name: e.name, message: e.message, stack: e.stack, ...(e.code !== undefined ? { code: e.code } : {}), ...(e.cause !== undefined ? { cause: e.cause } : {}) };
+    }
+    if (v && typeof v === "object") {
+      if (seen.has(v)) return "[circular]";
+      seen.add(v);
+    }
+    return v;
+  });
 }
 
 export function createLogger(opts: LoggerOptions): Logger {
@@ -43,7 +55,8 @@ export function createLogger(opts: LoggerOptions): Logger {
   const keep = opts.keep ?? 3;
   const now = opts.now ?? (() => new Date());
   const file = path.join(opts.dir, "ember.log");
-  fs.mkdirSync(opts.dir, { recursive: true });
+  // Private: logs mention apps and windows the user worked in.
+  fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
 
   const rotateIfNeeded = () => {
     let size: number;
@@ -57,18 +70,19 @@ export function createLogger(opts: LoggerOptions): Logger {
   };
 
   const write = (lvl: LogLevel, scope: string | undefined, msg: string, fields?: Fields) => {
-    if (ORDER[lvl] < ORDER[level]) return;
-    const entry: Fields = { t: now().toISOString(), level: lvl, msg };
-    if (scope) entry.scope = scope;
-    for (const [k, v] of Object.entries(fields ?? {})) entry[k] = serialize(v);
-    const line = JSON.stringify(entry) + "\n";
+    // Logging must never take the app down, whatever it is given.
     try {
-      rotateIfNeeded();
-      fs.appendFileSync(file, line);
-    } catch {
-      // Logging must never take the app down.
-    }
-    if (opts.stdout) process.stdout.write(line);
+      if (ORDER[lvl] < ORDER[level]) return;
+      const entry: Fields = { t: now().toISOString(), level: lvl, msg };
+      if (scope) entry.scope = scope;
+      Object.assign(entry, fields ?? {});
+      const line = safeLine(entry) + "\n";
+      try {
+        rotateIfNeeded();
+        fs.appendFileSync(file, line, { mode: 0o600 });
+      } catch { /* disk full, read-only… */ }
+      if (opts.stdout) process.stdout.write(line);
+    } catch { /* an unprintable value */ }
   };
 
   const make = (scope?: string): Logger => ({

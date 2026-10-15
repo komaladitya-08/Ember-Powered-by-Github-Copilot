@@ -8,16 +8,28 @@ export interface Point { x: number; y: number }
 /** Where Ember rests relative to the cursor tip (below-right, out of the way). */
 export const FOLLOW_OFFSET: Point = { x: 30, y: 34 };
 
-/** Critically-damped-ish spring that trails a moving target. */
+/** Damping that settles a spring of this stiffness as fast as possible without overshooting. */
+export function criticalDamping(stiffness: number): number {
+  return 2 * Math.sqrt(stiffness);
+}
+
+/** Critically-damped-ish spring that trails a moving target (a little overshoot reads as alive). */
 export class Spring2D {
   x: number;
   y: number;
   private vx = 0;
   private vy = 0;
+  private damping: number;
 
-  constructor(start: Point, private stiffness = 190, private damping = 24) {
+  constructor(start: Point, private stiffness = 190, private readonly baseDamping = 24) {
     this.x = start.x;
     this.y = start.y;
+    this.damping = baseDamping;
+  }
+
+  /** Calm mode (reduced motion): settle without overshoot or wobble; off restores the lively damping. */
+  setCriticallyDamped(on: boolean): void {
+    this.damping = on ? Math.max(this.baseDamping, criticalDamping(this.stiffness)) : this.baseDamping;
   }
 
   step(target: Point, dt: number): Point {

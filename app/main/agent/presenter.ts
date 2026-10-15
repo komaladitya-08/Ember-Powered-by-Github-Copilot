@@ -12,6 +12,43 @@ export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
 const KEEP_CHARS = 600;
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
+/** Answers longer than this don't fit the bubble: it offers "Read all". */
+export const LONG_ANSWER = 260;
+
+/** Markdown the model may use anyway, removed so the bubble and speech read naturally. */
+export function plainText(s: string): string {
+  return s
+    .replace(/```[\s\S]*?```/g, m => m.replace(/```\w*\n?/g, ""))
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+    .replace(/(^|\s)[*_]([^*_\n]+)[*_](?=\s|[.,!?]|$)/g, "$1$2")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "• ")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1 ($2)");
+}
+
+/**
+ * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
+ * `raw` is kept for the log by the caller.
+ */
+export function friendlyError(raw: string, errorType?: string): string {
+  const m = `${errorType ?? ""} ${raw}`;
+  if (/authenticat|unauthori[sz]ed|\b401\b|bad credentials|not signed in/i.test(m)) return "Copilot didn't accept the sign-in. Open settings to sign in again.";
+  if (/quota|rate.?limit|\b429\b|\b402\b|credits/i.test(m)) return "Copilot's usage limit was reached for now. Try again a bit later.";
+  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model/i.test(m)) return "The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).";
+  if (/policy|\b403\b|forbidden|seat|subscription/i.test(m)) return "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
+  if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|connection (is )?(disposed|closed|lost)|disconnected/i.test(m)) return "I can't reach Copilot right now. Check the network, then ask again.";
+  const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
+  return short ? `Copilot reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : "Copilot reported a problem.";
+}
+
+/**
+ * Who wrote the bubble last. Several presenters share one bubble (the
+ * conversation and each task); a presenter's timer only hides the bubble it
+ * still owns, so the conversation can't hide a guide step that came after it.
+ */
+export interface BubbleOwner { current: object | null }
 
 export const TOOL_STEPS: Record<string, string> = {
   set_appearance: "Changing how I look",
@@ -57,10 +94,15 @@ export class Presenter {
     private timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout },
     /** The character's name, shown as the speaker of answers. */
     private name: () => string = () => "Ember",
+    /** Shared by every presenter writing the same bubble. */
+    private owner: BubbleOwner = { current: null },
+    /** A finished answer, in full (the bubble shows only the start of a long one). */
+    private onFinalAnswer?: (text: string) => void,
   ) {}
 
   private apply(patch: Partial<EmberState>): void {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}) } };
+    if (patch.bubble) this.owner.current = this;
     this.push({ ...patch, ...(patch.bubble ? { bubble: this.state.bubble } : {}) });
   }
 
@@ -70,7 +112,43 @@ export class Presenter {
 
   private hideLater(ms: number): void {
     this.cancelHide();
-    this.hideTimer = this.timers.set(() => this.apply({ emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } }), ms);
+    this.hideTimer = this.timers.set(() => {
+      this.hideTimer = null;
+      // Someone else has the bubble now (a task's step, a question): leave it alone.
+      if (this.owner.current !== this) return;
+      this.apply({ emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } });
+    }, ms);
+  }
+
+  /** Something went wrong outside the session's own events (the runtime died, a send failed). */
+  fail(message: string): void {
+    this.cancelHide();
+    this.answering = false;
+    this.apply({
+      emotion: "sad", talking: false, gesture: "facepalm",
+      bubble: { visible: true, mood: "error", title: "Something went wrong", thought: message, step: null, streaming: false, actions: [{ id: "ui:settings", label: "Open settings" }] },
+    });
+    this.hideLater(12000);
+  }
+
+  /** A short message from Ember itself (not the model), with optional buttons; it goes away on its own. */
+  notice(n: { title: string; text: string; actions?: { id: string; label: string }[]; ms?: number }): void {
+    this.cancelHide();
+    this.answering = false;
+    this.apply({
+      emotion: "confused", talking: false,
+      bubble: { visible: true, mood: "error", title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
+    });
+    this.hideLater(n.ms ?? 12000);
+  }
+
+  /** The session went away mid-turn (restart, sign-out): nothing is left streaming or "thinking". */
+  reset(): void {
+    this.cancelHide();
+    const wasBusy = this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
+    this.answering = false;
+    this.answer = "";
+    if (wasBusy && this.owner.current === this) this.apply({ emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } });
   }
 
   /** The user asked something (voice or text). */
@@ -112,10 +190,16 @@ export class Presenter {
       case "assistant.intent":
         if (!this.answering && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
         break;
+      case "user.message":
+      case "assistant.turn_start":
+        // A new turn (a queued question, or the next step after a tool): its answer starts fresh.
+        this.answering = false;
+        this.answer = "";
+        break;
       case "assistant.reasoning_delta": {
         if (this.answering) break;
-        let prev = this.state.bubble.thought.startsWith("“") ? "" : this.state.bubble.thought;
-        if (this.thoughtBreak && prev && !/\s$/.test(prev)) prev += " ";
+        // After a tool ran, the next reasoning is a new thought: it replaces the last one instead of running on.
+        const prev = this.state.bubble.thought.startsWith("“") || this.thoughtBreak ? "" : this.state.bubble.thought;
         this.thoughtBreak = false;
         this.apply({ emotion: "thinking", bubble: { ...this.state.bubble, mood: "thinking", thought: (prev + String(d.deltaContent ?? "")).slice(-KEEP_CHARS), streaming: true } });
         break;
@@ -147,21 +231,27 @@ export class Presenter {
         break;
       case "assistant.message":
         // The whole answer, from its start (the bubble shows the tail only while it streams).
-        if (this.answering) this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(this.answer), streaming: false } });
+        if (this.answering) {
+          const full = plainText(this.answer.trim());
+          this.onFinalAnswer?.(full);
+          this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
+            actions: full.length > LONG_ANSWER ? [{ id: "ui:more", label: "Read all" }] : [] } });
+        }
         break;
       case "session.error":
         this.answering = false;
         this.apply({
           emotion: "sad", talking: false,
-          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: String(d.message ?? "Copilot reported an error."), step: null, streaming: false, actions: [] },
+          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined), step: null, streaming: false, actions: [] },
         });
         this.hideLater(12000);
         break;
       case "session.idle": {
         const aborted = d.aborted === true;
         this.apply({ talking: false, emotion: aborted ? "neutral" : this.answering ? "happy" : this.state.emotion, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const } : {}) } });
+        // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
         const chars = this.answer.length;
-        this.hideLater(Math.min(20000, 6000 + chars * 50));
+        this.hideLater(Math.min(30000, 6000 + chars * 50));
         this.answering = false;
         break;
       }

@@ -40,3 +40,25 @@ describe("environment", () => {
     expect(status(r, "session")).toBe("fail");
   });
 });
+
+describe("session detection without XDG_SESSION_TYPE (Xvfb, xrdp, ssh -X)", () => {
+  const env = (e: Record<string, string>) => inspectEnvironment({ env: e, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", x11: true });
+  it("an X display Ember can open is fine, whatever the session type says", () => {
+    const r = env({ DISPLAY: ":55" });
+    expect(r.checks.find(c => c.id === "session")).toMatchObject({ status: "ok", detail: "X11 on :55" });
+  });
+  it("WAYLAND_DISPLAY means Wayland even when the session type is unset", () => {
+    expect(env({ DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }).checks.find(c => c.id === "session")?.status).toBe("fail");
+  });
+  it("a display Ember can't open is reported as such (not as a Wayland problem)", () => {
+    const r = inspectEnvironment({ env: { DISPLAY: ":9" }, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", x11: false });
+    const c = r.checks.find(x => x.id === "session")!;
+    expect(c.status).toBe("fail");
+    expect(c.detail).not.toMatch(/GNOME on Xorg/);
+  });
+  it("shortcuts another app holds are named, with the way around them", () => {
+    const r = inspectEnvironment({ env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", shortcutsTaken: ["Control+Alt+X"] });
+    expect(r.checks.find(c => c.id === "shortcuts")).toMatchObject({ status: "warn" });
+    expect(r.checks.find(c => c.id === "shortcuts")?.detail).toMatch(/Ctrl\+Alt\+X.*handle/);
+  });
+});

@@ -3,7 +3,8 @@
  * and noise suppression stay off: they distort speech enough to miss the wake
  * word), resamples to 16 kHz (the AudioContext does it), and streams
  * 512-sample frames to the voice process. Also speaks Ember's replies (speechSynthesis). Nothing is
- * stored; the stream stops (and the mic is released) when Ember stops listening.
+ * stored; the stream stops (and the mic is released) when Ember stops listening. Without an audio
+ * port (listening off) the page only speaks.
  */
 
 import type { MicApi } from "../../shared/voice";
@@ -40,17 +41,27 @@ async function start(): Promise<void> {
   }
 }
 
+/** What Ember is saying. Main is told while it lasts (repeated: main stops believing it after a minute) and when it ends. */
+let saying: SpeechSynthesisUtterance | null = null;
+let stillSpeaking: ReturnType<typeof setInterval> | undefined;
+function setSaying(u: SpeechSynthesisUtterance | null): void {
+  saying = u;
+  clearInterval(stillSpeaking);
+  if (u) stillSpeaking = setInterval(() => api.speaking(true), 20_000);
+  api.speaking(!!u);
+}
+
 api.onSpeak(text => {
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || "en-US";
   u.rate = 1.05;
-  u.onstart = () => api.speaking(true);
-  u.onend = () => api.speaking(false);
-  u.onerror = () => api.speaking(false);
+  u.onstart = () => setSaying(u);
+  // A reply replaced by the next one ends after the next has started: only the current one counts.
+  u.onend = u.onerror = () => { if (saying === u) setSaying(null); };
   speechSynthesis.speak(u);
 });
-api.onHush(() => { speechSynthesis.cancel(); api.speaking(false); });
+api.onHush(() => { speechSynthesis.cancel(); setSaying(null); });
 
 window.addEventListener("beforeunload", () => {
   stream?.getTracks().forEach(t => t.stop());

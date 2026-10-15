@@ -48,6 +48,8 @@ export interface TaskCard {
   title: string;
   status: "running" | "waiting" | "done" | "failed" | "stopped";
   detail: string;
+  /** Buttons on the card ("Stop" while it works, "Close" on a failure); clicks come back as bubble actions with these ids. */
+  actions?: { id: string; label: string }[];
 }
 
 export interface EmberState {

@@ -16,9 +16,11 @@ const canvas = document.getElementById("face") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const $ = (id: string) => document.getElementById(id)!;
 
+let name = "Ember";
 function applySettings(s: Settings): void {
   character = characters[s.character] ?? characters.cinder;
-  $("name").textContent = NAMES[s.character] ?? "Ember";
+  name = NAMES[s.character] ?? "Ember";
+  $("name").textContent = name;
 }
 
 api.onInit(i => {
@@ -30,8 +32,11 @@ let shownActions = "";
 api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
-  $("line").textContent = s.status ?? (s.bubble.visible ? s.bubble.title : "Ready");
+  // An answer's title is the character's name, already shown above: the line shows what it said instead.
+  const said = s.bubble.visible ? (s.bubble.title === name ? s.bubble.thought : s.bubble.title) : "";
+  $("line").textContent = s.status ?? (said || "Ready");
   $("thought").textContent = s.bubble.visible ? s.bubble.thought : "";
+  busy = s.talking || s.bubble.streaming;
   const mic = $("mic");
   const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
   mic.hidden = !micShown;
@@ -60,8 +65,11 @@ let pointer = { x: -1, y: -1 };
 window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; });
 
 let last = performance.now();
+/** Talking or streaming: full frame rate; otherwise a small face doesn't need more than ~15 frames a second. */
+let busy = false;
 function frame(now: number): void {
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  if (!busy && now - last < 66) { requestAnimationFrame(frame); return; }
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
   last = now;
   const dpr = window.devicePixelRatio || 1;
   const size = canvas.clientWidth;

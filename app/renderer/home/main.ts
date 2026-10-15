@@ -1,4 +1,8 @@
-/** Home window: pick your Ember, size, setup checks and build facts. */
+/**
+ * Home window: first-run consent, pick your Ember, Copilot sign-in, the
+ * conversation, voice, apps & privacy, comfort & access, what Ember did,
+ * setup checks and build facts.
+ */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, VoiceStatus } from "../../shared/ipc";
@@ -37,6 +41,16 @@ const cards: Card[] = FACTORIES.map(make => {
   $("cards").appendChild(el);
   return { id: character.id, el, canvas, character, rig: new Rig() };
 });
+// A radio group is one Tab stop; the arrow keys move (and choose) within it.
+$("cards").addEventListener("keydown", e => {
+  const keys: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (!(e.key in keys) && e.key !== "Home" && e.key !== "End") return;
+  e.preventDefault();
+  const at = cards.findIndex(c => c.el === document.activeElement);
+  const next = e.key === "Home" ? 0 : e.key === "End" ? cards.length - 1 : (Math.max(0, at) + keys[e.key] + cards.length) % cards.length;
+  cards[next].el.focus();
+  cards[next].el.click();
+});
 
 let settings: Settings | null = null;
 function applySettings(s: Settings): void {
@@ -45,25 +59,39 @@ function applySettings(s: Settings): void {
   for (const c of cards) {
     const on = c.id === s.character;
     c.el.setAttribute("aria-checked", String(on));
+    c.el.tabIndex = on ? 0 : -1;
     if (on && changed) c.rig.setEmotion("happy");
     if (!on) c.rig.setEmotion("neutral");
   }
-  ($("size") as HTMLInputElement).value = String(s.size);
+  const size = $("size") as HTMLInputElement;
+  size.value = String(s.size);
+  size.setAttribute("aria-valuetext", `${s.size} pixels`);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
+  ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   $("size-out").textContent = `${s.size} px`;
-  // First run (or changed terms): the consent panel comes first and Start waits for "I agree".
+  // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it.
   const consented = s.consent.version >= CONSENT_VERSION;
   $("welcome").hidden = consented;
-  $("start").hidden = s.onboarded;
+  $("start-row").hidden = s.onboarded;
+  $("agree-row").hidden = consented;
   ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
+  $("start-hint").hidden = consented;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
+  renderPrivacy(s);
 }
 $("login").addEventListener("change", e => { void window.ember.updateSettings({ startAtLogin: (e.target as HTMLInputElement).checked }); });
-$("agree").addEventListener("change", e => { ($("start") as HTMLButtonElement).disabled = !(e.target as HTMLInputElement).checked; });
+$("agree").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  ($("start") as HTMLButtonElement).disabled = !on;
+  $("start-hint").hidden = on;
+});
+$("reduce-motion").addEventListener("change", e => { void window.ember.updateSettings({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 
 $("size").addEventListener("input", e => {
-  const v = Number((e.target as HTMLInputElement).value);
+  const input = e.target as HTMLInputElement;
+  const v = Number(input.value);
   $("size-out").textContent = `${v} px`;
+  input.setAttribute("aria-valuetext", `${v} pixels`);
   void window.ember.updateSettings({ size: v });
 });
 $("start").addEventListener("click", () => {
@@ -109,7 +137,7 @@ function render(status: Status): void {
     ? "Ember needs a couple of things fixed before it can work on this machine."
     : status.settings.onboarded
       ? "Ember is beside your cursor. Pick a different look or size any time."
-      : "Pick who keeps you company, then press Start.";
+      : "Read how Ember works, pick who keeps you company, then agree and press Start.";
 
   renderChecks(status.environment);
   renderAdmin(status.admin);
@@ -192,19 +220,34 @@ function describeEntry(e: ActivityEntry): { tag: string; cls: string; what: stri
       return null;
   }
 }
+const dayOf = (t: string) => new Date(t).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+let shownActivity = "";
 async function refreshActivity(): Promise<void> {
   const entries = await window.ember.activity().catch(() => [] as ActivityEntry[]);
-  $("activity").replaceChildren(...entries.flatMap(e => {
+  // Unchanged: leave the list alone (a screen reader keeps its place, the scroll position stays).
+  const key = JSON.stringify(entries.slice(0, 1).map(e => e.t)) + entries.length;
+  if (key === shownActivity) return;
+  shownActivity = key;
+  let day = "";
+  const items: HTMLLIElement[] = [];
+  for (const e of entries) {
     const d = describeEntry(e);
-    if (!d) return [];
+    if (!d) continue;
+    if (items.length >= 80) break;
+    // A heading for each day: the list covers up to a month.
+    if (dayOf(e.t) !== day) {
+      day = dayOf(e.t);
+      items.push(Object.assign(document.createElement("li"), { className: "day", textContent: day }));
+    }
     const li = document.createElement("li");
     const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
     const tag = Object.assign(document.createElement("span"), { className: `tag ${d.cls}`, textContent: d.tag });
     const what = Object.assign(document.createElement("span"), { className: "what", textContent: d.what });
     if (d.why) what.append(Object.assign(document.createElement("span"), { className: "why", textContent: d.why }));
     li.append(t, tag, what);
-    return [li];
-  }).slice(0, 80));
+    items.push(li);
+  }
+  $("activity").replaceChildren(...items);
 }
 void refreshActivity();
 setInterval(() => { if (document.visibilityState === "visible") void refreshActivity(); }, 3000);
@@ -247,11 +290,14 @@ requestAnimationFrame(frame);
 
 // ───── Copilot section ─────
 type AgentStatus = Awaited<ReturnType<EmberHomeApi["agentStatus"]>>;
+let signingIn = false;
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
   $("agent-text").textContent = a.detail;
-  $("sign-in").hidden = a.phase === "ready" || a.phase === "starting";
+  const notConnected = a.phase === "signed-out" || a.phase === "error";
+  $("sign-in").hidden = !notConnected || signingIn;
+  $("retry").hidden = !notConnected || signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
   $("models").hidden = a.phase !== "ready" || a.models.length === 0;
   const fill = (id: string, list: AgentStatus["models"], current: string | null) => {
@@ -275,18 +321,40 @@ for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] a
     void window.ember.updateSettings({ models: { ...current, [key]: value } });
   });
 }
-$("sign-in").addEventListener("click", () => { void window.ember.signIn(); });
+const signInMsg = (text: string, error = false) => {
+  const msg = $("sign-in-msg");
+  msg.hidden = !text;
+  msg.classList.toggle("error", error);
+  msg.textContent = text;
+};
+const setSigningIn = (on: boolean) => {
+  signingIn = on;
+  $("cancel-sign-in").hidden = !on;
+  void window.ember.agentStatus().then(renderAgent);
+};
+$("sign-in").addEventListener("click", () => {
+  setSigningIn(true);
+  window.ember.signIn().catch(err => { setSigningIn(false); signInMsg(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err), true); });
+});
+$("retry").addEventListener("click", () => { signInMsg("Checking…"); void window.ember.retrySignIn().then(() => signInMsg("")); });
+$("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
 $("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
 window.ember.onSignInProgress(p => {
   const msg = $("sign-in-msg");
-  msg.hidden = false;
   if (p.state === "code") {
-    msg.innerHTML = "";
-    msg.append("Enter ", Object.assign(document.createElement("code"), { textContent: p.userCode ?? "" }), ` at ${p.verificationUri} (your browser should open it).`);
-  } else {
-    msg.textContent = p.message ?? (p.state === "done" ? "Signed in." : "");
-    if (p.state === "done" && !p.message) setTimeout(() => { msg.hidden = true; }, 3000);
+    msg.hidden = false;
+    msg.classList.remove("error");
+    const code = Object.assign(document.createElement("code"), { textContent: p.userCode ?? "" });
+    const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy code" });
+    copy.addEventListener("click", () => { void navigator.clipboard.writeText(p.userCode ?? "").then(() => { copy.textContent = "Copied"; }); });
+    msg.replaceChildren("Enter ", code, " ", copy, ` at ${p.verificationUri} (your browser should open it). Waiting for you to approve…`);
+    return;
   }
+  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); return; }
+  setSigningIn(false);
+  if (p.state === "cancelled") { signInMsg(""); return; }
+  signInMsg(p.message ?? (p.state === "done" ? "Signed in." : ""), p.state === "error");
+  if (p.state === "done" && !p.message) setTimeout(() => signInMsg(""), 3000);
 });
 void window.ember.agentStatus().then(renderAgent);
 window.ember.onAgentStatus(renderAgent);
@@ -294,9 +362,69 @@ window.ember.onAgentStatus(renderAgent);
 void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);
 
+// ───── Conversation (this session only) ─────
+type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
+const WHO: Record<string, string> = { you: "You", ember: "Ember", task: "Task" };
+function renderConversation(entries: Entry[]): void {
+  const list = $("conversation");
+  list.replaceChildren(...entries.map(e => {
+    const li = document.createElement("li");
+    li.className = e.who;
+    const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
+    const t = Object.assign(document.createElement("time"), { textContent: time(e.t), dateTime: e.t });
+    const text = Object.assign(document.createElement("p"), { textContent: e.text });
+    li.append(who, t, text);
+    return li;
+  }));
+  list.lastElementChild?.scrollIntoView({ block: "nearest" });
+}
+void window.ember.conversation().then(renderConversation);
+window.ember.onConversation(renderConversation);
+// Main asks for a section ("Read all" on a long answer, connecting after setup): show it and move focus there.
+window.ember.onFocusSection(section => {
+  const h = document.getElementById(`${section}-h`) as HTMLElement | null;
+  if (!h) return;
+  h.scrollIntoView({ block: "start", behavior: "smooth" });
+  h.focus({ preventScroll: true });
+});
+
+// ───── Apps & privacy ─────
+function renderPrivacy(s: Settings): void {
+  const row = (label: string, remove: () => void, locked: boolean) => {
+    const li = document.createElement("li");
+    li.append(Object.assign(document.createElement("span"), { textContent: label }));
+    const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Remove", disabled: locked });
+    btn.setAttribute("aria-label", `Remove ${label}`);
+    btn.addEventListener("click", remove);
+    li.append(btn);
+    return li;
+  };
+  const grants = Object.entries(s.grants).filter(([, g]) => g === "act");
+  $("grants").replaceChildren(...(grants.length
+    ? grants.map(([app]) => row(app, () => {
+      const next = { ...s.grants };
+      delete next[app];
+      void window.ember.updateSettings({ grants: next });
+    }, managed.has("grants")))
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: "None: Ember asks before its first action in each app." })]));
+  $("never-look").replaceChildren(...s.privacy.neverLook.map(item => row(item, () => {
+    void window.ember.updateSettings({ privacy: { neverLook: s.privacy.neverLook.filter(x => x !== item) } });
+  }, false)));
+}
+$("never-look-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const input = $("never-look-add") as HTMLInputElement;
+  const v = input.value.trim();
+  if (!v || !settings) return;
+  if (!settings.privacy.neverLook.some(x => x.toLowerCase() === v.toLowerCase())) {
+    void window.ember.updateSettings({ privacy: { neverLook: [...settings.privacy.neverLook, v] } });
+  }
+  input.value = "";
+});
+
 // ───── Voice ─────
 const VOICE_TEXT: Record<string, string> = {
-  off: "Off", "needs-models": "Needs its speech models (one-time download)", downloading: "Downloading speech models…",
+  off: "Off", "needs-models": "Speech models aren't downloaded yet (a one-time download)", downloading: "Downloading speech models…",
   starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: "Microphone off (Ctrl+Alt+M to turn on)", error: "Not working",
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
@@ -315,14 +443,18 @@ function applyVoiceSettings(s: Status["settings"]): void {
 }
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
-  if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; return; }
+  // First time: the microphone note comes first, and focus moves to it so it is read and answered.
+  if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
   void window.ember.updateSettings({ wakeWord: on });
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
   void window.ember.updateSettings({ wakeWord: true, voice: { consent: true, speakerRejection: true } });
+  // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
+  if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
+  $("wake").focus();
 });
-$("consent-no").addEventListener("click", () => { $("consent").hidden = true; });
+$("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
 $("speak").addEventListener("change", e => { void window.ember.updateSettings({ speak: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => { void window.ember.downloadVoice(); });
 window.ember.onVoiceProgress(p => {

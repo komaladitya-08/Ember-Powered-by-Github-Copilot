@@ -21,10 +21,19 @@ body.fallback #line { white-space: normal; font-weight: 700; color: #fbeee3; }
 /* Without a compositor the card is Ember's only surface, so questions are answered here. */
 .actions { position: absolute; left: 112px; right: 12px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
 .actions[hidden] { display: none; }
-.actions button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; font-weight: 600; font-size: 12px; border: 1px solid rgba(255, 220, 190, 0.3); }
+.actions button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; font-weight: 600; font-size: 12px; border: 1px solid rgba(255, 220, 190, 0.6); }
 .actions button.primary { background: #b77bff; color: #1a0f0b; border-color: transparent; }
 .actions button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
-body.fallback.asking .thought { -webkit-line-clamp: 2; }
+/* Asking: the whole question, upright and at full contrast, never clamped. The buttons get their own
+   row at the bottom and the question scrolls above them if the card is too short for it. */
+body.fallback.asking { display: flex; flex-direction: column; }
+body.fallback.asking .handle { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; padding-bottom: 6px; }
+body.fallback.asking .text { align-self: stretch; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); }
+body.fallback.asking .thought {
+  display: block; -webkit-line-clamp: unset; overflow-y: auto; overscroll-behavior: contain;
+  font-style: normal; color: #fbeee3; scrollbar-width: thin; scrollbar-color: rgba(183, 123, 255, 0.7) transparent;
+}
+body.fallback.asking .actions { position: static; flex: none; margin: 0 12px 10px 112px; }
 /* Microphone: a small dot on Ember's face. Dim = waiting for "Hey Ember", bright = hearing you. */
 .mic { position: absolute; left: 38px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: #ff9a3d; opacity: 0.45; box-shadow: 0 0 0 2px #1a0f0b; }
 .mic[data-state="active"] { opacity: 1; animation: mic-pulse 0.9s ease-in-out infinite; }

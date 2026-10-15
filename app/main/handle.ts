@@ -51,19 +51,32 @@ export class HandleWindow {
     });
     this.win.setAlwaysOnTop(true, "screen-saver");
     this.win.setVisibleOnAllWorkspaces(true);
-    this.win.webContents.once("did-finish-load", () => {
+    this.win.webContents.on("did-finish-load", () => {
       const primary = screen.getPrimaryDisplay();
       const init: OverlayInit = { displayId: primary.id, bounds: primary.bounds, settings: this.settings(), fallback };
       this.win.webContents.send(OVERLAY.init, init);
+      if (this.last) this.win.webContents.send(OVERLAY.state, this.last);
       this.win.showInactive();
+    });
+    // The handle is the way to Quit and Stop when shortcuts are taken: a crashed one comes back.
+    this.win.webContents.on("render-process-gone", () => {
+      setTimeout(() => { if (!this.win.isDestroyed()) this.win.webContents.reload(); }, 500);
     });
     screen.on("display-metrics-changed", () => this.reposition());
     screen.on("display-removed", () => this.reposition());
     void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));
   }
 
+  private last: EmberState | null = null;
+
   sendState(state: EmberState): void {
+    this.last = state;
     if (!this.win.isDestroyed()) this.win.webContents.send(OVERLAY.state, state);
+  }
+
+  /** While Ember borrows the mouse, its own windows let clicks through (a borrowed click must never land on Ember). */
+  setClickThrough(on: boolean): void {
+    if (!this.win.isDestroyed()) this.win.setIgnoreMouseEvents(on);
   }
 
   sendSettings(s: Settings): void {

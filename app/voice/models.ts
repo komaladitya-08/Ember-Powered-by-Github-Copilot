@@ -57,8 +57,17 @@ export function modelPaths(root: string): ModelPaths {
 
 const marker = (root: string, m: ModelFile) => path.join(root, `.${m.target}.ok`);
 
+/** In place and verified against the pin it was checked with (a model whose pin changed is fetched again). */
+function verified(root: string, m: ModelFile): boolean {
+  try {
+    return fs.readFileSync(marker(root, m), "utf8").trim() === m.sha256 && fs.existsSync(path.join(root, m.target));
+  } catch {
+    return false;
+  }
+}
+
 export function modelsReady(root: string): boolean {
-  return VOICE_MODELS.every(m => fs.existsSync(marker(root, m)) && fs.existsSync(path.join(root, m.target)));
+  return VOICE_MODELS.every(m => verified(root, m));
 }
 
 export async function sha256File(file: string): Promise<string> {
@@ -72,20 +81,27 @@ export async function ensureModels(root: string, download: Downloader, progress:
   fs.mkdirSync(root, { recursive: true });
   let done = 0;
   for (const m of VOICE_MODELS) {
-    if (fs.existsSync(marker(root, m)) && fs.existsSync(path.join(root, m.target))) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
+    if (verified(root, m)) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
+    fs.rmSync(marker(root, m), { force: true });
     const tmp = path.join(root, `.download-${path.basename(m.url)}`);
     const base = done;
-    await download(m.url, tmp, bytes => progress(base + bytes, VOICE_MODELS_BYTES));
-    const got = await sha256File(tmp);
-    if (got !== m.sha256) {
-      fs.rmSync(tmp, { force: true });
-      throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
-    }
-    if (m.kind === "file") {
-      fs.renameSync(tmp, path.join(root, m.target));
-    } else {
-      fs.rmSync(path.join(root, m.target), { recursive: true, force: true });
-      await new Promise<void>((resolve, reject) => execFile("tar", ["-xjf", tmp, "-C", root], err => (err ? reject(err) : resolve())));
+    // Whatever happens, no partial download (or half-unpacked model) is left behind.
+    try {
+      await download(m.url, tmp, bytes => progress(base + bytes, VOICE_MODELS_BYTES));
+      const got = await sha256File(tmp);
+      if (got !== m.sha256) throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
+      if (m.kind === "file") {
+        fs.renameSync(tmp, path.join(root, m.target));
+      } else {
+        fs.rmSync(path.join(root, m.target), { recursive: true, force: true });
+        try {
+          await new Promise<void>((resolve, reject) => execFile("tar", ["-xjf", tmp, "-C", root], err => (err ? reject(err) : resolve())));
+        } catch (err) {
+          fs.rmSync(path.join(root, m.target), { recursive: true, force: true });
+          throw err;
+        }
+      }
+    } finally {
       fs.rmSync(tmp, { force: true });
     }
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
