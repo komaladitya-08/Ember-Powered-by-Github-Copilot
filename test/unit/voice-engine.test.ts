@@ -174,12 +174,12 @@ describe("VoiceEngine idle CPU", () => {
     const e = new VoiceEngine(b, () => undefined, { now: () => 0 });
     const quiet = new Float32Array(512);
     for (let i = 0; i < 100; i++) e.feed(quiet);
-    expect(spotCalls).toBe(32); // a second, then the spotter rests
+    expect(spotCalls).toBe(16); // half a second, then the spotter rests
     const loud = new Float32Array(512).fill(0.1);
     e.feed(loud);
-    expect(spotCalls).toBe(32 + 24 + 1); // the last 24 quiet frames, then the new one
+    expect(spotCalls).toBe(16 + 12 + 1); // the last 12 quiet frames, then the new one
     e.feed(loud);
-    expect(spotCalls).toBe(58);
+    expect(spotCalls).toBe(30);
   });
 
   it("rests in a steady noisy room too (a fan), and wakes up for speech", () => {
@@ -195,7 +195,7 @@ describe("VoiceEngine idle CPU", () => {
     for (let i = 0; i < 100; i++) e.feed(hum());
     expect(spotCalls - resting).toBe(0);
     e.feed(new Float32Array(512).fill(0.1)); // someone speaks
-    expect(spotCalls - resting).toBe(24 + 1);
+    expect(spotCalls - resting).toBe(12 + 1);
   });
 });
 

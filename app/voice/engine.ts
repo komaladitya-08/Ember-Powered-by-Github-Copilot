@@ -108,10 +108,14 @@ export class Ring {
   }
 }
 
-/** Frames of 32 ms. The spotter reports a phrase about 460 ms after it ends. */
-const MIC_REST_FRAMES = 32;
-const MIC_REPLAY_FRAMES = 24;
-const SPEAKERS_TAIL_FRAMES = 48;
+/**
+ * Frames of 32 ms. The spotter gets half a second of silence after sound (enough for its
+ * own delay), then rests and is reset when sound returns: a stream fed long silence after
+ * a detection stops recognizing the next "Hey Ember" (measured: 1 s of it misses wakes).
+ */
+const MIC_REST_FRAMES = 16;
+const MIC_REPLAY_FRAMES = 12;
+const SPEAKERS_TAIL_FRAMES = 16;
 /** Speakers silent this long before a wake can't have played "Hey Ember" (phrase + spotter delay). */
 const SPEAKERS_QUIET_MS = 1500;
 
@@ -170,8 +174,7 @@ export class VoiceEngine {
     const at = this.now();
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
-    // Nothing playing: nothing to spot (most of the speakers stream's CPU). The spotter keeps
-    // running for a while after the sound stops, since it reports a phrase about half a second late.
+    // Nothing playing: nothing to spot (most of the speakers stream's CPU).
     if (Math.sqrt(sum / Math.max(1, frame.length)) < (this.o.silenceRms ?? 0.0008)) {
       if (++this.monitorQuietRun > SPEAKERS_TAIL_FRAMES) return;
     } else {
@@ -192,8 +195,7 @@ export class VoiceEngine {
     if (++this.frames % 4 === 0) this.emit({ type: "level", rms });
 
     // In a silent room nobody is saying "Hey Ember": skip the spotter (most of the idle CPU)
-    // after a second of silence (longer than a pause inside "Hey… Ember", and than the spotter's
-    // own delay), and replay the last few quiet frames when sound returns.
+    // after half a second of silence, and replay the last few quiet frames when sound returns.
     // A steady fan or hum isn't speech either: compare with the room's noise floor (minimum
     // statistics, so continuous speech or TV, which dips between words, can't drag it up).
     const base = this.o.silenceRms ?? 0.0008;
