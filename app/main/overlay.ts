@@ -48,17 +48,21 @@ export class OverlayManager {
     this.follower = new Follower({ x: c.x + 60, y: c.y + 60 });
   }
 
+  private onAdded = (_e: unknown, d: Display) => { this.log.info("display.added", { id: d.id }); this.create(d); };
+  private onRemoved = (_e: unknown, d: Display) => { this.log.info("display.removed", { id: d.id }); this.destroy(d.id); };
+  private onMetrics = (_e: unknown, d: Display) => {
+    const o = this.overlays.get(d.id);
+    if (!o) return;
+    o.display = d;
+    o.win.setBounds(d.bounds);
+    o.win.webContents.send(OVERLAY.init, this.initFor(o));
+  };
+
   start(): void {
     for (const d of screen.getAllDisplays()) this.create(d);
-    screen.on("display-added", (_e, d) => { this.log.info("display.added", { id: d.id }); this.create(d); });
-    screen.on("display-removed", (_e, d) => { this.log.info("display.removed", { id: d.id }); this.destroy(d.id); });
-    screen.on("display-metrics-changed", (_e, d) => {
-      const o = this.overlays.get(d.id);
-      if (!o) return;
-      o.display = d;
-      o.win.setBounds(d.bounds);
-      o.win.webContents.send(OVERLAY.init, this.initFor(o));
-    });
+    screen.on("display-added", this.onAdded);
+    screen.on("display-removed", this.onRemoved);
+    screen.on("display-metrics-changed", this.onMetrics);
     this.timer = setInterval(() => this.tick(), 16);
     // Some shell surfaces (Activities, notifications) can rise above us; take the top back.
     this.topTimer = setInterval(() => this.raise(), 2000);
@@ -67,6 +71,9 @@ export class OverlayManager {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     if (this.topTimer) clearInterval(this.topTimer);
+    screen.off("display-added", this.onAdded);
+    screen.off("display-removed", this.onRemoved);
+    screen.off("display-metrics-changed", this.onMetrics);
     for (const id of [...this.overlays.keys()]) this.destroy(id);
   }
 

@@ -17,6 +17,7 @@ import { IPC, type Status, type SignInProgress, type AskContext } from "../share
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
+import { revive } from "./revive";
 import { openX11 } from "./x11";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
@@ -98,6 +99,7 @@ if (process.argv.includes("--doctor")) {
 }
 
 let pyatspiPresent: boolean | null = null;
+let pyatspiProbed = 0;
 /** Set once Ember has tried the X display, and once it knows which shortcuts it got. */
 let x11Reachable: boolean | undefined;
 let shortcutsTaken: string[] | undefined;
@@ -109,7 +111,9 @@ function probeAccessibility(): { enabled: boolean | null; pyatspi: boolean } {
     const out = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
     enabled = out.trim() === "true";
   } catch { /* no gsettings (not GNOME) */ }
-  if (pyatspiPresent === null) {
+  // Asked again (at most every 30 s) while it is missing: the user may have just installed it.
+  if (pyatspiPresent === null || (!pyatspiPresent && Date.now() - pyatspiProbed > 30_000)) {
+    pyatspiProbed = Date.now();
     try {
       execFileSync(pickPython(), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
       pyatspiPresent = true;
@@ -194,11 +198,19 @@ function start(): void {
   if (loaded.recoveredFrom) log.warn("settings.recovered", { backup: loaded.recoveredFrom });
   // Edits made by hand (never-look list, grants) are picked up while Ember runs.
   const unwatch = settings.watch();
-  settings.onProblem(msg => log.warn("settings.hand_edit_not_used", { msg }));
+  /** What went wrong with settings.json (shown in the settings window until the file reads fine). */
+  let settingsNotice: string | null = settings.lastProblem;
+  settings.onProblem(problem => {
+    settingsNotice = problem;
+    if (problem) log.warn("settings.hand_edit", { detail: problem });
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(IPC.settingsNotice, problem);
+  });
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
   const showHome = () => {
+    // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now.
+    if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     if (home && !home.isDestroyed()) {
       if (home.isMinimized()) home.restore();
       home.show();
@@ -207,6 +219,8 @@ function start(): void {
     }
     home = createHomeWindow();
     home.once("ready-to-show", () => log.info("window.home.shown"));
+    // A crashed settings page comes back (it may be the consent page on first run).
+    revive(home, reason => log.warn("window.home.renderer_gone", { reason }));
     // While the user works in settings, Ember waits beside the window instead of over it.
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     home.on("closed", () => {
@@ -251,6 +265,7 @@ function start(): void {
     settings: settings.get(),
     environment: readEnvironment(),
     logFile: log.file,
+    settingsNotice,
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
       neverLook: policy.neverLook },
@@ -362,13 +377,13 @@ function start(): void {
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
   const readLastAnswer = () => {
+    // The answer being read in full goes from the bubble (with or without a "Read all" button).
     if (lastState.bubble.visible && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     showHome();
     sendToHome(IPC.focusSection, "conversation");
   };
   /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
-    if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     showHome();
     const phase = agent?.getStatus().phase;
     if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
@@ -477,10 +492,17 @@ function start(): void {
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
     void killSwitch.pull(source);
     const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
-    setState({ emotion: "neutral", talking: false, status: null, bubble });
+    statusBy.listen = statusBy.mic = null;
+    setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
     hideIfStill(bubble, 3000);
   };
   let lastAskByVoice = false;
+  /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
+  const statusBy: { borrow: string | null; listen: string | null; mic: string | null } = { borrow: null, listen: null, mic: null };
+  const setStatus = (owner: keyof typeof statusBy, text: string | null) => {
+    statusBy[owner] = text;
+    setState({ status: statusBy.borrow ?? statusBy.listen ?? statusBy.mic });
+  };
   /** What Ember showed before a wake, put back if the wake turns out to be another word. */
   let beforeWake: Pick<EmberState, "emotion" | "bubble"> | null = null;
   const toggleMute = () => {
@@ -488,8 +510,8 @@ function start(): void {
     voice.setMuted(!voice.isMuted);
     // Remembered: a restart (or login) doesn't quietly open the microphone again.
     try { settings.update({ voice: { ...settings.get().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
-    setState({ status: voice.isMuted ? "Microphone off" : null });
-    if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setState({ status: null }); }, 2500);
+    setStatus("mic", voice.isMuted ? "Microphone off" : null);
+    if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setStatus("mic", null); }, 2500);
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
@@ -507,13 +529,19 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") setState({ emotion: "listening", status: "Listening for a follow-up…" });
-        if (!e.on) setState({ status: null });
+        if (e.on && e.reason === "follow-up") { setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (!e.on) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
-        // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…").
-        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) agent?.claimBubble();
-        if (!e.on && e.reason === "timeout") setState(e.window === "wake" || lastState.bubble.mood === "listening" ? { emotion: "neutral", bubble: IDLE_BUBBLE } : { emotion: "neutral" });
-        if (!e.on && e.reason === "rejected") setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
+        // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…"),
+        // with its own hide timer still running. What is put back gets a hide of its own.
+        if (!e.on && e.reason === "timeout") {
+          if (e.window === "wake" || lastState.bubble.mood === "listening") { agent?.claimBubble(); setState({ emotion: "neutral", bubble: IDLE_BUBBLE }); } else setState({ emotion: "neutral" });
+        }
+        if (!e.on && e.reason === "rejected") {
+          agent?.claimBubble();
+          setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
+          if (beforeWake?.bubble.visible && !beforeWake.bubble.actions.length) hideIfStill(beforeWake.bubble, 6000);
+        }
         break;
       case "speech":
         if (e.on) agent?.claimBubble();
@@ -703,12 +731,21 @@ function start(): void {
   settings.onChange(autostart);
   if (process.argv.includes("--autostart")) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
+  /** How connecting Copilot ended (waits while it is still starting, up to 20 s). */
+  const settledPhase = async () => {
+    const t0 = Date.now();
+    await new Promise(r => setTimeout(r, 500));
+    for (;;) {
+      const phase = agent?.getStatus().phase;
+      if (phase !== "starting" || Date.now() - t0 > 20_000) return phase;
+      await new Promise(r => setTimeout(r, 250));
+    }
+  };
   settings.onChange(s => {
     if (s.onboarded && !wasOnboarded) {
       // Setup finished: get out of the way so the user sees Ember say hello. If Copilot isn't
       // connected, the window stays and shows how to connect (asking would only say "not connected").
-      setTimeout(() => {
-        const phase = agent?.getStatus().phase;
+      void settledPhase().then(phase => {
         if (phase === "signed-out" || phase === "error") {
           // Settings stays open at Copilot; Ember says hello once it closes, not over it.
           sendToHome(IPC.focusSection, "copilot");
@@ -720,7 +757,7 @@ function start(): void {
           return;
         }
         greet();
-      }, 500);
+      });
     }
     wasOnboarded = s.onboarded;
   });
@@ -751,7 +788,7 @@ function start(): void {
     const x11 = process.env.DISPLAY ? openX11() : null;
     x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
     const env = readEnvironment();
-    const compositing = x11 ? x11.hasCompositor() : false;
+    let compositing = x11 ? x11.hasCompositor() : false;
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
       const p = x11?.pointer();
@@ -771,16 +808,43 @@ function start(): void {
       failing: env.checks.filter(c => c.status !== "ok").map(c => c.id),
     });
 
-    if (compositing) {
-      overlay = new OverlayManager(() => settings.get(), log.child("overlay"), cursor);
+    const makeOverlay = (hidden = false) => {
+      const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor);
       // GNOME's "Animations" switch off counts as asking for calm mode.
-      try { overlay.systemReducedMotion = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { /* not GNOME */ }
-      overlay.avoid = () => handle?.bounds ?? null;
-      overlay.start();
-    } else {
-      log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
+      try { o.systemReducedMotion = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { /* not GNOME */ }
+      o.avoid = () => handle?.bounds ?? null;
+      o.setState(lastState);
+      o.setHidden(hidden);
+      o.setPaused(followPaused);
+      o.start();
+      overlay = o;
+    };
+    /** The pill with a compositor, the card without one (transparent windows paint black then). */
+    const makeHandle = () => {
+      const old = handle;
+      handle = new HandleWindow(() => settings.get(), !overlay);
+      handle.sendState(lastState);
+      old?.destroy();
+    };
+    if (compositing) makeOverlay();
+    else log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
+    makeHandle();
+    // The compositor can go and come back (GNOME Shell restarting, another window manager): Ember follows,
+    // so its full-screen overlay never turns the desktop black.
+    if (x11) {
+      const watch = setInterval(() => {
+        const now = x11.hasCompositor();
+        if (now === compositing) return;
+        compositing = now;
+        log.warn("overlay.compositor_changed", { compositing: now });
+        const hidden = overlay?.isHidden() ?? false;
+        if (now) makeOverlay(hidden); else { overlay?.stop(); overlay = null; }
+        makeHandle();
+        presenceChanged();
+      }, 2000);
+      watch.unref?.();
+      app.on("will-quit", () => clearInterval(watch));
     }
-    handle = new HandleWindow(() => settings.get(), !compositing);
 
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
     const shortcuts: Record<string, () => void> = {
@@ -860,7 +924,7 @@ function start(): void {
       // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
       handle?.setClickThrough(driving);
       deskViewRef?.setDriving(driving);
-      setState({ status: driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null });
+      setStatus("borrow", driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null);
     };
     const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
     borrowRef = borrow;
@@ -943,8 +1007,10 @@ function start(): void {
       const found = provider ? null : await resolveToken(tokens);
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       currentToken = found?.token ?? null;
-      // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember.
-      await agent?.start(currentToken, found?.source, "auto");
+      // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
+      // (then "Sign in" may use it at once, so it isn't counted as the token in use).
+      const phase = await agent?.start(currentToken, found?.source, "auto");
+      if (phase === "signed-out") currentToken = null;
     };
     void startBrain();
     settings.onChange(() => { void startBrain(); });

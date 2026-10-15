@@ -37,6 +37,8 @@ export const IPC = {
   presence: "ember:presence",
   setPresence: "ember:set-presence",
   presenceChanged: "ember:presence-changed",
+  /** The settings file couldn't be used as it is (a hand edit that isn't valid JSON): what Ember did about it. */
+  settingsNotice: "ember:settings-notice",
   quit: "ember:quit",
 } as const;
 
@@ -60,6 +62,8 @@ export interface Status {
   settings: Settings;
   environment: EnvReport;
   logFile: string;
+  /** Set when settings.json couldn't be used as it was (see IPC.settingsNotice). */
+  settingsNotice: string | null;
   /** The administrator's policy in force, if any. */
   admin: {
     source: string | null;
@@ -121,6 +125,7 @@ export interface EmberHomeApi {
   presence(): Promise<Presence>;
   setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;
   onPresence(fn: (p: Presence) => void): () => void;
+  onSettingsNotice(fn: (notice: string | null) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   cancelSignIn(): Promise<void>;

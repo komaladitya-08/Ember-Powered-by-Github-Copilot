@@ -63,8 +63,8 @@ export class HandleWindow {
     });
     // The handle is the way to Quit and Stop when shortcuts are taken: a crashed one comes back.
     revive(this.win);
-    screen.on("display-metrics-changed", () => this.reposition());
-    screen.on("display-removed", () => this.reposition());
+    screen.on("display-metrics-changed", this.reposition);
+    screen.on("display-removed", this.reposition);
     void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));
   }
 
@@ -106,9 +106,16 @@ export class HandleWindow {
     return { x: wa.x + wa.width - size.width - MARGIN, y: wa.y + wa.height - size.height - MARGIN };
   }
 
-  private reposition(): void {
+  /** Gone for good (Ember switches between the pill and the card when the compositor comes or goes). */
+  destroy(): void {
+    screen.off("display-metrics-changed", this.reposition);
+    screen.off("display-removed", this.reposition);
+    if (!this.win.isDestroyed()) this.win.destroy();
+  }
+
+  private reposition = (): void => {
     if (this.win.isDestroyed()) return;
     const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : PILL;
     this.win.setBounds({ ...size, ...this.corner(size) });
-  }
+  };
 }

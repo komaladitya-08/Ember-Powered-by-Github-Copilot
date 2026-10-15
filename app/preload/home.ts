@@ -33,6 +33,7 @@ const api: EmberHomeApi = {
   presence: () => ipcRenderer.invoke(IPC.presence),
   setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),
   onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
+  onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
   quit: () => ipcRenderer.invoke(IPC.quit),
 };
 

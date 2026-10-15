@@ -219,8 +219,17 @@ function render(status: Status): void {
     return [dt, dd];
   }));
   $("about-note").textContent = `Ember ${status.appVersion}`;
+  renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
 }
+
+/** A settings file Ember couldn't use as it was (a hand edit): what happened and where the user's copy is. */
+function renderSettingsNotice(notice: string | null): void {
+  const el = $("settings-notice");
+  el.hidden = !notice;
+  el.textContent = notice ?? "";
+}
+window.ember.onSettingsNotice(renderSettingsNotice);
 
 // ───── Organisation policy ─────
 let managed = new Set<string>();

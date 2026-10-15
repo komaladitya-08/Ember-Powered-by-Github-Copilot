@@ -115,20 +115,50 @@ describe("settings keep what the user set (review fixes)", () => {
     const s = new SettingsStore(file);
     s.load();
     s.update({ consent: { version: 99, at: "now" }, onboarded: true, privacy: { neverLook: ["payroll"] }, wakeWord: false });
-    const problems: string[] = [];
+    const problems: (string | null)[] = [];
     s.onProblem(m => problems.push(m));
-    const broken = fs.readFileSync(file, "utf8").replace('"payroll"', '"payroll", "salary",');
+    // A quote missing: not JSON even read leniently.
+    const broken = fs.readFileSync(file, "utf8").replace('"payroll"', '"payroll", "salary');
     fs.writeFileSync(file, broken);
     touch(file);
     expect(s.reloadIfChanged()).toBe(false);
     expect(s.get()).toMatchObject({ onboarded: true, wakeWord: false, privacy: { neverLook: ["payroll"] } });
     expect(fs.readFileSync(file, "utf8")).toBe(broken);
     expect(problems[0]).toMatch(/isn't valid JSON/);
-    // Fixed by hand: picked up.
-    fs.writeFileSync(file, broken.replace('"salary",', '"salary"'));
+    // Ember's next save keeps the user's version beside the file first.
+    s.update({ size: 72 });
+    expect(fs.readdirSync(dir).some(f => f.startsWith("settings.json.bad-") && fs.readFileSync(path.join(dir, f), "utf8") === broken)).toBe(true);
+    // Fixed by hand: picked up, and the problem is cleared.
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), privacy: { neverLook: ["payroll", "salary"] } }));
     touch(file, 9000);
     expect(s.reloadIfChanged()).toBe(true);
     expect(s.get().privacy.neverLook).toEqual(["payroll", "salary"]);
+    expect(problems.at(-1)).toBeNull();
+  });
+
+  it("a trailing comma or a comment in a hand edit is read anyway (and the file tidied)", () => {
+    const dir = tmp();
+    const file = path.join(dir, "settings.json");
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ privacy: { neverLook: ["payroll"] } });
+    const edited = fs.readFileSync(file, "utf8").replace('"payroll"', '"payroll", "salary", // added by hand\n');
+    fs.writeFileSync(file, edited);
+    touch(file);
+    expect(s.reloadIfChanged()).toBe(true);
+    expect(s.get().privacy.neverLook).toEqual(["payroll", "salary"]);
+    expect(() => JSON.parse(fs.readFileSync(file, "utf8"))).not.toThrow();
+  });
+
+  it("at start-up, a file that can't be read at all still gives back its never-look list", () => {
+    const dir = tmp();
+    const file = path.join(dir, "settings.json");
+    fs.writeFileSync(file, '{ "consent": { "version": 2, "privacy": { "neverLook": ["payroll", "Thunderbird"] }, "size": 70 ');
+    const s = new SettingsStore(file);
+    const r = s.load();
+    expect(r.recoveredFrom).toBeTruthy();
+    expect(s.get().privacy.neverLook).toEqual(["payroll", "Thunderbird"]);
+    expect(s.lastProblem).toMatch(/defaults/);
   });
 
   it("a deleted file is written again from the settings in use, not from defaults", () => {

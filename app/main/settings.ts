@@ -97,6 +97,49 @@ export function repairSettings(partial: Record<string, unknown>): Settings {
   return SettingsSchema.parse(out);
 }
 
+/**
+ * JSON with the slips people make editing by hand (comments, trailing commas) read anyway; undefined
+ * when even that fails.
+ */
+export function lenientJson(raw: string): unknown {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '"') {
+      // A string, copied as it is (escapes included).
+      let j = i + 1;
+      while (j < raw.length && raw[j] !== '"') j += raw[j] === "\\" ? 2 : 1;
+      out += raw.slice(i, j + 1);
+      i = j;
+    } else if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && raw[i + 1] === "*") {
+      const end = raw.indexOf("*/", i + 2);
+      i = end < 0 ? raw.length : end + 1;
+    } else if (c === ",") {
+      // A comma with nothing after it (but space and comments) before the closing bracket.
+      let j = i + 1;
+      for (;;) {
+        while (j < raw.length && /\s/.test(raw[j])) j++;
+        if (raw.startsWith("//", j)) { while (j < raw.length && raw[j] !== "\n") j++; continue; }
+        if (raw.startsWith("/*", j)) { const end = raw.indexOf("*/", j + 2); j = end < 0 ? raw.length : end + 2; continue; }
+        break;
+      }
+      if (raw[j] !== "}" && raw[j] !== "]") out += c;
+    } else out += c;
+  }
+  try { return JSON.parse(out); } catch { return undefined; }
+}
+
+/** The never-look entries of a file that can't be read at all: the one list worth saving from it. */
+function salvageNeverLook(raw: string): string[] | null {
+  const m = /"neverLook"\s*:\s*\[([\s\S]*?)\]/.exec(raw);
+  if (!m) return null;
+  const list = [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(x => { try { return JSON.parse(`"${x[1]}"`) as string; } catch { return null; } });
+  return list.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 100).slice(0, 100);
+}
+
 export interface LoadResult {
   settings: Settings;
   /** Set when the file existed but could not be used; the bad file is kept beside it. */
@@ -108,7 +151,9 @@ export class SettingsStore {
   private current: Settings = DEFAULT_SETTINGS;
   private effective: Settings = DEFAULT_SETTINGS;
   private listeners = new Set<(s: Settings) => void>();
-  private problemListeners = new Set<(msg: string) => void>();
+  private problemListeners = new Set<(msg: string | null) => void>();
+  /** A problem was reported and not yet cleared by a file that reads fine. */
+  private troubled = false;
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
   private seen: number | null = null;
   /** A change applied in memory whose save is due shortly (a slider being dragged). */
@@ -153,36 +198,63 @@ export class SettingsStore {
       return { settings: this.current };
     }
     let json: unknown;
+    let strict = true;
     try {
       json = JSON.parse(raw);
     } catch {
-      if (running) {
-        this.problem(`${this.file} isn't valid JSON, so Ember keeps the settings it has until the file is fixed.`);
+      strict = false;
+      // A hand edit with a slip (a trailing comma, a comment) is read anyway.
+      json = lenientJson(raw);
+      if (running && json === undefined) {
+        // Ember's next save would replace it: the user's file is kept beside it first.
+        const backup = this.keep();
+        this.problem(`settings.json isn't valid JSON, so Ember keeps the settings it was using until it is fixed${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`);
         return { settings: this.current };
       }
-      json = undefined;
     }
     const parsed = SettingsSchema.safeParse(json);
-    if (parsed.success) {
+    if (parsed.success && strict) {
       this.current = parsed.data;
+      if (this.troubled) this.problem(null);
       return { settings: this.current };
     }
-    // Keep what is valid (down to single entries), reset only what isn't.
-    this.current = json && typeof json === "object" && !Array.isArray(json) ? repairSettings(json as Record<string, unknown>) : DEFAULT_SETTINGS;
-    const backup = `${this.file}.bad-${Date.now()}`;
-    try { fs.copyFileSync(this.file, backup); } catch { /* best effort */ }
+    // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
+    // read at all, at least the never-look list.
+    if (parsed.success) this.current = parsed.data;
+    else if (json && typeof json === "object" && !Array.isArray(json)) this.current = repairSettings(json as Record<string, unknown>);
+    else {
+      const neverLook = salvageNeverLook(raw);
+      this.current = neverLook ? { ...DEFAULT_SETTINGS, privacy: { neverLook } } : DEFAULT_SETTINGS;
+    }
+    const backup = this.keep();
     // A full disk must not stop Ember starting: the repaired settings are used from memory.
     try { this.save(this.current); } catch { /* kept in memory; saved with the next change */ }
-    if (running) this.problem(`Some values in ${this.file} weren't valid and were reset; your file was kept as ${backup}.`);
-    return { settings: this.current, recoveredFrom: backup };
+    this.problem(parsed.success
+      ? `settings.json had a small mistake (a comma or comment JSON doesn't allow); Ember read it anyway and tidied the file${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`
+      : `Some of settings.json couldn't be used, so those settings went back to their defaults${backup ? `; your version is saved as ${path.basename(backup)}` : ""}.`);
+    return { settings: this.current, recoveredFrom: backup ?? undefined };
   }
 
-  private problem(msg: string): void {
+  /** A copy of the file as it is now (once per version of it), before Ember writes over it. */
+  private kept: number | null = null;
+  private keep(): string | null {
+    const m = this.mtime();
+    if (m !== null && m === this.kept) return null;
+    const backup = `${this.file}.bad-${Date.now()}`;
+    try { fs.copyFileSync(this.file, backup); this.kept = m; return backup; } catch { return null; }
+  }
+
+  private problem(msg: string | null): void {
+    this.troubled = msg !== null;
+    this.lastProblem = msg;
     for (const fn of this.problemListeners) { try { fn(msg); } catch { /* a listener's own problem */ } }
   }
 
-  /** Told when a hand edit couldn't be used (the settings in use are kept). */
-  onProblem(fn: (msg: string) => void): () => void {
+  /** What went wrong with the file last (null once it reads fine again). */
+  lastProblem: string | null = null;
+
+  /** Told when the file couldn't be used as it was (the settings in use are kept), and null once it reads fine. */
+  onProblem(fn: (msg: string | null) => void): () => void {
     this.problemListeners.add(fn);
     return () => this.problemListeners.delete(fn);
   }

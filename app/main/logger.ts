@@ -79,9 +79,9 @@ export function createLogger(opts: LoggerOptions): Logger {
     // Logging must never take the app down, whatever it is given.
     try {
       if (ORDER[lvl] < ORDER[level]) return;
-      const entry: Fields = { t: now().toISOString(), level: lvl, msg };
+      // A field can't take the place of the time, level, event name or scope.
+      const entry: Fields = { ...(fields ?? {}), t: now().toISOString(), level: lvl, msg };
       if (scope) entry.scope = scope;
-      Object.assign(entry, fields ?? {});
       const line = safeLine(entry) + "\n";
       if (toStderr) process.stderr.write(line);
       else {
