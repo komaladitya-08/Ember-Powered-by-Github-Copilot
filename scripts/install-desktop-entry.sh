@@ -8,6 +8,16 @@ apps="$HOME/.local/share/applications"
 autostart="$HOME/.config/autostart"
 icon="$repo/assets/ember.svg"
 
+# Quotes one Exec argument per the Desktop Entry spec: wrap in double quotes,
+# backslash-escape " ` $ and \ inside, then double every backslash (the
+# value is also a string, so its own escapes apply on top).
+exec_arg() {
+  local a=${1//\\/\\\\}
+  a=${a//\"/\\\"}; a=${a//\`/\\\`}; a=${a//\$/\\\$}
+  a=${a//\\/\\\\}
+  printf '"%s"' "$a"
+}
+
 if [ "${1:-}" = "--remove" ]; then
   rm -f "$apps/ember-dev.desktop" "$autostart/ember-dev.desktop"
   echo "Removed Ember (dev) launchers."
@@ -20,7 +30,7 @@ cat > "$apps/ember-dev.desktop" <<DESKTOP
 Type=Application
 Name=Ember (dev)
 Comment=Your cursor companion, powered by GitHub Copilot
-Exec=$repo/node_modules/.bin/electron $repo --show-settings
+Exec=$(exec_arg "$repo/node_modules/.bin/electron") $(exec_arg "$repo") --show-settings
 Icon=$icon
 Terminal=false
 Categories=Utility;Accessibility;

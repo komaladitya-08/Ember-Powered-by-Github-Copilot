@@ -136,8 +136,15 @@ export class Conductor {
     this.session = null;
   }
 
-  /** Forget the conversation and start a new one next time. */
-  forget(): void {
+  /**
+   * Forget the conversation: delete it from the runtime's store and drop the
+   * saved id, so the next start begins a fresh one (e.g. after sign-out, so
+   * another account never resumes this one's conversation).
+   */
+  async forget(): Promise<void> {
+    const id = this.session?.sessionId ?? this.readState();
+    await this.stop();
+    if (id) await this.deps.client.deleteSession(id).catch(err => this.deps.log.warn("conductor.delete_failed", { err }));
     try { fs.rmSync(this.deps.stateFile); } catch { /* none */ }
   }
 

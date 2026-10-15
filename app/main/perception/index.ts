@@ -87,6 +87,11 @@ export class Perception {
         ? (seen.window?.bounds ?? { x: seen.x11Window!.x, y: seen.x11Window!.y, width: seen.x11Window!.width, height: seen.x11Window!.height })
         : this.o.screenBounds();
       const mask = await this.privateWindows();
+      if (mask === null) {
+        // Can't tell where private windows are, so no screenshot (fail closed).
+        this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
+        return { ...seen, text: `${text}\n(No screenshot: Ember couldn't check for private windows.)`, capture: null };
+      }
       capture = await captureRect(this.o.x11, rect, {
         mask,
         hideOverlay: this.o.hideOverlay,
@@ -103,12 +108,32 @@ export class Perception {
   }
 
   /** Bounds of every visible window on the never-look list (blacked out in screenshots). */
-  private async privateWindows(): Promise<Bounds[]> {
+  /**
+   * Both sources are used: X11 sees every top-level window (even apps that expose
+   * nothing over accessibility, e.g. started before it was turned on), AT-SPI
+   * knows app names. null means neither could be listed: the caller must not
+   * capture (fail closed) while anything is on the never-look list.
+   */
+  async privateWindows(): Promise<Bounds[] | null> {
+    const list = this.o.neverLook();
+    if (!list.some(i => i.trim())) return [];
+    let x11: Bounds[] | null = null;
+    try {
+      x11 = (this.o.x11?.clientWindows() ?? [])
+        .filter(w => isNeverLook({ app: w.wmClass, name: w.title }, list))
+        .map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
+      if (!this.o.x11) x11 = null;
+    } catch (err) {
+      this.o.log.warn("perception.x11_windows_failed", { err });
+    }
+    let atspi: Bounds[] | null = null;
     try {
       const { windows } = await this.o.sidecar.listWindows();
-      return windows.filter(w => w.bounds && isNeverLook(w, this.o.neverLook())).map(w => w.bounds!);
-    } catch {
-      return [];
+      atspi = windows.filter(w => w.bounds && isNeverLook(w, list)).map(w => w.bounds!);
+    } catch (err) {
+      this.o.log.warn("perception.atspi_windows_failed", { err });
     }
+    if (x11 === null && atspi === null) return null;
+    return [...(x11 ?? []), ...(atspi ?? [])];
   }
 }
