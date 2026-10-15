@@ -54,6 +54,12 @@ const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling"
  */
 const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name]);
 
+// An installed Ember never opens a debugging port (anyone on the machine could drive it through one).
+if (app.isPackaged && process.argv.some(a => /^--(remote-debugging-(port|pipe)|inspect(-brk|-port)?)\b/.test(a))) {
+  process.stderr.write("Ember doesn't start with debugging switches.\n");
+  app.exit(2);
+}
+
 // Chromium on Linux speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
 if (process.platform === "linux") app.commandLine.appendSwitch("enable-speech-dispatcher");
 
@@ -177,7 +183,8 @@ async function runDoctor(): Promise<void> {
   try { const st = fs.statSync(path.join(path.dirname(process.execPath), "chrome-sandbox")); suidHelper = st.uid === 0 && (st.mode & 0o4000) !== 0; } catch { /* none */ }
   const checks = doctorChecks({
     env, compositor: x11 ? x11.hasCompositor() : null, xtest: x11 ? !!xin : null,
-    speechDispatcher: which("spd-say"), microphones,
+    // What Chromium speaks through (spd-say isn't packaged on RHEL 8, so it can't be the test).
+    speechDispatcher: which("speech-dispatcher") || ["/usr/lib64/libspeechd.so.2", "/usr/lib/x86_64-linux-gnu/libspeechd.so.2"].some(f => fs.existsSync(f)), microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
     runtime: runtime.exists, auth, admin, desk: DeskManager.available(), sandbox: { userNamespaces, suidHelper },
   });
