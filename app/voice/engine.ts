@@ -13,8 +13,9 @@
  * is needed ("Thanks" ends it), for a voice as loud as the one that woke Ember.
  * While Ember itself is speaking, "Hey Ember" that its speakers' own stream didn't
  * say cuts in: Ember is hushed and listens (without that stream, only "Hey Ember,
- * stop" counts); it or "Ember, stop" is ignored when it comes out of the speakers;
- * a listening window waits until Ember has finished speaking.
+ * stop" counts; what was said over Ember's voice is only heard for a stop, unless
+ * the request went on once Ember was quiet); it or "Ember, stop" is ignored when it
+ * comes out of the speakers; a listening window waits until Ember has finished speaking.
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
@@ -190,11 +191,11 @@ export function saidWakeStop(transcript: string): boolean {
 
 /**
  * What was heard right after cutting in on Ember, said over its voice: a few words with "stop", "quiet" or "that's
- * enough" in them are a stop as the recognizer garbled it ("Ever be quiet.", "I'm not quite there at all."), not a
- * request ("Is there enough disk space?" is one).
+ * enough" in them are a stop as the recognizer garbled it ("Ever be quiet.", "Be quite."), not a request ("Is there
+ * enough disk space?" is one). "Quite" counts only where nothing follows it: "That's not quite right." isn't a stop.
  */
 export function heardStopWord(text: string): boolean {
-  return text.trim().split(/\s+/).length <= 6 && /\b(stop\w*|quiet|quite|hush|shut|that'?s\s+enough)\b|^\W*enough\b/i.test(text);
+  return text.trim().split(/\s+/).length <= 6 && /\b(stop\w*|quiet|quite(?=\W*$)|hush|shut|that'?s\s+enough)\b|^\W*enough\b/i.test(text);
 }
 
 /**
@@ -295,6 +296,16 @@ const STOP_LEAD_FRAMES = 10;
 /** "Amber, stop" heard mid-sentence waits this long at most for the speaker's pause (ms). */
 const NAMED_STOP_WAIT_MS = 600;
 /**
+ * After cutting in on Ember, what the microphone heard while Ember's voice still reached it (until its speakers' stream
+ * went quiet, plus the microphone's lag and 64 ms) counts only for a stop: the recognizer mixes Ember's words into a
+ * phrase said over them ("Hey Ember, stop." came out as "Stiles 1440", "Hey Ember, pause." as "Paul's hunt."). What
+ * was heard is sent if the speaker's own voice (within 6 dB of its loudest, see QUIET_RATIO) went on for 2 frames
+ * after that; otherwise Ember, hushed, listens for the request again (once: what it hears next is sent). Measured on
+ * cut-ins at echo 0.05–0.25: none of 45 stops garbled into a request had a frame of it; 81 of 89 requests had 2.
+ */
+const OVER_EMBER_MS = 64;
+const AFTER_HUSH_FRAMES = 2;
+/**
  * A request ends when the speaker's voice does, even while other people talk on (the VAD hears their speech
  * too). Loudness is the median frame of a stretch (a TV's loud syllables don't count, nor do the speaker's own
  * short pauses): the request's own is its loudest 0.3 s (9 frames) in this window, the wake phrase's included.
@@ -369,11 +380,12 @@ const LAG_MIN_CORRELATION = 0.5;
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
  * `checkAt`: when the wake's transcript check runs (null: none pending), for `keyword`; `afterQuestion`: a follow-up
  * to an answer that asked something ("Okay." is a yes then, not the end of the conversation); `bargeIn`: a wake said
- * while Ember spoke (what it heard first has Ember's own words around it).
+ * while Ember spoke (what it heard first has Ember's own words around it); `held`: what it heard over Ember's voice
+ * wasn't sent (see AFTER_HUSH_FRAMES).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean };
 
 /** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
 type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
@@ -435,6 +447,8 @@ export class VoiceEngine {
   /** Frames of silence (the room's own noise) in a row, and where in the segment the last tenth of a second of it was. */
   private silentRun = 0;
   private silentAt = -1;
+  /** After cutting in: frames of the speaker's own voice in the segment under way since Ember's voice stopped reaching the microphone. */
+  private afterHush = 0;
   /** The loudness of the last wake's request (a follow-up must come near it), and whether the last request came from a follow-up (it gets none of its own). */
   private voice = 0;
   /** The room had sound before the last wake (others talking, a TV; not silence or a steady fan). */
@@ -902,6 +916,8 @@ export class VoiceEngine {
       else if (near && !this.pausedSinceVoice) this.quietFor = 0;
       else if (!near && this.hushRun < SILENT_FRAMES) this.quietFor++;
       if (this.hushRun >= SILENT_FRAMES) { this.pauseAt = n; this.pausedSinceVoice = true; this.hushed++; }
+      // After cutting in, the speaker's voice once Ember's no longer reaches the microphone (it starts over if Ember's does again).
+      if (this.mode.kind === "listening" && this.mode.bargeIn) this.afterHush = this.fedAt - this.monitorSoundAt <= this.micLag + OVER_EMBER_MS ? 0 : this.afterHush + (voice ? 1 : 0);
     }
     for (const seg of segments) this.handleSegment(this.trim(seg, false));
     if (segments.length && !speaking) this.endSegment();
@@ -934,6 +950,7 @@ export class VoiceEngine {
     this.hushed = 0;
     this.silentRun = 0;
     this.silentAt = -1;
+    this.afterHush = 0;
   }
 
   /** The VAD starts afresh (the window's loudest frame is kept). */
@@ -1064,6 +1081,13 @@ export class VoiceEngine {
     if (this.mode.reason === "follow-up" && isCloser(text, this.mode.afterQuestion)) {
       // "Thanks.": nothing more to do (like a window that heard nothing).
       this.endListening("timeout");
+      return;
+    }
+    if (bargeIn && !this.mode.held && this.afterHush < AFTER_HUSH_FRAMES) {
+      // Said over Ember's voice, and not a stop: maybe not what was said (see AFTER_HUSH_FRAMES). Ember has been hushed,
+      // and listens for the request again.
+      this.mode.held = true;
+      this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       return;
     }
     // A wake's request sets the loudness its follow-up must come near; a follow-up's request gets no follow-up.

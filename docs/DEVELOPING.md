@@ -173,7 +173,8 @@ the speech models (126 MB, once; agreeing to the microphone note starts the down
 one breath, or pause after “Hey Ember”. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
-Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`). **Ctrl+Alt+M** turns the
+Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
+over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
 “Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`). A request ends
