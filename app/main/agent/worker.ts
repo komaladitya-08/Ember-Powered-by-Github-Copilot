@@ -86,9 +86,12 @@ export interface WorkerDeps {
   clipboard?: PasteClipboard | TextClipboard;
   /**
    * Limits on one task (defaults: 150 tool calls, 20 minutes; a paste gets 10 s to show up in its field; a request
-   * the runtime took gets TURN_START_MS for its turn to begin).
+   * the runtime took gets TURN_START_MS for its turn to begin; a turn under way that hears nothing from Copilot says
+   * so on the card after TURN_SLOW_MS and is given up on after TURN_SILENT_MS).
    */
-  limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number };
+  limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number };
+  /** Whether this user's inotify instances are all in use (a task's turn can't begin then; see host's inotifyUsedUp). */
+  inotifyUsedUp?: () => boolean;
 }
 
 export interface TaskSpec {
@@ -762,10 +765,20 @@ export class Worker {
           ? `\n<context untrusted="true">The user was in the window ${q(t.title, 160)}${t.app ? ` (app ${q(t.app, 60)})` : ""} when they asked; start there unless the goal needs another app.</context>`
           : "";
         // A request the runtime takes but never begins a turn for ends this task, plainly (the user can ask again);
-        // a slow model doesn't (its turn has begun). Other tasks and the conversation go on.
-        const watch = new TurnWatch(d.limits?.turnStartMs ?? TURN_START_MS, () => {
-          d.log.warn("worker.turn_not_started");
-          this.stopNow("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+        // a slow model doesn't (its turn has begun). Nor does a turn that hears nothing from Copilot for minutes
+        // (a model request that never answers); a long step (a question, a wait for the user's click) isn't quiet.
+        // Other tasks and the conversation go on. Out of file watchers, the runtime can't begin a task's turn
+        // (the conversation, begun before, may still answer): Ember names them.
+        const watch = new TurnWatch(d.limits?.turnStartMs ?? TURN_START_MS, why => {
+          d.log.warn(why === "silent" ? "worker.turn_silent" : "worker.turn_not_started");
+          let full = false;
+          try { full = why === "not-started" && d.inotifyUsedUp?.() === true; } catch { /* can't be counted */ }
+          this.stopNow(why === "silent" ? "Copilot didn't answer, so I stopped this task. You can ask me again in a moment."
+            : full ? "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again."
+            : "Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+        }, {
+          slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
+          onSlow: slow => { if (!this.halted) d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); },
         });
         const unwatch = session.on(e => watch.event(e));
         const send = async (prompt: string) => {
@@ -1111,14 +1124,15 @@ export class Worker {
       if (after) this.known.set(id, { ...node, name: after.name, states: after.states, bounds: after.bounds ?? node.bounds });
       // A field can say yes and still not take the text (read-only, or fewer characters allowed).
       const holds = kind === "text" && res.ok && after ? textNotTaken(after, value ?? "", mode ?? "replace") : null;
-      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok && holds === null, ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }) });
+      // Done by accessibility on Ember's desk: "What Ember did" says so (tier 2), not that it was the user's own app.
+      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok && holds === null, ...(this.place ? { tier: 2 } : {}), ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }) });
       if (holds !== null) return fail(`The field didn't take the text as asked: it now holds ${q(holds, 200)} (it may be read-only, or take fewer characters). Tell the user in finish_task if it matters.`);
       const outcome = res.ok ? "Done" : "The app reported it did not work";
       if (!after) return done(`${outcome}. ${busyAfter ? "The app is busy, so the result can't be read yet: call perceive_window in a moment." : "The element is gone now (its dialog or window most likely closed). Call perceive_window."}`);
       return done(`${outcome}. Now: ${describeAfter(after)}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, element: req.element, ok: false, error: msg });
+      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, element: req.element, ok: false, ...(this.place ? { tier: 2 } : {}), error: msg });
       if (msg.includes("background_unavailable")) {
         release();
         // The router: tier 1 can't do it after all, so try tier 3 (the user's mouse), with their OK.

@@ -257,6 +257,9 @@ export const TOOL_STEPS: Record<string, string> = {
   finish_task: "Wrapping up",
 };
 
+/** The bubble's title while a turn under way hears nothing from Copilot (see TurnWatch). */
+export const STILL_WAITING = "Still waiting for Copilot…";
+
 /** What Ember's body does during each tool. */
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
@@ -294,6 +297,8 @@ export class Presenter {
   private readonly onEvent?: (e: PresenterEvent) => void;
   /** The task whose bubbles these are (BubbleState.task). */
   private readonly taskId?: string;
+  /** The title "Still waiting for Copilot…" replaced (see stalled). */
+  private stalledTitle = "";
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -471,6 +476,20 @@ export class Presenter {
     this.answer = "";
     // Only a bubble mid-turn is cleared; a notice or an answer keeps its own hide timer.
     if (wasBusy) this.hide();
+  }
+
+  /**
+   * The turn under way has heard nothing from Copilot for a while (`on`), or hears from it again: the bubble's title
+   * says Ember is still waiting, and then what it said before. Nothing else changes (Stop works as always).
+   */
+  stalled(on: boolean): void {
+    const b = this.state.bubble;
+    if (on && this.busy && !this.silent && b.title !== STILL_WAITING) {
+      this.stalledTitle = b.title;
+      this.apply({ bubble: { ...b, title: STILL_WAITING } });
+    } else if (!on && b.title === STILL_WAITING) {
+      this.apply({ bubble: { ...b, title: this.stalledTitle } });
+    }
   }
 
   /** The user asked something (voice or text). */

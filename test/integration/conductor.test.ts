@@ -40,7 +40,9 @@ afterAll(async () => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: { resume?: string | null; turnStartMs?: number; onStuck?: () => void } = {}) {
+function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: {
+  resume?: string | null; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number; onStuck?: (why: string) => void; baseUrl?: string;
+} = {}) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const conductor = new Conductor({
@@ -50,10 +52,12 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
     stateFile: path.join(dir, "agent.json"),
     workDir: path.join(dir, "empty"),
     model: "mock-model",
-    provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
+    provider: { type: "openai", baseUrl: o.baseUrl ?? mock.baseUrl, apiKey: "test" },
     describeScreen,
     resume: o.resume,
     turnStartMs: o.turnStartMs,
+    turnSlowMs: o.turnSlowMs,
+    turnSilentMs: o.turnSilentMs,
     onStuck: o.onStuck,
   });
   return { conductor, settings };
@@ -161,6 +165,37 @@ describe("conductor on the real Copilot runtime", () => {
     expect(seen.join("\n")).not.toContain("pineapple");
     await second.conductor.stop();
   }, 60000);
+
+  it("a model that takes the request and never answers (a dead connection, a stalled proxy): Ember says it's still waiting, then ends the turn (review round 8)", async () => {
+    let asked = 0, closed = 0;
+    const stalled = http.createServer(async (q, r) => {
+      for await (const chunk of q) void chunk;
+      if (q.url?.endsWith("/models")) { r.writeHead(200, { "content-type": "application/json" }); r.end(JSON.stringify({ object: "list", data: [{ id: "mock-model", object: "model" }] })); return; }
+      asked++;
+      r.on("close", () => { closed++; });
+    });
+    await new Promise<void>(r => stalled.listen(0, "127.0.0.1", () => r()));
+    const states: Partial<EmberState>[] = [];
+    const why: string[] = [];
+    const { conductor } = makeConductor(states, undefined, {
+      baseUrl: `http://127.0.0.1:${(stalled.address() as net.AddressInfo).port}/v1`, turnSlowMs: 1500, turnSilentMs: 5000, onStuck: w => { why.push(w); },
+    });
+    try {
+      await conductor.start();
+      await conductor.ask("what time is it in Tokyo");
+      for (let i = 0; i < 300 && !why.length; i++) await new Promise(r => setTimeout(r, 50));
+      expect(why).toEqual(["silent"]);
+      expect(asked).toBe(1);
+      expect(states.some(s => s.bubble?.title === "Still waiting for Copilot…" && s.bubble.mood === "thinking")).toBe(true);
+      // The turn was ended: the runtime let go of the request it was waiting on.
+      for (let i = 0; i < 100 && !closed; i++) await new Promise(r => setTimeout(r, 50));
+      expect(closed).toBe(1);
+    } finally {
+      await conductor.stop();
+      stalled.closeAllConnections();
+      stalled.close();
+    }
+  }, 60000);
 });
 
 describe("the conversation lasts one run of Ember (host on the real runtime)", () => {
@@ -207,6 +242,53 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
       expect(seen).not.toContain("pineapple");
     } finally {
       await host.stop();
+    }
+  }, 90000);
+
+  it("a turn whose model request never answers is ended and Copilot reconnected; the conversation goes on and the next ask is answered (review round 8)", async () => {
+    // The model's endpoint, which stops answering (and holds what it was asked) while `stall` is set.
+    let stall = false;
+    const relay = http.createServer((q, r) => {
+      if (stall && !q.url?.endsWith("/models")) return;
+      const up = http.request(`${mock.baseUrl.replace(/\/v1$/, "")}${q.url}`, { method: q.method, headers: q.headers }, res => { r.writeHead(res.statusCode ?? 502, res.headers); res.pipe(r); });
+      up.on("error", () => r.destroy());
+      q.pipe(up);
+    });
+    await new Promise<void>(r => relay.listen(0, "127.0.0.1", () => r()));
+    const userData = fs.mkdtempSync(path.join(dir, "stall-"));
+    const settings = new SettingsStore(path.join(userData, "settings.json"));
+    settings.load();
+    const states: Partial<EmberState>[] = [];
+    const host = new AgentHost({
+      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      log: createLogger({ dir: path.join(userData, "logs") }),
+      setState: p => states.push(p), onStatus: () => undefined,
+      provider: { type: "openai", baseUrl: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}/v1`, apiKey: "test" },
+      turnSlowMs: 1000, turnSilentMs: 4000,
+    });
+    const until = async (cond: () => boolean, ms = 20000) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 50)); return cond(); };
+    try {
+      expect(await host.start(null)).toBe("ready");
+      await host.ask("remember the word pineapple");
+      await idle(states, 0);
+      const id = host.conductor!.sessionId!;
+      stall = true;
+      const from = states.length;
+      await host.ask("what time is it in Tokyo");
+      expect(await until(() => states.slice(from).some(s => s.bubble?.title === "Still waiting for Copilot…"))).toBe(true);
+      expect(await until(() => states.slice(from).some(s => s.bubble?.thought === "Copilot didn't answer. Ask me again in a moment."))).toBe(true);
+      stall = false;
+      expect(await until(() => host.getStatus().phase === "ready" && host.conductor?.sessionId === id)).toBe(true);
+      const again = states.length, before = mock.requests.length;
+      await host.ask("what word did I ask you to remember?");
+      await idle(states, again);
+      expect(states.slice(again).some(s => s.bubble?.title === "Cinder" && /You said/.test(s.bubble.thought))).toBe(true);
+      // The same conversation: the model sees the earlier exchange.
+      expect(mock.requests.slice(before).flatMap(r => r.messages).map(m => JSON.stringify(m.content)).join("\n")).toContain("pineapple");
+    } finally {
+      await host.stop();
+      relay.closeAllConnections();
+      relay.close();
     }
   }, 90000);
 });

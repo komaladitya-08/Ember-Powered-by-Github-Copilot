@@ -1304,7 +1304,7 @@ describe("review round 7: a request the runtime takes but never begins", () => {
   it("a task whose turn never begins fails plainly and lets go of its session; the other task and the conversation go on", async () => {
     vi.useFakeTimers();
     sim.stall = (s, prompt) => s.sessionId.startsWith("ember-task-") && prompt.includes("the stuck one");
-    const { host } = makeHost({ hands: hands() });
+    const { host } = makeHost({ hands: hands(), inotifyUsedUp: () => false });
     await host.start(TOKEN, "stored");
     const stuck = host.tasks!.start("the stuck one");
     const fine = host.tasks!.start("the fine one");
@@ -1335,6 +1335,161 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     await vi.advanceTimersByTimeAsync(120_000);
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     expect(session.aborted).toBe(0);
+    await stopAll(host);
+  });
+});
+
+describe("review round 8: a turn that began and then hears nothing from Copilot", () => {
+  const STILL = "Still waiting for Copilot…";
+  const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
+  const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
+  const TASK_NO_ANSWER = "Copilot didn't answer, so I stopped this task. You can ask me again in a moment.";
+  const TASK_NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.";
+  const stopAll = async (host: AgentHost) => { const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done; };
+
+  it("a model request that never answers: still waiting at 30 s, then the turn is ended, Ember says so and reconnects, and what waited behind it goes", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ healthMs: 5000 });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const first = conductorSession();
+    // Its turn begins (user.message, assistant.turn_start), and then the model never answers.
+    await host.ask("what time is it in Tokyo");
+    sim.holdTurns = true;
+    await host.ask("are you there?");
+    expect((host as any).queued).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", thought: "“are you there?”" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: STILL, thought: "“are you there?”", streaming: true });
+    // Heard from again: the note goes, and the waits start over.
+    first.emit("assistant.reasoning_delta", { deltaContent: "Tokyo is" });
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…" });
+    await vi.advanceTimersByTimeAsync(179_000);
+    expect(screen().bubble).toMatchObject({ title: STILL });
+    expect(sim.clients).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
+    expect(first.aborted).toBeGreaterThan(0);
+    expect(statuses.map(s => s.detail)).toContain("Copilot didn't answer in time. Reconnecting…");
+    expect((host as any).queued).toEqual([]);
+    sim.holdTurns = false;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(sim.clients).toHaveLength(2);
+    expect(first.disconnected).toBe(true);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(sim.resumed).toEqual([first.sessionId]);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
+    await host.ask("what time is it in Tokyo");
+    expect(conductorSession()).not.toBe(first);
+    expect(conductorSession().sent.at(-1)).toMatch(/what time is it in Tokyo$/);
+    await host.stop();
+  });
+
+  it("a long look at the screen (a tool under way) isn't silence, and neither is a slow answer that streams", async () => {
+    vi.useFakeTimers();
+    const { host, patches } = makeHost();
+    await host.start(TOKEN, "stored");
+    const talk = conductorSession();
+    await host.ask("what's on my screen");
+    talk.emit("tool.execution_start", { toolCallId: "c1", toolName: "describe_screen" });
+    await vi.advanceTimersByTimeAsync(400_000);
+    talk.emit("tool.execution_complete", { toolCallId: "c1", success: true });
+    for (let i = 0; i < 20; i++) { await vi.advanceTimersByTimeAsync(25_000); talk.emit("assistant.reasoning_delta", { deltaContent: "hmm " }); }
+    talk.emit("assistant.message_delta", { deltaContent: "A spreadsheet." });
+    talk.emit("assistant.message", { content: "A spreadsheet." });
+    talk.emit("assistant.turn_end", {});
+    talk.emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(patches.some(p => p.bubble?.title === STILL)).toBe(false);
+    expect(talk.aborted).toBe(0);
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("Stop while it's still waiting stops it as always: nothing is given up on or reconnected later", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("what time is it in Tokyo");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(screen().bubble).toMatchObject({ title: STILL });
+    await host.abortAll();
+    expect(conductorSession().aborted).toBe(1);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(sim.clients).toHaveLength(1);
+    expect(statuses.map(s => s.detail)).not.toContain("Copilot didn't answer in time. Reconnecting…");
+    await host.stop();
+  });
+
+  it("turns that never begin with the file watchers used up aren't crashes: Ember keeps reconnecting, and once they're free the next ask works (AC8-2)", async () => {
+    vi.useFakeTimers();
+    let full = true;
+    const { host, screen, statuses } = makeHost({ inotifyUsedUp: () => full });
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    for (let i = 0; i < 7; i++) {
+      await host.ask(`what time is it? (${i})`);
+      await vi.advanceTimersByTimeAsync(20_500);
+      expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_WATCHERS });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(host.getStatus().phase).toBe("ready");
+    }
+    expect(sim.clients).toHaveLength(8);
+    expect(statuses.map(s => s.detail)).not.toContain("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    full = false;
+    sim.stall = () => false;
+    await host.ask("what time is it?");
+    expect(conductorSession().sent.at(-1)).toMatch(/what time is it\?$/);
+    expect(screen().bubble).toMatchObject({ mood: "thinking" });
+    await host.stop();
+  });
+
+  it("a turn nobody asked for that goes silent (it could come back on its own after each reconnect) still counts towards giving up", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost({ turnSilentMs: 5000 });
+    await host.start(TOKEN, "stored");
+    for (let i = 0; i < 6; i++) {
+      conductorSession().begin("(nothing the user asked)");
+      await vi.advanceTimersByTimeAsync(5500);
+      await vi.advanceTimersByTimeAsync(3000);
+    }
+    expect(sim.clients).toHaveLength(6);
+    expect(statuses.at(-1)?.detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    await host.stop();
+  });
+
+  it("a task's turn that began and then hears nothing: its card says so at 30 s, and it fails plainly at the long limit; the rest goes on", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(host.tasks!.get(t.id)).toMatchObject({ status: "running", detail: STILL });
+    const session = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    session.emit("assistant.reasoning_delta", { deltaContent: "First, " });
+    expect(host.tasks!.get(t.id)?.detail).toBe("Working…");
+    await vi.advanceTimersByTimeAsync(179_000);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    // The long limit, then the aborted turn's grace.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(host.tasks!.get(t.id)).toMatchObject({ status: "failed", result: { success: false, summary: TASK_NO_ANSWER } });
+    expect(session.aborted).toBeGreaterThan(0);
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    await stopAll(host);
+  });
+
+  it("a task whose turn never begins with the file watchers used up names them (AC8-1)", async () => {
+    vi.useFakeTimers();
+    sim.stall = s => s.sessionId.startsWith("ember-task-");
+    const { host } = makeHost({ hands: hands(), inotifyUsedUp: () => true });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(23_000);
+    expect(host.tasks!.get(t.id)).toMatchObject({ status: "failed", result: { success: false, summary: TASK_NO_WATCHERS } });
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
     await stopAll(host);
   });
 });

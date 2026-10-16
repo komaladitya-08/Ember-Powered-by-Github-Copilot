@@ -307,3 +307,19 @@ describe("what the keys select (review round 7)", () => {
     expect(press(["Left", "8", "1"], "44").typed).toBe("4481");
   });
 });
+
+describe("what Ember did on its desk (review round 8, PR8-3)", () => {
+  it("an action done by accessibility on Ember's desk is audited as the desk's (tier 2); one on the user's screen isn't", async () => {
+    const { w, call, audit } = makeWorker();
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    const actions = () => audit.filter(e => e.event === "action");
+    expect(actions().at(-1)).toMatchObject({ kind: "click", ok: true });
+    expect(actions().at(-1)).not.toHaveProperty("tier");
+    // On the desk: the same helper calls, through the desk's own sidecar.
+    const d = (w as unknown as { d: WorkerDeps }).d;
+    (w as unknown as { place: unknown }).place = { perception: d.perception, sidecar: d.sidecar, userInControl: () => false, dead: false, onDead() {} };
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect(actions().at(-1)).toMatchObject({ kind: "click", ok: true, tier: 2 });
+  });
+});

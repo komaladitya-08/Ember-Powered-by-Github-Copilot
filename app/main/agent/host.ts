@@ -106,6 +106,10 @@ export interface HostOptions {
   healthMs?: number;
   /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
   turnStartMs?: number;
+  /** How long a turn under way may hear nothing before Ember says it's still waiting (ms; TURN_SLOW_MS). */
+  turnSlowMs?: number;
+  /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
+  turnSilentMs?: number;
   /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
   inotifyUsedUp?: () => boolean;
 }
@@ -144,6 +148,9 @@ const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again i
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_DETAIL = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…";
+/** The conversation's turn began and then heard nothing from Copilot for minutes (TurnWatch): it was ended. */
+const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
+const NO_ANSWER_DETAIL = "Copilot didn't answer in time. Reconnecting…";
 
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
@@ -581,7 +588,8 @@ export class AgentHost {
           onDesk: hands.onDesk,
           onProgress: progress,
           onUsage: (i, o) => this.recordUsage(i, o),
-          ...(this.o.turnStartMs ? { limits: { turnStartMs: this.o.turnStartMs } } : {}),
+          limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
+          inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
         }, spec),
       }) : null;
       const tasks = this.tasks;
@@ -596,14 +604,20 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
-        // The runtime took a request and never began its turn, though it answers its health check: it is
-        // reconnected as a hung one is. The requests sent on it never run there (a reconnect resumes the conversation).
-        // Out of inotify instances, the runtime can't begin one (a reconnect doesn't help until apps close): Ember says so.
+        // The runtime took a request and never began its turn, or a turn under way went silent (a model request
+        // that never answers), though it answers its health check: it is reconnected as a hung one is. The requests
+        // sent on it never run there (a reconnect resumes the conversation). Out of inotify instances, the runtime
+        // can't begin a turn (a reconnect doesn't help until apps close): Ember says so.
         turnStartMs: this.o.turnStartMs,
-        onStuck: () => {
+        turnSlowMs: this.o.turnSlowMs,
+        turnSilentMs: this.o.turnSilentMs,
+        onStuck: why => {
+          // A request of the user's on this connection stalled (not a turn nobody asked for, which could repeat on its own).
+          const asked = this.queued.length > 0 || this.turn !== null;
           this.queued = [];
+          if (why === "silent") { this.lost(gen, "turn went silent", NO_ANSWER, NO_ANSWER_DETAIL, asked); return; }
           const full = (this.o.inotifyUsedUp ?? inotifyUsedUp)();
-          this.lost(gen, full ? "turn didn't start: inotify instances used up" : "turn didn't start", full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined);
+          this.lost(gen, full ? "turn didn't start: inotify instances used up" : "turn didn't start", full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked);
         },
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
@@ -738,8 +752,11 @@ export class AgentHost {
   /**
    * `gen`: the connection the failure belongs to (a newer one is left alone). `says`: what the conversation
    * tells the user (always shown), when it isn't that Copilot stopped; `detail`: what settings show then.
+   * `stalled`: the turn of a request the user sent on this connection never began or went silent, not a crash: it
+   * isn't counted towards giving up (each one takes a request of the user's, so it never loops on its own; with the
+   * file watchers used up, Ember would otherwise stop trying, and stay stopped once they're free again).
    */
-  private lost(gen: number, why: string, says?: string, detail?: string): void {
+  private lost(gen: number, why: string, says?: string, detail?: string, stalled = false): void {
     if (gen !== this.gen) return;
     this.o.log.error("agent.runtime_lost", { why });
     // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
@@ -748,13 +765,15 @@ export class AgentHost {
     if (says || this.presenter.busy || why === "send failed") this.presenter.fail(says ?? "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
     else this.presenter.reset();
     this.setStatus({ phase: "error", detail: detail ?? (says ? "Copilot isn't answering. Reconnecting…" : "Copilot stopped unexpectedly. Reconnecting…") });
-    const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
-    if (recent.length >= 5) {
-      this.setStatus({ phase: "error", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });
-      void this.halt(false);
-      return;
+    if (!stalled) {
+      const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
+      if (recent.length >= 5) {
+        this.setStatus({ phase: "error", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });
+        void this.halt(false);
+        return;
+      }
+      this.crashes = [...recent, Date.now()];
     }
-    this.crashes = [...recent, Date.now()];
     void this.launch(this.token, this.source);
   }
 

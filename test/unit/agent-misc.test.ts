@@ -268,14 +268,16 @@ describe("a request the runtime takes but never begins (review round 7)", () => 
   afterEach(() => { vi.useRealTimers(); });
   // Event sequences as the real runtime sends them (one user.message per request, in order; a request sent
   // during a turn begins after its turn_end; idle only once nothing waits).
-  async function watch(ms = 20_000) {
+  async function watch(ms = 20_000, opts: { slowMs?: number; silentMs?: number } = {}) {
     vi.useFakeTimers();
     const { TurnWatch } = await import("../../app/main/agent/conductor");
-    let stuck = 0;
-    const w = new TurnWatch(ms, () => { stuck++; });
+    const whys: string[] = [];
+    const slow: boolean[] = [];
+    const w = new TurnWatch(ms, why => { whys.push(why); }, { ...opts, onSlow: s => { slow.push(s); } });
     const ev = (...types: string[]) => { for (const type of types) w.event({ type, data: {} }); };
     const send = () => { w.sending(); ev("pending_messages.modified"); w.sent(); };
-    return { w, ev, send, stuck: () => stuck, wait: (t: number) => vi.advanceTimersByTime(t) };
+    const tool = (phase: "start" | "complete", id: string) => w.event({ type: `tool.execution_${phase}`, data: { toolCallId: id } });
+    return { w, ev, send, tool, whys, slow, stuck: () => whys.length, wait: (t: number) => vi.advanceTimersByTime(t) };
   }
 
   it("a turn that begins (also with its first word a minute later) is left alone; one that never does is noticed once", async () => {
@@ -312,15 +314,20 @@ describe("a request the runtime takes but never begins (review round 7)", () => 
     const a = await watch();
     a.send();
     a.ev("user.message", "assistant.turn_start");
+    // A long step of the turn (a question to the user, a slow look at the screen).
+    a.tool("start", "c1");
     a.send();
     a.send();
     a.wait(300_000);
+    a.tool("complete", "c1");
     a.ev("assistant.turn_end", "pending_messages.modified", "user.message", "assistant.turn_start");
+    a.tool("start", "c2");
     a.wait(300_000);
+    a.tool("complete", "c2");
     expect(a.stuck()).toBe(0);
     a.ev("assistant.turn_end", "pending_messages.modified");
     a.wait(20_000);
-    expect(a.stuck()).toBe(1);
+    expect(a.whys).toEqual(["not-started"]);
   });
 
   it("Stop or an error drops what waits; a failed send owes nothing; a sub-agent's events are only life", async () => {
@@ -366,5 +373,99 @@ describe("a request the runtime takes but never begins (review round 7)", () => 
     b.w.dispose();
     b.wait(60_000);
     expect(b.stuck()).toBe(0);
+  });
+});
+
+describe("a turn that began and then hears nothing from Copilot (review round 8)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  async function watch(opts: { slowMs?: number; silentMs?: number } = {}) {
+    vi.useFakeTimers();
+    const { TurnWatch, TURN_SLOW_MS, TURN_SILENT_MS } = await import("../../app/main/agent/conductor");
+    expect([TURN_SLOW_MS, TURN_SILENT_MS]).toEqual([30_000, 180_000]);
+    const whys: string[] = [];
+    const slow: boolean[] = [];
+    const w = new TurnWatch(20_000, why => { whys.push(why); }, { ...opts, onSlow: s => { slow.push(s); } });
+    const ev = (...types: string[]) => { for (const type of types) w.event({ type, data: {} }); };
+    const begin = () => { w.sending(); ev("pending_messages.modified"); w.sent(); ev("user.message", "assistant.turn_start"); };
+    const tool = (phase: "start" | "complete", id: string) => w.event({ type: `tool.execution_${phase}`, data: { toolCallId: id } });
+    return { w, ev, begin, tool, whys, slow, wait: (t: number) => vi.advanceTimersByTime(t) };
+  }
+
+  it("a model request that never answers: still waiting at 30 s, given up on at the long limit, once", async () => {
+    const a = await watch();
+    a.begin();
+    a.wait(29_000);
+    expect(a.slow).toEqual([]);
+    a.wait(1000);
+    expect(a.slow).toEqual([true]);
+    a.wait(149_000);
+    expect(a.whys).toEqual([]);
+    a.wait(1000);
+    expect(a.whys).toEqual(["silent"]);
+    a.ev("assistant.turn_end", "session.idle");
+    a.wait(600_000);
+    expect(a.whys).toEqual(["silent"]);
+  });
+
+  it("streaming (reasoning, the answer) is life: heard from again, the bubble's note goes and the waits start over", async () => {
+    const a = await watch();
+    a.begin();
+    for (let i = 0; i < 30; i++) { a.wait(20_000); a.ev(i % 2 ? "assistant.message_delta" : "assistant.reasoning_delta"); }
+    expect(a.slow).toEqual([]);
+    a.wait(40_000);
+    a.ev("assistant.reasoning_delta");
+    expect(a.slow).toEqual([true, false]);
+    a.wait(140_000);
+    a.ev("assistant.message", "assistant.turn_end", "assistant.idle", "session.idle");
+    a.wait(600_000);
+    expect(a.whys).toEqual([]);
+    expect(a.slow).toEqual([true, false, true, false]);
+  });
+
+  it("a long tool call (a slow look at the screen, a question to the user) isn't quiet; the wait starts once it's done", async () => {
+    const a = await watch();
+    a.begin();
+    a.ev("assistant.message");
+    a.tool("start", "c1");
+    a.w.event({ type: "external_tool.requested", data: { requestId: "r1" } });
+    a.wait(600_000);
+    a.w.event({ type: "external_tool.completed", data: { requestId: "r1" } });
+    a.wait(600_000);
+    expect(a.slow).toEqual([]);
+    expect(a.whys).toEqual([]);
+    a.tool("complete", "c1");
+    a.wait(180_000);
+    expect(a.whys).toEqual(["silent"]);
+  });
+
+  it("nothing is watched between turns, after Stop, or once disposed; the timings are the caller's", async () => {
+    const a = await watch({ slowMs: 1000, silentMs: 5000 });
+    a.begin();
+    a.ev("assistant.message", "assistant.turn_end", "assistant.idle", "session.idle");
+    a.wait(600_000);
+    a.begin();
+    a.w.clear();
+    a.wait(600_000);
+    expect(a.whys).toEqual([]);
+    a.begin();
+    a.wait(1000);
+    expect(a.slow).toEqual([true]);
+    a.wait(4000);
+    expect(a.whys).toEqual(["silent"]);
+    const b = await watch();
+    b.begin();
+    b.w.dispose();
+    b.wait(600_000);
+    expect([b.slow, b.whys]).toEqual([[], []]);
+  });
+
+  it("a compaction under way in the turn gets twice as long", async () => {
+    const a = await watch();
+    a.begin();
+    a.ev("session.compaction_start");
+    a.wait(359_000);
+    expect(a.whys).toEqual([]);
+    a.wait(1000);
+    expect(a.whys).toEqual(["silent"]);
   });
 });

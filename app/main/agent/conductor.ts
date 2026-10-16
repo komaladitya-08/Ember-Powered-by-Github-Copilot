@@ -48,12 +48,16 @@ export interface ConductorDeps {
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
   /**
-   * The runtime took a request and no turn began for it (see TurnWatch): the host says so and reconnects.
-   * Without it the conductor only says so.
+   * The runtime took a request and no turn began for it, or a turn under way went silent (see TurnWatch): the host
+   * says so and reconnects. Without it the conductor only says so.
    */
-  onStuck?: () => void;
+  onStuck?: (why: Stuck) => void;
   /** How long a request may wait for its turn to begin (TURN_START_MS). */
   turnStartMs?: number;
+  /** How long a turn under way may hear nothing before Ember says it's still waiting (TURN_SLOW_MS). */
+  turnSlowMs?: number;
+  /** How long a turn under way may hear nothing before it is given up on (TURN_SILENT_MS). */
+  turnSilentMs?: number;
 }
 
 export interface ConductorTasks {
@@ -133,8 +137,27 @@ export function within<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
 
 /** How long a request the runtime took may wait for its turn to begin (see TurnWatch). */
 export const TURN_START_MS = 20_000;
+/** How long a turn under way may hear nothing from Copilot before Ember says it's still waiting (see TurnWatch). */
+export const TURN_SLOW_MS = 30_000;
+/**
+ * How long a turn under way may hear nothing from Copilot before it is given up on (see TurnWatch): a model at work
+ * streams its reasoning or its answer long before this, and giving up reconnects (cutting off the tasks running).
+ */
+export const TURN_SILENT_MS = 180_000;
 /** Events of a turn under way: the model's (its first, assistant.turn_start, comes before the model is asked) and its tools'. */
 const IN_TURN = /^(assistant|tool|external_tool|permission|subagent|skill)\./;
+
+/** Why TurnWatch gave up: no turn began for a request taken, or the turn under way went silent. */
+export type Stuck = "not-started" | "silent";
+
+export interface TurnWatchOptions {
+  /** Quiet this long in a turn under way: onSlow(true) (TURN_SLOW_MS). */
+  slowMs?: number;
+  /** Quiet this long in a turn under way: stuck (TURN_SILENT_MS). */
+  silentMs?: number;
+  /** The turn under way has been quiet for slowMs (true), or is heard from again (false). */
+  onSlow?: (slow: boolean) => void;
+}
 
 /**
  * Notices a request the runtime accepted but never started a turn for: rarely, session.send returns and then
@@ -142,7 +165,14 @@ const IN_TURN = /^(assistant|tool|external_tool|permission|subagent|skill)\./;
  * request sent is still owed its turn and no turn is under way: the runtime holds a request sent during a turn
  * until that turn ends, so a long turn never counts. Any event of the session is life and starts the wait again;
  * a hook or a compaction under way gets six times as long. A slow model (its first token after a minute, a slow
- * proxy) never counts either: its turn has begun by then. Fires once.
+ * proxy) never counts either: its turn has begun by then.
+ *
+ * Once a turn is under way (until the session is idle), it watches that Copilot is still heard from: a model
+ * request that never answers (a connection dead after a suspend or a VPN change, an overloaded proxy) sends
+ * nothing at all, while a model at work streams its reasoning and its answer. Any event is life; a tool under
+ * way (tool.execution_start without its complete: reading the screen, a question to the user, a task's step) is
+ * work, never silence. Quiet for slowMs: onSlow(true), and onSlow(false) once it's heard from again; quiet for
+ * silentMs (twice that with a hook or a compaction under way): stuck. Fires once.
  */
 export class TurnWatch {
   /** Requests sent whose message hasn't come yet (the runtime sends one user.message per request, in order). */
@@ -150,12 +180,26 @@ export class TurnWatch {
   /** A request's message came and its turn hasn't begun. */
   private taken = false;
   private inTurn = false;
+  /** A turn began and the session hasn't gone idle since (the model's turns and the tools between them). */
+  private working = false;
+  /** Tools under way. */
+  private readonly tools = new Set<string>();
   /** Hooks and compaction under way (the runtime is at work before the turn). */
   private readonly busy = new Set<string>();
+  /** What the armed timer watches for. */
+  private watching: Stuck | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private slowTimer: ReturnType<typeof setTimeout> | null = null;
+  /** onSlow(true) was called and nothing has been heard since. */
+  private slow = false;
   private over = false;
+  private readonly slowMs: number;
+  private readonly silentMs: number;
 
-  constructor(private readonly ms: number, private readonly onStuck: () => void) {}
+  constructor(private readonly ms: number, private readonly onStuck: (why: Stuck) => void, private readonly opts: TurnWatchOptions = {}) {
+    this.slowMs = opts.slowMs ?? TURN_SLOW_MS;
+    this.silentMs = opts.silentMs ?? TURN_SILENT_MS;
+  }
 
   /** A request is about to be sent (its message may come before session.send returns). */
   sending(): void { this.owed++; }
@@ -163,42 +207,63 @@ export class TurnWatch {
   sent(): void { this.check(); }
   /** session.send failed: no turn comes for it. */
   unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
-  /** Stop: the runtime drops the requests waiting. */
-  clear(): void { this.owed = 0; this.taken = false; this.check(); }
+  /** Stop: the runtime ends the turn under way and drops the requests waiting. */
+  clear(): void { this.owed = 0; this.taken = false; this.working = false; this.tools.clear(); this.check(); }
   /** The session is let go: nothing fires any more. */
   dispose(): void { this.over = true; this.disarm(); }
 
   event(e: { type: string; agentId?: string; data?: unknown }): void {
     if (this.over) return;
     const t = e.type;
-    const id = (e.data as { hookInvocationId?: unknown } | undefined)?.hookInvocationId;
+    const data = e.data as { hookInvocationId?: unknown; toolCallId?: unknown; requestId?: unknown } | undefined;
+    const id = data?.hookInvocationId;
+    // A tool under way is work (a sub-agent's too).
+    if (t === "tool.execution_start") this.tools.add(`tool ${String(data?.toolCallId)}`);
+    else if (t === "tool.execution_complete") this.tools.delete(`tool ${String(data?.toolCallId)}`);
+    else if (t === "external_tool.requested") this.tools.add(`external ${String(data?.requestId)}`);
+    else if (t === "external_tool.completed") this.tools.delete(`external ${String(data?.requestId)}`);
     // A sub-agent's events are life, nothing more.
     if (!e.agentId) {
       if (t === "user.message") { this.owed = Math.max(0, this.owed - 1); this.taken = true; }
-      else if (t === "assistant.turn_end" || t === "assistant.idle") this.inTurn = false;
-      else if (t === "session.idle") { this.inTurn = false; this.taken = false; this.busy.clear(); }
+      else if (t === "assistant.turn_end") this.inTurn = false;
+      else if (t === "assistant.idle") { this.inTurn = false; this.working = false; this.tools.clear(); }
+      else if (t === "session.idle") { this.inTurn = false; this.taken = false; this.working = false; this.tools.clear(); this.busy.clear(); }
       // The runtime drops what was waiting (Stop does; an error may).
-      else if (t === "session.error" || t === "abort") { this.inTurn = false; this.taken = false; this.owed = 0; this.busy.clear(); }
+      else if (t === "session.error" || t === "abort") { this.inTurn = false; this.taken = false; this.owed = 0; this.working = false; this.tools.clear(); this.busy.clear(); }
       else if (t === "hook.start") this.busy.add(`hook ${String(id)}`);
       else if (t === "hook.end") this.busy.delete(`hook ${String(id)}`);
       else if (t === "session.compaction_start") this.busy.add("compaction");
       else if (t === "session.compaction_complete") this.busy.delete("compaction");
-      else if (IN_TURN.test(t)) { this.inTurn = true; this.taken = false; }
+      else if (IN_TURN.test(t)) { this.inTurn = true; this.taken = false; this.working = true; }
     }
     this.disarm();
+    // Heard from again after a quiet spell.
+    if (this.slow) { this.slow = false; this.opts.onSlow?.(false); }
     this.check();
   }
 
   private check(): void {
     if (this.over) return;
-    if (!(this.owed > 0 || this.taken) || this.inTurn) { this.disarm(); return; }
-    if (this.timer) return;
-    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.onStuck(); }, this.busy.size ? this.ms * 6 : this.ms);
+    const watching: Stuck | null = (this.owed > 0 || this.taken) && !this.inTurn ? "not-started" : this.working && !this.tools.size ? "silent" : null;
+    // Armed already for this: the wait isn't started again (only an event does that).
+    if (watching === this.watching && (this.timer || !watching)) return;
+    this.disarm();
+    if (!watching) return;
+    this.watching = watching;
+    const busy = this.busy.size > 0;
+    const ms = watching === "not-started" ? (busy ? this.ms * 6 : this.ms) : (busy ? this.silentMs * 2 : this.silentMs);
+    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.disarm(); this.onStuck(watching); }, ms);
     this.timer.unref?.();
+    if (watching === "silent" && this.slowMs < ms) {
+      this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); }, this.slowMs);
+      this.slowTimer.unref?.();
+    }
   }
 
   private disarm(): void {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.slowTimer) { clearTimeout(this.slowTimer); this.slowTimer = null; }
+    this.watching = null;
   }
 }
 
@@ -252,7 +317,7 @@ export class Conductor {
   private busy = false;
   /** Watches that each request sent gets its turn. */
   private watch: TurnWatch | null = null;
-  /** No turn began for a request (TurnWatch): the session is being replaced, and nothing of it shows any more. */
+  /** No turn began for a request, or the turn went silent (TurnWatch): the session is being replaced, and nothing of it shows any more. */
   private stuck = false;
 
   constructor(private deps: ConductorDeps) {
@@ -306,7 +371,12 @@ export class Conductor {
     const tools = await verifySessionTools(this.session, this.toolNames);
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
-    const watch = new TurnWatch(ms, () => this.notStarted(ms));
+    const silentMs = d.turnSilentMs ?? TURN_SILENT_MS;
+    // A turn that goes quiet says so in the bubble ("Still waiting for Copilot…"), calmly: Stop works as always.
+    const watch = new TurnWatch(ms, why => this.stuckTurn(why, why === "silent" ? silentMs : ms), {
+      slowMs: d.turnSlowMs, silentMs,
+      onSlow: slow => { if (!this.stuck) d.presenter.stalled(slow); },
+    });
     this.watch = watch;
     this.session.on(e => {
       watch.event(e);
@@ -364,17 +434,20 @@ export class Conductor {
   }
 
   /**
-   * The runtime took a request and no turn began for it within `ms` (TurnWatch), though it may still answer
-   * its health check: the host says so and reconnects (the conversation is resumed; the user asks again).
+   * The runtime took a request and no turn began for it within `ms`, or the turn under way heard nothing from
+   * Copilot for `ms` (a model request that never answers), though the runtime may still answer its health check
+   * (TurnWatch): the host says so and reconnects (the conversation is resumed; the user asks again). A silent
+   * turn is ended first: the runtime drops it and the requests waiting behind it, so none of them runs later.
    */
-  private notStarted(ms: number): void {
+  private stuckTurn(why: Stuck, ms: number): void {
     this.stuck = true;
     this.busy = false;
     this.stopping = false;
-    this.deps.log.warn("conductor.turn_not_started", { ms });
+    this.deps.log.warn(why === "silent" ? "conductor.turn_silent" : "conductor.turn_not_started", { ms });
+    if (why === "silent") void this.session?.abort().catch(() => undefined);
     this.deps.onTurnEnd?.(true);
-    if (this.deps.onStuck) this.deps.onStuck();
-    else this.deps.presenter.fail("Copilot isn't answering. Ask me again in a moment.");
+    if (this.deps.onStuck) this.deps.onStuck(why);
+    else this.deps.presenter.fail(why === "silent" ? "Copilot didn't answer. Ask me again in a moment." : "Copilot isn't answering. Ask me again in a moment.");
   }
 
   /** Another model from the next message on (no new session, the conversation stays). */
