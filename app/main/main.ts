@@ -409,20 +409,23 @@ function start(): void {
     const hidden = overlay?.isHidden() ?? false;
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
     const label = (text: string, accel: string) => hasKey(accel) ? `${text}   ${accel.replace("Control", "Ctrl")}` : text;
+    // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
+    // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
+    let opens = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => openAsk({ look: false }) },
+      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false }); } },
       { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
         : []),
-      ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: readLastAnswer }] : []),
+      ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", "Control+Alt+E"), click: showHome },
+      { label: label("Settings…", "Control+Alt+E"), click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
-      { label: "Quit Ember", click: () => { void quitEmber(); } },
+      { label: "Quit Ember", click: () => { opens = busyTasks() > 0; void quitEmber(); } },
     ]);
     // The handle never takes focus (a click on it leaves the user's app focused), so the menu's arrows, Enter
     // and Esc would go to that app: the handle takes focus first (the window manager may refuse a toolbar
@@ -438,7 +441,7 @@ function start(): void {
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
-      if (kept && !quitAsking) giveFocusBack();
+      if (kept && !opens && !quitAsking) giveFocusBack();
     }, 150) });
     win.setFocusable(true);
     if (win.isFocused()) { open(); return; }

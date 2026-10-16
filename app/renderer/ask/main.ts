@@ -40,5 +40,8 @@ window.emberAsk.onContext(c => {
   sees.hidden = !c.sees;
   sees.textContent = c.sees ? `Ember will see: ${c.sees}` : "";
   input.focus();
+  // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of
+  // running on from it ("draftwhat can you do"); End or a click keeps it.
+  if (c.opened) input.select();
 });
 input.focus();

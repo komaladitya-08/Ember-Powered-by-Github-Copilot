@@ -148,6 +148,8 @@ export interface AskContext {
   /** e.g. "Mousepad · notes.txt · 12 words selected", or null when Ember can't read the screen. */
   sees: string | null;
   history: string[];
+  /** The box has just opened (not a later update of what Ember will see): what was left in it is selected. */
+  opened?: boolean;
 }
 
 export interface EmberAskApi {

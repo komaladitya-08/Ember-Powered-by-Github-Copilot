@@ -94,12 +94,29 @@ const ROLE: Record<string, string> = {
 
 export interface EntryView { tag: string; cls: string; what: string; why?: string }
 
+const KEY_NAMES: Record<string, string> = {
+  ctrl: "Ctrl", control: "Ctrl", alt: "Alt", shift: "Shift", super: "Super", meta: "Super", return: "Enter", enter: "Enter",
+  escape: "Esc", esc: "Esc", backspace: "Backspace", delete: "Delete", tab: "Tab", space: "Space", up: "Up", down: "Down",
+  left: "Left", right: "Right", home: "Home", end: "End", pageup: "Page Up", page_up: "Page Up", prior: "Page Up",
+  pagedown: "Page Down", page_down: "Page Down", next: "Page Down", insert: "Insert",
+};
+/** A key as people write it: "ctrl+s" → "Ctrl+S", "Return" → "Enter". */
+export function keyLabel(key: string): string {
+  return key.split("+").map(part => {
+    const k = part.trim();
+    return KEY_NAMES[k.toLowerCase()] ?? (k.length === 1 || /^f\d{1,2}$/i.test(k) ? k.toUpperCase() : k);
+  }).join("+");
+}
+
 /** One line of "What Ember did", or null for entries that the next line already says. */
 export function describeEntry(e: ActivityEntry): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
   const control = e.element ? (e.element.name ? `“${e.element.name}”` : ROLE[e.element.role] ?? e.element.role) : e.value ? `“${e.value}”` : "";
   const target = [control, e.app ? `in ${friendlyApp(e.app)}` : ""].filter(Boolean).join(" ");
-  const what = `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
+  // Keys say which ("Press Ctrl+S in Mousepad"): the field they went to adds nothing.
+  const what = e.kind === "keys"
+    ? [typeof e.value === "string" && e.value ? `Press ${keyLabel(e.value)}` : "Press keys", e.app ? `in ${friendlyApp(e.app)}` : ""].filter(Boolean).join(" ")
+    : `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
   switch (e.event) {
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };

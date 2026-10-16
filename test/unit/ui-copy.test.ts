@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, friendlyApp, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
+  NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -69,6 +69,10 @@ describe("settings window words", () => {
     expect(describeEntry({ t, event: "action", kind: "toggle", ok: true, element: { role: "switch", name: "Night Light" }, app: "gnome-control-center" })?.what)
       .toBe("Switch “Night Light” in Settings");
     expect(describeEntry({ t, event: "action", kind: "click", ok: true, element: { role: "push button", name: "" } })?.what).toBe("Click a button");
+    expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "ctrl+s", element: { role: "text", name: "" }, app: "mousepad" })?.what).toBe("Press Ctrl+S in Mousepad");
+    expect(describeEntry({ t, event: "decision", kind: "keys", verdict: "confirm", value: "Return", app: "soffice" })?.what).toBe("Press Enter in LibreOffice");
+    expect(describeEntry({ t, event: "action", kind: "keys", ok: true, app: "mousepad" })?.what).toBe("Press keys in Mousepad");
+    expect(keyLabel("shift+F10")).toBe("Shift+F10");
     expect(describeEntry({ t, event: "decision", verdict: "allow" })).toBeNull();
   });
 });

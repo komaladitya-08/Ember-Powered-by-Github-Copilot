@@ -71,7 +71,7 @@ export class AskWindow {
    * Ember will read and lists earlier questions (it can follow a moment later via setContext).
    */
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext): void {
-    if (context) this.context = context;
+    this.context = { ...(context ?? this.context), opened: true };
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     const bounds = askBounds(near, display.workArea, this.keepOff());
     // The compositor came or went since the box was made: it is made again, opaque or not.
