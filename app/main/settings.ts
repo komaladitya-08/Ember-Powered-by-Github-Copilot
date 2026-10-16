@@ -154,6 +154,8 @@ export class SettingsStore {
   private problemListeners = new Set<(msg: string | null) => void>();
   /** A problem was reported and not yet cleared by a file that reads fine. */
   private troubled = false;
+  /** The file on disk isn't JSON (a hand edit): where the user's version was kept ("" if it couldn't be). */
+  private broken: string | null = null;
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
   private seen: number | null = null;
   /** A change applied in memory whose save is due shortly (a slider being dragged). */
@@ -208,6 +210,7 @@ export class SettingsStore {
       if (running && json === undefined) {
         // Ember's next save would replace it: the user's file is kept beside it first.
         const backup = this.keep();
+        this.broken = backup ?? this.broken ?? "";
         this.problem(`settings.json isn't valid JSON, so Ember keeps the settings it was using until it is fixed${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`);
         return { settings: this.current };
       }
@@ -215,6 +218,7 @@ export class SettingsStore {
     const parsed = SettingsSchema.safeParse(json);
     if (parsed.success && strict) {
       this.current = parsed.data;
+      this.broken = null;
       if (this.troubled) this.problem(null);
       return { settings: this.current };
     }
@@ -313,6 +317,7 @@ export class SettingsStore {
       // Saved first: memory changes only once the change is on disk.
       this.save(next);
       this.clearPending();
+      this.savedOverBroken();
     }
     this.apply(next);
     for (const fn of this.listeners) fn(this.effective);
@@ -324,6 +329,15 @@ export class SettingsStore {
     if (!this.pending) return;
     this.save(this.current);
     this.clearPending();
+    this.savedOverBroken();
+  }
+
+  /** Ember's own save replaced a hand edit that wasn't JSON: the notice says so (not "until it is fixed"). */
+  private savedOverBroken(): void {
+    if (this.broken === null) return;
+    const kept = this.broken;
+    this.broken = null;
+    this.problem(`Your edit of settings.json wasn't valid JSON, so Ember saved its settings over it${kept ? `; your version is kept as ${path.basename(kept)}` : ""}.`);
   }
 
   private clearPending(): void {

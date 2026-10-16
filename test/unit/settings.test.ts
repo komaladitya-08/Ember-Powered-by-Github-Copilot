@@ -128,6 +128,7 @@ describe("settings keep what the user set (review fixes)", () => {
     // Ember's next save keeps the user's version beside the file first.
     s.update({ size: 72 });
     expect(fs.readdirSync(dir).some(f => f.startsWith("settings.json.bad-") && fs.readFileSync(path.join(dir, f), "utf8") === broken)).toBe(true);
+    expect(problems.at(-1)).toMatch(/saved its settings over it; your version is kept as settings\.json\.bad-/);
     // Fixed by hand: picked up, and the problem is cleared.
     fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), privacy: { neverLook: ["payroll", "salary"] } }));
     touch(file, 9000);

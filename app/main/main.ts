@@ -44,6 +44,7 @@ import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { spokenText } from "../voice/spoken";
+import { readAgentState } from "./agent/conductor";
 
 const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
 
@@ -171,7 +172,9 @@ async function runDoctor(): Promise<void> {
   if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
   else {
     const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage)).catch(() => null);
-    if (t) auth = { kind: "github", source: t.source };
+    // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
+    const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
+    if (t && !ignored) auth = { kind: "github", source: t.source };
   }
   let microphones: string[] | null;
   try {
@@ -434,7 +437,7 @@ function start(): void {
     holdQuestionKeys();
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask.
     if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
-    if (settings.get().speak || screenReaderOn()) {
+    if (maySpeak()) {
       const keys = heldKeys().map(k => k.say);
       voice?.speak(`Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
     }
@@ -455,6 +458,8 @@ function start(): void {
     return screenReader || app.isAccessibilitySupportEnabled();
   };
   let askHistory: string[] = [];
+  /** Speak replies (or a screen reader runs), unless the organisation turned speaking off. */
+  const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
 
   // ───── Copilot brain ─────
   const askWindow = new AskWindow();
@@ -513,6 +518,8 @@ function start(): void {
   };
   let lastAskByVoice = false;
   let shownForAnswer = false;
+  /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
+  let showBorrowing: (() => void) | null = null;
   /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
   const statusBy: { borrow: string | null; listen: string | null; mic: string | null } = { borrow: null, listen: null, mic: null };
   const setStatus = (owner: keyof typeof statusBy, text: string | null) => {
@@ -750,10 +757,14 @@ function start(): void {
   settings.onChange(autostart);
   if (process.argv.includes("--autostart")) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
+  /** The brain's start (finding a sign-in, then connecting): what the greeting and onboarding wait for. */
+  let brainStart: Promise<unknown> = Promise.resolve();
   /** How connecting Copilot ended (waits while it is still starting, up to 20 s). */
   const settledPhase = async () => {
     const t0 = Date.now();
     await new Promise(r => setTimeout(r, 500));
+    // Still looking for a sign-in (a slow GitHub CLI at login): that counts as starting.
+    await Promise.race([brainStart, new Promise(r => setTimeout(r, 20_000))]);
     for (;;) {
       const phase = agent?.getStatus().phase;
       if (phase !== "starting" || Date.now() - t0 > 20_000) return phase;
@@ -808,6 +819,7 @@ function start(): void {
     x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
+    let keptHidden = false;
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
       const p = x11?.pointer();
@@ -856,9 +868,13 @@ function start(): void {
         if (now === compositing) return;
         compositing = now;
         log.warn("overlay.compositor_changed", { compositing: now });
-        const hidden = overlay?.isHidden() ?? false;
-        if (now) makeOverlay(hidden); else { overlay?.stop(); overlay = null; }
+        // "Hide Ember" outlives the switch (the overlay that knew it is gone while there is no compositor).
+        if (overlay) keptHidden = overlay.isHidden();
+        if (now) makeOverlay(keptHidden); else { overlay?.stop(); overlay = null; }
         makeHandle();
+        // What the new windows don't know yet: the settings window to keep off, a borrow under way.
+        stepAside();
+        showBorrowing?.();
         presenceChanged();
       }, 2000);
       watch.unref?.();
@@ -936,7 +952,7 @@ function start(): void {
     app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
     // The borrow says when someone starts waiting for the mouse or Ember starts driving it; the status follows.
-    const showBorrowing = () => {
+    showBorrowing = () => {
       if (!borrow) return;
       const driving = borrow.driving;
       overlay?.setBorrowing(driving);
@@ -1002,7 +1018,7 @@ function start(): void {
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
-      onAnswer: text => { if (settings.get().speak || screenReaderOn()) voice?.speak(spokenText(text)); },
+      onAnswer: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
       onStatus: status => {
@@ -1012,7 +1028,7 @@ function start(): void {
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       onTaskFinished: t => {
-        if (settings.get().speak || screenReaderOn()) voice?.speak(spokenText(t.text));
+        if (maySpeak()) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),
@@ -1034,8 +1050,8 @@ function start(): void {
       const phase = await agent?.start(currentToken, found?.source, "auto");
       if (phase === "signed-out") currentToken = null;
     };
-    void startBrain();
-    settings.onChange(() => { void startBrain(); });
+    brainStart = startBrain();
+    settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });
     // Another model chosen in settings: switched in place (running tasks keep going).
     let models = JSON.stringify(settings.get().models);
     settings.onChange(next => {
@@ -1064,7 +1080,8 @@ function start(): void {
     app.on("will-quit", () => voice?.stop());
 
     if (!settings.get().onboarded || process.argv.includes("--show-settings")) showHome();
-    else setTimeout(greet, 800);
+    // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
+    else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
