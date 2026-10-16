@@ -2,7 +2,7 @@
 
 import type { EnvReport } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
-import type { AgentStatus } from "../main/agent/host";
+import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 
@@ -22,10 +22,31 @@ export const IPC = {
   voiceProgress: "voice:progress",
   askClose: "agent:ask-close",
   activity: "ember:activity",
+  /** "Check again": look for a sign-in once more and reconnect. */
+  agentRetry: "agent:retry",
+  cancelSignIn: "agent:cancel-sign-in",
+  /** Opens GitHub's device page for the sign-in code shown (only https://github.com/…). */
+  openSignInPage: "agent:open-sign-in-page",
+  conversation: "agent:conversation",
+  conversationChanged: "agent:conversation-changed",
+  /** Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"). */
+  focusSection: "ember:focus-section",
+  /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
+  askContext: "agent:ask-context",
+  /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
+  presence: "ember:presence",
+  setPresence: "ember:set-presence",
+  presenceChanged: "ember:presence-changed",
+  /** The settings file couldn't be used as it is (a hand edit that isn't valid JSON): what Ember did about it. */
+  settingsNotice: "ember:settings-notice",
+  /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
+  homeVisibility: "ember:home-visibility",
+  quit: "ember:quit",
 } as const;
 
 export interface SignInProgress {
-  state: "code" | "done" | "error" | "unavailable";
+  /** "waiting": watching for a GitHub CLI sign-in (gh auth login), no restart needed. */
+  state: "code" | "done" | "error" | "unavailable" | "waiting" | "cancelled";
   userCode?: string;
   verificationUri?: string;
   message?: string;
@@ -43,6 +64,8 @@ export interface Status {
   settings: Settings;
   environment: EnvReport;
   logFile: string;
+  /** Set when settings.json couldn't be used as it was (see IPC.settingsNotice). */
+  settingsNotice: string | null;
   /** The administrator's policy in force, if any. */
   admin: {
     source: string | null;
@@ -56,6 +79,8 @@ export interface Status {
     confirmEveryAction: boolean;
     allowGrants: boolean;
     retentionDays: number;
+    /** Never-look entries the administrator set: shown locked; they never go into the user's own list. */
+    neverLook: string[];
   };
 }
 
@@ -96,9 +121,39 @@ export interface EmberHomeApi {
   onVoiceProgress(fn: (p: { done: number; total: number }) => void): () => void;
   /** The newest audit entries, newest first. */
   activity(): Promise<ActivityEntry[]>;
+  /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
+  retrySignIn(): Promise<{ found: boolean; source: string | null }>;
+  /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */
+  presence(): Promise<Presence>;
+  setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;
+  onPresence(fn: (p: Presence) => void): () => void;
+  onSettingsNotice(fn: (notice: string | null) => void): () => void;
+  /** Quit Ember (asks first while tasks are running). */
+  quit(): Promise<void>;
+  cancelSignIn(): Promise<void>;
+  /** Opens GitHub's page where the sign-in code is entered (again). */
+  openSignInPage(): Promise<void>;
+  /** This session's conversation (kept in memory only). */
+  conversation(): Promise<TranscriptEntry[]>;
+  onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
+  onFocusSection(fn: (section: string) => void): () => void;
+  /** The window was minimised or hidden (false), or shown again (true): nothing is drawn while it can't be seen. */
+  onVisibility(fn: (visible: boolean) => void): () => void;
+}
+
+export interface Presence { hidden: boolean; paused: boolean; overlay: boolean }
+
+/** What the ask box shows: where Ember will look, and the user's recent questions (newest last). */
+export interface AskContext {
+  /** e.g. "Mousepad · notes.txt · 12 words selected", or null when Ember can't read the screen. */
+  sees: string | null;
+  history: string[];
+  /** The box has just opened (not a later update of what Ember will see): what was left in it is selected. */
+  opened?: boolean;
 }
 
 export interface EmberAskApi {
   ask(text: string): void;
   close(): void;
+  onContext(fn: (c: AskContext) => void): void;
 }

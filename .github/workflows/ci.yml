@@ -17,11 +17,15 @@ jobs:
   checks:
     name: Lint, typecheck, unit tests, build
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
         env:
@@ -29,8 +33,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Accessibility sidecar self-test (stand-in pyatspi, no desktop)
+        run: npm run test:sidecar
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -45,6 +51,7 @@ jobs:
   el8:
     name: RHEL 8 compatibility (rockylinux:8)
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     container:
       image: rockylinux:8
       # Lets Chromium use its user-namespace sandbox inside the container.
@@ -52,47 +59,56 @@ jobs:
     steps:
       - name: System packages (build tools, Electron runtime libraries, Xvfb)
         run: |
-          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 \
+          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject
           useradd -m ci
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28 and check every binary
         run: scripts/rebuild-el8.sh --here
+      - name: Accessibility sidecar self-test on RHEL 8's platform-python (3.6), which installed Ember runs it with
+        run: /usr/libexec/platform-python -B sidecar/atspi/test_ember_atspi.py
       - run: npm run build
       - name: Launch smoke test as a normal user (sandbox on)
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
-      - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows)
+      - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
     steps:
       - name: Build tools only (the RPM must bring in its own runtime dependencies)
         run: |
-          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 rpm-build \
+          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28
@@ -113,9 +129,29 @@ jobs:
           rpm -q --requires ember | grep -v rpmlib
           stat -c '%A %U %n' /opt/ember/chrome-sandbox | grep -q '^-rwsr-xr-x root'
           test -x /usr/bin/ember && test -f /usr/share/applications/ember.desktop
+          # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
+          test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
+          ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'
+      - name: "The installed Ember's fuses: no debugger, no NODE_OPTIONS; plain Node kept for the desk helper"
+        run: |
+          node scripts/package/fuses.mjs --check /opt/ember/ember
+          # NODE_OPTIONS is ignored, also when Ember runs its desk helper as plain Node.
+          ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js /opt/ember/ember -e 'process.exit(0)'
+          # --inspect opens no debugger (and an installed Ember refuses to start with it).
+          sudo -u ci env HOME=/home/ci xvfb-run -a sh -c 'timeout 25 ember --inspect=127.0.0.1:9229 > /tmp/inspect.log 2>&1; true'
+          if grep -q 'Debugger listening' /tmp/inspect.log; then cat /tmp/inspect.log; exit 1; fi
+          grep -q "doesn't start with debugging switches" /tmp/inspect.log || { cat /tmp/inspect.log; exit 1; }
+      - name: The bundled licences are installed, and marked as licence files
+        run: |
+          test -s /opt/ember/THIRD_PARTY_NOTICES
+          rpm -qL ember | grep -qx /opt/ember/THIRD_PARTY_NOTICES
+          rpm -qL ember | grep -q 'sharp-libvips-linux-x64/README.md$'
+          rpm -ql ember | grep -qx /usr/share/doc/ember
       - name: ember doctor (no display, then on a display)
         run: |
           sudo -u ci env HOME=/home/ci ember doctor || true
+          # Without a display the check-up starts no GPU, so Chromium prints no GL errors over the report.
+          if { sudo -u ci env HOME=/home/ci ember doctor 2>&1 || true; } | grep -E 'ANGLE|eglInitialize|GPU process'; then exit 1; fi
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Sandbox'
       - name: The installed Ember starts and shows its window (as a normal user)
@@ -125,7 +161,7 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ember-packages
           path: |
@@ -136,29 +172,33 @@ jobs:
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
     steps:
       - name: System packages (as el8, plus gedit and dconf for the task suite)
         run: |
-          dnf -y -q install git tar xz bzip2 file binutils which sudo gcc-c++ make python3 \
+          dnf -y -q install git tar xz bzip2 file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject gedit dconf gsettings-desktop-schemas
           useradd -m ci
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+          cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -168,7 +208,7 @@ jobs:
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci \
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs --out dist/eval
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ember-eval

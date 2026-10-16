@@ -1,12 +1,18 @@
 /**
  * The reasoning bubble that rides under Ember: a state chip, a one-line intent,
- * the streaming thought (last three lines), and the current step with its "why".
+ * the thought (its newest lines while it streams, then the whole of it from the
+ * start), and the current step with its "why".
  *
  * It floats over any app, light or dark, so it always uses the same smoked-glass
- * look instead of following a page theme.
+ * look (dark and nearly opaque) instead of following a page theme.
+ *
+ * It is drawn every frame, so it only touches the DOM when something changed and
+ * only measures itself (a layout read) after its content changed.
  */
 
 export interface Point { x: number; y: number }
+export interface Size { width: number; height: number }
+export interface Rect { x: number; y: number; width: number; height: number }
 
 /** What the agent is doing; drives the chip colour and label. */
 export type BubbleMood =
@@ -19,9 +25,135 @@ export const BUBBLE_LABEL: Record<BubbleMood, string> = {
   acting: "Working",
   guiding: "Showing you",
   attention: "Needs you",
-  error: "Stuck",
+  error: "Problem",
   done: "Done",
 };
+
+/** The chip's words: an answer that is still arriving reads "Answering", not "Ready". */
+export function chipLabel(mood: BubbleMood, streaming: boolean): string {
+  return mood === "idle" && streaming ? "Answering" : BUBBLE_LABEL[mood];
+}
+
+export interface BubbleView {
+  visible: boolean;
+  mood: BubbleMood;
+  title: string;
+  thought: string;
+  streaming: boolean;
+}
+
+/**
+ * What a screen reader hears, once: finished answers and questions, never each
+ * streamed token or the running commentary while Ember thinks or works.
+ * "" means say nothing.
+ */
+export function announcement(v: BubbleView, speaker = "Ember"): string {
+  if (!v.visible || v.streaming) return "";
+  const text = v.thought.trim();
+  const title = v.title.trim();
+  const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
+  switch (v.mood) {
+    case "attention": return both ? `${speaker} needs you: ${both}` : "";
+    case "error": return both ? `${speaker} has a problem: ${both}` : "";
+    case "idle": case "done": case "guiding": return text || title ? `${speaker} says: ${text || title}` : "";
+    default: return "";
+  }
+}
+
+const MARGIN = 8;
+const GAP = 6;
+/** The narrowest the bubble gets (border box, px) to fit beside something it keeps off. */
+export const MIN_BUBBLE_WIDTH = 220;
+
+/** Where the bubble goes: its top-left corner and the size it has there. */
+export interface BubbleSpot extends Point { width: number; height: number }
+
+/** The usual places for a bubble of this size, in order of preference, and the one to fall back on. */
+function placesFor(anchor: Point, box: Size, bounds: Size, size: number): { places: Point[]; fallback: Point; below: number; above: number } {
+  const { width: w, height: h } = box;
+  const clampX = (x: number) => Math.min(Math.max(x, MARGIN), Math.max(MARGIN, bounds.width - w - MARGIN));
+  const clampY = (y: number) => Math.min(Math.max(y, MARGIN), Math.max(MARGIN, bounds.height - h - MARGIN));
+  const fitsY = (y: number) => y >= MARGIN && y + h <= bounds.height - MARGIN;
+  const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
+
+  const right = anchor.x - 22;
+  const x = clampX(right + w > bounds.width - MARGIN ? anchor.x - w + 22 : right);
+  const below = anchor.y + Math.max(18, size * 0.2 + GAP);
+  const above = anchor.y - h - Math.max(52, size * 1.5 + GAP);
+  const places: Point[] = [below, above].filter(fitsY).map(y => ({ x, y }));
+  if (size > 0) {
+    const cy = anchor.y - size * 0.4;
+    const y = clampY(cy - h / 2);
+    if (fitsX(anchor.x + size * 0.75 + GAP)) places.push({ x: anchor.x + size * 0.75 + GAP, y });
+    if (fitsX(anchor.x - size * 0.75 - GAP - w)) places.push({ x: anchor.x - size * 0.75 - GAP - w, y });
+  }
+  return { places, fallback: { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) }, below, above };
+}
+
+/** The first place that covers nothing in `avoid` (sliding sideways past it below or above Ember), or null. */
+function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid: readonly Rect[]): Point | null {
+  const { width: w, height: h } = box;
+  const { places, fallback, below, above } = placesFor(anchor, box, bounds, size);
+  const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
+  // Below and above are clear of Ember at any x, so there the bubble may also slide sideways past what it
+  // avoids: the shortest slide first (it stays by Ember rather than jump to the far side of a window).
+  const tries: Point[] = [];
+  for (const p of places) {
+    tries.push(p);
+    if (p.y !== below && p.y !== above) continue;
+    const slides = avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - p.x) - Math.abs(b - p.x));
+    for (const sx of slides) tries.push({ x: sx, y: p.y });
+  }
+  tries.push(fallback);
+  const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
+  return tries.find(clear) ?? null;
+}
+
+/**
+ * Where the bubble's top-left corner goes. `anchor` is the base of Ember (its
+ * centre + 0.4 × size). The bubble sits below-right of it and flips left or above
+ * near the edges of `bounds`. Given Ember's `size` (px), it also keeps clear of
+ * Ember's body and the emote over its head, so it never covers Ember in a corner;
+ * if neither below nor above fits, it goes beside Ember. `avoid` are things it
+ * should rather not cover (Ember's handle, the task cards): the first placement
+ * that clears them wins, sliding sideways past them if that is what it takes;
+ * when nothing clears them, the usual placement stands.
+ */
+export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = []): Point {
+  const { places, fallback } = placesFor(anchor, box, bounds, size);
+  return (avoid.length ? clearPlace(anchor, box, bounds, size, avoid) : null) ?? places[0] ?? fallback;
+}
+
+/**
+ * Like `bubblePosition`, but only a place that covers nothing in `avoid`: at the
+ * bubble's own width, or narrower (down to MIN_BUBBLE_WIDTH) to fit the room
+ * beside what it avoids, e.g. next to a centred settings window. A narrower
+ * bubble is chosen when its own width finds no place, or only one much further
+ * from Ember (across the window from it). `heightAt` says how tall the bubble is
+ * at a given width (its text wraps onto more lines). Null when no place clears them.
+ */
+export function bubbleFit(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = [], heightAt?: (width: number) => number): BubbleSpot | null {
+  const away = (p: Point, b: Size) => Math.hypot(p.x + b.width / 2 - anchor.x, p.y + b.height / 2 - anchor.y);
+  const own = clearPlace(anchor, box, bounds, size, avoid);
+  let best: BubbleSpot | null = own && { ...own, ...box };
+  if (!heightAt) return best;
+  // A narrower one must be nearer by more than the bubble's width; of the narrower ones, the nearest (the wider of two as near).
+  let far = own ? away(own, box) - box.width : Infinity;
+  for (const width of narrowerWidths(box.width, bounds, avoid)) {
+    const b = { width, height: heightAt(width) };
+    const q = clearPlace(anchor, b, bounds, size, avoid);
+    if (!q) continue;
+    const d = away(q, b);
+    if (d < far - 1) { best = { ...q, ...b }; far = d; }
+  }
+  return best;
+}
+
+/** The room beside each thing to avoid (left of it, right of it), widest first, where a bubble narrower than `width` would fit. */
+function narrowerWidths(width: number, bounds: Size, avoid: readonly Rect[]): number[] {
+  const rooms = avoid.flatMap(r => [r.x - GAP - MARGIN, bounds.width - MARGIN - (r.x + r.width + GAP)]).map(Math.floor);
+  return [...new Set(rooms.filter(w => w >= MIN_BUBBLE_WIDTH && w < width))].sort((a, b) => b - a);
+}
 
 const STYLE_ID = "ember-bubble-style";
 
@@ -33,18 +165,19 @@ export const BUBBLE_CSS = `
   display: grid; gap: 6px;
   padding: 10px 12px 11px;
   border-radius: 12px;
-  background: rgba(26, 15, 11, 0.88);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
-  backdrop-filter: blur(10px) saturate(1.2);
+  /* Nearly opaque instead of a backdrop blur: with software compositing the blur cost ~10% of a core
+     while Ember animated beside it, and at this opacity it made no visible difference. */
+  background: rgba(26, 15, 11, 0.94);
   border: 1px solid color-mix(in srgb, var(--eb-mood) 38%, transparent);
   box-shadow: 0 0 22px color-mix(in srgb, var(--eb-mood) 22%, transparent), 0 10px 26px rgba(0, 0, 0, 0.35);
   color: #fbeee3;
   font: 13px/1.4 var(--ember-font, "Atkinson Hyperlegible", system-ui, sans-serif);
   pointer-events: none;
   will-change: transform;
-  transition: opacity 160ms ease, border-color 300ms ease, box-shadow 300ms ease;
+  transition: opacity 160ms ease, visibility 0s, border-color 300ms ease, box-shadow 300ms ease;
 }
-.ember-bubble[data-hidden="true"] { opacity: 0; }
+/* Hidden is gone once it has faded: nothing in it takes a click or the keyboard. */
+.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; transition-delay: 0s, 160ms, 0s, 0s; }
 .ember-bubble[data-mood="listening"] { --eb-mood: #ffc45a; }
 .ember-bubble[data-mood="thinking"]  { --eb-mood: #ffd36b; }
 .ember-bubble[data-mood="acting"]    { --eb-mood: #ff9330; }
@@ -52,45 +185,77 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-mood="attention"] { --eb-mood: #b77bff; }
 .ember-bubble[data-mood="error"]     { --eb-mood: #ff6a45; }
 .ember-bubble[data-mood="done"]      { --eb-mood: #ffe08a; }
+/* A grid item is as wide as its longest word by default: one long unbroken word (an app's name on a
+   button) would widen the bubble past its edge. */
+.ember-bubble > * { min-width: 0; }
 .eb-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .eb-chip {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   font: 600 10.5px/1 var(--ember-mono, ui-monospace, monospace);
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--eb-mood);
 }
-.eb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eb-mood); box-shadow: 0 0 8px var(--eb-mood); animation: eb-pulse 1.4s ease-in-out infinite; }
+.eb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eb-mood); box-shadow: 0 0 8px var(--eb-mood); }
+/* The dot pulses only while Ember is busy or waiting on you; a finished answer sits still. */
+.ember-bubble:is([data-streaming="true"], [data-mood="listening"], [data-mood="thinking"], [data-mood="acting"], [data-mood="guiding"], [data-mood="attention"]) .eb-dot {
+  animation: eb-pulse 1.4s ease-in-out infinite;
+}
 .eb-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Finished text reads from its start, upright and at full contrast: up to six lines. */
 .eb-thought {
-  margin: 0; max-height: calc(1.4em * 3); overflow: hidden;
-  display: flex; flex-direction: column; justify-content: flex-end;
-  color: rgba(251, 238, 227, 0.74); font-style: italic;
+  margin: 0; max-height: calc(1.4em * 6); overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-start;
+  color: #fbeee3; white-space: pre-line; overflow-wrap: anywhere;
+}
+.eb-thought:empty { display: none; }
+/* Running commentary (thinking, working, listening) is quieter: italic, three lines. */
+.ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
+  max-height: calc(1.4em * 3); color: rgba(251, 238, 227, 0.74); font-style: italic;
+}
+/* While text streams in, the newest lines show and the start slides away under a fade. */
+.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(1.4em * 3); justify-content: flex-end; }
+.ember-bubble[data-streaming="true"] .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
 }
-.eb-thought:empty { display: none; }
-.ember-bubble[data-mood="idle"] .eb-thought, .ember-bubble[data-mood="done"] .eb-thought { font-style: normal; color: #fbeee3; }
-/* A finished answer reads from its start: up to six lines, fading out if longer. */
-.ember-bubble:is([data-mood="idle"], [data-mood="done"]):not([data-streaming="true"]) .eb-thought {
-  max-height: calc(1.4em * 6); justify-content: flex-start;
+/* Finished text that doesn't fit fades out at the bottom (only then). */
+.ember-bubble:not([data-streaming="true"]) .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
 }
-.eb-thought span::after { content: ""; display: inline-block; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); opacity: 0; }
-.ember-bubble[data-streaming="true"] .eb-thought span::after { opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
+/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
+.ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
+  max-height: calc(1.4em * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  -webkit-mask-image: none; mask-image: none;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
+}
+/* The caret exists only while text arrives (an invisible one could wrap onto a blank line of its own). */
+.eb-thought span::after { content: ""; display: none; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); }
+.ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
 .eb-step { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 220, 190, 0.12); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 700; }
-.eb-actions { display: flex; gap: 8px; padding-top: 2px; pointer-events: auto; }
+/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
+.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; color: rgba(251, 238, 227, 0.8); }
+.ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
+.eb-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 .eb-actions button {
   font: 600 12px/1 var(--ember-font, system-ui, sans-serif); padding: 7px 12px; border-radius: 8px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--eb-mood) 55%, transparent); background: transparent; color: #fbeee3;
+  max-width: 100%; overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--eb-mood) 85%, transparent); background: transparent; color: #fbeee3;
 }
 .eb-actions button.eb-primary { background: var(--eb-mood); border-color: var(--eb-mood); color: #1a0f0b; }
 .eb-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* Read out by screen readers, never seen. */
+.eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }
 @keyframes eb-blink { 50% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .eb-dot, .ember-bubble[data-streaming="true"] .eb-thought span::after { animation: none; } }
+/* Nothing animates while the bubble is hidden (an endless animation keeps the compositor busy). */
+.ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after { animation: none !important; }
+/* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). */
+@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after { animation: none !important; } .ember-bubble { transition: none; } }
+html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !important; }
+html.calm .ember-bubble { transition: none; }
 `;
 
 export interface BubbleAction {
@@ -101,16 +266,40 @@ export interface BubbleAction {
   onClick: () => void;
 }
 
+/** The bubble at one width: its size, where its clickable parts are, and whether its text overflows. */
+interface Measured { box: Size; hot: Rect[]; over: boolean }
+
 export class ReasoningBubble {
   readonly root: HTMLDivElement;
   private readonly chipText: HTMLSpanElement;
   private readonly title: HTMLSpanElement;
+  private readonly thoughtBox: HTMLParagraphElement;
   private readonly thought: HTMLSpanElement;
   private readonly step: HTMLDivElement;
   private readonly stepText: HTMLSpanElement;
   private readonly actions: HTMLDivElement;
+  /** The one place screen readers hear Ember from (see `announcement`). */
+  private readonly live: HTMLDivElement;
   private actionKey = "";
   private handlers: (() => void)[] = [];
+  private mood: BubbleMood = "idle";
+  private streaming = false;
+  private visible = true;
+  private speaker = "Ember";
+  private announced = "";
+  private announceQueued = false;
+  /** Content changed since the bubble last measured itself. */
+  private dirty = true;
+  /** What the bubble measured at each width tried since its content changed (0: its own width). */
+  private sizes = new Map<number, Measured>();
+  /** The width set on the bubble now (0: its own width). */
+  private width = 0;
+  private box: Size = { width: 0, height: 0 };
+  private pos: Point | null = null;
+  /** Clickable or scrollable parts, relative to the bubble's border box. */
+  private hot: Rect[] = [];
+  /** Hidden because there was no room for it beside what it must not cover (see `place`). */
+  private crowded = false;
 
   constructor(host: HTMLElement) {
     if (!document.getElementById(STYLE_ID)) {
@@ -121,51 +310,80 @@ export class ReasoningBubble {
     }
     this.root = document.createElement("div");
     this.root.className = "ember-bubble";
-    this.root.setAttribute("role", "status");
-    this.root.setAttribute("aria-live", "polite");
     this.root.innerHTML = `
-      <div class="eb-head"><span class="eb-chip"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-title"></span></div>
+      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-title"></span></div>
       <p class="eb-thought"><span></span></p>
-      <div class="eb-step" hidden><span class="eb-step-arrow">→</span><span class="eb-step-text"></span></div>
+      <div class="eb-step" hidden><span class="eb-step-arrow" aria-hidden="true">→</span><span class="eb-step-text"></span></div>
       <div class="eb-actions" hidden></div>`;
     this.chipText = this.root.querySelector(".eb-chip-text")!;
     this.title = this.root.querySelector(".eb-title")!;
+    this.thoughtBox = this.root.querySelector(".eb-thought")!;
     this.thought = this.root.querySelector(".eb-thought span")!;
     this.step = this.root.querySelector(".eb-step")!;
     this.stepText = this.root.querySelector(".eb-step-text")!;
     this.actions = this.root.querySelector(".eb-actions")!;
-    host.appendChild(this.root);
-    this.setMood("idle");
+    this.live = document.createElement("div");
+    this.live.className = "eb-live";
+    this.live.setAttribute("role", "status");
+    this.live.setAttribute("aria-live", "polite");
+    this.live.setAttribute("aria-atomic", "true");
+    host.append(this.root, this.live);
+    this.root.dataset.mood = this.mood;
+    this.root.dataset.streaming = "false";
+    this.chipText.textContent = chipLabel(this.mood, false);
+    // Late font loads and the like change the size without any setter running.
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => { this.dirty = true; }).observe(this.root);
+  }
+
+  /** Who is talking, for screen readers ("Cinder says: …"). */
+  setSpeaker(name: string): void {
+    this.speaker = name;
   }
 
   setMood(mood: BubbleMood): void {
+    if (mood === this.mood) return;
+    this.mood = mood;
     this.root.dataset.mood = mood;
-    this.chipText.textContent = BUBBLE_LABEL[mood];
+    this.updateChip();
+    this.changed();
   }
 
   setTitle(text: string): void {
+    if (this.title.textContent === text) return;
     this.title.textContent = text;
+    this.changed();
   }
 
   setThought(text: string): void {
+    if (this.thought.textContent === text) return;
     this.thought.textContent = text;
-    this.thought.parentElement!.style.display = text ? "" : "none";
+    this.thoughtBox.style.display = text ? "" : "none";
+    this.changed();
   }
 
   /** Append streamed reasoning text (e.g. from assistant.reasoning_delta). */
   appendThought(delta: string): void {
-    this.thought.parentElement!.style.display = "";
+    this.thoughtBox.style.display = "";
     this.thought.textContent += delta;
+    this.changed();
   }
 
   setStreaming(on: boolean): void {
+    if (on === this.streaming) return;
+    this.streaming = on;
     this.root.dataset.streaming = String(on);
+    if (on) this.root.setAttribute("aria-busy", "true");
+    else this.root.removeAttribute("aria-busy");
+    this.updateChip();
+    this.changed();
   }
 
   /** The step being performed and why; null hides the row. */
   setStep(text: string | null): void {
+    if (this.step.hidden === !text && this.stepText.textContent === (text ?? "")) return;
     this.step.hidden = !text;
     this.stepText.textContent = text ?? "";
+    this.changed();
   }
 
   /**
@@ -189,25 +407,131 @@ export class ReasoningBubble {
       b.addEventListener("click", () => this.handlers[i]?.());
       this.actions.appendChild(b);
     });
+    this.changed();
   }
 
   setVisible(on: boolean): void {
-    this.root.dataset.hidden = String(!on);
+    if (on === this.visible) return;
+    this.visible = on;
+    this.showHide();
+    this.queueAnnounce();
+  }
+
+  private showHide(): void {
+    const shown = this.visible && !this.crowded;
+    this.root.dataset.hidden = String(!shown);
+    if (shown) this.root.removeAttribute("aria-hidden");
+    else this.root.setAttribute("aria-hidden", "true");
   }
 
   /**
-   * Sit below-right of the flame base; flip left or above near the edges of
-   * `bounds` (the overlay's size).
+   * Sit below-right of the flame base (`anchor`), flipping left or above near the
+   * edges of `bounds` (the overlay's size) and, given Ember's `size` in px, never
+   * over Ember itself, nor (if it can help it) over the `avoid` rects, narrowing
+   * itself to fit beside them if that is what it takes. `hideFrom` (also in
+   * `avoid`) are places it would rather hide than cover, such as the settings
+   * window the user works in: with no room beside them it hides until there is.
+   * Returns true when the bubble moved, changed size, or hid or showed for room.
    */
-  place(anchor: Point, bounds: { width: number; height: number }): void {
-    const w = this.root.offsetWidth;
-    const h = this.root.offsetHeight;
-    let x = anchor.x - 22;
-    let y = anchor.y + 18;
-    if (x + w > bounds.width - 8) x = anchor.x - w + 22;
-    if (y + h > bounds.height - 8) y = anchor.y - h - 52;
-    x = Math.min(Math.max(x, 8), Math.max(8, bounds.width - w - 8));
-    y = Math.min(Math.max(y, 8), Math.max(8, bounds.height - h - 8));
-    this.root.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = []): boolean {
+    if (this.dirty) { this.dirty = false; this.sizes.clear(); }
+    const own = this.sized(0);
+    const heightAt = (w: number) => this.sized(w).box.height;
+    // Clear of everything; else (with places to hide from) at least clear of those; else the usual place.
+    const spot = avoid.length ? bubbleFit(anchor, own.box, bounds, size, avoid, heightAt)
+      ?? (hideFrom.length ? bubbleFit(anchor, own.box, bounds, size, hideFrom, heightAt) : undefined) : undefined;
+    if (spot === null) {
+      this.useWidth(0);
+      return this.setCrowded(true);
+    }
+    const width = spot && spot.width < own.box.width ? spot.width : 0;
+    const p = spot ?? bubblePosition(anchor, own.box, bounds, size, avoid);
+    const m = this.sized(width);
+    this.useWidth(width);
+    if ((this.thoughtBox.dataset.overflow === "true") !== m.over) this.thoughtBox.dataset.overflow = String(m.over);
+    const x = Math.round(p.x), y = Math.round(p.y);
+    // A new measurement (the content changed, or another width) may move the buttons.
+    const resized = m.box !== this.box || m.hot !== this.hot;
+    const shown = this.setCrowded(false);
+    this.box = m.box;
+    this.hot = m.hot;
+    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) return false;
+    this.pos = { x, y };
+    this.root.style.transform = `translate(${x}px, ${y}px)`;
+    return true;
+  }
+
+  /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
+  interactiveRects(pad = 4): Rect[] {
+    const pos = this.pos;
+    if (!this.visible || this.crowded || !pos) return [];
+    return this.hot.map(r => ({ x: pos.x + r.x - pad, y: pos.y + r.y - pad, width: r.width + pad * 2, height: r.height + pad * 2 }));
+  }
+
+  private setCrowded(on: boolean): boolean {
+    if (on === this.crowded) return false;
+    this.crowded = on;
+    this.showHide();
+    return true;
+  }
+
+  /** The bubble's size at `width` (0: its own), measured once per content change. */
+  private sized(width: number): Measured {
+    let m = this.sizes.get(width);
+    if (!m) {
+      this.useWidth(width);
+      m = this.measure();
+      this.sizes.set(width, m);
+    }
+    return m;
+  }
+
+  private useWidth(width: number): void {
+    if (width === this.width) return;
+    this.width = width;
+    this.root.style.width = width ? `${width}px` : "";
+    this.root.style.boxSizing = width ? "border-box" : "";
+  }
+
+  private changed(): void {
+    this.dirty = true;
+    this.queueAnnounce();
+  }
+
+  private updateChip(): void {
+    const label = chipLabel(this.mood, this.streaming);
+    if (this.chipText.textContent !== label) this.chipText.textContent = label;
+  }
+
+  /** One layout read: size, overflow, and where the clickable parts are. */
+  private measure(): Measured {
+    const t = this.thoughtBox;
+    const over = t.style.display !== "none" && this.thought.offsetHeight > t.clientHeight + 1;
+    const box = { width: this.root.offsetWidth, height: this.root.offsetHeight };
+    const edge = this.root.clientLeft;
+    const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
+    const hot: Rect[] = [];
+    if (!this.actions.hidden) hot.push(rel(this.actions));
+    if (over && this.mood === "attention" && !this.streaming) hot.push(rel(t));
+    return { box, hot, over };
+  }
+
+  private queueAnnounce(): void {
+    if (this.announceQueued) return;
+    this.announceQueued = true;
+    queueMicrotask(() => this.announce());
+  }
+
+  /** Runs after a batch of setters, so a whole update is judged at once. */
+  private announce(): void {
+    this.announceQueued = false;
+    // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
+    if (!this.visible) return;
+    const text = announcement({
+      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming,
+    }, this.speaker);
+    if (text === this.announced) return;
+    this.announced = text;
+    this.live.textContent = text;
   }
 }

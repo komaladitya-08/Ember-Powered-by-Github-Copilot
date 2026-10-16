@@ -11,7 +11,17 @@ Name:           ember
 Version:        %{ember_version}
 Release:        1%{?dist}
 Summary:        A cursor companion that works visibly in your apps, powered by GitHub Copilot
-License:        MIT
+# Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
+# LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0), semver
+# (ISC), koffi, zod and the Copilot SDK and runtime (MIT), and libvips (LGPL-3.0-or-later) with the
+# libraries @img/sharp-libvips bundles: cairo (MPL-1.1), aom, libarchive and libimagequant (BSD-2-Clause;
+# aom also grants the AOMedia Patent License 1.0), highway and libwebp (BSD-3-Clause), mozjpeg (IJG,
+# BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
+# (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
+# The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
+# a bundled package's licence, or a library one declares it bundles, is missing here
+# (scripts/package/licences.mjs).
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64
@@ -45,7 +55,7 @@ Requires:       ember = %{version}-%{release}
 
 %description voice-models
 The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Hey Ember". With this package Ember doesn't download them (about 125 MB).
+for "Hey Ember". With this package Ember doesn't download them (about 126 MB).
 Everything runs on this computer.
 %endif
 
@@ -55,6 +65,9 @@ Everything runs on this computer.
 %install
 mkdir -p %{buildroot}/opt
 cp -a ember %{buildroot}/opt/ember
+# Plain modes, whatever the build machine's umask or npm left: the owner writes, everyone reads (and
+# runs what is executable). The sandbox helper gets its setuid mode from %%attr below.
+chmod -R u=rwX,go=rX %{buildroot}/opt/ember
 install -Dm755 launcher %{buildroot}%{_bindir}/ember
 install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop
 install -Dm644 ember.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/ember.svg
@@ -64,9 +77,12 @@ install -dm755 %{buildroot}%{_sysconfdir}/ember
 %if 0%{?with_models}
 mkdir -p %{buildroot}%{_datadir}/ember
 cp -a voice-models %{buildroot}%{_datadir}/ember/voice-models
+chmod -R u=rwX,go=rX %{buildroot}%{_datadir}/ember/voice-models
 %endif
-# Every file under /opt/ember except the sandbox helper, which gets its own mode below.
-(cd %{buildroot} && find opt/ember \( -type f -o -type l \) ! -path opt/ember/chrome-sandbox | sed 's| |?|g; s|^|/|') > files.list
+# Every file under /opt/ember except the sandbox helper, which gets its own mode below. Licence and
+# notice files are marked %%license, so they're installed even with --excludedocs.
+(cd %{buildroot} && find opt/ember \( -type f -o -type l \) ! -path opt/ember/chrome-sandbox | sed 's| |?|g; s|^|/|' \
+  | sed -E 's@^(.*/((LICEN[CS]E|COPYING|NOTICE|THIRD_?PARTY_?NOTICES|COPYRIGHTNOTICE)[^/]*|sharp-libvips-[^/]*/README\.md))$@%%license \1@I') > files.list
 (cd %{buildroot} && find opt/ember -mindepth 1 -type d | sed 's| |?|g; s|^|%dir /|') >> files.list
 
 %post
@@ -91,11 +107,13 @@ fi
 %{_datadir}/applications/ember.desktop
 %{_datadir}/icons/hicolor/scalable/apps/ember.svg
 %{_datadir}/icons/hicolor/256x256/apps/ember.png
+%dir %{_docdir}/ember
 %doc %{_docdir}/ember/policy.example.json
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}
 %files voice-models
+%dir %{_datadir}/ember
 %{_datadir}/ember/voice-models
 %endif
 

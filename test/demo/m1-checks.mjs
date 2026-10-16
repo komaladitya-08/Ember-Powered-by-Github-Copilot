@@ -7,11 +7,12 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const [out, mode] = [path.resolve(process.argv[2] ?? "dist/demo"), process.argv[3] ?? "interactive"];
 mkdirSync(out, { recursive: true });
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const xdo = (...a) => execFileSync("xdotool", a, { env: process.env }).toString();
 const userData = mkdtempSync(path.join(tmpdir(), "ember-check-"));

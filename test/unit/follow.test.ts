@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { followTarget, Follower, contains } from "../../app/main/follow";
+import { followTarget, Follower, contains, besideRect, besideControl } from "../../app/main/follow";
 
 const area = { x: 0, y: 0, width: 1280, height: 800 };
 
@@ -43,5 +43,42 @@ describe("Follower", () => {
     f.park(null);
     f.setPaused(true);
     expect(settle(f, { x: 900, y: 700 }).x).toBeCloseTo(100, 0);
+  });
+});
+
+describe("Ember keeps off its own handle", () => {
+  it("sits just above the handle instead of behind it in the corner", () => {
+    const area = { x: 0, y: 0, width: 1280, height: 800 };
+    const handle = { x: 1068, y: 732, width: 200, height: 56 };
+    const p = followTarget({ x: 1150, y: 760 }, 60, area, handle);
+    expect(p.y + 36).toBeLessThanOrEqual(handle.y);
+    expect(followTarget({ x: 300, y: 300 }, 60, area, handle)).toEqual(followTarget({ x: 300, y: 300 }, 60, area));
+  });
+});
+
+describe("Ember steps beside things, never off screen", () => {
+  const area = { x: 0, y: 0, width: 1280, height: 800 };
+  it("waits to the right of a window, or to the left when the right has no room", () => {
+    expect(besideRect({ x: 100, y: 100, width: 600, height: 500 }, 60, area, 190)).toEqual({ x: 100 + 600 + 10 + 36, y: 190 });
+    const left = besideRect({ x: 500, y: 100, width: 760, height: 500 }, 60, area, 190)!;
+    expect(left.x).toBe(500 - 10 - 36);
+  });
+  it("has no spot beside a window that fills the screen", () => {
+    expect(besideRect({ x: 0, y: 0, width: 1280, height: 800 }, 60, area, 90)).toBeNull();
+  });
+  it("parks beside a control at the right edge on its left, and inside the screen for a full-width one", () => {
+    const menu = besideControl({ x: 1240, y: 4, width: 36, height: 30 }, 60, area);
+    expect(menu.x + 36).toBeLessThanOrEqual(1280);
+    expect(menu.x).toBeLessThan(1240);
+    const bar = besideControl({ x: 0, y: 760, width: 1280, height: 40 }, 60, area);
+    expect(bar.x).toBeGreaterThanOrEqual(36);
+    expect(bar.x + 36).toBeLessThanOrEqual(1280);
+    expect(bar.y + 36).toBeLessThanOrEqual(800);
+  });
+  it("goes to a forced target even while parked", () => {
+    const f = new Follower({ x: 0, y: 0 });
+    f.park({ x: 0, y: 0 });
+    for (let i = 0; i < 200; i++) f.step({ x: 300, y: 300 }, 0.016, true);
+    expect(f.position.x).toBeCloseTo(300, 0);
   });
 });

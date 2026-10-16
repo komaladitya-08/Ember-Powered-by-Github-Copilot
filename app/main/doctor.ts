@@ -6,6 +6,7 @@
 
 import type { EnvReport } from "./environment";
 import type { LoadedAdminPolicy } from "./admin";
+import { VOICE_MODELS_BYTES } from "../voice/models";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -33,6 +34,8 @@ export interface DoctorProbes {
   admin: LoadedAdminPolicy;
   desk: { ok: boolean; missing: string[] };
   sandbox: { userNamespaces: boolean; suidHelper: boolean };
+  /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
+  fileWatchers?: { used: number; max: number } | null;
 }
 
 export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
@@ -41,7 +44,11 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   for (const id of ["platform", "os", "glibc", "session", "desktop"]) {
     const c = env(id);
     if (!c) continue;
-    const fix = id === "session" && c.status !== "ok" ? "Log out, click the gear on the login screen and choose “GNOME on Xorg”." : undefined;
+    // Each session problem has its own way out: only Wayland needs another session.
+    const fix = id !== "session" || c.status === "ok" ? undefined
+      : /wayland/i.test(c.detail) ? "Log out, click the gear on the login screen and choose “GNOME on Xorg”."
+        : /can't connect/i.test(c.detail) ? "Start Ember from a terminal inside your desktop session (DISPLAY and XAUTHORITY come from it)."
+          : "Run Ember inside your desktop session (or over ssh -X).";
     out.push({ id, status: c.status, label: c.label, detail: c.detail, ...(fix ? { fix } : {}) });
   }
 
@@ -86,7 +93,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
       : { id: "microphone", status: "warn", label: "Microphone", detail: "No microphone found. Only needed for “Hey Ember”; typing (Ctrl+Alt+Space) always works." });
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: "Turn on “Hey Ember” in Ember's settings and download them (about 140 MB), or install ember-voice-models." }
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once), or install ember-voice-models.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
   out.push(p.speechDispatcher
     ? { id: "speech", status: "ok", label: "Speaking", detail: "speech-dispatcher is installed." }
@@ -99,6 +106,15 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   out.push(p.sandbox.userNamespaces || p.sandbox.suidHelper
     ? { id: "sandbox", status: "ok", label: "Sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
     : { id: "sandbox", status: "fail", label: "Sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
+  // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
+  // and never answers them.
+  const w = p.fileWatchers;
+  const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
+  if (w) out.push(w.max - w.used >= 8
+    ? { id: "file-watchers", status: "ok", label: "File watchers", detail: `${w.used} of ${w.max} in use.` }
+    : w.used >= w.max
+      ? { id: "file-watchers", status: "fail", label: "File watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 

@@ -12,6 +12,10 @@ export interface EnvInputs {
   arch: string;
   /** Accessibility (screen reading). Omitted when not probed. */
   accessibility?: { enabled: boolean | null; pyatspi: boolean };
+  /** Could Ember open the X display? (Xvfb, xrdp, ssh -X and su leave XDG_SESSION_TYPE unset or "tty".) Omitted when not probed. */
+  x11?: boolean;
+  /** Ember's keyboard shortcuts another app already holds. Omitted when not known yet. */
+  shortcutsTaken?: string[];
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -72,18 +76,18 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     detail: os.PRETTY_NAME ?? "unknown",
   });
 
-  if (sessionType === "x11" && display) {
-    checks.push({ id: "session", label: "Desktop session", status: "ok", detail: `X11 on ${display}` });
-  } else if (sessionType === "wayland") {
+  if (sessionType === "wayland" || (!!i.env.WAYLAND_DISPLAY && sessionType !== "x11")) {
     checks.push({
       id: "session", label: "Desktop session", status: "fail",
       detail: "Wayland session. Ember v1 needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",
     });
+  } else if (display && (sessionType === "x11" || i.x11 !== false)) {
+    // An X display Ember can use is what matters (the session type is often unset on Xvfb, xrdp or ssh -X).
+    checks.push({ id: "session", label: "Desktop session", status: "ok", detail: `X11 on ${display}` });
+  } else if (display) {
+    checks.push({ id: "session", label: "Desktop session", status: "fail", detail: `Ember can't connect to the X display ${display}. Start Ember from inside your desktop session.` });
   } else {
-    checks.push({
-      id: "session", label: "Desktop session", status: display ? "warn" : "fail",
-      detail: display ? `Unknown session type on ${display}` : "No X display found",
-    });
+    checks.push({ id: "session", label: "Desktop session", status: "fail", detail: "No X display. Start Ember from inside your desktop session (not over SSH without -X)." });
   }
 
   checks.push(/GNOME/i.test(desktop)
@@ -105,6 +109,13 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     } else {
       checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
     }
+  }
+
+  if (i.shortcutsTaken) {
+    const taken = i.shortcutsTaken.map(a => a.replace(/Control/g, "Ctrl"));
+    checks.push(taken.length
+      ? { id: "shortcuts", label: "Keyboard shortcuts", status: "warn", detail: `Another app already uses ${taken.join(", ")}. Use Ember's handle in the bottom-right corner instead (it has Ask, Stop everything and Settings); Ember keeps trying to get them.` }
+      : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: "Ctrl+Alt+Space ask · Ctrl+Alt+X stop · Ctrl+Alt+E settings · Ctrl+Alt+M microphone" });
   }
 
   return {

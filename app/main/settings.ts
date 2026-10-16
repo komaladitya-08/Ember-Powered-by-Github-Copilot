@@ -1,6 +1,8 @@
 /**
- * User settings in ~/.config/ember/settings.json. Validated with zod; unknown
- * or invalid values fall back to defaults; writes are atomic (tmp + rename).
+ * User settings in ~/.config/ember/settings.json. Validated with zod; invalid
+ * values fall back to defaults item by item (one bad never-look entry doesn't
+ * reset the list); writes are atomic and durable (tmp + fsync + rename), and a
+ * change made by hand while Ember runs is picked up, never overwritten.
  * The administrator's policy (/etc/ember/policy.json, see admin.ts) layers on
  * top: get() returns the settings in force, with the admin's values applied.
  */
@@ -27,7 +29,9 @@ export const SettingsSchema = z.object({
     consent: z.boolean().default(false),
     /** Ignore "Hey Ember" when it comes out of the speakers (needs parec). */
     speakerRejection: z.boolean().default(true),
-  }).default({ consent: false, speakerRejection: true }),
+    /** The user turned the microphone off (Ctrl+Alt+M): it stays off across restarts. */
+    muted: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),
@@ -48,6 +52,8 @@ export const SettingsSchema = z.object({
     conductor: z.string().nullable().default(null),
     worker: z.string().nullable().default(null),
   }).default({ conductor: null, worker: null }),
+  /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
+  reduceMotion: z.boolean().default(false),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -57,6 +63,82 @@ export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
 export { CONSENT_VERSION };
 export const hasConsent = (s: Settings) => s.consent.version >= CONSENT_VERSION;
+
+type Shape = typeof SettingsSchema.shape;
+
+/** A broken object field, cut down to what is still valid in it. */
+function repairObject(key: keyof Shape, v: Record<string, unknown>): unknown {
+  if (key === "grants") return Object.fromEntries(Object.entries(v).filter(([, g]) => g === "observe" || g === "act"));
+  if (key === "privacy") {
+    const list = Array.isArray(v.neverLook) ? v.neverLook.filter((x): x is string => typeof x === "string" && x.length <= 100).slice(0, 100) : undefined;
+    return list ? { neverLook: list } : {};
+  }
+  // Other objects: keep each sub-field that is valid on its own.
+  let kept = { ...(DEFAULT_SETTINGS[key] as Record<string, unknown>) };
+  for (const [k, x] of Object.entries(v)) {
+    const probe = { ...kept, [k]: x };
+    if (SettingsSchema.shape[key].safeParse(probe).success) kept = probe;
+  }
+  return kept;
+}
+
+/** Keeps every valid setting (down to single list entries) and resets only what is invalid. */
+export function repairSettings(partial: Record<string, unknown>): Settings {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(SettingsSchema.shape) as (keyof Shape)[]) {
+    const field = SettingsSchema.shape[key];
+    const v = partial[key];
+    if (field.safeParse(v).success) { out[key] = v; continue; }
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const fixed = repairObject(key, v as Record<string, unknown>);
+      if (field.safeParse(fixed).success) out[key] = fixed;
+    }
+  }
+  return SettingsSchema.parse(out);
+}
+
+/**
+ * JSON with the slips people make editing by hand (comments, trailing commas) read anyway; undefined
+ * when even that fails.
+ */
+export function lenientJson(raw: string): unknown {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '"') {
+      // A string, copied as it is (escapes included).
+      let j = i + 1;
+      while (j < raw.length && raw[j] !== '"') j += raw[j] === "\\" ? 2 : 1;
+      out += raw.slice(i, j + 1);
+      i = j;
+    } else if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && raw[i + 1] === "*") {
+      const end = raw.indexOf("*/", i + 2);
+      i = end < 0 ? raw.length : end + 1;
+    } else if (c === ",") {
+      // A comma with nothing after it (but space and comments) before the closing bracket.
+      let j = i + 1;
+      for (;;) {
+        while (j < raw.length && /\s/.test(raw[j])) j++;
+        if (raw.startsWith("//", j)) { while (j < raw.length && raw[j] !== "\n") j++; continue; }
+        if (raw.startsWith("/*", j)) { const end = raw.indexOf("*/", j + 2); j = end < 0 ? raw.length : end + 2; continue; }
+        break;
+      }
+      if (raw[j] !== "}" && raw[j] !== "]") out += c;
+    } else out += c;
+  }
+  try { return JSON.parse(out); } catch { return undefined; }
+}
+
+/** The never-look entries of a file that can't be read at all: the one list worth saving from it. */
+function salvageNeverLook(raw: string): string[] | null {
+  const m = /"neverLook"\s*:\s*\[([\s\S]*?)\]/.exec(raw);
+  if (!m) return null;
+  const list = [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(x => { try { return JSON.parse(`"${x[1]}"`) as string; } catch { return null; } });
+  return list.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 100).slice(0, 100);
+}
 
 export interface LoadResult {
   settings: Settings;
@@ -69,46 +151,140 @@ export class SettingsStore {
   private current: Settings = DEFAULT_SETTINGS;
   private effective: Settings = DEFAULT_SETTINGS;
   private listeners = new Set<(s: Settings) => void>();
+  private problemListeners = new Set<(msg: string | null) => void>();
+  /** A problem was reported and not yet cleared by a file that reads fine. */
+  private troubled = false;
+  /** The file on disk isn't JSON (a hand edit): where the user's version was kept ("" if it couldn't be). */
+  private broken: string | null = null;
+  /** The file as Ember last read or wrote it: anything newer was edited by hand. */
+  private seen: number | null = null;
+  /** A change applied in memory whose save is due shortly (a slider being dragged). */
+  private pending: SettingsPatch | null = null;
+  private pendingTimer: NodeJS.Timeout | null = null;
 
   constructor(readonly file: string, private admin: AdminPolicy | null = null) {}
 
   load(): LoadResult {
-    const r = this.read();
-    // Onboarding isn't finished until the current consent is given (older files are asked again).
-    if (this.current.onboarded && !hasConsent(this.current)) this.current = { ...this.current, onboarded: false };
-    this.effective = this.admin ? applyAdminPolicy(this.current, this.admin) : this.current;
+    const r = this.read(false);
+    this.apply(this.current);
     return { ...r, settings: this.effective };
   }
 
-  private read(): LoadResult {
+  private mtime(): number | null {
+    try { return fs.statSync(this.file).mtimeMs; } catch { return null; }
+  }
+
+  /** Onboarding isn't finished until the current consent is given (older files are asked again). */
+  private apply(next: Settings): void {
+    this.current = next.onboarded && !hasConsent(next) ? { ...next, onboarded: false } : next;
+    this.effective = this.admin ? applyAdminPolicy(this.current, this.admin) : this.current;
+  }
+
+  /**
+   * Reads the file. At start-up a missing or unreadable file means defaults. While Ember runs
+   * (`running`), a file that is gone, unreadable or not JSON at all (a hand edit in progress, a
+   * trailing comma) never replaces the settings in use: they stay, and the file is read again
+   * when it next changes. JSON with a few bad values is repaired value by value either way.
+   */
+  private read(running: boolean): LoadResult {
     let raw: string;
+    this.seen = this.mtime();
     try {
       raw = fs.readFileSync(this.file, "utf8");
-    } catch {
+    } catch (err) {
+      if (running) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
+        return { settings: this.current };
+      }
       this.current = DEFAULT_SETTINGS;
       return { settings: this.current };
     }
+    let json: unknown;
+    let strict = true;
     try {
-      const parsed = SettingsSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) {
-        this.current = parsed.data;
+      json = JSON.parse(raw);
+    } catch {
+      strict = false;
+      // A hand edit with a slip (a trailing comma, a comment) is read anyway.
+      json = lenientJson(raw);
+      if (running && json === undefined) {
+        // Ember's next save would replace it: the user's file is kept beside it first.
+        const backup = this.keep();
+        this.broken = backup ?? this.broken ?? "";
+        this.problem(`settings.json isn't valid JSON, so Ember keeps the settings it was using until it is fixed${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`);
         return { settings: this.current };
       }
-      // Keep valid fields, reset invalid ones.
-      const partial = JSON.parse(raw) as Record<string, unknown>;
-      const repaired: Record<string, unknown> = {};
-      for (const key of Object.keys(SettingsSchema.shape)) {
-        const field = SettingsSchema.shape[key as keyof typeof SettingsSchema.shape];
-        if (field.safeParse(partial[key]).success) repaired[key] = partial[key];
-      }
-      this.current = SettingsSchema.parse(repaired);
-    } catch {
-      this.current = DEFAULT_SETTINGS;
     }
+    const parsed = SettingsSchema.safeParse(json);
+    if (parsed.success && strict) {
+      this.current = parsed.data;
+      this.broken = null;
+      if (this.troubled) this.problem(null);
+      return { settings: this.current };
+    }
+    // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
+    // read at all, at least the never-look list.
+    if (parsed.success) this.current = parsed.data;
+    else if (json && typeof json === "object" && !Array.isArray(json)) this.current = repairSettings(json as Record<string, unknown>);
+    else {
+      const neverLook = salvageNeverLook(raw);
+      this.current = neverLook ? { ...DEFAULT_SETTINGS, privacy: { neverLook } } : DEFAULT_SETTINGS;
+    }
+    const backup = this.keep();
+    // A full disk must not stop Ember starting: the repaired settings are used from memory.
+    try { this.save(this.current); } catch { /* kept in memory; saved with the next change */ }
+    this.problem(parsed.success
+      ? `settings.json had a small mistake (a comma or comment JSON doesn't allow); Ember read it anyway and tidied the file${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`
+      : `Some of settings.json couldn't be used, so those settings went back to their defaults${backup ? `; your version is saved as ${path.basename(backup)}` : ""}.`);
+    return { settings: this.current, recoveredFrom: backup ?? undefined };
+  }
+
+  /** A copy of the file as it is now (once per version of it), before Ember writes over it. */
+  private kept: number | null = null;
+  private keep(): string | null {
+    const m = this.mtime();
+    if (m !== null && m === this.kept) return null;
     const backup = `${this.file}.bad-${Date.now()}`;
-    try { fs.copyFileSync(this.file, backup); } catch { /* best effort */ }
-    this.save();
-    return { settings: this.current, recoveredFrom: backup };
+    try { fs.copyFileSync(this.file, backup); this.kept = m; return backup; } catch { return null; }
+  }
+
+  private problem(msg: string | null): void {
+    this.troubled = msg !== null;
+    this.lastProblem = msg;
+    for (const fn of this.problemListeners) { try { fn(msg); } catch { /* a listener's own problem */ } }
+  }
+
+  /** What went wrong with the file last (null once it reads fine again). */
+  lastProblem: string | null = null;
+
+  /** Told when the file couldn't be used as it was (the settings in use are kept), and null once it reads fine. */
+  onProblem(fn: (msg: string | null) => void): () => void {
+    this.problemListeners.add(fn);
+    return () => this.problemListeners.delete(fn);
+  }
+
+  /** The file changed outside Ember (edited by hand): use it. Returns true when it did. */
+  reloadIfChanged(): boolean {
+    const m = this.mtime();
+    if (m === this.seen) return false;
+    const before = this.current;
+    this.read(true);
+    // A change still waiting to be saved goes on top of the hand edit.
+    if (this.pending) {
+      const next = SettingsSchema.safeParse({ ...this.current, ...this.pending });
+      if (next.success) this.current = next.data;
+    }
+    if (this.current === before) return false;
+    this.apply(this.current);
+    for (const fn of this.listeners) fn(this.effective);
+    return true;
+  }
+
+  /** Picks up hand edits while Ember runs (checked every couple of seconds). */
+  watch(intervalMs = 2000): () => void {
+    const timer = setInterval(() => { try { this.reloadIfChanged(); } catch { /* next time */ } }, intervalMs);
+    timer.unref?.();
+    return () => clearInterval(timer);
   }
 
   /** The settings in force (the user's, with the administrator's policy applied). */
@@ -116,15 +292,58 @@ export class SettingsStore {
     return this.effective;
   }
 
-  /** Validates and applies a patch to the user's settings; throws on invalid values. */
-  update(patch: SettingsPatch): Settings {
+  /** The user's own settings, without the administrator's policy. */
+  own(): Settings {
+    return this.current;
+  }
+
+  /**
+   * Validates and applies a patch to the user's settings; throws on invalid values (or if it can't
+   * be saved). `soon`: applied now and saved a moment later, for changes that come many times a
+   * second (a slider being dragged); any other change, or flush(), saves it at once.
+   */
+  update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
+    // A hand edit since Ember last looked comes first: the patch goes on top of it.
+    if (this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
     const next = SettingsSchema.parse({ ...this.current, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
-    this.current = next;
-    this.effective = this.admin ? applyAdminPolicy(next, this.admin) : next;
-    this.save();
+    if (opts.soon) {
+      this.pending = { ...this.pending, ...patch };
+      if (!this.pendingTimer) {
+        this.pendingTimer = setTimeout(() => { try { this.flush(); } catch { /* saved with the next change */ } }, 400);
+        this.pendingTimer.unref?.();
+      }
+    } else {
+      // Saved first: memory changes only once the change is on disk.
+      this.save(next);
+      this.clearPending();
+      this.savedOverBroken();
+    }
+    this.apply(next);
     for (const fn of this.listeners) fn(this.effective);
     return this.effective;
+  }
+
+  /** Saves a change made with `soon` now (also done on quit). */
+  flush(): void {
+    if (!this.pending) return;
+    this.save(this.current);
+    this.clearPending();
+    this.savedOverBroken();
+  }
+
+  /** Ember's own save replaced a hand edit that wasn't JSON: the notice says so (not "until it is fixed"). */
+  private savedOverBroken(): void {
+    if (this.broken === null) return;
+    const kept = this.broken;
+    this.broken = null;
+    this.problem(`Your edit of settings.json wasn't valid JSON, so Ember saved its settings over it${kept ? `; your version is kept as ${path.basename(kept)}` : ""}.`);
+  }
+
+  private clearPending(): void {
+    this.pending = null;
+    if (this.pendingTimer) clearTimeout(this.pendingTimer);
+    this.pendingTimer = null;
   }
 
   onChange(fn: (s: Settings) => void): () => void {
@@ -132,10 +351,24 @@ export class SettingsStore {
     return () => this.listeners.delete(fn);
   }
 
-  private save(): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+  private save(settings: Settings): void {
+    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(this.current, null, 2) + "\n", { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
+    try {
+      // Durable: the new file is on disk before it replaces the old one (a power cut leaves one or the other, never an empty file).
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try {
+        fs.writeSync(fd, JSON.stringify(settings, null, 2) + "\n");
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmp, this.file);
+    } catch (err) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing left to tidy */ }
+      throw err;
+    }
+    try { const dir = fs.openSync(path.dirname(this.file), "r"); fs.fsyncSync(dir); fs.closeSync(dir); } catch { /* not every filesystem allows it */ }
+    this.seen = this.mtime();
   }
 }

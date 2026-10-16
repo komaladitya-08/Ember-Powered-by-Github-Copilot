@@ -9,6 +9,7 @@ const api: HandleApi = {
   onState: fn => on(OVERLAY.state, fn),
   openMenu: () => ipcRenderer.send(OVERLAY.handleMenu),
   bubbleAction: id => ipcRenderer.send(OVERLAY.bubbleAction, id),
+  fit: height => ipcRenderer.send(OVERLAY.handleFit, height),
 };
 
 contextBridge.exposeInMainWorld("emberHandle", api);

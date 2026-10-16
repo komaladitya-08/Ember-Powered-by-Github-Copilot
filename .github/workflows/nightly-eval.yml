@@ -1,9 +1,30 @@
-# The nightly tier (PLAN.md M10.3): the task suite with a real model, three times per
-# task (pass^3), on a RHEL 8.4 GNOME on Xorg machine. It needs a self-hosted runner
-# labelled "rhel84-gnome" logged in to a desktop session, the repository variable
-# EMBER_NIGHTLY=true, EMBER_EVAL_MODEL, and a COPILOT_GITHUB_TOKEN secret (or
-# EMBER_EVAL_PROVIDER_URL + EMBER_EVAL_API_KEY for an OpenAI-compatible endpoint).
-# The runner's VM is reverted to a clean snapshot before the run (EMBER_EVAL_RESET).
+# The nightly tier (PLAN.md M10.3): the task suite with a real model, three times per task (pass^3),
+# on the eval VM: RHEL 8.4, GNOME on Xorg, logged in to a desktop session, with a self-hosted runner
+# labelled "rhel84-gnome". It needs the repository variable EMBER_NIGHTLY=true, EMBER_EVAL_MODEL, and a
+# COPILOT_GITHUB_TOKEN secret (or EMBER_EVAL_PROVIDER_URL + EMBER_EVAL_API_KEY for an OpenAI-compatible
+# endpoint).
+#
+# The evaluation drives that desktop: its windows, settings and accessibility bus. So the runner runs as the
+# desktop's user, inside the logged-in session, not as a system service (./svc.sh install), which has no
+# display, X authority or session bus: windows wouldn't appear, gsettings would fail and the gates would go
+# unmeasured. Log the user in automatically (/etc/gdm/custom.conf: AutomaticLoginEnable=True,
+# AutomaticLogin=<user>), turn the screen lock and blanking off, and start the runner from the session, e.g.
+# ~/.config/autostart/actions-runner.desktop with Exec=/home/<user>/actions-runner/run.sh (or a systemd --user
+# service, after `systemctl --user import-environment DISPLAY XAUTHORITY` in the session). The "live" job fills
+# in DISPLAY, XAUTHORITY and DBUS_SESSION_BUS_ADDRESS where the runner lacks them, and the evaluation stops
+# (exit 2) if it still can't reach the desktop. The VM also needs bzip2 (the test TTS voice is a .tar.bz2).
+#
+# Each run starts from the eval VM's clean snapshot. A machine can't revert itself (the job doing it would
+# be killed with it), so the "reset" job runs first on a separate controller host (the hypervisor, or a
+# machine that can drive it) with a self-hosted runner labelled "ember-eval-controller", never on the eval
+# VM. It runs the command the administrator installed on that host and named in the repository variable
+# EMBER_EVAL_RESET: the absolute path of an executable, taking no arguments, that reverts the eval VM (and
+# only the eval VM) to its snapshot, starts it, and returns once the VM's runner is online again. Take the
+# snapshot with the user logged in and the runner running in the session, idle. For example
+# /usr/local/bin/ember-eval-reset:
+#   virsh snapshot-revert ember-eval-rhel84 clean --running
+# The variable only names that command: it reaches the job in the environment and is run as a program, never
+# pasted into the script. Without EMBER_EVAL_RESET the run uses the eval VM as it is.
 name: nightly evaluation
 
 on:
@@ -14,26 +35,90 @@ on:
 permissions:
   contents: read
 
+# One run at a time: a second one would revert the eval VM under the first.
+concurrency:
+  group: nightly-eval
+  cancel-in-progress: false
+
 jobs:
+  reset:
+    name: Revert the eval VM to its clean snapshot (from the controller host)
+    if: vars.EMBER_NIGHTLY == 'true' && vars.EMBER_EVAL_RESET != ''
+    runs-on: [self-hosted, ember-eval-controller]
+    timeout-minutes: 30
+    steps:
+      # No checkout: nothing from the repository runs on the controller host.
+      - name: Run the reset command the administrator installed on this host
+        env:
+          EMBER_EVAL_RESET: ${{ vars.EMBER_EVAL_RESET }}
+        run: |
+          case "$EMBER_EVAL_RESET" in
+            /*) ;;
+            *) echo "EMBER_EVAL_RESET must be the absolute path of the reset command on the controller host" >&2; exit 1 ;;
+          esac
+          if [ ! -x "$EMBER_EVAL_RESET" ]; then
+            echo "There is no executable $EMBER_EVAL_RESET on this host (see the top of nightly-eval.yml)" >&2
+            exit 1
+          fi
+          "$EMBER_EVAL_RESET"
+
   live:
-    if: vars.EMBER_NIGHTLY == 'true'
+    needs: reset
+    # After a successful reset, or with no reset set up; never on a VM whose reset failed.
+    if: >-
+      always() && vars.EMBER_NIGHTLY == 'true' &&
+      (needs.reset.result == 'success' || (needs.reset.result == 'skipped' && vars.EMBER_EVAL_RESET == ''))
     runs-on: [self-hosted, rhel84-gnome]
     timeout-minutes: 180
-    env:
-      EMBER_EVAL_MODEL: ${{ vars.EMBER_EVAL_MODEL }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      EMBER_EVAL_PROVIDER_URL: ${{ vars.EMBER_EVAL_PROVIDER_URL }}
-      EMBER_EVAL_API_KEY: ${{ secrets.EMBER_EVAL_API_KEY }}
     steps:
-      - name: Revert the machine to its clean snapshot
-        if: vars.EMBER_EVAL_RESET != ''
-        run: ${{ vars.EMBER_EVAL_RESET }}
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: node scripts/voice/prepare.mjs
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The runner should already have the session's environment (see the top of this file); whatever it lacks
+      # is filled in from the user's graphical session, and only where the file or socket is there.
+      - name: The logged-in desktop session (display, X authority, session bus)
+        run: |
+          uid=$(id -u)
+          if [ -z "${DISPLAY:-}" ]; then
+            # The display of this user's graphical session (GDM may have put it on :1), else :0.
+            session=$(loginctl show-user "$uid" -p Display --value 2>/dev/null || true)
+            display=
+            if [ -n "$session" ]; then display=$(loginctl show-session "$session" -p Display --value 2>/dev/null || true); fi
+            display=${display:-:0}
+            n=${display#*:}
+            if [ ! -S "/tmp/.X11-unix/X${n%%.*}" ]; then
+              echo "::error::No X display $display: is $(id -un) logged in to GNOME on Xorg, and is the runner running as that user? (see the top of nightly-eval.yml)"
+              exit 1
+            fi
+            echo "DISPLAY=$display" >> "$GITHUB_ENV"
+          fi
+          if [ -z "${XAUTHORITY:-}" ]; then
+            for f in "/run/user/$uid/gdm/Xauthority" "$HOME/.Xauthority"; do
+              if [ -r "$f" ]; then echo "XAUTHORITY=$f" >> "$GITHUB_ENV"; break; fi
+            done
+          fi
+          if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+            if [ ! -S "/run/user/$uid/bus" ]; then
+              echo "::error::No session bus at /run/user/$uid/bus: is $(id -un) logged in to the desktop? (see the top of nightly-eval.yml)"
+              exit 1
+            fi
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          fi
+          if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$uid" ]; then echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"; fi
+      # No package's install scripts run on this machine. The evaluation runs on Node and needs no Electron;
+      # koffi, sharp, esbuild and the Copilot runtime come prebuilt in their platform packages.
+      - run: npm ci --ignore-scripts
+      # The speech models, and the test TTS voice: with it the missed-wakes gate has enough clips to be decided.
+      - run: node scripts/voice/prepare.mjs --tts-voice
+      # The model's credentials reach this step only.
       - name: Task suite with a live model (pass^3) and release gates
         run: node eval/run.mjs --live --repeat 3 --out dist/eval
-      - uses: actions/upload-artifact@v4
+        env:
+          EMBER_EVAL_MODEL: ${{ vars.EMBER_EVAL_MODEL }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          EMBER_EVAL_PROVIDER_URL: ${{ vars.EMBER_EVAL_PROVIDER_URL }}
+          EMBER_EVAL_API_KEY: ${{ secrets.EMBER_EVAL_API_KEY }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: ember-nightly-eval

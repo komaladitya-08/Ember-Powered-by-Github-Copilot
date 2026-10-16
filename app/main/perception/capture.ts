@@ -1,8 +1,8 @@
 /**
  * Screenshots for the model: captured straight from X11 (fast, includes
  * composited windows), with Ember's overlay hidden, never-look windows blacked
- * out, downscaled to at most 1280 px wide JPEG, and a record of how image
- * pixels map back to screen pixels.
+ * out, downscaled to at most 1280 px on its longer side (JPEG), and a record
+ * of how image pixels map back to screen pixels.
  */
 
 import { createRequire } from "node:module";
@@ -11,7 +11,7 @@ import type { X11 } from "../x11";
 import type { Bounds } from "./sidecar";
 
 export interface Capture {
-  /** What was captured, in screen (physical) pixels. */
+  /** What was captured, in screen (physical) pixels: the requested rectangle, clipped to the screen. */
   rect: Bounds;
   /** Encoded image. */
   data: Buffer;
@@ -23,14 +23,20 @@ export interface Capture {
 }
 
 export interface CaptureOptions {
-  maxWidth?: number;
+  /** Longest side of the image in px (portrait screens are limited by height). */
+  maxSide?: number;
   /** Rectangles (screen px) to paint black before encoding. */
   mask?: Bounds[];
+  /**
+   * More rectangles to black out, asked for once the pixels are taken (windows can move meanwhile).
+   * null means they can't be known: no image (fail closed).
+   */
+  maskAfter?: () => Promise<Bounds[] | null>;
   format?: "jpeg" | "png";
   /** Called to hide Ember's overlay; resolves when hidden. Returns a function that shows it again. */
   hideOverlay?: () => Promise<() => void>;
-  /** Extra layers drawn on top (e.g. set-of-marks), in image coordinates. */
-  overlaySvg?: (scale: number, width: number, height: number) => string | null;
+  /** Extra layers drawn on top (e.g. set-of-marks), in image coordinates; `origin` is the captured rectangle. */
+  overlaySvg?: (scale: number, width: number, height: number, origin: Bounds) => string | null;
 }
 
 // Loaded on first capture: sharp's native library is large and screenshots are rare.
@@ -68,22 +74,25 @@ export async function captureRect(x11: X11, rect: Bounds, opts: CaptureOptions =
     show?.();
   }
   if (!img) return null;
+  const after = opts.maskAfter ? await opts.maskAfter() : [];
+  if (after === null) return null;
+  // x11.capture clips the rectangle to the screen: image pixel (0,0) is screen pixel (img.x, img.y).
+  const origin: Bounds = { x: img.x, y: img.y, width: img.width, height: img.height };
   const rgba = bgraToRgba(img.bgra);
-  for (const m of opts.mask ?? []) {
-    maskRect(rgba, img.width, img.height, { x: m.x - rect.x, y: m.y - rect.y, width: m.width, height: m.height });
+  for (const m of [...opts.mask ?? [], ...after]) {
+    maskRect(rgba, img.width, img.height, { x: m.x - origin.x, y: m.y - origin.y, width: m.width, height: m.height });
   }
-  const maxWidth = opts.maxWidth ?? 1280;
-  const scale = Math.min(1, maxWidth / img.width);
-  const width = Math.round(img.width * scale), height = Math.round(img.height * scale);
+  const scale = Math.min(1, (opts.maxSide ?? 1280) / Math.max(img.width, img.height));
+  const width = Math.max(1, Math.round(img.width * scale)), height = Math.max(1, Math.round(img.height * scale));
   let pipeline = sharp(rgba, { raw: { width: img.width, height: img.height, channels: 4 } }).resize(width, height);
-  const svg = opts.overlaySvg?.(scale, width, height);
+  const svg = opts.overlaySvg?.(scale, width, height, origin);
   if (svg) {
     const base = await pipeline.png().toBuffer();
     pipeline = sharp(base).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]);
   }
   const format = opts.format ?? "jpeg";
   const data = format === "png" ? await pipeline.png().toBuffer() : await pipeline.jpeg({ quality: 78 }).toBuffer();
-  return { rect: { x: rect.x, y: rect.y, width: img.width, height: img.height }, data, mimeType: format === "png" ? "image/png" : "image/jpeg", width, height, scale };
+  return { rect: origin, data, mimeType: format === "png" ? "image/png" : "image/jpeg", width, height, scale };
 }
 
 /** Screen point for an image point in a capture. */

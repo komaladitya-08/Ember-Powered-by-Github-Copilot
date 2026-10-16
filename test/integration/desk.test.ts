@@ -27,6 +27,7 @@ import { locateRuntime } from "../../app/main/agent/runtime";
 import { SettingsStore } from "../../app/main/settings";
 import { openXInput } from "../../app/main/hands/input";
 import { openX11 } from "../../app/main/x11";
+import { deskAgentScript } from "../unit/desk-agent-build";
 import type { Logger } from "../../app/main/logger";
 
 const python = pickPython();
@@ -65,7 +66,7 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("worker on E
         const plan = [
           () => ({ tool: { name: "open_on_desk", args: { name: "Ember Bench" } } }),
           () => ({ tool: { name: "perceive_window", args: {} } }),
-          () => ({ tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Desk Worker" } } }),
+          () => ({ tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Desk Worker", mode: "replace" } } }),
           () => ({ tool: { name: "click", args: { id: idOf(messages, /"Sketch pad"/) } } }),
           () => ({ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }),
           () => ({ tool: { name: "finish_task", args: { success: true, summary: "Filled it in on my desk and saved." } } }),
@@ -79,7 +80,7 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("worker on E
       env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
     });
     await client.start();
-    desk = new DeskManager(quiet, { handOff: path.join(dir, "Ember") });
+    desk = new DeskManager(quiet, { handOff: path.join(dir, "Ember"), env: { EMBER_BENCH_LOG: log }, display: 254, agent: deskAgentScript() });
   }, 60_000);
 
   afterAll(async () => {
@@ -87,6 +88,7 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("worker on E
     desk?.stop();
     await client?.stop();
     await mock?.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("does the job on its desk with full input, asking nothing and leaving the user's pointer alone", async () => {
@@ -106,7 +108,14 @@ describe.skipIf(!available && process.env.EMBER_ATSPI_TEST !== "1")("worker on E
       perception: new Perception({ sidecar: new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), quiet, python), x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1, height: 1 }), log: quiet }),
       sidecar: new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), quiet, python),
       policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}) }),
-      confirmer: new Confirmer(p => { if (p.bubble?.actions.length) asked.push(p.bubble.thought); }),
+      // Nothing on the desk needs the user's OK: a question would be a failure, so it is noted and answered no at once.
+      confirmer: (() => {
+        const c: Confirmer = new Confirmer(p => {
+          const actions = p.bubble?.actions ?? [];
+          if (actions.length) { asked.push(p.bubble!.thought); setTimeout(() => c.answer(actions.find(a => a.id.endsWith(":deny"))!.id), 20); }
+        }, { timeoutMs: 30_000, armMs: 0, gapMs: 0 });
+        return c;
+      })(),
       audit: new AuditLog(path.join(dir, "audit")), settings,
       presenter: new Presenter(() => undefined),
       lease: async () => () => undefined,

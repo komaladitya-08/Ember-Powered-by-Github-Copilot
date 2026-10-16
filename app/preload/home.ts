@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type EmberHomeApi, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { IPC, type EmberHomeApi, type Presence, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
-import type { AgentStatus } from "../main/agent/host";
+import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 
 const listen = <T>(channel: string, fn: (v: T) => void) => {
   const handler = (_e: IpcRendererEvent, v: T) => fn(v);
@@ -24,6 +24,18 @@ const api: EmberHomeApi = {
   downloadVoice: () => ipcRenderer.invoke(IPC.voiceDownload),
   onVoiceProgress: fn => listen<{ done: number; total: number }>(IPC.voiceProgress, fn),
   activity: () => ipcRenderer.invoke(IPC.activity),
+  retrySignIn: () => ipcRenderer.invoke(IPC.agentRetry),
+  cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),
+  openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage),
+  conversation: () => ipcRenderer.invoke(IPC.conversation),
+  onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
+  onFocusSection: fn => listen<string>(IPC.focusSection, fn),
+  presence: () => ipcRenderer.invoke(IPC.presence),
+  setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),
+  onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
+  onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
+  onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
+  quit: () => ipcRenderer.invoke(IPC.quit),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

@@ -23,6 +23,12 @@ export interface HardenedOptions {
 }
 
 export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
+  // Defence in depth: even if the runtime offered a tool Ember didn't grant, it is refused before it runs.
+  const granted = new Set(o.tools.map(t => t.name));
+  const onPreToolUse: NonNullable<SessionHooks["onPreToolUse"]> = async (input, invocation) => {
+    if (!granted.has(input.toolName)) return { permissionDecision: "deny", permissionDecisionReason: "Ember grants only its own tools." };
+    return o.hooks?.onPreToolUse?.(input, invocation);
+  };
   return {
     ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     ...(o.model ? { model: o.model } : {}),
@@ -34,7 +40,7 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     systemMessage: o.systemMessage,
     workingDirectory: o.workingDirectory,
     onPermissionRequest: o.onPermissionRequest,
-    ...(o.hooks ? { hooks: o.hooks } : {}),
+    hooks: { ...(o.hooks ?? {}), onPreToolUse },
     infiniteSessions: { enabled: true },
   } as SessionConfig;
 }
@@ -45,11 +51,13 @@ export class UngrantedToolsError extends Error {
   }
 }
 
-/** Throws UngrantedToolsError unless the session's tools are a subset of `granted`. */
+/** Throws UngrantedToolsError unless the session's tools are a subset of `granted` (and the list could be read at all). */
 export async function verifySessionTools(session: CopilotSession, granted: string[]): Promise<string[]> {
   await session.rpc.tools.initializeAndValidate();
   const meta = await session.rpc.tools.getCurrentMetadata();
-  const names = (meta.tools ?? []).map(t => t.name);
+  // No list means it can't be checked: fail closed.
+  if (!Array.isArray(meta.tools)) throw new UngrantedToolsError(["(the runtime did not report its tools)"]);
+  const names = meta.tools.map(t => t.name);
   const extra = names.filter(n => !granted.includes(n));
   if (extra.length) throw new UngrantedToolsError(extra);
   return names;

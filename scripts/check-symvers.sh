@@ -1,20 +1,45 @@
 #!/bin/bash
 # Fails if any x86-64 ELF under <dir> needs a newer glibc / libstdc++ than RHEL 8.4 ships
 # (GLIBC_2.28, GLIBCXX_3.4.25, CXXABI_1.3.11). Prints one line per binary.
+# It fails closed: a binary it can't read fails, and so does finding no binaries at all.
+# Exit: 0 all compatible, 1 something isn't (or nothing was checked), 2 it can't check.
 # usage: scripts/check-symvers.sh <dir> [<dir> ...]
 set -u
 MAX_GLIBC=2.28
 MAX_GLIBCXX=3.4.25
 MAX_CXXABI=1.3.11
 
+[ $# -gt 0 ] || { echo "usage: $0 <dir> [<dir> ...]" >&2; exit 2; }
+for tool in file objdump find; do
+  command -v "$tool" > /dev/null || { echo "check-symvers: '$tool' is missing (dnf install file binutils findutils)" >&2; exit 2; }
+done
+for dir in "$@"; do
+  [ -d "$dir" ] || { echo "check-symvers: no such directory: $dir" >&2; exit 2; }
+done
+
 newer() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]; }
 
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
 fail=0
+checked=0
 for dir in "$@"; do
-  while read -r f; do
-    file -b "$f" | grep -q 'ELF 64-bit.*x86-64' || continue
-    file -b "$f" | grep -q 'musl' && continue
-    syms=$(objdump -T "$f" 2>/dev/null)
+  find "$dir" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 > "$list" \
+    || { echo "check-symvers: couldn't list everything under $dir" >&2; exit 2; }
+  while IFS= read -r -d '' f; do
+    kind=$(file -b "$f") || { echo "FAIL ${f}: file couldn't read it"; fail=1; continue; }
+    echo "$kind" | grep -q 'ELF 64-bit.*x86-64' || continue
+    echo "$kind" | grep -q 'musl' && continue
+    checked=$((checked + 1))
+    if echo "$kind" | grep -q 'statically linked'; then
+      echo "ok   ${f} (statically linked)"
+      continue
+    fi
+    if ! syms=$(objdump -T "$f" 2>&1); then
+      echo "FAIL ${f}: objdump couldn't read its symbols: $(echo "$syms" | tail -1)"
+      fail=1
+      continue
+    fi
     g=$(echo "$syms" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -uV | tail -1)
     x=$(echo "$syms" | grep -oE 'GLIBCXX_[0-9.]+' | sed 's/GLIBCXX_//' | sort -uV | tail -1)
     c=$(echo "$syms" | grep -oE 'CXXABI_[0-9.]+' | sed 's/CXXABI_//' | sort -uV | tail -1)
@@ -28,6 +53,10 @@ for dir in "$@"; do
     else
       echo "ok   ${f} (GLIBC_${g:-none} GLIBCXX_${x:-none} CXXABI_${c:-none})"
     fi
-  done < <(find "$dir" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' -o -perm -u+x \) 2>/dev/null)
+  done < "$list"
 done
+if [ "$checked" -eq 0 ]; then
+  echo "FAIL no x86-64 glibc binaries found under: $*"
+  exit 1
+fi
 exit $fail

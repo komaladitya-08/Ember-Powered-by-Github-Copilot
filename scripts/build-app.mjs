@@ -2,10 +2,11 @@
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages)
 import { build } from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
-const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: root.pathname };
+const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk"];
 
@@ -21,6 +22,16 @@ await Promise.all([
     format: "cjs",
     target: "node24",
     external: ["electron", "koffi", "@github/copilot-sdk", "sharp"],
+  }),
+  // The desk helper: every X call on Ember's desk is made in this process, never in Ember's.
+  build({
+    ...common,
+    entryPoints: ["app/main/desk/agent-process.ts"],
+    outfile: "dist/app/desk-agent.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "koffi", "sharp"],
   }),
   // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself).
   build({

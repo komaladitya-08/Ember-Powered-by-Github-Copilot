@@ -1,7 +1,9 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
 body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
-#stage { position: absolute; inset: 0; width: 100%; height: 100%; }
-#bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+/* Ember: a small canvas that moves with it (sized and placed by main.ts). */
+/* Never takes a click: the task cards' buttons and the bubble's are what the user clicks, even with Ember beside them. */
+#stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
+#bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
@@ -10,19 +12,42 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 }
 .status[hidden] { display: none; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 8px #ff9a3d; animation: pulse 1.2s ease-in-out infinite; }
-.tasks { position: absolute; top: 40px; right: 16px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; }
+/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
+.tasks {
+  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
+}
+/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
+.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 154, 61, 0.6) transparent; }
+/* min-width 0 and wrapping anywhere: a long unbroken word wraps inside the 260 px card instead of stretching it off screen. */
 .task {
   display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
-  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 0;
 }
+.task b, .task span { overflow-wrap: anywhere; }
 .task b { font-size: 13px; }
-.task span { color: rgba(251, 238, 227, 0.72); font-size: 12px; }
+.task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
+.task span[hidden] { display: none; }
+/* The older ended cards folded into one line at the top of the stack, with Close all for the failures among them. */
+.task.more { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; }
+.more-text { flex: 1; min-width: 0; display: grid; }
+.task.more .task-actions { flex: none; margin-top: 0; }
+.tasks > [hidden] { display: none; }
+/* Stop / Close: the overlay is click-through except over these (reported to the main process). */
+.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.task-actions[hidden] { display: none; }
+.task-actions button {
+  font: 600 12px/1 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; padding: 6px 11px; border-radius: 7px; cursor: pointer;
+  background: transparent; color: #fbeee3; border: 1px solid rgba(255, 220, 190, 0.6);
+}
+.task-actions button:hover { border-color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
+.task-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
 .task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
 .task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
 .task[data-status="stopped"] { border-color: rgba(251, 238, 227, 0.3); }
 @keyframes pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .status i { animation: none; } }
+html.calm .status i { animation: none; }
 
 /* The control Ember is working on. */
 .focus {
@@ -32,6 +57,7 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
   transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease, opacity 0.2s;
   animation: focus-pulse 1.2s ease-in-out infinite;
 }
-.focus[hidden] { display: block; opacity: 0; }
+.focus[hidden] { display: block; opacity: 0; animation: none; }
 @keyframes focus-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 26, 0.18), 0 0 30px 10px rgba(255, 122, 26, 0.5); } }
 @media (prefers-reduced-motion: reduce) { .focus { animation: none; transition: none; } }
+html.calm .focus { animation: none; transition: none; }

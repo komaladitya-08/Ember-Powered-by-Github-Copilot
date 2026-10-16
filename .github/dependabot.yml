@@ -1,0 +1,11 @@
+# The workflows pin every action to a full commit SHA (the release tag is in a comment beside it);
+# Dependabot proposes the updates, moving both together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

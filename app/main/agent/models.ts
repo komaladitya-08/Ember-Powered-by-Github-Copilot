@@ -1,7 +1,8 @@
 /**
  * Picks models from client.listModels(): a fast one for the conductor (it
  * answers every utterance) and a vision-capable one for workers (images are
- * silently dropped for models without vision).
+ * silently dropped for models without vision). Without any vision model,
+ * workers use the chosen or conductor model and read the screen as text.
  */
 
 export interface ModelLike {
@@ -13,7 +14,8 @@ export interface ModelLike {
 
 export interface ModelChoice { conductor: string | null; worker: string | null }
 
-const FAST = [/mini/i, /haiku/i, /flash/i, /nano/i, /small/i, /fast/i];
+/** Small, quick models by name: whole words only ("gemini" is not "mini"). */
+const FAST = [/(^|[-_. ])(mini|haiku|flash|nano|small|fast|lite)($|[-_. ])/i];
 
 const enabled = (m: ModelLike) => !m.policy?.state || m.policy.state === "enabled";
 export const supportsVision = (m: ModelLike) => m.capabilities?.supports?.vision === true;
@@ -31,5 +33,7 @@ export function chooseModels(models: ModelLike[], prefer: { conductor?: string; 
     const vision = usable.filter(supportsVision);
     worker = (vision.find(m => !FAST.some(r => r.test(m.id))) ?? vision[0])?.id ?? null;
   }
+  // No model with vision: tasks still get an allowed model (never the runtime's default) and work from text only.
+  if (!worker) worker = preferredWorker?.id ?? conductor;
   return { conductor, worker };
 }

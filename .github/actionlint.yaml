@@ -1,0 +1,5 @@
+# Labels of the self-hosted runners the nightly evaluation uses (.github/workflows/nightly-eval.yml).
+self-hosted-runner:
+  labels:
+    - rhel84-gnome
+    - ember-eval-controller

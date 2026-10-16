@@ -114,14 +114,18 @@ export async function pollDeviceFlow(
   const sleep = opts.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
   let interval = code.interval;
   const deadline = Date.now() + code.expiresIn * 1000;
+  const cancelled = () => { const e = new Error("Sign-in cancelled"); e.name = "AbortError"; return e; };
   while (Date.now() < deadline) {
-    if (opts.signal?.aborted) throw new Error("Sign-in cancelled");
+    if (opts.signal?.aborted) throw cancelled();
     await sleep(interval * 1000);
+    // Cancelled (or signed out) while waiting: nothing more is fetched, and no token comes back.
+    if (opts.signal?.aborted) throw cancelled();
     const res = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST", headers: HEADERS,
       body: form({ client_id: clientId, device_code: code.deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
     });
     const j = await res.json() as Record<string, unknown>;
+    if (opts.signal?.aborted) throw cancelled();
     if (typeof j.access_token === "string") return j.access_token;
     switch (j.error) {
       case "authorization_pending": break;

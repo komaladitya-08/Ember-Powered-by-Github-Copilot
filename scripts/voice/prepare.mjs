@@ -1,18 +1,31 @@
 // Downloads Ember's speech models (verified) for the voice tests and demos.
-// With --clips it also re-synthesizes the test clips in test/fixtures/voice with a
-// local TTS voice. The voice is random on every run, so new clips must pass the voice
-// tests before they're committed; the committed clips keep the tests repeatable.
-// usage: node scripts/voice/prepare.mjs [dir] [--clips]   (default dir: .cache/voice)
+//   --tts-voice        also fetches a TTS voice (test-only; never shipped). With it the evaluation's missed-wakes gate
+//                      speaks enough renderings of "Hey Ember" (in memory, new ones every run) to be measured.
+//   --clips            also (with the TTS voice) synthesizes new test clips into <dir>/clips, a scratch folder.
+//   --update-fixtures  as --clips, but into test/fixtures/voice, replacing the committed clips. The voice is random
+//                      on every run, so new clips must pass the voice tests before they're committed (git restore
+//                      test/fixtures/voice puts the old ones back); the committed clips keep the tests repeatable.
+// usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--clips | --update-fixtures]   (default dir: .cache/voice)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
+const FLAGS = ["--tts-voice", "--clips", "--update-fixtures"];
+const unknown = args.filter(a => a.startsWith("--") && !FLAGS.includes(a));
+if (unknown.length) {
+  console.error(`unknown option ${unknown.join(", ")}\nusage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--clips | --update-fixtures]`);
+  process.exit(2);
+}
 const dir = path.resolve(args.find(a => !a.startsWith("--")) ?? path.join(root, ".cache/voice"));
-const makeClips = args.includes("--clips");
+const updateFixtures = args.includes("--update-fixtures");
+const makeClips = updateFixtures || args.includes("--clips");
+const ttsVoice = makeClips || args.includes("--tts-voice");
 const require = createRequire(import.meta.url);
 fs.mkdirSync(dir, { recursive: true });
 
@@ -26,18 +39,33 @@ await ensureModels(models, curlDownloader, (done, total) => {
   if (pct !== last && pct % 10 === 0) { last = pct; console.log(`models ${pct}%`); }
 });
 
-if (!makeClips) {
+if (!ttsVoice) {
   console.log(`models in ${models}`);
   process.exit(0);
 }
 
-// A TTS voice to speak the test lines (test-only; not shipped).
+// A TTS voice to speak the test lines (test-only; not shipped). The evaluation looks for it here.
 const ttsDir = path.join(dir, "vits-piper-en_US-amy-low");
+const TTS_SHA256 = "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639";
 if (!fs.existsSync(ttsDir)) {
   const tar = path.join(dir, "tts.tar.bz2");
-  execFileSync("curl", ["-sSfL", "--retry", "3", "-o", tar, "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2"]);
-  execFileSync("tar", ["-xjf", tar, "-C", dir]);
-  fs.rmSync(tar);
+  // A failed download or unpack leaves nothing behind (a half-unpacked voice would be skipped next time).
+  try {
+    execFileSync("curl", ["-sSfL", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "30", "-o", tar, "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2"]);
+    // Pinned, like the speech models: nothing else is unpacked.
+    const sha256 = crypto.createHash("sha256").update(fs.readFileSync(tar)).digest("hex");
+    if (sha256 !== TTS_SHA256) throw new Error(`the TTS voice's download doesn't match its SHA-256 (got ${sha256})`);
+    execFileSync("tar", ["-xjf", tar, "-C", dir]);
+  } catch (err) {
+    fs.rmSync(ttsDir, { recursive: true, force: true });
+    throw err;
+  } finally {
+    fs.rmSync(tar, { force: true });
+  }
+}
+if (!makeClips) {
+  console.log(`models in ${models}\nTTS voice in ${ttsDir}`);
+  process.exit(0);
 }
 const sherpa = require("sherpa-onnx");
 const tts = sherpa.createOfflineTts({
@@ -55,7 +83,8 @@ export const CLIPS = {
   dnd: "Hey Ember, turn on do not disturb.",
   bigger: "And make the text a bit bigger.",
 };
-const clips = path.join(root, "test/fixtures/voice");
+// Into a scratch folder unless the committed clips are to be replaced (--update-fixtures).
+const clips = updateFixtures ? path.join(root, "test/fixtures/voice") : path.join(dir, "clips");
 fs.mkdirSync(clips, { recursive: true });
 for (const [name, text] of Object.entries(CLIPS)) {
   const parts = text.split("|").map(t => tts.generate({ text: t, sid: 0, speed: 1.0 }).samples);
@@ -68,4 +97,4 @@ for (const [name, text] of Object.entries(CLIPS)) {
   sherpa.writeWave(path.join(clips, `${name}.wav`), { samples, sampleRate: 16000 });
 }
 fs.writeFileSync(path.join(clips, "clips.json"), JSON.stringify(CLIPS, null, 2) + "\n");
-console.log(`models in ${models}\nclips in ${clips}`);
+console.log(`models in ${models}\nTTS voice in ${ttsDir}\nclips in ${clips}${updateFixtures ? " (run the voice tests before committing them; git restore test/fixtures/voice puts the old ones back)" : ""}`);

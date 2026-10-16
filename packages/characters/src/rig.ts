@@ -106,6 +106,12 @@ export interface Pose {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** Longest frame the rig accepts, and the step it integrates in (so 15 fps moves like 60 fps). */
+const MAX_DT = 0.1;
+const STEP = 1 / 30;
+/** Longest step handed to renderers' own physics (Glassling's jiggle, Wisp's sparks). */
+const MAX_DRAW_DT = 1 / 20;
+
 export class Rig {
   emotion: Emotion = "neutral";
   alive = true;
@@ -137,25 +143,67 @@ export class Rig {
   private accel = { x: 0, y: 0 };
   private lean = 0;
   private aim: { x: number; y: number } | null = null;
+  private blink = 1;
+  /** Asleep because nothing happened for `sleepAfter` seconds (not because someone asked). */
+  private dozing = false;
   /** Fall asleep after this many idle seconds (0 = never). */
   sleepAfter = 0;
+  /**
+   * Calm mode (prefers-reduced-motion or the reduce-motion setting): no hops, idle float,
+   * fidgets, squash pops or jiggle, and no wobble on the body springs. Blinks, gaze, the
+   * talking mouth and a gentle breath stay, so Ember still reads as alive.
+   */
+  reducedMotion = false;
 
   setEmotion(e: Emotion, opts: { gesture?: Gesture } = {}): void {
     const p = PRESETS[e];
     const changed = e !== this.emotion;
     this.emotion = e;
+    this.dozing = false;
     this.target = { ...NEUTRAL, ...p.face };
     if (changed || opts.gesture) {
       this.emote = p.emote;
       this.emoteAge = 0;
       this.setGesture(opts.gesture ?? p.gesture);
       this.gazeOverride = p.gaze ?? null;
-      this.vel.squash += 2.2;   // anticipation pop on every change
-      this.vel.tilt += rand(-0.6, 0.6);
+      if (!this.reducedMotion) {
+        this.vel.squash += 2.2;   // anticipation pop on every change
+        this.vel.tilt += rand(-0.6, 0.6);
+      }
       if (p.hop) this.hop(p.hop);
       this.fidget = null;
       this.idleFor = 0;
     }
+  }
+
+  /** Something happened (the user moved, Ember was spoken to): restart the idle clock and wake from a doze. */
+  wake(): void {
+    this.idleFor = 0;
+    if (this.dozing) this.setEmotion("neutral");
+  }
+
+  /** Dozing after a long idle (see `sleepAfter`). */
+  get asleep(): boolean {
+    return this.dozing;
+  }
+
+  /**
+   * How much passing motion there is, so a renderer can draw less often when little moves:
+   * "brisk" (a hop, a fresh gesture or emote, a fast change of face or gaze), "gentle" (a
+   * blink, an idle fidget, springs still settling) or "still". Steady motion, like talking
+   * or a waving hand, is the renderer's call.
+   */
+  get motion(): "brisk" | "gentle" | "still" {
+    const look = Math.abs(this.lookVel.x) + Math.abs(this.lookVel.y);
+    const face = Math.max(...KEYS.map(k => Math.abs(this.vel[k])));
+    if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || look > 1.5 || face > 1.5) return "brisk";
+    if (this.fidget || this.blinkT >= 0 || look > 0.05 || face > 0.05) return "gentle";
+    return "still";
+  }
+
+  /** No passing motion at all (see `motion`). */
+  get settled(): boolean {
+    return this.motion === "still";
   }
 
   setGesture(g: Gesture): void {
@@ -174,6 +222,7 @@ export class Rig {
   }
 
   hop(strength = 1): void {
+    if (this.reducedMotion) return;
     if (this.hopY > -1) this.hopV = -150 * strength;
   }
 
@@ -192,17 +241,49 @@ export class Rig {
   }
 
   update(dt: number): Pose {
-    dt = Math.min(Math.max(dt, 0), 1 / 20);
+    dt = Math.min(Math.max(dt, 0), MAX_DT);
+    const n = Math.max(1, Math.ceil(dt / STEP - 1e-6));
+    for (let i = 0; i < n; i++) this.step(dt / n);
+
+    const breath = Math.sin(this.t * Math.PI * 2 * 0.28);
+    const face = { ...this.face };
+    face.open = Math.max(0, face.open * this.blink);
+    face.mouthOpen = Math.min(1, face.mouthOpen + this.talk * 0.55);
+    face.squash += breath * 0.025;
+
+    return {
+      face,
+      look: { ...this.look },
+      emotion: this.emotion,
+      emote: this.emote,
+      emoteAge: this.emoteAge,
+      gesture: this.gesture,
+      gestureAge: this.gestureAge,
+      t: this.t,
+      dt: Math.min(dt, MAX_DRAW_DT),
+      breath,
+      lift: this.hopY + (this.reducedMotion ? 0 : Math.sin(this.t * 2.1) * face.bounce * 3),
+      lean: this.lean,
+      accel: this.reducedMotion ? { x: 0, y: 0 } : { ...this.accel },
+      talk: this.talk,
+      aim: this.aim,
+    };
+  }
+
+  private step(dt: number): void {
     this.t += dt;
     this.emoteAge += dt;
     this.gestureAge += dt;
 
-    // Idle life: fidgets, then sleep.
+    // Idle life: fidgets (not in calm mode), then sleep.
+    if (this.reducedMotion) this.fidget = null;
     if (this.alive && this.emotion === "neutral") {
       this.idleFor += dt;
       this.fidgetIn -= dt;
-      if (this.sleepAfter && this.idleFor > this.sleepAfter) this.setEmotion("sleepy");
-      else if (this.fidgetIn <= 0 && !this.fidget) {
+      if (this.sleepAfter && this.idleFor > this.sleepAfter) {
+        this.setEmotion("sleepy");
+        this.dozing = true;
+      } else if (this.fidgetIn <= 0 && !this.fidget && !this.reducedMotion) {
         const r = Math.random();
         this.fidget = r < 0.5
           ? { kind: "glance", age: 0, dur: 1.2, dir: { x: rand(-1, 1), y: rand(-0.6, 0.6) } }
@@ -228,11 +309,11 @@ export class Rig {
       if (f.age >= f.dur) this.fidget = null;
     }
 
-    // Springs: wobbly for body, snappier for face.
+    // Springs: wobbly for body (settling without wobble in calm mode), snappier for face.
     for (const k of KEYS) {
       const wobbly = k === "squash" || k === "tilt";
       const stiff = wobbly ? 160 : 110;
-      const damp = wobbly ? 2 * Math.sqrt(stiff) * 0.32 : 2 * Math.sqrt(stiff) * 0.8;
+      const damp = 2 * Math.sqrt(stiff) * (wobbly ? (this.reducedMotion ? 1 : 0.32) : 0.8);
       this.vel[k] += (stiff * (target[k] - this.face[k]) - damp * this.vel[k]) * dt;
       this.face[k] += this.vel[k] * dt;
     }
@@ -273,12 +354,13 @@ export class Rig {
         if (b >= 1) { this.blinkT = -1; blink = 1; }
       }
     }
+    this.blink = blink;
 
     // Hops land with a squash.
     this.hopV += 900 * dt;
     this.hopY += this.hopV * dt;
     if (this.hopY > 0) {
-      if (this.hopV > 120) this.vel.squash -= this.hopV * 0.012;
+      if (this.hopV > 120 && !this.reducedMotion) this.vel.squash -= this.hopV * 0.012;
       this.hopY = 0;
       this.hopV = 0;
     }
@@ -288,29 +370,5 @@ export class Rig {
     this.talk += ((this.talking ? syl : 0) - this.talk) * Math.min(1, dt * 25);
 
     this.lean += ((Math.max(-1, Math.min(1, this.posVel.x / 900)) * 0.35) - this.lean) * Math.min(1, dt * 8);
-
-    const breath = Math.sin(this.t * Math.PI * 2 * 0.28);
-    const face = { ...this.face };
-    face.open = Math.max(0, face.open * blink);
-    face.mouthOpen = Math.min(1, face.mouthOpen + this.talk * 0.55);
-    face.squash += breath * 0.025;
-
-    return {
-      face,
-      look: { ...this.look },
-      emotion: this.emotion,
-      emote: this.emote,
-      emoteAge: this.emoteAge,
-      gesture: this.gesture,
-      gestureAge: this.gestureAge,
-      t: this.t,
-      dt,
-      breath,
-      lift: this.hopY + Math.sin(this.t * 2.1) * face.bounce * 3,
-      lean: this.lean,
-      accel: { ...this.accel },
-      talk: this.talk,
-      aim: this.aim,
-    };
   }
 }

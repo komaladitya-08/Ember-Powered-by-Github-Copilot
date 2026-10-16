@@ -34,7 +34,8 @@
         "id": {
           "find": "^text \"Comment\""
         },
-        "text": "Looks good"
+        "text": "Looks good",
+        "mode": "replace"
       }
     },
     {

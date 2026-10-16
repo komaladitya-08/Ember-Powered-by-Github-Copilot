@@ -7,7 +7,9 @@ import type { X11 } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
-const win = (title: string, wmClass: string, x = 0) => ({ id: 1, pid: 1, title, wmClass, x, y: 0, width: 100, height: 50 });
+const win = (title: string, wmClass: string, x = 0) => ({
+  id: 1, client: 1, pid: 1, title, wmClass, x, y: 0, width: 100, height: 50, outer: { x, y: 0, width: 100, height: 50 }, overrideRedirect: false,
+});
 
 function make(opts: { x11?: X11 | null; atspi?: () => Promise<{ windows: { app: string; name: string; bounds: { x: number; y: number; width: number; height: number } | null; pid: number | null; role: string; active: boolean }[] }> }) {
   const sidecar = { listWindows: opts.atspi ?? (async () => ({ windows: [] })) } as unknown as AtspiSidecar;
@@ -16,13 +18,13 @@ function make(opts: { x11?: X11 | null; atspi?: () => Promise<{ windows: { app: 
 
 describe("private windows", () => {
   it("masks never-look windows found by X11 even when accessibility doesn't list them", async () => {
-    const x11 = { clientWindows: () => [win("Passwords.kdbx - KeePassXC", "keepassxc KeePassXC", 300), win("notes.txt", "gedit")] } as unknown as X11;
+    const x11 = { stack: () => [win("Passwords.kdbx - KeePassXC", "keepassxc KeePassXC", 300), win("notes.txt", "gedit")] } as unknown as X11;
     const masks = await make({ x11 }).privateWindows();
     expect(masks).toEqual([{ x: 300, y: 0, width: 100, height: 50 }]);
   });
 
   it("adds what accessibility finds", async () => {
-    const x11 = { clientWindows: () => [] } as unknown as X11;
+    const x11 = { stack: () => [] } as unknown as X11;
     const masks = await make({ x11, atspi: async () => ({ windows: [{ app: "KeePassXC", name: "vault", bounds: { x: 5, y: 6, width: 7, height: 8 }, pid: 1, role: "frame", active: false }] }) }).privateWindows();
     expect(masks).toEqual([{ x: 5, y: 6, width: 7, height: 8 }]);
   });
@@ -47,9 +49,15 @@ sys.path.insert(0, ${JSON.stringify(path.resolve("sidecar/atspi"))})
 import ember_atspi as e
 class W:
     def __init__(self, name, states): self.name = name; self._s = states
-class App: name = "app"
-wins = [(App(), 10, W("Inbox - Mail", ["showing"])), (App(), 10, W("Compose - Mail", ["showing", "active"])), (App(), 20, W("notes.txt - Text Editor", ["showing"]))]
-e.frames = lambda: iter(wins)
+class App:
+    name = "app"
+    def __init__(self, pid, wins): self.pid = pid; self.wins = wins
+    def get_process_id(self): return self.pid
+    @property
+    def childCount(self): return len(self.wins)
+    def getChildAtIndex(self, i): return self.wins[i]
+apps = [App(10, [W("Inbox - Mail", ["showing"]), W("Compose - Mail", ["showing", "active"])]), App(20, [W("notes.txt - Text Editor", ["showing"])])]
+fake.Registry = types.SimpleNamespace(getDesktop=lambda i: types.SimpleNamespace(childCount=len(apps), getChildAtIndex=lambda j: apps[j]))
 e.state_names = lambda w: w._s
 found = e.find_window(json.loads(sys.argv[1]))
 print(found[2].name if found else "none")

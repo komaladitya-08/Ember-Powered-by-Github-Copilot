@@ -10,7 +10,8 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains } from "./follow";
+import { Follower, followTarget, contains, besideRect, besideControl } from "./follow";
+import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
@@ -22,6 +23,8 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
+  /** The task cards on this display (global DIP). */
+  cards: Rect | null;
 }
 
 export class OverlayManager {
@@ -45,17 +48,21 @@ export class OverlayManager {
     this.follower = new Follower({ x: c.x + 60, y: c.y + 60 });
   }
 
+  private onAdded = (_e: unknown, d: Display) => { this.log.info("display.added", { id: d.id }); this.create(d); };
+  private onRemoved = (_e: unknown, d: Display) => { this.log.info("display.removed", { id: d.id }); this.destroy(d.id); };
+  private onMetrics = (_e: unknown, d: Display) => {
+    const o = this.overlays.get(d.id);
+    if (!o) return;
+    o.display = d;
+    o.win.setBounds(d.bounds);
+    o.win.webContents.send(OVERLAY.init, this.initFor(o));
+  };
+
   start(): void {
     for (const d of screen.getAllDisplays()) this.create(d);
-    screen.on("display-added", (_e, d) => { this.log.info("display.added", { id: d.id }); this.create(d); });
-    screen.on("display-removed", (_e, d) => { this.log.info("display.removed", { id: d.id }); this.destroy(d.id); });
-    screen.on("display-metrics-changed", (_e, d) => {
-      const o = this.overlays.get(d.id);
-      if (!o) return;
-      o.display = d;
-      o.win.setBounds(d.bounds);
-      o.win.webContents.send(OVERLAY.init, this.initFor(o));
-    });
+    screen.on("display-added", this.onAdded);
+    screen.on("display-removed", this.onRemoved);
+    screen.on("display-metrics-changed", this.onMetrics);
     this.timer = setInterval(() => this.tick(), 16);
     // Some shell surfaces (Activities, notifications) can rise above us; take the top back.
     this.topTimer = setInterval(() => this.raise(), 2000);
@@ -64,6 +71,9 @@ export class OverlayManager {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     if (this.topTimer) clearInterval(this.topTimer);
+    screen.off("display-added", this.onAdded);
+    screen.off("display-removed", this.onRemoved);
+    screen.off("display-metrics-changed", this.onMetrics);
     for (const id of [...this.overlays.keys()]) this.destroy(id);
   }
 
@@ -75,7 +85,10 @@ export class OverlayManager {
     return this.hidden;
   }
 
+  private paused = false;
+
   setPaused(on: boolean): void {
+    this.paused = on;
     this.follower.setPaused(on);
   }
 
@@ -87,17 +100,34 @@ export class OverlayManager {
     return this.follower.position;
   }
 
+  /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
+  avoid: (() => Rect | null) | null = null;
+  systemReducedMotion = false;
+  /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
+  private aside: Rect | null = null;
+
+  stepAside(r: Rect | null): void {
+    this.aside = r;
+  }
+
   setState(next: Partial<EmberState>): void {
-    const waiting = (s: EmberState) => s.bubble.visible && s.bubble.actions.length > 0;
+    // Ember holds still while you decide (buttons) and while you read a finished answer or error;
+    // following the cursor resumes when the bubble goes.
+    const waiting = (s: EmberState) => s.bubble.visible && (s.bubble.actions.length > 0
+      || (!s.bubble.streaming && !!s.bubble.thought && (s.bubble.mood === "idle" || s.bubble.mood === "done" || s.bubble.mood === "error")));
     const before = waiting(this.state);
     this.state = { ...this.state, ...next };
     const now = waiting(this.state);
     if ("focus" in next || now !== before) {
       const f = this.state.focus;
       const size = this.settings().size;
-      // Working on a control: Ember sits just to its right. Waiting for a decision: it holds still,
-      // so its buttons don't run away from the cursor. Otherwise it follows the cursor again.
-      this.follower.park(f ? { x: f.x + f.width + size * 0.6 + 10, y: f.y + f.height / 2 } : now ? this.follower.position : null);
+      // Working on a control: Ember sits just beside it (on screen). Waiting for a decision: it holds still by
+      // the cursor (where it would be now, not wherever it was on its way), so its buttons don't run away.
+      // Otherwise it follows the cursor again.
+      const c = this.cursor();
+      const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
+      // ("Stay put": it answers where it already is.)
+      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -117,12 +147,33 @@ export class OverlayManager {
     this.borrowing = on;
   }
 
+  private lastHandleCheck = 0;
+  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
+
   getState(): EmberState {
     return this.state;
   }
 
   broadcastSettings(s: Settings): void {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
+  }
+
+  /** Called by IPC when a renderer reports where its task cards are. */
+  setCards(sender: Electron.WebContents, r: Rect | null): void {
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
+  }
+
+  /** What Ember keeps off: its handle and the task cards stacked above it (one area: they touch). */
+  private keepOff(): Rect | null {
+    let r = this.avoid?.() ?? null;
+    for (const o of this.overlays.values()) {
+      const c = o.cards;
+      if (!c) continue;
+      if (!r) { r = c; continue; }
+      const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
+      r = { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
+    }
+    return r;
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
@@ -137,7 +188,19 @@ export class OverlayManager {
   }
 
   private initFor(o: Overlay): OverlayInit {
-    return { displayId: o.display.id, bounds: o.display.bounds, settings: this.settings(), fallback: false };
+    const h = this.avoid?.() ?? null;
+    const b = o.display.bounds;
+    const here = !!h && h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
+    return { displayId: o.display.id, bounds: b, settings: this.settings(), fallback: false, handle: here ? h : null };
+  }
+
+  /** The handle moved (another screen layout): every overlay is told where it is now. */
+  private handleAt = "";
+  private checkHandle(): void {
+    const at = JSON.stringify(this.avoid?.() ?? null);
+    if (at === this.handleAt) return;
+    this.handleAt = at;
+    for (const o of this.overlays.values()) if (!o.win.isDestroyed() && !o.win.webContents.isLoading()) o.win.webContents.send(OVERLAY.init, this.initFor(o));
   }
 
   private create(display: Display): void {
@@ -171,14 +234,24 @@ export class OverlayManager {
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setIgnoreMouseEvents(true);
-    const overlay: Overlay = { win, display, interactive: [], clickThrough: true };
+    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, cards: null };
     this.overlays.set(display.id, overlay);
-    win.webContents.once("did-finish-load", () => {
+    // Every load (also after a crash and reload) gets the current picture.
+    win.webContents.on("did-finish-load", () => {
       win.webContents.send(OVERLAY.init, this.initFor(overlay));
       win.webContents.send(OVERLAY.state, this.state);
+      this.lastFrame = null;
       win.showInactive();
       win.setBounds(display.bounds); // re-apply after map; some WMs adjust on first show
       this.log.info("overlay.shown", { display: display.id, bounds: display.bounds });
+    });
+    // A crashed overlay must not leave an invisible window that swallows clicks: click-through again, then reload
+    // (sooner the first time, more slowly if it keeps crashing).
+    revive(win, reason => {
+      this.log.warn("overlay.renderer_gone", { display: display.id, reason });
+      overlay.interactive = [];
+      overlay.clickThrough = true;
+      if (!win.isDestroyed()) win.setIgnoreMouseEvents(true);
     });
     win.on("closed", () => this.overlays.delete(display.id));
     void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
@@ -202,15 +275,28 @@ export class OverlayManager {
     const now = Date.now();
     const dt = (now - this.last) / 1000;
     this.last = now;
+    if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
     const s = this.settings();
-    const ember = this.follower.step(followTarget(cursor, s.size, display.workArea), dt);
-    const frame = { ember, cursor, visible: !this.hidden };
+    this.follower.setReducedMotion(s.reduceMotion || this.systemReducedMotion);
+    // Out of the settings window's way while the user works in it; out of sight when it fills the screen.
+    // A question is never hidden, though: with no room beside the window, Ember asks by the cursor as usual.
+    const aside = this.aside ? besideRect(this.aside, s.size, screen.getDisplayMatching(this.aside).workArea, this.aside.y + 90) : null;
+    const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
+    const ember = aside
+      ? this.follower.step(aside, dt, true)
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff()), dt);
+    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
+    // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
+    const p = this.lastFrame;
+    const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
+      && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
+    if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
 
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
-      o.win.webContents.send(OVERLAY.frame, frame);
+      if (!still) o.win.webContents.send(OVERLAY.frame, frame);
       // Hover-to-interact: only while the cursor is over something clickable.
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
       const over = !this.borrowing && contains(o.display.bounds, cursor) && o.interactive.some(r => contains(r, local));

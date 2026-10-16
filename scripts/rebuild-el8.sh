@@ -25,7 +25,7 @@ if [ "${1:-}" != "--here" ] && ! is_el8; then
   echo "Re-running inside $image with $runtime"
   exec "$runtime" run --rm -v "$PWD":/src:Z -w /src "$image" bash -c '
     set -e
-    dnf -y -q install gcc-c++ make python3 file binutils libX11-devel libXtst-devel libXt-devel >/dev/null
+    dnf -y -q install gcc-c++ make python3 file binutils findutils libX11-devel libXtst-devel libXt-devel >/dev/null
     command -v node >/dev/null || dnf -y -q module install nodejs:22/common >/dev/null
     scripts/rebuild-el8.sh --here'
 fi

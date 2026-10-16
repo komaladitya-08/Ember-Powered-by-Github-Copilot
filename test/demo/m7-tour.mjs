@@ -9,12 +9,13 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
 mkdirSync(out, { recursive: true });
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const display = process.env.DISPLAY ?? ":55";
 const env = { ...process.env, DISPLAY: display };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -46,7 +47,7 @@ const mock = await startMockLlm({
     const plan = [
       () => ({ reasoning: "I'll open the bench on my own desk so I don't get in their way.", tool: { name: "open_on_desk", args: { name: "Ember Bench" } } }),
       () => ({ reasoning: "Let me see the form.", tool: { name: "perceive_window", args: {} } }),
-      () => ({ reasoning: "Name first.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace" } } }),
+      () => ({ reasoning: "Name first.", tool: { name: "type_text", args: { id: idOf(messages, /^text "Name"/), text: "Ada Lovelace", mode: "replace" } } }),
       () => ({ reasoning: "Theme: Dark.", tool: { name: "choose_option", args: { id: idOf(messages, /^combo box "Theme"/), option: "Dark" } } }),
       () => ({ reasoning: "The sketch pad only takes real clicks; on my desk I can just click it.", tool: { name: "click", args: { id: idOf(messages, /"Sketch pad"/) } } }),
       () => ({ reasoning: "Now save with Ctrl+S.", tool: { name: "press_keys", args: { keys: "ctrl+s" } } }),

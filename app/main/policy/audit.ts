@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { typesCharacter } from "./policy";
 
 export interface AuditEntry {
   task?: string;
@@ -27,14 +28,24 @@ export class AuditLog {
     return path.join(this.dir, `audit-${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}.jsonl`);
   }
 
+  /** The newest entries, newest first: read from the files once, then kept up to date in memory. */
+  private latest: (AuditEntry & { t: string })[] | null = null;
+  private static readonly KEEP = 500;
+
   write(e: AuditEntry): void {
     const line = JSON.stringify({ t: this.now().toISOString(), ...e });
     fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+    if (this.latest) { this.latest.unshift(JSON.parse(line)); this.latest.length = Math.min(this.latest.length, AuditLog.KEEP); }
     try { this.sink?.(line); } catch { /* the journal is a copy; the file is the record */ }
   }
 
-  /** The newest entries, newest first (for the activity timeline). */
+  /** The newest entries, newest first (for the activity timeline, asked for every few seconds). */
   recent(limit = 100): (AuditEntry & { t: string })[] {
+    this.latest ??= this.readNewest(AuditLog.KEEP);
+    return this.latest.slice(0, limit);
+  }
+
+  private readNewest(limit: number): (AuditEntry & { t: string })[] {
     const files = fs.readdirSync(this.dir).filter(f => MONTH_FILE.test(f)).sort().reverse();
     const out: (AuditEntry & { t: string })[] = [];
     for (const f of files) {
@@ -56,6 +67,7 @@ export class AuditLog {
       const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
       if (end < cutoff) fs.rmSync(path.join(this.dir, f));
     }
+    this.latest = null;
   }
 }
 
@@ -78,6 +90,39 @@ export function journalSink(onError: (err: unknown) => void = () => undefined): 
   return line => {
     if (broken) return;
     if (!child) start();
-    child!.stdin!.write(line + "\n");
+    child!.stdin!.write(journalLine(line) + "\n");
   };
+}
+
+/** Values that say nothing private: key combinations, scroll directions, Ember's own settings, app names, on/off. */
+const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "toggle"]);
+
+/**
+ * The journal is readable by more people than the user's own 0600 audit file: what the user asked,
+ * window titles, element names (an email's subject), chosen values (a form's answers) and error messages
+ * (they can quote the app's own text) go there as sizes only (the full text stays in ~/.config/ember/audit).
+ * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
+ * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names.
+ */
+export function journalLine(line: string): string {
+  try {
+    const e = JSON.parse(line) as Record<string, unknown>;
+    const size = (o: Record<string, unknown>, k: string) => {
+      if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
+    };
+    for (const k of ["goal", "summary", "window", "error"]) size(e, k);
+    if (!PLAIN_VALUE_KINDS.has(String(e.kind))) size(e, "value");
+    else if (e.kind === "keys" && typeof e.value === "string" && typesCharacter(e.value)) { delete e.value; e.chars = 1; }
+    for (const k of ["element", "after"]) {
+      if (e[k] && typeof e[k] === "object") {
+        const copy = { ...(e[k] as Record<string, unknown>) };
+        size(copy, "name");
+        size(copy, "selected");
+        e[k] = copy;
+      }
+    }
+    return JSON.stringify(e);
+  } catch {
+    return line;
+  }
 }

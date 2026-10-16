@@ -6,8 +6,13 @@ APP=/opt/ember/ember
 case "$1" in
   doctor)
     shift
-    if [ -z "$DISPLAY" ]; then exec "$APP" --doctor --ozone-platform=headless "$@"; fi
-    exec "$APP" --doctor --ozone-platform=x11 "$@"
+    # Chromium won't start as root with its sandbox (sudo ember doctor). The check-up shows
+    # no web content, so as root it runs without the sandbox; Ember itself never does.
+    nosandbox=
+    if [ "$(id -u)" = 0 ]; then nosandbox=--no-sandbox; fi
+    # No GPU either: nothing is drawn, and without a display Chromium's GL set-up only prints errors.
+    if [ -z "$DISPLAY" ]; then exec "$APP" --doctor --ozone-platform=headless --disable-gpu $nosandbox "$@"; fi
+    exec "$APP" --doctor --ozone-platform=x11 --disable-gpu $nosandbox "$@"
     ;;
   -h|--help)
     echo "usage: ember [doctor | --show-settings]"

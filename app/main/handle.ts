@@ -10,11 +10,14 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { Settings } from "./settings";
+import { revive } from "./revive";
 import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 
 const appDir = __dirname;
 const PILL = { width: 200, height: 56 };
 const CARD = { width: 360, height: 150 };
+/** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
+const CARD_MIN = 120, CARD_MAX = 360;
 const MARGIN = 12;
 
 export class HandleWindow {
@@ -51,19 +54,47 @@ export class HandleWindow {
     });
     this.win.setAlwaysOnTop(true, "screen-saver");
     this.win.setVisibleOnAllWorkspaces(true);
-    this.win.webContents.once("did-finish-load", () => {
+    this.win.webContents.on("did-finish-load", () => {
       const primary = screen.getPrimaryDisplay();
       const init: OverlayInit = { displayId: primary.id, bounds: primary.bounds, settings: this.settings(), fallback };
       this.win.webContents.send(OVERLAY.init, init);
+      if (this.last) this.win.webContents.send(OVERLAY.state, this.last);
       this.win.showInactive();
     });
-    screen.on("display-metrics-changed", () => this.reposition());
-    screen.on("display-removed", () => this.reposition());
+    // The handle is the way to Quit and Stop when shortcuts are taken: a crashed one comes back.
+    revive(this.win);
+    screen.on("display-metrics-changed", this.reposition);
+    screen.on("display-removed", this.reposition);
     void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));
   }
 
+  private last: EmberState | null = null;
+
+  private cardHeight = CARD.height;
+
   sendState(state: EmberState): void {
-    if (!this.win.isDestroyed()) this.win.webContents.send(OVERLAY.state, state);
+    this.last = state;
+    if (this.win.isDestroyed()) return;
+    this.win.webContents.send(OVERLAY.state, state);
+  }
+
+  /** Fallback card: grows or shrinks (upward, same corner) to the height its content needs. */
+  fit(height: number): void {
+    if (!this.fallback || !Number.isFinite(height)) return;
+    const h = Math.round(Math.min(Math.max(height, CARD_MIN), CARD_MAX));
+    if (h === this.cardHeight) return;
+    this.cardHeight = h;
+    this.reposition();
+  }
+
+  /** The handle's place on screen (Ember keeps off it). */
+  get bounds(): { x: number; y: number; width: number; height: number } | null {
+    return this.win.isDestroyed() ? null : this.win.getBounds();
+  }
+
+  /** While Ember borrows the mouse, its own windows let clicks through (a borrowed click must never land on Ember). */
+  setClickThrough(on: boolean): void {
+    if (!this.win.isDestroyed()) this.win.setIgnoreMouseEvents(on);
   }
 
   sendSettings(s: Settings): void {
@@ -75,9 +106,16 @@ export class HandleWindow {
     return { x: wa.x + wa.width - size.width - MARGIN, y: wa.y + wa.height - size.height - MARGIN };
   }
 
-  private reposition(): void {
-    if (this.win.isDestroyed()) return;
-    const size = this.fallback ? CARD : PILL;
-    this.win.setBounds({ ...size, ...this.corner(size) });
+  /** Gone for good (Ember switches between the pill and the card when the compositor comes or goes). */
+  destroy(): void {
+    screen.off("display-metrics-changed", this.reposition);
+    screen.off("display-removed", this.reposition);
+    if (!this.win.isDestroyed()) this.win.destroy();
   }
+
+  private reposition = (): void => {
+    if (this.win.isDestroyed()) return;
+    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : PILL;
+    this.win.setBounds({ ...size, ...this.corner(size) });
+  };
 }

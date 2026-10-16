@@ -16,15 +16,18 @@ function fakeX() {
     move: (px, py) => { s.pointer = { x: px, y: py }; },
     button: (b, down) => { s.log.push(`button ${b} ${down ? "down" : "up"}`); },
     keysym: (sym, down) => { const code = sym % 200 + 8; if (down) s.keys.add(code); else s.keys.delete(code); s.log.push(`key ${sym} ${down ? "down" : "up"}`); return true; },
+    keycode: (code, down) => { if (down) s.keys.add(code); else s.keys.delete(code); s.log.push(`keycode ${code} ${down ? "down" : "up"}`); },
     keysymOf: name => ({ Control_L: 0xffe3, Shift_L: 0xffe1, Return: 0xff0d, s: 0x73 } as Record<string, number>)[name] ?? 0,
     keycodeOf: sym => sym % 200 + 8,
     needsShift: sym => sym >= 0x41 && sym <= 0x5a,
     keysDown: () => [...s.keys],
     activeWindow: () => s.active,
+    focusedWindow: () => s.active,
     screenSize: () => ({ width: 1280, height: 800 }),
     findWindow: () => 22,
     activate: w => { s.active = w; s.log.push(`activate ${w}`); },
     sync: () => undefined,
+    releaseAll: () => undefined,
     close: () => undefined,
   };
   return { s, x };
@@ -135,15 +138,66 @@ describe("CursorBorrow", () => {
     expect(s.pointer).toEqual({ x: 500, y: 400 });
   });
 
-  it("refuses to borrow twice at once", async () => {
+  it("never borrows twice at once: the second borrow waits its turn", async () => {
     const { x } = fakeX();
+    const b = new CursorBorrow(x);
+    const order: string[] = [];
+    let release!: () => void;
+    const first = b.borrow(() => new Promise<void>(r => { order.push("first"); release = () => { order.push("first done"); r(); }; }), fast);
+    await new Promise(r => setTimeout(r, 0));
+    const second = b.borrow(async () => { order.push("second"); }, fast);
+    await new Promise(r => setTimeout(r, 5));
+    expect(order).toEqual(["first"]);
+    release();
+    await first;
+    await second;
+    expect(order).toEqual(["first", "first done", "second"]);
+  });
+
+  it("Stop cancels borrows that were waiting their turn (nothing moves after Stop)", async () => {
+    const { s, x } = fakeX();
     const b = new CursorBorrow(x);
     let release!: () => void;
     const first = b.borrow(() => new Promise<void>(r => { release = r; }), fast);
     await new Promise(r => setTimeout(r, 0));
-    await expect(b.borrow(async () => undefined, fast)).rejects.toThrow(/already/);
+    const second = b.borrow(async hand => { await hand.glideTo(10, 10); await hand.click(); }, fast);
+    const secondResult = expect(second).rejects.toBeInstanceOf(BorrowStopped);
+    b.stop();
     release();
-    await first;
+    await first; // its work was already done when Stop came
+    await secondResult;
+    expect(s.log).not.toContain("button 1 down");
+  });
+
+  it("a mouse click or held button from the user is a takeover, like moving the mouse", async () => {
+    const { x } = fakeX();
+    let mask = 0;
+    x.pointerState = () => ({ ...x.pointer()!, mask });
+    const b = new CursorBorrow(x);
+    const err = await b.borrow(async hand => {
+      await hand.click(); // Ember's own click doesn't count
+      mask = 0x100; // the user presses button 1
+      await hand.click();
+    }, fast).catch(e => e);
+    expect(err).toBeInstanceOf(UserTookOver);
+  });
+
+  it("waits while the user holds a mouse button (a drag in progress)", async () => {
+    const { x } = fakeX();
+    let t = 0;
+    x.pointerState = () => ({ x: 500, y: 400, mask: 0x100 });
+    const err = await new CursorBorrow(x).borrow(async () => undefined, { idleMs: 500, idleTimeoutMs: 2000, now: () => t, sleep: async ms => { t += ms; } }).catch(e => e);
+    expect(String(err)).toMatch(/kept using/);
+  });
+});
+
+describe("parseCombo punctuation and function keys", () => {
+  it("names the keys X knows", () => {
+    expect(parseCombo("ctrl+-")).toEqual({ modifiers: ["Control_L"], key: "minus" });
+    expect(parseCombo("ctrl++")).toEqual({ modifiers: ["Control_L"], key: "plus" });
+    expect(parseCombo("ctrl+,")).toEqual({ modifiers: ["Control_L"], key: "comma" });
+    expect(parseCombo("f5")).toEqual({ modifiers: [], key: "F5" });
+    expect(parseCombo("insert")).toEqual({ modifiers: [], key: "Insert" });
   });
 });
 
@@ -152,10 +206,86 @@ describe("tier 3 policy", () => {
   it("asks every time Ember needs the mouse or keyboard, even with a grant", () => {
     const d = e.decide({ taskId: "t", kind: "cursor_click", app: "gedit", window: "notes", element: { role: "panel", name: "Canvas" } });
     expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true, prompt: "Borrow your mouse to click “Canvas” panel in gedit?" });
-    expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "notes", value: "ctrl+s" }).prompt).toBe("Borrow your keyboard to press ctrl+s in gedit?");
+    expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "notes", value: "ctrl+s" }).prompt).toBe("Borrow your keyboard to press Ctrl+S in gedit?");
   });
   it("still refuses secrets", () => {
     expect(e.decide({ taskId: "t", kind: "cursor_text", app: "gedit", window: "w", element: { role: "text", name: "Password" }, value: "x" }).verdict).toBe("deny");
     expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "w", element: { role: "password text", name: "" }, value: "Return" }).verdict).toBe("deny");
+  });
+});
+
+describe("keys go only to the approved window", () => {
+  it("doesn't touch a window that never comes to the front", async () => {
+    const { s, x } = fakeX();
+    x.activate = () => { s.log.push("activate refused"); };
+    const err = await new CursorBorrow(x).borrow(async hand => { await hand.click(); }, { ...fast, window: 22 }).catch(e => e);
+    expect(String(err)).toMatch(/didn't come to the front/);
+    expect(s.log).not.toContain("button 1 down");
+  });
+  it("stops typing when another window takes the keyboard", async () => {
+    const { s, x } = fakeX();
+    const err = await new CursorBorrow(x).borrow(async hand => {
+      await hand.type("ab");
+      s.active = 99; // a dialog popped up
+      await hand.type("cd");
+    }, { ...fast, window: 22 }).catch(e => e);
+    expect(String(err)).toMatch(/another window has the keyboard/);
+  });
+});
+
+describe("borrows belong to their task (review round 2)", () => {
+  it("stopping one task's borrow leaves another task's queued borrow alone", async () => {
+    const { s, x } = fakeX();
+    const b = new CursorBorrow(x);
+    const a = new AbortController();
+    let release!: () => void;
+    const first = b.borrow(() => new Promise<void>(r => { release = r; }), { ...fast, signal: a.signal });
+    await new Promise(r => setTimeout(r, 0));
+    const second = b.borrow(async hand => { await hand.click(); }, fast);
+    a.abort();
+    release();
+    await first.catch(() => undefined);
+    await second;
+    expect(s.log).toContain("button 1 down");
+  });
+  it("is only 'driving' while it really moves the pointer, not while waiting for the user", async () => {
+    const { x } = fakeX();
+    let t = 0;
+    const b = new CursorBorrow(x);
+    let drivingWhileWaiting = false;
+    let started = false;
+    const run = b.borrow(async () => undefined, { idleMs: 500, now: () => t, onStart: () => { started = true; }, sleep: async ms => { if (!started) drivingWhileWaiting ||= b.driving; t += ms; } });
+    let drivingInside = false;
+    await run;
+    await b.borrow(async () => { drivingInside = b.driving; }, fast);
+    expect(drivingWhileWaiting).toBe(false);
+    expect(drivingInside).toBe(true);
+    expect(b.driving).toBe(false);
+  });
+
+  it("says whether it uses the mouse: the borrow it drives with, else any it waits for (PR9-3)", async () => {
+    const { x } = fakeX();
+    const seen: string[] = [];
+    // The status as main.ts words it, at every change.
+    const b: CursorBorrow = new CursorBorrow(x, { onChange: () => seen.push(`${b.driving ? "driving" : b.pending ? "waiting" : "idle"} ${b.usesMouse ? "mouse" : "keys"}`) });
+    let inside: boolean | null = null;
+    await b.borrow(async hand => { inside = b.usesMouse; await hand.keys("ctrl+s"); }, { ...fast, keysOnly: true });
+    expect(inside).toBe(false);
+    expect(seen).toEqual(["waiting keys", "driving keys", "idle keys"]);
+    // A mouse borrow queued behind keys only: waiting, the mouse is wanted; driving the keys, it says the keyboard.
+    seen.length = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let during: boolean | null = null;
+    const keys = b.borrow(async () => { await gate; during = b.usesMouse; }, { ...fast, keysOnly: true });
+    const mouse = b.borrow(async hand => { await hand.glideTo(10, 10); during = during === false && b.usesMouse; }, fast);
+    expect([b.pending, b.usesMouse]).toEqual([2, true]);
+    await new Promise(r => setTimeout(r, 5));
+    expect([b.driving, b.usesMouse]).toEqual([true, false]);
+    release();
+    await keys;
+    await mouse;
+    expect(during).toBe(true);
+    expect(b.usesMouse).toBe(false);
   });
 });

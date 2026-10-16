@@ -4,24 +4,33 @@
  *
  *   node eval/run.mjs                      per-PR tier: scripted model, every task once
  *   node eval/run.mjs --live --repeat 3    nightly tier: a real model, pass^3
- *   options: --only <id,id>  --tag <tag>  --out <dir>  --no-tasks  --no-gates
+ *   options: --only <id,id>  --tag <tag>  --out <dir>  --no-tasks  --no-gates  --keep (each attempt's temporary folder)
  * The live tier needs EMBER_EVAL_MODEL and either a GitHub token (COPILOT_GITHUB_TOKEN,
  * GH_TOKEN) or EMBER_EVAL_PROVIDER_URL (+ EMBER_EVAL_API_KEY) for an OpenAI-compatible endpoint.
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TaskSchema, type Task } from "./schema";
 import { Runner, type Outcome } from "./runner";
 import { measureGates, type GateResult } from "./gates";
 import { renderReport, shownAttempt } from "./report";
+import { computeExit, liveDesktopProblem } from "./exit";
 import { pickPython } from "../../app/main/perception/sidecar";
+import { openX11 } from "../../app/main/x11";
 import { locateRuntime } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
-const opt = (name: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
+const opt = (name: string) => {
+  const i = args.indexOf(`--${name}`);
+  if (i < 0) return undefined;
+  const v = args[i + 1];
+  if (v === undefined || v.startsWith("--")) { console.error(`--${name} needs a value`); process.exit(2); }
+  return v;
+};
 
 const root = path.resolve(__dirname, "../..");
 const out = path.resolve(opt("out") ?? path.join(root, "dist/eval"));
@@ -50,6 +59,9 @@ export interface EvalResults {
   gates: GateResult[];
 }
 
+/** A mistake in the command line: said plainly, without a stack trace. */
+class UsageError extends Error {}
+
 function loadTasks(): Task[] {
   const dir = path.join(root, "eval/tasks");
   const tasks = fs.readdirSync(dir).filter(f => f.endsWith(".json")).sort().map(f => {
@@ -58,15 +70,28 @@ function loadTasks(): Task[] {
     if (parsed.data.id !== f.replace(/\.json$/, "")) throw new Error(`${f}: id must match the file name`);
     return parsed.data;
   });
-  const only = opt("only")?.split(",");
+  const only = opt("only")?.split(",").map(s => s.trim()).filter(Boolean);
   const tag = opt("tag");
-  return tasks.filter(t => (!only || only.includes(t.id)) && (!tag || t.tags.includes(tag)));
+  const unknown = only?.filter(id => !tasks.some(t => t.id === id)) ?? [];
+  if (unknown.length) throw new UsageError(`no task named ${unknown.join(", ")} (the tasks are eval/tasks/*.json)`);
+  const picked = tasks.filter(t => (!only || only.includes(t.id)) && (!tag || t.tags.includes(tag)));
+  if (!picked.length) throw new UsageError(`no task matches ${[only && `--only ${only.join(",")}`, tag && `--tag ${tag}`].filter(Boolean).join(" and ")}`);
+  return picked;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
+  if (live) {
+    const problem = liveDesktopProblem(process.env, {
+      uid: process.getuid?.() ?? 0,
+      displayOpens: name => { const x = openX11(name); x?.close(); return !!x; },
+      isSocket: file => { try { return fs.statSync(file).isSocket(); } catch { return false; } },
+    });
+    if (problem) throw new UsageError(problem);
+  }
   fs.mkdirSync(out, { recursive: true });
   const python = pickPython();
-  const tasks = flag("no-tasks") ? [] : loadTasks();
+  const suite = !flag("no-tasks");
+  const tasks = suite ? loadTasks() : [];
   const model = live ? process.env.EMBER_EVAL_MODEL ?? "" : "mock-model (scripted)";
   if (live && !process.env.EMBER_EVAL_MODEL) throw new Error("the live tier needs EMBER_EVAL_MODEL");
   const providerUrl = process.env.EMBER_EVAL_PROVIDER_URL;
@@ -77,8 +102,10 @@ async function main(): Promise<void> {
     provider: live && providerUrl ? { type: "openai", baseUrl: providerUrl, apiKey: process.env.EMBER_EVAL_API_KEY } : undefined,
     gitHubToken: live && !providerUrl ? process.env.COPILOT_GITHUB_TOKEN ?? process.env.GH_TOKEN : undefined,
     vision: live,
+    keep: flag("keep"),
   });
   const outcomes: Outcome[] = [];
+  if (flag("keep")) say(`Keeping each attempt's folder (--keep): ${path.join(os.tmpdir(), "ember-eval-<task>-…")}. Delete them when done: they hold the audit log and the app's files.`);
   if (tasks.length) {
     await runner.start();
     say(`Ember task suite: ${tasks.length} tasks, ${live ? `live model ${model}, pass^${repeat}` : "scripted model"}`);
@@ -95,7 +122,7 @@ async function main(): Promise<void> {
     }
     await runner.stop();
   }
-  const gates = flag("no-gates") ? [] : await measureGates({ root, python, outcomes, live, log, say });
+  const gates = flag("no-gates") ? [] : await measureGates({ root, python, outcomes, live, suite, log, say });
   const results: EvalResults = {
     when: new Date().toISOString(),
     tier: live ? "nightly (live model)" : "per-PR (scripted model)",
@@ -111,7 +138,10 @@ async function main(): Promise<void> {
   say(`\n${passed}/${ran.length} tasks passed${outcomes.length - ran.length ? ` (${outcomes.length - ran.length} skipped on this machine)` : ""}. Report: ${path.join(out, "report.html")}`);
   const failedGates = gates.filter(g => g.status === "fail");
   if (failedGates.length) say(`Gates not met: ${failedGates.map(g => g.name).join(", ")}`);
-  process.exitCode = passed === ran.length && !failedGates.some(g => g.blocking) ? 0 : 1;
+  const verdict = computeExit({ suite, live, outcomes, gates });
+  if (verdict.code) say(`The run fails:\n${verdict.problems.map(p => `  - ${p}`).join("\n")}`);
+  return verdict.code;
 }
 
-main().catch(err => { console.error(err instanceof Error ? err.stack : err); process.exit(2); });
+// Exits explicitly: a gate trial that never let go of the mouse mustn't keep the run alive.
+main().then(code => process.exit(code), err => { console.error(err instanceof UsageError ? err.message : err instanceof Error ? err.stack : err); process.exit(2); });

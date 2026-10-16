@@ -2,64 +2,65 @@
  * The voice utility process: runs the recognizers off Electron's main thread.
  * Audio frames arrive from the microphone window over a MessagePort; events
  * go to the main process. Optionally listens to speaker output (PulseAudio
- * monitor, via parec) to reject wake words that come from videos.
+ * monitor, via parec) to reject wake words that come from videos. Tells main
+ * when the microphone's frames stop arriving, so it can start listening again.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import { VoiceEngine, type VoiceEvent } from "./engine";
 import { sherpaBackend, type ModelPaths } from "./sherpa";
+import { SpeakerMonitor } from "./speakers";
+import { FrameWatchdog } from "./watchdog";
 
 type FromMain =
-  | { type: "init"; models: ModelPaths; monitor: boolean }
+  /** `dev`: an unpackaged (development) build. */
+  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean }
   | { type: "self-speaking"; on: boolean }
-  | { type: "follow-up"; ms: number }
+  /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
+  | { type: "follow-up"; ms: number; afterQuestion?: boolean }
   | { type: "cancel" };
 
-type ToMain = VoiceEvent | { type: "ready"; loadMs: number; monitor: boolean } | { type: "error"; message: string } | { type: "stats"; cpuMs: number; audioMs: number; peak: number };
+/** Messages for main (VoiceService); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone frames for `ms`. */
+export type VoiceProcessMessage =
+  | VoiceEvent
+  | { type: "ready"; loadMs: number }
+  | { type: "error"; message: string }
+  | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
+  | { type: "monitor"; on: boolean; reason?: string }
+  | { type: "stalled"; ms: number };
 
 const parent = process.parentPort;
-const send = (m: ToMain) => parent.postMessage(m);
+const send = (m: VoiceProcessMessage) => parent.postMessage(m);
 
 let engine: VoiceEngine | null = null;
-let monitor: ChildProcess | null = null;
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
-// Development only: EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32) for debugging.
-const dump = process.env.EMBER_VOICE_DUMP ? fs.createWriteStream(process.env.EMBER_VOICE_DUMP) : null;
-
-function startMonitor(): boolean {
-  // Speaker output as 16 kHz mono float: whatever is playing (videos, calls).
-  const p = spawn("parec", ["--device=@DEFAULT_MONITOR@", "--rate=16000", "--channels=1", "--format=float32le", "--latency-msec=40"], { stdio: ["ignore", "pipe", "ignore"] });
-  let ok = true;
-  p.on("error", () => { ok = false; monitor = null; });
-  let rest = Buffer.alloc(0);
-  p.stdout!.on("data", (chunk: Buffer) => {
-    rest = Buffer.concat([rest, chunk]);
-    const usable = rest.length - (rest.length % 2048);
-    for (let i = 0; i < usable; i += 2048) {
-      const f = new Float32Array(rest.buffer.slice(rest.byteOffset + i, rest.byteOffset + i + 2048));
-      engine?.feedMonitor(f);
-    }
-    rest = rest.subarray(usable);
-  });
-  monitor = p;
-  return ok;
-}
+/** The speakers' stream counts in the CPU report too (its spotter runs while a wake or stop is checked). */
+const speakers = new SpeakerMonitor(f => {
+  const t0 = performance.now();
+  engine?.feedMonitor(f);
+  cpuMs += performance.now() - t0;
+}, (on, reason) => send({ type: "monitor", on, ...(reason ? { reason } : {}) }));
+/** Development builds only (installed Ember never keeps audio): EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32). */
+let dump: fs.WriteStream | null = null;
 
 parent.on("message", e => {
   const m = e.data as FromMain;
   if (m.type === "init") {
+    if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
       const backend = sherpaBackend(m.models, { monitor: m.monitor });
       engine = new VoiceEngine(backend, send);
-      const monitorOn = m.monitor && startMonitor();
-      send({ type: "ready", loadMs: Date.now() - t0, monitor: monitorOn });
+      if (m.monitor) speakers.start();
+      send({ type: "ready", loadMs: Date.now() - t0 });
     } catch (err) {
       send({ type: "error", message: err instanceof Error ? err.message : String(err) });
     }
+    const watchdog = new FrameWatchdog(ms => send({ type: "stalled", ms }));
+    setInterval(() => watchdog.check(), 1000);
     const port = e.ports[0];
     port.on("message", ev => {
+      watchdog.frame();
       const d = ev.data as ArrayBuffer | ArrayBufferView;
       const frame = ArrayBuffer.isView(d) ? new Float32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Float32Array(d);
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
@@ -78,10 +79,10 @@ parent.on("message", e => {
   } else if (m.type === "self-speaking") {
     engine?.selfSpeaking(m.on);
   } else if (m.type === "follow-up") {
-    engine?.followUp(m.ms);
+    engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
   } else if (m.type === "cancel") {
     engine?.cancel();
   }
 });
 
-process.on("exit", () => monitor?.kill());
+process.on("exit", () => speakers.stop());

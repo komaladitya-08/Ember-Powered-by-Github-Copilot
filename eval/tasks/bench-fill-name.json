@@ -20,7 +20,8 @@
         "id": {
           "find": "^text \"Name\""
         },
-        "text": "Ada Lovelace"
+        "text": "Ada Lovelace",
+        "mode": "replace"
       }
     },
     {
