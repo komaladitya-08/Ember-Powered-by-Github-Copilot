@@ -1069,6 +1069,13 @@ function start(): void {
       onEvent: onVoice,
       onState: (state, detail) => {
         setState({ mic: state });
+        // The microphone went off (muted, listening turned off, the voice process died) while "Listening…"
+        // was up: nothing more will be heard, so it goes, and the bubble is given back.
+        if (state !== "active" && state !== "waiting" && lastState.bubble.mood === "listening") {
+          setStatus("listen", null);
+          setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+          agent?.releaseBubble(lastState.bubble);
+        }
         broadcast(IPC.voiceStatus, voiceStatus(detail));
       },
     });
