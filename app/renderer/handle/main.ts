@@ -115,10 +115,12 @@ api.onState(s => {
   document.body.dataset.mood = b.visible ? b.mood : "idle";
   document.body.classList.toggle("streaming", b.visible && b.streaming);
   const actions = b.visible ? b.actions : [];
+  // A question (not just "Read all" or "Open settings", which are Ember's own buttons).
+  const asks = actions.some(a => !a.id.startsWith("ui:"));
   // Under a bubble the status line ("Using your mouse: move it to take over", "Waiting until you let go of the
   // mouse…", "I only caught the first part…") takes the step's place: without a compositor it has nowhere else to
   // show. A question keeps its keyboard hint there. A step the task row already shows isn't repeated.
-  const step = b.visible && s.status && actions.length === 0 ? s.status : b.visible && b.step !== task?.detail ? b.step : null;
+  const step = b.visible && s.status && !asks ? s.status : b.visible && b.step !== task?.detail ? b.step : null;
   $("step").hidden = !step;
   $("step").textContent = step ?? "";
 

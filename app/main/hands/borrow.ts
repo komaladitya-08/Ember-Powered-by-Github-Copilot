@@ -427,7 +427,9 @@ export class CursorBorrow {
       this.busy = false;
       this.stopping = false;
       o.signal?.removeEventListener("abort", onAbort);
-      this.setDriving(false);
+      // Quietly: borrow() reports the end once, with this borrow no longer counted (reported now, it read as "waiting
+      // for the user to let go" for a moment, and a screen reader announced that after every borrow).
+      this.drivingNow = false;
     }
   }
 }

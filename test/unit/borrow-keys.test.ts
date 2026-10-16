@@ -241,7 +241,8 @@ describe("CursorBorrow state changes", () => {
     const seen: string[] = [];
     const b: CursorBorrow = new CursorBorrow(x, { onChange: () => seen.push(`${b.pending}/${b.driving}`) });
     await b.borrow(async () => undefined, fast);
-    expect(seen).toEqual(["1/false", "1/true", "1/false", "0/false"]);
+    // Its end is one change: never "pending, not driving" after it drove (read as "waiting for you to let go").
+    expect(seen).toEqual(["1/false", "1/true", "0/false"]);
     seen.length = 0;
     b.stop();
     await b.borrow(async () => undefined, fast).catch(e => expect(e).toBeInstanceOf(BorrowStopped));
