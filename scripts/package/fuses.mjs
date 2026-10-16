@@ -26,9 +26,10 @@ export const FUSES = [
 const OFF = 0x30, ON = 0x31, REMOVED = 0x72;
 
 /**
- * What the installed Ember needs. No debugger and no code injected through the environment: --inspect* and
- * NODE_OPTIONS are ignored, in the app and in anything it runs as plain Node. RunAsNode stays on: Ember runs its
- * desk helper (app/main/desk/agent.ts) with its own binary as plain Node (ELECTRON_RUN_AS_NODE).
+ * What the installed Ember needs. No debugger and no code injected through the environment: the app ignores
+ * --inspect* and NODE_OPTIONS. RunAsNode stays on: Ember runs its desk helper (app/main/desk/agent.ts) with its
+ * own binary as plain Node (ELECTRON_RUN_AS_NODE). In that mode Node's own --inspect still works, which gives
+ * whoever starts it nothing beyond running the binary themselves (the running Ember is unaffected).
  * (main.ts also refuses --remote-debugging-* and --inspect* in a packaged build.)
  */
 export const EMBER_FUSES = {

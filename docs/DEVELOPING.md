@@ -295,7 +295,8 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 
 The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds; it sets the
 staged binary's Electron fuses so the installed Ember ignores `--inspect` and `NODE_OPTIONS`, and keeps plain-Node
-mode for the desk helper: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/package/rpm.sh` and
+mode for the desk helper, where Node's own `--inspect` still works but reaches only that new process, not the
+running Ember: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/package/rpm.sh` and
 `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime). CI builds both packages on
 `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
 fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user.

@@ -7,9 +7,13 @@ The agent loop runs on the GitHub Copilot SDK. First platform: RHEL 8.4 (GNOME o
 Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8):
 
 ```bash
-sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm ./ember-voice-models-0.1.0-1.el8.noarch.rpm
+sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm
 ember doctor               # checks this computer and explains anything to fix
 ```
+
+For “Hey Ember” without downloading the speech models on each computer, also install
+`ember-voice-models-0.1.0-1.el8.noarch.rpm` when you build it (`node scripts/voice/prepare.mjs` before packaging;
+see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB) when voice is turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing. To develop:
 

@@ -139,7 +139,8 @@ describe.skipIf(!available)("a real desk", () => {
   });
 
   it("survives its display dying in the middle of input: Ember makes no X call there, its helper does", async () => {
-    const desk = make();
+    // A display of its own: the desk before this one may still be letting go of :241, which would move this one.
+    const desk = make({ display: 254 });
     const p = await place(desk, "profiles2");
     const info = desk.running!;
     expect(p.x11.capture(0, 0, 10, 10)?.width).toBe(10);
