@@ -299,6 +299,8 @@ export class Presenter {
   private readonly taskId?: string;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
   private stalledTitle = "";
+  /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
+  private asked: string | null = null;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -420,6 +422,7 @@ export class Presenter {
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
+    this.asked = null;
     this.silent = true;
     this.owner.forget(this);
   }
@@ -448,6 +451,7 @@ export class Presenter {
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
+    this.asked = null;
     this.silent = false;
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
@@ -461,6 +465,7 @@ export class Presenter {
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
+    this.asked = null;
     this.silent = false;
     this.apply({
       emotion: "confused", talking: false,
@@ -474,6 +479,7 @@ export class Presenter {
     const wasBusy = this.busy;
     this.answering = false;
     this.answer = "";
+    this.asked = null;
     // Only a bubble mid-turn is cleared; a notice or an answer keeps its own hide timer.
     if (wasBusy) this.hide();
   }
@@ -498,6 +504,7 @@ export class Presenter {
     this.answering = false;
     this.answer = "";
     this.silent = false;
+    this.asked = text;
     this.apply({
       emotion: "thinking", talking: false,
       bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${text.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
@@ -551,7 +558,26 @@ export class Presenter {
       case "assistant.intent":
         if (!this.answering && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
         break;
-      case "user.message":
+      case "user.message": {
+        // A request's turn begins while one asked is still owed its turn. Asked while the turn before was still
+        // ending, it lost its "Thinking…" to that turn's end (session.idle): it is thinking again. The latest one's
+        // own message (it ends with the user's words) settles it.
+        const asked = this.asked;
+        if (asked !== null) {
+          if (!this.busy && !this.silent) {
+            this.cancelHide();
+            this.apply({
+              emotion: "thinking", talking: false,
+              bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${asked.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
+            });
+          }
+          const said = typeof d.content === "string" ? d.content.trimEnd() : null;
+          if (said === null || said.endsWith(asked.trim())) this.asked = null;
+        }
+        this.answering = false;
+        this.answer = "";
+        break;
+      }
       case "assistant.turn_start":
         // A new turn (a queued question, or the next step after a tool): its answer starts fresh.
         this.answering = false;

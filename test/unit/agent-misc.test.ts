@@ -468,4 +468,55 @@ describe("a turn that began and then hears nothing from Copilot (review round 8)
     a.wait(1000);
     expect(a.whys).toEqual(["silent"]);
   });
+
+  it("a background compaction outlasts the turn that started it: the next turn, held until it completes, gets twice as long too (AC9-1)", async () => {
+    const a = await watch();
+    a.begin();
+    a.ev("session.compaction_start", "assistant.message", "assistant.turn_end", "assistant.idle", "session.idle");
+    // The next request: its turn begins, and the runtime holds it until the compaction completes.
+    a.begin();
+    a.wait(359_000);
+    expect(a.whys).toEqual([]);
+    a.ev("session.compaction_complete");
+    // Done: the usual limit again.
+    a.wait(179_000);
+    expect(a.whys).toEqual([]);
+    a.wait(1000);
+    expect(a.whys).toEqual(["silent"]);
+  });
+
+  it("Stop or an error ends the compaction under way: the usual limit again", async () => {
+    for (const end of ["abort", "session.error"]) {
+      const a = await watch();
+      a.ev("session.compaction_start");
+      a.begin();
+      if (end === "abort") a.w.clear();
+      a.ev(end, "assistant.turn_end", "session.idle");
+      a.begin();
+      a.wait(179_000);
+      expect(a.whys).toEqual([]);
+      a.wait(1000);
+      expect(a.whys).toEqual(["silent"]);
+    }
+  });
+
+  it("once it has given up, nothing fires until resume(); then it watches again from what the events since say", async () => {
+    const a = await watch();
+    a.begin();
+    a.wait(180_000);
+    expect(a.whys).toEqual(["silent"]);
+    // The turn is being ended: what comes meanwhile fires nothing.
+    a.ev("assistant.reasoning_delta");
+    a.wait(600_000);
+    a.ev("abort", "assistant.turn_end", "session.idle");
+    a.w.resume();
+    a.wait(600_000);
+    expect(a.whys).toEqual(["silent"]);
+    a.begin();
+    a.wait(179_000);
+    expect(a.whys).toEqual(["silent"]);
+    a.wait(1000);
+    expect(a.whys).toEqual(["silent", "silent"]);
+    expect(a.slow).toEqual([true, true]);
+  });
 });

@@ -41,7 +41,7 @@ afterAll(async () => {
 });
 
 function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: {
-  resume?: string | null; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number; onStuck?: (why: string) => void; baseUrl?: string;
+  resume?: string | null; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number; onStuck?: (why: string) => void; onSilentTurn?: () => void; baseUrl?: string;
 } = {}) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
@@ -59,6 +59,7 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
     turnSlowMs: o.turnSlowMs,
     turnSilentMs: o.turnSilentMs,
     onStuck: o.onStuck,
+    onSilentTurn: o.onSilentTurn,
   });
   return { conductor, settings };
 }
@@ -166,7 +167,7 @@ describe("conductor on the real Copilot runtime", () => {
     await second.conductor.stop();
   }, 60000);
 
-  it("a model that takes the request and never answers (a dead connection, a stalled proxy): Ember says it's still waiting, then ends the turn (review round 8)", async () => {
+  it("a model that takes the request and never answers (a dead connection, a stalled proxy): Ember says it's still waiting, then ends the turn, and the session goes on (review rounds 8, 9)", async () => {
     let asked = 0, closed = 0;
     const stalled = http.createServer(async (q, r) => {
       for await (const chunk of q) void chunk;
@@ -178,18 +179,27 @@ describe("conductor on the real Copilot runtime", () => {
     const states: Partial<EmberState>[] = [];
     const why: string[] = [];
     const { conductor } = makeConductor(states, undefined, {
-      baseUrl: `http://127.0.0.1:${(stalled.address() as net.AddressInfo).port}/v1`, turnSlowMs: 1500, turnSilentMs: 5000, onStuck: w => { why.push(w); },
+      baseUrl: `http://127.0.0.1:${(stalled.address() as net.AddressInfo).port}/v1`, turnSlowMs: 1500, turnSilentMs: 5000,
+      onStuck: w => { why.push(w); }, onSilentTurn: () => { why.push("silent turn"); },
     });
     try {
       await conductor.start();
       await conductor.ask("what time is it in Tokyo");
       for (let i = 0; i < 300 && !why.length; i++) await new Promise(r => setTimeout(r, 50));
-      expect(why).toEqual(["silent"]);
+      expect(why).toEqual(["silent turn"]);
       expect(asked).toBe(1);
       expect(states.some(s => s.bubble?.title === "Still waiting for Copilot…" && s.bubble.mood === "thinking")).toBe(true);
-      // The turn was ended: the runtime let go of the request it was waiting on.
+      expect(states.at(-1)?.bubble).toMatchObject({ mood: "error", thought: "Copilot didn't answer. Ask me again in a moment." });
+      // The turn was ended: the runtime let go of the request it was waiting on, and the session went idle at once
+      // (not given up on: no onStuck).
+      expect(await (conductor.ending ?? Promise.resolve(true))).toBe(true);
       for (let i = 0; i < 100 && !closed; i++) await new Promise(r => setTimeout(r, 50));
       expect(closed).toBe(1);
+      expect(why).toEqual(["silent turn"]);
+      // The next request goes out on the same session (and is watched as before).
+      await conductor.ask("are you there?");
+      for (let i = 0; i < 100 && asked < 2; i++) await new Promise(r => setTimeout(r, 50));
+      expect(asked).toBe(2);
     } finally {
       await conductor.stop();
       stalled.closeAllConnections();
@@ -245,7 +255,7 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
     }
   }, 90000);
 
-  it("a turn whose model request never answers is ended and Copilot reconnected; the conversation goes on and the next ask is answered (review round 8)", async () => {
+  it("a turn whose model request never answers is ended (no reconnect); the conversation goes on and the next ask is answered (review rounds 8, 9)", async () => {
     // The model's endpoint, which stops answering (and holds what it was asked) while `stall` is set.
     let stall = false;
     const relay = http.createServer((q, r) => {
@@ -259,10 +269,12 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
     const settings = new SettingsStore(path.join(userData, "settings.json"));
     settings.load();
     const states: Partial<EmberState>[] = [];
+    const phases: string[] = [];
+    let turnsEnded = 0;
     const host = new AgentHost({
       userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
       log: createLogger({ dir: path.join(userData, "logs") }),
-      setState: p => states.push(p), onStatus: () => undefined,
+      setState: p => states.push(p), onStatus: s => phases.push(s.phase), onTurnEnd: () => { turnsEnded++; },
       provider: { type: "openai", baseUrl: `http://127.0.0.1:${(relay.address() as net.AddressInfo).port}/v1`, apiKey: "test" },
       turnSlowMs: 1000, turnSilentMs: 4000,
     });
@@ -271,14 +283,22 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
       expect(await host.start(null)).toBe("ready");
       await host.ask("remember the word pineapple");
       await idle(states, 0);
+      // Its turn's real end (session.idle), not just its answer: the next question isn't asked while it ends.
+      expect(await until(() => turnsEnded === 1)).toBe(true);
       const id = host.conductor!.sessionId!;
+      const conductor = host.conductor;
+      const seen = phases.length;
       stall = true;
       const from = states.length;
       await host.ask("what time is it in Tokyo");
       expect(await until(() => states.slice(from).some(s => s.bubble?.title === "Still waiting for Copilot…"))).toBe(true);
       expect(await until(() => states.slice(from).some(s => s.bubble?.thought === "Copilot didn't answer. Ask me again in a moment."))).toBe(true);
       stall = false;
-      expect(await until(() => host.getStatus().phase === "ready" && host.conductor?.sessionId === id)).toBe(true);
+      // The abort ended it at once: nothing was reconnected.
+      expect(await until(() => conductor?.ending === null)).toBe(true);
+      expect(host.conductor).toBe(conductor);
+      expect(host.conductor?.sessionId).toBe(id);
+      expect(phases.slice(seen).filter(p => p !== "ready")).toEqual([]);
       const again = states.length, before = mock.requests.length;
       await host.ask("what word did I ask you to remember?");
       await idle(states, again);

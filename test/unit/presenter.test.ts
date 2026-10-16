@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, Presenter, plainText } from "../../app/main/agent/presenter";
+import { BubbleOwner, Presenter, STILL_WAITING, plainText } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -478,5 +478,54 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
     expect(friendlyError("Pending response rejected since connection got disposed")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 502 Bad gateway")).toBe("Copilot had a problem on its side. Try again in a moment.");
     expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's AI endpoint had a problem/);
+  });
+});
+
+describe("Presenter: a question asked while the turn before is still ending (review round 9, BLD9-1)", () => {
+  it("the turn before's session.idle doesn't take the queued question's Thinking: it thinks again when its turn begins, and says when Copilot is quiet", () => {
+    const { p, states, last } = setup();
+    p.userPrompt("remember the word pineapple");
+    p.event({ type: "user.message", data: { content: "<current_datetime>now</current_datetime>\n\nremember the word pineapple" } });
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "OK, pineapple." } });
+    p.event({ type: "assistant.message", data: { content: "OK, pineapple." } });
+    // Asked before the first turn's session.idle came.
+    p.userPrompt("what time is it in Tokyo");
+    p.event({ type: "assistant.turn_end", data: {} });
+    p.event({ type: "session.idle", data: {} });
+    // Its turn begins: thinking again, and the hide armed by the old turn's end is off.
+    p.event({ type: "user.message", data: { content: "what time is it in Tokyo" } });
+    p.event({ type: "assistant.turn_start", data: {} });
+    expect(p.busy).toBe(true);
+    expect(last()).toMatchObject({ emotion: "thinking", bubble: { visible: true, title: "Thinking…", thought: "“what time is it in Tokyo”", streaming: true } });
+    p.stalled(true);
+    expect(last().bubble?.title).toBe(STILL_WAITING);
+    vi.advanceTimersByTime(60_000);
+    expect(states.filter(s => s.bubble).at(-1)?.bubble).toMatchObject({ visible: true, title: STILL_WAITING });
+    // Its answer comes and ends as usual.
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Noon." } });
+    p.event({ type: "assistant.message", data: { content: "Noon." } });
+    p.event({ type: "session.idle", data: {} });
+    expect(last().bubble).toMatchObject({ thought: "Noon.", streaming: false });
+    vi.advanceTimersByTime(10_000);
+    expect(states.filter(s => s.bubble).at(-1)?.bubble?.visible).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("a turn beginning after the question's own has begun, or after a Stop, changes nothing", () => {
+    const { p, last } = setup();
+    p.userPrompt("hello");
+    p.event({ type: "user.message", data: { content: "hello" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Hi." } });
+    p.event({ type: "assistant.message", data: { content: "Hi." } });
+    p.event({ type: "session.idle", data: {} });
+    p.event({ type: "user.message", data: { content: "(something nobody asked)" } });
+    expect(last().bubble).toMatchObject({ thought: "Hi.", streaming: false });
+    p.userPrompt("and again");
+    p.quiet();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    p.event({ type: "user.message", data: { content: "and again" } });
+    expect(p.busy).toBe(false);
+    vi.useRealTimers();
   });
 });

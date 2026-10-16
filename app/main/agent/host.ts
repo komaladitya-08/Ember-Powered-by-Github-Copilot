@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
-import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
+import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
 import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
 import { chooseModels, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
@@ -138,6 +138,8 @@ function hostOf(url: string): string | null {
 
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
+/** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
+export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
 
 const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network is unreachable|fetch failed|socket hang up|net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|CONNECTION_\w+|ADDRESS_UNREACHABLE|NETWORK_\w+|TIMED_OUT|PROXY_\w+|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE)/i;
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
@@ -145,12 +147,19 @@ const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
 const RUNTIME_WAIT_MS = 5000;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
+/** The same while tasks are at work: Copilot is reconnected once they're done. */
+const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
-const NO_WATCHERS_DETAIL = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…";
-/** The conversation's turn began and then heard nothing from Copilot for minutes (TurnWatch): it was ended. */
-const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
+const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
+const NO_WATCHERS_DETAIL = `${NO_WATCHERS_WHY} Reconnecting…`;
+/**
+ * The conversation's turn began and then heard nothing from Copilot for minutes (TurnWatch), and ending it didn't
+ * end it: Copilot is reconnected (the conductor said NO_ANSWER).
+ */
 const NO_ANSWER_DETAIL = "Copilot didn't answer in time. Reconnecting…";
+/** A reconnect put off while tasks are at work (the runtime still works for them): what settings show meanwhile. */
+const AFTER_TASKS = "Reconnecting when the tasks running are done…";
 
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
@@ -271,8 +280,16 @@ export class AgentHost {
   private readonly mainBubble = {};
   /** Ends main's hold on the bubble if main doesn't give it back. */
   private mainHold: ReturnType<typeof setTimeout> | null = null;
-  /** The runtime stopped under the tasks: the next stop ends them as failed, not as stopped by the user. */
-  private cutOff = false;
+  /**
+   * The runtime stopped under the tasks (or stopped answering): the next stop ends them as failed with this, not as
+   * stopped by the user.
+   */
+  private cutOff: string | null = null;
+  /**
+   * The conversation stalled while tasks were at work, and the runtime still works for them: Copilot is reconnected
+   * (this) once they're done, not before (a reconnect would cut them off).
+   */
+  private reconnectAfterTasks: (() => void) | null = null;
   /** Ember is quitting: finished tasks are neither shown nor announced. */
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
@@ -550,6 +567,8 @@ export class AgentHost {
         deleteSession: id => client.deleteSession(id),
         audit: hands.audit,
         onFinished: task => {
+          // Copilot is to be reconnected once the tasks are done: this may have been the last one.
+          if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           const summary = task.result?.summary ?? "";
           const text = taskOutcome(task);
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal);
@@ -604,20 +623,35 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
-        // The runtime took a request and never began its turn, or a turn under way went silent (a model request
-        // that never answers), though it answers its health check: it is reconnected as a hung one is. The requests
-        // sent on it never run there (a reconnect resumes the conversation). Out of inotify instances, the runtime
-        // can't begin a turn (a reconnect doesn't help until apps close): Ember says so.
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
+        // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
+        // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
+        // the tasks go on (each one's own watch decides its fate).
+        onSilentTurn: () => { this.queued = []; },
+        // The runtime took a request and never began its turn, or a silent turn didn't end when it was aborted,
+        // though it answers its health check: it is reconnected as a hung one is. The requests sent on it never run
+        // there (a reconnect resumes the conversation). Out of inotify instances, the runtime can't begin a turn (a
+        // reconnect doesn't help until apps close): Ember says so. With tasks at work, the runtime still works for
+        // them: it is reconnected once they're done (a task that goes silent too is ended by its own watch, a
+        // runtime that dies by the health check). Tasks cut off by a reconnect say Copilot didn't answer.
         onStuck: why => {
           // A request of the user's on this connection stalled (not a turn nobody asked for, which could repeat on its own).
           const asked = this.queued.length > 0 || this.turn !== null;
           this.queued = [];
-          if (why === "silent") { this.lost(gen, "turn went silent", NO_ANSWER, NO_ANSWER_DETAIL, asked); return; }
-          const full = (this.o.inotifyUsedUp ?? inotifyUsedUp)();
-          this.lost(gen, full ? "turn didn't start: inotify instances used up" : "turn didn't start", full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked);
+          const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
+          const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
+          if (this.tasksAtWork()) {
+            this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
+            // (A silent turn: the conductor said Copilot didn't answer.)
+            if (why === "not-started") this.presenter.fail(full ? NO_WATCHERS : NOT_ANSWERING_AFTER_TASKS);
+            this.setStatus({ phase: "error", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `Copilot isn't answering. ${AFTER_TASKS}` });
+            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? NO_ANSWER_DETAIL : full ? NO_WATCHERS_DETAIL : "Copilot isn't answering. Reconnecting…", asked, CUT_OFF_STALLED); };
+            return;
+          }
+          if (why === "silent") this.lost(gen, reason, NO_ANSWER, NO_ANSWER_DETAIL, asked, CUT_OFF_STALLED);
+          else this.lost(gen, reason, full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
         },
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
@@ -755,12 +789,13 @@ export class AgentHost {
    * `stalled`: the turn of a request the user sent on this connection never began or went silent, not a crash: it
    * isn't counted towards giving up (each one takes a request of the user's, so it never loops on its own; with the
    * file watchers used up, Ember would otherwise stop trying, and stay stopped once they're free again).
+   * `cut`: what the tasks cut off by the reconnect say.
    */
-  private lost(gen: number, why: string, says?: string, detail?: string, stalled = false): void {
+  private lost(gen: number, why: string, says?: string, detail?: string, stalled = false, cut = CUT_OFF): void {
     if (gen !== this.gen) return;
     this.o.log.error("agent.runtime_lost", { why });
     // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
-    this.cutOff = true;
+    this.cutOff = cut;
     // An answer cut off half-way says so, instead of vanishing.
     if (says || this.presenter.busy || why === "send failed") this.presenter.fail(says ?? "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
     else this.presenter.reset();
@@ -810,6 +845,11 @@ export class AgentHost {
     return p;
   }
 
+  /** Tasks running or waiting to run. */
+  private tasksAtWork(): boolean {
+    return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
+  }
+
   /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
   private queued: UserRequest[] = [];
   /**
@@ -824,6 +864,14 @@ export class AgentHost {
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
     if (epoch !== this.stopEpoch) return;
+    // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
+    // conversation goes on, or Copilot is being reconnected (then it waits for that below).
+    const ending = this.conductor?.ending;
+    if (ending) {
+      this.presenter.userPrompt(text);
+      await ending;
+      if (epoch !== this.stopEpoch) { this.presenter.reset(); return; }
+    }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
@@ -882,6 +930,8 @@ export class AgentHost {
    * its own (start(…, "auto")) until the user signs in again.
    */
   async forgetConversation(): Promise<void> {
+    // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
+    this.reconnectAfterTasks = null;
     this.tasks?.cancelAll();
     this.o.hands?.confirmer.cancelAll();
     await this.tasks?.drain(2500);
@@ -910,11 +960,13 @@ export class AgentHost {
   /** `forget`: a clean stop (quit) deletes the conversation; a restart keeps it to resume. */
   private async doStop(forget = false): Promise<void> {
     if (this.health) { clearInterval(this.health); this.health = null; }
+    // (A reconnect put off until the tasks were done: this is it, or something newer.)
+    this.reconnectAfterTasks = null;
     const cutOff = this.cutOff;
-    this.cutOff = false;
+    this.cutOff = null;
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
-    // that stopped, tasks end as failed.
-    this.tasks?.cancelAll(cutOff ? CUT_OFF : undefined);
+    // that stopped (or stopped answering), tasks end as failed.
+    this.tasks?.cancelAll(cutOff ?? undefined);
     this.o.hands?.confirmer.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);

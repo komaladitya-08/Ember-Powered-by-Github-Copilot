@@ -48,16 +48,25 @@ export interface ConductorDeps {
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
   /**
-   * The runtime took a request and no turn began for it, or a turn under way went silent (see TurnWatch): the host
-   * says so and reconnects. Without it the conductor only says so.
+   * The runtime took a request and no turn began for it ("not-started"), or a turn under way went silent and the
+   * abort that ends it didn't (no session.idle within TURN_END_GRACE_MS: "silent"; see TurnWatch): the host says
+   * so and reconnects. Without it the conductor only says so.
    */
   onStuck?: (why: Stuck) => void;
+  /**
+   * A turn under way went silent (see TurnWatch): Ember said Copilot didn't answer, and the turn is being ended
+   * (an abort), which drops the requests waiting behind it. Once the session is idle the conversation goes on, on
+   * this session (nothing else is cut off); if it isn't idle in time, onStuck("silent") follows.
+   */
+  onSilentTurn?: () => void;
   /** How long a request may wait for its turn to begin (TURN_START_MS). */
   turnStartMs?: number;
   /** How long a turn under way may hear nothing before Ember says it's still waiting (TURN_SLOW_MS). */
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (TURN_SILENT_MS). */
   turnSilentMs?: number;
+  /** How long a silent turn, once aborted, may take to end before the runtime is given up on (TURN_END_GRACE_MS). */
+  turnEndGraceMs?: number;
 }
 
 export interface ConductorTasks {
@@ -141,9 +150,17 @@ export const TURN_START_MS = 20_000;
 export const TURN_SLOW_MS = 30_000;
 /**
  * How long a turn under way may hear nothing from Copilot before it is given up on (see TurnWatch): a model at work
- * streams its reasoning or its answer long before this, and giving up reconnects (cutting off the tasks running).
+ * streams its reasoning or its answer long before this. Giving up on the conversation's turn ends that turn (the
+ * tasks running go on); on a task's, ends that task.
  */
 export const TURN_SILENT_MS = 180_000;
+/**
+ * How long a silent turn, once aborted, may take to end: an abort ends a model request that never answers at once
+ * and the session goes idle. A runtime that doesn't is reconnected (cutting off the tasks running).
+ */
+export const TURN_END_GRACE_MS = 10_000;
+/** What Ember says when the conversation's turn heard nothing from Copilot for TURN_SILENT_MS and was ended. */
+export const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
 /** Events of a turn under way: the model's (its first, assistant.turn_start, comes before the model is asked) and its tools'. */
 const IN_TURN = /^(assistant|tool|external_tool|permission|subagent|skill)\./;
 
@@ -172,7 +189,10 @@ export interface TurnWatchOptions {
  * nothing at all, while a model at work streams its reasoning and its answer. Any event is life; a tool under
  * way (tool.execution_start without its complete: reading the screen, a question to the user, a task's step) is
  * work, never silence. Quiet for slowMs: onSlow(true), and onSlow(false) once it's heard from again; quiet for
- * silentMs (twice that with a hook or a compaction under way): stuck. Fires once.
+ * silentMs (twice that with a hook or a compaction under way): stuck. Fires once (until resume()).
+ *
+ * A background compaction started in one turn runs on past that turn's session.idle, and the runtime holds the
+ * next turn on it (its turn_start comes, then nothing until compaction_complete): it counts until it completes.
  */
 export class TurnWatch {
   /** Requests sent whose message hasn't come yet (the runtime sends one user.message per request, in order). */
@@ -184,14 +204,22 @@ export class TurnWatch {
   private working = false;
   /** Tools under way. */
   private readonly tools = new Set<string>();
-  /** Hooks and compaction under way (the runtime is at work before the turn). */
-  private readonly busy = new Set<string>();
+  /** Hooks under way (the runtime is at work before the turn). */
+  private readonly hooks = new Set<string>();
+  /**
+   * A compaction under way, until session.compaction_complete (it outlasts the turn that started it), Stop or an
+   * error (they end it).
+   */
+  private compacting = false;
   /** What the armed timer watches for. */
   private watching: Stuck | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private slowTimer: ReturnType<typeof setTimeout> | null = null;
   /** onSlow(true) was called and nothing has been heard since. */
   private slow = false;
+  /** It gave up (onStuck): nothing more fires until resume(); events still count meanwhile. */
+  private fired = false;
+  /** Disposed: nothing fires any more. */
   private over = false;
   private readonly slowMs: number;
   private readonly silentMs: number;
@@ -211,6 +239,8 @@ export class TurnWatch {
   clear(): void { this.owed = 0; this.taken = false; this.working = false; this.tools.clear(); this.check(); }
   /** The session is let go: nothing fires any more. */
   dispose(): void { this.over = true; this.disarm(); }
+  /** The turn it gave up on has ended and the session goes on: it watches again (from what the events since say). */
+  resume(): void { if (this.over) return; this.fired = false; this.check(); }
 
   event(e: { type: string; agentId?: string; data?: unknown }): void {
     if (this.over) return;
@@ -227,13 +257,14 @@ export class TurnWatch {
       if (t === "user.message") { this.owed = Math.max(0, this.owed - 1); this.taken = true; }
       else if (t === "assistant.turn_end") this.inTurn = false;
       else if (t === "assistant.idle") { this.inTurn = false; this.working = false; this.tools.clear(); }
-      else if (t === "session.idle") { this.inTurn = false; this.taken = false; this.working = false; this.tools.clear(); this.busy.clear(); }
-      // The runtime drops what was waiting (Stop does; an error may).
-      else if (t === "session.error" || t === "abort") { this.inTurn = false; this.taken = false; this.owed = 0; this.working = false; this.tools.clear(); this.busy.clear(); }
-      else if (t === "hook.start") this.busy.add(`hook ${String(id)}`);
-      else if (t === "hook.end") this.busy.delete(`hook ${String(id)}`);
-      else if (t === "session.compaction_start") this.busy.add("compaction");
-      else if (t === "session.compaction_complete") this.busy.delete("compaction");
+      // (A background compaction goes on after the turn that started it: it isn't over with the turn.)
+      else if (t === "session.idle") { this.inTurn = false; this.taken = false; this.working = false; this.tools.clear(); this.hooks.clear(); }
+      // The runtime drops what was waiting (Stop does; an error may), and the compaction under way with it.
+      else if (t === "session.error" || t === "abort") { this.inTurn = false; this.taken = false; this.owed = 0; this.working = false; this.tools.clear(); this.hooks.clear(); this.compacting = false; }
+      else if (t === "hook.start") this.hooks.add(`hook ${String(id)}`);
+      else if (t === "hook.end") this.hooks.delete(`hook ${String(id)}`);
+      else if (t === "session.compaction_start") this.compacting = true;
+      else if (t === "session.compaction_complete") this.compacting = false;
       else if (IN_TURN.test(t)) { this.inTurn = true; this.taken = false; this.working = true; }
     }
     this.disarm();
@@ -243,16 +274,16 @@ export class TurnWatch {
   }
 
   private check(): void {
-    if (this.over) return;
+    if (this.over || this.fired) return;
     const watching: Stuck | null = (this.owed > 0 || this.taken) && !this.inTurn ? "not-started" : this.working && !this.tools.size ? "silent" : null;
     // Armed already for this: the wait isn't started again (only an event does that).
     if (watching === this.watching && (this.timer || !watching)) return;
     this.disarm();
     if (!watching) return;
     this.watching = watching;
-    const busy = this.busy.size > 0;
+    const busy = this.hooks.size > 0 || this.compacting;
     const ms = watching === "not-started" ? (busy ? this.ms * 6 : this.ms) : (busy ? this.silentMs * 2 : this.silentMs);
-    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.disarm(); this.onStuck(watching); }, ms);
+    this.timer = setTimeout(() => { this.timer = null; this.fired = true; this.slow = false; this.disarm(); this.onStuck(watching); }, ms);
     this.timer.unref?.();
     if (watching === "silent" && this.slowMs < ms) {
       this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); }, this.slowMs);
@@ -317,8 +348,15 @@ export class Conductor {
   private busy = false;
   /** Watches that each request sent gets its turn. */
   private watch: TurnWatch | null = null;
-  /** No turn began for a request, or the turn went silent (TurnWatch): the session is being replaced, and nothing of it shows any more. */
+  /**
+   * No turn began for a request (TurnWatch): the session is being replaced. Or the turn went silent: it is being
+   * ended (endSilentTurn). Nothing of it shows meanwhile.
+   */
   private stuck = false;
+  /** A silent turn being ended (see endSilentTurn): true once it has, false if it hasn't in time. */
+  private endingTurn: Promise<boolean> | null = null;
+  /** Settles endingTurn. */
+  private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
@@ -330,6 +368,14 @@ export class Conductor {
 
   get sessionId(): string | null {
     return this.session?.sessionId ?? null;
+  }
+
+  /**
+   * A turn that went silent is being ended: settles true once it has (the conversation goes on, on this session),
+   * false if it hasn't in time (onStuck("silent") came first) or the session was let go of. Null otherwise.
+   */
+  get ending(): Promise<boolean> | null {
+    return this.endingTurn;
   }
 
   async start(): Promise<void> {
@@ -380,7 +426,11 @@ export class Conductor {
     this.watch = watch;
     this.session.on(e => {
       watch.event(e);
-      if (this.stuck) return;
+      if (this.stuck) {
+        // The silent turn being ended has ended (Ember said so already): the conversation goes on.
+        if (e.type === "session.idle") this.settleEnding?.(true);
+        return;
+      }
       d.presenter.event(e as { type: string; data?: Record<string, unknown> });
       if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
       if (e.type === "assistant.message") {
@@ -394,6 +444,8 @@ export class Conductor {
 
   /** `context`: a snapshot of where the user was when they called Ember (untrusted). */
   async ask(text: string, context?: string): Promise<void> {
+    // A turn that went silent is being ended: a request sent now would run (and show) only after it.
+    if (this.endingTurn) await this.endingTurn;
     const session = this.session;
     if (!session) throw new Error("Ember's brain is not connected yet.");
     // A new request: an earlier Stop doesn't refuse what the user asks for now.
@@ -434,20 +486,60 @@ export class Conductor {
   }
 
   /**
-   * The runtime took a request and no turn began for it within `ms`, or the turn under way heard nothing from
-   * Copilot for `ms` (a model request that never answers), though the runtime may still answer its health check
-   * (TurnWatch): the host says so and reconnects (the conversation is resumed; the user asks again). A silent
-   * turn is ended first: the runtime drops it and the requests waiting behind it, so none of them runs later.
+   * The runtime took a request and no turn began for it within `ms`, though it may still answer its health check
+   * (TurnWatch): the host says so and reconnects (the conversation is resumed; the user asks again). Or the turn
+   * under way heard nothing from Copilot for `ms` (a model request that never answers): Ember says so and the turn
+   * is ended (endSilentTurn); only the conversation's request is given up on, and the tasks running go on.
    */
   private stuckTurn(why: Stuck, ms: number): void {
     this.stuck = true;
     this.busy = false;
     this.stopping = false;
     this.deps.log.warn(why === "silent" ? "conductor.turn_silent" : "conductor.turn_not_started", { ms });
-    if (why === "silent") void this.session?.abort().catch(() => undefined);
     this.deps.onTurnEnd?.(true);
+    if (why === "silent") {
+      this.deps.presenter.fail(NO_ANSWER);
+      this.deps.onSilentTurn?.();
+      this.endSilentTurn();
+      return;
+    }
     if (this.deps.onStuck) this.deps.onStuck(why);
-    else this.deps.presenter.fail(why === "silent" ? "Copilot didn't answer. Ask me again in a moment." : "Copilot isn't answering. Ask me again in a moment.");
+    else this.deps.presenter.fail("Copilot isn't answering. Ask me again in a moment.");
+  }
+
+  /**
+   * Ends a silent turn: an abort ends a model request that never answers at once, the runtime drops the requests
+   * waiting behind it, and the session goes idle. The conversation then goes on, on this session: the turn's own
+   * end isn't shown (Ember said Copilot didn't answer), and the next request's turn is watched as usual. A session
+   * not idle within the grace is given up on: onStuck("silent") (the host reconnects).
+   */
+  private endSilentTurn(): void {
+    const session = this.session;
+    const grace = this.deps.turnEndGraceMs ?? TURN_END_GRACE_MS;
+    let resolve: (ended: boolean) => void = () => undefined;
+    const ending = new Promise<boolean>(r => { resolve = r; });
+    const settle = (ended: boolean): void => {
+      if (this.endingTurn !== ending) return;
+      clearTimeout(timer);
+      this.endingTurn = null;
+      this.settleEnding = null;
+      if (ended) {
+        this.stuck = false;
+        this.watch?.resume();
+        this.deps.log.info("conductor.turn_ended");
+      } else if (session && this.session === session) {
+        // (Not when the session was let go of meanwhile: a restart, sign-out or quit.)
+        this.deps.log.warn("conductor.turn_not_ended", { ms: grace });
+        this.deps.onStuck?.("silent");
+      }
+      // (After onStuck: a request waiting for this finds the reconnect under way.)
+      resolve(ended);
+    };
+    const timer = setTimeout(() => settle(false), grace);
+    timer.unref?.();
+    this.endingTurn = ending;
+    this.settleEnding = settle;
+    void session?.abort().catch(() => settle(false));
   }
 
   /** Another model from the next message on (no new session, the conversation stays). */
@@ -461,6 +553,7 @@ export class Conductor {
     this.session = null;
     this.watch?.dispose();
     this.watch = null;
+    this.settleEnding?.(false);
     if (session) await within(session.disconnect().catch(() => undefined), 3000);
   }
 

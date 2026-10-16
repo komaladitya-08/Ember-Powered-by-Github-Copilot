@@ -31,6 +31,8 @@ const sim = vi.hoisted(() => ({
   holdTurns: false,
   /** The runtime takes this request (send returns) but never begins its turn. */
   stall: (_session: any, _prompt: string) => false as boolean,
+  /** An abort ends the turn under way as the real runtime's does (abort, then session.idle); off: it ends nothing. */
+  abortEnds: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -57,7 +59,10 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     begin(prompt: string) { this.emit("user.message", { content: prompt }); this.emit("assistant.turn_start", { turnId: "0" }); }
     nextTurn() { const p = this.waiting.shift(); if (p !== undefined) this.begin(p); }
     // Stop ends the turn, and the runtime drops the requests waiting behind it.
-    async abort() { this.aborted++; this.waiting = []; }
+    async abort() {
+      this.aborted++; this.waiting = [];
+      if (sim.abortEnds) { await Promise.resolve(); this.emit("abort", { reason: "user initiated" }); this.emit("session.idle", { aborted: true }); }
+    }
     disconnected = false;
     async disconnect() { this.disconnected = true; if (sim.stopHangs) await hang(); }
     async setModel() { /* nothing */ }
@@ -121,6 +126,7 @@ beforeEach(() => {
   sim.onSend = () => undefined;
   sim.holdTurns = false;
   sim.stall = () => false;
+  sim.abortEnds = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -1349,7 +1355,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
   const TASK_NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.";
   const stopAll = async (host: AgentHost) => { const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done; };
 
-  it("a model request that never answers: still waiting at 30 s, then the turn is ended, Ember says so and reconnects, and what waited behind it goes", async () => {
+  it("a model request that never answers: still waiting at 30 s, then the turn is ended and Ember says so; a runtime the abort doesn't end it on is reconnected, and what waited behind it goes", async () => {
     vi.useFakeTimers();
     const { host, screen, statuses } = makeHost({ healthMs: 5000 });
     expect(await host.start(TOKEN, "stored")).toBe("ready");
@@ -1372,8 +1378,13 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await vi.advanceTimersByTimeAsync(1500);
     expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
     expect(first.aborted).toBeGreaterThan(0);
-    expect(statuses.map(s => s.detail)).toContain("Copilot didn't answer in time. Reconnecting…");
     expect((host as any).queued).toEqual([]);
+    // The abort didn't end the turn (no session.idle): after a short grace, Copilot is reconnected.
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot didn't answer in time. Reconnecting…");
     sim.holdTurns = false;
     await vi.advanceTimersByTimeAsync(3000);
     expect(sim.clients).toHaveLength(2);
@@ -1447,13 +1458,14 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await host.stop();
   });
 
-  it("a turn nobody asked for that goes silent (it could come back on its own after each reconnect) still counts towards giving up", async () => {
+  it("a turn nobody asked for that goes silent and doesn't end when aborted (it could come back on its own after each reconnect) still counts towards giving up", async () => {
     vi.useFakeTimers();
     const { host, statuses } = makeHost({ turnSilentMs: 5000 });
     await host.start(TOKEN, "stored");
     for (let i = 0; i < 6; i++) {
       conductorSession().begin("(nothing the user asked)");
       await vi.advanceTimersByTimeAsync(5500);
+      await vi.advanceTimersByTimeAsync(10_000);
       await vi.advanceTimersByTimeAsync(3000);
     }
     expect(sim.clients).toHaveLength(6);
@@ -1461,6 +1473,181 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await host.stop();
   });
 
+  it("silent turns of the user's own requests that don't end when aborted aren't crashes either (AC8-2)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ turnSilentMs: 5000 });
+    await host.start(TOKEN, "stored");
+    for (let i = 0; i < 7; i++) {
+      await host.ask(`what time is it? (${i})`);
+      await vi.advanceTimersByTimeAsync(5500);
+      expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(host.getStatus().phase).toBe("ready");
+    }
+    expect(sim.clients).toHaveLength(8);
+    expect(statuses.map(s => s.detail)).not.toContain("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    await host.stop();
+  });
+
+  it("the abort ends the silent turn (as the runtime's does): Ember says Copilot didn't answer, nothing reconnects, and the conversation goes on (AC9-2)", async () => {
+    vi.useFakeTimers();
+    sim.abortEnds = true;
+    const { host, screen, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    const talk = conductorSession();
+    await host.ask("what time is it in Tokyo");
+    sim.holdTurns = true;
+    await host.ask("are you there?");
+    await vi.advanceTimersByTimeAsync(180_500);
+    expect(talk.aborted).toBe(1);
+    // The aborted turn's own end ("Stopped") doesn't replace what Ember said; what waited behind it went with it.
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
+    expect((host as any).queued).toEqual([]);
+    expect(talk.waiting).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(statuses.map(s => s.phase)).not.toContain("error");
+    // The user asks again: same session, and its turn shows as always.
+    sim.holdTurns = false;
+    await host.ask("what time is it in Tokyo?");
+    expect(conductorSession()).toBe(talk);
+    expect(talk.sent.at(-1)).toMatch(/what time is it in Tokyo\?$/);
+    talk.emit("assistant.message_delta", { deltaContent: "It's noon." });
+    talk.emit("assistant.message", { content: "It's noon." });
+    talk.emit("assistant.turn_end", {});
+    talk.emit("session.idle", {});
+    expect(screen().bubble).toMatchObject({ mood: "idle", thought: "It's noon.", streaming: false });
+    // Its turns are watched again: the next one that goes silent is noticed too.
+    await host.ask("and in Paris?");
+    await vi.advanceTimersByTimeAsync(180_500);
+    expect(talk.aborted).toBe(2);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NO_ANSWER });
+    expect(sim.clients).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("a question asked while the silent turn is being ended waits for it, then goes on the same session, or on the new one if Copilot is reconnected", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(TOKEN, "stored");
+    const talk = conductorSession();
+    await host.ask("what time is it in Tokyo");
+    await vi.advanceTimersByTimeAsync(180_500);
+    expect(talk.aborted).toBe(1);
+    // The runtime takes a moment to end it.
+    const asked = host.ask("are you there?");
+    expect(screen().bubble).toMatchObject({ mood: "thinking", thought: "“are you there?”" });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(talk.sent.at(-1)).toMatch(/what time is it in Tokyo$/);
+    talk.emit("abort", {});
+    talk.emit("session.idle", { aborted: true });
+    await asked;
+    expect(talk.sent.at(-1)).toMatch(/are you there\?$/);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", thought: "“are you there?”" });
+    expect(sim.clients).toHaveLength(1);
+    // It goes silent too, and this time the runtime doesn't end it: the question asked meanwhile goes to the new connection.
+    await vi.advanceTimersByTimeAsync(180_500);
+    expect(talk.aborted).toBe(2);
+    const later = host.ask("hello?");
+    await vi.advanceTimersByTimeAsync(13_000);
+    await later;
+    expect(sim.clients).toHaveLength(2);
+    expect(talk.sent.at(-1)).toMatch(/are you there\?$/);
+    expect(conductorSession()).not.toBe(talk);
+    expect(conductorSession().sent.at(-1)).toMatch(/hello\?$/);
+    await host.stop();
+  });
+
+  it("a busy task survives a silent conversation turn, and the next ask is answered on the same runtime (AC9-2, PR9-1)", async () => {
+    vi.useFakeTimers();
+    sim.abortEnds = true;
+    const finished: { status: string; text: string }[] = [];
+    const { host, screen, statuses } = makeHost({ hands: hands(), onTaskFinished: t => finished.push(t) });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy the desktop slowly");
+    await vi.advanceTimersByTimeAsync(100);
+    const work = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    const talk = conductorSession();
+    await host.ask("what time is it in Tokyo");
+    // The task's model answers every 3 s; the conversation's never does.
+    for (let i = 0; i < 70; i++) { await vi.advanceTimersByTimeAsync(3000); work.emit("tool.execution_start", { toolCallId: `c${i}`, toolName: "report_progress" }); work.emit("tool.execution_complete", { toolCallId: `c${i}`, success: true }); }
+    expect(talk.aborted).toBe(1);
+    expect(work.aborted).toBe(0);
+    expect(host.tasks!.get(t.id)).toMatchObject({ status: "running" });
+    expect(finished).toEqual([]);
+    expect(sim.clients).toHaveLength(1);
+    expect(statuses.map(s => s.phase)).not.toContain("error");
+    // The next ask goes out on the same runtime and session, hears of no task that failed, and is answered.
+    await host.ask("how's the tidying going?");
+    expect(conductorSession()).toBe(talk);
+    expect(talk.sent.at(-1)).toMatch(/how's the tidying going\?$/);
+    expect(talk.sent.at(-1)).not.toContain("task_results");
+    talk.emit("assistant.message_delta", { deltaContent: "Still tidying." });
+    talk.emit("assistant.message", { content: "Still tidying." });
+    talk.emit("assistant.turn_end", {});
+    talk.emit("session.idle", {});
+    expect(screen().bubble).toMatchObject({ mood: "idle", thought: "Still tidying.", streaming: false });
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    expect(sim.clients).toHaveLength(1);
+    await stopAll(host);
+  });
+
+  it("a runtime that doesn't end the silent turn while a task is at work: the task isn't cut off, and Copilot is reconnected once it's done (AC9-2)", async () => {
+    vi.useFakeTimers();
+    const finished: { status: string; text: string }[] = [];
+    const { host, screen } = makeHost({ hands: hands(), onTaskFinished: t => finished.push(t) });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(100);
+    const work = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    await host.ask("what time is it in Tokyo");
+    // The conversation's turn goes silent and the abort doesn't end it; the task's model answers every few seconds.
+    for (let i = 0; i < 60; i++) { await vi.advanceTimersByTimeAsync(5000); work.emit("assistant.reasoning_delta", { deltaContent: `step ${i} ` }); }
+    expect(sim.clients).toHaveLength(1);
+    expect(host.tasks!.get(t.id)).toMatchObject({ status: "running" });
+    expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    // Asked meanwhile, Ember says so (the conversation can't answer now).
+    await host.ask("are you there?");
+    expect(screen().bubble).toMatchObject({ title: "I can't reach Copilot", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    expect(conductorSession().sent.at(-1)).toMatch(/Tokyo$/);
+    // The task ends (here the user stops it): Copilot is reconnected now, and the next ask goes out.
+    host.tasks!.cancel(t.id);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(finished).toEqual([expect.objectContaining({ status: "cancelled" })]);
+    expect(sim.clients).toHaveLength(2);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.ask("how's the tidying going?");
+    expect(conductorSession().sent.at(-1)).toMatch(/how's the tidying going\?$/);
+    expect(conductorSession().sent.at(-1)).not.toContain(CUT_OFF);
+    await stopAll(host);
+  });
+
+  it("a conversation turn that never begins while a task is at work: the same, and a task that goes silent too ends by its own watch, then Copilot is reconnected", async () => {
+    vi.useFakeTimers();
+    sim.stall = s => s.sessionId.startsWith("ember-conductor-");
+    const finished: { status: string; text: string }[] = [];
+    const { host, screen } = makeHost({ hands: hands(), onTaskFinished: t => finished.push(t), inotifyUsedUp: () => false });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(100);
+    const work = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    await host.ask("what time is it in Tokyo");
+    work.emit("assistant.reasoning_delta", { deltaContent: "looking " });
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then." });
+    expect(sim.clients).toHaveLength(1);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    // The task's model goes quiet as well: its own watch ends it, and then Copilot is reconnected.
+    await vi.advanceTimersByTimeAsync(165_000);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: failed. ${TASK_NO_ANSWER}` })]);
+    sim.stall = () => false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sim.clients).toHaveLength(2);
+    expect(host.getStatus().phase).toBe("ready");
+    await stopAll(host);
+  });
   it("a task's turn that began and then hears nothing: its card says so at 30 s, and it fails plainly at the long limit; the rest goes on", async () => {
     vi.useFakeTimers();
     const { host, screen } = makeHost({ hands: hands() });
