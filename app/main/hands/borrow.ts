@@ -42,6 +42,8 @@ export interface BorrowOptions {
   elementWindow?: number;
   /** Called once the user is still and Ember actually takes the cursor. */
   onStart?: () => void;
+  /** Only the keyboard is used (keys pressed, a spreadsheet's cells typed into): the status says so (see usesMouse). */
+  keysOnly?: boolean;
   /** This borrow only: stops it while it waits its turn or runs (the kill switch uses stop() for all). */
   signal?: AbortSignal;
   now?: () => number;
@@ -148,6 +150,10 @@ export class CursorBorrow {
   private drivingNow = false;
   /** Borrows asked for and not finished yet (waiting their turn, waiting for the user, or driving). */
   private open = 0;
+  /** Of those, the ones that use the mouse (not keysOnly). */
+  private openMouse = 0;
+  /** The borrow running now (waiting for the user to be still, or driving) uses the mouse. */
+  private runningMouse = false;
 
   constructor(private x: XInput, private options: CursorBorrowOptions = {}) {}
 
@@ -175,6 +181,14 @@ export class CursorBorrow {
     return this.open;
   }
 
+  /**
+   * Does Ember use the mouse (not only the keyboard): the borrow it drives with now, else, while it waits, any borrow
+   * asked for and not finished. The status says "your mouse" or "your keyboard" by it.
+   */
+  get usesMouse(): boolean {
+    return this.drivingNow ? this.runningMouse : this.openMouse > 0;
+  }
+
   /** Kill switch: the current borrow sends no more input and the pointer goes straight back; queued ones never start. */
   stop(): void {
     this.epoch++;
@@ -183,12 +197,15 @@ export class CursorBorrow {
 
   borrow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions = {}): Promise<T> {
     const epoch = this.epoch;
+    const mouse = !o.keysOnly;
     this.open++;
+    if (mouse) this.openMouse++;
     this.changed();
     const run = this.turn.catch(() => undefined).then(() => {
       if (epoch !== this.epoch || o.signal?.aborted) throw new BorrowStopped();
+      this.runningMouse = mouse;
       return this.borrowNow(fn, o);
-    }).finally(() => { this.open--; this.changed(); });
+    }).finally(() => { this.open--; if (mouse) this.openMouse--; this.changed(); });
     this.turn = run;
     return run;
   }

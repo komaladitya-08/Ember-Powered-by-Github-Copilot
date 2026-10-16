@@ -242,6 +242,7 @@ export const TOOL_STEPS: Record<string, string> = {
   click: "Clicking",
   toggle: "Flipping a switch",
   type_text: "Typing",
+  fill_cells: "Filling cells (your keyboard)",
   choose_option: "Choosing an option",
   set_value: "Setting a value",
   change_setting: "Changing a setting",
@@ -264,7 +265,7 @@ export const STILL_WAITING = "Still waiting for Copilot…";
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
   click: "tap", toggle: "tap", choose_option: "tap", set_value: "tap", change_setting: "tap", open_app: "tap", scroll: "tap",
-  type_text: "type", press_keys: "type",
+  type_text: "type", fill_cells: "type", press_keys: "type",
   point_at: "point", wait_for_click: "point",
   set_appearance: "wave", start_task: "thumbsUp", show_me: "point",
 };

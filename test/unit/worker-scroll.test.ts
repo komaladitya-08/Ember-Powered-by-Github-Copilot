@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, aimedAt, atSpot, seesInside, tabPage, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, aimedAt, atSpot, cellTook, seesInside, tabPage, takerInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
 import { marksSvg } from "../../app/main/perception/marks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -334,6 +334,46 @@ describe("where the wheel and the mouse go (review round 6)", () => {
     expect([sliver.st.asked, sliver.st.notches]).toEqual([0, []]);
   });
 
+  it("the words on a button inside a row are the button's: the row is clicked beside it (H9-6)", async () => {
+    // Chromium answers with the deepest element: at the row's middle, the text of its own "Remove Alice" button.
+    const page: PointElement = { role: "document web", name: "", bounds: FRAME };
+    const row = { x: 0, y: 100, width: 420, height: 41 };
+    const wrap: PointElement = { role: "panel", name: "", bounds: { x: 0, y: 100, width: 420, height: 40 } };
+    const button: PointElement = { role: "push button", name: "Remove Alice", bounds: { x: 102, y: 108, width: 110, height: 24 } };
+    const words: PointElement = { role: "static", name: "Remove Alice", bounds: { x: 110, y: 112, width: 90, height: 16 } };
+    const name: PointElement = { role: "static", name: "Alice", bounds: { x: 8, y: 112, width: 70, height: 16 } };
+    const item: PointElement = { role: "list item", name: "", bounds: row };
+    expect(aimedAt([page, item, wrap, button, words], "list item", row)).toBe("other");
+    expect(takerInside([page, item, wrap, button, words], "list item", row)).toBe(button);
+    // Without the row in the answer, the button round the words is found all the same.
+    expect(aimedAt([page, wrap, button, words], "list item", row)).toBe("other");
+    // The row's own words, and a button's words aimed at that button, are what is aimed at.
+    expect(aimedAt([page, item, wrap, name], "list item", row)).toBe("yes");
+    expect(takerInside([page, item, wrap, name], "list item", row)).toBeUndefined();
+    expect(aimedAt([page, item, wrap, button, words], "push button", button.bounds!)).toBe("yes");
+    // Chromium's own answer: from the window straight to the words (what lies between is left out). The read found the
+    // button inside the row: it is round the words, so a click there presses it. The row's own name isn't in it.
+    expect(aimedAt([page, words], "list item", row)).toBe("yes");
+    expect(aimedAt([page, words], "list item", row, [], undefined, [button])).toBe("other");
+    expect(takerInside([page, words], "list item", row, [button])).toBe(button);
+    expect(aimedAt([page, name], "list item", row, [], undefined, [button])).toBe("yes");
+    // The click goes in at the row's left part (its name), never on the button's words.
+    const known = (b: Bounds): AxNode[] => [{ id: 50, parent: 2, depth: 3, role: "push button", name: "Remove Alice", states: ["enabled", "sensitive"], bounds: b }];
+    const chromium = async (_t: unknown, p: { x: number }) => (p.x >= 102 && p.x < 212 ? [page, words] : [page, name]);
+    const { w, st, call } = app([{ role: "list item", name: "Alice", bounds: row }], { atPoint: true, extra: known(button.bounds!) });
+    (w as unknown as { perception: { atPoint: typeof chromium } }).perception.atPoint = chromium;
+    await call("perceive_window", {});
+    expect((await call("click", { id: 2 })).textResultForLlm).toMatch(/^Done.*The click landed on static "Alice"\.$/);
+    expect(st.clicks).toEqual([{ x: 12, y: 120.5 }]);
+    // A button as wide as the row inside it, its words wherever Ember could click: refused, naming the button, unasked.
+    const wide = app([{ role: "list item", name: "Alice", bounds: row }], { atPoint: true, extra: known({ x: 2, y: 104, width: 416, height: 32 }) });
+    (wide.w as unknown as { perception: { atPoint: (t: unknown, p: { x: number }) => Promise<PointElement[]> } }).perception.atPoint =
+      async (_t, p) => [page, { ...words, bounds: { x: p.x - 4, y: 112, width: 8, height: 16 } }];
+    await wide.call("perceive_window", {});
+    expect((await wide.call("click", { id: 2 })).textResultForLlm).toMatch(/^Another control inside element 2 is where the mouse would click \("Remove Alice" \("push button"\)\)/);
+    expect([wide.st.asked, wide.st.clicks]).toEqual([0, []]);
+  });
+
   it("a scroll bar is a place for the wheel: it stays put while what it scrolls moves (W7-3)", async () => {
     const { st, call } = app(rows(39), { atPoint: true, extra: [] });
     await call("perceive_window", {});
@@ -362,5 +402,43 @@ describe("clearing a field with the user's mouse (review round 5)", () => {
     expect(st.keys).toEqual(["ctrl+a", "Delete"]);
     expect(field.text).toBe("");
     expect(clip).toEqual({ saved: 0, written: [], restored: 0 });
+  });
+});
+
+describe("a long list of rows (review round 9)", () => {
+  it("a row the list couldn't be looked through for in time is to be typed instead; a choice not checked all through says so (H9-2)", async () => {
+    // A file dialog's list of 800 files: the helper names the first rows in time and says how many it left out.
+    const files: Item = { role: "table", name: "Files", bounds: { x: 10, y: 60, width: 600, height: 400 } };
+    const { w, call } = app([files]);
+    const chosen: string[] = [];
+    Object.assign((w as unknown as { d: { sidecar: object } }).d.sidecar, {
+      listOptions: async () => ({ options: ["file_001.txt", "file_002.txt"], left: 798 }),
+      selectOption: async (_id: number, option: string) => {
+        chosen.push(option);
+        return { ok: true, option, after: { role: "table", name: "Files", states: [], bounds: files.bounds, selected: option }, unchecked: 798 };
+      },
+    });
+    await call("perceive_window", {});
+    expect((await call("choose_option", { id: 2, option: "file_700.txt" })).textResultForLlm).toBe(
+      'None of the first 2 rows is called exactly "file_700.txt", and the list is too long for Ember to look through the other 798 in time. Type the name instead: in a file dialog press Ctrl+L (or use its name field) and type the file\'s name.');
+    expect(chosen).toEqual([]);
+    const r = await call("choose_option", { id: 2, option: "file_002.txt" });
+    expect(r.resultType).toBe("success");
+    expect(r.textResultForLlm).toMatch(/^Done\. Now: table "Files" selected="file_002\.txt" \(The list is long: its last 798 rows weren't checked for another of that name in time\.\)$/);
+    expect(chosen).toEqual(["file_002.txt"]);
+  });
+
+  it("a cell read back after Enter took what was typed: the same, Calc's own way of showing it, or a formula's new result (H9-3)", () => {
+    expect(cellTook("999", "1200", "999")).toBe(true);
+    expect(cellTook("3.10", "", "3.1")).toBe(true); // Calc shows a number its own way
+    expect(cellTook("=A1*2", "1200", "2400")).toBe(true); // a formula: something new
+    expect(cellTook("", "x", "")).toBe(true); // cleared
+    expect(cellTook("1200.0", "1200", "1200")).toBe(true); // the same number
+    expect(cellTook("1200", "1200", "1200")).toBe(true); // what it held already
+    // Still what it held: a read-only document, a protected cell (or a formula working out to the same).
+    expect(cellTook("999", "1200", "1200")).toBe(false);
+    expect(cellTook("=A1*2", "1200", "1200")).toBe(false);
+    expect(cellTook("", "x", "x")).toBe(false);
+    expect(cellTook("Phone", "", "")).toBe(false);
   });
 });

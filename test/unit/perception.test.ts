@@ -234,6 +234,28 @@ describe("secret fields", () => {
     expect(out).toContain('[14] combo box "PIN" (label) (showing, visible, secret)');
     expect(inferLabels([node(1, "label", "Country", at(0, 0, 90)), node(2, "combo box", "France", at(100, 0), { selected: "France" })]).get(2)).toBe("Country");
   });
+  it("never lists a name elsewhere that says a secret field's value as words of its own, short values aside (PERC9-3)", () => {
+    // A button named after the field by aria-labelledby holds no field: every name and text of the read is looked through,
+    // for values of 4 characters or more (a "Total: 42" beside a CVV of 42 stays), however their characters are spaced.
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const out = serializeElements(win, [
+      node(1, "document web", "Checkout", at(0, 0, 600, 400), { parent: null }),
+      node(2, "static", "PIN", at(0, 0, 40), { parent: 1 }),
+      node(3, "entry", "", at(50, 0), { parent: 1, text: "ABCD" }),
+      node(4, "static", "CVV", at(0, 40, 40), { parent: 1 }),
+      node(5, "entry", "", at(50, 40), { parent: 1, text: "42" }),
+      node(6, "entry", "Card number", at(0, 80), { parent: 1, text: "4111111111111111" }),
+      node(7, "push button", "Pay with ABCD", at(0, 120, 100), { parent: 1 }),
+      node(8, "static", "Saved card 4111 1111 1111 1111", at(0, 160, 300), { parent: 1 }),
+      node(9, "static", "Total: 42", at(0, 200, 100), { parent: 1 }),
+      node(10, "static", "Order ABCDEF", at(0, 240, 100), { parent: 1 }),
+      node(11, "paragraph", "", at(0, 280, 300), { parent: 1, text: "Your PIN a b c d was saved" }),
+    ]);
+    expect(out).not.toMatch(/\bABCD\b|a b c d|1111/i);
+    expect(out).toContain('[7] push button (showing, visible)');
+    expect(out).toContain('"Total: 42"');
+    expect(out).toContain('"Order ABCDEF"');
+  });
   it("recognises secret labels in many languages, not look-alikes", () => {
     for (const s of labels.secret) expect(isSecretLabel(s), s).toBe(true);
     for (const s of labels.plain) expect(isSecretLabel(s), s).toBe(false);

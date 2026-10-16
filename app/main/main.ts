@@ -1112,7 +1112,8 @@ function start(): void {
       // Ember's own windows let the borrowed clicks through (they sit where apps keep OK and Save buttons).
       handle?.setClickThrough(driving);
       deskViewRef?.setDriving(driving);
-      setStatus("borrow", driving ? "Using your mouse: move it to take over" : borrow.pending > 0 ? "Waiting until you let go of the mouse…" : null);
+      setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
+        : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop typing…") : null);
     };
     const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
     borrowRef = borrow;

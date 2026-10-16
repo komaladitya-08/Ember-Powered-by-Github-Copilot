@@ -40,6 +40,8 @@ export interface AxNode {
    * text what it holds. A cell with the keyboard that is scrolled away has no `bounds`.
    */
   grid?: boolean;
+  /** A spreadsheet's sheet: how many rows and columns it has (LibreOffice 6.4: 1024 columns, to AMJ; 24.2: 16384, to XFD). */
+  size?: { rows: number; columns: number };
 }
 
 export interface AxWindow {
@@ -130,8 +132,11 @@ export interface CanDo {
   handlerUnknown?: boolean;
 }
 
-/** `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering. */
-export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean }
+/**
+ * `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering.
+ * `unchecked`: a row chosen in a long list, whose rows after it (this many) weren't looked through for another of that name in time.
+ */
+export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean; unchecked?: number }
 
 export interface SidecarStatus { version: number; python: string; toolkitAccessibility: boolean | null; apps: number }
 
@@ -415,7 +420,8 @@ export class AtspiSidecar {
   selectOption(id: number, option: string): Promise<ActionResult> {
     return this.request<ActionResult>("select_option", { id, option }).then(r => this.physicalResult(id, r));
   }
-  listOptions(id: number): Promise<{ options: string[] }> { return this.request("list_options", { id }); }
+  /** `left`: rows of a long list (a folder of many files) left out, not named in time; theirs aren't among `options`. */
+  listOptions(id: number): Promise<{ options: string[]; left?: number }> { return this.request("list_options", { id }); }
 
   /** Ember quits (or its desk closes): the helper stops, and isn't started again on its own (see revive). */
   stop(): void {

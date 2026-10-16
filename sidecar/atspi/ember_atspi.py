@@ -404,6 +404,153 @@ def says_secret(acc, name, text, values, field):
     return holds_value(name, values) or holds_value(text, values) or (not field and bool(name) and named_from_contents(acc))
 
 
+# A secret field's values are looked for in every name and text of a read too, not only in what holds the field (a
+# button named after it by aria-labelledby: "Pay with 4821"): those of WORD_VALUE_MIN characters or more (a shorter one
+# is too common: "Total: 42"), as words of their own. A password field's bullets say nothing.
+WORD_VALUE_MIN = 4
+MASKS = "\u2022\u25cf\u2219\u00b7*\u25e6"
+
+
+def says_value(text, values):
+    """Does `text` say one of a secret field's values (see secret_values) as a word, or words, of its own, however it
+    spaces their characters ("4111 1111 1111 1111")? Only values of WORD_VALUE_MIN characters or more, and none that
+    is only bullets."""
+    if not text or not values:
+        return False
+    whole, words = squash(text), None
+    for v in values:
+        if len(v) < WORD_VALUE_MIN or not v.strip(MASKS) or v not in whole:
+            continue
+        if words is None:
+            words = normalize_label(text).replace(OBJECT_CHAR, " ")
+        if re.search(r"(?<!\w)" + r"\s*".join(re.escape(c) for c in v) + r"(?!\w)", words):
+            return True
+    return False
+
+
+# A web engine's element named after what it holds (see named_from_contents) says what a secret field in it holds also
+# where a read didn't list that field (scrolled out of view, or past where the read stopped); one named after other
+# elements (aria-labelledby) says what a secret field among them holds. Such names are checked before they are
+# reported (see name_says_secret): the fields in the element are found by the app (AT-SPI's Collection, one call), or
+# else child by child, CONTENTS_NODES elements at most, and at most CONTENTS_FIELDS of them are asked whether they are
+# secret. For CONTENTS_S at most (in a read, for all its names): a name that can't be checked in time, or for want of
+# room, is withheld.
+CONTENTS_FIELDS = 32
+CONTENTS_NODES = 120
+CONTENTS_S = 0.4
+# Roles whose names never say what a field holds that way: fields (a field's name is its label: see is_secret), a web
+# page's text (Chromium's static text holds nothing) and pages and windows (named after their titles).
+OWN_NAME_ROLES = FIELD_ROLES | WINDOW_ROLES | frozenset(["static", "document web", "document frame"])
+# Words, as a name's are compared with what the elements in it say (see unlisted_secrets).
+WORD = re.compile(r"\w+")
+
+
+def fields_in(acc, until):
+    """The input fields in acc (see FIELD_ROLES), shown or not; None when they can't all be told by `until`
+    (time.monotonic()), or for want of room (see CONTENTS_FIELDS)."""
+    if native(acc):
+        try:
+            wanted = [getattr(Atspi.Role, r.upper().replace(" ", "_")) for r in sorted(FIELD_ROLES)
+                      if hasattr(Atspi.Role, r.upper().replace(" ", "_"))]
+            rule = Atspi.MatchRule.new(Atspi.StateSet.new([]), Atspi.CollectionMatchType.ALL, {},
+                                       Atspi.CollectionMatchType.ALL, wanted, Atspi.CollectionMatchType.ANY, [],
+                                       Atspi.CollectionMatchType.ALL, False)
+            found = list(Atspi.Collection.get_matches(acc, rule, Atspi.CollectionSortOrder.CANONICAL,
+                                                      CONTENTS_FIELDS + 1, True))
+            return found if len(found) <= CONTENTS_FIELDS else None
+        except Exception:
+            pass
+    found, todo, seen = [], [acc], 0
+    while todo:
+        cur = todo.pop()
+        try:
+            count = cur.childCount
+        except Exception:
+            return None
+        for i in range(count):
+            seen += 1
+            if seen > CONTENTS_NODES or time.monotonic() > until:
+                return None
+            child = child_at(cur, i)
+            try:
+                role = child.getRoleName()
+            except Exception:
+                return None
+            if role in FIELD_ROLES:
+                found.append(child)
+                if len(found) > CONTENTS_FIELDS:
+                    return None
+            else:
+                todo.append(child)
+    return found
+
+
+def secret_inside(acc, until):
+    """Is a secret field (see is_secret) in acc, shown or not? None when that can't be told by `until` (see fields_in)."""
+    fields = fields_in(acc, until)
+    if fields is None:
+        return None
+    for f in fields:
+        if time.monotonic() > until:
+            return None
+        try:
+            role, name = f.getRoleName(), (f.name or "").strip()
+        except Exception:
+            return None
+        if is_secret(f, role, name):
+            return True
+    return False
+
+
+def labelled_by_secret(acc, until):
+    """Is acc named after a secret field, or after an element with one in it (aria-labelledby: "Pay with" and the PIN
+    field)? None when that can't be told by `until`."""
+    try:
+        relations = acc.getRelationSet() or []
+    except Exception:
+        return None
+    for rel in relations:
+        try:
+            if rel.getRelationType() != pyatspi.RELATION_LABELLED_BY:
+                continue
+            targets = [rel.getTarget(i) for i in range(min(rel.getNTargets(), 16))]
+        except Exception:
+            return None
+        for t in targets:
+            if time.monotonic() > until:
+                return None
+            try:
+                role = t.getRoleName()
+                name = (t.name or "").strip()
+            except Exception:
+                return None
+            if role == "static":
+                continue  # a web page's text: nothing in it
+            found = is_secret(t, role, name) if role in FIELD_ROLES else secret_inside(t, until)
+            if found is not False:
+                return found
+    return False
+
+
+def name_says_secret(acc, role, name, until):
+    """Does acc's name (`name`) say what a secret field holds, though that field wasn't read with it (see CONTENTS_S)?
+    True too when that can't be told by `until` (time.monotonic()). Only a web engine's names are checked (a few calls
+    each); `role` None: asked for."""
+    if not name or role in OWN_NAME_ROLES or not web_engine(acc):
+        return False
+    try:
+        role = role or acc.getRoleName()
+    except Exception:
+        return True
+    if role in OWN_NAME_ROLES:
+        return False
+    if time.monotonic() > until:
+        return True
+    if not named_from_contents(acc):
+        return labelled_by_secret(acc, until) is not False
+    return secret_inside(acc, until) is not False
+
+
 def withhold_around(acc, role):
     """Notes in WITHHELD the names that say what secret field acc holds (see withhold_names), looking up from its
     accessible (a few calls for each level): for a field Ember found secret after a read (mark_secret). Returns their
@@ -824,6 +971,16 @@ def grid_of(acc, count, states, clip):
     return row0, row1, col0, col1, heads
 
 
+def sheet_size(acc):
+    """How many rows and columns a spreadsheet's sheet has (LibreOffice 6.4: 1024 columns; 24.2: 16384), or None."""
+    try:
+        t = acc.queryTable()
+        rows, cols = int(t.nRows), int(t.nColumns)
+    except Exception:
+        return None
+    return {"rows": rows, "columns": cols} if rows > 0 and cols > 0 else None
+
+
 def grid_cells(acc, grid, budget, cap, until=None):
     """The cells of a spreadsheet's rows and columns on screen (see grid_of), row by row, as (row, column, cell):
     `cap` at most, until `until` (time.monotonic()) at most, when budget.cut notes the rest was left out; and none once
@@ -1200,9 +1357,11 @@ def read_panes(panes, depth, out, max_depth, max_nodes, parent_id, clip, budget,
     return shown
 
 
-def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False, pane=False):
+def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False, pane=False, web=False):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen. `pane`: a spreadsheet's pane
-    (or its sheet) found on screen by where it lies, which shows if it is visible (see read_panes)."""
+    (or its sheet) found on screen by where it lies, which shows if it is visible (see read_panes). `web`: acc is in a
+    web page, where only the page (and a frame in it) clips what is in it, in the page's own units, as in visible_part:
+    on a HiDPI screen Chromium's page reports physical pixels inside a window frame that reports logical ones."""
     budget = budget or Budget()
     if len(out) - budget.grid >= max_nodes:
         budget.cut_short("nodes")
@@ -1235,14 +1394,18 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
                 return read_panes(panes, depth, out, max_depth, max_nodes, parent_id, clip, budget, in_pane)
     my_id = parent_id
     listed = judged and (role not in SKIP_ROLES or bool(name))
-    bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES else None
+    page = role in DOCUMENT_ROLES
+    bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES or page else None
     secret = False
+    mine = None
     if listed and (bounds is None or (bounds["width"] > 0 and bounds["height"] > 0)):
-        node = node_of(acc, role, name, states, bounds)
+        node = mine = node_of(acc, role, name, states, bounds)
         node["id"] = SNAPSHOTS.add(acc)
         node["parent"] = parent_id
         node["depth"] = depth
-        shown = clip_to(clip, bounds) if clip is not None and bounds is not None else None
+        # A page is clipped by the page it is a frame of, never by what holds the page (see `web`).
+        by = clip if web or not page else None
+        shown = clip_to(by, bounds) if by is not None and bounds is not None else None
         if shown is not None and shown != bounds:
             # Partly scrolled out of its list, or outside its window: the part that shows (a mark goes there).
             node["shown"] = shown
@@ -1254,7 +1417,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     if secret:
         # What a secret field holds is its contents too: Chromium lists a text box's text as static text in it.
         return True
-    if depth == 0 or role in CLIP_ROLES:
+    if page:
+        # What is in a page shows inside it (a frame's inside the frame too), in the page's units (see `web`).
+        clip = clip_to(clip, bounds) if web else bounds
+        web = True
+    elif (depth == 0 or role in CLIP_ROLES) and not web:
         clip = clip_to(clip, bounds)
     if budget.check():
         return True
@@ -1265,7 +1432,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     long_list = count > MAX_CHILDREN
     grid = grid_of(acc, count, states, clip) if long_list else None
     if grid is not None:
-        # A spreadsheet: its cells on screen, by row and column.
+        # A spreadsheet: its cells on screen, by row and column; and how many it has (Ember checks a cell's address).
+        if mine is not None:
+            size = sheet_size(acc)
+            if size is not None:
+                mine["size"] = size
         walk_grid(acc, grid, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, "focused" in states)
         return judged
     indices, left_out, ordered = child_indices(acc, count, clip)
@@ -1281,7 +1452,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
             continue
         last = (i, child)
         on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, role == "scroll pane",
-                             pane and role == PANE_ROLE)
+                             pane and role == PANE_ROLE, web)
         if budget.busy or budget.over:
             return True
         judged = judged or on_screen_now
@@ -1304,7 +1475,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
                 return True
             if budget.tick():
                 return True
-            walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+            walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, web=web)
             if budget.busy or budget.over:
                 return True
     return judged
@@ -1379,40 +1550,124 @@ def redact_by_layout(nodes, accessible_of):
 def withhold_names(nodes, accessible_of):
     """Names that say what a secret field holds (Chromium names a table's cell, a row or a <div> after what the fields
     in it hold; GTK a combo box after the option it shows): the field's own and its listed containers', with their
-    text, are left out, and noted in WITHHELD (for what is under the wheel and actions). The field's value is asked
-    for here (never reported), for a field with a named container or name only. A read lists parents first. Returns
-    the keys noted."""
+    text, are left out, and noted in WITHHELD (for what is under the wheel and actions). So are the names and texts
+    elsewhere in the read that say a field's value as words of their own (see says_value), and a web page's names
+    that may say what a field the read didn't list holds (see unlisted_secrets). The field's value is asked for here
+    (never reported). A read lists parents first. Returns the keys noted."""
     by_id, held = dict((n["id"], n) for n in nodes), set()
+
+    def withhold(c, acc):
+        c["name"] = ""
+        for k in ("text", "selection", "selected"):
+            c.pop(k, None)
+        key = object_key(acc) if acc is not None else None
+        if key is not None:
+            WITHHELD.add(key)
+            held.add(key)
+    values_of_all, short = [], []
     for n in nodes:
         if not n.get("secret"):
             continue
+        field = accessible_of(n["id"])
+        values = secret_values(field, n["role"]) if field is not None else []
+        values_of_all.extend(v for v in values if v not in values_of_all)
+        short.extend((field, v) for v in values if len(v) < WORD_VALUE_MIN and v.strip(MASKS))
         chain = [n]
         p = by_id.get(n["parent"])
         while p is not None and len(chain) <= WITHHELD_LEVELS and p["role"] not in WINDOW_ROLES:
             chain.append(p)
             p = by_id.get(p["parent"])
-        if not any(c["name"] or c.get("text") for c in chain):
-            continue
-        field = accessible_of(n["id"])
-        values = secret_values(field, n["role"]) if field is not None else []
         for c in chain:
             acc = field if c is n else accessible_of(c["id"])
             if acc is None or not (c["name"] or c.get("text")):
                 continue
             if says_secret(acc, c["name"], c.get("text"), values, c is n):
-                c["name"] = ""
-                for k in ("text", "selection", "selected"):
-                    c.pop(k, None)
-                key = object_key(acc)
+                withhold(c, acc)
+    # A short value ("42") is too common to withhold wherever it is a word (see says_value), but not what is named after
+    # its field (aria-labelledby: "Pay with" and the field), which the field tells (one call) where the read says it.
+    for field, v in short:
+        if any(not c.get("secret") and (holds_value(c["name"], [v]) or holds_value(c.get("text"), [v])) for c in nodes):
+            for key in (object_key(t) for t in labels_by(field)):
                 if key is not None:
                     WITHHELD.add(key)
                     held.add(key)
+    bus = None
+    for c in nodes:
+        if c.get("secret") or not (c["name"] or c.get("text")):
+            continue
+        # Saying a field's value as words of its own, or found before (see WITHHELD).
+        if says_value(c["name"], values_of_all) or says_value(c.get("text"), values_of_all):
+            withhold(c, accessible_of(c["id"]))
+        elif WITHHELD.keys:
+            acc = accessible_of(c["id"])
+            if bus is None and acc is not None:
+                bus = (object_key(acc) or ("",))[0]
+            if acc is not None and (bus, getattr(acc, "path", None)) in WITHHELD:
+                withhold(c, acc)
+    unlisted_secrets(nodes, accessible_of, withhold)
     return held
 
 
-def withheld_name(acc, name):
-    """acc's name as it may be reported: none for one that says what a secret field holds (see WITHHELD)."""
-    return "" if name and WITHHELD.keys and object_key(acc) in WITHHELD else name
+def labels_by(field):
+    """The elements named after `field` (aria-labelledby), as its LABEL_FOR relation says (a few at most)."""
+    try:
+        for rel in field.getRelationSet() if field is not None else []:
+            if rel.getRelationType() == pyatspi.RELATION_LABEL_FOR:
+                return [t for t in (rel.getTarget(i) for i in range(min(rel.getNTargets(), 16))) if t is not None]
+    except Exception:
+        pass
+    return []
+
+
+def words_of(text):
+    return WORD.findall(normalize_label(text)) if text else []
+
+
+def unlisted_secrets(nodes, accessible_of, withhold):
+    """A web page's names that say words none of the elements the read listed in them say (`withhold` leaves them out),
+    of elements the read may not have listed all of: some of it listed, or partly out of view (`shown`), or where the
+    read stopped (the last element listed and what holds it). Named after what they hold, they may say what a secret
+    field the read didn't list holds (scrolled out of view, or past where the read stopped), and so are checked (see
+    name_says_secret), CONTENTS_S at most for the read; so are ones named after other elements (aria-labelledby).
+    Children first: a row is checked once its cell's name is withheld. Elsewhere, and on a page where every name is
+    said by what is listed in it, no call is made."""
+    first = accessible_of(nodes[0]["id"]) if nodes else None
+    if first is None or not web_engine(first):
+        return  # names are made from contents only in a web engine (see named_from_contents); a read is one app's
+    by_id, last = dict((n["id"], n) for n in nodes), nodes[-1]
+    stop = set()
+    while last is not None and last["id"] not in stop:
+        stop.add(last["id"])
+        last = by_id.get(last["parent"])
+    said, kids, until = {}, set(), time.monotonic() + CONTENTS_S
+    for n in reversed(nodes):
+        inner = said.pop(n["id"], None) or set()
+        if n["name"] and n["role"] not in OWN_NAME_ROLES and not n.get("secret") \
+                and (n["id"] in kids or "shown" in n or n["id"] in stop) and not inner.issuperset(words_of(n["name"])):
+            acc = accessible_of(n["id"])
+            if acc is not None and name_says_secret(acc, n["role"], n["name"], until):
+                withhold(n, acc)
+        p = n["parent"]
+        if p is not None:
+            kids.add(p)
+            words = said.setdefault(p, set())
+            words |= inner
+            for k in ("name", "text", "selected"):
+                words.update(words_of(n.get(k)))
+
+
+def withheld_name(acc, name, role=None):
+    """acc's name as it may be reported: none for one that says what a secret field holds (see WITHHELD and
+    name_says_secret, which a few calls check)."""
+    if not name:
+        return name
+    key = object_key(acc)
+    if WITHHELD.keys and key in WITHHELD:
+        return ""
+    if name_says_secret(acc, role, name, time.monotonic() + CONTENTS_S):
+        WITHHELD.add(key)
+        return ""
+    return name
 
 
 def inside_secrets(nodes):
@@ -2227,7 +2482,8 @@ def node_info(acc, nid=None):
         name = (acc.name or "").strip()
     except Exception as err:
         raise unreachable(nid, err, t0)
-    withheld = bool(name) and withheld_name(acc, name) == ""
+    # Not one that says what a secret field holds, even one that isn't in view (see withheld_name).
+    withheld = bool(name) and withheld_name(acc, name, role) == ""
     info = {"role": role, "name": "" if withheld else name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
     if is_secret(acc, role, name):
@@ -2248,17 +2504,21 @@ def node_info(acc, nid=None):
             sel = option_selection(acc, holder)
             for i in range(min(holder.childCount, 500) if sel is not None else 0):
                 if sel.isChildSelected(i):
-                    info["selected"] = (holder.getChildAtIndex(i).name or "").strip()
+                    # Never a name that says what a secret field holds (see said_name).
+                    item = holder.getChildAtIndex(i)
+                    info["selected"] = said_name(item, (item.name or "").strip(), secret_values_in(acc))
                     break
         except Exception:
             pass
     elif role in ROW_LIST_ROLES and not spreadsheet(acc):
-        # A list of rows: its row selected (the first), by its first cell with words in it (see row_list).
+        # A list of rows: its row selected (the first), by its first cell with words in it (see row_list), never by what
+        # a secret field in it holds (see cell_words, said_name).
         try:
             rows = acc.queryTable().getSelectedRows()
             if len(rows):
+                values = secret_values_in(acc)
                 for c in range(min(acc.queryTable().nColumns, 8)):
-                    words = cell_words(table_cell_at(acc, rows[0], c))
+                    words = said_name(None, cell_words(table_cell_at(acc, rows[0], c)), values)
                     if words:
                         info["selected"] = words[:200]
                         break
@@ -2459,7 +2719,15 @@ def click_handler(acc, picked):
 ROW_CELL_ROLES = frozenset(["table cell", "tree item"])
 # Lists of rows whose options (choose_option) are their rows, named after their first cell with words in it.
 ROW_LIST_ROLES = frozenset(["table", "tree table", "tree"])
-ROWS_MAX = 500
+ROWS_MAX = 5000
+# GTK makes a row's cells as they are asked for: a few milliseconds a row, so a folder of a thousand files takes seconds
+# (and Ember waits 5 s for an answer). Listing a list's rows stops after LIST_ROWS_S; looking for the row to choose
+# after FIND_ROW_S, and for another of the same name after TWIN_ROWS_S from the start.
+LIST_ROWS_S = 1.5
+FIND_ROW_S = 2.0
+TWIN_ROWS_S = 2.5
+# What to do instead where a list is too long to look through in time.
+TYPE_INSTEAD = "in a long list, type the name instead (in a file dialog: Ctrl+L, or its name field)"
 
 
 def spreadsheet(acc):
@@ -2480,8 +2748,9 @@ def selects_row(acc, picked):
 
 
 def row_of(acc):
-    """(list, its Table interface, the row) for a cell of a list of rows (a cell may be inside another: GTK puts a
-    file's icon and name in one column's cell), or None where the row can't be told or chosen by accessibility."""
+    """(list, its Table interface, the row, the row's cell in the list that acc is or is in) for a cell of a list of
+    rows (a cell may be inside another: GTK puts a file's icon and name in one column's cell), or None where the row
+    can't be told or chosen by accessibility."""
     top = acc
     try:
         for _ in range(4):
@@ -2496,7 +2765,7 @@ def row_of(acc):
         row = t.getRowAtIndex(top.getIndexInParent())
     except Exception:
         return None
-    return (holder, t, row) if row >= 0 else None
+    return (holder, t, row, top) if row >= 0 else None
 
 
 def selected_rows(t):
@@ -2506,12 +2775,58 @@ def selected_rows(t):
         return None
 
 
-def choose_row(t, row):
+# Why a row of a list in a window the user isn't in isn't chosen by accessibility: the mouse does it, with their OK.
+ROW_IN_BACKGROUND = ("background_unavailable: its window isn't the active one, and a row is chosen as a click chooses "
+                     "it (the list's cursor, which Enter and the app follow, with it) only by bringing the window to the front")
+
+
+def focuses_rows(holder):
+    """Is a row of list `holder` chosen by its cell's grabFocus (see choose_row): True in a window that is active, False
+    in one that isn't (the user is elsewhere: choosing would bring it to the front), None where it isn't asked (a web
+    page's list, whose focus is no click) or that can't be told."""
+    if holder is None or web_engine(holder):
+        return None
+    return window_active(holder)
+
+
+def row_has_cursor(holder, t, row):
+    """Has row `row` of list `holder` (Table `t`) the list's cursor? One of its cells says it has the keyboard
+    ("focused"; GTK says "active" too), as the cursor's cell does while the list has the keyboard."""
+    try:
+        cols = min(t.nColumns, 8)
+    except Exception:
+        return False
+    for c in range(cols):
+        cell = table_cell_at(holder, row, c)
+        if cell is not None and ("focused" in state_names(cell) or "active" in state_names(cell)):
+            return True
+    return False
+
+
+def choose_row(t, row, holder=None, cell=None):
     """Selects `row` alone in a list (Table `t`), as a single click on it does: the rows selected before are
-    unselected (a list that lets several be chosen would keep them: a file dialog would open those too). Returns
-    (it is the one selected now, it was already); background_unavailable where it can't be selected at all."""
-    if selected_rows(t) == [row]:
+    unselected (a list that lets several be chosen would keep them: a file dialog would open those too), and the list's
+    cursor goes there, which Enter (row-activated) and some apps follow (LibreOffice's Options shows the page of the
+    row its tree's cursor is on). The row's `cell` in `holder` (the list) is given the keyboard: GTK's tree view moves its
+    cursor and selection there together, as a click does, and never opens it. Only in the active window (see
+    focuses_rows): elsewhere that brings the window to the front, so it is left to the mouse (ROW_IN_BACKGROUND). Where
+    the cell won't take the keyboard (or isn't asked: a web page's list), the Table selects the row (the cursor stays
+    where it was). Returns (it is the one selected now, it was already); background_unavailable where it can't be
+    selected at all."""
+    focus = focuses_rows(holder) if cell is not None else None
+    if selected_rows(t) == [row] and (focus is not True or row_has_cursor(holder, t, row)):
         return True, True
+    if focus is False:
+        raise RuntimeError(ROW_IN_BACKGROUND)
+    if focus:
+        try:
+            took = bool(cell.queryComponent().grabFocus())
+        except Exception:
+            took = False
+        if took:
+            settle()
+            if selected_rows(t) == [row] and row_has_cursor(holder, t, row):
+                return True, False
     if row not in (selected_rows(t) or []):
         t.addRowSelection(row)
         settle()
@@ -2524,12 +2839,60 @@ def choose_row(t, row):
     return selected_rows(t) == [row], False
 
 
+# How many fields inside a list of options are looked at for secrets (see secret_values_in).
+LIST_FIELDS = 64
+
+
+def fields_within(acc, limit=LIST_FIELDS):
+    """The input fields inside acc, shown or not, found by a web page itself (one call: see WEB_TOOLKITS); [] elsewhere."""
+    if not web_engine(acc):
+        return []
+    try:
+        roles = [getattr(Atspi.Role, r.upper().replace(" ", "_")) for r in sorted(FIELD_ROLES)
+                 if hasattr(Atspi.Role, r.upper().replace(" ", "_"))]
+        rule = Atspi.MatchRule.new(Atspi.StateSet.new([]), Atspi.CollectionMatchType.ALL, {}, Atspi.CollectionMatchType.ALL,
+                                   roles, Atspi.CollectionMatchType.ANY, [], Atspi.CollectionMatchType.ALL, False)
+        return list(Atspi.Collection.get_matches(acc, rule, Atspi.CollectionSortOrder.CANONICAL, limit, True))
+    except Exception:
+        return []
+
+
+def secret_values_in(acc):
+    """What the secret fields inside a list or grid hold (squashed, see secret_values; never reported). A web page
+    names its options and cells after what is in them (Chromium names a grid's cell after the card number typed in its
+    input): a name that says one of these is withheld (see said_name). Elsewhere names are given, never made from what
+    fields hold, and nothing is asked."""
+    values = []
+    for f in fields_within(acc):
+        try:
+            role = f.getRoleName()
+            name = (f.name or "").strip()
+        except Exception:
+            continue
+        if is_secret(f, role, name):
+            values.extend(secret_values(f, role))
+    return values
+
+
+def said_name(acc, name, values=()):
+    """An option's or a row's name (acc's, where it is known) as it may be reported: none where it says what a secret
+    field holds (see WITHHELD; `values`: what the secret fields around it hold, see secret_values_in)."""
+    if acc is not None:
+        name = withheld_name(acc, name)
+    return "" if values and holds_value(name, values) else name
+
+
 def cell_words(cell, depth=0):
-    """What a cell says: its name, or the first name in a cell inside it (GTK's icon and file name in one column)."""
+    """What a cell says: its name, or the first name in a cell inside it (GTK's icon and file name in one column). Never
+    a name that says what a secret field holds (see WITHHELD), nor anything in a secret field (a web grid's card number
+    input in its cell: its text is its value)."""
     if cell is None:
         return ""
     try:
         name = (cell.name or "").strip()
+        if is_secret(cell, cell.getRoleName(), name):
+            return ""
+        name = withheld_name(cell, name)
         if name or depth >= 2:
             return name
         for i in range(min(cell.childCount, 4)):
@@ -2541,10 +2904,48 @@ def cell_words(cell, depth=0):
     return ""
 
 
-def row_list(acc):
-    """A list of rows whose rows are its options (see ROW_LIST_ROLES): (its Table interface, each row's name, after
-    its first cell with words in it), or None for anything else. Only one whose rows can be selected (a Selection),
-    never a spreadsheet's sheet."""
+def words_in(cell):
+    """What a cell says (see cell_words: never what a secret field holds), and where: None for the cell itself, else
+    the index of its child that says it (or holds what does)."""
+    words = cell_words(cell)
+    if not words or cell_words(cell, 2) == words:
+        return words, None
+    try:
+        for i in range(min(cell.childCount, 4)):
+            if cell_words(cell.getChildAtIndex(i), 1) == words:
+                return words, i
+    except Exception:
+        pass
+    return words, None
+
+
+def row_name(table, row, ncols, where=None):
+    """What row `row` of a list of rows says (its first cell with words in it, see cell_words), and where they were:
+    (column, see words_in). `where`: where the row before had them, asked first (a list's rows are alike: a few calls
+    to the app, where finding them takes a dozen; GTK's file list holds a file's name in its first column's second
+    cell). Asked there as cell_words asks: never a secret field's words."""
+    if where is not None:
+        col, kid = where
+        cell = table_cell_at(table, row, col)
+        try:
+            # A cell found secret (see SECRETS) says nothing, nor does what is in it.
+            at = cell if kid is None or cell is None or is_secret(cell, "table cell", "") else cell.getChildAtIndex(kid)
+            name = cell_words(at, 2) if at is not cell or kid is None else ""
+        except Exception:
+            name = ""
+        if name:
+            return name, where
+    for c in range(min(ncols, 8)):
+        name, kid = words_in(table_cell_at(table, row, c))
+        if name:
+            return name, (c, kid)
+    return "", where
+
+
+def row_table(acc):
+    """A list of rows whose rows are its options (see ROW_LIST_ROLES): (its Table interface, how many rows and
+    columns it has), or None for anything else. Only one whose rows can be selected (a Selection), never a
+    spreadsheet's sheet."""
     try:
         if acc.getRoleName() not in ROW_LIST_ROLES or spreadsheet(acc):
             return None
@@ -2555,15 +2956,72 @@ def row_list(acc):
         return None
     if nrows < 0 or ncols <= 0:
         return None
-    names = []
+    return t, nrows, ncols
+
+
+def row_list(acc, seconds=None):
+    """A list of rows whose rows are its options (see row_table): (its Table interface, the names of its rows from the
+    first, after their first cell with words in it, and how many rows it has), or None for anything else. Rows are
+    named for `seconds` at most (see LIST_ROWS_S), ROWS_MAX at most: the rest are left out. BUSY where the app stops
+    answering."""
+    found = row_table(acc)
+    if found is None:
+        return None
+    t, nrows, ncols = found
+    budget = Budget(LIST_ROWS_S if seconds is None else seconds)
+    names, where = [], None
     for r in range(min(nrows, ROWS_MAX)):
-        name = ""
-        for c in range(min(ncols, 8)):
-            name = cell_words(table_cell_at(acc, r, c))
-            if name:
-                break
+        if budget.tick():
+            break
+        name, where = row_name(acc, r, ncols, where)
         names.append(name)
-    return t, names
+    if budget.busy and len(names) < nrows:
+        raise RuntimeError(BUSY)
+    return t, names, nrows
+
+
+def find_row(acc, rows, want):
+    """The row of a list of rows (see row_table: `rows`) called `want` (as option_index finds an option), as (its
+    index, its name, how many rows after it weren't checked for another of that name). Rows are named from the first
+    until the first one called that (FIND_ROW_S at most), then the rest are checked for another one of that name
+    (TWIN_ROWS_S from the start at most). ValueError where none is (or none within the time: then what to do
+    instead), or several are."""
+    t, nrows, ncols = rows
+    want = want.strip()
+    count = min(nrows, ROWS_MAX)
+    start = time.monotonic()
+    budget = Budget(FIND_ROW_S)
+    names, where, index = [], None, None
+    for r in range(count):
+        if budget.tick():
+            break
+        name, where = row_name(acc, r, ncols, where)
+        names.append(name)
+        if want and name == want:
+            index = r
+            break
+    if budget.busy:
+        raise RuntimeError(BUSY)
+    if index is None:
+        if len(names) < nrows:
+            raise ValueError("Ember looked through the list's first %d rows of %d in time and none is called exactly "
+                             "that: %s" % (len(names), nrows, TYPE_INSTEAD))
+        index = option_index(names, want)
+        if index is None:
+            raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % nrows)
+    # Another row of that name (but for case): the two can't be told apart.
+    same = names[index].lower()
+    twins = sum(1 for n in names if n.lower() == same)
+    budget = Budget(max(0.0, start + TWIN_ROWS_S - time.monotonic()))
+    for r in range(len(names), count):
+        if twins > 1 or budget.tick():
+            break
+        name, where = row_name(acc, r, ncols, where)
+        names.append(name)
+        twins += name.lower() == same
+    if twins > 1:
+        raise ValueError("several rows are called that; click a cell of the one meant instead")
+    return index, names[index], nrows - len(names)
 
 
 def can_do(params):
@@ -2584,9 +3042,14 @@ def can_do(params):
             picked = out["action"] = names[index]
             if kind == "click" and selects_row(acc, picked):
                 # The click selects its row (see select_row), where accessibility can.
-                if row_of(acc) is None:
+                found = row_of(acc)
+                if found is None:
                     raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
+                holder, t, row, _ = found
+                # A click selects its row, by accessibility or (its window in the background) with the mouse.
                 out["action"] = "select row"
+                if selected_rows(t) != [row] and focuses_rows(holder) is False:
+                    raise RuntimeError(ROW_IN_BACKGROUND)
         elif kind == "text":
             editable_text(acc)
         elif kind == "value":
@@ -2632,9 +3095,9 @@ def select_row(acc, nid):
     found = row_of(acc)
     if found is None:
         raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
-    _, t, row = found
+    holder, t, row, top = found
     before = node_info(acc, nid)
-    ok, _ = choose_row(t, row)
+    ok, _ = choose_row(t, row, holder, top)
     res = after_action(acc, nid)
     res.update({"ok": ok, "action": "select row", "before": before})
     return res
@@ -2741,18 +3204,25 @@ def option_chosen(sel, holder, index):
 
 def option_items(acc):
     """The names of a combo box's or list's options: the children its Selection chooses among, an unnamed one by the
-    label inside it (GTK's list row), as a read names it; a list of rows' rows (see row_list)."""
+    label inside it (GTK's list row), as a read names it; a list of rows' rows (see row_list). Never a secret
+    element's (its options say what it holds), nor a name that says what a secret field holds (see said_name): those
+    are listed nameless."""
+    refuse_secret(acc)
+    values = secret_values_in(acc)
     rows = row_list(acc)
     if rows is not None:
-        return rows[1]
+        return [said_name(None, n, values) for n in rows[1]]
     holder = option_holder(acc)
     if option_selection(acc, holder) is None:
         raise RuntimeError("background_unavailable: this element has no selectable options")
     names = []
     for i in range(min(holder.childCount, 500)):
         c = holder.getChildAtIndex(i)
-        name = (c.name or "").strip() if c is not None else ""
-        names.append(name or (inner_label(c) if c is not None else ""))
+        if c is None:
+            names.append("")
+            continue
+        name = (c.name or "").strip()
+        names.append("" if is_secret(c, c.getRoleName(), name) else said_name(c, name or inner_label(c), values))
     return names
 
 
@@ -2800,22 +3270,31 @@ def select_option(params):
     nid = int(params["id"])
     acc = usable(nid)
     refuse_secret(acc)
-    rows = row_list(acc)
-    names = rows[1] if rows is not None else option_items(acc)
+    rows = row_table(acc)
+    if rows is not None:
+        # A row, selected alone as a click on it does (choose_row): two of that name can't be told apart (find_row).
+        index, name, unchecked = find_row(acc, rows, str(params.get("option", "")))
+        try:
+            ok, already = choose_row(rows[0], index, acc, table_cell_at(acc, index, 0))
+        except RuntimeError as err:
+            if str(err) != ROW_IN_BACKGROUND:
+                raise
+            # The mouse does it: a click on the row's cell (which Ember does with the mouse, with the user's OK).
+            raise RuntimeError("its window isn't the active one, and choosing a row there by name would bring it to the "
+                               "front: click a cell of that row instead")
+        res = after_action(acc, nid)
+        res.update({"ok": ok, "option": name})
+        if already:
+            res["already"] = True
+        if unchecked > 0:
+            # A long list: the rows after these weren't looked through for another of that name in time.
+            res["unchecked"] = unchecked
+        return res
+    names = option_items(acc)
     index = option_index(names, str(params.get("option", "")))
     if index is None:
         # The options themselves are app text: they are listed with list_options, not in an error.
         raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % len(names))
-    if rows is not None:
-        # A row, selected alone as a click on it does (choose_row): two of that name can't be told apart.
-        if sum(1 for n in names if n.lower() == names[index].lower()) > 1:
-            raise ValueError("several rows are called that; click a cell of the one meant instead")
-        ok, already = choose_row(rows[0], index)
-        res = after_action(acc, nid)
-        res.update({"ok": ok, "option": names[index]})
-        if already:
-            res["already"] = True
-        return res
     holder = option_holder(acc)
     sel = option_selection(acc, holder)
     if option_chosen(sel, holder, index):
@@ -2875,8 +3354,15 @@ def choose_again(holder, index):
 
 
 def list_options(params):
+    """A combo box's or list's options (see option_items). `left`: how many rows of a long list of rows weren't named
+    in time (see row_list), whose names aren't among them."""
     acc = SNAPSHOTS.get(int(params["id"]))
-    return {"options": option_items(acc)}
+    options = option_items(acc)
+    out = {"options": options}
+    rows = row_table(acc)
+    if rows is not None and rows[1] > len(options):
+        out["left"] = rows[1] - len(options)
+    return out
 
 
 def focus(params):
@@ -3224,11 +3710,21 @@ def at_point(params):
         return {"chain": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
     x, y = int(params["x"]), int(params["y"])
     chain, accs, noted = [], [], []
-    # Names found to say what a secret field holds (see WITHHELD) are left out: the app's, by object path.
+    # Names found to say what a secret field holds (see WITHHELD) are left out: the app's, by object path. So are a web
+    # page's that may say what a secret field holds that isn't at the point (see name_says_secret): CONTENTS_S for all.
     bus = (object_key(acc) or ("",))[0]
+    until = [None]
 
-    def name_of(el, name):
-        return "" if name and WITHHELD.keys and (bus, getattr(el, "path", None)) in WITHHELD else name[:200]
+    def name_of(el, name, role):
+        key = (bus, getattr(el, "path", None))
+        if not name or (WITHHELD.keys and key in WITHHELD):
+            return ""
+        until[0] = until[0] or time.monotonic() + CONTENTS_S
+        if name_says_secret(el, role, name, until[0]):
+            WITHHELD.add(key)
+            noted.append(list(key))
+            return ""
+        return name[:200]
     # The app's own popup (a drop-down's list), or an open menu, lies over its windows: what shows there is in it.
     # (`menus`: false when Ember knows none of the app's popup windows is there: a big app's menus cost dozens of calls.)
     popup = popup_at(app, acc, x, y, budget)
@@ -3238,7 +3734,7 @@ def at_point(params):
             role, name = el.getRoleName(), (el.name or "").strip()
         except Exception:
             role, name = "", ""
-        chain.append({"role": role, "name": name_of(el, name), "bounds": extents(el)})
+        chain.append({"role": role, "name": name_of(el, name, role), "bounds": extents(el)})
         accs.append(el)
         acc = el
     try:
@@ -3262,7 +3758,7 @@ def at_point(params):
             # A secret field: neither its name nor what is in it (Chromium's text children hold its contents) leaves,
             # and nothing in it is looked at.
             secret = role in TEXT_ROLES and is_secret(el, role, name)
-            node = {"role": role, "name": "" if secret else name_of(el, name), "bounds": extents(el)}
+            node = {"role": role, "name": "" if secret else name_of(el, name, role), "bounds": extents(el)}
             if secret:
                 node["secret"] = True
                 # Nor do the names of what holds it that say what it holds (see withhold_names).

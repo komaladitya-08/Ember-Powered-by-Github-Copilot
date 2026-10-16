@@ -62,6 +62,19 @@ const TABLE_PAGE = `<!doctype html><title>Ember test: Table</title><body style="
 <div role=grid><div role=row><div role=gridcell>IBAN</div><div role=gridcell><input aria-label="IBAN" value="DE89 3704 0044 0532 0130 00"></div></div></div>
 <div onclick="1"><label>One-time code <input value="918273"></label></div>
 <p>Ordinary <select><option selected>Blue</option></select></p></body>`;
+// Names that say what a secret field holds though the read doesn't list the field (PERC9-1, PERC9-3): a cell whose field
+// is scrolled out of view (its label line shows at the bottom), an ARIA cell a read cut short lists without its field,
+// a button named after a field by aria-labelledby. "Total: 42" beside a CVV of 42 stays.
+const UNLISTED_PAGE = `<!doctype html><title>Ember test: Unlisted</title><body style="margin:0;padding:4px;font:13px sans-serif">
+<p>Total: 42</p>
+<p><span id=lb>Pay with</span> <label>PIN <input id=pinx value="ABCD" size=6></label> <label>CVV <input id=cvv value="42" size=3></label>
+<button aria-labelledby="lb pinx">x</button> <button aria-labelledby="lb cvv">y</button></p>
+<div role=table><div role=row><div role=cell>PIN 1 <input aria-label="PIN 1" value="100101" size=8></div></div></div>
+<div id=sp></div>
+<table cellspacing=0 cellpadding=0><tr><td>Card number<input aria-label="Card number" value="4111 1111 1111 1111" style="display:block;margin-top:6px"></td></tr></table>
+<div style="height:600px"></div>
+<script>const fit = () => { sp.style.height = Math.max(0, innerHeight - sp.getBoundingClientRect().top - 10) + "px"; };
+fit(); addEventListener("resize", fit);</script></body>`;
 // A form as in an Electron app (review round 6): Chromium names a check box's, radio button's and switch's action
 // "check" or "uncheck", and keeps a <select>'s options (and their Selection) on a child menu. What the page hears
 // shows in its last paragraph.
@@ -149,7 +162,8 @@ describe.skipIf(!available && !required)("Electron windows through the real side
 
   it("blacks out secret fields a cut-short read never reached", async () => {
     const p = await perception.perceive({ image: true, scope: "window", target: { pid: pids.Checkout } });
-    expect(p.truncated).toBe("nodes");
+    // Cut short by its node limit, or (on a loaded machine) by its time limit first: either way unreached.
+    expect(["nodes", "time"]).toContain(p.truncated);
     expect(p.nodes.some(n => n.role === "entry")).toBe(false);
     expect(p.capture, p.text).not.toBeNull();
     expect(p.text).not.toContain("covered by other windows");
@@ -240,6 +254,42 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     }
     const raw = await sidecar.readWindow({ pid: pids.Table, keep: false });
     expect(JSON.stringify(raw.nodes)).not.toMatch(leaks);
+  }, 60_000);
+
+  it("never says what a secret field the read didn't list holds: scrolled out of view, past a cut-short read, named by aria-labelledby (PERC9-1, PERC9-3)", async () => {
+    start("Ember test: Unlisted", UNLISTED_PAGE, true, 1);
+    await appear(Object.keys(pids).length + 1);
+    if (!pids.Unlisted) throw new Error("the page never appeared on the accessibility bus");
+    const leaks = /4111|\bABCD\b|with 42|100101/;
+    let seen = await perception.perceive({ image: false, scope: "window", target: { pid: pids.Unlisted } });
+    for (let i = 0; i < 20 && !seen.nodes.some(n => /^Card number/.test(n.name) || (n.role === "section" && n.bounds && n.bounds.y > 200)); i++) {
+      await new Promise(r => setTimeout(r, 250)); // the page is still being handed over
+      seen = await perception.perceive({ image: false, scope: "window", target: { pid: pids.Unlisted } });
+    }
+    expect(seen.text).not.toMatch(leaks);
+    expect(seen.text).toContain('"Total: 42"');
+    // The cell at the bottom is listed (its label line shows), its field is not.
+    expect(seen.text).toMatch(/static "Card number"/);
+    expect(seen.nodes.some(n => n.role === "entry" && n.name === "Card number")).toBe(false);
+    for (const n of seen.nodes) expect(JSON.stringify(await sidecar.readElement(n.id).catch(() => null)), n.role).not.toMatch(leaks);
+    // A read that stops right after the ARIA cell, before its field.
+    const full = await sidecar.readWindow({ pid: pids.Unlisted, keep: false });
+    const at = full.nodes.findIndex(n => n.role === "table cell");
+    expect(at).toBeGreaterThan(0);
+    const cut = await sidecar.readWindow({ pid: pids.Unlisted, maxNodes: at + 1 });
+    expect([cut.truncated, cut.nodes[cut.nodes.length - 1].role]).toEqual([true, "table cell"]);
+    expect(JSON.stringify(cut.nodes)).not.toMatch(leaks);
+    // Under the mouse, by a helper started afresh too (it knows of none of it).
+    const path = seen.window!.path!;
+    const spots = seen.nodes.filter(n => n.bounds && /section|table cell|push button|static/.test(n.role));
+    for (const restart of [false, true]) {
+      if (restart) sidecar.stop();
+      for (const n of spots) {
+        const b = n.bounds!;
+        const chain = await perception.atPoint({ pid: pids.Unlisted, path }, { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + Math.min(b.height, 8) / 2) });
+        expect(JSON.stringify(chain), `${n.role} ${n.name}`).not.toMatch(leaks);
+      }
+    }
   }, 60_000);
 
   it("fills in a web form by accessibility: check boxes, radio buttons, switches and drop-downs; text only with the mouse, asked once (review round 6)", async () => {

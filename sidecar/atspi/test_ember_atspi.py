@@ -1265,13 +1265,29 @@ class Acting(unittest.TestCase):
         self.assertEqual(self.act_on(words, "can_do", kind="click")["handler"], {"role": "page tab", "name": "Billing"})
 
     @staticmethod
-    def file_list(names, selected=(0,), multiple=False, takes=True):
+    def file_list(names, selected=(0,), multiple=False, takes=True, window=None, focus=True, slow=0.0):
         """GTK's tree view of files (a file dialog): a table of rows, a column holding a cell that holds an icon's cell
         and the name's, then a size column; each cell's actions are a double click's ("activate" is row-activated,
-        which opens the row selected before). `takes`: whether it lets a row be selected by accessibility."""
+        which opens the row selected before). `takes`: whether it lets a row be selected by accessibility. `window`:
+        "active" or "inactive", the dialog it is in (None: none known). Its cursor (`table.cursor`, where Enter goes)
+        is on the first row selected; a cell's grabFocus moves it there and selects that row alone, as GTK's does
+        (`focus`: the list takes the keyboard), and the cursor's first cell says "focused" while the window is active.
+        `slow`: seconds the app takes to make a cell (GTK makes them as they are asked for)."""
         table = Acc("table", "Files", states=("showing", "visible", "enabled", "sensitive", "manages descendants"))
         table.rows = list(selected)
+        table.cursor = table.rows[0] if table.rows else 0
         table.activated = []
+        table.grabs = []
+        table.made = 0
+        # In its scroll pane, beside its scroll bar (a long list is no spreadsheet: see spreadsheet()).
+        bar = Acc("scroll bar", states=("showing", "visible", "enabled", "vertical"))
+        bar.queryValue = lambda: types.SimpleNamespace(minimumValue=0.0, maximumValue=100.0, currentValue=0.0)
+        pane = Acc("scroll pane", kids=[table, bar])
+        table.parent = bar.parent = pane
+        if window is not None:
+            frame = Acc("dialog", "Open File", states=("showing", "visible", "enabled") + (("active",) if window == "active" else ()))
+            frame.parent = types.SimpleNamespace(getRoleName=lambda: "application")
+            pane.parent = frame
         cells = []
         for r, name in enumerate(names):
             for c in range(2):
@@ -1290,6 +1306,31 @@ class Acting(unittest.TestCase):
                 nActions=3, getName=lambda i: acc.acts[i], doAction=lambda i: table.activated.append(i) or True))(cell)
         table.kids = cells
 
+        def show_cursor():
+            for i, cell in enumerate(cells):
+                if "focused" in cell.states:
+                    cell.states.remove("focused")
+                if i == table.cursor * 2 and window == "active":
+                    cell.states.append("focused")
+        table.show_cursor = show_cursor
+        show_cursor()
+
+        def grab(i):
+            table.grabs.append(i // 2)
+            if not focus:
+                return False
+            table.cursor, table.rows = i // 2, [i // 2]
+            show_cursor()
+            return True
+        for i, cell in enumerate(cells):
+            cell.queryComponent = (lambda i: lambda: types.SimpleNamespace(grabFocus=lambda: grab(i)))(i)
+
+        def cell_at(r, c):
+            table.made += 1
+            if slow:
+                time.sleep(slow)
+            return cells[r * 2 + c]
+
         def add(r):
             if not takes or r in table.rows:
                 return False
@@ -1302,7 +1343,7 @@ class Acting(unittest.TestCase):
             table.rows.remove(r)
             return True
         table.queryTable = lambda: types.SimpleNamespace(
-            nRows=len(names), nColumns=2, getRowAtIndex=lambda i: i // 2, getAccessibleAt=lambda r, c: cells[r * 2 + c],
+            nRows=len(names), nColumns=2, getRowAtIndex=lambda i: i // 2, getAccessibleAt=cell_at,
             getSelectedRows=lambda: list(table.rows), addRowSelection=add, removeRowSelection=remove)
         table.querySelection = lambda: types.SimpleNamespace(selectChild=lambda i: False, isChildSelected=lambda i: False)
         return table, [c.kids[1] if c.kids else c for c in cells[::2]]
@@ -1353,6 +1394,92 @@ class Acting(unittest.TestCase):
         finally:
             e.settle = settle
 
+    def test_a_row_is_chosen_with_the_lists_cursor_as_a_click_chooses_it(self):
+        # H9-1: Table.addRowSelection moves GTK's selection, not its cursor, which Enter (row-activated) and some apps
+        # follow (LibreOffice's Options tree shows its cursor's page). In the active window the row's cell takes the
+        # keyboard: cursor and selection go there together, and nothing is opened.
+        names = ["agenda.txt", "budget.csv", "meeting.txt", "minutes.txt", "notes.md", "report.pdf"]
+        settle, e.settle = e.settle, lambda: None
+        try:
+            table, named = self.file_list(names, window="active")
+            self.assertEqual(self.act_on(named[5], "can_do", kind="click"), {"tier1": True, "action": "select row"})
+            res = self.act_on(named[5], "do_action", action="click")
+            self.assertEqual((res["ok"], res["action"]), (True, "select row"))
+            self.assertEqual((table.rows, table.cursor, table.grabs, table.activated), ([5], 5, [5], []))
+            # Chosen by name: the same; in a list that lets several be chosen, the others go too.
+            table, _ = self.file_list(names, selected=range(6), multiple=True, window="active")
+            res = self.act_on(table, "select_option", option="budget.csv")
+            self.assertEqual((res["ok"], table.rows, table.cursor, table.activated), (True, [1], 1, []))
+            # Its row selected and the cursor on it already: nothing is touched. Selected without the cursor: moved.
+            res = self.act_on(table, "select_option", option="budget.csv")
+            self.assertEqual((res.get("already"), table.grabs), (True, [1]))
+            table.cursor = 3
+            table.show_cursor()
+            self.assertNotIn("already", self.act_on(table, "select_option", option="budget.csv"))
+            self.assertEqual((table.rows, table.cursor, table.grabs), ([1], 1, [1, 1]))
+            # A list whose cells won't take the keyboard: the Table selects the row (its cursor stays).
+            table, named = self.file_list(names, window="active", focus=False)
+            self.assertTrue(self.act_on(named[2], "do_action", action="click")["ok"])
+            self.assertEqual((table.rows, table.cursor, table.grabs, table.activated), ([2], 0, [2], []))
+            # A window the user isn't in: choosing would bring it to the front, so the mouse does it (with their OK).
+            table, named = self.file_list(names, window="inactive")
+            out = self.act_on(named[5], "can_do", kind="click")
+            self.assertEqual((out["tier1"], out["action"]), (False, "select row"))  # the mouse's click only selects it too
+            self.assertIn("isn't the active one", out["why"])
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(named[5], "do_action", action="click")
+            self.assertIn("background_unavailable", str(ctx.exception))
+            # Chosen by name there: the row's cell is to be clicked instead (the mouse, with the user's OK).
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(table, "select_option", option="report.pdf")
+            self.assertIn("click a cell of that row instead", str(ctx.exception))
+            self.assertEqual((table.rows, table.cursor, table.grabs, table.activated), ([0], 0, [], []))
+            # ... unless it is the one selected already.
+            self.assertTrue(self.act_on(table, "select_option", option="agenda.txt")["already"])
+            self.assertTrue(self.act_on(named[0], "can_do", kind="click")["tier1"])
+        finally:
+            e.settle = settle
+
+    def test_a_long_list_is_looked_through_in_time(self):
+        # H9-2: GTK makes each row's cells as they are asked for. Listing stops in time and says how many rows were
+        # left out; choosing stops at the row asked for, checks the rest for another of that name in time and says
+        # how many it couldn't; a row not found in time is to be typed instead. The helper never times out.
+        names = ["file_%04d.txt" % i for i in range(3000)]
+        saved = (e.settle, e.LIST_ROWS_S, e.FIND_ROW_S, e.TWIN_ROWS_S)
+        e.settle, e.LIST_ROWS_S, e.FIND_ROW_S, e.TWIN_ROWS_S = lambda: None, 0.15, 0.2, 0.3
+        try:
+            table, _ = self.file_list(names, slow=0.0005)
+            t0 = time.monotonic()
+            out = self.act_on(table, "list_options")
+            self.assertLess(time.monotonic() - t0, 0.6)
+            listed = len(out["options"])
+            self.assertTrue(10 < listed < 3000, listed)
+            self.assertEqual(out["options"], names[:listed])
+            self.assertEqual(out["left"], 3000 - listed)
+            # The row's words are asked where the row before had them: a few calls a row.
+            table, _ = self.file_list(names[:50])
+            e.row_list(table)
+            self.assertLess(table.made, 50 * 2 + 4)
+            # Chosen: the first of that name, the rest checked for another in time (here, not all of them).
+            table, _ = self.file_list(names, slow=0.0005)
+            res = self.act_on(table, "select_option", option="file_0003.txt")
+            self.assertEqual((res["ok"], res["option"], table.rows), (True, "file_0003.txt", [3]))
+            self.assertTrue(0 < res["unchecked"] < 3000 - 4, res["unchecked"])
+            # Too far down to be reached in time: nothing is chosen, and the name is to be typed instead.
+            with self.assertRaises(ValueError) as ctx:
+                self.act_on(table, "select_option", option="file_2999.txt")
+            self.assertIn("type the name instead", str(ctx.exception))
+            self.assertEqual(table.rows, [3])
+            # A short list is checked all through: no "unchecked", and two of a name are refused, as before.
+            table, _ = self.file_list(names[:20] + ["file_0003.txt"])
+            with self.assertRaises(ValueError) as ctx:
+                self.act_on(table, "select_option", option="file_0003.txt")
+            self.assertIn("several rows", str(ctx.exception))
+            self.assertNotIn("unchecked", self.act_on(table, "select_option", option="file_0004.txt"))
+            self.assertNotIn("left", self.act_on(table, "list_options"))
+        finally:
+            e.settle, e.LIST_ROWS_S, e.FIND_ROW_S, e.TWIN_ROWS_S = saved
+
     def test_unnamed_options_are_named_by_the_label_inside(self):
         # GTK's list box (PR8-6): its rows have no name, each holds its label.
         rows = [Acc("list item", "", kids=[Acc("filler", "", kids=[Acc("label", t)])]) for t in ("English", "Français", "Deutsch")]
@@ -1366,6 +1493,40 @@ class Acting(unittest.TestCase):
         finally:
             e.settle = settle
         self.assertEqual(chosen, [2])
+
+    def test_options_never_say_what_a_secret_field_holds(self):
+        # W9-SEC4, PERC9-2: a web page names its options and its grid's cells after what is in them, a card number's
+        # input too. The read withholds those names; the options listed, and the option or row said to be chosen, do too.
+        # A secret element's options aren't listed at all.
+        e.SECRETS = e.SecretFields()
+        e.WITHHELD = e.SecretFields()
+        card = Acc("entry", "Card number", text="4111 1111 1111 1111", kids=[Acc("static", "4111 1111 1111 1111")])
+        held = Acc("list item", "Card number 4111 1111 1111 1111", kids=[Acc("label", "Card number", kids=[card])])
+        unseen = Acc("entry", "", text="5500 4821 0000 1234")
+        e.SECRETS.add(e.object_key(unseen))  # found secret by a read (the label beside it)
+        rows = [Acc("list item", "Personal"), held, Acc("list item", "", kids=[Acc("label", "5500 4821 0000 1234")]), Acc("list item", "Other")]
+        box = Acc("list box", "Picker", kids=rows)
+        box.querySelection = lambda: types.SimpleNamespace(selectChild=lambda i: True, isChildSelected=lambda i: i == 1)
+        fields_within = e.fields_within
+        e.fields_within = lambda acc, limit=e.LIST_FIELDS: [card, unseen] if acc in (box, table) else []
+        table, _ = self.file_list(["agenda.txt", "5500 4821 0000 1234"], selected=(1,))
+        try:
+            self.assertEqual(self.act_on(box, "list_options")["options"], ["Personal", "", "", "Other"])
+            self.assertEqual(self.act_on(table, "list_options")["options"], ["agenda.txt", ""])
+            # The row chosen is said by another cell of it.
+            self.assertEqual(e.node_info(table)["selected"], "11 bytes")
+            # A name the read withheld stays withheld (WITHHELD), whatever it says.
+            e.WITHHELD.add(e.object_key(rows[3]))
+            self.assertEqual(self.act_on(box, "list_options")["options"], ["Personal", "", "", ""])
+            # A grid's cell holding the input is named by its label, never by the input's text.
+            cell = Acc("table cell", "", kids=[Acc("entry", "", text="4111", kids=[Acc("static", "4111")])])
+            e.SECRETS.add(e.object_key(cell.kids[0]))
+            self.assertEqual(e.cell_words(cell), "")
+            combo = Acc("combo box", "Security question", kids=[Acc("menu", "", kids=[Acc("menu item", "Fluffy the cat")])])
+            with self.assertRaises(PermissionError):
+                self.act_on(combo, "list_options")
+        finally:
+            e.fields_within = fields_within
 
     def test_a_click_handed_on_further_than_ember_looks_is_unknown(self):
         # Text under many role=group levels inside a link "Delete everything" (SEC8-5): found however deep the page
@@ -1901,6 +2062,123 @@ class Windows(unittest.TestCase):
         found = e.secret_fields({"pid": 20, "path": win.path})
         self.assertEqual((sorted(f["bounds"]["y"] for f in found["fields"]), found["complete"]), ([40, 80, 120], True))
 
+    def test_a_web_name_made_from_a_secret_field_the_read_did_not_list_is_withheld(self):
+        # Chromium names a cell after what it holds, a field's value too, and lists the cell when only its label line
+        # shows (its field scrolled out of view), or as the last element of a read that stopped at its node limit. Such
+        # a name is checked before it is reported: in a read, the element's own look, under the wheel (PERC9-1).
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        e.WITHHELD = e.SecretFields()
+        hidden = ("visible", "enabled", "sensitive")
+        card = Acc("entry", "Card number", states=hidden, bounds=(12, 296, 260, 20), text="4111 1111 1111 1111")
+        card_cell = Acc("section", "Card number 4111 1111 1111 1111", bounds=(10, 270, 280, 46),
+                        kids=[Acc("static", "Card number", bounds=(12, 272, 90, 16)), card])
+        notes = Acc("section", "Notes Leave at the door", bounds=(300, 270, 280, 46),
+                    kids=[Acc("static", "Notes", bounds=(302, 272, 60, 16)),
+                          Acc("entry", "Delivery notes", states=hidden, bounds=(302, 296, 260, 20), text="Leave at the door")])
+        ship = Acc("table cell", "Ship to Ada", bounds=(10, 40, 280, 24),
+                   kids=[Acc("static", "Ship to", bounds=(12, 42, 50, 16)), Acc("entry", "Name", bounds=(70, 42, 100, 18), text="Ada")])
+        pay = Acc("push button", "Pay now", bounds=(10, 70, 60, 20))
+        rows = [Acc("table row", "", bounds=(10, 100 + 30 * i, 380, 24), kids=[
+            Acc("table cell", "PIN %d 10010%d" % (i, i), bounds=(10, 100 + 30 * i, 380, 24), kids=[
+                Acc("static", "PIN %d" % i, bounds=(12, 102 + 30 * i, 40, 16)),
+                Acc("entry", "PIN %d" % i, bounds=(60, 100 + 30 * i, 60, 20), text="10010%d" % i)])]) for i in range(2)]
+        doc = Acc("document web", "Checkout", bounds=(0, 0, 600, 300), kids=[ship, pay] + rows + [card_cell, notes])
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds, win.kids = (0, 0, 600, 300), [doc]
+        self.linked(win)
+        checked = []
+        saved = e.web_engine, e.name_says_secret, e.CONTENTS_S
+
+        def counted(acc, role, name, until):
+            checked.append(name)
+            return saved[1](acc, role, name, until)
+        e.web_engine, e.name_says_secret = (lambda acc: True), counted
+        try:
+            out = e.read_window({"pid": 20})
+            names = dict((n["id"], n["name"]) for n in out["nodes"])
+            self.assertNotIn("4111", json.dumps(out))
+            by_role = [(n["role"], n["name"]) for n in out["nodes"] if n["role"] in ("section", "table cell", "push button")]
+            self.assertEqual(by_role, [("table cell", "Ship to Ada"), ("push button", "Pay now"), ("table cell", ""),
+                                       ("table cell", ""), ("section", ""), ("section", "Notes Leave at the door")])
+            # Only the names of what the read may not have listed all of are checked: not a button in full view.
+            self.assertEqual(sorted(checked), ["Card number 4111 1111 1111 1111", "Notes Leave at the door"])
+            self.assertIn([":1.42", card_cell.path], out["withheldKeys"])
+            cell_id = [i for i, name in names.items() if e.SNAPSHOTS.get(i) is card_cell][0]
+            notes_id = [i for i, name in names.items() if e.SNAPSHOTS.get(i) is notes][0]
+            # A read that stopped at its node limit right after a cell: its field wasn't listed.
+            e.WITHHELD = e.SecretFields()
+            del checked[:]
+            cut = e.read_window({"pid": 20, "maxNodes": 12})
+            self.assertEqual((cut["truncated"], cut["nodes"][-1]["role"], cut["nodes"][-1]["name"]), (True, "table cell", ""))
+            self.assertNotIn("100101", json.dumps(cut))
+            self.assertEqual(checked, ["PIN 1 100101"])
+            # The element's own look, and what is under the wheel, by a helper that knows of none of it.
+            e.WITHHELD = e.SecretFields()
+            self.assertEqual((e.read_element({"id": cell_id})["name"], e.read_element({"id": cell_id}).get("text")), ("", None))
+            self.assertEqual(e.read_element({"id": notes_id})["name"], "Notes Leave at the door")
+            e.WITHHELD = e.SecretFields()
+            at = lambda x, y: e.at_point({"pid": 20, "path": win.path, "x": x, "y": y})  # noqa: E731
+            point = at(200, 280)
+            self.assertEqual([(c["role"], c["name"]) for c in point["chain"]], [("document web", "Checkout"), ("section", "")])
+            self.assertEqual(point["withheldKeys"], [[":1.42", card_cell.path]])
+            self.assertEqual([c["name"] for c in at(500, 280)["chain"]], ["Checkout", "Notes Leave at the door"])
+            # What can't be checked in time is withheld.
+            e.WITHHELD = e.SecretFields()
+            e.CONTENTS_S = -1.0
+            late = [(n["role"], n["name"]) for n in e.read_window({"pid": 20})["nodes"] if n["role"] in ("section", "table cell")]
+            self.assertEqual(late, [("table cell", "Ship to Ada"), ("table cell", ""), ("table cell", ""), ("section", ""), ("section", "")])
+        finally:
+            e.web_engine, e.name_says_secret, e.CONTENTS_S = saved
+            e.WITHHELD = e.SecretFields()
+
+    def test_a_name_that_says_a_secret_fields_value_elsewhere_is_withheld(self):
+        # A button named after a secret field (aria-labelledby="lead pin") says what it holds though it doesn't hold it:
+        # every name of a read is looked through for a field's value of 4 characters or more, as words of their own;
+        # one named after a field whose shorter value the read says, by what the field says it labels (PERC9-3). A
+        # "Total: 42" beside a CVV of 42 stays.
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        e.WITHHELD = e.SecretFields()
+        FAKE.RELATION_LABEL_FOR = "label-for"
+        lead = Acc("static", "Pay with", bounds=(10, 10, 60, 16))
+        pin = Acc("entry", "PIN", bounds=(80, 10, 100, 20), text="ABCD")
+        cvv = Acc("entry", "CVV", bounds=(80, 40, 100, 20), text="42")
+        pay = Acc("push button", "Pay with ABCD", bounds=(10, 70, 100, 24), labelled_by=[lead, pin])
+        pay42 = Acc("push button", "Pay with 42", bounds=(120, 70, 100, 24), labelled_by=[lead, cvv])
+        cvv.getRelationSet = lambda: [Relation(FAKE.RELATION_LABEL_FOR, [pay42])]
+        for button in (pay, pay42):
+            button.getAttributes = lambda: ["explicit-name:true"]
+        card = Acc("entry", "Card number", bounds=(80, 100, 200, 20), text="4111111111111111")
+        kept = ["Pay with", "Total: 42", "Order ABCDEF", "Step 4111 of 9"]
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds = (0, 0, 400, 300)
+        win.kids = [lead, pin, cvv, pay, pay42, card, Acc("static", "Saved card 4111 1111 1111 1111", bounds=(10, 130, 200, 16))] + [
+            Acc("static", name, bounds=(10, 160 + 20 * i, 120, 16)) for i, name in enumerate(kept[1:])]
+        self.linked(win)
+        out = e.read_window({"pid": 20})
+        self.assertEqual([n["name"] for n in out["nodes"] if n["role"] in ("static", "push button")],
+                         ["Pay with", "", "", ""] + kept[1:])
+        self.assertNotRegex(json.dumps(out), r"(?i)\babcd\b|1111")
+        self.assertIn([":1.42", pay42.path], out["withheldKeys"])
+        # A page's element named after a secret field, looked at by a helper that knows of none of it.
+        e.WITHHELD = e.SecretFields()
+        saved = e.web_engine
+        e.web_engine = lambda acc: True
+        try:
+            chain = lambda x, y: [(c["role"], c["name"]) for c in e.at_point({"pid": 20, "path": win.path, "x": x, "y": y})["chain"]]  # noqa: E731
+            self.assertEqual(chain(50, 80), [("push button", "")])
+            self.assertEqual(chain(150, 80), [("push button", "")])
+            ids = dict((e.SNAPSHOTS.get(n["id"]), n["id"]) for n in out["nodes"])
+            e.WITHHELD = e.SecretFields()
+            self.assertEqual(e.read_element({"id": ids[pay]})["name"], "")
+            self.assertEqual(e.read_element({"id": ids[lead]})["name"], "Pay with")
+        finally:
+            e.web_engine = saved
+            e.WITHHELD = e.SecretFields()
+
     def test_an_open_menu_in_libreoffices_menu_bar_is_on_top(self):
         # LibreOffice 24.2 (gtk3) keeps its menu bar five levels down, in a scroll pane's viewport: with its View menu
         # open, what was under the menu (a toolbar's button, the sheet) was taken for what is at a point (PERC8-2).
@@ -2238,6 +2516,28 @@ class Windows(unittest.TestCase):
         self.assertIsNone(shown(page))
         self.assertEqual(shown(inner), {"x": 44, "y": 820, "width": 730, "height": 100})
         self.assertEqual(shown(framed), {"x": 64, "y": 1190, "width": 107, "height": 0})  # below what the page shows
+        # A read says the same (H9-5): the window's frame cut what the page holds down to nothing, and marks.ts left
+        # their numbers out of the screenshot.
+        nodes = []
+        e.walk(win, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([(n["role"], n["name"], n.get("shown")) for n in nodes], [
+            ("frame", "Web Rows", None), ("document web", "Web Rows", None), ("static", "A row 7", None),
+            ("document web", "", {"x": 44, "y": 820, "width": 730, "height": 100}),
+            ("static", "F row 9", {"x": 64, "y": 1190, "width": 107, "height": 0})])
+        # Scrolled panes inside a page don't clip it (they are the page's own boxes, as in visible_part); outside a
+        # page, a pane does, in the window's units, as before.
+        pane = Acc("scroll pane", "", bounds=(40, 40, 100, 100), kids=[Acc("static", "Deep", bounds=(60, 300, 50, 20))])
+        pane.kids[0].parent, pane.parent = pane, page
+        page.kids.append(pane)
+        nodes = []
+        e.walk(win, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertNotIn("shown", [n for n in nodes if n["name"] == "Deep"][0])
+        page.kids.remove(pane)
+        pane.parent = win
+        win.kids.append(pane)
+        nodes = []
+        e.walk(win, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([n for n in nodes if n["name"] == "Deep"][0]["shown"], {"x": 60, "y": 300, "width": 50, "height": 0})
 
     def test_one_broken_app_does_not_break_the_list(self):
         class Broken(self.AppNode):

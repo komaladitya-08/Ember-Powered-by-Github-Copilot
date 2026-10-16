@@ -262,4 +262,30 @@ describe("borrows belong to their task (review round 2)", () => {
     expect(drivingInside).toBe(true);
     expect(b.driving).toBe(false);
   });
+
+  it("says whether it uses the mouse: the borrow it drives with, else any it waits for (PR9-3)", async () => {
+    const { x } = fakeX();
+    const seen: string[] = [];
+    // The status as main.ts words it, at every change.
+    const b: CursorBorrow = new CursorBorrow(x, { onChange: () => seen.push(`${b.driving ? "driving" : b.pending ? "waiting" : "idle"} ${b.usesMouse ? "mouse" : "keys"}`) });
+    let inside: boolean | null = null;
+    await b.borrow(async hand => { inside = b.usesMouse; await hand.keys("ctrl+s"); }, { ...fast, keysOnly: true });
+    expect(inside).toBe(false);
+    expect(seen).toEqual(["waiting keys", "driving keys", "idle keys"]);
+    // A mouse borrow queued behind keys only: waiting, the mouse is wanted; driving the keys, it says the keyboard.
+    seen.length = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let during: boolean | null = null;
+    const keys = b.borrow(async () => { await gate; during = b.usesMouse; }, { ...fast, keysOnly: true });
+    const mouse = b.borrow(async hand => { await hand.glideTo(10, 10); during = during === false && b.usesMouse; }, fast);
+    expect([b.pending, b.usesMouse]).toEqual([2, true]);
+    await new Promise(r => setTimeout(r, 5));
+    expect([b.driving, b.usesMouse]).toEqual([true, false]);
+    release();
+    await keys;
+    await mouse;
+    expect(during).toBe(true);
+    expect(b.usesMouse).toBe(false);
+  });
 });

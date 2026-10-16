@@ -209,33 +209,52 @@ function secretValues(n: AxNode): string[] {
   const found = [n.text, n.selected, n.value === undefined ? undefined : String(n.value)];
   return found.flatMap(v => (v ? [squash(v)] : [])).filter(Boolean);
 }
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Does `text` say one of a secret field's values? A short value (part of a code typed so far) only as a word of its own. */
 function holdsValue(text: string | undefined, values: string[]): boolean {
   if (!text || !values.length) return false;
   const whole = squash(text), words = normalize(text).replace(/\s+/g, " ");
   return values.some(v => v.length >= 4 ? whole.includes(v)
-    : new RegExp(`(?<![\\p{L}\\p{N}_])${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "u").test(words));
+    : new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(v)}(?![\\p{L}\\p{N}_])`, "u").test(words));
+}
+/**
+ * A secret field's values are looked for in every name and text of a read too, not only in what holds the field (a
+ * button named after it by aria-labelledby: "Pay with 4821"): those of 4 characters or more (a shorter one is too
+ * common: "Total: 42"), never only bullets. Keep in step with WORD_VALUE_MIN and MASKS in ember_atspi.py.
+ */
+const WORD_VALUE_MIN = 4;
+const MASKS = /^[\u2022\u25cf\u2219\u00b7*\u25e6]*$/u;
+/** Does `text` say one of `values` as a word, or words, of its own, however it spaces their characters? See says_value in ember_atspi.py. */
+function saysValue(text: string | undefined, values: string[]): boolean {
+  if (!text || !values.length) return false;
+  const whole = squash(text), words = normalize(text).replace(/\ufffc/g, " ");
+  return values.some(v => [...v].length >= WORD_VALUE_MIN && !MASKS.test(v) && whole.includes(v)
+    && new RegExp(`(?<![\\p{L}\\p{N}_])${[...v].map(escapeRe).join("\\s*")}(?![\\p{L}\\p{N}_])`, "u").test(words));
 }
 
 /**
  * Elements whose names say what a secret field (of `secret`) holds: Chromium names a table's cell, an ARIA row or a
  * <div> after the values of the fields in it, GTK a combo box after the option it shows. Its listed containers whose
- * name or text has its value in it, and the field itself when its name has. Only for a field whose contents the read
- * still has (the sidecar withholds these itself, and sends no contents of a field it knows is secret).
+ * name or text has its value in it, and the field itself when its name has; and any other element whose name or text
+ * says its value as words of their own (see saysValue). Only for a field whose contents the read still has (the
+ * sidecar withholds these itself, and sends no contents of a field it knows is secret).
  */
 export function withheldIds(nodes: AxNode[], secret: Set<number>): Set<number> {
   const out = new Set<number>();
   const byId = new Map(nodes.map(n => [n.id, n]));
+  const all: string[] = [];
   for (const n of nodes) {
     if (!secret.has(n.id)) continue;
     const values = secretValues(n);
     if (!values.length) continue;
+    all.push(...values);
     let c: AxNode | undefined = n;
     for (let i = 0; c && i <= WITHHELD_LEVELS && !WINDOW_ROLES.has(c.role); i++) {
       if (holdsValue(c.name, values) || (c !== n && holdsValue(c.text, values))) out.add(c.id);
       c = c.parent === null ? undefined : byId.get(c.parent);
     }
   }
+  if (all.length) for (const n of nodes) if (!secret.has(n.id) && (saysValue(n.name, all) || saysValue(n.text, all))) out.add(n.id);
   return out;
 }
 
