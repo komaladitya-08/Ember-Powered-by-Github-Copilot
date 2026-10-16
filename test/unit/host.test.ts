@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EmberState } from "../../app/shared/overlay";
+import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
@@ -27,6 +27,8 @@ const sim = vi.hoisted(() => ({
   sendGate: null as Promise<void> | null,
   /** A prompt reached a session. */
   onSend: (_session: any, _prompt: string) => undefined as void,
+  /** A turn is running: a request sent now waits (its turn starts at session.nextTurn()). */
+  holdTurns: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -40,8 +42,17 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     constructor(public sessionId: string, public config: any) {}
     on(fn: (e: any) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
     emit(type: string, data: Record<string, unknown> = {}) { for (const l of [...this.listeners]) l({ type, data }); }
-    async send(m: { prompt: string }) { this.sent.push(m.prompt); sim.onSend(this, m.prompt); if (sim.sendGate) await sim.sendGate; return "m"; }
-    async abort() { this.aborted++; }
+    /** Requests the runtime holds until the running turn ends. */
+    waiting: string[] = [];
+    // Like the runtime: a request's turn starts with its message (at once when nothing runs).
+    async send(m: { prompt: string }) {
+      this.sent.push(m.prompt); sim.onSend(this, m.prompt); if (sim.sendGate) await sim.sendGate;
+      if (sim.holdTurns) this.waiting.push(m.prompt); else this.emit("user.message", { content: m.prompt });
+      return "m";
+    }
+    nextTurn() { const p = this.waiting.shift(); if (p !== undefined) this.emit("user.message", { content: p }); }
+    // Stop ends the turn, and the runtime drops the requests waiting behind it.
+    async abort() { this.aborted++; this.waiting = []; }
     async disconnect() { if (sim.stopHangs) await hang(); }
     async setModel() { /* nothing */ }
   }
@@ -66,6 +77,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
 import { AgentHost, CUT_OFF, proxyFromChromium, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter } from "../../app/main/agent/presenter";
+import { Confirmer } from "../../app/main/agent/confirm";
 import { SettingsStore } from "../../app/main/settings";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -101,6 +113,7 @@ beforeEach(() => {
   sim.createGate = null;
   sim.sendGate = null;
   sim.onSend = () => undefined;
+  sim.holdTurns = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -1002,7 +1015,9 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
 
   it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
     const transcripts: unknown[][] = [];
-    const { host } = makeHost({ onTranscript: e => transcripts.push(e) });
+    // (Main clears the ask box's history then, as at sign-out.)
+    let accountChanged = 0;
+    const { host } = makeHost({ onTranscript: e => transcripts.push(e), onAccountChanged: () => accountChanged++ });
     await host.start(TOKEN, "stored");
     const first = conductorSession().sessionId;
     await host.ask("what's on my calendar?");
@@ -1010,6 +1025,7 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     // Copilot refuses the sign-in (Check again later): the error state, the conversation kept for a reconnect.
     sim.auth = async () => ({ isAuthenticated: false });
     expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(accountChanged).toBe(0);
     // "Sign in" with another GitHub account.
     sim.auth = async () => ({ isAuthenticated: true, login: "hubot" });
     const other = "gho_" + "u".repeat(36); // not a real token
@@ -1020,9 +1036,123 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     expect(second).not.toBe(first);
     expect(host.getTranscript()).toEqual([]);
     expect(transcripts.at(-1)).toEqual([]);
+    expect(accountChanged).toBe(1);
     // The same account reconnecting resumes its own conversation.
     expect(await host.start(other, "stored")).toBe("ready");
     expect(sim.resumed).toEqual([second]);
+    expect(accountChanged).toBe(1);
+    await host.stop();
+  });
+});
+
+describe("review round 6: a request sent while the conversation is busy waits for its own turn", () => {
+  /** The host with tasks whose specs (and the words each change of plan carried) are recorded; their workers never run. */
+  async function withTasks(extra: Partial<HostOptions> = {}) {
+    const made = makeHost({ hands: hands(), ...extra });
+    await made.host.start(TOKEN, "stored");
+    const specs: { goal: string; userWords?: string; screen?: string; target?: { title: string }; mode?: string }[] = [];
+    const steered: [string, string | undefined, string | undefined][] = [];
+    const d = (made.host.tasks as any).d;
+    d.makeWorker = (spec: (typeof specs)[number]) => {
+      specs.push(spec);
+      return {
+        run: (signal: AbortSignal) => new Promise(r => signal.addEventListener("abort", () => r({ success: false, summary: "Stopped." }))),
+        steer: async (text: string, words?: string, screen?: string) => { steered.push([text, words, screen]); return true; },
+        dispose: async () => undefined,
+      };
+    };
+    const session = conductorSession();
+    const tool = (name: string) => (args: Record<string, unknown> = {}) => session.config.tools.find((t: { name: string }) => t.name === name).handler(args, {});
+    return { ...made, specs, steered, session, tool };
+  }
+  const mail = { target: { pid: 1, title: "Mail" }, text: "<screen>Mail: Inbox (3)</screen>" };
+  const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
+
+  it("the first turn's task carries its own request's window, words and screen text, not those of a request asked meanwhile", async () => {
+    let shown = "<screen>Mail: Write: Weekly report</screen>";
+    const { host, specs, steered, session, tool } = await withTasks({ describeScreen: async () => shown });
+    sim.holdTurns = true;
+    await host.ask("send the weekly report email to Dana", mail);
+    session.nextTurn();
+    // Turn 1 is still thinking when the user asks something else, somewhere else: the runtime holds it.
+    await host.ask("what time is it?", terminal);
+    await tool("describe_screen")();
+    await tool("start_task")({ goal: "send the weekly report email to Dana" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ goal: "send the weekly report email to Dana", userWords: "send the weekly report email to Dana", target: { title: "Mail" } });
+    expect(specs[0].screen).toBe("<screen>Mail: Inbox (3)</screen>\n<screen>Mail: Write: Weekly report</screen>");
+    // Turn 2 (the question asked meanwhile) starts: what it does is its own request's.
+    session.nextTurn();
+    shown = "<screen>Terminal: ~</screen>";
+    await tool("describe_screen")();
+    await tool("steer_task")({ id: host.tasks!.list()[0].id, instruction: "send it at 5" });
+    expect(steered).toEqual([["send it at 5", "what time is it?", "<screen>Terminal</screen>\n<screen>Terminal: ~</screen>"]]);
+    await tool("show_me")({ goal: "how to read the clock" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1]).toMatchObject({ mode: "guide", target: { title: "Terminal" } });
+    await host.stop();
+  });
+
+  it("Stop drops the requests waiting behind the turn; a message the user didn't send takes no request's context; a restart starts clean", async () => {
+    const { host, specs, session, tool } = await withTasks();
+    sim.holdTurns = true;
+    await host.ask("archive these mails", mail);
+    session.nextTurn();
+    await host.ask("delete the Downloads folder", terminal);
+    await host.abortAll();
+    expect(session.waiting).toEqual([]);
+    // Asked again after Stop (the same words, elsewhere): this request's context, not the dropped one's.
+    await host.ask("delete the Downloads folder", { target: { pid: 3, title: "Files" }, text: "<screen>Files</screen>" });
+    session.nextTurn();
+    await tool("start_task")({ goal: "delete the Downloads folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ userWords: "delete the Downloads folder", target: { title: "Files" }, screen: "<screen>Files</screen>" });
+    // A request waits; a turn starts that none of the user's requests began (nothing Ember sent): it carries none of their words.
+    await host.ask("rename it to Old", mail);
+    session.emit("user.message", { content: "<system_notification>Background work finished.</system_notification>" });
+    await tool("start_task")({ goal: "empty the trash" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].userWords).toBeUndefined();
+    expect(specs[1].target).toEqual({});
+    // The waiting request still gets its own turn's context. (The two tasks so far stop: two run at a time.)
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    session.nextTurn();
+    await tool("start_task")({ goal: "rename the Downloads folder to Old" });
+    await vi.waitFor(() => expect(specs).toHaveLength(3));
+    expect(specs[2]).toMatchObject({ userWords: "rename it to Old", target: { title: "Mail" } });
+    // However many wait, only so many are kept; a restart drops them all, and the turn that ran.
+    for (let i = 0; i < 30; i++) await host.ask(`question ${i}`);
+    expect((host as any).queued.length).toBeLessThanOrEqual(20);
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect((host as any).queued).toEqual([]);
+    expect((host as any).turn).toBeNull();
+    await host.stop();
+  });
+});
+
+describe("review round 6: a task's bubbles say whose they are", () => {
+  it("its work and its question name the task (the corner card pairs them with its row and Stop), titled as its card is", async () => {
+    const bubbles: BubbleState[] = [];
+    const confirmer = new Confirmer(p => { if (p.bubble) bubbles.push(p.bubble); }, { armMs: 0, gapMs: 0 });
+    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }) };
+    const { host } = makeHost({ hands: { ...hands(), confirmer, policy } as never });
+    await host.start(TOKEN, "stored");
+    await host.ask("turn on night light");
+    const talk = conductorSession();
+    await talk.config.tools.find((t: any) => t.name === "start_task").handler({ goal: "turn on  the\nnight light" });
+    const taskSession = () => sim.sessions.find(s => s.sessionId.startsWith("ember-task-"));
+    await vi.waitFor(() => expect(taskSession()?.sent).toHaveLength(1));
+    const card = host.tasks!.list()[0];
+    expect(card.title).toBe("turn on the night light");
+    taskSession().emit("assistant.reasoning_delta", { deltaContent: "Looking for the setting." });
+    const presenter = (host as any).taskPresenters.get(card.id) as Presenter;
+    expect(presenter.bubble).toMatchObject({ visible: true, title: card.title, task: card.id });
+    const asked = taskSession().config.tools.find((t: any) => t.name === "change_setting").handler({ setting: "night_light", value: "on" });
+    await vi.waitFor(() => expect(bubbles.at(-1)?.title).toBe("May I?"));
+    expect(bubbles.at(-1)!.task).toBe(card.id);
+    confirmer.answerKey("deny");
+    expect(bubbles.at(-1)).toMatchObject({ thought: "Okay, I won't.", task: card.id });
+    await asked;
     await host.stop();
   });
 });

@@ -53,7 +53,8 @@ export interface TaskManagerDeps {
   cardMs?: number;
 }
 
-const titleOf = (goal: string) => {
+/** A task's title on its card (and its bubbles' title): the goal on one line, at most 40 characters. */
+export const titleOf = (goal: string) => {
   const t = goal.trim().replace(/\s+/g, " ");
   return t.length > 40 ? t.slice(0, 39) + "…" : t;
 };

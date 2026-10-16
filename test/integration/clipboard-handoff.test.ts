@@ -1,15 +1,18 @@
 /**
- * Handing the clipboard to a clipboard manager when Ember quits (review round 5), on the X server in DISPLAY (skipped
- * without one): a pretend Electron owns the clipboard and a pretend manager follows the freedesktop protocol (it reads
+ * Handing the clipboard to a clipboard manager when Ember quits (review round 5), on a private X server (Xvfb; skipped
+ * without it, and never on the user's own display, whose clipboard and clipboard manager it would take): a pretend
+ * Electron owns the clipboard and a pretend manager follows the freedesktop protocol (it reads
  * every format from the owner, then owns the clipboard itself). Nothing is asked of a clipboard that isn't Ember's or
  * when there is no manager, and a manager that doesn't answer costs at most the deadline.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { handClipboardToManager } from "../../app/main/hands/clipboard-handoff";
 
 const requireCjs = createRequire(import.meta.url);
+const xvfb = spawnSync("sh", ["-c", "command -v Xvfb"], { stdio: "ignore" }).status === 0;
 
 function xlib() {
   const koffi = requireCjs("koffi") as typeof import("koffi");
@@ -34,9 +37,19 @@ function xlib() {
   };
 }
 
-describe.skipIf(!process.env.DISPLAY)("the clipboard goes to the clipboard manager when Ember quits", () => {
+describe.skipIf(!xvfb)("the clipboard goes to the clipboard manager when Ember quits", () => {
   const x = xlib();
   const open: unknown[] = [];
+  let server: ChildProcess;
+  let display = "";
+  beforeAll(async () => {
+    server = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "640x480x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
+    display = ":" + await new Promise<string>((resolve, reject) => {
+      server.stdio[3]!.on("data", (d: Buffer) => resolve(d.toString().trim()));
+      server.on("exit", () => reject(new Error("Xvfb didn't start")));
+    });
+  });
+  afterAll(() => { server?.kill(); });
   const timers: ReturnType<typeof setInterval>[] = [];
   afterEach(() => {
     for (const t of timers.splice(0)) clearInterval(t);
@@ -45,7 +58,7 @@ describe.skipIf(!process.env.DISPLAY)("the clipboard goes to the clipboard manag
 
   /** A client on its own connection that answers selection requests with `serve` (property 0: refused). */
   const client = (serve: (req: { requestor: number; selection: number; target: number; property: number; time: bigint }, c: { dpy: unknown; win: number }) => number | null, onNotify?: (property: number, target: number) => void) => {
-    const dpy = x.XOpenDisplay(process.env.DISPLAY!);
+    const dpy = x.XOpenDisplay(display);
     open.push(dpy);
     const win = Number(x.XCreateSimpleWindow(dpy, x.XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0));
     const ev = Buffer.alloc(192);
@@ -130,7 +143,7 @@ describe.skipIf(!process.env.DISPLAY)("the clipboard goes to the clipboard manag
   it("the manager takes every format from Ember's process and keeps the clipboard", async () => {
     const e = electron();
     const m = manager();
-    expect(await handClipboardToManager({ ourWindow: e.win + 4 })).toBe("saved");
+    expect(await handClipboardToManager({ ourWindow: e.win + 4, display })).toBe("saved");
     expect([...m.saved.entries()]).toEqual([[e.atom("UTF8_STRING"), "the user's copy"]]);
     expect(Number(x.XGetSelectionOwner(m.dpy, m.atom("CLIPBOARD")))).toBe(m.win);
   });
@@ -138,13 +151,13 @@ describe.skipIf(!process.env.DISPLAY)("the clipboard goes to the clipboard manag
   it("asks nothing of a clipboard another app holds, or with no manager; waits no longer than its deadline", async () => {
     const e = electron();
     const m = manager(false);
-    expect(await handClipboardToManager({ ourWindow: m.win })).toBe("not-ours");
+    expect(await handClipboardToManager({ ourWindow: m.win, display })).toBe("not-ours");
     expect(m.pending).toEqual([]);
     const t0 = Date.now();
-    expect(await handClipboardToManager({ ourWindow: e.win, timeoutMs: 300 })).toBe("timeout");
+    expect(await handClipboardToManager({ ourWindow: e.win, timeoutMs: 300, display })).toBe("timeout");
     expect(Date.now() - t0).toBeLessThan(1000);
     x.XSetSelectionOwner(m.dpy, m.atom("CLIPBOARD_MANAGER"), 0, 0); x.XFlush(m.dpy);
     await new Promise(r => setTimeout(r, 50));
-    expect(await handClipboardToManager({ ourWindow: e.win })).toBe("no-manager");
+    expect(await handClipboardToManager({ ourWindow: e.win, display })).toBe("no-manager");
   });
 });

@@ -104,9 +104,18 @@ describe("corner card (no compositor)", () => {
   it("shows the running task whose work the bubble shows, so its Stop stops what the user sees", () => {
     const task = (id: string, status: TaskCard["status"]): TaskCard => ({ id, title: `Task ${id}`, status, detail: "", actions: [] });
     const both = [task("a", "running"), task("b", "running")];
-    expect(cardTask(both, "Task a")?.id).toBe("a");
-    expect(cardTask(both, "Cinder")?.id).toBe("b");
-    expect(cardTask([task("a", "done"), task("b", "running")], "Task a")?.id).toBe("b");
+    expect(cardTask(both, { title: "Task a" })?.id).toBe("a");
+    expect(cardTask(both, { title: "Cinder" })?.id).toBe("b");
+    expect(cardTask([task("a", "done"), task("b", "running")], { title: "Task a" })?.id).toBe("b");
+  });
+  it("a question from the older of two tasks shows with that task's row and Stop, not the newer one's", () => {
+    const task = (id: string, title: string): TaskCard => ({ id, title, status: "running", detail: "", actions: [{ id: `task:${id}:stop`, label: "Stop" }] });
+    const both = [task("1", "Reply to Ana in Thunderbird"), task("2", "Fill in the Beta form")];
+    // "May I?" names no task: the bubble's own task id says whose question it is.
+    expect(cardTask(both, { title: "May I?", task: "1" })?.id).toBe("1");
+    expect(cardTask(both, { title: "Reply to Ana in Thunderbird", task: "1" })?.id).toBe("1");
+    // A bubble of a task that has finished: the newest one still under way, as before.
+    expect(cardTask([{ ...both[0], status: "done" }, both[1]], { title: "May I?", task: "1" })?.id).toBe("2");
   });
 });
 

@@ -365,24 +365,43 @@ function start(): void {
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
-  /** Quitting with tasks under way asks first (they would stop half-way). */
-  // One question at a time: Quit chosen again while it is up doesn't stack a second one behind it.
-  let quitAsking: Promise<void> | null = null;
-  const quitEmber = () => quitAsking ??= (async () => {
+  /**
+   * Quitting with tasks under way asks first (they would stop half-way). One question at a time: Quit chosen
+   * again while it is up (perhaps behind a window now) closes it and asks again on top.
+   */
+  let quitAsking: AbortController | null = null;
+  const quitEmber = async (): Promise<void> => {
+    const n = busyTasks();
+    if (!n) { app.quit(); return; }
+    quitAsking?.abort();
+    const mine = quitAsking = new AbortController();
     try {
-      const n = busyTasks();
-      if (n) {
-        const { response } = await dialog.showMessageBox({
-          type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0,
-          title: "Quit Ember?", message: `Ember is still working on ${n === 1 ? "a task" : `${n} tasks`}.`, detail: "Quitting stops it where it is.",
-        });
-        if (response !== 1) return;
-      }
-      app.quit();
-    } finally { quitAsking = null; }
-  })();
+      const { response } = await dialog.showMessageBox({
+        type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0, signal: mine.signal,
+        title: "Quit Ember?", message: `Ember is still working on ${n === 1 ? "a task" : `${n} tasks`}.`, detail: "Quitting stops it where it is.",
+      });
+      if (!mine.signal.aborted && response === 1) app.quit();
+    } finally {
+      if (quitAsking === mine) quitAsking = null;
+    }
+  };
   /** The handle's menu is open (or opening): a second click doesn't open another one over it. */
   let menuOpen = false;
+  /** The app window the user was last in (an X client window), for giving focus back after Ember's own windows. */
+  let userWindow = 0;
+  /** Notes the window with the keyboard now when it is the user's (not Ember's). Returns whether it was. */
+  const rememberUserWindow = (): boolean => {
+    const f = x11Ref?.focusWindow();
+    if (!f || f.pid === process.pid) return false;
+    userWindow = f.id;
+    return true;
+  };
+  /** Focus goes back to the user's window, or, when that has gone, to the topmost app window that isn't Ember's. */
+  const giveFocusBack = () => {
+    const shown = x11Ref?.stack().filter(w => w.pid !== process.pid && w.title && w.width > 1 && w.height > 1) ?? [];
+    const back = shown.some(w => w.client === userWindow) ? userWindow : shown.at(-1)?.client ?? userWindow;
+    if (back) xinputRef?.activate(back);
+  };
   const showMenu = () => {
     if (!handle || menuOpen) return;
     const win = handle.win;
@@ -391,7 +410,8 @@ function start(): void {
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
     const label = (text: string, accel: string) => hasKey(accel) ? `${text}   ${accel.replace("Control", "Ctrl")}` : text;
     const menu = Menu.buildFromTemplate([
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: openAsk },
+      // What the user was in was read before the handle took focus: looking again would find the handle.
+      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => openAsk({ look: false }) },
       { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
@@ -409,14 +429,16 @@ function start(): void {
     // window, so straight from X then), and gives it back after unless a menu item opened something that took
     // it (the ask box, settings, the quit question). The menu opens once the focus has come: a focus change
     // under an open menu closes it.
-    const before = xinputRef?.focusedWindow() ?? 0;
+    // The user's window, and what "Ask Ember…" will read there, taken now: once the handle has focus they're
+    // gone. In one of Ember's own windows (the ask box, settings) the user's window is the one they came from.
+    if (rememberUserWindow()) captureContext();
     menuOpen = true;
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
-      if (kept && !quitAsking && before) xinputRef?.activate(before);
+      if (kept && !quitAsking) giveFocusBack();
     }, 150) });
     win.setFocusable(true);
     if (win.isFocused()) { open(); return; }
@@ -526,11 +548,12 @@ function start(): void {
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 1500))]);
     return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
   };
-  const openAsk = () => {
+  /** `look: false`: what the user is in was read already (the handle's menu reads it before taking focus). */
+  const openAsk = ({ look = true }: { look?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
-    captureContext();
+    if (look) { rememberUserWindow(); captureContext(); }
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
@@ -569,6 +592,7 @@ function start(): void {
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
   let xinputRef: ReturnType<typeof openXInput> = null;
+  let x11Ref: ReturnType<typeof openX11> = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
   let showBorrowing: (() => void) | null = null;
   /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
@@ -890,7 +914,7 @@ function start(): void {
     session.defaultSession.setSpellCheckerEnabled(false);
     session.defaultSession.setSpellCheckerLanguages([]);
     session.defaultSession.on("spellcheck-dictionary-download-begin", (_e, lang) => log.warn("spellcheck.download", { lang }));
-    const x11 = process.env.DISPLAY ? openX11() : null;
+    const x11 = x11Ref = process.env.DISPLAY ? openX11() : null;
     x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
@@ -962,7 +986,7 @@ function start(): void {
 
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
     const shortcuts: Record<string, () => void> = {
-      "Control+Alt+E": showHome, "Control+Alt+Space": openAsk, "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
+      "Control+Alt+E": showHome, "Control+Alt+Space": () => openAsk(), "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
     };
     const registerShortcuts = () => {
       const taken: string[] = [];
@@ -1106,6 +1130,8 @@ function start(): void {
         showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : "Not connected" });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
+      // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
+      onAccountChanged: () => { askHistory = []; },
       onTaskFinished: t => {
         if (maySpeak()) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
@@ -1181,7 +1207,7 @@ function start(): void {
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: openAsk,
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk(),
         showMenu, state: () => lastState,
       };
     }

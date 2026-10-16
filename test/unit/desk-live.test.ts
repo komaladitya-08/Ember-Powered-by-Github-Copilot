@@ -188,7 +188,7 @@ describe.skipIf(!available)("a real desk", () => {
     expect(shot).toMatchObject({ width: 320, height: 200 });
     p2.close();
     desk.stop();
-  });
+  }, 20_000); // two desk starts, each may wait up to 3 s for its window manager
 
   it("stops cleanly even with something mounted in its folder, and starts again", async (ctx) => {
     if (process.getuid?.() !== 0) ctx.skip(); // mounting needs root here (gvfs would mount with FUSE as the user)
@@ -212,7 +212,7 @@ describe.skipIf(!available)("a real desk", () => {
       spawnSync("umount", ["-l", mount]);
       fs.rmSync(path.dirname(runtime), { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("gives two desks starting at once different displays", async () => {
     const a = make({ display: 248 }), b = make({ display: 248 });

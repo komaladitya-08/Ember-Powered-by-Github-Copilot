@@ -20,6 +20,7 @@ const APP_NAMES: Record<string, string> = {
   eog: "Image Viewer",
   "gnome-system-monitor": "System Monitor",
   "soffice.bin": "LibreOffice",
+  soffice: "LibreOffice",
   firefox: "Firefox",
   thunderbird: "Thunderbird",
   mousepad: "Mousepad",

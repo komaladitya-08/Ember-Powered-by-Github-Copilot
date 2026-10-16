@@ -21,6 +21,8 @@ export interface Question {
   context?: string;
   prompt: string;
   options: { id: string; label: string; primary?: boolean }[];
+  /** The task asking (its id): the question's bubble, and the one after the answer, belong to it. */
+  task?: string;
 }
 
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void }
@@ -139,6 +141,7 @@ export class Confirmer {
     const bubble: BubbleState = {
       visible: true, mood: "attention", title: p.q.title, thought: p.q.prompt, step: this.keyHint?.() || null, streaming: false,
       actions: p.q.options.map(o => ({ id: `q${p.n}:${o.id}`, label: o.label, primary: o.primary })),
+      ...(p.q.task ? { task: p.q.task } : {}),
     };
     this.show({ emotion: "curious", talking: false, bubble });
     this.onChange?.({ n: p.n, question: p.q });
@@ -155,7 +158,7 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [] } });
+      this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : "Okay, I won't.", step: null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}) } });
     }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);

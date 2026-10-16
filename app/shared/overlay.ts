@@ -47,6 +47,8 @@ export interface BubbleState {
   step: string | null;
   streaming: boolean;
   actions: { id: string; label: string; primary?: boolean }[];
+  /** The task whose bubble this is (its work, its question): the corner card shows that task's row and Stop with it. */
+  task?: string;
 }
 
 export interface TaskCard {

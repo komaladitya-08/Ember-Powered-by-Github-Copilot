@@ -11,13 +11,13 @@
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter } from "./presenter";
+import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
 import { chooseModels, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
-import { TaskManager, statusWord, taskOutcome, type Task } from "./tasks";
+import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
 import { Worker, type WorkerDeps } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
@@ -76,6 +76,11 @@ export interface HostOptions {
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
   /** The conversation changed (the settings window shows it). */
   onTranscript?: (entries: TranscriptEntry[]) => void;
+  /**
+   * Another account signed in: the conversation of the one before (and its transcript) was deleted, so main
+   * drops what it kept of it too (the ask box's history).
+   */
+  onAccountChanged?: () => void;
   /** The organisation's own endpoint (admin policy), or for tests and offline demos an OpenAI-compatible server. */
   provider?: ProviderConfig;
   /** Admin lockdown (/etc/ember/policy.json). */
@@ -170,6 +175,14 @@ const OUTCOME = {
 } as const;
 /** A finished task, as the conductor hears about it. */
 const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}`;
+/** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
+const MAX_QUEUED = 20;
+
+/**
+ * One request of the user's: where they were when they called Ember, what they said, and what the conversation
+ * read on the screen in its turn (the context sent with it, describe_screen's answers).
+ */
+interface UserRequest { target: (WindowTarget & { app?: string }) | null; words: string; screen: string[] }
 
 export class AgentHost {
   private client: CopilotClient | null = null;
@@ -232,7 +245,25 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = o.hands?.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    this.presenter = new Presenter(o.setState, undefined, () => NAMES[o.settings.get().character] ?? "Ember", this.owner, text => this.remember("ember", text), !!o.provider);
+    this.presenter = new Presenter(o.setState, undefined, () => NAMES[o.settings.get().character] ?? "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
+      { onEvent: e => this.conversationEvent(e) });
+  }
+
+  /**
+   * A turn of the conversation starts with its request's message (the runtime holds a request sent during a
+   * turn until that turn ends): what that turn does belongs to that request. The message is the prompt
+   * conductor.ask sent, which ends with the user's words; the oldest request it matches is the one (those
+   * before it never ran: Stop drops what is waiting). A message that is none of them (nothing the user asked)
+   * takes none of their context.
+   */
+  private conversationEvent(e: PresenterEvent): void {
+    if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
+    const said = typeof e.data?.content === "string" ? e.data.content.trimEnd() : "";
+    const i = this.queued.findIndex(r => said.endsWith(r.words.trim()));
+    this.turn = i < 0 ? null : this.queued[i];
+    this.queued.splice(0, i + 1);
+    // Its reply announces the tasks it starts ("On it…"), not the ones an earlier turn did.
+    this.announced.clear();
   }
 
   /**
@@ -430,6 +461,7 @@ export class AgentHost {
         this.carried = [];
         this.transcript.length = 0;
         this.o.onTranscript?.([]);
+        this.o.onAccountChanged?.();
       }
 
       let models: ModelLike[] = [];
@@ -513,20 +545,22 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider,
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
-        describeScreen: this.o.describeScreen ? async () => { const seen = await this.o.describeScreen!(); this.askScreen.push(seen); return seen; } : undefined,
+        describeScreen: this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
-          // Risky steps are checked against what the user said, not the goal (the conductor may have read it off the screen).
-          const t = tasks.start(goal, { target: this.askTarget ?? undefined, userWords: this.askWords ?? undefined, screen: this.askScreen.join("\n") || undefined });
+          // Risky steps are checked against what the user said in this turn's request, not the goal (the conductor may
+          // have read it off the screen). A request sent meanwhile waits for its own turn: none of it goes with this task.
+          const r = this.turn;
+          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: r?.words, screen: r?.screen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? goal => {
-          const t = tasks.start(goal, { target: this.askTarget ?? undefined, mode: "guide" });
+          const t = tasks.start(goal, { target: this.turn?.target ?? undefined, mode: "guide" });
           this.announced.add(t.id);
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
@@ -534,7 +568,7 @@ export class AgentHost {
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
-          steer: (id, text) => tasks.steer(id, text, this.askWords ?? undefined, this.askScreen.join("\n") || undefined),
+          steer: (id, text) => tasks.steer(id, text, this.turn?.words, this.turn?.screen.join("\n") || undefined),
         } : undefined,
       });
       await this.conductor.start();
@@ -690,19 +724,21 @@ export class AgentHost {
     this.setStatus({ usage: { calls: u.calls + 1, inputTokens: u.inputTokens + input, outputTokens: u.outputTokens + output } });
   }
 
-  /** A task's own presenter: its bubble is titled with the goal, and gives way to an answer being read. */
+  /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
   private taskPresenter(id: string, goal: string): Presenter {
-    const p = new Presenter(this.o.setState, undefined, () => goal.length > 40 ? goal.slice(0, 39) + "…" : goal, this.owner, undefined, !!this.o.provider, { task: true });
+    const title = titleOf(goal);
+    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id });
     this.taskPresenters.set(id, p);
     return p;
   }
 
-  /** Where the user was when they last called Ember: tasks from this request start there. */
-  private askTarget: (WindowTarget & { app?: string }) | null = null;
-  /** What the user said or typed in their latest request: tasks started or changed in its turn check risky steps against it. */
-  private askWords: string | null = null;
-  /** Screen text the conversation read in that request's turn (the context sent with it, describe_screen's answers). */
-  private askScreen: string[] = [];
+  /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
+  private queued: UserRequest[] = [];
+  /**
+   * The request whose turn is running (or ran last): tasks it starts begin in its window, and they and the tasks
+   * it changes check risky steps against its words; what describe_screen reads in it goes with them.
+   */
+  private turn: UserRequest | null = null;
 
   /**
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
@@ -710,9 +746,6 @@ export class AgentHost {
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
     if (epoch !== this.stopEpoch) return;
-    this.askTarget = context?.target ?? null;
-    this.askWords = text;
-    this.askScreen = context?.text ? [context.text] : [];
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
@@ -734,10 +767,15 @@ export class AgentHost {
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
     this.remember("you", text);
-    this.announced.clear();
+    // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
+    const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [] };
+    this.queued.push(request);
+    this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       await this.conductor.ask(text, context?.text);
     } catch (err) {
+      // Never sent: no turn of its own will come.
+      this.queued = this.queued.filter(r => r !== request);
       if (err instanceof ConnectionLost) this.lost(gen, "send failed");
       else throw err;
     }
@@ -749,6 +787,8 @@ export class AgentHost {
    */
   async abortAll(): Promise<void> {
     this.stops++;
+    // Requests still waiting for their turn are dropped with it (the runtime runs none of them).
+    this.queued = [];
     this.claimBubble();
     this.presenter.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
@@ -809,6 +849,9 @@ export class AgentHost {
     this.tasks?.close();
     this.tasks = null;
     this.outcomes.clear();
+    // The session goes, and with it every turn of it, running or waiting.
+    this.queued = [];
+    this.turn = null;
     this.presenter.reset();
     await this.conductor?.stop();
     this.conductor = null;

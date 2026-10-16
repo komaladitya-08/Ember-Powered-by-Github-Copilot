@@ -1347,7 +1347,7 @@ export class Worker {
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     this.asked = true;
-    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options }, this.overSignal);
+    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id }, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {

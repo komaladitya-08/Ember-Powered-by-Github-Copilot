@@ -202,8 +202,13 @@ export class BubbleOwner {
 const plainOwners = new WeakMap<object, BubbleOwner>();
 
 export interface PresenterOptions {
-  /** A task's presenter: its work shows in the bubble only while nobody holds it (its card shows the step anyway). */
-  task?: boolean;
+  /**
+   * A task's presenter: its work shows in the bubble only while nobody holds it (its card shows the step anyway).
+   * Given as the task's id, its bubbles carry it (the corner card pairs them with that task's row).
+   */
+  task?: boolean | string;
+  /** Every event of the session it shows, before it's shown (the host follows which request's turn is running). */
+  onEvent?: (e: PresenterEvent) => void;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -265,6 +270,9 @@ export class Presenter {
   private readonly work: Claim;
   /** Shared by every presenter writing the same bubble. */
   private readonly owner: BubbleOwner;
+  private readonly onEvent?: (e: PresenterEvent) => void;
+  /** The task whose bubbles these are (BubbleState.task). */
+  private readonly taskId?: string;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -280,11 +288,13 @@ export class Presenter {
   ) {
     this.work = opts.task ? "progress" : "reply";
     this.owner = BubbleOwner.of(owner);
+    this.onEvent = opts.onEvent;
+    if (typeof opts.task === "string") this.taskId = opts.task;
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
-    this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}) } };
+    this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}) } };
     if (this.silent) return false;
     if (!patch.bubble) {
       // Just the face (talking stops): only while this presenter's bubble is the one on screen.
@@ -479,6 +489,7 @@ export class Presenter {
   }
 
   event(e: PresenterEvent): void {
+    this.onEvent?.(e);
     const d = e.data ?? {};
     switch (e.type) {
       case "assistant.intent":
