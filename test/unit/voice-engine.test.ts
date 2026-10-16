@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ring, VoiceEngine, heardOtherStop, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { Ring, VoiceEngine, heardOtherStop, heardStopWord, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 
 /** A scripted backend: frames are tagged by their first sample. */
 const KW = { 1: "hey_ember", 2: "ember_stop" } as Record<number, string>;
@@ -133,8 +133,11 @@ describe("'Hey Ember, stop' over Ember's own voice", () => {
   it.each(["is on. Hey Ember, stop. It makes the", "Hey Ember stop", "warmer in the evening. Hey, Amber, stop! Which is", "Hey Ember, please stop.", "Hey Ember, be quiet.", "Hey Ember, shut up."])(
     "%j stops", t => expect(saidWakeStop(t)).toBe(true));
   it.each(["Night Light is on. Hey Ember, what's the time?", "Remember, stop at the red light.", "The ember stopped glowing.", "Stop the music.", "It makes the screen warmer.", "",
-    "Hey Ember stopped the music.", "Hey Ember, stuff to do today.", "Hey Ember, steps to follow."])(
+    "Hey Ember, stuff to do today.", "Hey Ember, steps to follow.", "A member stopped by the office.", "Ember stopped the music."])(
     "%j doesn't", t => expect(saidWakeStop(t)).toBe(false));
+  // Ember never says "Hey Ember" itself, and its own words go on after the user's "stop" until it has been hushed (VO9-2).
+  it.each(["Literally. Hey, Ember stopped Thursday at 2.", "Hey Ember stopped the music.", "They, Amber, stopping at the third floor"])(
+    "%j stops (with the greeting, whatever follows the stop)", t => expect(saidWakeStop(t)).toBe(true));
   it.each(["A. Ember stopped.", "A. Ember Stuff.", "\"pay ember\" stopped talking.", "Hey Ember stopped. Which is", "Hey Ember, step!", "is on. Hey, Amber, stopped it. It makes", "P. M. B. Stop.", "A. Ember, the quiet."])(
     "%j stops (a lone 'stop' as the recognizer writes it)", t => expect(saidWakeStop(t)).toBe(true));
 });
@@ -632,6 +635,43 @@ describe("VoiceEngine with other people talking", () => {
     expect(b.heard.every(frames => frames <= 6 + 10)).toBe(true); // the others' talk was never transcribed
   });
 
+  describe("after a bare 'Hey Ember' (VO9-3)", () => {
+    /** Others talking 10 dB under the speaker (their louder words): as loud as a speaker's softer ones, but never as the wake phrase. */
+    const near = () => level(++said % 5 ? 0.03 : 0.006);
+    /** The wake phrase as long as it is said (0.4 s), and a recognizer that makes nothing of a moment of talk around it. */
+    const wake = () => n(12, () => level(0.1));
+    const lenient = (b: ReturnType<typeof talking>) => { const t = b.transcribe; b.transcribe = s => { const r = t(s); return /^U12 b(1\d|2[0-2]|\d)$/.test(r) ? "Hey Ember." : r; }; return b; };
+
+    it("doesn't send the others' talk heard right after it, in the same breath of sound", () => {
+      const b = lenient(talking({ wake: 9 }));
+      const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(400, near)]);
+      expect(utterances(events)).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "timeout" });
+    });
+
+    it("doesn't send the others' talk heard after it ended (not as loud as the wake phrase), in a room where they talk", () => {
+      // They talked until 1.9 s before "Hey Ember".
+      const b = lenient(talking({ wake: 9 }));
+      const { events } = listen(b, [...n(100, near), ...n(58, room), level(0, 9), ...wake(), ...n(30, room), ...n(60, near), ...n(200, room)]);
+      expect(utterances(events)).toEqual([]);
+      // In a quiet room, a request that follows it is sent however softly it's said.
+      const quiet = lenient(talking({ wake: 9 }));
+      expect(utterances(listen(quiet, [...n(160, room), level(0, 9), ...wake(), ...n(30, room), ...n(60, near), ...n(200, room)]).events)).toEqual([expect.stringMatching(/^U0 b60$/)]);
+    });
+
+    it("sends the request the speaker says after it, as loud as they said it (with the others talking on)", () => {
+      const b = lenient(talking({ wake: 9 }));
+      const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(20, near), ...n(30, () => level(0.08)), ...n(300, near)]);
+      expect(utterances(events)).toEqual([expect.stringMatching(/^U42 /)]); // the wake phrase and the request (the talk this close goes with it, as before)
+    });
+
+    it("still sends a one-breath request said softer than the wake phrase, in a quiet room", () => {
+      const b = lenient(talking({ wake: 9 }));
+      const { events } = listen(b, [...n(100, room), level(0, 9), ...wake(), ...n(30, () => level(0.03)), ...n(60, room)]);
+      expect(utterances(events)).toEqual(["U12 b30"]);
+    });
+  });
+
   it("hears a request that starts after the others had been talking, without the talk before it", () => {
     const b = talking({ wake: 9 });
     const { events } = listen(b, [...n(20, room), level(0, 9), ...n(6, () => level(0.1)), ...n(60, others), ...n(40, () => level(0.1)), ...n(200, others)]);
@@ -1006,7 +1046,10 @@ describe("'Hey Ember' while Ember speaks", () => {
     const { events, checked } = heardWhileSpeaking("the screen warmer. Hey Ember, stop. Which is");
     expect(events).toEqual([{ type: "stop" }]);
     expect(checked).toBe((10 + 5) * 32); // at the pause after it
-    expect(heardWhileSpeaking("Hey Ember, stop.", { speakersSaidIt: false }).events).toEqual([{ type: "stop" }]);
+    // With the speakers' stream (which didn't say it), the check runs as soon as they can't have said it.
+    const cutIn = heardWhileSpeaking("Hey Ember, stop.", { speakersSaidIt: false });
+    expect(cutIn.events).toEqual([{ type: "stop" }]);
+    expect(cutIn.checked).toBe(13 * 32);
   });
 
   it("hears the phrase from just before its first sound (the recognizer returns nothing for a phrase after near-silence)", () => {
@@ -1024,6 +1067,70 @@ describe("'Hey Ember' while Ember speaks", () => {
   it("doesn't stop when the speakers said it", () => {
     expect(heardWhileSpeaking("Hey Ember, stop.", { speakersSaidIt: true }).events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "speakers" }]);
   });
+});
+
+describe("cutting in on Ember (VO9-2)", () => {
+  /**
+   * Ember speaks (its speakers' stream on, saying something else); the user says "Hey Ember, …" (0.35 s after the spotter
+   * fired), then pauses. `transcripts`: the wake's check, then what the window heard. `hushed`: main hushes Ember on a wake.
+   */
+  function cutIn(transcripts: string[], o: { speakers?: boolean } = {}) {
+    const b = fake(transcripts);
+    if (o.speakers !== false) b.spotMonitor = () => [];
+    const events: (VoiceEvent & { at: number })[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push({ ...ev, at: c.t }), { now: () => c.t });
+    const step = (f: Float32Array) => { c.t += 32; if (o.speakers !== false) e.feedMonitor(new Float32Array(512).fill(0.05)); e.feed(f); };
+    e.selfSpeaking(true);
+    for (let i = 0; i < 30; i++) step(frame(0));
+    const spottedAt = c.t + 32;
+    step(frame(1, true));
+    for (let i = 0; i < 10; i++) step(frame(0, true));
+    for (let i = 0; i < 80; i++) step(frame(0));
+    return { events, spottedAt };
+  }
+  const plain = (events: (VoiceEvent & { at: number })[]) => events.filter(ev => ev.type !== "speech").map(({ at: _at, ...ev }) => ev);
+
+  it("hushes Ember (a wake: main hushes it) as soon as the speakers can't have said it, and sends the request it heard", () => {
+    const { events, spottedAt } = cutIn(["Literally. Hey Ember, what's the weather tomorrow? Thursday", "Hey Ember, what's the weather tomorrow?"]);
+    expect(plain(events)).toEqual([
+      { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+      { type: "utterance", text: "What's the weather tomorrow?", ms: 0, window: "wake" }, { type: "listening", on: false, reason: "done", window: "wake" }]);
+    expect(events[0].at - spottedAt).toBe(416); // the speakers' window (400 ms), to the frame
+  });
+
+  it("stops on 'Hey Ember, stop' with Ember's own words after it, before hushing it as a wake", () => {
+    expect(plain(cutIn(["Literally. Hey, Ember stopped Thursday at 2."]).events)).toEqual([{ type: "stop" }]);
+  });
+
+  it("takes the wake back when what it heard after cutting in was someone talking to an Amber", () => {
+    expect(plain(cutIn(["He, he, he.", "Hey, Amber, what time is the meeting?"]).events)).toEqual([
+      { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+      { type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey, Amber, what time is the meeting?" }, { type: "listening", on: false, reason: "rejected", window: "wake" }]);
+    // "Ember" heard as "Amber" in a stop: it stops.
+    expect(plain(cutIn(["He, he, he.", "Hey, Amber, be quiet."]).events).filter(ev => ev.type !== "listening")).toEqual([{ type: "wake", keyword: "hey_ember" }, { type: "stop" }]);
+  });
+
+  it("stops on a few garbled words with a stop in them, heard after cutting in", () => {
+    for (const heard of ["But not quite there.", "Ever be quiet."]) {
+      const { events } = cutIn(["Bitterly play. Hey Ember. " + heard, heard]);
+      expect(plain(events).filter(ev => ev.type !== "listening"), heard).toEqual([{ type: "wake", keyword: "hey_ember" }, { type: "stop" }]);
+    }
+  });
+
+  it("without the speakers' stream, can't tell its own voice from the user's: only 'Hey Ember, stop' counts", () => {
+    expect(plain(cutIn(["Hey Ember, what's the weather tomorrow?"], { speakers: false }).events)).toEqual([
+      { type: "rejected", keyword: "hey_ember", reason: "self", heard: "Hey Ember, what's the weather tomorrow?" }]);
+  });
+
+  it("doesn't cut in when the check heard someone else's name (Ember goes on speaking), and still stops on 'Hey Amber, stop'", () => {
+    expect(plain(cutIn(["Hey Amber, what time is the meeting?", "Hey Amber, what time is the meeting?"]).events)).toEqual([
+      { type: "rejected", keyword: "hey_ember", reason: "self", heard: "Hey Amber, what time is the meeting?" }]);
+    expect(plain(cutIn(["Hey Amber, stop by my desk.", "Hey Amber, stop by my desk."]).events)).toEqual([{ type: "stop" }]);
+  });
+
+  it.each(["But not quite there.", "Ever be quiet.", "I'm not quite there at all", "Stop.", "Enough!", "No, that's enough."])("%j is a garbled stop", t => expect(heardStopWord(t)).toBe(true));
+  it.each(["What's the weather tomorrow?", "Know the other file.", "Is there enough disk space?", "Turn the volume up a little, it's not quite loud enough for me."])("%j isn't", t => expect(heardStopWord(t)).toBe(false));
 });
 
 describe("follow-up windows", () => {

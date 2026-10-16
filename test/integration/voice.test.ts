@@ -190,6 +190,40 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(wake.events.filter(e => e.type !== "rejected")).toEqual([]);
   });
 
+  it("cuts in on Ember's answer when its speakers didn't say 'Hey Ember': Ember is hushed, and the request is heard (VO9-2)", () => {
+    // Ember reads an answer (its echo in the microphone, 20 dB down); the user says "Hey Ember, turn on night light" over it.
+    // Main hushes Ember on a wake: its speakers go quiet 150 ms later.
+    const answer = cat(trimmed("chat"), silence(0.2), trimmed("remember"), silence(0.2), trimmed("chat")), wake = read("wake"), from = at(1.2);
+    const speakers = cat(answer, silence(4)), voice = new Float32Array(speakers.length);
+    voice.set(wake, from);
+    const mic = inRoom(voice.map((x, i) => x + speakers[i] * 0.1));
+    const s = session();
+    let hushAt = -1;
+    s.engine.selfSpeaking(true);
+    s.hear(mic, {
+      speakers,
+      onFrame: k => {
+        if (hushAt < 0 && s.events.some(e => e.type === "wake")) hushAt = k + 5;
+        if (k === hushAt) { speakers.fill(0, k * 512); for (let i = k * 512; i < mic.length; i++) mic[i] -= speakers[i]; s.engine.selfSpeaking(false); }
+      },
+    });
+    s.end();
+    expect(s.events.filter(e => e.type === "wake")).toHaveLength(1);
+    expect(sent(s.events)).toMatchObject([{ text: expect.stringMatching(/night ?light/i), window: "wake" }]);
+  });
+
+  it("doesn't send others' talk (10 dB under the user) after a bare 'Hey Ember' (VO9-3)", () => {
+    const talk = cat(...["chat", "remember", "bigger", "chat", "remember"].flatMap(n => [trimmed(n).map(x => x * 0.3), silence(0.15)]));
+    const hey = read("wake_pause").subarray(0, at(1.52)), from = at(2);
+    const audio = cat(talk, silence(1));
+    for (let i = 0; i < hey.length; i++) audio[from + i] += hey[i];
+    const s = session();
+    s.hear(inRoom(audio));
+    s.end();
+    expect(s.events.filter(e => e.type === "wake")).toHaveLength(1);
+    expect(sent(s.events)).toEqual([]);
+  });
+
   it("keeps a reply that starts the moment Ember's voice ends (the microphone hears the speakers 64 ms late)", () => {
     const answer = cat(silence(0.5), trimmed("chat"), trimmed("remember")), reply = trimmed("followup"), lag = 1024;
     const speakers = cat(answer, silence(0.032), new Float32Array(reply.length + at(2)));

@@ -11,9 +11,11 @@
  * speaker's own voice does, and runs 10 s at most (20 s in a quiet room).
  * After Ember answers a wake's request: one follow-up window where no wake word
  * is needed ("Thanks" ends it), for a voice as loud as the one that woke Ember.
- * While Ember itself is speaking, the wake word only counts as "Hey Ember, stop";
- * it or "Ember, stop" is ignored when it comes out of the speakers; a listening
- * window waits until Ember has finished speaking.
+ * While Ember itself is speaking, "Hey Ember" that its speakers' own stream didn't
+ * say cuts in: Ember is hushed and listens (without that stream, only "Hey Ember,
+ * stop" counts); it or "Ember, stop" is ignored when it comes out of the speakers;
+ * a listening window waits until Ember has finished speaking.
+ * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
 export const SAMPLE_RATE = 16_000;
@@ -137,8 +139,10 @@ function afterName(transcript: string, names: RegExp): string | null {
   return m ? m[3] : null;
 }
 
+const GREETING = String.raw`(hey|hi|ok|okay|hay|pay|pey|they)[\s,.!]*`;
+const NAME = String.raw`(embers?\b|ember(?=[a-z])|emmer\b|amber\b|member\b|emma\b|[ap][.\s-]*m[.\s-]*[br]\b\.?)[\s,.!?:;-]*`;
 /** The wake phrase as the recognizer writes it ("Hey, Ember." "hey Emmer" "OK Amber" "Hey, EmberStop." "Peyamber" "A. M. B." "P. M. B."). */
-const WAKE = String.raw`((hey|hi|ok|okay|hay|pay|pey|they)[\s,.!]*)?(embers?\b|ember(?=[a-z])|emmer\b|amber\b|member\b|emma\b|[ap][.\s-]*m[.\s-]*[br]\b\.?)[\s,.!?:;-]*`;
+const WAKE = String.raw`(${GREETING})?${NAME}`;
 const WAKE_AT_START = new RegExp(String.raw`^\s*` + WAKE, "i");
 /** Right after a wake, the pre-roll can start with the end of what was said before it: "Lunch, hey Ember, …". */
 const WAKE_IN_FIRST_WORDS = new RegExp(String.raw`^\s*(\S+\s+){0,5}?` + WAKE, "i");
@@ -175,8 +179,22 @@ export function isStop(text: string): boolean {
  */
 const STOP_HEARD_SHORT = String.raw`(stop\w*|stuff|step|stap|stob|stup)(?=([\s,.!]+(it|that|now|please|talking|everything|ember|already)\b)*[\s"”]*([.!?,;:]|$))`;
 const WAKE_THEN_STOP = new RegExp(String.raw`\b` + WAKE + String.raw`["“”]?\s*(please\s+)?(stop\b|${STOP_HEARD_SHORT}|(be|the)\s+quiet|quiet|hush|shut\s+up|that'?s\s+enough|enough|cancel|never\s?mind)\b`, "i");
+/**
+ * With the greeting ("Hey Ember, stopped Thursday at 2."), "stopped" counts whatever follows it: Ember never says "Hey
+ * Ember" itself, and its own words go on after the user's "stop" until it has been hushed.
+ */
+const GREETED_STOP = new RegExp(String.raw`\b${GREETING}${NAME}["“”]?\s*(please\s+)?stop`, "i");
 export function saidWakeStop(transcript: string): boolean {
-  return WAKE_THEN_STOP.test(transcript);
+  return WAKE_THEN_STOP.test(transcript) || GREETED_STOP.test(transcript);
+}
+
+/**
+ * What was heard right after cutting in on Ember, said over its voice: a few words with "stop", "quiet" or "that's
+ * enough" in them are a stop as the recognizer garbled it ("Ever be quiet.", "I'm not quite there at all."), not a
+ * request ("Is there enough disk space?" is one).
+ */
+export function heardStopWord(text: string): boolean {
+  return text.trim().split(/\s+/).length <= 6 && /\b(stop\w*|quiet|quite|hush|shut|that'?s\s+enough)\b|^\W*enough\b/i.test(text);
 }
 
 /**
@@ -311,6 +329,16 @@ const QUIET_END_FRAMES = 12;
 const RETURN_FRAMES = 8;
 const PAUSE_HOLD_FRAMES = 20;
 const LOUD_FRAMES = 9;
+/** A dip this short (frames) in that loudness doesn't end the stretch it's in; the wake phrase's own stretch is heard with this many frames after it. */
+const CLOSE_GAP_FRAMES = 3;
+const OWN_AFTER_FRAMES = 6;
+/**
+ * The frames just before a wake hold the wake phrase; a room with sound in a quarter of the 16 or more before them was
+ * busy (measured before wakes: a quiet room or a fan none, typing up to 0.23, others talking 15 dB under the user 0.15–0.85).
+ */
+const WAKE_PHRASE_FRAMES = 47;
+const BUSY_FRAMES = 16;
+const BUSY_SHARE = 0.25;
 const KEEP_AFTER_FRAMES = 10;
 const SPEECH_CAP_FRAMES = 313;
 const LONG_CAP_FRAMES = 625;
@@ -340,11 +368,15 @@ const LAG_MIN_CORRELATION = 0.5;
 /**
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
  * `checkAt`: when the wake's transcript check runs (null: none pending), for `keyword`; `afterQuestion`: a follow-up
- * to an answer that asked something ("Okay." is a yes then, not the end of the conversation).
+ * to an answer that asked something ("Okay." is a yes then, not the end of the conversation); `bargeIn`: a wake said
+ * while Ember spoke (what it heard first has Ember's own words around it).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean };
+
+/** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
+type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
@@ -357,10 +389,11 @@ export class VoiceEngine {
   private monitorHits: { keyword: string; at: number }[] = [];
   /**
    * A spotted wake word waiting out the speakers check; a spotted stop waiting out it and its transcript check
-   * (`keyword` "hey_ember": said while Ember spoke, it's a stop only as "Hey Ember, stop").
+   * (`keyword` "hey_ember": said while Ember spoke; `checked`: the speakers didn't say it, and what was said with it was
+   * heard; `bargeIn`: it was "Hey Ember", so Ember was hushed to listen).
    */
   private pendingWake: { keyword: string; at: number; paused: boolean } | null = null;
-  private pendingStop: { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean } | null = null;
+  private pendingStop: PendingStop | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
   private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number }[] = [];
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
@@ -404,6 +437,8 @@ export class VoiceEngine {
   private silentAt = -1;
   /** The loudness of the last wake's request (a follow-up must come near it), and whether the last request came from a follow-up (it gets none of its own). */
   private voice = 0;
+  /** The room had sound before the last wake (others talking, a TV; not silence or a steady fan). */
+  private busyRoom = false;
   private afterFollowUp = false;
   /** Frames the keyword spotter actually decoded (for CPU accounting and tests). */
   spotted = 0;
@@ -537,8 +572,8 @@ export class VoiceEngine {
         continue;
       }
       if (now < this.selfSpeakingUntil) {
-        // While Ember speaks, "Hey Ember" only counts as "Hey Ember, stop" (the spotter takes the name, so the kill
-        // phrase isn't spotted after it): checked once "stop" has been said, if the speakers didn't say it.
+        // While Ember speaks, "Hey Ember" the speakers didn't say cuts in (see decideStop); "Hey Ember, stop" stops (the
+        // spotter takes the name, so the kill phrase isn't spotted after it): checked once "stop" has been said.
         if (this.o.verifyWake === false) this.emit({ type: "rejected", keyword, reason: "self" });
         else if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS }; this.watchSpeakers(); }
         continue;
@@ -670,6 +705,12 @@ export class VoiceEngine {
       this.emit({ type: "rejected", keyword: s.keyword, reason: "speakers" });
       return;
     }
+    if (s.keyword !== "ember_stop" && !s.checked && now < this.selfSpeakingUntil && this.speakersClear(s.at, now) && this.hearsSpeakers(now)) {
+      // "Hey Ember" while Ember speaks, and its speakers' own stream didn't say it: the user is cutting in (see bargeIn).
+      // Without that stream, Ember can't tell its own voice from the user's: only "Hey Ember, stop" counts (below).
+      s.checked = true;
+      if (this.bargeIn(s, now)) return;
+    }
     const waits = s.keyword !== "ember_stop" || s.again;
     const due = s.checkAt === null || now >= s.checkAt || (waits && this.pauseRun >= (s.spoke || s.again ? SELF_STOP_PAUSE_FRAMES : SELF_STOP_SILENT_FRAMES));
     if (!this.speakersClear(s.at, now) || !due) return;
@@ -678,7 +719,7 @@ export class VoiceEngine {
     if (s.keyword !== "ember_stop") {
       // "Hey Ember" while Ember spoke: a stop if "stop" came with it, otherwise Ember's own voice (or a wake it can't take now).
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS)));
-      if (!saidWakeStop(heard)) { this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
+      if (!saidWakeStop(heard)) { if (!s.bargeIn) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
     } else if (s.checkAt !== null) {
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000)));
       const empty = !/[a-z]/i.test(heard);
@@ -697,10 +738,46 @@ export class VoiceEngine {
     this.pendingWake = null;
   }
 
+  /** Is the speakers' stream arriving (so a wake word they didn't say wasn't Ember's own voice)? */
+  private hearsSpeakers(now: number): boolean {
+    return !!this.backend.spotMonitor && now - this.monitorFrameAt < 200;
+  }
+
+  /**
+   * "Hey Ember" the speakers didn't say, while Ember speaks: the wake's check runs first, on what the microphone heard
+   * (the phrase was said 0.4 s ago). "Hey Ember, stop" (Ember's words around it) stops. Another name ("Hey Amber, …",
+   * someone else in the room) leaves Ember speaking: the stop check still decides on it, as before. Otherwise the user
+   * is cutting in: Ember's voice counts as over from now (main hushes it on a wake, and nothing it was saying resumes),
+   * and a wake's window opens on the pre-roll (Ember's words around the wake phrase are left out where the user's
+   * voice is much louder, as before a wake). Returns whether the stop check is done with.
+   */
+  private bargeIn(s: PendingStop, now: number): boolean {
+    const heard = this.backend.transcribe(this.ring.read());
+    if (saidWakeStop(heard)) {
+      this.pendingStop = null;
+      this.emit({ type: "stop" });
+      if (this.mode.kind === "listening") this.endListening("stop");
+      this.ring.clear();
+      return true;
+    }
+    if (heard && heardOtherWord(heard)) return false;
+    s.bargeIn = true;
+    this.selfSpeakingUntil = now;
+    this.tailFrom = 0;
+    this.tail = [];
+    this.announceWake(s.keyword, null);
+    if (this.mode.kind === "listening") this.mode.bargeIn = true;
+    this.replayPreRoll();
+    return false;
+  }
+
   private announceWake(keyword: string, checkAt: number | null): void {
     this.emit({ type: "wake", keyword });
     this.resetListening();
     this.peak = 0;
+    // The 1.5 s before the wake phrase (and what the pre-roll holds).
+    const silence = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2, before = this.micLevels.slice(0, -WAKE_PHRASE_FRAMES);
+    this.busyRoom = before.length >= BUSY_FRAMES && before.filter(e => e >= silence).length >= before.length * BUSY_SHARE;
     const ms = this.o.waitForSpeechMs ?? 6000;
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake", checkAt, keyword };
     this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
@@ -865,35 +942,50 @@ export class VoiceEngine {
     this.endSegment();
   }
 
-  /** Does anything in the segment under way stand out like the speaker's own voice (within 12 dB of the request's loudness; in a follow-up, within 6 dB of the wake's)? */
+  /**
+   * Does anything in the segment under way stand out like the speaker's own voice (within 12 dB of the request's
+   * loudness; within 6 dB of the wake phrase's once it was heard, in a follow-up of the wake's request)?
+   */
   private segmentStandsOut(): boolean {
     const { first, close } = this.loudFrames();
     return this.mustBeClose() ? close >= 0 : first >= 0;
   }
 
-  /** A follow-up hears only a voice about as loud as the one that woke Ember (the room's talk isn't a request). */
+  /**
+   * A follow-up hears only a voice about as loud as the one that woke Ember, and so does a wake's window once it heard
+   * the wake phrase in a room where others talk: the user says their request up close, as they said "Hey Ember"; the
+   * room's talk, 10 dB under them, isn't a request (it was sent when the user said nothing more).
+   */
   private mustBeClose(): boolean {
-    return this.mode.kind === "listening" && this.mode.reason === "follow-up" && this.voice > 0;
+    if (this.mode.kind !== "listening") return false;
+    return this.mode.reason === "follow-up" ? this.voice > 0 : !this.mode.first && this.peak > 0 && this.busyRoom;
   }
 
   /**
    * The first and last frames of the segment under way (or of the frame energies `e`) loud enough to be the
    * speaker's (the 9 frames around them), or -1; and the first within 6 dB of the request's loudness (the wake
-   * phrase is said up close: what the pre-roll heard before it, quieter, is someone else), in a follow-up the wake's.
+   * phrase is said up close: what the pre-roll heard before it, quieter, is someone else), in a follow-up the wake's;
+   * `closeEnd`: where that loudness first stops (the wake phrase's end, at the start of a wake's window), and
+   * `closeAgain`: whether it comes back after that.
    * With `silent` (an energy), the loudness of 9 frames is that of those with sound (at least 5): a short word's
    * own, not lowered by the silence around it.
    */
-  private loudFrames(e: number[] = this.segment, silent = -1): { first: number; last: number; close: number } {
-    const half = LOUD_FRAMES >> 1, threshold = this.peak * QUIET_RATIO, closeThreshold = (this.mustBeClose() ? this.voice : this.peak) * CLOSE_RATIO;
-    let first = -1, last = -1, close = -1;
+  private loudFrames(e: number[] = this.segment, silent = -1): { first: number; last: number; close: number; closeEnd: number; closeAgain: boolean } {
+    const followUp = this.mode.kind === "listening" && this.mode.reason === "follow-up" && this.voice > 0;
+    const half = LOUD_FRAMES >> 1, threshold = this.peak * QUIET_RATIO, closeThreshold = (followUp ? this.voice : this.peak) * CLOSE_RATIO;
+    let first = -1, last = -1, close = -1, closeEnd = -1, closeAgain = false;
     for (let i = 0; i < e.length; i++) {
       const m = silent < 0 ? median(e, i - half, i + half + 1) : soundMedian(e, i - half, i + half + 1, silent);
+      if (m >= closeThreshold) {
+        if (close < 0) close = closeEnd = i;
+        else if (i - closeEnd <= CLOSE_GAP_FRAMES && !closeAgain) closeEnd = i;
+        else closeAgain = true;
+      }
       if (m < threshold) continue;
       if (first < 0) first = i;
-      if (close < 0 && m >= closeThreshold) close = i;
       last = i;
     }
-    return { first, last, close };
+    return { first, last, close, closeEnd, closeAgain };
   }
 
   /**
@@ -906,16 +998,21 @@ export class VoiceEngine {
    * `before`: a moment of what was heard before it (for a second try at a short one, see handleSegment).
    */
   private trim(seg: Float32Array, flushed = true): Clip | null {
-    const levels = framesOf(seg), { first, last, close } = this.loudFrames(levels, Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2);
+    const levels = framesOf(seg), { first, last, close, closeEnd, closeAgain } = this.loudFrames(levels, Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2);
     if (levels.length && (first < 0 || (this.mustBeClose() && close < 0))) return null;
+    const n = levels.length, wakePhrase = this.mode.kind === "listening" && this.mode.first && close >= 0;
     let from = 0, to = seg.length;
     if (flushed && first >= 0) {
-      const n = levels.length, start = this.mode.kind === "listening" && this.mode.first && close >= 0 ? close : first;
+      const start = wakePhrase ? close : first;
       to = Math.max(0, seg.length - Math.max(0, n - 1 - last - KEEP_AFTER_FRAMES) * 512);
       from = Math.max(0, seg.length - (n - start + KEEP_AFTER_FRAMES) * 512);
     }
     const audio = seg.subarray(from, Math.min(to, from + MAX_TRANSCRIBE));
-    return { audio, before: from ? seg.subarray(Math.max(0, from - RETRY_LEAD), from) : this.backend.before?.(seg) ?? null };
+    // Right after a wake in a room where others talk, the user's voice was as loud as the wake phrase only in it, and
+    // what goes to the recognizer goes on after it: what they said themselves is the wake phrase's stretch (see handleSegment).
+    const ownTo = seg.length - Math.max(0, n - 1 - closeEnd - OWN_AFTER_FRAMES) * 512;
+    const own = wakePhrase && this.busyRoom && !closeAgain && ownTo > from && ownTo < from + audio.length ? seg.subarray(from, ownTo) : undefined;
+    return { audio, before: from ? seg.subarray(Math.max(0, from - RETRY_LEAD), from) : this.backend.before?.(seg) ?? null, own };
   }
 
   private handleSegment(clip: Clip | null, cut = false): void {
@@ -930,14 +1027,34 @@ export class VoiceEngine {
       again.set(clip.audio, clip.before.length);
       heard = this.transcribe(again);
     }
-    const text = stripWake(heard, this.mode.first);
+    const bargeIn = !!this.mode.bargeIn, stopped = (t: string) => isStop(t) || (bargeIn && heardStopWord(t));
+    if (bargeIn && this.pendingStop?.bargeIn) this.pendingStop = null; // decided here, on what the window heard
+    if (bargeIn && saidWakeStop(heard)) {
+      // "Hey Ember, stop" with Ember's last words after it ("Hey Ember stopped Thursday at 2.").
+      this.emit({ type: "stop" });
+      this.endListening("stop");
+      return;
+    }
+    if (bargeIn && this.mode.first && heardOtherWord(heard) && !stopped(stripWake(heard, true))) {
+      // "Hey Amber, what time is the meeting?": the check (0.4 s after the name, over Ember's voice) made out too little;
+      // the whole of it is someone talking to an Amber ("Hey, Amber, be quiet." still stops: the safe side).
+      this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
+      this.endListening("rejected");
+      return;
+    }
+    let text = stripWake(heard, this.mode.first);
     this.mode.first = false;
-    if (!text || /^[\s.,!?]*$/.test(text) || isFiller(text)) {
+    if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
+      // "Hey Ember." and then only others' talk (a TV, colleagues: under the wake phrase's loudness): the user hasn't
+      // said their request yet.
+      text = "";
+    }
+    if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       return;
     }
-    if (isStop(text)) {
+    if (stopped(text)) {
       // "Hey Ember, stop": the kill phrase in other words, handled here and never sent anywhere (once: the spotter may have heard it too).
       this.pendingStop = null;
       this.emit({ type: "stop" });
@@ -985,8 +1102,19 @@ export class VoiceEngine {
   }
 }
 
-/** A segment as it goes to the recognizer, and a moment of what was heard before it (null: not known). */
-type Clip = { audio: Float32Array; before: Float32Array | null };
+/**
+ * A segment as it goes to the recognizer, and a moment of what was heard before it (null: not known); `own`: right
+ * after a wake, the part with the wake phrase's loudness, when sound went on after it (others' talk, or a softer request).
+ */
+type Clip = { audio: Float32Array; before: Float32Array | null; own?: Float32Array };
+
+/** "Hey." "A." (the wake phrase with its name cut off). */
+const LONE_GREETING = /^\W*(a|hey|hi|ok|okay|hay|pay|pey|they)\W*$/i;
+
+/** Words, not only punctuation, a cough or an "um". */
+function saysSomething(text: string): boolean {
+  return !!text && !/^[\s.,!?]*$/.test(text) && !isFiller(text);
+}
 
 /** The energy of each 512-sample frame of `seg`, counted back from its end (a flushed segment ends with the frame just heard). */
 function framesOf(seg: Float32Array): number[] {
