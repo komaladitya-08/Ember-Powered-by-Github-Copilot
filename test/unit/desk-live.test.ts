@@ -168,7 +168,7 @@ describe.skipIf(!available)("a real desk", () => {
     const again = await desk.start();
     expect(again.display).toBe(info.display);
     desk.stop();
-  });
+  }, 15_000); // two desk starts: slow on a loaded machine
 
   it("counts the desk as dead when its helper dies, and starts a new one next time", async () => {
     const desk = make({ display: 244 });

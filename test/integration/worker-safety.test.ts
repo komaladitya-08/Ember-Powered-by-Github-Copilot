@@ -781,7 +781,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
   describe("review round 4", () => {
     /** The same screen split into windows of several apps: perceive and switch_window pick one by title. */
     const apps = (screen: ReturnType<typeof fakeScreen>, wins: { app: string; name: string; ids: number[] }[]) => {
-      const W = (w: typeof wins[number], i: number) => ({ app: w.app, pid: 100 + i, name: w.name, role: "frame", active: i === 0, bounds: { x: 0, y: 0, width: 400, height: 300 } });
+      // (Pids that can't be the test's own: one equal to it reads as Ember's own window, as in a pid namespace.)
+      const W = (w: typeof wins[number], i: number) => ({ app: w.app, pid: process.pid + 100_000 + i, name: w.name, role: "frame", active: i === 0, bounds: { x: 0, y: 0, width: 400, height: 300 } });
       const pick = (title?: string) => wins.find(w => !title || w.name.toLowerCase().includes(title.toLowerCase())) ?? wins[0];
       const read = screen.perception.read, perceive = screen.perception.perceive;
       screen.perception.read = async (t?: { title?: string }) => { const w = pick(t?.title); const p = await read(); return { ...p, window: W(w, wins.indexOf(w)), nodes: p.nodes.filter(n => w.ids.includes(n.id)) }; };

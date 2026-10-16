@@ -154,6 +154,8 @@ lb.connect("row-selected", lambda b, r: emit(lang=r.get_child().get_text() if r 
 box.add(lb)
 w.add(box)
 w.connect("destroy", Gtk.main_quit)
+# Rows are chosen only in the active window: with no window manager (CI's bare X server) it takes the focus itself.
+w.connect("map-event", lambda *a: w.present())
 w.show_all()
 Gtk.main()
 `);
