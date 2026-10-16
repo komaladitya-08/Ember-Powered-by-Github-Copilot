@@ -35,12 +35,16 @@ export function askBounds(near: { x: number; y: number; size?: number } | null, 
   }
   const x = near ? near.x - SIZE.width / 2 : wa.x + (wa.width - SIZE.width) / 2;
   const b = { ...SIZE, x: Math.round(Math.min(Math.max(x, left), right)), y: Math.round(Math.min(Math.max(y, top), bottom)) };
+  return clearOf(b, wa, keepOff);
+}
+
+/** `b` moved off `keepOff` when over it: up above it (Ember is under the box, so this keeps clear of it too), else to its left. */
+function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
   if (!keepOff || !overlap(b, keepOff)) return b;
-  // Over the handle: move up above it (Ember is under the box, so this keeps clear of it too), else to its left.
   const up = Math.round(keepOff.y - SIZE.height - GAP);
-  if (up >= top) return { ...b, y: up };
+  if (up >= wa.y + GAP) return { ...b, y: up };
   const aside = Math.round(keepOff.x - SIZE.width - GAP);
-  return aside >= left ? { ...b, x: aside } : b;
+  return aside >= wa.x + GAP ? { ...b, x: aside } : b;
 }
 
 export class AskWindow {
@@ -97,6 +101,14 @@ export class AskWindow {
       this.win.focus();
       this.sendContext();
     }
+  }
+
+  /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */
+  keepClear(): void {
+    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
+    const b = this.win.getBounds();
+    const next = clearOf(b, screen.getDisplayMatching(b).workArea, this.keepOff());
+    if (next !== b) this.win.setBounds(next);
   }
 
   private keepOff(): Box | null {

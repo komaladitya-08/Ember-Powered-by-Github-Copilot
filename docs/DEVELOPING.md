@@ -117,7 +117,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 ### Asking Ember to do things
 
 Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember
-starts a task in the background, with a card in the top-right corner. It works through the app's
+starts a task in the background, with a card just above Ember's handle (bottom-right). It works through the app's
 accessibility interface, so your mouse and keyboard stay yours. Before its first action in an app it
 asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N**
 (not now), so you never need the mouse (the question shows the keys). **Always** is a click only: a global key could
@@ -145,7 +145,7 @@ agree.
 Say "on your desk" (or ask for a long typing job) and Ember opens the app on its own private,
 invisible display instead of yours. There it can use a full mouse and keyboard without
 borrowing yours, so you keep working undisturbed. A small **Ember's desk** window in the
-bottom-right corner shows what it is doing. Click **Take over** to enlarge it and use the desk
+bottom-left corner shows what it is doing. Click **Take over** to enlarge it and use the desk
 yourself (Ember pauses), then **Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
 The desk has its own clipboard, its own app settings (`~/.config/ember/desk-profiles`), only the environment its
 apps need (no tokens or keys), and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`

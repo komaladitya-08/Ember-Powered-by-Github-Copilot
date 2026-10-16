@@ -277,6 +277,11 @@ export class AgentHost {
     return this.status;
   }
 
+  /** A start failed for want of a network and will try again by itself: nothing for the user to set up. */
+  get waitingForNetwork(): boolean {
+    return this.retry !== null;
+  }
+
   getTranscript(): TranscriptEntry[] {
     return [...this.transcript];
   }

@@ -28,31 +28,37 @@ function beside(lb: Bounds, b: Bounds): number | null {
   return sameRow && gap >= -4 && gap < 320 ? gap : null;
 }
 
+/** Reads like a label, not a paragraph: short, one line, no sentence ending before more text. */
+const labelLike = (s: string) => s.length <= 40 && !/[\n\r]/.test(s) && !/[.!?]\s+\S/.test(s);
+
 /**
  * The label beside an unnamed control: on its row to its left, else just above it and over its left
  * part (from a little left of where it starts, for an indented field, to no further than its middle).
- * A label that already names a control on its own row (`claimed`) names nothing below it.
+ * A label that already names a control on its own row (`claimed`) names nothing below it. Text above
+ * names it only when it reads like a label (a paragraph over a text area is the page, not its name),
+ * unless `anyAbove` (secret detection: "Enter the password for your account at …" still counts).
  */
-function labelFor(b: Bounds, labels: AxNode[], claimed: Set<number>): string | null {
+function labelFor(b: Bounds, labels: AxNode[], claimed: Set<number>, anyAbove = false): string | null {
   let left: { name: string; gap: number } | null = null, above: { name: string; gap: number } | null = null;
   for (const l of labels) {
     const lb = l.bounds!;
     const gap = beside(lb, b);
     if (gap !== null && (!left || gap < left.gap)) left = { name: l.name, gap };
     const up = b.y - (lb.y + lb.height);
-    if (up >= -4 && up < 24 && lb.x <= b.x + b.width / 2 && lb.x + lb.width >= b.x - 16 && !claimed.has(l.id) && (!above || up < above.gap)) above = { name: l.name, gap: up };
+    if (up >= -4 && up < 24 && lb.x <= b.x + b.width / 2 && lb.x + lb.width >= b.x - 16 && !claimed.has(l.id) && (anyAbove || labelLike(l.name)) && (!above || up < above.gap)) above = { name: l.name, gap: up };
   }
   return left?.name ?? above?.name ?? null;
 }
 
-export function inferLabels(nodes: AxNode[]): Map<number, string> {
+/** `anyAbove`: any text just above an unnamed control names it, sentences too (for secret detection only). */
+export function inferLabels(nodes: AxNode[], { anyAbove = false } = {}): Map<number, string> {
   const labels = nodes.filter(n => LABEL_ROLES.has(n.role) && n.name && n.bounds);
   const controls = nodes.filter(n => NAMED_BY_ROW.has(n.role) && n.bounds);
   const claimed = new Set(labels.filter(l => controls.some(c => beside(l.bounds!, c.bounds!) !== null)).map(l => l.id));
   const out = new Map<number, string>();
   for (const n of nodes) {
     if (n.name || !n.bounds || !INTERACTIVE.has(n.role)) continue;
-    const name = labelFor(n.bounds, labels, claimed);
+    const name = labelFor(n.bounds, labels, claimed, anyAbove);
     if (name) out.set(n.id, name);
   }
   return out;
@@ -141,7 +147,7 @@ function besideField(f: Bounds, c: Bounds): boolean {
  * a bare "Show" or "Reveal" when the field is named like a key or code: they hold a password
  * even after it was revealed.
  */
-export function secretIds(nodes: AxNode[], labels = inferLabels(nodes)): Set<number> {
+export function secretIds(nodes: AxNode[], labels = inferLabels(nodes, { anyAbove: true })): Set<number> {
   const out = new Set<number>();
   const reveals = nodes.flatMap(n => { const kind = n.bounds ? revealKind(n) : null; return kind ? [{ b: n.bounds!, kind }] : []; });
   for (const n of nodes) {

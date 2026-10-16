@@ -175,6 +175,20 @@ print(json.dumps([e.SECRET_WORDS, e.SECRET_ANYWHERE]))
     expect(inferLabels(nodes).get(2)).toBe("Card number");
     expect([...secretIds(nodes)].sort()).toEqual([2, 3, 5]);
   });
+  it("doesn't name a field after a paragraph above it, but still finds a secret one by it", () => {
+    const at = (x: number, y: number, w = 300, h = 24) => ({ x, y, width: w, height: h });
+    const nodes = [
+      node(1, "label", "Thanks for writing to us. Tell us more about the problem below.", at(10, 10, 400, 18)),
+      node(2, "entry", "", at(10, 30, 400, 120), { text: "", states: ["enabled", "sensitive", "multi line"] }),
+      node(3, "label", "Enter the password for your account at example.com", at(10, 170, 400, 18)),
+      node(4, "entry", "", at(10, 190), { text: "hunter2" }),
+      node(5, "label", "Your message", at(10, 230, 100, 18)),
+      node(6, "entry", "", at(10, 250), { text: "hello" }),
+    ];
+    const labels = inferLabels(nodes);
+    expect([labels.get(2), labels.get(4), labels.get(6)]).toEqual([undefined, undefined, "Your message"]);
+    expect([...secretIds(nodes)]).toEqual([4]);
+  });
 });
 
 describe("screen words", () => {

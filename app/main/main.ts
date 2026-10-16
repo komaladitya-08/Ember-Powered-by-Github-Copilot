@@ -19,6 +19,7 @@ import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
 import { openX11 } from "./x11";
+import { friendlyApp } from "../shared/apps";
 import { AtspiSidecar, pickPython } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { isSecurityWindow } from "./policy/policy";
@@ -326,7 +327,7 @@ function start(): void {
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
-    if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; overlay?.setHidden(true); }
+    if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
   };
@@ -344,15 +345,18 @@ function start(): void {
     const name = CHARACTER_NAMES[settings.get().character];
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
+    // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
+    const waiting = phase === "error" && (agent?.waitingForNetwork ?? false);
     const keys = hasKey("Control+Alt+Space") && hasKey("Control+Alt+X")
       ? "Press Ctrl+Alt+Space to ask me anything; Ctrl+Alt+X stops me."
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
-    const thought = !connected
+    const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
+      : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey("Control+Alt+E") ? " (Ctrl+Alt+E)" : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: "idle" as const, title: `Hi, I'm ${name}!`, thought,
-      actions: connected || settingsOpen ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: `Hi, I'm ${name}!`, thought,
+      actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
@@ -361,24 +365,31 @@ function start(): void {
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
   /** Quitting with tasks under way asks first (they would stop half-way). */
-  const quitEmber = async () => {
-    const n = busyTasks();
-    if (n) {
-      const { response } = await dialog.showMessageBox({
-        type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0,
-        title: "Quit Ember?", message: `Ember is still working on ${n === 1 ? "a task" : `${n} tasks`}.`, detail: "Quitting stops it where it is.",
-      });
-      if (response !== 1) return;
-    }
-    app.quit();
-  };
+  // One question at a time: Quit chosen again while it is up doesn't stack a second one behind it.
+  let quitAsking: Promise<void> | null = null;
+  const quitEmber = () => quitAsking ??= (async () => {
+    try {
+      const n = busyTasks();
+      if (n) {
+        const { response } = await dialog.showMessageBox({
+          type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0,
+          title: "Quit Ember?", message: `Ember is still working on ${n === 1 ? "a task" : `${n} tasks`}.`, detail: "Quitting stops it where it is.",
+        });
+        if (response !== 1) return;
+      }
+      app.quit();
+    } finally { quitAsking = null; }
+  })();
+  /** The handle's menu is open (or opening): a second click doesn't open another one over it. */
+  let menuOpen = false;
   const showMenu = () => {
-    if (!handle) return;
+    if (!handle || menuOpen) return;
+    const win = handle.win;
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
     const label = (text: string, accel: string) => hasKey(accel) ? `${text}   ${accel.replace("Control", "Ctrl")}` : text;
-    Menu.buildFromTemplate([
+    const menu = Menu.buildFromTemplate([
       { label: label("Ask Ember…", "Control+Alt+Space"), click: openAsk },
       { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
@@ -388,10 +399,37 @@ function start(): void {
       { type: "separator" },
       { label: label("Settings…", "Control+Alt+E"), click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
-      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; overlay?.setHidden(!hidden); presenceChanged(); } },
+      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
       { label: "Quit Ember", click: () => { void quitEmber(); } },
-    ]).popup({ window: handle.win });
+    ]);
+    // The handle never takes focus (a click on it leaves the user's app focused), so the menu's arrows, Enter
+    // and Esc would go to that app: the handle takes focus first (the window manager may refuse a toolbar
+    // window, so straight from X then), and gives it back after unless a menu item opened something that took
+    // it (the ask box, settings, the quit question). The menu opens once the focus has come: a focus change
+    // under an open menu closes it.
+    const before = xinputRef?.focusedWindow() ?? 0;
+    menuOpen = true;
+    const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
+      menuOpen = false;
+      if (win.isDestroyed()) return;
+      const kept = BrowserWindow.getFocusedWindow() === win;
+      win.setFocusable(false);
+      if (kept && !quitAsking && before) xinputRef?.activate(before);
+    }, 150) });
+    win.setFocusable(true);
+    if (win.isFocused()) { open(); return; }
+    let opened = false;
+    const go = () => {
+      if (opened) return;
+      opened = true; win.off("focus", go); clearTimeout(late);
+      if (win.isDestroyed()) menuOpen = false; else open();
+    };
+    // No focus within a moment (no X input here): the menu opens anyway, as it did before.
+    const late = setTimeout(go, 250);
+    win.once("focus", go);
+    win.focus();
+    if (xinputRef?.focusInput) xinputRef.focusInput(Number(win.getNativeWindowHandle().readUInt32LE(0)));
   };
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
@@ -439,7 +477,9 @@ function start(): void {
       return;
     }
     holdQuestionKeys();
-    // A question nobody can see expires as "no": a hidden Ember shows itself to ask.
+    // A question nobody can see expires as "no": a hidden Ember shows itself to ask (and stays shown,
+    // also when the compositor comes back while the question is on the card).
+    keptHidden = false;
     if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
     if (maySpeak()) {
       const keys = heldKeys().map(k => k.say);
@@ -478,7 +518,7 @@ function start(): void {
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
-    if (overlay?.isHidden() && !shownForAnswer) { shownForAnswer = true; overlay.setHidden(false); }
+    if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 1.5 s.
@@ -494,7 +534,7 @@ function start(): void {
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
-      const sees = t ? [t.app, t.title].filter(Boolean).join(" · ") || null : null;
+      const sees = t ? [t.app && friendlyApp(t.app), t.title].filter(Boolean).join(" · ") || null : null;
       const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory };
       askWindow.setContext(ctx);
     });
@@ -522,6 +562,9 @@ function start(): void {
   };
   let lastAskByVoice = false;
   let shownForAnswer = false;
+  /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
+  let keptHidden = false;
+  let xinputRef: ReturnType<typeof openXInput> = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
   let showBorrowing: (() => void) | null = null;
   /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
@@ -687,7 +730,7 @@ function start(): void {
   ipcMain.handle(IPC.presence, guard(presence));
   ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
     const want = (p && typeof p === "object" ? p : {}) as { hidden?: unknown; paused?: unknown };
-    if (typeof want.hidden === "boolean") { shownForAnswer = false; overlay?.setHidden(want.hidden); }
+    if (typeof want.hidden === "boolean") { shownForAnswer = false; keptHidden = want.hidden; overlay?.setHidden(want.hidden); }
     if (typeof want.paused === "boolean") { followPaused = want.paused; overlay?.setPaused(followPaused); }
     broadcast(IPC.presenceChanged, presence());
     return presence();
@@ -742,7 +785,7 @@ function start(): void {
     if (handle && event.sender === handle.win.webContents) showMenu();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
-    if (handle && event.sender === handle.win.webContents && typeof height === "number") handle.fit(height);
+    if (handle && event.sender === handle.win.webContents && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
   });
 
   settings.onChange((s) => {
@@ -824,7 +867,6 @@ function start(): void {
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
     askWindow.setOpaque(!compositing);
-    let keptHidden = false;
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
       const p = x11?.pointer();
@@ -876,9 +918,11 @@ function start(): void {
         askWindow.setOpaque(!now);
         log.warn("overlay.compositor_changed", { compositing: now });
         // "Hide Ember" outlives the switch (the overlay that knew it is gone while there is no compositor).
-        if (overlay) keptHidden = overlay.isHidden();
-        if (now) makeOverlay(keptHidden); else { overlay?.stop(); overlay = null; }
+        // Shown only for an answer still counts as hidden: it hides again when the answer goes.
+        if (overlay) keptHidden = overlay.isHidden() || shownForAnswer;
+        if (now) makeOverlay(keptHidden && !shownForAnswer); else { overlay?.stop(); overlay = null; }
         makeHandle();
+        askWindow.keepClear();
         // What the new windows don't know yet: the settings window to keep off, a borrow under way.
         stepAside();
         showBorrowing?.();
@@ -953,7 +997,7 @@ function start(): void {
       keyHint: questionKeyHint,
     });
     const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
-    const xinput = x11 ? openXInput() : null;
+    const xinput = xinputRef = x11 ? openXInput() : null;
     if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
     // A borrow still running lets go (keys up, pointer home) before the connection closes.
     app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
@@ -1082,12 +1126,15 @@ function start(): void {
       onEvent: onVoice,
       onState: (state, detail) => {
         setState({ mic: state });
-        // The microphone went off (muted, listening turned off, the voice process died) while "Listening…"
-        // was up: nothing more will be heard, so it goes, and the bubble is given back.
-        if (state !== "active" && state !== "waiting" && lastState.bubble.mood === "listening") {
-          setStatus("listen", null);
-          setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-          agent?.releaseBubble(lastState.bubble);
+        // The microphone went off (muted, listening turned off, the voice process died): nothing more will be
+        // heard, so "Listening…" goes (the bubble is given back), and so do a follow-up window's status line and
+        // listening pose (its "listening off" never comes now).
+        if (state !== "active" && state !== "waiting") {
+          if (statusBy.listen) setStatus("listen", null);
+          if (lastState.bubble.mood === "listening") {
+            setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+            agent?.releaseBubble(lastState.bubble);
+          } else if (lastState.emotion === "listening") setState({ emotion: "neutral" });
         }
         broadcast(IPC.voiceStatus, voiceStatus(detail));
       },

@@ -49,6 +49,11 @@ export interface XInput {
   focusedWindow(): number;
   /** Asks the window manager to activate a window (_NET_ACTIVE_WINDOW). */
   activate(window: number): void;
+  /**
+   * Gives one of Ember's own windows the keyboard at once (XSetInputFocus), where the window manager
+   * wouldn't activate it (openbox never activates a toolbar window on its own).
+   */
+  focusInput?(window: number): void;
   sync(): void;
   /** Lets go of every key and mouse button Ember pressed and hasn't released yet (close() does this too). */
   releaseAll(): void;
@@ -401,6 +406,11 @@ export function openXInput(displayName?: string): XInput | null {
         ev.writeBigInt64LE(0n, 64);                   // timestamp: current time
         const SubstructureRedirectMask = 1 << 20, SubstructureNotifyMask = 1 << 19;
         XSendEvent(dpy, root, 0, SubstructureRedirectMask | SubstructureNotifyMask, ev);
+        XFlush(dpy);
+      },
+      focusInput(window) {
+        if (!open) return;
+        XSetInputFocus(dpy, window, 2 /* RevertToParent */, 0 /* CurrentTime */);
         XFlush(dpy);
       },
       layout() {
