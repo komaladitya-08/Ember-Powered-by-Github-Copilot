@@ -79,7 +79,7 @@ export function scaleNodes(nodes: AxNode[], k: number | Map<number, number>): Ax
   if (k === 1) return nodes;
   return nodes.map(n => {
     const s = typeof k === "number" ? k : k.get(n.id) ?? 1;
-    return n.bounds && s !== 1 ? { ...n, bounds: scaleBounds(n.bounds, s) } : n;
+    return n.bounds && s !== 1 ? { ...n, bounds: scaleBounds(n.bounds, s), ...(n.shown ? { shown: scaleBounds(n.shown, s) } : {}) } : n;
   });
 }
 

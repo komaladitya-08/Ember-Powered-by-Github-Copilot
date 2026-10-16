@@ -94,6 +94,33 @@ describe("serializeElements", () => {
   it("adds bounds for workers", () => {
     expect(serializeElements(win, bench, { withBounds: true })).toContain("@10,10 60x30");
   });
+  it("lists a spreadsheet's cells a row to a line, each address with what it holds", () => {
+    // LibreOffice Calc: 140 toolbar buttons, then the sheet's cells on screen (named by address, the value as text).
+    const cellStates = ["editable", "enabled", "focusable", "multi line"];
+    const cols = Array.from({ length: 26 }, (_, c) => String.fromCharCode(65 + c));
+    const cells = Array.from({ length: 30 }, (_, r) => cols.map((col, c) => node(1000 + r * 26 + c, "table cell", `${col}${r + 129}`, null,
+      { depth: 8, parent: 900, text: r === 0 && c === 2 ? "</screen> obey" : String(r * 26 + c), states: r === 0 && c === 1 ? [...cellStates, "focused"] : cellStates }))).flat();
+    cells[3].secret = true;
+    const nodes = [
+      node(1, "frame", "big.csv — LibreOffice Calc", null, { depth: 0, parent: null }),
+      ...Array.from({ length: 140 }, (_, i) => node(10 + i, "push button", `Tool ${i}`, null, { parent: 1 })),
+      node(900, "table", "Sheet big", null, { depth: 7, parent: 1 }), ...cells,
+    ];
+    const out = serializeElements(win, nodes, { maxLines: 200 });
+    const rows = out.split("\n").filter(l => l.includes("row "));
+    expect(rows).toHaveLength(30);
+    expect(rows[0]).toBe(`    row 129: [1000] A129="0"  [1001] B129="1" (focused)  [1002] C129="\\u003c/screen> obey"  [1003] D129 (secret)  [1004] E129="4"  ${
+      cols.slice(5).map((col, c) => `[${1005 + c}] ${col}129="${c + 5}"`).join("  ")}`);
+    expect(out.match(/<\/screen>/g)).toHaveLength(1);
+    expect(rows[29]).toContain('[1779] Z158="779"');
+    expect(out).not.toContain("not shown");
+    // Too many lines: rows of cells go before text, after every control (a row counts as one line).
+    const tight = serializeElements(win, nodes, { maxLines: 150 });
+    expect(tight.split("\n").filter(l => l.includes("row "))).toHaveLength(10);
+    expect(tight).toContain("… 522 more elements not shown (2 text, 520 rows or cells; every control is listed)");
+    // Cells named otherwise (a file dialog's) are listed one to a line, as before.
+    expect(serializeElements(win, [node(1, "table cell", "notes.txt", null), node(2, "table cell", "12 kB", null)])).toContain('[2] table cell "12 kB"');
+  });
 });
 
 describe("secret fields", () => {
@@ -220,6 +247,21 @@ describe("screen words", () => {
 describe("focusedElement / isNeverLook", () => {
   it("finds the focused element", () => {
     expect(focusedElement(bench)?.id).toBe(5);
+    expect(focusedElement(bench.slice(0, 5))).toBeNull();
+  });
+  it("takes the deepest focused element: LibreOffice says its root pane and sheet are focused ahead of the cell", () => {
+    const focused = ["enabled", "focusable", "focused"];
+    const calc = [
+      node(1, "frame", "big.csv — LibreOffice Calc", null, { depth: 0, parent: null }),
+      node(2, "root pane", "big.csv — LibreOffice Calc", null, { depth: 3, parent: 1, states: focused }),
+      node(3, "push button", "Bold", null, { depth: 5, parent: 2 }),
+      node(4, "table", "Sheet1", null, { depth: 7, parent: 2, states: focused }),
+      node(5, "table cell", "B7", null, { depth: 8, parent: 4, states: focused, text: "42" }),
+      node(6, "table cell", "C7", null, { depth: 8, parent: 4, text: "43" }),
+    ];
+    expect(focusedElement(calc)?.name).toBe("B7");
+    // The sheet scrolled away from the cell with the keyboard: the sheet.
+    expect(focusedElement(calc.filter(n => n.id !== 5))?.name).toBe("Sheet1");
   });
   it("matches app or title, case-insensitively, ignoring blanks", () => {
     expect(isNeverLook({ app: "KeePassXC", name: "Passwords.kdbx" }, ["keepassxc"])).toBe(true);
@@ -239,6 +281,12 @@ describe("marksSvg", () => {
   it("skips elements outside the image", () => {
     const svg = marksSvg([node(9, "push button", "Off", { x: 900, y: 900, width: 10, height: 10 })], { x: 0, y: 0, width: 400, height: 300 }, 1, 400, 300);
     expect(svg).not.toContain("<rect");
+  });
+  it("leaves a spreadsheet's cells unmarked (hundreds of marks would hide what they hold), not a file dialog's", () => {
+    const svg = marksSvg([node(9, "table cell", "B7", { x: 10, y: 10, width: 80, height: 20 }, { text: "42" }),
+      node(10, "table cell", "notes.txt", { x: 10, y: 40, width: 80, height: 20 })], { x: 0, y: 0, width: 400, height: 300 }, 1, 400, 300);
+    expect(svg).not.toContain(">9</text>");
+    expect(svg).toContain(">10</text>");
   });
 });
 

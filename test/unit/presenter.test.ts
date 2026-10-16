@@ -312,6 +312,48 @@ describe("Presenter: one bubble, held while it's read (review round 3)", () => {
     expect(shown().at(-1)).toBe("task:Click File");
   });
 
+  it("a guide step that came while the answer streamed shows a moment after the answer is done, not after its reading time (review round 6)", () => {
+    const { talk, task, shown } = shared();
+    talk.userPrompt("show me how to add a contact");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Sure, I'll show you " } });
+    // The guide's first step, while the answer still streams.
+    task.event({ type: "tool.execution_start", data: { toolName: "point_at" } });
+    task.guide("Click Add to save the contact", "Step 1");
+    task.event({ type: "tool.execution_complete", data: { success: true } });
+    task.event({ type: "tool.execution_start", data: { toolName: "wait_for_click" } });
+    expect(shown().at(-1)).toBe("ember:Sure, I'll show you ");
+    vi.advanceTimersByTime(700);
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "where to click." } });
+    talk.event({ type: "assistant.message", data: { content: "Sure, I'll show you where to click." } });
+    talk.event({ type: "session.idle", data: {} });
+    expect(shown().at(-1)).toBe("ember:Sure, I'll show you where to click.");
+    vi.advanceTimersByTime(1400);
+    expect(shown().at(-1)).toBe("ember:Sure, I'll show you where to click.");
+    vi.advanceTimersByTime(100);
+    expect(shown().at(-1)).toBe("task:Click Add to save the contact");
+    // The answer's own reading time running out later doesn't take the step away.
+    vi.advanceTimersByTime(30_000);
+    expect(shown().at(-1)).toBe("task:Click Add to save the contact");
+  });
+
+  it("a guide step waiting behind an answer waits while the conversation is still at work after it", () => {
+    const { talk, task, shown } = shared();
+    talk.userPrompt("show me how to save");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Let me look first." } });
+    task.guide("Click File", "Step 1");
+    talk.event({ type: "assistant.message", data: { content: "Let me look first.", toolRequests: [{ name: "describe_screen" }] } });
+    // The conversation goes on working (a tool) before the moment is over: the step keeps waiting.
+    talk.event({ type: "tool.execution_start", data: { toolName: "describe_screen" } });
+    vi.advanceTimersByTime(2000);
+    expect(shown().at(-1)).toMatch(/^ember:/);
+    talk.event({ type: "tool.execution_complete", data: { success: true } });
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Done." } });
+    talk.event({ type: "assistant.message", data: { content: "Done." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(1500);
+    expect(shown().at(-1)).toBe("task:Click File");
+  });
+
   it("a task's result waits for the answer being read, then shows and goes on its own", () => {
     const { talk, task, shown, answer } = shared();
     task.taskStarted();

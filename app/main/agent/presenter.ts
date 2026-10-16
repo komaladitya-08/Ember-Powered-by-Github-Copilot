@@ -98,6 +98,8 @@ export class BubbleOwner {
   private stage: { p: Presenter; at: number } | null = null;
   /** The presenter whose bubble was on screen when main took the bubble: main's own covers it until main's hold ends. */
   private covered: Presenter | null = null;
+  /** A guide step waits behind an answer that has finished: it shows when this fires. */
+  private stepTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
@@ -156,6 +158,23 @@ export class BubbleOwner {
     this.current = p;
     if (claim !== "progress") this.holder = p;
     else if (this.holder === p) this.holder = null;
+  }
+
+  /**
+   * `p`'s bubble on screen is complete (its answer finished streaming). A guide step that came while it streamed, and
+   * hasn't shown yet, replaces it ACK_MS later rather than after its whole reading time: the user is to act on the
+   * step (the answer stays in the transcript, and "Read the last answer" has it).
+   */
+  finished(p: Presenter): void {
+    if (this.stepTimer || this.holder !== p || !this.showing.some(x => x !== p && x.stepWaiting)) return;
+    this.stepTimer = this.timers.set(() => {
+      this.stepTimer = null;
+      const h = this.holder;
+      // Something else took the bubble meanwhile: the step waits for that one to finish instead.
+      if (h !== p) { if (h instanceof Presenter && !h.busy) this.finished(h); return; }
+      if (p.busy) return;
+      [...this.showing].reverse().find(x => x !== p && x.stepWaiting)?.reshow("step");
+    }, ACK_MS);
   }
 
   /** `p` has nothing to show any more (and holds nothing). */
@@ -263,6 +282,8 @@ export class Presenter {
   private silent = false;
   /** A guide step is up: the guide holds the bubble until its next step or its outcome (not just while pointing). */
   private guiding = false;
+  /** The latest guide step hasn't been on screen yet. */
+  private newStep = false;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
   /** How the bubble this presenter shows claimed it (see Claim). */
   kind: Claim = "progress";
@@ -304,8 +325,11 @@ export class Presenter {
     this.kind = claim;
     const ok = this.owner.allows(this, claim);
     this.unseen = !ok;
+    if (ok) this.newStep = false;
     this.owner.wrote(this, claim, ok);
     if (ok) this.push({ ...patch, bubble: this.state.bubble });
+    // Its answer is complete on screen: a guide step waiting behind it may show soon.
+    if (ok && claim !== "progress" && !this.busy) this.owner.finished(this);
     return ok;
   }
 
@@ -334,6 +358,11 @@ export class Presenter {
     return this.unseen && this.visible;
   }
 
+  /** A guide step that hasn't been on screen yet is waiting to show. */
+  get stepWaiting(): boolean {
+    return this.guiding && this.newStep && this.waiting;
+  }
+
   /** Its latest bubble (on screen or waiting), or the idle one when it has nothing to show. */
   get bubble(): Readonly<BubbleState> {
     return this.visible ? this.state.bubble : IDLE_BUBBLE;
@@ -353,12 +382,16 @@ export class Presenter {
     this.pendingHide = ms;
   }
 
-  /** Shows this presenter's bubble again after it waited or was covered; its hide starts now. False if there's nothing to show. */
-  reshow(): boolean {
+  /**
+   * Shows this presenter's bubble again after it waited or was covered; its hide starts now. False if there's nothing
+   * to show. `as`: how it claims the bubble ("step": a guide step replacing a finished answer).
+   */
+  reshow(as?: Claim): boolean {
     if (!this.visible) return false;
-    const claim = this.kind === "progress" ? "progress" : "reply";
+    const claim = as ?? (this.kind === "progress" ? "progress" : "reply");
     if (!this.owner.allows(this, claim)) return false;
     this.unseen = false;
+    this.newStep = false;
     this.owner.wrote(this, claim, true);
     this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
     if (this.pendingHide !== null) this.hideLater(this.pendingHide);
@@ -455,6 +488,7 @@ export class Presenter {
     this.answering = false;
     this.silent = false;
     this.guiding = true;
+    this.newStep = true;
     this.apply({
       emotion: "happy", talking: true, gesture: "point",
       bubble: { visible: true, mood: "guiding", title: this.name(), thought: say, step, streaming: false, actions: [] },

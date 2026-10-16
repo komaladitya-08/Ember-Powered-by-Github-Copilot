@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { typesCharacter } from "./policy";
 
 export interface AuditEntry {
   task?: string;
@@ -100,7 +101,8 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
  * The journal is readable by more people than the user's own 0600 audit file: what the user asked,
  * window titles, element names (an email's subject), chosen values (a form's answers) and error messages
  * (they can quote the app's own text) go there as sizes only (the full text stays in ~/.config/ember/audit).
- * Reasons stay: they are Ember's own words and app names.
+ * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
+ * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names.
  */
 export function journalLine(line: string): string {
   try {
@@ -110,6 +112,7 @@ export function journalLine(line: string): string {
     };
     for (const k of ["goal", "summary", "window", "error"]) size(e, k);
     if (!PLAIN_VALUE_KINDS.has(String(e.kind))) size(e, "value");
+    else if (e.kind === "keys" && typeof e.value === "string" && typesCharacter(e.value)) { delete e.value; e.chars = 1; }
     for (const k of ["element", "after"]) {
       if (e[k] && typeof e[k] === "object") {
         const copy = { ...(e[k] as Record<string, unknown>) };

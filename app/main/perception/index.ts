@@ -103,9 +103,10 @@ export class Perception {
 
   /**
    * A window's tree (see WindowTarget); with an empty target, the active window's. `stack`: the
-   * X11 windows when the caller has them (undefined: looked up when needed).
+   * X11 windows when the caller has them (undefined: looked up when needed). `keep: false`: a quick
+   * look whose ids aren't acted on, which keeps the ids of the reads that are (AtspiSidecar.readWindow).
    */
-  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null): Promise<Seen> {
+  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean } = {}): Promise<Seen> {
     const t0 = Date.now();
     const params = target.pid != null && target.path ? { pid: target.pid, path: target.path }
       : target.pid != null || target.title ? { ...(target.pid != null ? { pid: target.pid } : {}), ...(target.title ? { title: target.title } : {}) }
@@ -116,7 +117,7 @@ export class Perception {
     // "electron"): those processes aren't read at all.
     if (list.length && stack === undefined) stack = this.stackNow();
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}) })
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}) })
       : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
     let res = await ask();
     if (res.busy) {

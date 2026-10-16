@@ -940,6 +940,102 @@ describe("review round 3: what Ember asks about is what it does", () => {
         expect(lastToolResult("Write Servus")).toMatch(/held a password from their password manager, so Ember didn't put it back/);
       });
     });
+
+    describe("review round 6", () => {
+      const CODE_MAIL: FakeNode = { id: 10, role: "paragraph", name: "", text: "Your password reset code: 448812" };
+      const MAIL_AND_SURVEY = [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2] }, { app: "Thunderbird", name: "Inbox - Thunderbird", ids: [10] }];
+      /** A worker whose windows are all on Ember's desk, where keys need no borrowing. */
+      const deskWorker = (screen: ReturnType<typeof fakeScreen>, goal: string, o: { target: { title: string }; confirmer: Confirmer; keyLog: string[] }) => {
+        const place = { info: { handOff: dir }, perception: screen.perception, sidecar: screen.sidecar, input: fakeX({ log: o.keyLog }),
+          userInControl: () => false, dead: false, onDead: () => undefined, close: () => undefined, open: () => 4242 };
+        const w = makeWorker(screen, goal, { target: o.target, confirmer: o.confirmer, desk: async () => place as never });
+        (w as unknown as { setPlace: (p: unknown) => void }).setPlace(place);
+        return w;
+      };
+      const keysOf = (k: string[]) => k.map(keys => ({ tool: { name: "press_keys", args: { keys } } }));
+      const downs = (log: string[]) => log.filter(l => l.startsWith("key") && l.endsWith("down"));
+
+      it("text appended in pieces that spell a code read in another app is asked about at the piece that completes it (SEC6-1)", async () => {
+        // The field's text can't be read back (what the task typed there counts), it can, or it held the first half already.
+        for (const [goal, field, pieces] of [["Add the code to the survey", undefined, ["448", "812"]], ["Add the code to the survey too", "", ["448", "812"]],
+          ["Finish the code in the survey", "448", ["812"]]] as const) {
+          plan(goal, [perceive, { tool: { name: "switch_window", args: { title: "Survey" } } },
+            ...pieces.map(text => ({ tool: { name: "type_text", args: { id: 2, text, mode: "append" } } })), { tool: { name: "finish_task", args: { success: true, summary: "added" } } }]);
+          const screen = apps(fakeScreen([SURVEY[0], { ...SURVEY[1], text: field }, CODE_MAIL]), MAIL_AND_SURVEY);
+          const set = screen.sidecar.setText;
+          screen.sidecar.setText = async (id: number, t?: string) => { const n = screen.live.get(id)!; if (n.text !== undefined) n.text += t ?? ""; return set(id); };
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(screen, goal, { grants: { firefox: "act" }, target: { title: "Inbox" }, confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), goal).toEqual(["Type “812” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
+          expect(screen.log.map(e => e.what), goal).toEqual(pieces.length > 1 ? ["setText 2"] : []);
+        }
+      });
+
+      it("on the desk, keys typed one by one stay one text across a caret move, and are judged with the field's own text (SEC6-3)", async () => {
+        for (const [goal, held, keys] of [["Put the code in the sheet", "", ["4", "4", "8", "End", "8", "1"]], ["Finish the code in the sheet", "Code: 448 81", ["2"]]] as const) {
+          plan(goal, [perceive, { tool: { name: "switch_window", args: { title: "Sheet" } } }, ...keysOf([...keys])]);
+          const screen = apps(fakeScreen([CODE_MAIL, { id: 41, role: "text", name: "Cell", text: held, states: [...EDITABLE, "focused"] }]),
+            [{ app: "Thunderbird", name: "Inbox - Thunderbird", ids: [10] }, { app: "gnumeric", name: "Sheet", ids: [41] }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          await deskWorker(screen, goal, { target: { title: "Inbox" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+          // Every key but the last went in; the last makes the field read the code.
+          expect(downs(keyLog), goal).toHaveLength(keys.length - 1);
+          expect(asked.map(a => a.prompt), goal).toEqual([`Borrow your keyboard to press ${keys[keys.length - 1]} on “Cell” text in Gnumeric (on my desk)? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.`]);
+        }
+      });
+
+      it("after Ctrl+A on a long document, a symbol or text typed at the caret replaces it all and is asked about; Ctrl+C keeps the selection (DK6-2)", async () => {
+        const DOC: FakeNode = { id: 50, role: "text", name: "Document", text: "Notes\n".repeat(60), states: [...EDITABLE, "focused"] };
+        plan("Tidy the desk document", [perceive, ...keysOf(["ctrl+a", "ctrl+c", "period"])]);
+        const screen = apps(fakeScreen([DOC]), [{ app: "gedit", name: "notes.txt - gedit", ids: [50] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        const keyLog: string[] = [];
+        await deskWorker(screen, "Tidy the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+        expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to press . on “Document” text in gedit (on my desk)?"]);
+        // Ctrl+A and Ctrl+C went in, never the period.
+        expect(downs(keyLog)).toHaveLength(4);
+
+        plan("Retitle the desk document", [perceive, ...keysOf(["ctrl+a"]), { tool: { name: "type_text", args: { id: 50, text: "Hello", mode: "insert" } } }]);
+        const second = apps(fakeScreen([DOC]), [{ app: "gedit", name: "notes.txt - gedit", ids: [50] }]);
+        const asked2: { prompt: string; options: string[] }[] = [];
+        await deskWorker(second, "Retitle the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked2), keyLog: [] }).run(new AbortController().signal);
+        expect(asked2.map(a => a.prompt)).toEqual(["Replace the text in “Document” text in gedit with “Hello” (on my desk)?"]);
+        expect(second.log).toEqual([]);
+      });
+
+      it("Files showing the ~/Ember folder (a window titled “Ember” in another process) is listed, read and acted in (DK6-1)", async () => {
+        plan("Open the summary Ember made", [{ tool: { name: "list_windows", args: {} } }, { tool: { name: "switch_window", args: { title: "Ember" } } }, { tool: { name: "click", args: { id: 60 } } }]);
+        const screen = apps(fakeScreen([{ id: 60, role: "push button", name: "summary.pdf" }]), [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [] }, { app: "nautilus", name: "Ember", ids: [60] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        await makeWorker(screen, "Open the summary Ember made", { grants: { nautilus: "act" }, target: { title: "Survey" }, confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+        const results = toolResults("Open the summary Ember made");
+        expect(results[0]).toMatch(/Ember/);
+        expect(results[1]).not.toMatch(/one of Ember's own windows/);
+        expect(asked).toEqual([]);
+        expect(screen.log.map(e => e.what)).toEqual([expect.stringMatching(/^doAction 60 /)]);
+      });
+
+      it("the ids of a perceive_window survive ten press_keys: the looks at what has the keyboard don't use up the sidecar's kept reads", async () => {
+        plan("Type ten letters, then make it bold", [perceive, ...keysOf(Array(10).fill("a")), { tool: { name: "click", args: { id: 2 } } }]);
+        const screen = apps(fakeScreen([{ id: 1, role: "text", name: "Notes", text: "", states: [...EDITABLE, "focused"] }, { id: 2, role: "push button", name: "Bold" }]),
+          [{ app: "gedit", name: "notes.txt - gedit", ids: [1, 2] }]);
+        // Like the sidecar: it keeps the last 8 reads acted on; a quick look (keep: false) isn't one of them.
+        let kept = 0, perceivedAt = 0;
+        const read = screen.perception.read as (t?: unknown) => ReturnType<typeof screen.perception.read>;
+        const perceiveIt = screen.perception.perceive as (o?: unknown) => ReturnType<typeof screen.perception.perceive>, readElement = screen.sidecar.readElement;
+        screen.perception.read = async (t?: { title?: string }, _x?: unknown, _s?: unknown, o?: { keep?: boolean }) => { if (o?.keep !== false) kept++; return read(t); };
+        screen.perception.perceive = async (o?: { target?: { title?: string } }) => { kept++; perceivedAt = kept; return perceiveIt(o); };
+        screen.sidecar.readElement = async (id: number) => {
+          if (kept - perceivedAt >= 8) throw new Error(`element ${id} is no longer known; read the window again`);
+          return readElement(id);
+        };
+        const keyLog: string[] = [];
+        await deskWorker(screen, "Type ten letters, then make it bold", { target: { title: "notes" }, confirmer: asking(["deny"], []), keyLog }).run(new AbortController().signal);
+        expect(downs(keyLog)).toHaveLength(10);
+        expect(screen.log.map(e => e.what)).toEqual([expect.stringMatching(/^doAction 2 /)]);
+      });
+    });
   });
 });
 

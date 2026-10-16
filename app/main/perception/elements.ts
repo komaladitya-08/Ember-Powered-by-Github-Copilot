@@ -193,6 +193,26 @@ export interface SerializeOptions {
 /** Rows and cells: many of them in a list, each one item of content rather than a control. */
 const ITEM_ROLES = new Set(["list item", "table cell", "tree item", "icon"]);
 
+/** A spreadsheet's cell is named by its address ("B7": LibreOffice Calc). Keep in step with CELL_ADDRESS in ember_atspi.py. */
+const CELL_ADDRESS = /^\$?[A-Z]{1,3}\$?[1-9][0-9]{0,6}$/;
+/** A spreadsheet's cell: its name says where it is, its text what it holds. */
+export const isSheetCell = (n: Pick<AxNode, "role" | "name">) => n.role === "table cell" && CELL_ADDRESS.test(n.name);
+/** The row of a spreadsheet's cell ("7" for "B7"). */
+const sheetRow = (n: AxNode) => n.name.replace(/^\$?[A-Z]+\$?/, "");
+/** States every spreadsheet cell has: not worth a word on each. */
+const PLAIN_CELL_STATES = new Set(["enabled", "sensitive", "focusable", "editable", "multi line"]);
+
+/** One row of a spreadsheet's cells on one line, each `[id] B7="what it holds"` with any state worth saying. */
+function cellRow(cells: AxNode[]): string {
+  const bits = cells.map(c => {
+    const secret = isSecretNode(c);
+    const states = c.states.filter(s => !PLAIN_CELL_STATES.has(s));
+    if (secret) states.push("secret");
+    return `[${c.id}] ${c.name}${c.text && !secret ? `=${quote(c.text, 60)}` : ""}${states.length ? ` (${states.join(", ")})` : ""}`;
+  });
+  return `row ${sheetRow(cells[0])}: ${bits.join("  ")}`;
+}
+
 /**
  * How much an element says, for choosing what to list when there are too many: controls (3),
  * then rows and cells (2), then text and anything named (1), then unnamed containers (0).
@@ -213,16 +233,30 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
   // Indented by the elements listed above it: a web page's unnamed layers of <div>s add nothing.
   const level = new Map<number, number>();
   for (const n of nodes) level.set(n.id, n.parent !== null && level.has(n.parent) ? level.get(n.parent)! + 1 : 0);
+  // One line per element, but a spreadsheet's cells one line per row (hundreds of cells show at once).
+  const units: AxNode[][] = [];
+  for (const n of nodes) {
+    const prev = units[units.length - 1];
+    if (prev && isSheetCell(n) && isSheetCell(prev[0]) && prev[0].parent === n.parent && sheetRow(prev[0]) === sheetRow(n)) prev.push(n);
+    else units.push([n]);
+  }
   // Too many to list: what says least is left out first (unnamed containers, then text, then rows), in tree order.
-  let shown: Set<number> | null = null;
-  if (nodes.length > maxLines) {
-    const order = nodes.map((n, i) => ({ i, w: weight(n, labels) })).sort((a, b) => b.w - a.w || a.i - b.i);
-    shown = new Set(order.slice(0, maxLines).map(o => nodes[o.i].id));
+  let shown: Set<AxNode[]> | null = null;
+  if (units.length > maxLines) {
+    const order = units.map((u, i) => ({ u, i, w: Math.max(...u.map(n => weight(n, labels))) })).sort((a, b) => b.w - a.w || a.i - b.i);
+    shown = new Set(order.slice(0, maxLines).map(o => o.u));
   }
   const lines: string[] = [];
   const left = [0, 0, 0, 0];
-  for (const n of nodes) {
-    if (shown && !shown.has(n.id)) { left[weight(n, labels)]++; continue; }
+  let omitted = 0;
+  for (const unit of units) {
+    if (shown && !shown.has(unit)) {
+      for (const n of unit) left[weight(n, labels)]++;
+      omitted += unit.length;
+      continue;
+    }
+    const n = unit[0];
+    if (isSheetCell(n)) { lines.push("  ".repeat(level.get(n.id)!) + cellRow(unit)); continue; }
     const name = n.name || labels.get(n.id) || "";
     const bits = [`[${n.id}] ${screenWord(n.role)}`];
     if (name) bits.push(quote(name, 80) + (n.name ? "" : " (label)"));
@@ -242,14 +276,20 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
   if (shown) {
     const kinds = [[left[0], "without a name"], [left[1], "text"], [left[2], "rows or cells"], [left[3], "controls"]] as const;
     const what = kinds.filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}`).join(", ");
-    lines.push(`… ${nodes.length - shown.size} more elements not shown (${what}${left[3] ? "" : "; every control is listed"})`);
+    lines.push(`… ${omitted} more elements not shown (${what}${left[3] ? "" : "; every control is listed"})`);
   }
   const attrs = `app=${quote(window.app, 60)} window=${quote(window.name, 100)}`;
   return `<screen source="accessibility" ${attrs} untrusted="true">\n${[...opts.header ?? [], ...lines].join("\n")}\n</screen>`;
 }
 
+/**
+ * The element with the keyboard: the deepest one that says it is focused. LibreOffice says its root pane and the
+ * sheet are focused too, ahead of the cell (a read lists parents before what is in them).
+ */
 export function focusedElement(nodes: AxNode[]): AxNode | null {
-  return nodes.find(n => n.states.includes("focused")) ?? null;
+  let found: AxNode | null = null;
+  for (const n of nodes) if (n.states.includes("focused") && (!found || n.depth > found.depth)) found = n;
+  return found;
 }
 
 /** True when the app or window matches the user's "never look at" list. */

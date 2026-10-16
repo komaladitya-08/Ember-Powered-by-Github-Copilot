@@ -161,6 +161,92 @@ class Acc(object):
         return self.kids[i]
 
 
+def column_name(c):
+    """A spreadsheet's column: A..Z, AA.."""
+    name = ""
+    c += 1
+    while c:
+        c, rest = divmod(c - 1, 26)
+        name = chr(65 + rest) + name
+    return name
+
+
+class Sheet(Acc):
+    """LibreOffice Calc's sheet: a table of a million rows it makes cells for as they are asked for (2^31 children,
+    "manages descendants"), each named by its address with its value as text. Those scrolled away, above and below
+    the view alike, sit at its corner sized 0x0. Rows 20 px high, columns 80 px wide; `top` and `left` are the first
+    row and column on screen, `values` maps (row, column) to what a cell holds."""
+
+    ROWS, COLS = 1048576, 16384
+
+    def __init__(self, values, top=0, left=0, bounds=(37, 158, 1170, 556), focus=(0, 0)):
+        Acc.__init__(self, "table", "Sheet1", bounds=bounds,
+                     states=("showing", "visible", "enabled", "focusable", "focused", "manages descendants"))
+        self.values, self.top, self.left, self.focus = values, top, left, focus
+        self.made = 0
+        self.secret_at = None
+
+    @property
+    def childCount(self):
+        return 2 ** 31 - 1
+
+    def on_screen(self, r, c):
+        x, y, w, h = self.bounds
+        return self.top <= r < self.top + (h + 19) // 20 and self.left <= c < self.left + (w + 79) // 80
+
+    def cell(self, r, c):
+        if not (0 <= r < self.ROWS and 0 <= c < self.COLS):
+            raise IndexError(r, c)
+        self.made += 1
+        x, y, _, _ = self.bounds
+        states = ["visible", "enabled", "focusable", "editable", "multi line"]
+        if self.on_screen(r, c):
+            states.append("showing")
+            bounds = (x + (c - self.left) * 80, y + (r - self.top) * 20, 80, 20)
+        else:
+            bounds = (x - 1, y - 1, 0, 0)
+        if (r, c) == self.focus:
+            states.append("focused")
+        cell = Acc("table cell", "%s%d" % (column_name(c), r + 1), states=states, bounds=bounds,
+                   text=self.values.get((r, c), ""))
+        if (r, c) == self.secret_at:
+            cell.path = "/sheet/secret"
+        index = min(r * self.COLS + c, 2 ** 31 - 1)
+        cell.getIndexInParent = lambda: index
+        return cell
+
+    def getChildAtIndex(self, i):
+        self.child_reads += 1
+        return self.cell(i // self.COLS, i % self.COLS)
+
+    def queryTable(self):
+        cols = self.COLS
+        return types.SimpleNamespace(nRows=self.ROWS, nColumns=cols, getIndexAt=lambda r, c: min(r * cols + c, 2 ** 31 - 1),
+                                     getAccessibleAt=self.cell, getRowAtIndex=lambda i: i // cols,
+                                     getColumnAtIndex=lambda i: i % cols)
+
+    def queryComponent(self):
+        sheet, extents = self, Acc.queryComponent(self)
+
+        class C(object):
+            def getExtents(self, coords):
+                return extents.getExtents(coords)
+
+            def getAccessibleAtPoint(self, px, py, coords):
+                x, y, w, h = sheet.bounds
+                if not (x <= px < x + w and y <= py < y + h):
+                    return None
+                return sheet.cell(sheet.top + (py - y) // 20, sheet.left + (px - x) // 80)
+        return C()
+
+
+def calc_window(sheet, after=()):
+    """A Calc window: its sheet, then the rest of the window (`after`: the status bar)."""
+    doc = Acc("document spreadsheet", "", bounds=sheet.bounds, kids=[sheet])
+    return Acc("frame", "big.csv - LibreOffice Calc", bounds=(0, 0, 1280, 800),
+               kids=[Acc("push button", "Bold", bounds=(10, 30, 24, 24)), doc] + list(after))
+
+
 class Secrets(unittest.TestCase):
     def setUp(self):
         e.SECRETS = e.SecretFields()
@@ -492,16 +578,125 @@ class Reading(unittest.TestCase):
         finally:
             e.Atspi, e.native = saved
 
-    def test_cells_scrolled_away_with_no_size_end_the_secret_scan(self):
-        # LibreOffice Calc: a row of a million cells, those scrolled away at the table's corner with no size.
+    def test_a_list_whose_children_have_no_size_is_never_called_complete(self):
+        # A long list whose children scrolled away, above and below alike, sit at one corner with no size (Calc's
+        # cells, without its Table interface): their order says nothing, so what was read can't be vouched for.
         cells = [Acc("table cell", "C%d" % i, bounds=(37 + 82 * i, 158, 82, 17)) if i < 15
                  else Acc("table cell", "C%d" % i, bounds=(36, 157, 0, 0), states=("visible",)) for i in range(5000)]
         table = Acc("table", "Sheet1", bounds=(37, 158, 1170, 556), kids=cells)
         root = Acc("frame", "Calc", bounds=(0, 0, 1280, 800), kids=[Acc("document spreadsheet", "", bounds=(37, 158, 1170, 556), kids=[table])])
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertEqual([n["name"] for n in nodes if n["role"] == "table cell"], ["C%d" % i for i in range(15)])
+        self.assertEqual((budget.cut, budget.why), (True, ["nodes"]))
+        self.assertLess(table.child_reads, 100)
         found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
         e.scan_fields(root, 0, found, None, budget, [0])
+        self.assertTrue(budget.cut)
+        self.assertLess(table.child_reads, 200)
+        # One child without a size among ones with a size (an empty element in a web page) changes nothing.
+        root, lst = self.scrolled_list()
+        for i in range(0, 5000, 7):
+            lst.kids[i].bounds = (10, 0, 0, 0)
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertIn("row 2510", [n["name"] for n in nodes])
+        self.assertFalse(budget.cut)
+
+    def test_a_spreadsheet_is_read_where_it_is_scrolled_to(self):
+        # LibreOffice Calc scrolled 2000 rows down: the cells on screen, with what they hold, and the one with the
+        # keyboard (empty); the empty ones and those scrolled away (above and below) are not listed.
+        values = dict(((r, c), "v%d.%d" % (r, c)) for r in range(1990, 2010) for c in range(6))
+        values[(5, 0)] = "far above"
+        values[(9000, 0)] = "far below"
+        sheet = Sheet(values, top=2000, focus=(2012, 3))
+        root = calc_window(sheet, [Acc("status bar", "Sum=0", bounds=(0, 760, 1280, 24))])
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        cells = [n for n in nodes if n["role"] == "table cell"]
+        self.assertEqual([(n["name"], n.get("text")) for n in cells[:3]], [("A2001", "v2000.0"), ("B2001", "v2000.1"), ("C2001", "v2000.2")])
+        self.assertEqual(len(cells), 10 * 6 + 1)
+        self.assertEqual((cells[-1]["name"], cells[-1].get("text"), cells[-1]["states"][-1]), ("D2013", None, "focused"))
+        self.assertNotIn("far above", [n.get("text") for n in nodes])
+        self.assertEqual(set(n["parent"] for n in cells), set([n["id"] for n in nodes if n["role"] == "table"]))
+        self.assertEqual(cells[0]["bounds"], {"x": 37, "y": 158, "width": 80, "height": 20})
+        # The rest of the window is read too, and nothing on screen was left out.
+        self.assertEqual(nodes[-1]["name"], "Sum=0")
+        self.assertFalse(budget.cut or budget.over or budget.busy)
+        # Only the cells on screen were asked for (28 rows of 15), and none by its index (Calc's stop at 2^31).
+        self.assertLessEqual(sheet.made, 28 * 15 + 2)
+        self.assertEqual(sheet.child_reads, 0)
+        # An element found by id is the cell.
+        self.assertEqual(e.SNAPSHOTS.get(cells[0]["id"]).name, "A2001")
+
+    def test_a_full_spreadsheet_is_read_up_to_its_limit(self):
+        # Every cell on screen holds something: GRID_CELLS of them (on top of the window's own node limit), and the
+        # read says it was cut short.
+        sheet = Sheet(dict(((r, c), str(r * 100 + c)) for r in range(40) for c in range(20)))
+        root = calc_window(sheet, [Acc("status bar", "Sum=0", bounds=(0, 760, 1280, 24))])
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, 30, None, None, budget)
+        cells = [n for n in nodes if n["role"] == "table cell"]
+        self.assertEqual(len(cells), e.GRID_CELLS)
+        self.assertEqual((cells[-1]["name"], cells[-1]["text"]), ("J27", "2609"))  # row by row, 15 to a row
+        self.assertEqual(nodes[-1]["name"], "Sum=0")
+        self.assertEqual((budget.cut, budget.why), (True, ["nodes"]))
+        # Nor are its cells read for longer than GRID_BUDGET_S.
+        saved = e.GRID_BUDGET_S
+        e.GRID_BUDGET_S = 0
+        try:
+            budget, nodes = e.Budget(), []
+            e.walk(calc_window(Sheet({(0, 0): "1"})), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        finally:
+            e.GRID_BUDGET_S = saved
+        self.assertEqual([n for n in nodes if n["role"] == "table cell"], [])
+        self.assertEqual((budget.cut, budget.why), (True, ["nodes"]))
+
+    def test_a_spreadsheet_cell_known_to_be_secret_keeps_its_contents(self):
+        sheet = Sheet({(0, 0): "hunter2", (0, 1): "plain"}, focus=(5, 5))
+        sheet.secret_at = (0, 0)
+        e.SECRETS.add((":1.42", "/sheet/secret"))
+        nodes = []
+        e.walk(calc_window(sheet), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        cells = dict((n["name"], n) for n in nodes if n["role"] == "table cell")
+        self.assertEqual((cells["A1"].get("secret"), cells["A1"].get("text")), (True, None))
+        self.assertEqual(cells["B1"].get("text"), "plain")
+        self.assertNotIn("hunter2", json.dumps(nodes))
+
+    def test_cells_named_by_their_address_say_what_they_hold(self):
+        # A small sheet (a few cells, read as children): the address is the name, the value the text. A file
+        # dialog's cells are named by what they show, and not asked for their text.
+        nodes = []
+        cells = [Acc("table cell", "A1", text="Total"), Acc("table cell", "B1", text="42"), Acc("table cell", "notes.txt", text="notes.txt")]
+        e.walk(Acc("frame", "W", kids=[Acc("table", "", kids=cells)]), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([(n["name"], n.get("text")) for n in nodes if n["role"] == "table cell"],
+                         [("A1", "Total"), ("B1", "42"), ("notes.txt", None)])
+        self.assertEqual(cells[2].reads, 0)
+
+    def test_the_secret_scan_looks_at_a_spreadsheets_cells_on_screen(self):
+        # Calc's cells hold values, not fields: the scan is complete, asking only the cells on screen.
+        sheet = Sheet(dict(((r, c), "x") for r in range(100) for c in range(20)), top=50)
+        found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(calc_window(sheet), 0, found, None, budget, [0])
         self.assertFalse(budget.busy or budget.over or budget.cut)
-        self.assertLess(table.child_reads, 100)
+        self.assertEqual(found["fields"], [])
+        self.assertLessEqual(sheet.made, 28 * 15 + 2)
+        # Anything else in its grid is looked through.
+        entry = Acc("entry", "Card number", bounds=(117, 178, 80, 20))
+        cell = sheet.cell
+        sheet.cell = lambda r, c: entry if (r, c) == (51, 1) else cell(r, c)
+        found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(calc_window(sheet), 0, found, None, budget, [0])
+        self.assertEqual([acc for _, acc in found["fields"]], [entry])
+        # More cells on screen than the scan takes: it can't vouch for the window.
+        saved = e.SCAN_CHILDREN
+        e.SCAN_CHILDREN = 100
+        try:
+            found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+            e.scan_fields(calc_window(Sheet({})), 0, found, None, budget, [0])
+        finally:
+            e.SCAN_CHILDREN = saved
+        self.assertTrue(budget.cut)
 
     def test_secret_scan_reads_only_the_rows_on_screen(self):
         root, lst = self.scrolled_list()
@@ -637,6 +832,27 @@ class Ids(unittest.TestCase):
             b.get(stale)
         self.assertIn("no longer known", str(ctx.exception))
 
+    def test_quick_looks_keep_the_ids_of_the_reads_acted_on(self):
+        s = e.Snapshots(start=1)
+        s.begin()
+        kept = s.add(Acc("push button", "Bold"))
+        # A key pressed ten times: before each, a look at what has the keyboard (twice: before and once in front).
+        for _ in range(20):
+            s.begin(keep=False)
+            look = s.add(Acc("text", "Notes"))
+            s.end()
+        self.assertEqual(s.get(kept).name, "Bold")
+        self.assertEqual(s.get(look).name, "Notes")
+        # Ids added after a look (secret fields for a screenshot) go with the newest kept read, not the look's.
+        later = s.add(Acc("password text", ""))
+        s.begin(keep=False)
+        self.assertEqual(s.get(later).role, "password text")
+        # Kept reads still push out the oldest kept ones.
+        for _ in range(e.Snapshots.KEEP):
+            s.begin()
+        with self.assertRaises(KeyError):
+            s.get(kept)
+
 
 class Acting(unittest.TestCase):
     def setUp(self):
@@ -735,6 +951,121 @@ class Acting(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self.act_on(quiet, "read_element")
         self.assertEqual(str(ctx.exception), e.BUSY)
+
+    # Review round 6: Chromium (Chrome, Electron apps) and Firefox name their actions by what they do now.
+    @staticmethod
+    def checkable(role, name, names, checked=False):
+        """A control whose actions `names(acc)` are named by its state, as Chromium's are; the ones done are kept."""
+        acc = Acc(role, name, states=("showing", "visible", "enabled", "sensitive") + (("checked",) if checked else ()))
+        acc.done = []
+
+        def do(i):
+            n = names(acc)[i].lower()
+            acc.done.append(n)
+            on = "checked" in acc.states
+            if n in ("check", "select") or (n == "dodefault" and not on):
+                acc.states.append("checked")
+            elif on and n in ("uncheck", "dodefault"):
+                acc.states.remove("checked")
+            return True
+        acc.queryAction = lambda: types.SimpleNamespace(nActions=len(names(acc)), getName=lambda i: names(acc)[i], doAction=do)
+        return acc
+
+    def test_check_boxes_radio_buttons_and_switches_in_chromium_and_firefox(self):
+        chromium = lambda acc: ["uncheck" if "checked" in acc.states else "check", "showContextMenu"]
+        settle, e.settle = e.settle, lambda: None
+        try:
+            box = self.checkable("check box", "Urgent", chromium)
+            self.assertEqual(self.act_on(box, "do_action", action="toggle")["action"], "check")
+            self.assertIn("checked", box.states)
+            self.assertEqual(self.act_on(box, "do_action", action="toggle")["action"], "uncheck")
+            self.assertEqual(self.act_on(box, "do_action", action="click")["action"], "check")
+            self.assertEqual(box.done, ["check", "uncheck", "check"])
+            # A one-way action that would change nothing is never done (and so never reported as done).
+            stale = self.checkable("check box", "Urgent", lambda acc: ["check"], checked=True)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(stale, "do_action", action="toggle")
+            self.assertIn("background_unavailable", str(ctx.exception))
+            self.assertEqual(stale.done, [])
+            # Firefox: a radio button's "select", which can't turn it off.
+            radio = self.checkable("radio button", "Card", lambda acc: ["select"])
+            self.assertEqual(self.act_on(radio, "do_action", action="toggle")["action"], "select")
+            with self.assertRaises(RuntimeError):
+                self.act_on(radio, "do_action", action="toggle")
+            # An ARIA switch: "doDefault".
+            switch = self.checkable("toggle button", "Notify", lambda acc: ["doDefault", "showContextMenu"])
+            res = self.act_on(switch, "do_action", action="toggle")
+            self.assertEqual((res["action"], "checked" in res["after"]["states"]), ("dodefault", True))
+        finally:
+            e.settle = settle
+
+    def test_whether_an_action_can_be_done_is_told_without_doing_it(self):
+        box = self.checkable("check box", "Urgent", lambda acc: ["check", "showContextMenu"])
+        self.assertEqual(self.act_on(box, "can_do", kind="toggle"), {"tier1": True})
+        self.assertEqual(box.done, [])
+        menu_only = self.checkable("check box", "Urgent", lambda acc: ["showContextMenu"])
+        out = self.act_on(menu_only, "can_do", kind="toggle")
+        self.assertFalse(out["tier1"])
+        self.assertIn("no 'toggle' action", out["why"])
+        # A Chromium entry has no EditableText; with `caret`, whether it has the keyboard in the active window.
+        app = Acc("application", "electron")
+        frame = Acc("frame", "Expense report", states=("showing", "visible", "active"))
+        entry = Acc("entry", "Description", states=("showing", "visible", "enabled", "sensitive", "editable"), text="")
+        frame.parent, app.parent, entry.parent = app, None, frame
+        self.assertEqual(self.act_on(entry, "can_do", kind="text", caret=True),
+                         {"tier1": False, "why": "this element's text can't be edited directly", "focused": False, "windowActive": True})
+        self.assertEqual(self.act_on(Acc("slider", "Volume"), "can_do", kind="value")["tier1"], False)
+
+    @staticmethod
+    def web_select(options, selected=0, takes=True):
+        """A Chromium <select>: a combo box without Selection; its one child menu has it, but refuses selectChild
+        while closed; each option's "select" action chooses it (unless `takes` is False)."""
+        items = [Acc("menu item", n, states=("visible", "enabled", "selectable") + (("selected",) if i == selected else ()))
+                 for i, n in enumerate(options)]
+        menu = Acc("menu", kids=items)
+
+        def choose(item):
+            if takes:
+                for other in items:
+                    if "selected" in other.states:
+                        other.states.remove("selected")
+                item.states.append("selected")
+            return True
+        for item in items:
+            item.queryAction = (lambda it: lambda: types.SimpleNamespace(
+                nActions=2, getName=lambda i: ["select", "showContextMenu"][i], doAction=lambda i: choose(it)))(item)
+        menu.querySelection = lambda: types.SimpleNamespace(selectChild=lambda i: False,
+                                                            isChildSelected=lambda i: "selected" in items[i].states)
+        combo = Acc("combo box", "Category", kids=[menu], acts=["open"])
+
+        def no_selection():
+            raise NotImplementedError
+        combo.querySelection = no_selection
+        return combo
+
+    def test_a_drop_down_in_a_web_page_or_electron_app(self):
+        settle, e.settle = e.settle, lambda: None
+        try:
+            combo = self.web_select(["Travel", "Meals", "Office"])
+            self.assertEqual(self.act_on(combo, "list_options")["options"], ["Travel", "Meals", "Office"])
+            self.assertEqual(self.act_on(combo, "read_element")["selected"], "Travel")
+            res = self.act_on(combo, "select_option", option="meals")
+            self.assertEqual((res["ok"], res["option"], res["after"]["selected"]), (True, "Meals", "Meals"))
+            # One that doesn't take the choice is reported as not done.
+            stuck = self.web_select(["Travel", "Meals"], takes=False)
+            res = self.act_on(stuck, "select_option", option="Meals")
+            self.assertEqual((res["ok"], res["after"]["selected"]), (False, "Travel"))
+        finally:
+            e.settle = settle
+
+    def test_an_open_menu(self):
+        items = [Acc("menu item", "New", states=("visible", "enabled")), Acc("menu item", "Open", states=("visible", "enabled"))]
+        menu = Acc("menu", "File", kids=items)
+        self.assertEqual(self.act_on(menu, "read_element")["open"], False)
+        for item in items:
+            item.states.append("showing")
+        self.assertEqual(self.act_on(menu, "read_element")["open"], True)
+        self.assertNotIn("open", self.act_on(Acc("push button", "Save"), "read_element"))
 
 
 class Windows(unittest.TestCase):
@@ -1209,6 +1540,76 @@ class Windows(unittest.TestCase):
         # A never-look window isn't looked at; one that is gone isn't found.
         self.assertTrue(e.at_point({"pid": 20, "path": win.path, "x": 1, "y": 1, "neverLook": ["notes"]})["blocked"])
         self.assertFalse(e.at_point({"pid": 20, "path": "/gone", "x": 1, "y": 1})["found"])
+
+    def test_under_the_wheel_in_a_chromium_window(self):
+        # Electron: the window's hit test ends on an empty views panel that lies over the web view; the page is in the
+        # panel beside it. What shows at the point is looked for there.
+        field = Acc("spin button", "Quantity", bounds=(700, 774, 500, 260))
+        doc = Acc("document web", "Order Form", bounds=(700, 450, 500, 450),
+                  kids=[Acc("paragraph", "", bounds=(700, 450, 500, 34)), field])
+        holder = Acc("panel", "", bounds=(700, 450, 500, 450), kids=[Acc("panel", "", bounds=(700, 450, 0, 0), states=()), doc])
+        empty = Acc("panel", "", bounds=(700, 450, 500, 450))
+        top = Acc("panel", "", bounds=(700, 450, 500, 450), kids=[empty, holder])
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds, win.kids = (700, 450, 500, 450), [top]
+        for parent in (win, top, holder, doc):
+            for kid in parent.kids:
+                kid.parent = parent
+        chain = lambda x, y: e.at_point({"pid": 20, "path": win.path, "x": x, "y": y})["chain"]
+        # Looked through by bounds: the empty panel comes first, the one holding the page is taken.
+        self.assertEqual([c["role"] for c in chain(950, 850)], ["panel", "panel", "document web", "spin button"])
+        # Asked of the app (Chromium answers with the deepest element there, and from the window, the empty panel).
+        hits = {top.path: empty, holder.path: field}
+        box = lambda acc, coords: types.SimpleNamespace(x=acc.bounds[0], y=acc.bounds[1], width=acc.bounds[2], height=acc.bounds[3])
+        fake = types.SimpleNamespace(
+            CoordType=types.SimpleNamespace(SCREEN=0),
+            Component=types.SimpleNamespace(get_accessible_at_point=lambda acc, x, y, coords: hits.get(acc.path), get_extents=box),
+            Accessible=types.SimpleNamespace(get_state_set=lambda acc: types.SimpleNamespace(get_states=lambda: acc.states)))
+        saved = e.Atspi, e.native
+        e.Atspi, e.native = fake, lambda acc: acc is top or acc is holder
+        try:
+            got = chain(950, 850)
+            self.assertEqual([(c["role"], c["name"]) for c in got], [("panel", ""), ("panel", ""), ("spin button", "Quantity")])
+            self.assertNotIn("empty", got[-1])
+            # Nothing but the empty panel there: the answer says the app told nothing about what shows.
+            top.kids = [empty]
+            self.assertEqual(chain(950, 850), [{"role": "panel", "name": "", "bounds": {"x": 700, "y": 450, "width": 500, "height": 450}},
+                                               {"role": "panel", "name": "", "bounds": {"x": 700, "y": 450, "width": 500, "height": 450},
+                                                "empty": True}])
+        finally:
+            e.Atspi, e.native = saved
+
+    def test_the_part_of_an_element_that_shows(self):
+        # GTK: a list scrolled until "Keep file 7" shows 6 px, above a button below the list (its middle is on the button).
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SNAPSHOTS.begin()
+        rows = [Acc("check box", "Keep file %d" % i, bounds=(701, 84 + 30 * i, 300, 30)) for i in range(8)]
+        box = Acc("filler", "", bounds=(701, 84, 300, 240), kids=rows)
+        view = Acc("viewport", "", bounds=(701, 100, 294, 200), kids=[box])
+        pane = Acc("scroll pane", "", bounds=(700, 99, 302, 202), kids=[view, Acc("scroll bar", "", bounds=(995, 100, 6, 200))])
+        button = Acc("push button", "Delete all files", bounds=(701, 300, 300, 40))
+        win = Acc("frame", "EdgeTest", bounds=(700, 80, 302, 262), kids=[pane, button])
+        win.parent = types.SimpleNamespace(getRoleName=lambda: "application")
+        for parent in (win, pane, view, box):
+            for kid in parent.kids:
+                kid.parent = parent
+        shown = lambda acc: e.read_element({"id": e.SNAPSHOTS.add(acc), "shown": True}).get("shown")
+        self.assertEqual(shown(rows[7]), {"x": 701, "y": 294, "width": 294, "height": 6})
+        self.assertNotIn("shown", e.read_element({"id": e.SNAPSHOTS.add(rows[7])}))  # only asked for where the mouse aims
+        self.assertEqual(shown(rows[0]), {"x": 701, "y": 100, "width": 294, "height": 14})
+        self.assertIsNone(shown(rows[3].__class__("label", "", bounds=(701, 180, 50, 20))))  # no parent known: as reported
+        self.assertEqual(shown(rows[3]), {"x": 701, "y": 174, "width": 294, "height": 30})  # under the scroll bar's edge
+        self.assertIsNone(shown(button))
+        win.bounds = (700, 80, 302, 240)  # a smaller window: the button is half out of it
+        self.assertEqual(shown(button), {"x": 701, "y": 300, "width": 300, "height": 20})
+        # A read says the same.
+        nodes = []
+        e.walk(win, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        by = dict((n["name"], n) for n in nodes)
+        self.assertEqual(by["Keep file 7"]["shown"], {"x": 701, "y": 294, "width": 294, "height": 6})
+        self.assertEqual(by["Delete all files"]["shown"], {"x": 701, "y": 300, "width": 300, "height": 20})
+        self.assertNotIn("shown", by["EdgeTest"])
 
     def test_one_broken_app_does_not_break_the_list(self):
         class Broken(self.AppNode):

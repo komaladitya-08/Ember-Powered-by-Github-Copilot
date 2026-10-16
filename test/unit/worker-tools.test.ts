@@ -12,9 +12,17 @@ import type { Logger } from "../../app/main/logger";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-function makeWorker(o: { blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide" } = {}) {
+function makeWorker(o: {
+  blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide";
+  /** More of what readElement says (a menu's `open`). */
+  extra?: () => Record<string, unknown>;
+  canDo?: (id: number, kind: string, caret: boolean) => { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean };
+  /** The user's answer to every question (default "once"), and the app's grant. */
+  answer?: string; grants?: Record<string, "act">; noCursor?: boolean;
+} = {}) {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
+  const asked: string[] = [];
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
   const node = { id: 1, parent: null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
   const seen = { window, x11Window: null, nodes: [node], blocked: !!o.blocked, ms: 0 };
@@ -22,21 +30,23 @@ function makeWorker(o: { blocked?: boolean; busy?: boolean; role?: string; name?
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
     sidecar: {
-      readElement: async () => { const states = o.states ? o.states() : ["enabled", "sensitive"]; return states && { role: node.role, name: node.name, states, bounds: node.bounds }; },
+      readElement: async () => { const states = o.states ? o.states() : ["enabled", "sensitive"]; return states && { role: node.role, name: node.name, states, bounds: node.bounds, ...o.extra?.() }; },
       doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
+      setText: async () => { events.push("set_text"); throw new Error("background_unavailable: this element's text can't be edited directly"); },
+      ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
-    policy: new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }) }),
-    confirmer: { ask: async () => "once" } as never,
+    policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
+    confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter: new Presenter(() => undefined),
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
-    cursor: { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined },
+    cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined },
     pointer: o.pointer,
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, call };
+  return { w, audit, events, asked, call };
 }
 
 describe("worker tools", () => {
@@ -106,6 +116,74 @@ describe("guides (review round 5)", () => {
     const pressed = button.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
     setTimeout(() => { focused = true; }, 100);
     expect((await pressed).textResultForLlm).toMatch(/^It changed/);
+  });
+});
+
+describe("guides through menus with the keyboard (review round 6)", () => {
+  it("a menu opened with Alt+F or F10 (its items show) counts; hovering it, which selects it, doesn't", async () => {
+    let hovered = false, open = false;
+    const { call } = makeWorker({ role: "menu", name: "File", states: () => (hovered || open ? ["enabled", "selected", "focused"] : ["enabled"]),
+      extra: () => ({ open }), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "Open the File menu" });
+    const t0 = Date.now();
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { hovered = true; }, 100);
+    setTimeout(() => { open = true; }, 1300);
+    const r = await waiting;
+    expect(r.textResultForLlm).toMatch(/^It changed: menu .*File.*\(open\)/);
+    expect(Date.now() - t0).toBeGreaterThan(1200);
+  });
+
+  it("a menu that stays closed while hovered: the step waits for the user", async () => {
+    const { call } = makeWorker({ role: "menu", name: "File", states: () => ["enabled", "selected"], extra: () => ({ open: false }), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await call("perceive_window", {});
+    const r = await call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    expect(r.textResultForLlm).toMatch(/hasn't clicked it yet/);
+  }, 8000);
+});
+
+describe("one question per step (review round 6)", () => {
+  it("where only the mouse can do it, only the question to borrow it is asked", async () => {
+    const { call, asked, events } = makeWorker({ role: "check box", name: "Urgent", grants: {}, answer: "deny", canDo: () => ({ tier1: false, why: "no 'toggle' action (has: showcontextmenu)" }) });
+    await call("perceive_window", {});
+    const r = await call("toggle", { id: 1, on: true });
+    expect(asked).toEqual([expect.stringMatching(/^Borrow your mouse to click “Urgent” check box/)]);
+    expect(r.resultType).toBe("denied");
+    expect(events).toEqual([]);
+  });
+
+  it("where accessibility can do it, the question about acting in the app is asked, and nothing about the mouse", async () => {
+    const { call, asked, events } = makeWorker({ grants: {}, canDo: () => ({ tier1: true }) });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: click “Bold” push button/)]);
+    expect(events).toEqual(["start", "end"]);
+  });
+
+  it("where neither can, it says so without asking", async () => {
+    const { call, asked, audit } = makeWorker({ noCursor: true, grants: {}, canDo: () => ({ tier1: false, why: "no 'click' action (has: none)" }) });
+    await call("perceive_window", {});
+    const r = await call("click", { id: 1 });
+    expect(asked).toEqual([]);
+    expect(r.textResultForLlm).toMatch(/can't do this by accessibility .*no 'click' action/);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "action", kind: "click", ok: false }));
+  });
+
+  it("text typed at the caret: refused before asking where the field hasn't the keyboard in the window the user is in; asked to borrow otherwise", async () => {
+    const field = (windowActive: boolean) => makeWorker({ role: "paragraph", name: "Body", states: () => ["enabled", "sensitive", "editable"], grants: {}, answer: "deny",
+      canDo: (_id, kind, caret) => ({ tier1: kind !== "text", ...(caret ? { focused: false, windowActive } : {}) }) });
+    const active = field(true);
+    await active.call("perceive_window", {});
+    const r = await active.call("type_text", { id: 1, text: "Hello", mode: "insert" });
+    expect(active.asked).toEqual([]);
+    expect(r.textResultForLlm).toMatch(/can't put the caret in the right place/);
+    // Behind another window, the caret may come back once the window is in front: asked (only) to borrow.
+    const behind = field(false);
+    await behind.call("perceive_window", {});
+    await behind.call("type_text", { id: 1, text: "Hello", mode: "insert" });
+    expect(behind.asked).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Hello” into “Body” paragraph/)]);
+    expect(behind.events).toEqual([]);
   });
 });
 

@@ -34,9 +34,15 @@ export interface ActionRequest {
   value?: string;
   /** For text: replace everything, insert at the caret, or append. */
   mode?: TextMode;
-  /** For text (and keys): what the field holds now (replacing a lot of it is confirmed). */
+  /**
+   * For text and keys: what the field holds now (replacing a lot of it is confirmed; text added to it is judged with
+   * what is around it there).
+   */
   currentText?: string;
-  /** For keys: the letters and digits typed into this window by keys, this one included (checked like typed text). */
+  /**
+   * For text added to a field ("append", "insert") and keys that type: what this task typed into this field before,
+   * followed by what this one types (checked as one text: a field filled in pieces is judged as a whole).
+   */
   typed?: string;
   /** For keys: the last keys pressed here were Ctrl+A, so this one may replace everything selected. */
   afterSelectAll?: boolean;
@@ -117,7 +123,7 @@ export function normalizeLabel(s: string): string {
 }
 
 /** Words on buttons that make an action hard to undo or visible to others. */
-const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|overwrite|replace|empty|format|buy|pay|order|purchase|checkout|install|uninstall|upload|transfer|reply|forward|sign|accept|approve|confirm|authori[sz]e|grant|trust|merge|run|execute|reset|clear|archive|revoke|unsubscribe|trash|wipe|destroy|quit|close without saving|don't save|log ?out|sign ?out|shut ?down|restart|reboot|power off|kill|terminate|end process|force stop|donate|book now|deploy|subscribe|leave (the )?(group|chat|conversation|meeting|team|channel))\b/;
+const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|overwrite|replace|empty|buy|pay|order|purchase|checkout|install|uninstall|upload|transfer|reply|forward|sign|accept|approve|confirm|authori[sz]e|grant|trust|merge|run|execute|reset|clear|archive|revoke|unsubscribe|trash|wipe|destroy|quit|close without saving|don't save|log ?out|sign ?out|shut ?down|restart|reboot|power off|kill|terminate|end process|force stop|donate|book now|deploy|subscribe|leave (the )?(group|chat|conversation|meeting|team|channel))\b/;
 
 /**
  * Text in other languages, ready for matching: compatibility forms folded, invisible characters and
@@ -131,10 +137,11 @@ export function foldLabel(s: string): string {
 /**
  * The same in the languages RHEL desktops commonly use: infinitives and imperatives (the forms buttons
  * use) for deleting, removing, emptying, sending, submitting, replying, forwarding, sharing, publishing,
- * buying, ordering, paying, transferring money, installing, resetting, formatting, signing out, confirming,
+ * buying, ordering, paying, transferring money, installing, resetting, signing out, confirming,
  * accepting, discarding, closing without saving, replacing and overwriting, merging, quitting, running programs, moving to
  * the trash, archiving, restarting, subscribing, signing and uploading (GTK's and Nautilus's own words where they have them).
- * Whole words only; words that are also everyday labels ("Formato", "Zahlen", "Ordina" = sort, "Firma") are left out.
+ * Whole words only; words that are also everyday labels ("Formato", "Zahlen", "Ordina" = sort, "Firma") are left out, and
+ * formatting is risky only for a disk (FORMAT_WORDS).
  * Written with their accents (folded when the pattern is built).
  */
 export const RISKY_WORDS: Record<string, string[]> = {
@@ -142,21 +149,21 @@ export const RISKY_WORDS: Record<string, string[]> = {
     "vider", "videz", "envoyer", "envoyez", "envoie", "soumettre", "soumettez", "valider", "validez", "répondre", "répondez",
     "transférer", "transférez", "partager", "partagez", "publier", "publiez", "commander", "commandez", "passer (la )?commande",
     "acheter", "achetez", "payer", "payez", "installer", "installez", "désinstaller", "désinstallez", "réinitialiser", "réinitialisez",
-    "formater", "formatez", "déconnecter", "déconnexion", "confirmer", "confirmez", "accepter", "acceptez", "accepte",
+    "déconnecter", "déconnexion", "confirmer", "confirmez", "accepter", "acceptez", "accepte",
     "ne pas enregistrer", "sans enregistrer", "quitter", "exécuter", "exécutez", "lancer", "lancez",
     "(mettre|déplacer|jeter) (à|dans|vers) la corbeille", "remplacer", "remplacez", "écraser", "écrasez", "fusionner", "archiver",
     "redémarrer", "éteindre", "s'abonner", "se désabonner", "signer", "téléverser"],
   de: ["löschen", "lösche", "loeschen", "entfernen", "entferne", "leeren", "senden", "sende", "absenden", "versenden", "abschicken",
     "verschicken", "einreichen", "übermitteln", "antworten", "antworte", "weiterleiten", "teilen", "freigeben", "veröffentlichen",
     "kaufen", "bestellen", "bestelle", "zahlungspflichtig", "bezahlen", "jetzt zahlen", "überweisen", "überweisung", "installieren",
-    "deinstallieren", "zurücksetzen", "formatieren", "abmelden", "ausloggen", "bestätigen", "akzeptieren", "annehmen", "zustimmen",
+    "deinstallieren", "zurücksetzen", "abmelden", "ausloggen", "bestätigen", "akzeptieren", "annehmen", "zustimmen",
     "verwerfen", "nicht speichern", "ohne speichern", "beenden", "ausführen", "in den papierkorb", "ersetzen", "ersetze", "überschreiben",
     "zusammenführen", "ohne zu speichern", "archivieren", "neu starten", "herunterfahren", "abonnieren", "abbestellen", "unterschreiben",
     "signieren", "hochladen"],
   es: ["eliminar", "elimina", "elimine", "borrar", "borra", "borre", "suprimir", "suprime", "suprima", "quitar", "quita", "quite",
     "vaciar", "enviar", "envía", "envíe", "responder", "responde", "responda", "reenviar", "reenvía", "compartir", "comparte",
     "comparta", "publicar", "publique", "comprar", "compra", "compre", "(realizar|hacer|tramitar|finalizar) pedido", "pagar", "paga",
-    "pague", "transferir", "transfiere", "instalar", "instala", "instale", "desinstalar", "restablecer", "restablece", "formatear",
+    "pague", "transferir", "transfiere", "instalar", "instala", "instale", "desinstalar", "restablecer", "restablece",
     "cerrar sesión", "desconectar", "confirmar", "confirma", "confirme", "aceptar", "acepta", "acepte", "acepto", "descartar",
     "descarta", "no guardar", "sin guardar", "salir", "ejecutar", "ejecuta", "ejecute", "ejecutarlo", "ejecutarlos",
     "(mover|tirar) a la papelera", "reemplazar", "reemplaza", "reemplace", "reemplazarlo", "sustituir", "sobrescribir", "sobreescribir",
@@ -164,7 +171,7 @@ export const RISKY_WORDS: Record<string, string[]> = {
   it: ["eliminare", "elimina", "elimini", "cancellare", "cancella", "rimuovere", "rimuovi", "svuotare", "svuota", "inviare", "invia",
     "spedire", "spedisci", "rispondere", "rispondi", "inoltrare", "inoltra", "condividere", "condividi", "pubblicare", "pubblica",
     "acquistare", "acquista", "comprare", "ordina ora", "effettua (l')?ordine", "pagare", "paga", "bonifico", "installare", "installa",
-    "disinstallare", "disinstalla", "reimpostare", "reimposta", "formattare", "formatta", "disconnetti", "esci", "confermare",
+    "disinstallare", "disinstalla", "reimpostare", "reimposta", "disconnetti", "esci", "confermare",
     "conferma", "accettare", "accetta", "accetto", "scarta", "scartare", "non salvare", "senza salvare", "eseguire", "esegui", "eseguirlo",
     "eseguirli", "(sposta|spostare|spostalo|spostali) nel cestino", "cestina", "sostituisci", "sostituire", "sostituirlo", "sovrascrivi",
     "sovrascrivere", "unisci", "archivia", "riavvia", "spegni", "iscriviti", "annulla (l')?iscrizione", "carica file"],
@@ -173,21 +180,21 @@ export const RISKY_WORDS: Record<string, string[]> = {
     "(fazer|finalizar) pedido", "pague", "transfira", "redefinir", "redefina", "(terminar|encerrar) sessão", "sair", "aceitar",
     "aceite", "aceito", "concordo", "concordar", "não salvar", "não guardar", "sem salvar", "sem guardar", "executar", "executa",
     "mover para (a lixeira|o lixo|a reciclagem)", "substituir", "substitua", "sobrescrever", "sobrescreva", "mesclar", "arquivar",
-    "reiniciar", "desligar", "inscrever-se", "assinar", "formatar", "formate"],
+    "reiniciar", "desligar", "inscrever-se", "assinar"],
   nl: ["verwijderen", "verwijder", "leegmaken", "prullenbak legen", "verzenden", "verzend", "versturen", "verstuur", "indienen",
     "beantwoorden", "antwoorden", "doorsturen", "delen", "publiceren", "publiceer", "kopen", "koop", "bestellen", "bestel",
     "afrekenen", "betalen", "betaal", "overmaken", "overboeken", "installeren", "installeer", "de-installeren", "resetten",
-    "opnieuw instellen", "formatteren", "afmelden", "uitloggen", "bevestigen", "bevestig", "accepteren", "accepteer", "akkoord",
+    "opnieuw instellen", "afmelden", "uitloggen", "bevestigen", "bevestig", "accepteren", "accepteer", "akkoord",
     "niet opslaan", "verwerpen", "afsluiten", "vervangen", "vervang", "overschrijven", "zonder opslaan", "naar (de )?prullenbak",
     "samenvoegen"],
   pl: ["usuń", "usunąć", "skasuj", "opróżnij", "wyślij", "wysłać", "odpowiedz", "przekaż", "udostępnij", "opublikuj", "kup",
-    "kupuję", "zamów", "zamawiam", "zapłać", "płacę", "przelew", "zainstaluj", "odinstaluj", "resetuj", "zresetuj", "formatuj",
-    "sformatuj", "wyloguj", "potwierdź", "zatwierdź", "akceptuj", "zaakceptuj", "zgadzam się", "odrzuć", "nie zapisuj", "zastąp", "zastąpić",
+    "kupuję", "zamów", "zamawiam", "zapłać", "płacę", "przelew", "zainstaluj", "odinstaluj", "resetuj", "zresetuj",
+    "wyloguj", "potwierdź", "zatwierdź", "akceptuj", "zaakceptuj", "zgadzam się", "odrzuć", "nie zapisuj", "zastąp", "zastąpić",
     "nadpisz", "nadpisać", "bez zapisywania", "do kosza", "scal"],
   ru: ["удалить", "удали", "удалите", "убрать", "очистить", "очисти", "отправить", "отправь", "отправьте", "послать", "ответить",
     "ответь", "ответьте", "переслать", "перешли", "поделиться", "поделись", "опубликовать", "опубликуй", "купить", "купи",
     "оформить заказ", "заказать", "закажи", "оплатить", "оплати", "заплатить", "установить", "установи", "сбросить", "сбрось",
-    "форматировать", "выйти", "выход", "подтвердить", "подтверди", "подтвердите", "принять", "прими", "согласен", "согласиться",
+    "выйти", "выход", "подтвердить", "подтверди", "подтвердите", "принять", "прими", "согласен", "согласиться",
     "не сохранять", "заменить", "замени", "перезаписать", "без сохранения", "в корзину", "объединить"],
   sv: ["ta bort", "radera", "töm papperskorgen", "skicka", "svara", "vidarebefordra", "publicera", "köp nu", "köpa", "beställ",
     "betala", "installera", "avinstallera", "återställ", "logga ut", "bekräfta", "acceptera", "godkänn", "spara inte", "ersätt",
@@ -199,21 +206,21 @@ export const RISKY_WORDS: Record<string, string[]> = {
   fi: ["poista", "tyhjennä", "lähetä", "vastaa", "välitä", "jaa", "julkaise", "osta", "tilaa nyt", "maksa", "asenna", "nollaa",
     "kirjaudu ulos", "vahvista", "hyväksy", "älä tallenna", "korvaa", "tallentamatta", "roskakoriin"],
   cs: ["smazat", "smaž", "odstranit", "odstraň", "vysypat", "odeslat", "odešli", "odpovědět", "přeposlat", "sdílet", "publikovat",
-    "zveřejnit", "koupit", "objednat", "zaplatit", "nainstalovat", "instalovat", "odinstalovat", "resetovat", "formátovat",
-    "naformátovat", "odhlásit", "potvrdit", "přijmout", "souhlasím", "neukládat", "nahradit", "přepsat", "bez uložení", "do koše"],
+    "zveřejnit", "koupit", "objednat", "zaplatit", "nainstalovat", "instalovat", "odinstalovat", "resetovat",
+    "odhlásit", "potvrdit", "přijmout", "souhlasím", "neukládat", "nahradit", "přepsat", "bez uložení", "do koše"],
   tr: ["sil", "kaldır", "boşalt", "gönder", "yanıtla", "cevapla", "ilet", "paylaş", "yayınla", "satın al", "sipariş ver", "ödeme yap",
-    "ödemeyi tamamla", "havale", "yükle", "sıfırla", "biçimlendir", "çıkış yap", "oturumu kapat", "onayla", "kabul et",
+    "ödemeyi tamamla", "havale", "yükle", "sıfırla", "çıkış yap", "oturumu kapat", "onayla", "kabul et",
     "kabul ediyorum", "kaydetme", "üzerine yaz", "kaydetmeden", "çöpe taşı"],
 };
 /** Scripts without spaces between words: matched anywhere in the label. */
 export const RISKY_ANYWHERE: Record<string, string[]> = {
   ja: ["削除", "消去", "送信", "返信", "転送", "共有", "公開", "投稿", "購入", "注文", "決済", "支払", "振込", "送金", "インストール",
-    "リセット", "初期化", "フォーマット", "ログアウト", "サインアウト", "確定", "同意", "承認", "破棄", "保存しない", "空にする", "終了", "置き換え", "置換", "上書き", "保存せず", "ゴミ箱"],
+    "リセット", "初期化", "ログアウト", "サインアウト", "確定", "同意", "承認", "破棄", "保存しない", "空にする", "終了", "置き換え", "置換", "上書き", "保存せず", "ゴミ箱"],
   zh: ["删除", "刪除", "移除", "清空", "清除", "发送", "發送", "提交", "回复", "回覆", "转发", "轉發", "分享", "共享", "发布", "發佈",
     "發布", "发表", "發表", "购买", "購買", "下单", "下單", "结算", "結算", "支付", "付款", "转账", "轉帳", "汇款", "匯款", "安装",
-    "安裝", "卸载", "卸載", "重置", "格式化", "注销", "註銷", "登出", "退出", "同意", "接受", "放弃", "放棄", "不保存", "替换", "替換", "覆盖", "覆蓋", "回收站", "废纸篓", "廢紙簍"],
+    "安裝", "卸载", "卸載", "重置", "注销", "註銷", "登出", "退出", "同意", "接受", "放弃", "放棄", "不保存", "替换", "替換", "覆盖", "覆蓋", "回收站", "废纸篓", "廢紙簍"],
   ko: ["삭제", "제거", "비우기", "전송", "보내기", "제출", "답장", "전달", "공유", "게시", "구매", "구입", "주문", "결제", "이체",
-    "송금", "설치", "초기화", "포맷", "로그아웃", "동의", "수락", "저장 안 함", "종료", "모두 바꾸기", "찾아 바꾸기", "덮어쓰기", "저장하지 않", "휴지통"],
+    "송금", "설치", "초기화", "로그아웃", "동의", "수락", "저장 안 함", "종료", "모두 바꾸기", "찾아 바꾸기", "덮어쓰기", "저장하지 않", "휴지통"],
 };
 const all = (lists: Record<string, string[]>) => foldLabel(Object.values(lists).flat().join("|"));
 const intlSource = (words: Record<string, string[]>, anywhere: Record<string, string[]>) =>
@@ -227,51 +234,53 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * "Block selection" check item, isn't one. English verbs that are nouns too count where they lead the label
  * ("Report", "Block user"; not "Download report", "Add block").
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick)\b/u;
-const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream))\b/;
+const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget)\b/u;
+const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser))\b/;
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
   fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
     "fermer (le |mon |votre )?compte", "désactiver (le |mon |votre )?compte", "créer (une )?(pull|merge) request", "créer une demande de (fusion|tirage)",
     "demander (une )?(revue|relecture)", "pousser", "tweeter", "retweeter", "reposter", "republier", "passer en direct", "lancer (le )?direct",
-    "bloquer", "signaler", "bannir", "expulser"],
+    "bloquer", "signaler", "bannir", "expulser", "oublier", "réparer firefox"],
   de: ["kommentieren", "einladen", "ablehnen", "zurückziehen", "kündigen", "konto schließen", "konto deaktivieren", "pull request erstellen",
     "merge request erstellen", "review anfordern", "überprüfung anfordern", "pushen", "committen", "twittern", "tweeten", "retweeten", "reposten",
-    "live gehen", "blockieren", "melden", "bannen", "verbannen"],
+    "live gehen", "blockieren", "melden", "bannen", "verbannen", "verbindung vergessen", "netzwerk vergessen", "gerät vergessen",
+    "diese website vergessen", "firefox bereinigen"],
   es: ["comentar", "comenta", "invitar", "invita", "rechazar", "rechaza", "declinar", "retirar", "retira", "cancelar (la |mi |tu |su )?suscripción",
     "cerrar (la |mi |tu |su )?cuenta", "desactivar (la |mi |tu |su )?cuenta", "crear (una )?(pull|merge) request",
     "crear (una )?solicitud de (extracción|incorporación|fusión|cambios)", "solicitar (una )?revisión", "hacer push", "revertir", "tuitear", "retuitear",
-    "republicar", "repostear", "transmitir en (vivo|directo)", "bloquear", "denunciar", "reportar", "banear", "expulsar"],
+    "republicar", "repostear", "transmitir en (vivo|directo)", "bloquear", "denunciar", "reportar", "banear", "expulsar", "olvidar"],
   it: ["commenta", "commentare", "invita", "invitare", "rifiuta", "rifiutare", "declina", "ritira", "ritirare", "annulla (l')?abbonamento", "disdici",
     "chiudi (l')?account", "disattiva (l')?account", "crea (una )?(pull|merge) request", "richiedi (una )?revisione", "twitta", "ritwitta", "ripubblica",
-    "vai in diretta", "avvia (la )?diretta", "blocca", "segnala", "banna", "espelli"],
+    "vai in diretta", "avvia (la )?diretta", "blocca", "segnala", "banna", "espelli", "dimentica", "ripristina firefox"],
   pt: ["comentar", "comente", "convidar", "convide", "recusar", "recuse", "declinar", "retirar", "cancelar (a |minha |sua )?(assinatura|inscrição)",
     "(encerrar|fechar) (a |minha |sua )?conta", "desativar (a |minha |sua )?conta", "criar (uma )?(pull|merge) request",
     "criar (uma )?solicitação de (pull|merge|mesclagem)", "solicitar (uma )?revisão", "fazer push", "reverter", "tuitar", "retuitar", "republicar",
-    "repostar", "transmitir ao vivo", "bloquear", "denunciar", "reportar", "banir", "expulsar"],
+    "repostar", "transmitir ao vivo", "bloquear", "denunciar", "reportar", "banir", "expulsar", "esquecer", "restaurar o firefox"],
   nl: ["reageren", "uitnodigen", "nodig uit", "afwijzen", "weigeren", "terugtrekken", "intrekken", "opzeggen", "account (sluiten|opheffen|deactiveren)",
     "pull request aanmaken", "merge request aanmaken", "review aanvragen", "pushen", "terugdraaien", "tweeten", "retweeten", "reposten", "live gaan",
-    "blokkeren", "rapporteren", "melden", "verbannen"],
+    "blokkeren", "rapporteren", "melden", "verbannen", "verbinding vergeten", "netwerk vergeten", "deze website vergeten", "firefox opfrissen"],
   pl: ["skomentuj", "komentuj", "zaproś", "odmów", "wycofaj", "anuluj subskrypcję", "zamknij konto", "dezaktywuj", "utwórz (pull|merge) request",
-    "poproś o recenzję", "wypchnij", "tweetuj", "podaj dalej", "rozpocznij transmisję", "transmisja na żywo", "zablokuj", "zgłoś", "zbanuj", "wyrzuć"],
+    "poproś o recenzję", "wypchnij", "tweetuj", "podaj dalej", "rozpocznij transmisję", "transmisja na żywo", "zablokuj", "zgłoś", "zbanuj", "wyrzuć", "zapomnij",
+    "odśwież (program )?firefox"],
   ru: ["комментировать", "прокомментировать", "пригласить", "пригласи", "отклонить", "отклони", "отказаться", "отозвать", "вывести средства",
     "отменить подписку", "отписаться", "закрыть аккаунт", "деактивировать", "создать (pull|merge) request", "создать запрос на (слияние|включение)",
     "запросить (ревью|проверку)", "запушить", "откатить", "твитнуть", "ретвитнуть", "репост", "сделать репост", "начать трансляцию", "выйти в эфир",
-    "заблокировать", "заблокируй", "пожаловаться", "забанить", "выгнать"],
+    "заблокировать", "заблокируй", "пожаловаться", "забанить", "выгнать", "забыть"],
   sv: ["kommentera", "bjud in", "avböj", "neka", "dra tillbaka", "säg upp", "avsluta prenumeration(en)?", "(avsluta|stäng|inaktivera) (mitt |ditt )?konto",
-    "skapa pull request", "begär granskning", "pusha", "tweeta", "retweeta", "gå live", "blockera", "rapportera", "anmäl", "bannlys"],
+    "skapa pull request", "begär granskning", "pusha", "tweeta", "retweeta", "gå live", "blockera", "rapportera", "anmäl", "bannlys", "glöm"],
   da: ["kommenter", "inviter", "invitér", "afvis", "afslå", "træk tilbage", "opsig", "(luk|deaktiver) (min |din )?konto", "opret pull request",
-    "anmod om gennemgang", "gå live", "bloker", "rapporter", "anmeld", "udeluk"],
+    "anmod om gennemgang", "gå live", "bloker", "rapporter", "anmeld", "udeluk", "glem"],
   nb: ["kommenter", "inviter", "avslå", "trekk tilbake", "si opp", "avslutt abonnement(et)?", "(avslutt|lukk|deaktiver) (min |din )?konto",
-    "opprett pull request", "be om gjennomgang", "gå live", "blokker", "rapporter", "anmeld", "utesteng"],
+    "opprett pull request", "be om gjennomgang", "gå live", "blokker", "rapporter", "anmeld", "utesteng", "glem"],
   fi: ["kommentoi", "kutsu", "hylkää", "kieltäydy", "peruuta tilaus", "peru tilaus", "sulje tili", "poista tili käytöstä", "luo pull request",
-    "pyydä (arviointia|katselmointia)", "twiittaa", "aloita lähetys", "estä", "ilmianna", "raportoi", "anna porttikielto"],
+    "pyydä (arviointia|katselmointia)", "twiittaa", "aloita lähetys", "estä", "ilmianna", "raportoi", "anna porttikielto", "unohda"],
   cs: ["komentovat", "okomentovat", "pozvat", "odmítnout", "zamítnout", "zrušit (předplatné|odběr|účet)", "zavřít účet", "deaktivovat účet",
     "vytvořit (pull|merge) request", "požádat o revizi", "pushnout", "vrátit změny", "tweetnout", "retweetnout", "zahájit vysílání", "vysílat živě",
-    "zablokovat", "blokovat", "nahlásit", "zabanovat", "vyhodit"],
+    "zablokovat", "blokovat", "nahlásit", "zabanovat", "vyhodit", "zapomenout", "zapomeň", "vyčistit firefox"],
   tr: ["yorum yap", "yorumla", "davet et", "reddet", "geri çek", "(aboneliği|aboneliğimi|üyeliği|üyeliğimi) iptal et", "(hesabı|hesabımı) kapat",
     "(hesabı|hesabımı) devre dışı bırak", "pull request oluştur", "birleştirme isteği oluştur", "inceleme iste", "tweetle", "retweetle",
-    "yeniden paylaş", "canlı yayına geç", "canlı yayın başlat", "engelle", "şikayet et", "bildir", "yasakla"],
+    "yeniden paylaş", "canlı yayına geç", "canlı yayın başlat", "engelle", "şikayet et", "bildir", "yasakla", "unut", "firefox'u yenile"],
 };
 /** Scripts without spaces between words: matched anywhere in the label. */
 export const RISKY_ACT_ANYWHERE: Record<string, string[]> = {
@@ -326,17 +335,42 @@ export function isSecurityWindow(w: { app?: string; title?: string; name?: strin
   return SECURITY_APP.test((w.app ?? "").trim()) || SECURITY_TITLE.test(normalizeLabel(w.title ?? w.name ?? ""));
 }
 
+/**
+ * Formatting, in the languages of RISKY_WORDS: risky for a disk only (a label that names one, or "Format…" in a window
+ * or dialog about one, as GNOME Disks has them), never LibreOffice's or a mail composer's "Format" menu.
+ */
+const FORMAT_WORDS = ["format", "formater", "formatez", "formatieren", "formatear", "formattare", "formatta", "formatar", "formate", "formatteren",
+  "formatuj", "sformatuj", "форматировать", "отформатировать", "biçimlendir", "formátovat", "naformátovat", "formatera"];
+const FORMAT_ANYWHERE = ["フォーマット", "格式化", "포맷"];
+/** Disks, drives, partitions and volumes: the start of the word ("Datenträger", "disques", "разделы"). */
+const DISK_STEMS = ["disk", "drive", "partition", "volume", "device", "usb", "sd card", "memory card", "file ?system", "media", "flash",
+  "datenträger", "laufwerk", "festplatte", "disque", "lecteur", "périphérique", "disco", "dischi", "unidad", "unità", "partic", "partiz", "volum",
+  "dispositiv", "schijf", "schijven", "station", "dysk", "partycj", "wolumin", "urządzeni", "диск", "раздел", "том", "устройств", "накопител",
+  "bölüm", "birim", "sürücü", "oddíl", "svazek", "svazk", "jednotk", "zařízení"];
+const DISK_ANYWHERE = ["ディスク", "ドライブ", "パーティション", "ボリューム", "デバイス", "磁盘", "磁碟", "硬盘", "硬碟", "驱动器", "分区", "分割區", "디스크",
+  "드라이브", "파티션", "볼륨", "장치"];
+const FORMAT_LABEL = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(FORMAT_WORDS.join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(FORMAT_ANYWHERE.join("|"))}`, "u");
+const DISK_WORD = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(DISK_STEMS.join("|"))})|${foldLabel(DISK_ANYWHERE.join("|"))}`, "u");
+/** Does this label format a disk: by its own words, or in a window or dialog about one (`context`)? */
+const formatsDisk = (label: string, context = "") => FORMAT_LABEL.test(foldLabel(label)) && DISK_WORD.test(foldLabel(`${label} ${context}`));
+
 /** Words risky only as the whole label: Korean "바꾸기" is GTK's Replace button, but also part of "이름 바꾸기" (Rename). */
 const RISKY_WHOLE = new RegExp(`^\\s*(${foldLabel(["바꾸기"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
-export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s));
+export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s)) || formatsDisk(s);
 /** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
 export const isRiskyControl = (role: string, name: string) => isRiskyLabel(name) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
 
 /** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper). */
 const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone)$/;
-/** Is this one of Ember's own windows (by its process, or its app or title)? A task never acts in them: they answer Ember's questions and hold its settings. */
+/**
+ * Is this one of Ember's own windows: its process's, an app called Ember, or (when its process isn't known) a window
+ * titled like one? A task never acts in them: they answer Ember's questions and hold its settings. Another program's
+ * window that is only titled "Ember" (Files showing the ~/Ember hand-off folder) isn't one.
+ */
 export function isEmberWindow(w: { app?: string; name?: string; pid?: number | null }, ownPid: number = process.pid): boolean {
-  return (w.pid != null && w.pid === ownPid) || EMBER_WINDOW.test(normalizeLabel(w.app ?? "").trim()) || EMBER_WINDOW.test(normalizeLabel(w.name ?? "").trim());
+  if (w.pid != null && w.pid === ownPid) return true;
+  if (EMBER_WINDOW.test(normalizeLabel(w.app ?? "").trim())) return true;
+  return w.pid == null && EMBER_WINDOW.test(normalizeLabel(w.name ?? "").trim());
 }
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
@@ -427,6 +461,31 @@ export function typedChar(keys: string): string | null {
   const m = /^(shift\+)?([a-z0-9])$/.exec(k);
   return m ? m[2] : /^(shift\+)?space$/.test(k) ? " " : null;
 }
+/** Keys (without Ctrl or Alt) that type nothing: they move the caret, switch modes or are modifiers themselves. */
+const TYPES_NOTHING = /^(shift\+)?(escape|up|down|left|right|home|end|prior|next|insert|menu|pause|print|break|f\d{1,2}|caps_lock|num_lock|scroll_lock|(shift|control|alt|super|meta|hyper)_[lr]|iso_level3_shift|mode_switch|sys_req|xf86\w+)$/;
+/** Keys that move the caret (a Ctrl+A selection ends there). */
+export const MOVES_CARET = /(^|\+)(up|down|left|right|home|end|prior|next)$/;
+/**
+ * Does this key type a character (a letter, digit, symbol or Space, with or without Shift)? Shortcuts with Ctrl, Alt or
+ * Super, and keys that edit, move or switch (Enter, Tab, Backspace, Delete, arrows, F-keys) don't; neither does
+ * anything Ember's keyboard wouldn't understand as a key (it may be text).
+ */
+export function typesCharacter(keys: string): boolean {
+  const k = canonicalKeys(keys);
+  if (k === null) return true;
+  const f = keyFamily(k);
+  return !/(^|\+)(ctrl|alt|super)\+/.test(f) && !TYPES_NOTHING.test(f) && !/^(shift\+)?(return|tab|backspace|delete)$/.test(f);
+}
+/**
+ * Does this key, with everything selected (Ctrl+A), replace all of it? Any key that types (letters, digits, symbols,
+ * Space, Enter, Tab), Backspace, Delete, Ctrl+X and the paste keys do.
+ */
+export function replacesSelection(keys: string): boolean {
+  const k = keyFamily(canonicalKeys(keys) ?? "");
+  if (!k) return false;
+  if (PASTE_KEYS.has(k) || k === "ctrl+x" || k === "shift+delete") return true;
+  return !/(^|\+)(ctrl|alt|super)\+/.test(k) && !TYPES_NOTHING.test(k);
+}
 
 /** Whole words or phrases (written with their accents, folded like RISKY_WORDS) anywhere in a text. */
 const anyOf = (list: string[]) => new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(list.join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u");
@@ -493,26 +552,97 @@ function elsewhere(s: ReadSource, r: ActionRequest): boolean {
 }
 /** Letters and digits in a row that make a run of text recognisably from somewhere (shorter ones are everyday coincidences). */
 const RUN = 12;
-/** Each line's letters and digits, folded ("Re: Layoff list" → "relayofflist"). */
-const compactLines = (s: string) => foldLabel(s).split("\n").map(l => l.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean);
-/** Numbers of five digits or more, separators dropped ("84,000" → "84000", "448 812" → "448812"). */
-const numbersIn = (s: string) => foldLabel(s).replace(/(\d)[\s,.'’](?=\d)/g, "$1").match(/\d{5,}/g) ?? [];
+/** Each line folded (foldLabel would make line breaks spaces), the lines kept apart by "\n": runs and numbers stay within a line. */
+const fold = (s: string) => s.split(/[\n\r]+/).map(foldLabel).join("\n");
+/** Each line's letters and digits, folded ("Re: Layoff list" → "relayofflist"), the lines kept apart by "\n". */
+const compact = (s: string) => fold(s).split("\n").map(l => l.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean).join("\n");
+/** Separators within a number (dashes of any kind, the minus sign, slash, dot, comma, apostrophe, plus). */
+const NUMBER_SEPARATORS = "-\\u2010-\\u2015\\u2212/.,'+";
 /**
- * The runs of `value` that `text` holds too: any RUN letters and digits in a row (within one line of `text`), and any
- * number of five digits or more.
+ * What may stand between the digits of one number: spaces and brackets, with at most one separator among them
+ * ("84,000", "448 812", "84'000", "123-45-6789", "+1 (555) 123-4567", "12/03/1985").
  */
-function runsIn(value: string, text: string): Set<string> {
+const NUMBER_GAP = new RegExp(`(\\d)(?:[ ()]{1,2}(?:[${NUMBER_SEPARATORS}][ ()]{0,2})?|[${NUMBER_SEPARATORS}][ ()]{0,2})(?=\\d)`, "g");
+/** Numbers of five digits or more in folded text (fold), however they are written ("84,000" → "84000", "123-45-6789" → "123456789"). */
+const numbersOf = (folded: string) => folded.replace(NUMBER_GAP, "$1").match(/\d{5,}/g) ?? [];
+/** A digit at most a NUMBER_GAP away from the end (or the start) of a text: a number there can go on past it. */
+const DIGIT_BEFORE = new RegExp(`\\d[${NUMBER_SEPARATORS} ()]{0,5}$`);
+const DIGIT_AFTER = new RegExp(`^[${NUMBER_SEPARATORS} ()]{0,5}\\d`);
+
+/** What makes text recognisable: RUN letters and digits in a row, and numbers of five digits or more. */
+interface Runs { grams: Set<string>; numbers: Set<string> }
+/** A run within one line (compact keeps lines apart: text on two lines is no run, it is two). */
+const addGram = (out: Set<string>, g: string) => { if (!g.includes("\n")) out.add(g); };
+const gramsOf = (c: string, out = new Set<string>()) => { for (let i = 0; i + RUN <= c.length; i++) addGram(out, c.slice(i, i + RUN)); return out; };
+const runsOf = (s: string): Runs => ({ grams: gramsOf(compact(s)), numbers: new Set(numbersOf(fold(s))) });
+/** The runs `text` holds too. */
+function runsIn(runs: Runs, text: string): Set<string> {
   const found = new Set<string>();
-  const grams = new Set<string>();
-  for (const line of compactLines(value)) for (let i = 0; i + RUN <= line.length; i++) grams.add(line.slice(i, i + RUN));
-  if (grams.size) {
-    for (const line of compactLines(text)) {
-      for (let i = 0; i + RUN <= line.length; i++) { const g = line.slice(i, i + RUN); if (grams.has(g)) found.add(g); }
+  if (runs.grams.size) for (const g of gramsOf(compact(text))) if (runs.grams.has(g)) found.add(g);
+  if (runs.numbers.size) {
+    const numbers = numbersOf(fold(text));
+    for (const n of runs.numbers) if (numbers.some(m => m.includes(n))) found.add(n);
+  }
+  return found;
+}
+
+/** Text around the place a number may continue through: enough for any number written out. */
+const NUMBER_CONTEXT = 40;
+/**
+ * The runs the text in a field has once `value` goes into `before` (at its end, or `anywhere` when the caret is
+ * unknown) and didn't have before: the value's own, and the ones it makes with the text on either side of it.
+ */
+function addedRuns(before: string, value: string, anywhere: boolean): Runs {
+  const cb = compact(before), cv = compact(value), fb = fold(before), fv = fold(value);
+  const grams = gramsOf(cv);
+  if (cv) {
+    for (let q = anywhere ? 0 : cb.length; q <= cb.length; q++) {
+      const left = cb.slice(Math.max(0, q - RUN + 1), q);
+      const s = left + cv + cb.slice(q, q + RUN - 1);
+      // The runs across either edge of the value (the ones inside it are above).
+      for (let i = 0; i < left.length && i + RUN <= s.length; i++) addGram(grams, s.slice(i, i + RUN));
+      for (let i = Math.max(left.length, left.length + cv.length - RUN + 1); i < left.length + cv.length && i + RUN <= s.length; i++) addGram(grams, s.slice(i, i + RUN));
     }
   }
-  const numbers = numbersIn(text);
-  for (const n of numbersIn(value)) if (numbers.some(m => m.includes(n))) found.add(n);
-  return found;
+  const own = numbersOf(fv);
+  const numbers = new Set(own);
+  if (/\d/.test(fv)) {
+    // Only the value's edges join the digits beside it ("448" after "812"); a number inside it is the same anywhere.
+    const v = fv.length > 2 * NUMBER_CONTEXT ? `${fv.slice(0, NUMBER_CONTEXT)}x${fv.slice(-NUMBER_CONTEXT)}` : fv;
+    for (let p = anywhere ? 0 : fb.length; p <= fb.length; p++) {
+      if (!DIGIT_BEFORE.test(fb.slice(Math.max(0, p - 6), p)) && !DIGIT_AFTER.test(fb.slice(p, p + 6))) continue;
+      const around = numbersOf(fb.slice(Math.max(0, p - NUMBER_CONTEXT), p) + v + fb.slice(p, p + NUMBER_CONTEXT));
+      for (const n of around) if (!own.some(m => m.includes(n))) numbers.add(n);
+    }
+  }
+  // What the field held already isn't new there.
+  const held = gramsOf(cb), heldNumbers = numbersOf(fb);
+  return {
+    grams: new Set([...grams].filter(g => !held.has(g))),
+    numbers: new Set([...numbers].filter(n => !heldNumbers.some(m => m.includes(n)))),
+  };
+}
+
+/**
+ * What text going into a field is judged by: all of it when it replaces everything (type_text's "replace", a key
+ * after Ctrl+A); otherwise its runs that are new there, with what the field holds now on either side of it (after it
+ * for "append"; anywhere for "insert" and keys, the caret being unknown), and after what this task typed there before
+ * (`typed`), so text typed in pieces is judged as a whole. Null when nothing is typed.
+ */
+function enteringRuns(r: ActionRequest): Runs | null {
+  const text = r.kind === "text" || r.kind === "cursor_text";
+  const now = text ? r.value ?? "" : r.kind === "keys" ? typedChar(r.value ?? "") ?? "" : "";
+  if (!now) return null;
+  if (text ? (r.mode ?? "replace") === "replace" : r.afterSelectAll) return runsOf(now);
+  const runs = r.currentText !== undefined ? addedRuns(r.currentText, now, !text || r.mode === "insert") : runsOf(now);
+  const typed = r.typed ?? "";
+  const prior = typed.endsWith(now) ? typed.slice(0, typed.length - now.length) : typed;
+  if (prior) {
+    const more = addedRuns(prior, now, false);
+    for (const g of more.grams) runs.grams.add(g);
+    for (const n of more.numbers) runs.numbers.add(n);
+  }
+  return runs;
 }
 
 const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
@@ -528,6 +658,18 @@ const sameWord = (a: string, b: string) => {
   const x = stem(a), y = stem(b);
   return x === y || (Math.min(x.length, y.length) >= 5 && (x.startsWith(y) || y.startsWith(x)));
 };
+/** Phrases that say one risky thing in several words, as one word: in the request and on the control alike. */
+const PHRASES: [RegExp, string][] = [
+  [/\b(move|send|put|throw|drag)( (it|them|this|these|that|those|the files?|the folders?|everything))? (to|in|into) (the )?(trash|bin|wastebasket|rubbish bin)\b/g, " trash "],
+  [/\b(throw (it |them |this |these |that |those )?away|get rid of)\b/g, " trash "],
+  [/\b(log ?(me |us |you |him |her |them )?(out|off)|sign ?(me |us |you |him |her |them )?out)\b/g, " logout "],
+  [/\b(shut ?down|power ?off)\b/g, " shutdown "],
+];
+const asOneWord = (s: string) => PHRASES.reduce((t, [re, w]) => t.replace(re, w), foldLabel(s));
+/** Words that ask for the same thing: "delete report.txt" asks for "Move to Trash", "remove row 5" for "Delete Rows", "sign me out" for "Log Out". */
+const SAME_ASK = [["delete", "remove", "erase", "trash", "discard", "wipe", "purge", "clear", "empty"], ["uninstall", "remove", "delete"], ["replace", "overwrite"],
+  ["send", "submit"], ["quit", "exit", "close"], ["restart", "reboot"]];
+const sameAsk = (a: string, b: string) => sameWord(a, b) || SAME_ASK.some(g => g.some(x => sameWord(x, a)) && g.some(x => sameWord(x, b)));
 /** The risky words and phrases in a label, in any of the languages above ("log out", "ta bort", "删除"). */
 function riskyTerms(s: string): string[] {
   const out: string[] = [];
@@ -549,12 +691,12 @@ function riskyTerms(s: string): string[] {
  */
 export function alignedWithGoal(goal: string | undefined, element: string): boolean {
   if (!goal) return true;
-  const asked = words(goal);
-  const said = `${normalizeLabel(goal)} ${foldLabel(goal)}`;
+  const asked = words(asOneWord(goal));
+  const said = `${normalizeLabel(goal)} ${foldLabel(goal)} ${asOneWord(goal)}`;
   const saidTerm = (t: string) => said.includes(t) || said.includes(hangulStem(t));
   // Scripts without spaces: the word (or the risky term in it) inside the request ("インストールして", "보내 줘").
-  const wanted = (w: string) => asked.some(a => sameWord(a, w)) || (SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm)));
-  const all = words(element);
+  const wanted = (w: string) => asked.some(a => sameAsk(a, w)) || (SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm)));
+  const all = words(asOneWord(element));
   let risky = all.filter(w => isRiskyLabel(w));
   // "Comment", "Block user": the verb, unless another risky word is ("Delete comment" acts on a comment).
   if (!risky.length) risky = all.filter(w => isRiskyActLabel(w));
@@ -564,9 +706,10 @@ export function alignedWithGoal(goal: string | undefined, element: string): bool
     const rest = all.filter(w => !risky.includes(w));
     return rest.length === 0 || rest.some(wanted);
   }
-  // A risky phrase, or a word in a script without spaces: the request must say it too.
+  // A risky phrase, or a word in a script without spaces: the request must say it too (a phrase of three words or more
+  // may have other words between: "close my notes without saving" asks for "Close without Saving").
   const terms = riskyTerms(element);
-  if (terms.length) return terms.some(saidTerm);
+  if (terms.length) return terms.some(t => saidTerm(t) || (t.split(" ").length >= 3 && words(t).every(wanted)));
   return all.some(wanted);
 }
 
@@ -610,6 +753,10 @@ function describe(r: ActionRequest, withApp = true): string {
 
 /** Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question. */
 type Risk = { reason: string; about?: string; note?: string };
+/** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
+const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
+const SELECTS_MORE: Risk = { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
+const KEYS_SELECT_MORE: Risk = { reason: "replacing with the keyboard selects everything (Ctrl+A), which here may be the whole document", note: "To replace it I select everything with Ctrl+A, which here may be the whole document." };
 
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
@@ -657,32 +804,39 @@ export class PolicyEngine {
     // What the dialog says, in the question: on the desk (or behind Ember) the user may not see it.
     const says = (r.dialog ? r.dialog.text.trim() || r.dialog.name : r.window).replace(/\s+/g, " ").trim();
     const note = says ? `It says: ${quote(says, 90)}.` : undefined;
+    // Risky by its name; "Format…" also in a disks app or a dialog about a disk (not in a document whose title says "USB").
+    const dialogTitle = DIALOG_WINDOW.test(r.windowId?.role ?? "") ? r.window : "";
+    const riskyNamed = isRiskyControl(role, name) || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
-        if (isRiskyControl(role, name)) return { reason: "this action may be hard to undo or visible to others", about: name };
+        if (riskyNamed) return { reason: "this action may be hard to undo or visible to others", about: name };
         if (agrees) return { reason: r.dialog && !isRiskyLabel(asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo", about: asks, note };
         return null;
       case "select":
         return isRiskyLabel(r.value ?? "") ? { reason: "this choice may be hard to undo or visible to others", about: r.value } : null;
       case "text": case "cursor_text": {
-        if (/[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
+        // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
+        if (r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         const current = r.currentText ?? "";
         if (r.mode === "replace" && (current.length > 80 || current.includes("\n"))) return { reason: `this replaces all ${current.length >= 200 ? "the" : current.length} characters already there` };
+        // With the keyboard, "replace" is Ctrl+A and Delete: in a paragraph that selects the whole document or page.
+        if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role)) return KEYS_SELECT_MORE;
         return null;
       }
       case "keys": {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
         const k = keyFamily(canonicalKeys(r.value ?? "") ?? "");
-        // After Ctrl+A, a typed character, Backspace, Delete, Enter or Ctrl+X replaces everything selected (as type_text's "replace").
-        if (r.afterSelectAll && (typedChar(k) !== null || ["backspace", "delete", "return", "ctrl+x"].includes(k))) {
+        // After Ctrl+A, a key that types, Backspace, Delete, Ctrl+X or a paste replaces everything selected (as type_text's "replace").
+        if (r.afterSelectAll && replacesSelection(k)) {
           const current = r.currentText;
-          if (current === undefined) return { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
+          // In a paragraph Ctrl+A selects the whole document or page, not only what the paragraph holds.
+          if (current === undefined || !HOLDS_ALL_TEXT.test(role)) return SELECTS_MORE;
           if (current.length > 80 || current.includes("\n")) return { reason: `everything is selected (Ctrl+A), so this replaces all ${current.length >= 200 ? "the" : current.length} characters already there` };
         }
         if (DESTRUCTIVE_KEYS.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button.
-          if (ACTIVATING_ROLES.test(role) && isRiskyControl(role, name)) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
+          if (ACTIVATING_ROLES.test(role) && riskyNamed) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
           if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog, and Ember can't be sure what it agrees to", about: asks, note };
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           return null;
@@ -712,11 +866,11 @@ export class PolicyEngine {
     if (!others.length) return risk;
     const pastes = r.kind === "keys" ? PASTE_KEYS.has(keyFamily(canonicalKeys(r.value ?? "") ?? ""))
       : (r.kind === "click" || r.kind === "cursor_click") && isPasteLabel(r.element?.name ?? "");
-    const value = r.kind === "text" || r.kind === "cursor_text" ? r.value : r.kind === "keys" ? r.typed : undefined;
-    if (!pastes && !value) return risk;
+    const runs = pastes ? null : enteringRuns(r);
+    if (!pastes && !runs) return risk;
     // Runs the user said, or the window typed into holds already, aren't carried from anywhere.
-    const own = pastes ? new Set<string>() : runsIn(value!, [r.goal ?? "", ...sources.filter(s => !elsewhere(s, r)).map(s => s.text ?? s.window)].join("\n"));
-    const from = pastes ? others : others.filter(s => [...runsIn(value!, s.text ?? s.window)].some(g => !own.has(g)));
+    const own = runs ? runsIn(runs, [r.goal ?? "", ...sources.filter(s => !elsewhere(s, r)).map(s => s.text ?? s.window)].join("\n")) : new Set<string>();
+    const from = runs ? others.filter(s => [...runsIn(runs, s.text ?? s.window)].some(g => !own.has(g))) : others;
     if (!from.length) return risk;
     const read = [...new Map(from.filter(s => !s.listed && !s.described).map(s => [`${s.app}\n${s.window}`, s])).values()];
     const named = read.slice(0, 2).map(s => { const app = friendlyApp(s.app); return `the window ${quote(s.window, 50)}${s.window.toLowerCase().includes(app.toLowerCase()) ? "" : ` (${app})`}`; });

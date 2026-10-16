@@ -94,6 +94,13 @@ VALUE_ROLES = frozenset(["slider", "spin button", "scroll bar", "progress bar", 
 FIELD_ROLES = frozenset(["text", "entry", "password text", "spin button", "combo box"])
 # Text that labels a control: GTK's and Qt's labels, Chromium's plain text. Keep in step with LABEL_ROLES in elements.ts.
 LABEL_ROLES = frozenset(["label", "static", "caption"])
+# A spreadsheet's cell is named by its address ("B7": LibreOffice Calc) and keeps what it holds as its text.
+# Keep in step with CELL_ADDRESS in elements.ts.
+CELL_ADDRESS = re.compile(r"^\$?[A-Z]{1,3}\$?[1-9][0-9]{0,6}$")
+# A spreadsheet's cells on screen (see grid_of) are read row by row: at most this many listed per read (on top of
+# MAX_NODES), for at most GRID_BUDGET_S (or half the time the read has left). Past either, the read is cut short.
+GRID_CELLS = 400
+GRID_BUDGET_S = 0.6
 
 # Labels of fields whose contents never leave this process (passwords, payment and bank details,
 # one-time codes, keys), in the languages Ember's users are likely to meet. The same lists as
@@ -204,6 +211,17 @@ def text_of(acc, limit=200):
     try:
         t = acc.queryText()
         return t.getText(0, min(t.characterCount, limit))
+    except Exception:
+        return None
+
+
+def cell_text(acc, limit=200):
+    """What a table cell holds (None: it has no text). A real one in one call for all of it: LibreOffice answers
+    nothing for a range that runs past the end of the text, and a spreadsheet has hundreds of cells to ask."""
+    if not native(acc):
+        return text_of(acc, limit)
+    try:
+        return (Atspi.Text.get_text(acc, 0, -1) or "")[:limit]
     except Exception:
         return None
 
@@ -337,35 +355,51 @@ class Snapshots(object):
 
     Ids are unique across reads, so a worker acting on an id from its own read
     can't hit an element from someone else's read. The last few reads are kept.
+    A quick look (`keep=False`: what has the keyboard before a key is pressed) goes in a
+    scratch read of its own that the next quick look replaces, so looks never push the
+    reads a worker acts on out of the kept ones.
     """
 
     KEEP = 8
 
     def __init__(self, start=None):
         self.reads = []  # list of dicts id -> accessible, oldest first
+        self.scratch = {}
+        self.current = None  # the read ids go to now
         self.next_id = first_id() if start is None else start
 
-    def begin(self):
-        self.reads.append({})
-        if len(self.reads) > self.KEEP:
-            self.reads.pop(0)
+    def begin(self, keep=True):
+        if keep:
+            self.reads.append({})
+            if len(self.reads) > self.KEEP:
+                self.reads.pop(0)
+            self.current = self.reads[-1]
+        else:
+            self.scratch = {}
+            self.current = self.scratch
+
+    def end(self):
+        """After a quick look: ids added later (secret fields for a screenshot) go to the newest kept read."""
+        self.current = self.reads[-1] if self.reads else None
 
     def add(self, acc):
         nid = self.next_id
         self.next_id += 1
-        if not self.reads:
+        if self.current is None:
             self.begin()
-        self.reads[-1][nid] = acc
+        self.current[nid] = acc
         return nid
 
     def get(self, nid):
         for read in reversed(self.reads):
             if nid in read:
                 return read[nid]
+        if nid in self.scratch:
+            return self.scratch[nid]
         raise KeyError("element %s is no longer known; read the window again" % nid)
 
     def latest(self):
-        return self.reads[-1] if self.reads else {}
+        return self.current if self.current is not None else {}
 
 
 SNAPSHOTS = Snapshots()
@@ -400,6 +434,15 @@ def node_of(acc, role, name, states, bounds):
                 sel = selection_of(acc)
                 if sel:
                     node["selection"] = sel
+    elif role == "table cell" and CELL_ADDRESS.match(name):
+        # A spreadsheet's cell: its name says where it is ("B7"), its text what it holds.
+        secret = is_secret(acc, role, name)
+        if secret:
+            node["secret"] = True
+        else:
+            txt = cell_text(acc)
+            if txt:
+                node["text"] = txt
     if role in VALUE_ROLES and not secret:
         val = value_of(acc)
         if val is not None:
@@ -428,11 +471,19 @@ def child_at(acc, i):
         return None
 
 
-def ends_above(acc, i, top):
-    """Does child i lie wholly above `top` (scrolled out of view upwards)?"""
+def above(acc, i, top):
+    """Does child i lie wholly above `top` (scrolled out of view upwards)? None when it has no size: LibreOffice
+    Calc puts the cells scrolled away, above and below the view alike, at its table's corner, sized 0x0."""
     child = child_at(acc, i)
     b = extents(child) if child is not None else None
+    if b is not None and b["width"] <= 0 and b["height"] <= 0:
+        return None
     return b is not None and b["y"] + b["height"] <= top
+
+
+def ends_above(acc, i, top):
+    """Does child i lie wholly above `top`, as far as can be told?"""
+    return above(acc, i, top) is True
 
 
 def raw_height(acc):
@@ -518,7 +569,8 @@ def child_indices(acc, count, clip, cap=MAX_CHILDREN):
     are a run of children taken to be laid out in order (see showing_after).
     Long lists and tables (thousands of rows) are read from the first row on screen, not from
     the top: rows are laid out top to bottom, so a binary search finds where the visible ones
-    start. Leading children on screen (column headers) are kept."""
+    start. Leading children on screen (column headers) are kept. Children without a size say nothing about
+    where the rows are: where the search meets only those, it stops, and some on screen may be left out."""
     if count <= MAX_CHILDREN:
         return list(range(count)), False, False
     in_table = table_indices(acc, count)
@@ -530,15 +582,171 @@ def child_indices(acc, count, clip, cap=MAX_CHILDREN):
     lead = 0
     while lead < min(count, 16) and not ends_above(acc, lead, top) and "showing" in state_names(child_at(acc, lead)):
         lead += 1
-    lo, hi = lead, count - 1
+    lo, hi, unsure = lead, count - 1, False
     while lo < hi:
         mid = (lo + hi) // 2
-        if ends_above(acc, mid, top):
-            lo = mid + 1
+        # One without a size (an empty element) may sit beside ones with a size: the next few are asked too.
+        side, probe = None, mid
+        while side is None and probe <= min(hi, mid + 3):
+            side = above(acc, probe, top)
+            probe += 1
+        if side is None:
+            unsure = True
+            break
+        if side:
+            lo = probe
         else:
             hi = mid
     end = min(count, lo + cap - lead)
-    return list(range(lead)) + list(range(lo, end)), end < count and on_screen(acc, end, clip), True
+    return list(range(lead)) + list(range(lo, end)), unsure or (end < count and on_screen(acc, end, clip)), True
+
+
+def table_cell_at(table, row, col):
+    """The cell of `table` at (row, col), or None."""
+    try:
+        if native(table):
+            return Atspi.Table.get_accessible_at(table, row, col)
+        return table.queryTable().getAccessibleAt(row, col)
+    except Exception:
+        return None
+
+
+def accessible_at_point(acc, x, y):
+    """The child of acc the app finds at screen point (x, y), or None."""
+    try:
+        if native(acc):
+            return Atspi.Component.get_accessible_at_point(acc, x, y, Atspi.CoordType.SCREEN)
+        return acc.queryComponent().getAccessibleAtPoint(x, y, pyatspi.DESKTOP_COORDS)
+    except Exception:
+        return None
+
+
+def cell_position(table, cell):
+    """(row, column) of a cell of `table`, or None. LibreOffice Calc's cells say so themselves (their index in the
+    table stops at 2^31, a sheet's row 131072)."""
+    if native(cell):
+        try:
+            pos = Atspi.TableCell.get_position(cell)
+            if pos[1] >= 0 and pos[2] >= 0:
+                return pos[1], pos[2]
+        except Exception:
+            pass
+    try:
+        t = table.queryTable()
+        i = cell.getIndexInParent()
+        row, col = t.getRowAtIndex(i), t.getColumnAtIndex(i)
+    except Exception:
+        return None
+    return (row, col) if i >= 0 and row >= 0 and col >= 0 else None
+
+
+def grid_of(acc, count, states, clip):
+    """A spreadsheet (LibreOffice Calc): a table that makes its cells as they are asked for ("manages descendants",
+    2^31 children), with no scroll bar beside it, that puts the cells scrolled away, above and below the view alike,
+    at its corner with no size: the order of its children says nothing about what shows. Returns its first and
+    last row and column on screen, from the cells the app finds at the corners of the part of it that shows,
+    and how many children come before its cells (column headers), as (first row, last row, first column, last
+    column, headers); None for any other list (a web page's table is read by its rows, which have their places)."""
+    if count <= MAX_CHILDREN or "manages descendants" not in states or web_engine(acc) or scroll_fraction(acc) is not None:
+        return None
+    view = clip_to(clip, extents(acc))
+    if view is None or view["width"] <= 0 or view["height"] <= 0:
+        return None
+    left, top = view["x"] + 1, view["y"] + 1
+    right, bottom = max(left, view["x"] + view["width"] - 2), max(top, view["y"] + view["height"] - 2)
+    corners = []
+    for x, y in ((left, top), (right, bottom)):
+        cell = accessible_at_point(acc, x, y)
+        pos = cell_position(acc, cell) if cell is not None else None
+        if pos is None:
+            return None
+        corners.append(pos)
+    (row0, col0), (row1, col1) = corners
+    if row1 < row0 or col1 < col0:
+        return None
+    try:
+        heads = max(0, min(acc.queryTable().getIndexAt(0, 0), 16))
+    except Exception:
+        heads = 0
+    return row0, row1, col0, col1, heads
+
+
+def grid_cells(acc, grid, budget, cap, until=None):
+    """The cells of a spreadsheet's rows and columns on screen (see grid_of), row by row: `cap` at most, until
+    `until` (time.monotonic()) at most, when budget.cut notes the rest was left out; and none once the read should
+    stop (see Budget.tick)."""
+    row0, row1, col0, col1, _ = grid
+    asked = 0
+    for row in range(row0, row1 + 1):
+        for col in range(col0, col1 + 1):
+            if asked >= cap or (until is not None and time.monotonic() > until):
+                budget.cut_short("nodes")
+                return
+            if budget.tick():
+                return
+            asked += 1
+            cell = table_cell_at(acc, row, col)
+            if cell is not None:
+                yield cell
+
+
+def walk_grid(acc, grid, depth, out, max_depth, max_nodes, parent_id, clip, budget):
+    """Reads a spreadsheet's cells on screen (see grid_of) into `out`, as children of acc (`depth`, `parent_id`):
+    those that hold something, and those focused or selected (hundreds of empty cells say nothing), GRID_CELLS at
+    most in a read, for GRID_BUDGET_S at most (or half the time the read has left). A cell is asked what it holds
+    first: one call, where its name, states and place take three more."""
+    for i in range(grid[4]):
+        # Column headers before the cells (GTK's tree view).
+        child = child_at(acc, i)
+        if child is not None:
+            walk(child, depth, out, max_depth, max_nodes, parent_id, clip, budget)
+        if budget.busy or budget.over:
+            return
+    now = time.monotonic()
+    until = min(now + GRID_BUDGET_S, now + max(0.0, budget.until - now) / 2.0)
+    editable = None
+    for cell in grid_cells(acc, grid, budget, 1 << 30, until):
+        text = cell_text(cell)
+        states = state_names(cell)
+        if text == "" and "focused" not in states and "selected" not in states:
+            continue
+        if "showing" not in states or "visible" not in states:
+            continue
+        if budget.grid >= GRID_CELLS:
+            budget.cut_short("nodes")
+            return
+        try:
+            role, name = cell.getRoleName(), (cell.name or "").strip()
+        except Exception:
+            continue
+        if role != "table cell":
+            # Something else in the grid: read as any element is (what it holds, whether it is secret).
+            walk(cell, depth, out, max_depth, max_nodes, parent_id, clip, budget)
+            if budget.busy or budget.over:
+                return
+            continue
+        bounds = extents(cell)
+        if not in_view(bounds, clip):
+            continue
+        node = {"role": role, "name": name[:200], "states": [s for s in states if s in INTERESTING_STATES],
+                "bounds": bounds}
+        if is_secret(cell, role, name):
+            node["secret"] = True
+        elif text and (text != name or CELL_ADDRESS.match(name)):
+            node["text"] = text
+        if editable is None and "editable" in states:
+            editable = is_editable(cell, states)  # the same for every cell
+        if editable and "editable" in states:
+            node["editable"] = True
+        node["id"] = SNAPSHOTS.add(cell)
+        node["parent"] = parent_id
+        node["depth"] = depth
+        shown = clip_to(clip, bounds) if clip is not None and bounds is not None else None
+        if shown is not None and shown != bounds:
+            node["shown"] = shown
+        out.append(node)
+        budget.grid += 1
+
 
 
 def showing_rule():
@@ -595,7 +803,8 @@ class Budget(object):
     longer than SLOW_APP_S was a call that timed out: the app is busy (or hung), and asking it more
     would only time out again. Either way the read stops where it is. `cut` notes elements on screen left
     out for want of room rather than time, and `why` says which room: "nodes" (the node limit, a long list's
-    row limit) or "depth" (nested deeper than a read goes)."""
+    row limit) or "depth" (nested deeper than a read goes). `grid`: the spreadsheet cells read (see walk_grid),
+    which have their own limit and leave the node limit to the rest of the window."""
 
     def __init__(self, seconds=READ_BUDGET_S):
         self.last = time.monotonic()
@@ -604,6 +813,7 @@ class Budget(object):
         self.over = False
         self.cut = False
         self.why = []
+        self.grid = 0
 
     def cut_short(self, why):
         self.cut = True
@@ -649,7 +859,7 @@ def shows(acc, states, in_pane=False):
 def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
     budget = budget or Budget()
-    if len(out) >= max_nodes:
+    if len(out) - budget.grid >= max_nodes:
         budget.cut_short("nodes")
         return False
     if budget.tick():
@@ -678,6 +888,10 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         node["id"] = SNAPSHOTS.add(acc)
         node["parent"] = parent_id
         node["depth"] = depth
+        shown = clip_to(clip, bounds) if clip is not None and bounds is not None else None
+        if shown is not None and shown != bounds:
+            # Partly scrolled out of its list, or outside its window: the part that shows (a mark goes there).
+            node["shown"] = shown
         out.append(node)
         my_id = node["id"]
         secret = node.get("secret", False)
@@ -695,10 +909,15 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     except Exception:
         count = 0
     long_list = count > MAX_CHILDREN
+    grid = grid_of(acc, count, states, clip) if long_list else None
+    if grid is not None:
+        # A spreadsheet: its cells on screen, by row and column.
+        walk_grid(acc, grid, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+        return judged
     indices, left_out, ordered = child_indices(acc, count, clip)
     shown, misses, last = False, 0, None
     for i in indices:
-        if len(out) >= max_nodes:
+        if len(out) - budget.grid >= max_nodes:
             budget.cut_short("nodes")
             return True
         if budget.tick():
@@ -725,7 +944,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         if not complete:
             budget.cut_short("nodes")
         for child in rest:
-            if len(out) >= max_nodes:
+            if len(out) - budget.grid >= max_nodes:
                 budget.cut_short("nodes")
                 return True
             if budget.tick():
@@ -1131,7 +1350,8 @@ def read_window(params):
         remember_windows(pid, [window], merge=True)
     if never_looked(window, params):
         return {"window": window, "nodes": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
-    SNAPSHOTS.begin()
+    # keep=False: a quick look whose ids aren't acted on (Snapshots), so it doesn't push out the kept reads.
+    SNAPSHOTS.begin(params.get("keep", True) is not False)
     nodes = []
     max_nodes = int(params.get("maxNodes", MAX_NODES))
     if not budget.busy:
@@ -1161,6 +1381,7 @@ def read_window(params):
         out["busy"] = True
     elif budget.over:
         out["slow"] = True
+    SNAPSHOTS.end()
     return out
 
 
@@ -1257,6 +1478,28 @@ def scan_fields(acc, depth, found, clip, budget, seen, in_pane=False):
         count = acc.childCount
     except Exception:
         count = 0
+    grid = grid_of(acc, count, states, clip) if count > MAX_CHILDREN else None
+    if grid is not None:
+        # A spreadsheet: its cells on screen (see grid_of). A plain cell holds a value, not a field; anything else
+        # in the grid is looked through.
+        for i in range(grid[4]):
+            child = child_at(acc, i)
+            if child is not None:
+                scan_fields(child, depth + 1, found, clip, budget, seen)
+        for cell in grid_cells(acc, grid, budget, SCAN_CHILDREN):
+            if budget.busy or budget.over or budget.cut:
+                return
+            seen[0] += 1
+            if seen[0] > SCAN_NODES:
+                budget.cut_short("nodes")
+                return
+            try:
+                plain = cell.getRoleName() == "table cell" and cell.childCount == 0
+            except Exception:
+                continue
+            if not plain:
+                scan_fields(cell, depth + 1, found, clip, budget, seen)
+        return
     indices, left_out, ordered = child_indices(acc, count, clip, SCAN_CHILDREN)
     if left_out:
         budget.cut_short("nodes")
@@ -1516,13 +1759,20 @@ def status(params):
 
 # ---------------------------------------------------------------- actions (tier 1)
 
+# What each action may be called (lower case). Chromium (Chrome, Electron apps: VS Code, Slack, Teams) names a check
+# box's, radio button's or switch's action "check" or "uncheck" (an ARIA switch's may be "doDefault"), a pop-up
+# button's "open" and a click inside a clickable element "clickAncestor"; Firefox a radio button's "select".
 ACTION_ALIASES = {
-    "click": ("click", "press", "activate", "jump", "toggle"),
+    "click": ("click", "press", "activate", "jump", "toggle", "check", "uncheck", "select", "dodefault", "open",
+              "clickancestor"),
     "press": ("press", "click", "activate"),
     "activate": ("activate", "click", "press", "jump"),
-    "toggle": ("toggle", "click", "press", "activate"),
+    "toggle": ("toggle", "click", "press", "activate", "check", "uncheck", "select", "dodefault"),
     "expand": ("expand or contract", "expand", "open", "press"),
 }
+# Actions that only turn a control one way: whether it is checked when the action would change nothing ("check" on a
+# check box already checked). Those are never used then: a toggle that does nothing would be reported as done.
+ONE_WAY = {"check": True, "select": True, "uncheck": False}
 
 
 BUSY = "the app is busy (it didn't answer in time); try again in a moment"
@@ -1564,15 +1814,30 @@ def node_info(acc, nid=None):
         info["value"] = val
     if role == "combo box":
         try:
-            sel = acc.querySelection()
-            holder = acc.getChildAtIndex(0) if acc.childCount == 1 else acc
-            for i in range(holder.childCount):
+            holder = option_holder(acc)
+            sel = option_selection(acc, holder)
+            for i in range(min(holder.childCount, 500) if sel is not None else 0):
                 if sel.isChildSelected(i):
                     info["selected"] = (holder.getChildAtIndex(i).name or "").strip()
                     break
         except Exception:
             pass
+    elif role == "menu":
+        # Open: its items show (the user opened it, with the mouse or with Alt+F or F10). A hover never opens a
+        # closed menu in a menu bar, though it selects it.
+        info["open"] = menu_open(acc)
     return info
+
+
+def menu_open(acc):
+    """Do a menu's items show (it is open)? Its first few are asked (a separator shows too)."""
+    try:
+        for i in range(min(acc.childCount, 3)):
+            if "showing" in state_names(acc.getChildAtIndex(i)):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def settle():
@@ -1618,22 +1883,89 @@ def after_action(acc, nid):
         raise
 
 
-def do_action(params):
-    nid = int(params["id"])
-    acc = usable(nid)
-    want = (params.get("action") or "click").lower()
+def pick_action(acc, want):
+    """(acc's Action interface, its action names, the index of the one that does `want`), or background_unavailable.
+    A one-way action ("check", "uncheck") is only picked where it changes something."""
     try:
         act = acc.queryAction()
     except NotImplementedError:
         raise RuntimeError("background_unavailable: this element has no accessible actions")
     names = [act.getName(i).lower() for i in range(act.nActions)]
-    index = None
+    checked = None
     for candidate in ACTION_ALIASES.get(want, (want,)):
-        if candidate in names:
-            index = names.index(candidate)
-            break
-    if index is None:
-        raise RuntimeError("background_unavailable: no '%s' action (has: %s)" % (want, ", ".join(names) or "none"))
+        if candidate not in names:
+            continue
+        if candidate in ONE_WAY:
+            if checked is None:
+                checked = "checked" in state_names(acc)
+            if ONE_WAY[candidate] == checked:
+                continue
+        return act, names, names.index(candidate)
+    raise RuntimeError("background_unavailable: no '%s' action (has: %s)" % (want, ", ".join(names) or "none"))
+
+
+def editable_text(acc):
+    try:
+        return acc.queryEditableText()
+    except NotImplementedError:
+        raise RuntimeError("background_unavailable: this element's text can't be edited directly")
+
+
+def value_iface(acc):
+    try:
+        return acc.queryValue()
+    except NotImplementedError:
+        raise RuntimeError("background_unavailable: this element has no value to set")
+
+
+def window_active(acc):
+    """Is the window acc is in the active one (None: can't tell)?"""
+    cur = acc
+    for _ in range(60):
+        try:
+            parent = cur.parent
+            if parent is None or parent.getRoleName() == "application":
+                return "active" in state_names(cur)
+        except Exception:
+            return None
+        cur = parent
+    return None
+
+
+def can_do(params):
+    """Could `kind` ("click", "toggle", "text" or "value") be done on element `id` by accessibility? Checked as
+    do_action, set_text and set_value check it, and nothing is done: Ember asks the user only the question that
+    applies (to borrow the mouse, where that is the only way). With `caret`: whether the element has the keyboard
+    (`focused`) and its window is the active one (`windowActive`), for text typed where the caret is."""
+    nid = int(params["id"])
+    acc = SNAPSHOTS.get(nid)
+    kind = params.get("kind")
+    out = {"tier1": True}
+    try:
+        if kind in ("click", "toggle"):
+            pick_action(acc, kind)
+        elif kind == "text":
+            editable_text(acc)
+        elif kind == "value":
+            value_iface(acc)
+    except RuntimeError as err:
+        if not str(err).startswith("background_unavailable"):
+            raise
+        out["tier1"] = False
+        out["why"] = str(err)[len("background_unavailable: "):]
+    if params.get("caret"):
+        out["focused"] = "focused" in state_names(acc)
+        active = window_active(acc)
+        if active is not None:
+            out["windowActive"] = active
+    return out
+
+
+def do_action(params):
+    nid = int(params["id"])
+    acc = usable(nid)
+    want = (params.get("action") or "click").lower()
+    act, names, index = pick_action(acc, want)
     before = node_info(acc, nid)
     ok = act.doAction(index)
     settle()
@@ -1648,10 +1980,7 @@ def set_text(params):
     refuse_secret(acc)
     text = params.get("text", "")
     mode = params.get("mode", "replace")
-    try:
-        et = acc.queryEditableText()
-    except NotImplementedError:
-        raise RuntimeError("background_unavailable: this element's text can't be edited directly")
+    et = editable_text(acc)
     if mode == "replace":
         ok = et.setTextContents(text)
     else:
@@ -1667,10 +1996,7 @@ def set_text(params):
 def set_value(params):
     acc = usable(int(params["id"]))
     refuse_secret(acc)
-    try:
-        v = acc.queryValue()
-    except NotImplementedError:
-        raise RuntimeError("background_unavailable: this element has no value to set")
+    v = value_iface(acc)
     value = float(params["value"])
     if not math.isfinite(value) or value < v.minimumValue or value > v.maximumValue:
         raise ValueError("value %s is outside %s..%s" % (value, v.minimumValue, v.maximumValue))
@@ -1679,18 +2005,40 @@ def set_value(params):
     return {"ok": True, "after": node_info(acc)}
 
 
-def option_items(acc):
-    """(selection-owner, [names]) for a combo box or list: the items Selection indexes."""
-    try:
-        acc.querySelection()
-    except NotImplementedError:
-        raise RuntimeError("background_unavailable: this element has no selectable options")
-    holder = acc
-    # GTK combo boxes keep their items in a child menu.
+def option_holder(acc):
+    """The element whose children are acc's options: a combo box's one child menu or list (GTK, Chromium and
+    Firefox keep the items there), else acc itself."""
     if acc.getRoleName() == "combo box" and acc.childCount == 1:
         child = acc.getChildAtIndex(0)
-        if child is not None and child.getRoleName() in ("menu", "list"):
-            holder = child
+        if child is not None and child.getRoleName() in ("menu", "list", "list box"):
+            return child
+    return acc
+
+
+def option_selection(acc, holder):
+    """The Selection that chooses among holder's children: acc's own (GTK's combo box), else the holder's (a
+    Chromium or Firefox <select> has it on its menu); None without one."""
+    for owner in ((acc, holder) if holder is not acc else (acc,)):
+        try:
+            return owner.querySelection()
+        except NotImplementedError:
+            continue
+    return None
+
+
+def option_chosen(sel, holder, index):
+    """Is option `index` the chosen one now?"""
+    try:
+        return bool(sel.isChildSelected(index)) or "selected" in state_names(holder.getChildAtIndex(index))
+    except Exception:
+        return False
+
+
+def option_items(acc):
+    """The names of a combo box's or list's options: the children its Selection chooses among."""
+    holder = option_holder(acc)
+    if option_selection(acc, holder) is None:
+        raise RuntimeError("background_unavailable: this element has no selectable options")
     names = []
     for i in range(min(holder.childCount, 500)):
         c = holder.getChildAtIndex(i)
@@ -1719,10 +2067,27 @@ def select_option(params):
     if index is None:
         # The options themselves are app text: they are listed with list_options, not in an error.
         raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % len(names))
-    ok = acc.querySelection().selectChild(index)
+    holder = option_holder(acc)
+    sel = option_selection(acc, holder)
+    ok = bool(sel.selectChild(index))
     settle()
+    if not ok:
+        # Chromium's closed <select> refuses Selection: its option's own "select" action chooses it (and the
+        # page hears of it as if the user had). Only that action: on a GTK menu item "click" activates it.
+        item = holder.getChildAtIndex(index)
+        try:
+            if item is None:
+                raise RuntimeError("background_unavailable: the option is gone")
+            act, _, i = pick_action(item, "select")
+        except RuntimeError as err:
+            if not str(err).startswith("background_unavailable"):
+                raise
+        else:
+            act.doAction(i)
+            settle()
+            ok = option_chosen(sel, holder, index)
     res = after_action(acc, nid)
-    res.update({"ok": bool(ok), "option": names[index]})
+    res.update({"ok": ok, "option": names[index]})
     return res
 
 
@@ -1739,8 +2104,15 @@ def focus(params):
 
 
 def read_element(params):
+    """The element as it is now. With `shown` asked for (where the mouse is to aim): the part of it that shows, where
+    some of it is scrolled out of view or lies outside its window (a few more calls to the app)."""
     nid = int(params["id"])
-    return node_info(SNAPSHOTS.get(nid), nid)
+    acc = SNAPSHOTS.get(nid)
+    info = node_info(acc, nid)
+    shown = visible_part(acc, info.get("bounds")) if params.get("shown") else None
+    if shown is not None:
+        info["shown"] = shown
+    return info
 
 
 # ---------------------------------------------------------------- what is at one point (under the wheel)
@@ -1754,11 +2126,70 @@ def contains(b, x, y):
     return b is not None and b["x"] <= x < b["x"] + b["width"] and b["y"] <= y < b["y"] + b["height"]
 
 
+def visible_part(acc, bounds):
+    """The part of acc's rectangle `bounds` that shows: inside each scroll pane and viewport it is in, and inside its
+    window. GTK reports a row scrolled almost out of its list as showing, at its full size: a click at its middle
+    lands below the list. None without a position (or when it would be all of `bounds`); a rectangle of no size
+    when nothing of it shows."""
+    if bounds is None:
+        return None
+    shown, cur = bounds, acc
+    for _ in range(AT_POINT_LEVELS):
+        try:
+            parent = cur.parent
+            role = parent.getRoleName() if parent is not None else "application"
+        except Exception:
+            break
+        if role == "application":
+            # cur is the window: what lies outside its frame doesn't show either.
+            if cur is not acc:
+                shown = clip_to(shown, extents(cur))
+            break
+        if role in CLIP_ROLES:
+            # GTK's viewport scrolled past its first screen has no position (see shows): its scroll pane clips.
+            shown = clip_to(shown, extents(parent))
+        cur = parent
+    return None if shown == bounds else shown
+
+
+# Containers that only group: one of these with nothing in it tells nothing about what shows at a point.
+GENERIC_ROLES = frozenset(["panel", "filler", "unknown", "redundant object"])
+
+
+def dead_end(acc):
+    """An empty grouping container (or one that can't be asked): Chromium's hit test from its window ends on an
+    empty views panel that lies over the web view, whose page is in a sibling panel."""
+    try:
+        return acc.getRoleName() in GENERIC_ROLES and acc.childCount == 0
+    except Exception:
+        return True
+
+
+def sibling_at(acc, x, y, budget):
+    """A sibling of acc that shows at (x, y) and isn't a dead end (Chromium: the panel holding the page, beside the
+    empty one its hit test ended on), or None."""
+    try:
+        parent = acc.parent
+        count = min(parent.childCount, AT_POINT_CHILDREN)
+    except Exception:
+        return None
+    for i in range(count):
+        if budget.tick():
+            return None
+        child = child_at(parent, i)
+        if child is None or getattr(child, "path", None) == getattr(acc, "path", None):
+            continue
+        if shows(child, state_names(child)) and contains(extents(child), x, y) and not dead_end(child):
+            return child
+    return None
+
+
 def child_at_point(acc, role, x, y, budget):
     """The child of acc (role `role`) that shows at screen point (x, y), as a list: [child], or [holder, child]
     for a child in a notebook's page tab (its page lies outside the tab's own bounds) or in a viewport GTK
-    misjudged (see shows: it has no bounds then); [] for none. The app is asked first (one call); where it
-    finds none, acc's first AT_POINT_CHILDREN children are looked through."""
+    misjudged (see shows: it has no bounds then); [] for none. The app is asked first (one call; Chromium answers
+    with the deepest element there); where it finds none, or only an empty container, acc's first
+    AT_POINT_CHILDREN children are looked through (one with something in it first)."""
     if native(acc):
         try:
             hit = Atspi.Component.get_accessible_at_point(acc, x, y, Atspi.CoordType.SCREEN)
@@ -1768,12 +2199,18 @@ def child_at_point(acc, role, x, y, budget):
             return []
         if hit is not None and hit is not acc and getattr(hit, "path", None) != getattr(acc, "path", None) \
                 and shows(hit, state_names(hit), role == "scroll pane"):
-            return [hit]
+            if not dead_end(hit):
+                return [hit]
+            # Chromium: an empty panel over the web view; the page is in one beside it.
+            beside_hit = sibling_at(hit, x, y, budget)
+            if beside_hit is not None:
+                return [beside_hit]
     try:
         count = min(acc.childCount, AT_POINT_CHILDREN)
     except Exception:
         return []
     through = []
+    empty = None
     for i in range(count):
         if budget.tick():
             return []
@@ -1782,7 +2219,11 @@ def child_at_point(acc, role, x, y, budget):
         if not shows(child, states, role == "scroll pane"):
             continue
         if contains(extents(child), x, y):
-            return [child]
+            if not dead_end(child):
+                return [child]
+            # An empty container lying over a sibling that holds what shows there: that one first.
+            empty = empty or child
+            continue
         try:
             if "showing" not in states or child.getRoleName() == "page tab":
                 through.append(child)
@@ -1799,13 +2240,15 @@ def child_at_point(acc, role, x, y, budget):
             child = child_at(holder, i)
             if child is not None and shows(child, state_names(child)) and contains(extents(child), x, y):
                 return [holder, child]
-    return []
+    return [empty] if empty is not None else []
 
 
 def at_point(params):
     """What shows at screen point (`x`, `y`) in one window (`pid` and `path`), outermost first: each element's
     role, name and bounds, as deep as the app tells. For the wheel: is a control it would change there? A read
-    of the whole window would take a hundred times as long. `busy`: the app didn't answer in time."""
+    of the whole window would take a hundred times as long. `busy`: the app didn't answer in time. The last
+    element is marked `empty` when it is an empty grouping container: the app told nothing about what shows
+    there (it may lie over what does)."""
     t0 = time.time()
     new_request(params)
     found = find_window(params, time.monotonic() + FIND_BUDGET_S)
@@ -1843,6 +2286,8 @@ def at_point(params):
         if secret:
             break
         acc = step[-1]
+    if chain and not secret and dead_end(acc):
+        chain[-1]["empty"] = True
     out = {"chain": chain, "ms": int((time.time() - t0) * 1000)}
     if budget.busy or budget.over:
         out["busy"] = True
@@ -1860,6 +2305,7 @@ METHODS = {
     "secret_fields": secret_fields,
     "read_element": read_element,
     "at_point": at_point,
+    "can_do": can_do,
     "do_action": do_action,
     "set_text": set_text,
     "set_value": set_value,

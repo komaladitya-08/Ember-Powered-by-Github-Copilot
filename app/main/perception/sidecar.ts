@@ -31,6 +31,8 @@ export interface AxNode {
   editable?: boolean;
   /** A password, payment or one-time-code field: its contents are never read. */
   secret?: boolean;
+  /** The part of `bounds` that shows, where some of it is scrolled out of its list or lies outside its window. */
+  shown?: Bounds;
 }
 
 export interface AxWindow {
@@ -79,8 +81,12 @@ export interface SecretFieldsResult {
 /** Something GNOME Shell draws over the windows (a system dialog, a notification), in physical pixels. */
 export interface ShellOverlay { role: string; name: string; text: string; bounds: Bounds | null }
 
-/** One of the elements that show at a point of a window (see atPoint), with its bounds as the app reports them. A secret field comes nameless, and last. */
-export interface PointElement { role: string; name: string; bounds: Bounds | null; secret?: boolean }
+/**
+ * One of the elements that show at a point of a window (see atPoint), with its bounds as the app reports them. A secret
+ * field comes nameless, and last. `empty`: the last one is an empty grouping container, so the app told nothing about
+ * what shows there (Chromium's hit test can end on an empty panel lying over its web page).
+ */
+export interface PointElement { role: string; name: string; bounds: Bounds | null; secret?: boolean; empty?: boolean }
 
 /** What shows at a point, outermost first; `busy`: the app didn't answer in time; `found`: false when the window is gone. */
 export interface AtPointResult { chain: PointElement[]; busy?: boolean; blocked?: boolean; found?: boolean; ms: number }
@@ -96,7 +102,18 @@ export interface ElementInfo {
   selected?: string;
   /** Contents withheld (a password or payment field). */
   secret?: boolean;
+  /** readElement: the part of `bounds` that shows, where some of it is scrolled out of view or lies outside its window. */
+  shown?: Bounds;
+  /** A menu: whether it is open (its items show). */
+  open?: boolean;
 }
+
+/**
+ * Could an action be done by accessibility (tier 1), checked as the action itself checks it and without doing it.
+ * `why`: why it can't (the app's own action names may be in it). `focused` and `windowActive` (asked with `caret`):
+ * the element has the keyboard, and its window is the active one.
+ */
+export interface CanDo { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean }
 
 /** `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering. */
 export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean }
@@ -249,7 +266,7 @@ export class AtspiSidecar {
 
   private physical<T extends ElementInfo | undefined>(id: number, e: T): T {
     const k = this.scales.get(id);
-    return k && e?.bounds ? { ...e, bounds: scaleBounds(e.bounds, k) } : e;
+    return k && e?.bounds ? { ...e, bounds: scaleBounds(e.bounds, k), ...(e.shown ? { shown: scaleBounds(e.shown, k) } : {}) } : e;
   }
 
   private physicalResult(id: number, r: ActionResult): ActionResult {
@@ -262,9 +279,11 @@ export class AtspiSidecar {
   /**
    * `pid` and `path` together name one window (no other is read if it is gone). A window whose app
    * or title matches `neverLook`, or whose process is in `skipPids`, is found but not read. `ownPid`'s
-   * windows (Ember's own) are never found, not even as the active window.
+   * windows (Ember's own) are never found, not even as the active window. `keep: false`: a quick look whose ids
+   * aren't acted on (what has the keyboard before a key): it doesn't push the reads acted on out of the sidecar's
+   * last few, so the ids of the latest perceive_window stay known.
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number } = {}): Promise<ReadWindowResult> {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown }>("read_window", params).then(({ secretKeys, ...r }) => {
       this.remember(secretKeys);
       return r;
@@ -304,7 +323,14 @@ export class AtspiSidecar {
   }
 
   // Tier 1 actions on element ids from a previous readWindow.
-  readElement(id: number): Promise<ElementInfo> { return this.request<ElementInfo>("read_element", { id }).then(e => this.physical(id, e)); }
+  /** `shown`: also the part of it that shows (where the mouse is to aim; a few more calls to the app). */
+  readElement(id: number, o: { shown?: boolean } = {}): Promise<ElementInfo> {
+    return this.request<ElementInfo>("read_element", o.shown ? { id, shown: true } : { id }).then(e => this.physical(id, e));
+  }
+  /** Could `kind` be done on element `id` by accessibility? Nothing is done. */
+  canDo(id: number, kind: "click" | "toggle" | "text" | "value", caret = false): Promise<CanDo> {
+    return this.request<CanDo>("can_do", { id, kind, caret });
+  }
   doAction(id: number, action = "click"): Promise<ActionResult> {
     return this.request<ActionResult>("do_action", { id, action }).then(r => this.physicalResult(id, r));
   }

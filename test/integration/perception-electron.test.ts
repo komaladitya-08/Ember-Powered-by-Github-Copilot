@@ -16,9 +16,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { AtspiSidecar, pickPython } from "../../app/main/perception/sidecar";
+import { AtspiSidecar, pickPython, type AxNode } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { openX11, type X11 } from "../../app/main/x11";
+import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
+import { Presenter } from "../../app/main/agent/presenter";
+import { PolicyEngine } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
 
 const python = pickPython();
@@ -48,6 +51,20 @@ ${'<div role="group" aria-label="layer">'.repeat(40)}Card number <input style="f
 ${Array.from({ length: 250 }, (_, i) => `<p style="margin:2px">Item ${i}</p>`).join("")}
 <div style="position:fixed;right:10px;top:50px;width:330px;background:#eef;padding:8px">Pay now<br>
 Card number <input style="font:16px monospace;width:220px;color:#00b000" value="5500 0000 0000 0004"><br><button>Pay</button></div></body>`;
+// A form as in an Electron app (review round 6): Chromium names a check box's, radio button's and switch's action
+// "check" or "uncheck", and keeps a <select>'s options (and their Selection) on a child menu. What the page hears
+// shows in its last paragraph.
+const FORM_PAGE = `<!doctype html><title>Ember test: Form</title><body style="font:14px sans-serif">
+<div><label>Description <input id=desc></label></div>
+<div><label>Category <select id=cat><option>Travel</option><option>Meals</option><option>Office</option></select></label></div>
+<div><label><input type=checkbox id=urgent> Urgent</label> <label><input type=radio name=pay id=cash checked> Cash</label>
+<label><input type=radio name=pay id=card> Card</label> <button role=switch aria-checked=false id=sw>Notify</button></div>
+<p id=out>nothing yet</p>
+<script>
+const show = () => { out.textContent = "cat=" + cat.value + " urgent=" + urgent.checked + " pay=" + (card.checked ? "card" : "cash") + " notify=" + sw.getAttribute("aria-checked"); };
+cat.onchange = urgent.onchange = cash.onchange = card.onchange = show;
+sw.onclick = () => { sw.setAttribute("aria-checked", sw.getAttribute("aria-checked") === "true" ? "false" : "true"); show(); };
+</script></body>`;
 const MAIN = `
 const { app, BrowserWindow } = require("electron");
 app.commandLine.appendSwitch("force-renderer-accessibility");
@@ -179,5 +196,60 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     // Deeper than a read goes: the read says what it left out.
     const shallow = await sidecar.readWindow({ pid: pids.Deep, maxDepth: 20 });
     expect([shallow.truncated, shallow.cut]).toEqual([true, ["depth"]]);
+  }, 40_000);
+
+  it("fills in a web form by accessibility: check boxes, radio buttons, switches and drop-downs; text only with the mouse, asked once (review round 6)", async () => {
+    start("Ember test: Form", FORM_PAGE, true, 1);
+    await appear(Object.keys(pids).length + 1);
+    if (!pids.Form) throw new Error("the form never appeared on the accessibility bus");
+    let nodes: AxNode[] = [];
+    for (let i = 0; i < 20 && !nodes.some(n => n.role === "combo box"); i++) {
+      nodes = (await sidecar.readWindow({ pid: pids.Form })).nodes;
+      await new Promise(r => setTimeout(r, 250)); // the page is still being handed over
+    }
+    const find = (role: RegExp, name: string) => nodes.find(n => role.test(n.role) && n.name === name)!;
+    const urgent = find(/^check box$/, "Urgent");
+    expect(urgent.actions?.map(a => a.toLowerCase())).toContain("check");
+    // Each by Chromium's own action, never the mouse; and back off with "uncheck", not "check" once more.
+    for (const n of [urgent, find(/^radio button$/, "Card"), find(/^(toggle button|switch)$/, "Notify")]) {
+      const r = await sidecar.doAction(n.id, "toggle");
+      expect(r.after?.states, n.name).toContain("checked");
+    }
+    const off = await sidecar.doAction(urgent.id, "toggle");
+    expect([off.action, off.after?.states.includes("checked")]).toEqual(["uncheck", false]);
+
+    // The worker's own tools, on the real page: the drop-down is chosen by accessibility; the description can only
+    // be typed with the mouse and keyboard, so that is the one question.
+    const asked: string[] = [];
+    const answers = ["once", "deny"];
+    const worker = new Worker({
+      client: {} as never, log: quiet, model: "m", vision: false, workDir: dir,
+      perception, sidecar, policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}) }),
+      confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); return answers.shift() ?? "deny"; } },
+      audit: { write: () => undefined }, settings: { get: () => ({ grants: {} }), update: () => undefined },
+      presenter: new Presenter(() => undefined),
+      lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
+      cursor: { borrow: {}, findWindow: () => 1, setBorrowing: () => undefined },
+    } as unknown as WorkerDeps, { id: "f1", goal: "Fill in the expense report: Meals, train to Lyon", target: { title: "Ember test: Form", pid: pids.Form } });
+    const call = (name: string, args: Record<string, unknown>) =>
+      worker.tools().find(t => t.name === name)!.handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
+    const screen = (await call("perceive_window", {})).textResultForLlm;
+    const id = (re: RegExp) => Number(/\[(\d+)\]/.exec(screen.split("\n").find(l => re.test(l)) ?? "")?.[1]);
+    const chose = await call("choose_option", { id: id(/\] combo box "Category"/), option: "Meals" });
+    expect(chose.textResultForLlm).toMatch(/^Done\. Now: combo box "Category".*selected="Meals"/);
+    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: choose “Meals” in “Category” combo box/)]);
+    const typed = await call("type_text", { id: id(/\] entry "Description"/), text: "Train to Lyon", mode: "replace" });
+    expect(typed.resultType).toBe("denied");
+    expect(asked.slice(1)).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Train to Lyon” into “Description” entry/)]);
+    await worker.dispose();
+
+    // What the page itself heard.
+    let said = "";
+    for (let i = 0; i < 20 && !said.includes("cat=Meals"); i++) {
+      const { nodes: now } = await sidecar.readWindow({ pid: pids.Form });
+      said = now.map(n => `${n.name} ${n.text ?? ""}`).find(s => s.includes("cat=")) ?? "";
+      if (!said.includes("cat=Meals")) await new Promise(r => setTimeout(r, 200));
+    }
+    expect(said).toContain("cat=Meals urgent=false pay=card notify=true");
   }, 40_000);
 });

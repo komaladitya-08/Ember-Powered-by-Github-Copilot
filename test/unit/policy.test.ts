@@ -103,7 +103,9 @@ describe("policy: review fixes (screen text can't hide risk)", () => {
     }
   });
   it("typed line breaks and replacing a whole document are confirmed", () => {
-    expect(e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hello\n", mode: "insert" }).verdict).toBe("confirm");
+    // Typed with the keyboard a line break is Enter; put in by accessibility it presses nothing (review round 6, W6-4).
+    expect(e.decide({ taskId: "x", kind: "cursor_text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hello\n", mode: "insert", onDesk: true }).verdict).toBe("confirm");
+    expect(e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hello\n", mode: "insert" }).verdict).toBe("allow");
     const doc = "line\n".repeat(50);
     const d = e.decide({ taskId: "x", kind: "text", app: "gedit", window: "notes", element: { role: "text", name: "Doc" }, value: "hi", mode: "replace", currentText: doc });
     expect(d.verdict).toBe("confirm");
@@ -648,8 +650,8 @@ describe("policy: review round 5", () => {
     for (const [goal, label] of [["整理一下文件", "删除"], ["메일을 읽어 줘", "보내기"], ["このページを読んで", "インストール"]]) expect(alignedWithGoal(goal, label), label).toBe(false);
   });
 
-  it("Korean “바꾸기” is risky as GTK's Replace button, not inside “이름 바꾸기” (Rename); Portuguese “Formatar” is", () => {
-    for (const name of ["바꾸기", "바꾸기(R)", "모두 바꾸기", "찾아 바꾸기", "Formatar…", "Formate"]) expect(isRiskyLabel(name), name).toBe(true);
+  it("Korean “바꾸기” is risky as GTK's Replace button, not inside “이름 바꾸기” (Rename); Portuguese “Formatar” is for a disk", () => {
+    for (const name of ["바꾸기", "바꾸기(R)", "모두 바꾸기", "찾아 바꾸기", "Formatar disco…", "Formatar partição"]) expect(isRiskyLabel(name), name).toBe(true);
     for (const name of ["이름 바꾸기…", "이름 바꾸기"]) expect(isRiskyLabel(name), name).toBe(false);
     expect(e({ nautilus: "act" }).decide({ taskId: "k", kind: "click", app: "nautilus", window: "Downloads", element: { role: "menu item", name: "이름 바꾸기…" }, goal: "파일 이름을 바꿔 줘" }).verdict).toBe("allow");
   });
@@ -662,5 +664,173 @@ describe("policy: review round 5", () => {
     expect(fresh.decide({ taskId: "f", kind: "click", app: "soffice.bin", window: "report.odt", element: { role: "push button", name: "Delete" } }).prompt).toBe("Click “Delete” push button in LibreOffice?");
     expect(e({ "gnome-control-center": "act" }).decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Night Light" } }))
       .toMatchObject({ verdict: "allow", reason: "Ember may act in Settings" });
+  });
+});
+
+describe("policy: review round 6", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", gedit: "act" }), rateLimit: 1e6 });
+  const FORM: ReadSource = { app: "Firefox", window: "Survey - Mozilla Firefox", pid: 7, path: "/a/1", role: "frame", text: "Survey\nComments" };
+  const MAIL: ReadSource = { app: "Thunderbird", window: "Inbox - Thunderbird", pid: 9, path: "/t/1", role: "frame",
+    text: "From HR: your salary review: 84,000 EUR\nSSN 123-45-6789\nCall me on +1 (555) 123-4567\nReset code: 448812\nAna's email: ana.silva@example.com\nThe layoff list: Tom Baker, Sue Lin" };
+  const type = (value: string, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "c", kind: "text", app: "Firefox", window: FORM.window,
+    windowId: { pid: 7, path: "/a/1", role: "frame" }, element: { role: "entry", name: "Comments" }, value, mode: "append", goal: "fill in the survey", readFrom: [FORM, MAIL], ...o }).verdict;
+
+  it("text added in pieces is judged with what the field holds and what the task typed there: the run it completes is asked about (SEC6-1)", () => {
+    // Each piece alone is an everyday run.
+    for (const v of ["448", "812", "ana.silva@", "example.com"]) expect(type(v, { currentText: "" }), v).toBe("allow");
+    // Added after what the field holds, it completes text read in the mail.
+    expect(type("812", { currentText: "448" })).toBe("confirm");
+    expect(type("example.com", { currentText: "Contact: ana.silva@" })).toBe("confirm");
+    expect(type("example.com", { kind: "cursor_text", onDesk: true, currentText: "ana.silva@" })).toBe("confirm");
+    // Inserted at the caret, wherever that is.
+    expect(type("example", { mode: "insert", currentText: "ana.silva@.com" })).toBe("confirm");
+    expect(type("448", { mode: "insert", currentText: "code 812" })).toBe("confirm");
+    // Where the field's text can't be read in full, what this task typed there before counts.
+    expect(type("812", { currentText: "x".repeat(2000), typed: "448812" })).toBe("confirm");
+    expect(type("example.com", { typed: "ana.silva@example.com" })).toBe("confirm");
+    // What the field held before isn't new there; text added after it that carries nothing isn't asked about.
+    expect(type(" thanks", { currentText: "ana.silva@example.com" })).toBe("allow");
+    expect(type("x", { currentText: "448812", typed: "448812x" })).toBe("allow");
+    // "replace" drops what was there: only the new text counts.
+    expect(type("812", { mode: "replace", currentText: "448", typed: "448812" })).toBe("allow");
+  });
+
+  it("keys typed one by one are judged with the field's text, wherever the caret is (SEC6-3)", () => {
+    const key = (value: string, o: Partial<ActionRequest>) => e.decide({ taskId: "k", kind: "keys", app: "gedit", window: "notes.txt - gedit", onDesk: true,
+      element: { role: "text", name: "Document" }, value, goal: "write my notes", readFrom: [MAIL], ...o }).verdict;
+    // "example.com" first, then Home and "ana.silva@" before it: the run in typing order is no address, the field is.
+    expect(key("v", { typed: "examplecomanasilv", currentText: "ana.silexample.com" })).toBe("allow");
+    expect(key("a", { typed: "examplecomanasilva", currentText: "ana.silvexample.com" })).toBe("confirm");
+    expect(key("2", { typed: "2", currentText: "Reset 448 81" })).toBe("confirm");
+    // After Ctrl+A the key replaces everything: only it counts.
+    expect(key("2", { typed: "2", currentText: "448 81", afterSelectAll: true, element: { role: "entry", name: "Code" } })).toBe("allow");
+  });
+
+  it.each(["123-45-6789", "123456789", "+1 (555) 123-4567", "15551234567", "555 123 4567", "448-812", "84-000", "84 000"])("a number read elsewhere, written “%s”, is asked about (SEC6-2)", v => {
+    expect(type(v, { mode: "replace" })).toBe("confirm");
+  });
+
+  it("numbers the user said, or of four digits or fewer, still aren't (SEC6-2)", () => {
+    expect(type("123-45-6789", { mode: "replace", goal: "put my SSN 123 45 6789 in the survey" })).toBe("allow");
+    for (const v of ["6789", "Room 4-12", "1-2-3", "(555)"]) expect(type(v, { mode: "replace" }), v).toBe("allow");
+  });
+
+  it("keys that type a character go to the journal as a count, shortcuts and keys that edit or move in full (SEC6-4)", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const line = (value: string) => JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "keys", app: "gedit", value, verdict: "allow" })));
+    for (const v of ["a", "A", "shift+a", "4", "KP_4", "space", "comma", "at", ".", "eacute", "448812", "hello world"]) {
+      expect(line(v), v).toEqual({ event: "decision", kind: "keys", app: "gedit", chars: 1, verdict: "allow" });
+    }
+    for (const v of ["ctrl+s", "Return", "Tab", "BackSpace", "Delete", "Left", "F5", "alt+F4", "ctrl+shift+v", "Escape", "Home", "alt+f"]) expect(line(v).value, v).toBe(v);
+    // The user's own 0600 file keeps the key.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-audit6-"));
+    const sunk: string[] = [];
+    const log = new AuditLog(dir, () => new Date(0), l => sunk.push(journalLine(l)));
+    log.write({ event: "action", kind: "keys", value: "a" });
+    expect(JSON.parse(fs.readFileSync(log.file, "utf8")).value).toBe("a");
+    expect(JSON.parse(sunk[0])).toMatchObject({ chars: 1 });
+    expect(JSON.parse(sunk[0]).value).toBeUndefined();
+  });
+
+  it("a window only titled “Ember” in another program (Files showing ~/Ember) isn't Ember's own (DK6-1)", () => {
+    expect(isEmberWindow({ app: "nautilus", name: "Ember", pid: 3100 }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "org.gnome.Nautilus", name: "ember", pid: 3100 }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "nautilus", name: "Ember", pid: 4242 }, 4242)).toBe(true);
+    // Without a process, by title; an app called Ember, whatever its process.
+    expect(isEmberWindow({ app: "", name: "Ember" }, 4242)).toBe(true);
+    expect(isEmberWindow({ app: "ember", name: "Preferences", pid: 3100 }, 4242)).toBe(true);
+    const files = new PolicyEngine({ neverLook: () => [], grants: () => ({ nautilus: "act" }), rateLimit: 1e6, ownPid: 4242 });
+    const click = (o: Partial<ActionRequest>) => files.decide({ taskId: "f", kind: "click", app: "nautilus", window: "Ember", element: { role: "icon", name: "report.pdf" }, goal: "open the report", ...o }).verdict;
+    expect(click({ windowId: { pid: 3100, path: "/n/1", role: "frame" } })).toBe("allow");
+    expect(click({ windowId: { pid: 4242, path: "/n/1", role: "frame" } })).toBe("deny");
+    expect(click({})).toBe("deny");
+  });
+
+  it("after Ctrl+A every key that types, Tab and the paste keys replace it all; in a paragraph Ctrl+A selects the whole document (DK6-2)", () => {
+    const LONG = "x".repeat(300);
+    const key = (value: string, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "s", kind: "keys", app: "gedit", window: "notes.txt - gedit", onDesk: true,
+      element: { role: "text", name: "Document" }, value, afterSelectAll: true, currentText: LONG, goal: "tidy my notes", ...o });
+    for (const k of ["period", "minus", "comma", "slash", "apostrophe", "Tab", "ctrl+v", "shift+Insert", "shift+a", "KP_1", "at", "a", "BackSpace", "Return", "ctrl+x"]) {
+      expect(key(k), k).toMatchObject({ verdict: "confirm", reason: "everything is selected (Ctrl+A), so this replaces all the characters already there" });
+    }
+    // Keys that move, copy or format replace nothing.
+    for (const k of ["Left", "End", "ctrl+c", "ctrl+b", "Escape", "shift+Right"]) expect(key(k).verdict, k).toBe("allow");
+    // A short field's text is all it replaces.
+    expect(key("period", { currentText: "short" }).verdict).toBe("allow");
+    // In a paragraph (a Writer document's) Ctrl+A selected the whole document: asked whatever the paragraph holds.
+    expect(key("period", { currentText: "short", element: { role: "paragraph", name: "" } })).toMatchObject({ verdict: "confirm", reason: "everything is selected (Ctrl+A), so this replaces it all" });
+    // With the keyboard, "replace" is Ctrl+A too: in a paragraph it is asked about.
+    const typeIn = (role: string) => e.decide({ taskId: "s", kind: "cursor_text", app: "soffice.bin", window: "report.odt - LibreOffice Writer", onDesk: true,
+      element: { role, name: "" }, value: "Hello", mode: "replace", currentText: "Hi", goal: "write hello" });
+    expect(typeIn("paragraph")).toMatchObject({ verdict: "confirm", reason: "replacing with the keyboard selects everything (Ctrl+A), which here may be the whole document" });
+    expect(typeIn("entry").verdict).toBe("allow");
+  });
+});
+
+describe("policy: review round 6, labels and words", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ "soffice.bin": "act", nautilus: "act", "gnome-control-center": "act", "gnome-disks": "act", firefox: "act", mousepad: "act" }), rateLimit: 1e6 });
+  const click = (app: string, window: string, role: string, name: string, goal: string, o: Partial<ActionRequest> = {}) =>
+    e.decide({ taskId: "w", kind: "click", app, window, element: { role, name }, goal, ...o });
+
+  it("LibreOffice's and the mail composers' Format menus are everyday labels; formatting a disk is asked about (W6-1)", () => {
+    for (const name of ["Format", "Format Cells…", "Number Format", "Formatieren", "Formater", "Formatar", "Format Paintbrush"]) {
+      expect(isRiskyLabel(name), name).toBe(false);
+      expect(click("soffice.bin", "Budget.ods - LibreOffice Calc", "menu", name, "make the title bold"), name).toMatchObject({ verdict: "allow" });
+    }
+    // A document that only mentions a disk in its title is still a document.
+    expect(click("soffice.bin", "USB disk inventory.ods - LibreOffice Calc", "menu", "Format", "make the title bold").verdict).toBe("allow");
+    for (const name of ["Format Disk…", "Format Partition…", "Datenträger formatieren…", "Formater le disque", "Formatear unidad", "Форматировать диск", "ディスクをフォーマット", "格式化磁盘"]) {
+      expect(isRiskyLabel(name), name).toBe(true);
+      expect(click("gnome-disks", "Disks", "menu item", name, "check my USB stick").verdict, name).toBe("confirm");
+    }
+    // GNOME Disks' own "Format…" button, and the one in its "Format Volume" dialog.
+    expect(click("gnome-disks", "Disks", "push button", "Format…", "check my USB stick")).toMatchObject({ verdict: "confirm", aligned: false });
+    expect(click("gnome-disks", "Disks", "push button", "Format…", "format my USB stick").aligned).toBeUndefined();
+    expect(click("udisks", "Format Volume", "push button", "Format", "check my USB stick", { windowId: { pid: 3, path: "/d/2", role: "dialog" } }).verdict).toBe("confirm");
+    expect(click("nautilus", "Files", "push button", "Format", "check my USB stick", { dialog: { name: "Format Volume", text: "Erase: Don't overwrite existing data (Quick)" } }).verdict).toBe("confirm");
+  });
+
+  it("what the user said in other words still asks for it: no “You didn't ask for this” (W6-3)", () => {
+    for (const goal of ["delete report.txt", "remove report.txt from Documents", "throw away report.txt", "get rid of report.txt", "move report.txt to the trash", "trash report.txt"]) {
+      expect(alignedWithGoal(goal, "Move to Trash"), goal).toBe(true);
+    }
+    expect(alignedWithGoal("sign me out", "Log Out")).toBe(true);
+    expect(alignedWithGoal("log me off", "Sign Out")).toBe(true);
+    expect(alignedWithGoal("delete the old HP printer", "Remove Printer")).toBe(true);
+    expect(alignedWithGoal("remove row 5", "Delete Rows")).toBe(true);
+    expect(alignedWithGoal("remove the formatting from this paragraph", "Clear Direct Formatting")).toBe(true);
+    expect(alignedWithGoal("remove Thunderbird", "Uninstall")).toBe(true);
+    expect(alignedWithGoal("save it, overwriting the old one", "Replace")).toBe(true);
+    expect(alignedWithGoal("shut down the computer", "Power Off")).toBe(true);
+    expect(alignedWithGoal("close my notes without saving", "Close without Saving")).toBe(true);
+    expect(alignedWithGoal("empty cell B2", "Clear")).toBe(true);
+    expect(alignedWithGoal("save my notes and close", "Close without Saving")).toBe(false);
+    expect(click("nautilus", "Documents", "menu item", "Move to Trash", "get rid of report.txt").aligned).toBeUndefined();
+    // Other words, or what the verb acts on, still have to match.
+    expect(alignedWithGoal("fill in the survey", "Move to Trash")).toBe(false);
+    expect(alignedWithGoal("delete report.txt", "Delete account")).toBe(false);
+    expect(alignedWithGoal("remove the bold", "Clear history")).toBe(false);
+    expect(alignedWithGoal("open my mail", "Log Out")).toBe(false);
+    expect(alignedWithGoal("sign the contract", "Log Out")).toBe(false);
+  });
+
+  it("line breaks put in by accessibility are no Enter: a multi-line edit in a granted editor isn't asked about (W6-4)", () => {
+    const edit = (kind: "text" | "cursor_text", onDesk = false) => e.decide({ taskId: "m", kind, app: "mousepad", window: "notes.txt - Mousepad", element: { role: "text", name: "" },
+      value: "\nbread\nbutter", mode: "append", currentText: "Shopping\nmilk\neggs", goal: "add bread and butter to my shopping list", onDesk });
+    expect(edit("text")).toMatchObject({ verdict: "allow" });
+    // Typed with the keyboard (Ember's desk), a line break is Enter.
+    expect(edit("cursor_text", true)).toMatchObject({ verdict: "confirm", reason: "the text contains a line break or tab, which can submit a form or move to another field" });
+  });
+
+  it.each([["Forget Connection", "gnome-control-center", "Wi-Fi", "push button"], ["Forget About This Site", "firefox", "History - Mozilla Firefox", "menu item"],
+    ["Refresh Firefox…", "firefox", "Troubleshooting Information - Mozilla Firefox", "push button"], ["Verbindung vergessen", "gnome-control-center", "WLAN", "push button"],
+    ["Oublier la connexion", "gnome-control-center", "Wi-Fi", "push button"], ["Olvidar conexión", "gnome-control-center", "Wi-Fi", "push button"]])(
+    "“%s” (%s) is asked about (W6-7)", (name, app, window, role) => {
+    expect(isRiskyControl(role, name)).toBe(true);
+    expect(click(app, window, role, name, "check the wifi").verdict).toBe("confirm");
+  });
+
+  it("“Forgot password?” and other everyday labels with those words aren't (W6-7)", () => {
+    for (const name of ["Forgot password?", "Passwort vergessen?", "Wachtwoord vergeten?", "Mot de passe oublié ?", "Refresh", "Refresh page"]) expect(isRiskyControl("link", name), name).toBe(false);
   });
 });

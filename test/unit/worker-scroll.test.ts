@@ -5,7 +5,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, seesInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, aimedAt, seesInside, tabPage, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { marksSvg } from "../../app/main/perception/marks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import type { AxNode, Bounds, PointElement } from "../../app/main/perception/sidecar";
@@ -22,8 +23,8 @@ interface Item { role: string; name: string; bounds: Bounds; states?: string[]; 
  * A settings page: `items` at their places when it isn't scrolled, moving up `notch` px per wheel notch inside the
  * frame (y 40 to 600). `blindAfter`: past this far, reads see only the frame and its scroll bar (GTK 3's viewport).
  */
-function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: boolean; read?: (n: number, nodes: AxNode[]) => object; extra?: AxNode[] } = {}) {
-  const st = { offset: 0, reads: 0, points: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 } };
+function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: boolean; read?: (n: number, nodes: AxNode[]) => object; extra?: AxNode[]; clip?: Bounds; emptyChain?: boolean } = {}) {
+  const st = { offset: 0, reads: 0, points: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 }, clicks: [] as { x: number; y: number }[] };
   const notch = o.notch ?? 40;
   const shown = () => items.map((it, i) => ({ id: i + 2, parent: 1, depth: 2, role: it.role, name: it.name, states: it.states ?? ["enabled", "sensitive"], ...(it.text !== undefined ? { text: it.text } : {}), bounds: { ...it.bounds, y: it.bounds.y - st.offset } }))
     .filter(n => n.bounds.y + n.bounds.height > 40 && n.bounds.y < 600);
@@ -39,6 +40,8 @@ function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: 
     ...(o.atPoint ? {
       atPoint: async (_t: unknown, p: { x: number; y: number }): Promise<PointElement[]> => {
         st.points++;
+        // Chromium's hit test from the window can end on an empty panel lying over its page.
+        if (o.emptyChain) return [{ role: "panel", name: "", bounds: FRAME, empty: true }];
         const hit = shown().find(n => under(p, n.bounds));
         return [{ role: "scroll pane", name: "", bounds: { x: 0, y: 40, width: 800, height: 560 } }, ...(hit ? [{ role: hit.role, name: hit.name, bounds: hit.bounds }] : [])];
       },
@@ -47,13 +50,18 @@ function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: 
   const sidecar = {
     readElement: async (id: number) => {
       const n = id === 1 ? frame : nodes().find(x => x.id === id) ?? shown().find(x => x.id === id) ?? { ...items[id - 2], states: items[id - 2].states ?? [], bounds: null };
-      return { role: n.role, name: n.name, states: n.states, bounds: n.bounds, ...(n.text !== undefined ? { text: n.text } : {}) };
+      // The real helper says which part of an element shows (inside its scroll pane and its window).
+      const b = n.bounds, c = o.clip;
+      const cut = b && c ? { x: Math.max(b.x, c.x), y: Math.max(b.y, c.y), width: Math.max(0, Math.min(b.x + b.width, c.x + c.width) - Math.max(b.x, c.x)), height: Math.max(0, Math.min(b.y + b.height, c.y + c.height) - Math.max(b.y, c.y)) } : null;
+      const shownPart = cut && b && (cut.width !== b.width || cut.height !== b.height) ? { shown: cut } : {};
+      return { role: n.role, name: n.name, states: n.states, bounds: n.bounds, ...shownPart, ...(n.text !== undefined ? { text: n.text } : {}) };
     },
     setText: async () => { throw new Error("background_unavailable: this app takes no text this way"); },
+    doAction: async () => { throw new Error("background_unavailable: no accessible action"); },
   };
   const hand: Hand = {
     glideTo: async (x: number, y: number) => { st.pointer = { x, y }; },
-    click: async () => undefined,
+    click: async () => { st.clicks.push(st.pointer); },
     keys: async (k: string) => { st.keys.push(k); if (k === "Delete") for (const it of items) if (it.text !== undefined) it.text = ""; },
     type: async (t: string) => { st.typed.push(t); },
     scroll: async (_d: string, n: number) => { for (let i = 0; i < n; i++) { st.notches.push(st.pointer); st.offset += notch; } },
@@ -157,6 +165,112 @@ describe("the wheel and what it can't see (review round 5)", () => {
     const list: AxNode = { id: 4, parent: 1, depth: 1, role: "list", name: "", states: [], bounds: FRAME };
     expect(seesInside([frame, list, { ...bar, id: 5, parent: 4, role: "list item", bounds: { x: 0, y: 300, width: 800, height: 30 } }], region)).toBe(false);
     expect(seesInside([frame, list, { ...bar, id: 5, parent: 4, role: "list item", bounds: { x: 0, y: 80, width: 800, height: 30 } }], region)).toBe(true);
+  });
+});
+
+describe("where the wheel and the mouse go (review round 6)", () => {
+  /** A GTK 3 notebook: its tab list holds the page (tabs along the top). */
+  const notebook: AxNode[] = [
+    { id: 50, parent: 1, depth: 1, role: "page tab list", name: "", states: [], bounds: { x: 0, y: 40, width: 800, height: 560 } },
+    { id: 51, parent: 50, depth: 2, role: "page tab", name: "Editor", states: ["selected"], bounds: { x: 20, y: 44, width: 90, height: 26 } },
+    { id: 52, parent: 50, depth: 2, role: "page tab", name: "View", states: [], bounds: { x: 120, y: 44, width: 90, height: 26 } },
+  ];
+
+  it("a tab list (GTK 3's holds its page) scrolls the page, checked notch by notch: never over a spin button", async () => {
+    // A preferences page of spin buttons: one as wide as the page reaches the wheel after three notches. The wheel used
+    // to go to the tab list's middle unchecked, like a control asked to change, and turned it.
+    const spin: Item = { role: "spin button", name: "Opt 8", bounds: { x: 0, y: 380, width: 800, height: 30 }, states: ["enabled", "editable"] };
+    for (const atPoint of [true, false]) {
+      const { st, call } = app([spin], { extra: notebook, notch: 20, atPoint });
+      await call("perceive_window", {});
+      const r = await call("scroll", { id: 50, direction: "down", steps: 5 });
+      expect(r.textResultForLlm).toMatch(/^Scrolled 3 of 5 steps, then stopped: "Opt 8" \("spin button"\) came under the wheel/);
+      // In the page, below the tabs.
+      expect(st.notches).toEqual(Array(3).fill({ x: 120, y: 335 }));
+    }
+    expect(tabPage(notebook, notebook[0].bounds!, notebook[0].bounds!)).toEqual({ x: 0, y: 70, width: 800, height: 530 });
+    // Tabs down the left side; and no tabs shown (one page): all of it.
+    const left = notebook.map((n, i) => (i ? { ...n, bounds: { x: 2, y: 50 + 30 * i, width: 80, height: 28 } } : n));
+    expect(tabPage(left, left[0].bounds!, left[0].bounds!)).toEqual({ x: 82, y: 40, width: 718, height: 560 });
+    expect(tabPage(notebook.slice(0, 1), notebook[0].bounds!, notebook[0].bounds!)).toEqual(notebook[0].bounds);
+  });
+
+  it("a tab list that is only its tabs (Qt's tab bar) is the control asked for: the wheel goes over its tabs", async () => {
+    const bar: AxNode[] = [
+      { id: 50, parent: 1, depth: 1, role: "page tab list", name: "", states: [], bounds: { x: 0, y: 40, width: 800, height: 30 } },
+      { id: 51, parent: 50, depth: 2, role: "page tab", name: "One", states: [], bounds: { x: 2, y: 42, width: 90, height: 26 } },
+    ];
+    expect(tabPage(bar, bar[0].bounds!, bar[0].bounds!)).toBeNull();
+    const { st, call } = app([], { extra: bar, atPoint: true });
+    await call("perceive_window", {});
+    expect((await call("scroll", { id: 50, direction: "down", steps: 2 })).textResultForLlm).toMatch(/^Done/);
+    expect(st.notches).toEqual([{ x: 120, y: 55 }, { x: 120, y: 55 }]);
+  });
+
+  it("a list taller than its window is scrolled from the part of it that shows", async () => {
+    // GtkListBox in a scrolled window (GNOME Settings): 1413 px tall in a 560 px pane. Its middle is off the window.
+    const list: Item = { role: "list box", name: "", bounds: { x: 0, y: 40, width: 780, height: 1413 } };
+    const pane = { x: 0, y: 40, width: 785, height: 560 };
+    const { st, call } = app([list], { notch: 0, atPoint: true, clip: pane });
+    await call("perceive_window", {});
+    expect((await call("scroll", { id: 2, direction: "down", steps: 3 })).textResultForLlm).toMatch(/^Done/);
+    expect(st.notches).toHaveLength(3);
+    for (const p of st.notches) expect(under(p, pane)).toBe(true);
+  });
+
+  it("where the app's answer ends on an empty container (Chromium), each notch reads the window instead", async () => {
+    const { st, call } = app(rows(20), { atPoint: true, emptyChain: true });
+    await call("perceive_window", {});
+    const r = await call("scroll", { id: 2, direction: "down", steps: 25 });
+    expect(r.textResultForLlm).toMatch(/^Scrolled 20 of 25 steps, then stopped: "slider" \("slider"\) came under the wheel/);
+    expect(st.notches).toHaveLength(20);
+    expect(st.reads).toBe(21);
+    // A read that leaves part of the window out can't stand in for it.
+    const cut = app(rows(20), { atPoint: true, emptyChain: true, read: n => (n > 1 ? { truncated: "nodes" } : {}) });
+    await cut.call("perceive_window", {});
+    expect((await cut.call("scroll", { id: 2, direction: "down", steps: 5 })).textResultForLlm)
+      .toMatch(/^Scrolled 1 of 5 steps, then stopped: Ember couldn't see what would come under the wheel next \(the window has more in it than Ember reads at once\)/);
+  });
+
+  it("a row scrolled almost out of its list isn't clicked at its middle, which lies on the button below the list", async () => {
+    // GTK: a list (y 40 to 300) scrolled until "Keep file 7" shows 6 px; "Delete all files" lies below the list.
+    const del: Item = { role: "push button", name: "Delete all files", bounds: { x: 1, y: 300, width: 300, height: 40 } };
+    const keep = (y: number): Item => ({ role: "check box", name: "Keep file 7", bounds: { x: 1, y, width: 300, height: 30 } });
+    const clip = { x: 0, y: 40, width: 400, height: 260 };
+    const sliver = app([del, keep(294)], { atPoint: true, clip });
+    await sliver.call("perceive_window", {});
+    expect((await sliver.call("click", { id: 3 })).textResultForLlm).toMatch(/^Element 3 is scrolled almost all the way out of view \(only a sliver of it shows\), so nothing was done/);
+    expect(sliver.st.clicks).toEqual([]);
+    // 12 px show: it is clicked there.
+    const some = app([del, keep(288)], { atPoint: true, clip });
+    await some.call("perceive_window", {});
+    expect((await some.call("click", { id: 3 })).textResultForLlm).toMatch(/^Done/);
+    expect(some.st.clicks).toEqual([{ x: 121, y: 294 }]);
+  });
+
+  it("nothing is clicked where the app says something else shows at the spot", async () => {
+    const del: Item = { role: "push button", name: "Delete all files", bounds: { x: 1, y: 70, width: 300, height: 40 } };
+    const keep: Item = { role: "check box", name: "Keep file 1", bounds: { x: 1, y: 60, width: 300, height: 30 } };
+    const { st, call } = app([del, keep], { atPoint: true });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 3 })).textResultForLlm).toMatch(/^Something else shows where element 3 should be \("Delete all files" \("push button"\)\)/);
+    expect(st.clicks).toEqual([]);
+    // What the app's answer can say about the element aimed at.
+    const row = { x: 0, y: 100, width: 300, height: 30 };
+    const pane = { role: "scroll pane", name: "", bounds: { x: 0, y: 40, width: 400, height: 260 } };
+    expect(aimedAt([pane, { role: "check box", name: "", bounds: row }], "check box", row)).toBe("yes");
+    expect(aimedAt([pane, { role: "static", name: "Keep", bounds: { x: 20, y: 104, width: 60, height: 20 } }], "link", row)).toBe("yes");
+    expect(aimedAt([pane], "check box", row)).toBe("unknown");
+    expect(aimedAt([{ ...pane, empty: true }], "check box", row)).toBe("unknown");
+    expect(aimedAt([pane, { role: "push button", name: "Delete", bounds: { x: 0, y: 120, width: 300, height: 40 } }], "check box", row)).toBe("other");
+  });
+
+  it("a screenshot mark goes round the part of an element that shows, and none on a sliver", () => {
+    const origin = { x: 0, y: 0, width: 800, height: 600 };
+    const box = (shown?: Bounds): AxNode => ({ id: 7, parent: 1, depth: 2, role: "check box", name: "Keep", states: [], bounds: { x: 1, y: 288, width: 300, height: 30 }, ...(shown ? { shown } : {}) });
+    expect(marksSvg([box()], origin, 1, 800, 600)).toContain('<rect x="1.0" y="288.0" width="300.0" height="30.0"');
+    expect(marksSvg([box({ x: 1, y: 288, width: 300, height: 12 })], origin, 1, 800, 600)).toContain('<rect x="1.0" y="288.0" width="300.0" height="12.0"');
+    expect(marksSvg([box({ x: 1, y: 294, width: 300, height: 6 })], origin, 1, 800, 600)).not.toContain("<rect");
   });
 });
 
