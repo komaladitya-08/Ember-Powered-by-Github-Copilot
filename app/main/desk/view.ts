@@ -199,6 +199,11 @@ export class DeskView {
     this.setControl(false);
   }
 
+  /** Whether `xid` (an X client window) is the view's window. */
+  isWindow(xid: number): boolean {
+    try { return !!this.win && !this.win.isDestroyed() && this.win.getNativeWindowHandle().readUInt32LE(0) === xid; } catch { return false; }
+  }
+
   owns(sender: Electron.WebContents): boolean {
     return !!this.win && !this.win.isDestroyed() && this.win.webContents === sender;
   }

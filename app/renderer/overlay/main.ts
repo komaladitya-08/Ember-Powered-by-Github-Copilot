@@ -333,6 +333,8 @@ function showStage(on: boolean): void {
   canvas.style.visibility = on ? "visible" : "hidden";
 }
 
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
 function setBody(r: Rect | null): void {
   if (JSON.stringify(r) === JSON.stringify(bodyRect)) return;
   bodyRect = r;
@@ -419,8 +421,11 @@ function draw(now: number): void {
     if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows)) interactiveDirty = true;
     // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
     // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on
-    // Ember never lands on what it hides. Following the cursor, it lets them through.
-    setBody(f || (showBubble && asks) ? { x: Math.round(lx - size * 0.45), y: Math.round(ly - size * 0.55), width: Math.round(size * 0.9), height: Math.round(size * 1.05) } : null);
+    // Ember never lands on what it hides. Following the cursor, it lets them through; and sitting on the control
+    // itself (no room beside one as wide as the screen), a click there is meant for the control.
+    const body = { x: Math.round(lx - size * 0.45), y: Math.round(ly - size * 0.55), width: Math.round(size * 0.9), height: Math.round(size * 1.05) };
+    const onTarget = !!f && overlaps(body, { x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height });
+    setBody((f || (showBubble && asks)) && !onTarget ? body : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;

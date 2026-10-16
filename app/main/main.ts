@@ -392,6 +392,8 @@ function start(): void {
   let userWindow = 0;
   /** The window the ask box was opened over (it may be one of Ember's: settings, the quit question). */
   let askOver = 0;
+  /** The window the user took Ember's desk over from (the keyboard goes back there on hand back). */
+  let deskTakenFrom = 0;
   /**
    * The window with the keyboard now (an X client window, 0 if none), noted as the user's when it isn't Ember's.
    * `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
@@ -452,6 +454,7 @@ function start(): void {
     const fromAskBox = had.ember && askWindow.isWindow(had.id);
     if (!fromAskBox) captureContext();
     // From the ask box (it hides when it loses focus), focus goes back to what the box was opened over.
+    const fromDesk = had.ember && !!deskViewRef?.isWindow(had.id);
     const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
@@ -459,7 +462,9 @@ function start(): void {
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
-      if (kept && !opens) giveFocusBack(back);
+      // From the desk view the user had taken over: once handed back ("Stop everything"), the view takes no keys, so
+      // they go back to the window the user took it over from.
+      if (kept && !opens) giveFocusBack(fromDesk && !deskInControl ? deskTakenFrom : back);
     }, 150) });
     win.setFocusable(true);
     const xid = Number(win.getNativeWindowHandle().readUInt32LE(0));
@@ -1123,6 +1128,7 @@ function start(): void {
       userFocus: () => {
         const had = focusNow();
         const back = had.ember ? shownWindows().filter(w => w.pid !== process.pid).at(-1)?.client ?? 0 : had.id;
+        deskTakenFrom = back;
         return () => giveFocusBack(back);
       },
     });
