@@ -275,28 +275,12 @@ export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestor
   const last = here[here.length - 1];
   if (!last?.bounds || last.empty) return "unknown";
   if (last.role === role && sameRect(last.bounds, b)) return "yes";
-  // Inside it: its own text, picture or label; or another control in it, which a click there would work instead (also
-  // round the text there: Chromium answers with the deepest element, the words of a row's own "Remove" button).
-  if (insideOf(last.bounds, b)) return takerInside(here, role, b) ? "other" : "yes";
+  // Inside it: its own text, picture or label; or another control in it, which a click there would work instead.
+  if (insideOf(last.bounds, b)) return CLICK_TAKERS.test(last.role) && !sameRect(last.bounds, b) ? "other" : "yes";
   if (!insideOf(b, last.bounds)) return "other";
   // Round it: what holds it (the app stopped there), or something else lying over it (a header's button).
   const holds = ancestors.some(a => a.role === last.role && !!a.bounds && sameRect(a.bounds, last.bounds!));
   return holds || HOLDERS.test(last.role) ? "unknown" : "other";
-}
-/**
- * The control inside the element aimed at (role `role`, at `b`) that a click on the deepest of `here` (from atPoint,
- * outermost first) works instead: that element itself, or one round it on the way up to the element aimed at (a
- * button round its own text); undefined when there is none (its own text, label or picture).
- */
-export function takerInside(here: PointElement[], role: string, b: Bounds): PointElement | undefined {
-  for (let i = here.length - 1; i >= 0; i--) {
-    const n = here[i];
-    if (!n.bounds) continue;
-    // Up to the element itself, or out of it (what holds it).
-    if ((n.role === role && sameRect(n.bounds, b)) || !insideOf(n.bounds, b)) return undefined;
-    if (CLICK_TAKERS.test(n.role) && !sameRect(n.bounds, b)) return n;
-  }
-  return undefined;
 }
 /**
  * The elements of `chain` (from atPoint, outermost first) down to the deepest that lies at `spot`: GTK's answer goes on
@@ -1551,8 +1535,7 @@ export class Worker {
         if (other) continue;
         return s;
       }
-      // The control a click there works (a row's own button, rather than the words on it), else what is there.
-      other ??= takerInside(here, now.role, now.bounds) ?? here[here.length - 1];
+      other ??= here[here.length - 1];
       // An open menu over it (the app's answer starts in it): a click beside the menu would only close it.
       if (/^(menu|window)$/.test(chain[0].role)) {
         const what = `${q(other.name || other.role, 60)} (${q(other.role, 40)})`;
