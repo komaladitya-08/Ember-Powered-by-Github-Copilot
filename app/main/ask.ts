@@ -92,7 +92,9 @@ export class AskWindow {
       win.on("blur", () => { if (this.win === win) this.hide(); });
       // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
       win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
-      win.webContents.on("did-finish-load", () => this.sendContext());
+      // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
+      // update and the first box opened from the menu never showed "Ember will see: …").
+      win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
       void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
       win.once("ready-to-show", () => { if (this.win === win) { win.show(); win.focus(); } });
     } else {
