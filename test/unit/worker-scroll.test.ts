@@ -543,3 +543,23 @@ describe("a cell that shows what it held, and GTK's lists and icons (review roun
     expect((await call("toggle", { id: 4, on: true })).textResultForLlm).toMatch(/^Done\. Now: check box "Urgent" \(.*checked/);
   });
 });
+
+describe("a busy spreadsheet (review round 11)", () => {
+  type Looks = { cellWithKeyboard(want?: string, near?: string[]): Promise<{ name: string } | null> };
+  const cell = (name: string): AxNode => ({ id: 50, parent: 1, depth: 3, role: "table cell", name, text: "", states: ["enabled", "focused", "selected"], bounds: { x: 100, y: 100, width: 60, height: 20 } });
+
+  it("looks again for the cell with the keyboard when a read was cut short before it found one (PR11-1)", async () => {
+    // The first two looks are cut short (a busy Calc) and find no cell; the third finds B3.
+    const { w, st } = app([], { read: (n, nodes) => (n <= 2 ? { truncated: "nodes" } : { nodes: [...nodes, cell("B3")] }) });
+    expect((await (w as unknown as Looks).cellWithKeyboard(undefined, ["B3"]))?.name).toBe("B3");
+    expect(st.reads).toBe(3);
+    // Never found: it gives up after a few looks, and says why (cellLookCut).
+    const busy = app([], { read: () => ({ truncated: "nodes" }) });
+    expect(await (busy.w as unknown as Looks).cellWithKeyboard()).toBeNull();
+    expect(busy.st.reads).toBe(5);
+    // Not cut short, and the keyboard on something else (the Name Box): the answer at once.
+    const none = app([], { extra: [{ id: 60, parent: 1, depth: 2, role: "text", name: "Name Box", states: ["enabled", "focused"], bounds: { x: 0, y: 40, width: 80, height: 20 } }] });
+    expect(await (none.w as unknown as Looks).cellWithKeyboard()).toBeNull();
+    expect(none.st.reads).toBe(1);
+  });
+});

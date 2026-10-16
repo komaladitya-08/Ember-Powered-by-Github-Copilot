@@ -2271,7 +2271,8 @@ export class Worker {
       // (a Calc just opened or brought to the front moves it about): looked at again, a few times.
       this.cellLookCut = !cell && (!seen || seen.busy || !!seen.truncated);
       const unsure = !cell && (this.cellLookCut || unsureFocus(f ?? undefined));
-      if ((!want && !(unsure && i < 4)) || cell?.name === want || i >= 5) return cell;
+      // (Looking for no cell in particular, none found is no answer: `cell?.name === want` would take it for one.)
+      if ((!want && !(unsure && i < 4)) || (!!cell && cell.name === want) || i >= 5) return cell;
       await sleep(100);
     }
   }
