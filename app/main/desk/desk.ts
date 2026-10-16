@@ -168,12 +168,16 @@ const LOCK_FILE = /^\.~lock\..+#$/;
 
 /**
  * Removes LibreOffice's lock files in `dir` (and folders in it, a few levels down) that a desk's LibreOffice left:
- * those naming a desk's profile (`desk`: that desk's id, else any desk's). A desk stopped with documents open leaves
- * them, and the user's own LibreOffice would then open those documents read-only, "locked by" themselves. Never
- * follows links; never throws. Returns how many went.
+ * those naming a desk's profile (`desk`: those desks' ids, else any desk's). A desk stopped with documents open leaves
+ * them (LibreOffice doesn't remove them when it is signalled to end), and the user's own LibreOffice would then open
+ * those documents read-only, "locked by" themselves. Never follows links; never throws. Returns how many went.
+ * `o.depth`: folder levels below `dir` looked in (4); `o.hidden`: false leaves hidden folders out; `o.skip`: folders
+ * not gone into. At most 5000 entries are looked at.
  */
-export function clearDeskLocks(dir: string, desk?: string): number {
-  const mark = desk ?? "ember-desk-";
+export function clearDeskLocks(dir: string, desk?: string | string[], o: { depth?: number; hidden?: boolean; skip?: ReadonlySet<string> } = {}): number {
+  const marks = desk === undefined ? ["ember-desk-"] : [desk].flat().filter(Boolean);
+  if (!marks.length) return 0;
+  const depthMax = o.depth ?? 4;
   let removed = 0, seen = 0;
   const walk = (d: string, depth: number) => {
     let entries: fs.Dirent[];
@@ -181,17 +185,32 @@ export function clearDeskLocks(dir: string, desk?: string): number {
     for (const e of entries) {
       if (++seen > 5000) return;
       const p = path.join(d, e.name);
-      if (e.isDirectory() && depth < 4) walk(p, depth + 1);
-      else if (e.isFile() && LOCK_FILE.test(e.name)) {
+      if (e.isDirectory()) {
+        if (depth < depthMax && (o.hidden !== false || !e.name.startsWith(".")) && !o.skip?.has(p)) walk(p, depth + 1);
+      } else if (e.isFile() && LOCK_FILE.test(e.name)) {
         try {
           // ",user,host,date,profile URL;": the profile is the desk's (its folder's name), never the user's own.
-          if (fs.readFileSync(p, "utf8").slice(0, 4096).includes(mark)) { fs.unlinkSync(p); removed++; }
+          const text = fs.readFileSync(p, "utf8").slice(0, 4096);
+          if (marks.some(m => text.includes(m))) { fs.unlinkSync(p); removed++; }
         } catch { /* gone, or not ours to read */ }
       }
     }
   };
   walk(dir, 0);
   return removed;
+}
+
+/**
+ * The locks a desk's LibreOffice left (`desk`: those desks', else any desk's), wherever its documents are likely to be:
+ * the hand-off folder, and the home folder two folders down (a document opened or saved elsewhere there), leaving out
+ * hidden folders and anything mounted there (a network share that doesn't answer would hold Ember up). Synchronous, so
+ * it is done even when Ember exits right after. Returns how many went.
+ */
+export function clearDeskLocksNear(handOff: string, desk?: string | string[], home = os.homedir()): number {
+  const real = (p: string) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  // (Mount points are real paths: so are the folders compared with them.)
+  const skip = new Set([...mountPoints(), real(handOff)]);
+  return clearDeskLocks(handOff, desk) + clearDeskLocks(real(home), desk, { depth: 2, hidden: false, skip });
 }
 
 /**
@@ -314,6 +333,8 @@ export class DeskManager {
       killAll(left(300), "SIGKILL");
       const still = left(200).length > 0;
       for (const dir of desks.values()) removeTree(dir, still ? { keep: [OWNER] } : {});
+      // Their LibreOffice left its locks on the documents it had open: they go now (stop()'s later clearing won't come).
+      if (desks.size) clearDeskLocksNear(this.handOff, [...desks.keys()]);
     });
     // Desks an earlier Ember left behind (it was killed) go as soon as Ember starts.
     void reapDesks(log);
@@ -321,6 +342,11 @@ export class DeskManager {
 
   get running(): DeskInfo | null {
     return this.info;
+  }
+
+  /** Where Ember puts what it made for the user (~/Ember). */
+  private get handOff(): string {
+    return this.o.handOff ?? path.join(os.homedir(), "Ember");
   }
 
   /** The helper that makes the desk's X calls (null while the desk isn't running). */
@@ -358,12 +384,12 @@ export class DeskManager {
     if (!ok) throw new Error(`Ember's desk needs ${missing.join(", ")} (dnf install xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon)`);
     const width = this.o.width ?? 1280, height = this.o.height ?? 800;
     // The hand-off folder first: if it can't be made, nothing has been started.
-    const handOff = this.o.handOff ?? path.join(os.homedir(), "Ember");
+    const handOff = this.handOff;
     fs.mkdirSync(handOff, { recursive: true });
     // A desk an earlier Ember left running (it was killed) goes first: its display number is free again.
     await reapDesks(this.log);
-    // And the lock files its LibreOffice left beside documents in the hand-off folder.
-    const stale = clearDeskLocks(handOff);
+    // And the lock files its LibreOffice left beside documents (in the hand-off folder, or elsewhere in the home folder).
+    const stale = clearDeskLocksNear(handOff);
     if (stale) this.log.info("desk.locks_cleared", { files: stale });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-desk-"));
     fs.chmodSync(dir, 0o700);
@@ -528,9 +554,8 @@ export class DeskManager {
       // Only processes not yet exited: their ids (and groups) can't have been reused yet.
       for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL");
       if (id) { killAll(deskProcesses(id, groups), "SIGKILL"); this.leaving.delete(id); }
-      // Its LibreOffice is gone: the locks it left on documents in the hand-off folder go too (the next start
-      // clears them if Ember quits before this).
-      if (id && info) clearDeskLocks(info.handOff, id);
+      // Its LibreOffice is gone: anything it locked meanwhile goes too.
+      if (id && info) clearDeskLocksNear(info.handOff, id);
       // Apps that save as they quit may have put files back.
       if (dir && !removeTree(dir)) this.log.warn("desk.folder_left", { dir });
     }, 1500).unref();
@@ -539,6 +564,12 @@ export class DeskManager {
     // then whatever left its group (setsid) but carries the desk's mark.
     for (const p of procs) signal(p, "SIGTERM");
     if (id) killAll(deskProcesses(id, groups), "SIGTERM");
+    // LibreOffice ends without removing its locks on the documents it had open, and the user's own would then open
+    // them read-only, "locked by" themselves: they go now, as Ember may exit before the moment above.
+    if (id && info) {
+      const files = clearDeskLocksNear(info.handOff, id);
+      if (files) this.log.info("desk.locks_cleared", { files });
+    }
     // The cookie and everything else go now; the owner record stays until the desk's processes have gone.
     if (dir && !removeTree(dir, { keep: [OWNER] })) this.log.warn("desk.folder_left", { dir });
     if (info) this.log.info("desk.stopped", { display: info.display });

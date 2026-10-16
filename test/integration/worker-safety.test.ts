@@ -484,6 +484,29 @@ describe("Ember's desk", () => {
     expect(audited).toContainEqual(expect.objectContaining({ task: "desk-ambiguous", event: "action", kind: "keys", ok: false, tier: 2, error: expect.stringMatching(/couldn't be told apart/) }));
   });
 
+  it("a dialog on the desk whose X title isn't its accessible name is found where it was read; two windows there, it isn't (DSK10-2)", async () => {
+    // GTK's message dialog: "Question" over accessibility, no title in X. Its process's window where it was read is it.
+    const dialog = (goal: string, clients: number[]) => {
+      onDesk(goal, [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
+      const log: string[] = [];
+      const desk = fakeDesk({ log });
+      Object.assign(desk.screen.window, { name: "Question", role: "alert" });
+      desk.place.input.findWindow = () => 0;
+      const at = desk.screen.window.bounds;
+      Object.assign(desk.place, { x11: { stack: () => clients.map(client => ({ id: client + 100, client, pid: desk.screen.window.pid, title: "", wmClass: "scribble", ...at, outer: at, inner: at, overrideRedirect: false })) } });
+      return { log, desk };
+    };
+    const found = dialog("Replace the file", [1]);
+    await makeWorker(found.desk.screen, "Replace the file", { id: "desk-dialog", desk: async () => found.desk.place as never }).run(new AbortController().signal);
+    expect(found.log.filter(l => l.startsWith("key")).length).toBeGreaterThan(0);
+    const two = dialog("Replace the other file", [1, 2]);
+    await makeWorker(two.desk.screen, "Replace the other file", { id: "desk-dialog-two", desk: async () => two.desk.place as never }).run(new AbortController().signal);
+    expect(two.log.filter(l => l.startsWith("key"))).toEqual([]);
+    const audited = fs.readFileSync(new AuditLog(path.join(dir, "audit")).file, "utf8").trim().split("\n").map(l => JSON.parse(l));
+    expect(audited).toContainEqual(expect.objectContaining({ task: "desk-dialog", event: "action", kind: "keys", ok: true, tier: 2 }));
+    expect(audited).toContainEqual(expect.objectContaining({ task: "desk-dialog-two", event: "action", kind: "keys", ok: false, tier: 2, error: expect.stringMatching(/couldn't be told apart/) }));
+  }, 20_000);
+
   it("a key pressed on the desk is named on its action line, so \"What Ember did\" says which (review round 7)", async () => {
     onDesk("Save the document", [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
     const desk = fakeDesk({ log: [] });

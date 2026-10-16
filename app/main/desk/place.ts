@@ -10,7 +10,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AtspiSidecar } from "../perception/sidecar";
 import { Perception } from "../perception";
-import type { X11 } from "../x11";
+import type { Rect, StackedWindow, X11 } from "../x11";
 import type { XInput } from "../hands/input";
 import { execArgv, hasBuiltInShell, isTerminalApp, type DesktopApp } from "../hands/system";
 import { DESK_STOPPED, deskInput, deskKeys, deskSnapshot, deskX11, type DeskKeys, type DeskSnapshot } from "./agent";
@@ -66,6 +66,21 @@ const LIBREOFFICE_LOCKDOWN = [
 /** Commands switched off: the macro editors and runners, extensions, and Tools > Options (where the above could be undone). */
 const LIBREOFFICE_OFF = ["BasicIDEAppear", "MacroDialog", "RunMacro", "ScriptOrganizer", "MacroOrganizer", "MacroRecorder", "PackageManager", "OptionsTreeDialog"];
 
+/**
+ * LibreOffice's work folder ("My Documents" in its options: where its Open and Save dialogs start). On the desk it is
+ * the hand-off folder, as it is for the desk's other apps (they start there): its locks are cleared there, and the
+ * user finds what Ember made there. The items as LibreOffice writes them when it is changed in its options: the folder,
+ * and the old setting emptied (while it has a value, by default "$(work)", the home folder, LibreOffice takes that).
+ */
+const WORK_PATH = "/org.openoffice.Office.Paths/Paths/org.openoffice.Office.Paths:NamedPath['Work']";
+const OLD_WORK_PATH = "/org.openoffice.Office.Common/Path/Current";
+const workItems = (work: string) => [
+  `<item oor:path="${OLD_WORK_PATH}"><prop oor:name="Work" oor:op="fuse"><value xsi:nil="true"/></prop></item>`,
+  `<item oor:path="${WORK_PATH}"><prop oor:name="WritePath" oor:op="fuse"><value>${xmlText(pathToFileURL(work).href)}</value></prop></item>`,
+];
+
+const xmlText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 /** Makes a folder and everything in it read-only. */
 function readOnly(p: string): void {
   const st = fs.lstatSync(p);
@@ -78,8 +93,9 @@ function readOnly(p: string): void {
  * Locks a LibreOffice profile down (see LIBREOFFICE_LOCKDOWN): writes the settings into its
  * registrymodifications.xcu, keeping the rest of it, and makes its macro folders read-only.
  * `presets`: LibreOffice's own presets folder, whose Basic libraries a new profile starts with.
+ * `work`: the folder its Open and Save dialogs start in (see WORK_PATH).
  */
-export function lockDownLibreOffice(profile: string, presets?: string): void {
+export function lockDownLibreOffice(profile: string, presets?: string, work?: string): void {
   const user = path.join(profile, "user");
   fs.mkdirSync(user, { recursive: true, mode: 0o700 });
   for (const dir of ["basic", "Scripts"]) {
@@ -98,10 +114,12 @@ export function lockDownLibreOffice(profile: string, presets?: string): void {
   } catch { /* a new profile */ }
   // Ember's own items go; everything else the profile has stays.
   const ours = (item: string) => LIBREOFFICE_LOCKDOWN.some(([p, name]) => item.includes(`oor:path="${p}"`) && item.includes(`oor:name="${name}"`))
-    || item.includes('oor:path="/org.openoffice.Office.Commands/Execute/Disabled"') && item.includes('oor:name="ember-');
+    || item.includes('oor:path="/org.openoffice.Office.Commands/Execute/Disabled"') && item.includes('oor:name="ember-')
+    || !!work && (item.includes(`oor:path="${WORK_PATH}"`) && item.includes('oor:name="WritePath"') || item.includes(`oor:path="${OLD_WORK_PATH}"`) && item.includes('oor:name="Work"'));
   const mine = [
     ...LIBREOFFICE_LOCKDOWN.map(([p, name, value]) => `<item oor:path="${p}"><prop oor:name="${name}" oor:op="fuse"><value>${value}</value></prop></item>`),
     ...LIBREOFFICE_OFF.map(c => `<item oor:path="/org.openoffice.Office.Commands/Execute/Disabled"><node oor:name="ember-${c}" oor:op="replace"><prop oor:name="Command" oor:op="fuse"><value>${c}</value></prop></node></item>`),
+    ...(work ? workItems(work) : []),
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n${[...items.filter(i => !ours(i)), ...mine].join("\n")}\n</oor:items>\n`;
   fs.writeFileSync(file, xml);
@@ -136,13 +154,30 @@ export function deskRecipe(app: DesktopApp, info: Pick<DeskInfo, "handOff"> & Pa
   if (/^(libreoffice|soffice|localc|lowriter|loimpress|lodraw|lobase|lomath)/.test(bin)) {
     // A profile for this desk only (in its runtime folder, gone when the desk stops): nothing planted in one lasts.
     const dir = path.join(info.env?.XDG_RUNTIME_DIR ?? profiles, "libreoffice");
-    lockDownLibreOffice(dir, libreOfficePresets(argv[0]));
+    lockDownLibreOffice(dir, libreOfficePresets(argv[0]), info.handOff);
     return [...argv, `-env:UserInstallation=${pathToFileURL(dir).href}`];
   }
   if (/^(chromium|chromium-browser|google-chrome|electron)/.test(bin)) {
     return [...argv, `--user-data-dir=${path.join(profiles, bin)}`, "--force-renderer-accessibility"];
   }
   return argv;
+}
+
+/** Accessible roles of dialog windows. */
+export const DIALOG_ROLES = new Set(["alert", "dialog", "file chooser", "color chooser", "font chooser"]);
+
+/**
+ * A dialog's window on the desk when its title doesn't name it: GTK's message dialogs are "Question" or "Information"
+ * over accessibility, while their X title is another ("Document in Use") or none at all. The one window of process
+ * `pid` that is where the dialog was read (`bounds`: its accessible frame, which toolkits report with the window
+ * manager's frame or without it); 0 if no window or several are there. Only for the desk: on the user's screen the
+ * title must match.
+ */
+export function deskWindowAt(stack: StackedWindow[], pid: number, bounds: Rect): number {
+  if (!(bounds.width > 0 && bounds.height > 0)) return 0;
+  const near = (r: Rect) => Math.abs(r.x - bounds.x) + Math.abs(r.y - bounds.y) <= 8 && Math.abs(r.width - bounds.width) + Math.abs(r.height - bounds.height) <= 8;
+  const hits = stack.filter(s => !s.overrideRedirect && s.pid === pid && [s.outer, s.inner, s].some(near));
+  return hits.length === 1 ? hits[0].client : 0;
 }
 
 /**

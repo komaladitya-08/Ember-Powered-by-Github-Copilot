@@ -3,13 +3,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { clearDeskLocks, freeDisplay, removeTree, running } from "../../app/main/desk/desk";
-import { deskRecipe, guardX, lockDownLibreOffice } from "../../app/main/desk/place";
+import { DeskManager, clearDeskLocks, clearDeskLocksNear, freeDisplay, removeTree, running } from "../../app/main/desk/desk";
+import { deskRecipe, deskWindowAt, guardX, lockDownLibreOffice } from "../../app/main/desk/place";
 import { keysymFor, wheelButtons, xButton } from "../../app/main/desk/view";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { appEnv, darkTheme, execArgv, hasBuiltInShell, isTerminalApp, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
+import type { Logger } from "../../app/main/logger";
+import type { Rect, StackedWindow } from "../../app/main/x11";
 
 const app = (id: string, name: string, exec: string, more: Partial<DesktopApp> = {}): DesktopApp => ({ id, name, exec, file: "", keywords: [], ...more });
+const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+/** A lock file LibreOffice writes beside a document it opens: ",user,host,date,profile URL;". */
+const lockFile = (dir: string, name: string, profile: string) => {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `.~lock.${name}#`), `,Ana,host,16.10.2026 10:00,${profile};`);
+};
+const deskProfile = (id: string) => `file:///tmp/${id}/runtime/libreoffice`;
+const locksIn = (dir: string) => fs.readdirSync(dir, { recursive: true }).map(String).filter(n => path.basename(n).startsWith(".~lock.")).sort();
 
 describe("desk", () => {
   it("picks the first free display number", () => {
@@ -129,6 +139,117 @@ describe("desk", () => {
     expect(fs.readFileSync(path.join(home, "letter.odt"), "utf8")).toBe("doc");
     expect(clearDeskLocks(path.join(home, "missing"))).toBe(0);
     for (const d of [home, elsewhere]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it("clears a desk's locks beside documents elsewhere in the home folder too, two folders down, never in hidden ones (DSK10-1)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ember-home-"));
+    const handOff = path.join(home, "Ember");
+    const ours = deskProfile("ember-desk-abc123");
+    lockFile(handOff, "result.ods", ours);
+    lockFile(path.join(handOff, "a", "b", "c"), "deep.ods", ours); // the hand-off folder: four folders down
+    lockFile(home, "top.odt", ours);
+    lockFile(path.join(home, "Documents"), "letter.odt", ours);
+    lockFile(path.join(home, "Documents", "2026"), "budget.ods", ours);
+    lockFile(path.join(home, "Documents", "2026", "Q3"), "far.ods", ours); // three down: not looked for
+    lockFile(path.join(home, ".cache", "x"), "hidden.ods", ours); // a hidden folder: not looked in
+    lockFile(path.join(home, "Documents"), "mine.odt", "file:///home/ana/.config/libreoffice/4");
+    lockFile(path.join(home, "Documents"), "other.odt", deskProfile("ember-desk-zzz999"));
+    expect(clearDeskLocksNear(handOff, "ember-desk-abc123", home)).toBe(5);
+    expect(locksIn(home)).toEqual([".cache/x/.~lock.hidden.ods#", "Documents/.~lock.mine.odt#", "Documents/.~lock.other.odt#", "Documents/2026/Q3/.~lock.far.ods#"]);
+    // Several desks' at once (as Ember exits), a folder left out, a depth.
+    expect(clearDeskLocks(home, ["ember-desk-zzz999", "ember-desk-abc123"], { skip: new Set([path.join(home, "Documents")]) })).toBe(1);
+    expect(locksIn(home)).toEqual(["Documents/.~lock.mine.odt#", "Documents/.~lock.other.odt#", "Documents/2026/Q3/.~lock.far.ods#"]);
+    expect(clearDeskLocks(home, ["ember-desk-zzz999", "ember-desk-abc123"], { depth: 1 })).toBe(1);
+    expect(clearDeskLocks(home, [])).toBe(0);
+    expect(locksIn(home)).toEqual(["Documents/.~lock.mine.odt#", "Documents/2026/Q3/.~lock.far.ods#"]);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("clears its LibreOffice's locks the moment it stops, and as Ember exits, not a moment later (DSK10-1)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-quit-"));
+    const home = path.join(root, "home"), handOff = path.join(home, "Ember"), docs = path.join(home, "Documents"), tmp = path.join(root, "tmp");
+    for (const d of [handOff, docs, tmp]) fs.mkdirSync(d, { recursive: true });
+    // os.homedir() and os.tmpdir() go by these: the real home folder and other desks stay out of it.
+    const saved = { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR };
+    Object.assign(process.env, { HOME: home, TMPDIR: tmp });
+    const before = process.listeners("exit");
+    const ids = ["ember-desk-quit01", "ember-desk-quit02"];
+    const desks = ids.map(id => {
+      const m = new DeskManager(quiet, { handOff });
+      const dir = path.join(tmp, id);
+      fs.mkdirSync(dir);
+      // As if its desk were up, with LibreOffice there (nothing runs: no X server is needed for this).
+      Object.assign(m, { id, dir, info: { display: ":0", width: 1, height: 1, env: {}, handOff } });
+      return m;
+    });
+    // Its exit handlers, called here rather than when the test's process exits.
+    const exits = process.listeners("exit").filter(l => !before.includes(l)) as (() => void)[];
+    for (const l of exits) process.removeListener("exit", l);
+    try {
+      expect(exits).toHaveLength(2);
+      for (const id of ids) { lockFile(handOff, `${id}.ods`, deskProfile(id)); lockFile(docs, `${id}.ods`, deskProfile(id)); }
+      lockFile(docs, "mine.ods", "file:///home/ana/.config/libreoffice/4");
+      // Ember quits: will-quit stops the desk, and Ember may exit at once. Its locks are gone already, no one else's.
+      desks[0].stop();
+      expect(locksIn(home)).toEqual(["Documents/.~lock.ember-desk-quit02.ods#", "Documents/.~lock.mine.ods#", "Ember/.~lock.ember-desk-quit02.ods#"]);
+      // Ember exits with a desk still up: its locks go as it does.
+      exits[1]();
+      expect(locksIn(home)).toEqual(["Documents/.~lock.mine.ods#"]);
+      // And one its LibreOffice wrote as it ended, after the desk stopped.
+      lockFile(handOff, "late.ods", deskProfile(ids[0]));
+      exits[0]();
+      expect(locksIn(home)).toEqual(["Documents/.~lock.mine.ods#"]);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("starts the desk's LibreOffice dialogs in the hand-off folder, where its locks are cleared (DSK10-1)", () => {
+    const p = fs.mkdtempSync(path.join(os.tmpdir(), "ember-lo-work-"));
+    const handOff = path.join(p, "Ana & Bo's <docs>", "Ember");
+    const profile = path.join(p, "lo");
+    lockDownLibreOffice(profile, undefined, handOff);
+    lockDownLibreOffice(profile, undefined, handOff); // twice: still one
+    const xcu = fs.readFileSync(path.join(profile, "user", "registrymodifications.xcu"), "utf8");
+    const url = pathToFileURL(handOff).href;
+    expect(url).toContain("&");
+    // The items as LibreOffice writes them (Tools > Options > Paths, "My Documents"), with the URL as XML text; the old
+    // setting is emptied, or LibreOffice takes it (the home folder) instead.
+    expect(xcu).toContain(`<item oor:path="/org.openoffice.Office.Paths/Paths/org.openoffice.Office.Paths:NamedPath['Work']"><prop oor:name="WritePath" oor:op="fuse"><value>${url.replace(/&/g, "&amp;")}</value></prop></item>`);
+    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Common/Path/Current"><prop oor:name="Work" oor:op="fuse"><value xsi:nil="true"/></prop></item>');
+    expect(xcu.match(/NamedPath\['Work'\]/g)).toHaveLength(1);
+    expect(xcu.match(/Common\/Path\/Current/g)).toHaveLength(1);
+    expect(xcu).not.toMatch(/&(?!amp;|lt;|gt;)/);
+    // The desk's recipe gives it the desk's hand-off folder.
+    const runtime = path.join(p, "runtime");
+    deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: "/home/ana/Ember", env: { XDG_RUNTIME_DIR: runtime } }, p);
+    expect(fs.readFileSync(path.join(runtime, "libreoffice", "user", "registrymodifications.xcu"), "utf8")).toContain("<prop oor:name=\"WritePath\" oor:op=\"fuse\"><value>file:///home/ana/Ember</value></prop>");
+    expect(removeTree(p)).toBe(true);
+  });
+
+  it("finds a dialog on its desk by where it is when its title isn't its accessible name, and only one there (DSK10-2)", () => {
+    // The window manager's frame: a 1 px border and a 20 px title bar.
+    const w = (client: number, pid: number | null, title: string, outer: Rect, more: Partial<StackedWindow> = {}): StackedWindow => ({
+      id: client + 1000, client, pid, title, wmClass: "mousepad", ...outer, outer,
+      inner: { x: outer.x + 1, y: outer.y + 20, width: outer.width - 2, height: outer.height - 21 }, overrideRedirect: false, ...more,
+    });
+    const at = { x: 321, y: 351, width: 641, height: 134 };
+    // Mousepad's "Question" (accessible name) asks whether to replace a file: its X title is empty.
+    const question = w(3, 100, "", at);
+    const stack = [
+      w(1, 100, "*Untitled 1 - Mousepad", { x: 319, y: 147, width: 642, height: 505 }), w(2, 100, "Save As", { x: 92, y: 0, width: 1098, height: 800 }),
+      question, w(4, 100, "", at, { overrideRedirect: true }), w(5, 200, "Question", at),
+    ];
+    expect(deskWindowAt(stack, 100, at)).toBe(3);
+    // As toolkits that leave the window manager's frame out report it (Qt), a pixel or two off.
+    expect(deskWindowAt(stack, 100, { ...question.inner, x: question.inner.x + 1 })).toBe(3);
+    // None of the process's windows is there, or the process has none: nothing.
+    expect(deskWindowAt(stack, 100, { x: 600, y: 600, width: 100, height: 50 })).toBe(0);
+    expect(deskWindowAt(stack, 300, at)).toBe(0);
+    expect(deskWindowAt(stack, 100, { x: 0, y: 0, width: 0, height: 0 })).toBe(0);
+    // Two of its windows there: it can't tell which.
+    expect(deskWindowAt([...stack, w(6, 100, "", at)], 100, at)).toBe(0);
   });
 
   it("never runs terminals", () => {

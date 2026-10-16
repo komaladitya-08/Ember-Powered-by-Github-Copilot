@@ -28,7 +28,7 @@ import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elem
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
 import { SETTINGS, changeSetting, execArgv, findApp, isTerminalApp, launchApp, listApps, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
-import type { DeskPlace } from "../desk/place";
+import { DIALOG_ROLES, deskWindowAt, type DeskPlace } from "../desk/place";
 import { focusedElement, isSheetCell } from "../perception/elements";
 import { SLIVER_PX } from "../perception/marks";
 import { friendlyApp } from "../../shared/apps";
@@ -2431,7 +2431,7 @@ export class Worker {
       if (this.isOver) throw new BorrowStopped();
       if (place.userInControl()) throw new UserTookOver(0);
     };
-    const win = place.input.findWindow(this.window.name, this.target.pid);
+    const win = place.input.findWindow(this.window.name, this.target.pid) || this.deskDialogWindow(place);
     if (!win) {
       release();
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, tier: 2, error: "the window couldn't be told apart (none or several with that title)" });
@@ -2452,6 +2452,17 @@ export class Worker {
     } finally {
       release();
     }
+  }
+
+  /**
+   * A dialog read on the desk whose X title isn't its accessible name (GTK's message dialogs are "Question" or
+   * "Information" there, titled otherwise or not at all): its process's one window where it was read, else 0.
+   * Only on the desk: on the user's screen the title must match.
+   */
+  private deskDialogWindow(place: DeskPlace): number {
+    const pid = this.target.pid;
+    if (pid === undefined || !this.frame || !DIALOG_ROLES.has(this.window.role ?? "")) return 0;
+    try { return deskWindowAt(place.x11.stack(), pid, this.frame); } catch { return 0; }
   }
 
   /** Tier 0 actions (settings, launching): policy and audit, no window. `app`: the app being launched. */
