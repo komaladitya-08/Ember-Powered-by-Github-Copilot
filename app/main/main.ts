@@ -626,12 +626,20 @@ function start(): void {
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
-      case "utterance":
-        lastAskByVoice = true;
-        log.info("voice.utterance", { chars: e.text.length, ms: e.ms });
+      case "utterance": {
+        // One follow-up per wake: the answer to a follow-up opens no window of its own (the engine refuses it too).
+        lastAskByVoice = e.window === "wake";
+        log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
+        // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
+        if (e.cut) {
+          const note = "I only caught the first part: say the rest after my answer.";
+          setStatus("listen", note);
+          setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
+        }
         // A follow-up (no wake word) keeps the context from the last call.
         void askEmber(e.text);
         break;
+      }
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
         stopEverything("voice");

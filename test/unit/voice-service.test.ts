@@ -116,13 +116,13 @@ describe("VoiceService", () => {
     v.followUp(8000);
     v.cancelListening();
     expect(posted(proc, "cancel")).toHaveLength(1);
-    proc.emit("message", { type: "utterance", text: "Turn on night light.", ms: 120 });
+    proc.emit("message", { type: "utterance", text: "Turn on night light.", ms: 120, window: "wake" });
     speaking(mic, false);
     expect(posted(proc, "follow-up")).toEqual([]);
     expect(events).toEqual([]);
     vi.advanceTimersByTime(1100);
-    proc.emit("message", { type: "utterance", text: "Make the text bigger.", ms: 120 });
-    expect(events).toEqual([{ type: "utterance", text: "Make the text bigger.", ms: 120 }]);
+    proc.emit("message", { type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" });
+    expect(events).toEqual([{ type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" }]);
   });
 
   it("ignores a replaced voice process", async () => {

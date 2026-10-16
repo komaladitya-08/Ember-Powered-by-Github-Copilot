@@ -170,12 +170,13 @@ say “make this bold” or “what does this mean?”.
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
 the speech models (126 MB, once; agreeing to the microphone note starts the download). Then say “Hey Ember, …” with your request. You can say it in
-one breath, or pause after “Hey Ember”. After Ember answers you have 8 seconds to follow up without
-the wake word; “Thanks” or “that's all” ends that window. “Ember, stop” (or “Hey Ember, stop”) stops
-everything, and **Ctrl+Alt+M** turns the microphone off and on. Listening happens on this computer: no
+one breath, or pause after “Hey Ember”. After Ember answers a “Hey Ember” request you have 8 seconds for
+one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window. “Ember, stop” (or
+“Hey Ember, stop”, also while Ember is speaking) stops everything, and **Ctrl+Alt+M** turns the microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
 “Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`). A request ends
-when your voice stops, even with a TV or colleagues talking behind you, and is never longer than 10 s.
+when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
+quiet room); when a longer one is cut, Ember says it only caught the first part.
 
 ### Connecting Copilot
 

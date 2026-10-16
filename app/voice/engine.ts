@@ -8,11 +8,12 @@
  * punctuated). A short pre-roll means "Hey Ember, turn on Night Light" works
  * in one breath; the wake phrase is stripped from the transcript. Other people
  * talking in the background don't keep a request going: it ends when the
- * speaker's own voice does, and never runs past 10 s.
- * After Ember answers: a follow-up window where no wake word is needed ("Thanks"
- * ends it). The wake word is ignored while Ember itself is speaking, and it or
- * "Ember, stop" is ignored when it comes out of the speakers; a listening window
- * waits until Ember has finished speaking.
+ * speaker's own voice does, and runs 10 s at most (20 s in a quiet room).
+ * After Ember answers a wake's request: one follow-up window where no wake word
+ * is needed ("Thanks" ends it), for a voice as loud as the one that woke Ember.
+ * While Ember itself is speaking, the wake word only counts as "Hey Ember, stop";
+ * it or "Ember, stop" is ignored when it comes out of the speakers; a listening
+ * window waits until Ember has finished speaking.
  */
 
 export const SAMPLE_RATE = 16_000;
@@ -54,7 +55,8 @@ export type VoiceEvent =
   /** `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows). */
   | { type: "listening"; on: boolean; reason: "wake" | "follow-up" | "timeout" | "done" | "stop" | "rejected"; window: "wake" | "follow-up" }
   | { type: "speech"; on: boolean }
-  | { type: "utterance"; text: string; ms: number }
+  /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
+  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean }
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check"; heard?: string };
 
 export interface EngineOptions {
@@ -95,13 +97,35 @@ export function heardOtherWord(transcript: string): boolean {
 
 /**
  * The same for "Ember, stop": "September stopped being fun" and "December stop sign" are other words. The
- * recognizer often writes the name as "Amber" or "Emma", and the kill phrase as "Ember stopped"; a garbled
- * transcript still stops (stopping is the safe side).
+ * recognizer often writes the name as "Amber" or "Emma", and the kill phrase as "Ember stopped"; that counts
+ * when the stop is said on its own ("Amber, stop it."), not as part of a sentence ("Amber, stop that right now!",
+ * a TV or someone talking to an Amber), unless Ember is speaking (its own words may follow in the transcript).
+ * A garbled transcript still stops (stopping is the safe side).
  */
-export function heardOtherStop(transcript: string): boolean {
+export function heardOtherStop(transcript: string, emberSpeaking = false): boolean {
   const t = transcript.toLowerCase();
-  if (/\b(embers?|amber|emma|emmer)\b[^a-z]*(please\s+)?stop/.test(t)) return false;
+  if (/\bembers?\b[^a-z]*(please\s+)?stop/.test(t)) return false;
+  const rest = afterName(t, /amber|emma|emmer/);
+  if (rest !== null) return !emberSpeaking && !SAID_ALONE.test(rest);
   return /\b(sept|nov|dec|rem|m)ember\w*(\W+\w+){0,2}?\W+stop/.test(t);
+}
+
+/**
+ * The second look at "Amber, stop…" heard mid-sentence, once the speaker paused: a stop if no more than a couple of
+ * words ("it", "now"…) followed it, whichever way the name came out this time ("Ember stopped that right now." isn't).
+ */
+export function stopSaidAlone(transcript: string): boolean {
+  const t = transcript.toLowerCase();
+  return SAID_ALONE.test(afterName(t, /embers?|amber|emma|emmer/) ?? /\bst[a-z']*(.*)$/.exec(t)?.[1] ?? "");
+}
+
+/** What may follow a stop said on its own. */
+const SAID_ALONE = /^[^a-z]*((stop|it|that|now|please|everything|ember|already|talking)\b[^a-z]*){0,2}$/;
+
+/** "Amber, stop that right now!" → " that right now!": what follows the name (one of `names`) and the word after it, or null. */
+function afterName(transcript: string, names: RegExp): string | null {
+  const m = new RegExp(String.raw`\b(${names.source})\b[^a-z]*(please\s+)?[a-z']+(.*)$`).exec(transcript);
+  return m ? m[3] : null;
 }
 
 /** The wake phrase as the recognizer writes it ("Hey, Ember." "hey Emmer" "OK Amber" "Hey, EmberStop." "Peyamber" "A. M. B."). */
@@ -134,9 +158,15 @@ export function isStop(text: string): boolean {
   return /^((please|ok|okay|no|oh|ember)[\s,.!]+)*(stop|cancel|abort|never\s?mind|forget\s+(it|that)|be\s+quiet|quiet|hush|shut\s+up|that'?s\s+enough|enough)([\s,.!]+(stop|it|that|now|please|talking|everything|ember|already))*[\s.!,]*$/i.test(text);
 }
 
-/** "Thanks." "No, that's all." "Okay, great.": said in a follow-up window, the conversation is over (nothing is sent). */
+/** "Hey Ember, stop" anywhere in what the microphone heard while Ember spoke (its own words can come before and after it). */
+const WAKE_THEN_STOP = new RegExp(String.raw`\b` + WAKE + String.raw`(please\s+)?(stop|be\s+quiet|quiet|hush|shut\s+up|that'?s\s+enough|enough|cancel|never\s?mind)\b`, "i");
+export function saidWakeStop(transcript: string): boolean {
+  return WAKE_THEN_STOP.test(transcript);
+}
+
+/** "Thanks." "No, that's all." "Okay, great." "Sounds good.": said in a follow-up window, the conversation is over (nothing is sent). */
 export function isCloser(text: string): boolean {
-  const word = String.raw`(thanks|thank\s+you(\s+very\s+much)?|cheers|great|perfect|cool|nice|awesome|wonderful|excellent|good|got\s+it|that'?s\s+(all|it|everything)|that\s+is\s+all|nothing(\s+else)?|no|nope|no\s+thanks|not\s+now|i'?m\s+(good|done|fine|all\s+set)|all\s+(good|set)|bye|goodbye)`;
+  const word = String.raw`(thanks(\s+(a\s+lot|so\s+much|a\s+bunch|again))?|thank\s+you(\s+(very|so)\s+much)?|cheers|much\s+appreciated|appreciate\s+it|great|perfect|cool|nice|awesome|wonderful|excellent|good|fine|okay|ok|alright|all\s+right|sounds\s+(good|great|fine)|that\s+works|works\s+for\s+me|got\s+it|that'?s\s+(all|it|everything|fine|great|good|perfect)|that\s+is\s+all|nothing(\s+else)?|no|nope|no\s+thanks|not\s+now|i'?m\s+(good|done|fine|all\s+set)|all\s+(good|set)|bye|goodbye)`;
   return new RegExp(String.raw`^((okay|ok|alright|all\s+right|oh|so|yeah|um|uh)[\s,.!]+)*${word}([\s,.!]+(${word}|ember|for\s+now|then|anyway))*[\s.!,]*$`, "i").test(text);
 }
 
@@ -211,35 +241,63 @@ const SPEAKERS_RING_FRAMES = 94;
 const SPEAKERS_QUIET_MS = 1500;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks). */
 const SELF_SPEAKING_MAX_MS = 60_000;
-/** The microphone's last 2 s, for the stop phrase's transcript check. */
-const RECENT_SECONDS = 2;
+/**
+ * The microphone's last 3 s are kept. The stop phrase's transcript check hears the last 2 s. "Hey Ember" while Ember
+ * speaks is checked from 1.5 s before it was spotted, once "stop" can have been said: at a pause (5 quiet frames)
+ * after more words, 12 quiet frames, or 1.2 s on.
+ */
+const RECENT_SECONDS = 3;
+const STOP_CHECK_SECONDS = 2;
+const SELF_STOP_BEFORE_MS = 1500;
+const SELF_STOP_PAUSE_FRAMES = 5;
+const SELF_STOP_SILENT_FRAMES = 12;
+const SELF_STOP_MAX_MS = 1200;
+/** "Amber, stop" heard mid-sentence waits this long at most for the speaker's pause (ms). */
+const NAMED_STOP_WAIT_MS = 600;
 /**
  * A request ends when the speaker's voice does, even while other people talk on (the VAD hears their speech
  * too). Loudness is the median frame of a stretch (a TV's loud syllables don't count, nor do the speaker's own
  * short pauses): the request's own is its loudest 0.3 s (9 frames) in this window, the wake phrase's included.
  * When the last half second (16 frames) stays 12 dB under that for 12 frames, the request is over: about 20
- * frames after the voice ends, just past the VAD's own 0.6 s of silence, so in a quiet room the VAD still ends
- * it. What goes to the recognizer keeps 10 frames around the voice (it drops a last word cut at its very end;
- * right after a wake, the voice starts where it's within 6 dB of that loudness: the wake phrase is said up close);
- * a cut segment with no 0.3 s that loud is other people's talk, and is dropped. Speech is cut after 10 s
- * whatever it is (the VAD's own maximum isn't a hard one: 53 s was seen), and never more than 12 s is
- * transcribed (the recognizer's time grows with it, and it loops).
+ * frames after the voice ends, while other people talk on. A fifth of a second of silence (6 frames under 2.5
+ * times the room's noise) starts the count over: a pause in a quiet room is left to the VAD (0.6 s of silence),
+ * so a speaker's hesitation mid-request isn't cut (it was at 0.25 s); so does the speaker's voice coming back
+ * (4 frames within 6 dB of its loudest: their own softer words aren't others' talk). What goes to the recognizer keeps 10
+ * frames around the voice (it drops a last word cut at its very end; right after a wake, the voice starts where
+ * it's within 6 dB of that loudness: the wake phrase is said up close); a cut segment with no 0.3 s that loud is
+ * other people's talk, and is dropped. Speech is cut after 10 s (the VAD's own maximum isn't a hard one: 53 s
+ * was seen), or 20 s while the speaker's own voice goes on (heard in the last 2 s) in a quiet room (silent
+ * between their words in the last 3 s). The recognizer gets at most 12 s at a time (its time grows with it,
+ * and it loops), split where it's quietest.
  */
 const QUIET_RATIO = 10 ** -1.2;
 const CLOSE_RATIO = 10 ** -0.6;
+const SILENCE_RATIO = 2.5;
+const SILENT_FRAMES = 6;
 const LOUDNESS_FRAMES = 16;
+const BACK_FRAMES = 4;
 const QUIET_END_FRAMES = 12;
 const LOUD_FRAMES = 9;
 const KEEP_AFTER_FRAMES = 10;
 const SPEECH_CAP_FRAMES = 313;
-const MAX_TRANSCRIBE = 12 * SAMPLE_RATE;
+const LONG_CAP_FRAMES = 625;
+/** A request reaching the cap was cut when the speaker's voice was heard in its last second. */
+const STILL_TALKING_FRAMES = 32;
+const MAX_TRANSCRIBE = 21 * SAMPLE_RATE;
+const TRANSCRIBE_CHUNK = 12 * SAMPLE_RATE;
 /** Speech frames tracked per segment (the cap, plus the VAD's lead-in). */
-const SEGMENT_FRAMES = SPEECH_CAP_FRAMES + 32;
-/** Frames heard in the tail after Ember stops speaking (13 frames: 400 ms), replayed if the user was already replying: sound going on 8 frames past it. */
+const SEGMENT_FRAMES = LONG_CAP_FRAMES + 32;
+/**
+ * Frames kept around the end of Ember's speech (1 s), replayed if the user was already replying: from where the
+ * speakers' stream went quiet (plus the microphone's measured lag behind it), or, without that stream, from where
+ * the tail (13 frames: 400 ms after Ember says it stopped) went quiet, once sound has gone on 8 frames past it.
+ */
+const TAIL_KEEP_FRAMES = 32;
 const TAIL_FRAMES = 13;
 const TAIL_HOLD_FRAMES = 8;
-/** The mic hears the speakers this much later than their own stream (latency and echo): the tail ends this long after they went quiet (ms). */
-const SPEAKERS_ECHO_MS = 160;
+/** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
+const MAX_LAG_FRAMES = 12;
+const LAG_MIN_CORRELATION = 0.5;
 
 /**
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
@@ -254,20 +312,28 @@ export class VoiceEngine {
   private ring: Ring;
   private recent = new Ring(RECENT_SECONDS);
   private selfSpeakingUntil = 0;
-  /** When Ember said it had stopped speaking (the tail after it is under way), and the frames heard since. */
+  /** When Ember said it had stopped speaking (the tail after it is under way), and the frames heard around then. */
   private tailFrom = 0;
   private tail: { frame: Float32Array; energy: number; at: number }[] = [];
   private monitorHits: { keyword: string; at: number }[] = [];
-  /** A spotted wake word waiting out the speakers check; a spotted stop waiting out it and its transcript check. */
+  /**
+   * A spotted wake word waiting out the speakers check; a spotted stop waiting out it and its transcript check
+   * (`keyword` "hey_ember": said while Ember spoke, it's a stop only as "Hey Ember, stop").
+   */
   private pendingWake: { keyword: string; at: number; paused: boolean } | null = null;
-  private pendingStop: { at: number; checkAt: number | null } | null = null;
+  private pendingStop: { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean } | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
-  private speakers: { frame: Float32Array; at: number; sound: boolean }[] = [];
+  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number }[] = [];
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorFrameAt = Number.NEGATIVE_INFINITY;
   private monitorSpotting = false;
+  /** The microphone's recent frame energies (as long as the speakers' ring), and how much later it hears the speakers (ms, measured as Ember speaks). */
+  private micLevels: number[] = [];
+  private micLag = 0;
   private wasSpeaking = false;
   private frames = 0;
+  /** When the microphone's latest frame came. */
+  private fedAt = 0;
   /** Quiet frames in a row, and the most recent ones (replayed to the spotter when sound returns). */
   private quietRun = 0;
   /** The room's noise level (RMS): follows the quietest frames down at once and rises only slowly. */
@@ -282,10 +348,16 @@ export class VoiceEngine {
   /** Frames left before the voice check rests (the room was steady), and the frame it last heard. */
   private unsteady = 0;
   private checkedAt = -1;
-  /** Listening: the window's speech at its loudest (median energy of 9 frames), the energies of the segment under way, and how long it has been quiet against it. */
+  /** Listening: the window's speech at its loudest (median energy of 9 frames), the energies of the segment under way, and how long it has been quiet against it while others talked. */
   private peak = 0;
   private segment: number[] = [];
   private quietFor = 0;
+  /** Frames of silence (the room's own noise) in a row, and where in the segment the last fifth of a second of it was. */
+  private silentRun = 0;
+  private silentAt = -1;
+  /** The loudness of the last wake's request (a follow-up must come near it), and whether the last request came from a follow-up (it gets none of its own). */
+  private voice = 0;
+  private afterFollowUp = false;
   /** Frames the keyword spotter actually decoded (for CPU accounting and tests). */
   spotted = 0;
   private now: () => number;
@@ -300,13 +372,14 @@ export class VoiceEngine {
   }
 
   /**
-   * Ember is speaking (TTS): ignore wake words, and what a listening window hears, until it stops (plus a short
-   * tail). Capped, so a lost "stopped" can't deafen Ember for good. A "stopped" while silent changes nothing.
+   * Ember is speaking (TTS): a wake word only counts as "Hey Ember, stop", and what a listening window hears is
+   * ignored, until it stops (plus a short tail). Capped, so a lost "stopped" can't deafen Ember for good. A
+   * "stopped" while silent changes nothing; one after speech measures the microphone's lag behind the speakers.
    */
   selfSpeaking(on: boolean, tailMs = 400): void {
     const now = this.now();
     if (!on) {
-      if (this.selfSpeakingUntil > now) this.tailFrom = now;
+      if (this.selfSpeakingUntil > now) { this.tailFrom = now; this.micLag = this.measureLag() ?? this.micLag; }
       this.selfSpeakingUntil = Math.min(this.selfSpeakingUntil, now + tailMs);
       return;
     }
@@ -319,12 +392,19 @@ export class VoiceEngine {
     if (this.wasSpeaking) { this.wasSpeaking = false; this.emit({ type: "speech", on: false }); }
   }
 
-  /** Listen for a follow-up without the wake word (the window starts once Ember has finished speaking). */
+  /**
+   * Listen for a follow-up without the wake word (the window starts once Ember has finished speaking). Only after a
+   * wake's request: the answer to a follow-up gets none, or the room's talk could keep a conversation going without
+   * anyone saying "Hey Ember". It hears a voice about as loud as the one that woke Ember (within 6 dB).
+   */
   followUp(ms = 8000): void {
+    if (this.afterFollowUp) return;
     if (this.mode.kind === "listening") { this.mode.until = Math.max(this.mode.until, this.now() + ms); return; }
     this.resetListening();
-    this.peak = 0;
+    this.peak = this.voice;
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up", checkAt: null, keyword: "" };
+    // Opened during the tail after Ember's answer: what was heard since its voice ended (before it said so) may be a reply.
+    if (this.tailFrom) this.tail = this.recentFrames(TAIL_KEEP_FRAMES);
     this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
   }
 
@@ -341,9 +421,10 @@ export class VoiceEngine {
   feedMonitor(frame: Float32Array): void {
     const at = this.now();
     this.monitorFrameAt = at;
-    const sound = rmsOf(frame) >= (this.o.silenceRms ?? 0.0008);
+    const rms = rmsOf(frame);
+    const sound = rms >= (this.o.silenceRms ?? 0.0008);
     if (sound) this.monitorSoundAt = at;
-    this.speakers.push({ frame, at, sound });
+    this.speakers.push({ frame, at, sound, energy: rms * rms });
     if (this.speakers.length > SPEAKERS_RING_FRAMES) this.speakers.shift();
     if (this.monitorSpotting) this.spotSpeakers(frame, at);
   }
@@ -356,7 +437,10 @@ export class VoiceEngine {
     const energy = sum / Math.max(1, frame.length);
     const rms = Math.sqrt(energy);
     this.frames++;
+    this.fedAt = now;
     this.recent.push(frame);
+    this.micLevels.push(energy);
+    if (this.micLevels.length > SPEAKERS_RING_FRAMES) this.micLevels.shift();
 
     // Nobody is saying "Hey Ember" unless someone is speaking: the spotter (most of the idle CPU) rests
     // after half a second without speech, and the frames it missed are replayed when speech returns.
@@ -401,13 +485,20 @@ export class VoiceEngine {
       if (keyword === "ember_stop") {
         // The kill phrase works in every state (also while Ember speaks: that's when it's needed). It goes once
         // the speakers didn't say it and the recognizer heard "Ember, stop" (not "September stopped").
-        if (!this.pendingStop) { this.pendingStop = { at: now, checkAt: checkAt(now) }; this.watchSpeakers(); }
+        if (this.pendingStop?.keyword !== keyword) { this.pendingStop = { keyword, at: now, checkAt: checkAt(now) }; this.watchSpeakers(); }
         continue;
       }
-      if (now < this.selfSpeakingUntil) { this.emit({ type: "rejected", keyword, reason: "self" }); continue; }
+      if (now < this.selfSpeakingUntil) {
+        // While Ember speaks, "Hey Ember" only counts as "Hey Ember, stop" (the spotter takes the name, so the kill
+        // phrase isn't spotted after it): checked once "stop" has been said, if the speakers didn't say it.
+        if (this.o.verifyWake === false) this.emit({ type: "rejected", keyword, reason: "self" });
+        else if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS }; this.watchSpeakers(); }
+        continue;
+      }
       if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused }; this.watchSpeakers(); }
     }
     this.monitorHits = this.monitorHits.filter(h => now - h.at < 5000);
+    if (this.pendingStop && sound && now > this.pendingStop.at) this.pendingStop.spoke = true;
     this.decideStop(now);
 
     // A wake is accepted once we're sure the speakers didn't just say it.
@@ -455,13 +546,14 @@ export class VoiceEngine {
       }
       return;
     }
-    // The speakers went quiet (their own stream says so): Ember's voice is over, the tail can end now.
-    if (this.tailFrom && now < this.selfSpeakingUntil && now - this.monitorFrameAt < 200 && now - this.monitorSoundAt >= SPEAKERS_ECHO_MS) this.selfSpeakingUntil = now;
+    // The speakers went quiet (their own stream says so) and the microphone has stopped hearing them: Ember's voice is over, the tail can end now.
+    if (this.tailFrom && now < this.selfSpeakingUntil && now - this.monitorFrameAt < 200 && now - this.monitorSoundAt > this.micLag) this.selfSpeakingUntil = now;
     if (now < this.selfSpeakingUntil) {
       // Ember's own voice (it plays outside the browser's echo cancellation) is not a request: the VAD isn't fed,
       // and the window stays open until Ember has finished. Otherwise Ember answers itself, again and again.
       this.mode.until = Math.max(this.mode.until, now + this.mode.ms);
-      if (this.tailFrom) { this.tail.push({ frame, energy, at: now }); if (this.tail.length > TAIL_FRAMES) this.tail.shift(); }
+      this.tail.push({ frame, energy, at: now });
+      if (this.tail.length > TAIL_KEEP_FRAMES) this.tail.shift();
       return;
     }
     if (this.tailFrom && !this.afterTail(frame, energy, now)) return;
@@ -525,16 +617,28 @@ export class VoiceEngine {
   private decideStop(now: number): void {
     const s = this.pendingStop;
     if (!s) return;
-    if (this.saidBySpeakers("ember_stop", s.at)) {
+    if (this.saidBySpeakers(s.keyword, s.at)) {
       this.pendingStop = null;
-      this.emit({ type: "rejected", keyword: "ember_stop", reason: "speakers" });
+      this.emit({ type: "rejected", keyword: s.keyword, reason: "speakers" });
       return;
     }
-    if (!this.speakersClear(s.at, now) || (s.checkAt !== null && now < s.checkAt)) return;
+    const waits = s.keyword !== "ember_stop" || s.again;
+    const due = s.checkAt === null || now >= s.checkAt || (waits && this.pauseRun >= (s.spoke || s.again ? SELF_STOP_PAUSE_FRAMES : SELF_STOP_SILENT_FRAMES));
+    if (!this.speakersClear(s.at, now) || !due) return;
     this.pendingStop = null;
-    if (s.checkAt !== null) {
-      const heard = this.backend.transcribe(this.recent.read());
-      if (heard && heardOtherStop(heard)) { this.emit({ type: "rejected", keyword: "ember_stop", reason: "check", heard }); return; }
+    const emberSpeaking = now < this.selfSpeakingUntil;
+    if (s.keyword !== "ember_stop") {
+      // "Hey Ember" while Ember spoke: a stop if "stop" came with it, otherwise Ember's own voice (or a wake it can't take now).
+      const heard = this.backend.transcribe(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS));
+      if (!saidWakeStop(heard)) { this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
+    } else if (s.checkAt !== null) {
+      const heard = this.backend.transcribe(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000));
+      if (!s.again && !emberSpeaking && afterName(heard.toLowerCase(), /amber|emma|emmer/) !== null && this.pauseRun < SELF_STOP_PAUSE_FRAMES) {
+        // "Amber, stop…" and the speaker goes on: decided at their next pause (0.6 s at most), on how the sentence went on.
+        this.pendingStop = { ...s, checkAt: now + NAMED_STOP_WAIT_MS, again: true };
+        return;
+      }
+      if (s.again ? !stopSaidAlone(heard) : heard && heardOtherStop(heard, emberSpeaking)) { this.emit({ type: "rejected", keyword: "ember_stop", reason: "check", heard }); return; }
     }
     this.emit({ type: "stop" });
     if (this.mode.kind === "listening") this.endListening("stop");
@@ -563,34 +667,77 @@ export class VoiceEngine {
   }
 
   /**
-   * Ember's tail is over. If the user was already replying, what they said during the tail is heard too: from
-   * the speakers' own silence when their stream says when that was; otherwise, once the sound has gone on for
-   * 8 frames past the tail (Ember's own voice, when it was said to have ended early, stops sooner), from where
-   * it went quiet in the tail (2 quiet frames: a pause between Ember's own words is shorter). Returns whether
-   * this frame is still to be heard (false: it's held, or was heard with the tail).
+   * Ember's tail is over. If the user was already replying, what they said around its end is heard too: from
+   * the speakers' own silence (plus the microphone's lag) when their stream says when that was; otherwise, once
+   * the sound has gone on for 8 frames past the tail (Ember's own voice, when it was said to have ended early,
+   * stops sooner), from where it went quiet in the tail (2 quiet frames: a pause between Ember's own words is
+   * shorter). Returns whether this frame is still to be heard (false: it's held, or was heard with the tail).
    */
   private afterTail(frame: Float32Array, energy: number, now: number): boolean {
     const quiet = (e: number) => Math.sqrt(e) < Math.max(this.o.silenceRms ?? 0.0008, this.floor * 2.5);
-    const done = (from: number, then: { frame: Float32Array; energy: number }[] = []) => {
-      const tail = this.tail;
+    const replay = (frames: { frame: Float32Array; energy: number }[]) => {
       this.tail = [];
       this.tailFrom = 0;
-      if (from >= 0) for (const t of [...tail.slice(from), ...then]) this.listen(t.frame, t.energy);
+      for (const t of frames) this.listen(t.frame, t.energy);
     };
     if (now - this.monitorFrameAt < 200) {
-      const quietAt = this.monitorSoundAt + SPEAKERS_ECHO_MS;
-      done(this.tail.findIndex(t => t.at >= quietAt));
+      // From the frame the microphone heard the speakers' last sound in, and one before it (their last sounds are a
+      // faint fade, and the lag is known to a frame): a reply said right at the end keeps its first word.
+      const quietAt = this.monitorSoundAt + this.micLag - 32;
+      replay(this.tail.filter(t => t.at >= quietAt));
       return true;
     }
+    const tail = this.tail.filter(t => t.at >= this.tailFrom && t.at < this.selfSpeakingUntil).slice(-TAIL_FRAMES);
     const held = this.tail.filter(t => t.at >= this.selfSpeakingUntil);
-    if (quiet(energy)) { done(-1); return true; } // nothing, or only Ember's last sounds, went on past the tail
+    if (quiet(energy)) { replay([]); return true; } // nothing, or only Ember's last sounds, went on past the tail
     this.tail.push({ frame, energy, at: now });
     if (held.length + 1 < TAIL_HOLD_FRAMES) return false;
-    const tail = this.tail.slice(0, this.tail.length - held.length - 1);
     let from = tail.length;
     for (let i = tail.length - 1; i > 0; i--) if (quiet(tail[i].energy) && quiet(tail[i - 1].energy)) { from = i - 1; break; }
-    done(from);
+    replay([...tail.slice(from), ...held, { frame, energy }]);
     return false;
+  }
+
+  /** What the microphone heard in the last `ms`. */
+  private recentAudio(ms: number): Float32Array {
+    const s = this.recent.read();
+    return s.subarray(Math.max(0, s.length - Math.round((ms * SAMPLE_RATE) / 1000)));
+  }
+
+  /** The last `n` frames the microphone heard (the frames as they came, and when). */
+  private recentFrames(n: number): { frame: Float32Array; energy: number; at: number }[] {
+    const s = this.recent.read(), out: { frame: Float32Array; energy: number; at: number }[] = [];
+    for (let k = 1; k <= n && k * 512 <= s.length; k++) {
+      const frame = s.slice(s.length - k * 512, s.length - (k - 1) * 512);
+      out.unshift({ frame, energy: rmsOf(frame) ** 2, at: this.fedAt - (k - 1) * 32 });
+    }
+    return out;
+  }
+
+  /**
+   * How much later the microphone hears the speakers (ms): where the loudness of the speakers' last 3 s lines up
+   * best with the microphone's (frame by frame, in dB), up to when the speakers went quiet (a reply may follow).
+   * Null when it doesn't line up well (the microphone doesn't hear them).
+   */
+  private measureLag(): number | null {
+    const mic = this.micLevels, spk = this.speakers;
+    if (this.now() - this.monitorFrameAt > 200 || !spk.some(s => s.sound)) return null;
+    const db = (e: number) => 10 * Math.log10(e + 1e-10);
+    // The microphone's latest frame came this many frames after the speakers' latest, and this many after their last sound.
+    const ahead = Math.round((this.fedAt - this.monitorFrameAt) / 32), sinceSound = Math.round((this.fedAt - this.monitorSoundAt) / 32);
+    let best = LAG_MIN_CORRELATION, lag: number | null = null;
+    for (let l = 0; l <= MAX_LAG_FRAMES; l++) {
+      const x: number[] = [], y: number[] = [];
+      for (let i = sinceSound; i < mic.length; i++) {
+        const k = i + l - ahead; // frames back from the speakers' latest
+        if (k < 0 || k >= spk.length) continue;
+        x.push(db(spk[spk.length - 1 - k].energy));
+        y.push(db(mic[mic.length - 1 - i]));
+      }
+      const r = x.length >= 32 ? correlation(x, y) : 0;
+      if (r > best) { best = r; lag = l * 32; }
+    }
+    return lag;
   }
 
   /** Feeds a frame to the VAD, follows the speaker's loudness, and ends a request their voice has left (or that ran on too long). */
@@ -607,20 +754,39 @@ export class VoiceEngine {
       if (this.segment.length > SEGMENT_FRAMES) this.segment.shift();
       const n = this.segment.length;
       if (speaking && n >= LOUD_FRAMES) this.peak = Math.max(this.peak, median(this.segment, n - LOUD_FRAMES, n));
-      this.quietFor = median(this.segment, n - LOUDNESS_FRAMES, n) < this.peak * QUIET_RATIO ? this.quietFor + 1 : 0;
+      // A fifth of a second of the room's own noise: a pause, or the end, that the VAD's silence decides on.
+      this.silentRun = Math.sqrt(energy) < Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ? this.silentRun + 1 : 0;
+      if (this.silentRun >= SILENT_FRAMES) this.silentAt = n;
+      // The count starts over then, and when the speaker's voice is back (the last 4 frames within 6 dB of its loudest).
+      const back = median(this.segment, n - LOUDNESS_FRAMES, n) >= this.peak * QUIET_RATIO || median(this.segment, n - BACK_FRAMES, n) >= this.peak * CLOSE_RATIO;
+      this.quietFor = back || this.silentRun >= SILENT_FRAMES ? 0 : this.quietFor + 1;
     }
     for (const seg of segments) this.handleSegment(this.trim(seg, false));
     if (segments.length && !speaking) this.endSegment();
     if (this.mode.kind !== "listening" || !speaking) return;
-    if (this.quietFor >= QUIET_END_FRAMES || this.segment.length >= SPEECH_CAP_FRAMES) {
-      for (const seg of this.backend.flushVad()) this.handleSegment(this.trim(seg));
+    const n = this.segment.length;
+    // At 10 s, a request goes on (to 20 s) while the speaker's own voice does, in a room quiet between their words.
+    const goesOn = this.voiceIn(n - 2 * STILL_TALKING_FRAMES) && n - this.silentAt <= 3 * STILL_TALKING_FRAMES;
+    const capped = n >= LONG_CAP_FRAMES || (n >= SPEECH_CAP_FRAMES && !goesOn);
+    if (this.quietFor >= QUIET_END_FRAMES || capped) {
+      const cut = this.quietFor < QUIET_END_FRAMES && this.voiceIn(n - STILL_TALKING_FRAMES);
+      for (const seg of this.backend.flushVad()) this.handleSegment(this.trim(seg), cut);
       this.endSegment();
     }
+  }
+
+  /** Was the speaker's own voice (within 12 dB of the request's loudness) heard in the segment since frame `from`? */
+  private voiceIn(from: number): boolean {
+    const e = this.segment, half = LOUD_FRAMES >> 1;
+    for (let i = Math.max(0, from); i < e.length; i++) if (median(e, i - half, i + half + 1) >= this.peak * QUIET_RATIO) return true;
+    return false;
   }
 
   private endSegment(): void {
     this.segment = [];
     this.quietFor = 0;
+    this.silentRun = 0;
+    this.silentAt = -1;
   }
 
   /** The VAD starts afresh (the window's loudest frame is kept). */
@@ -629,18 +795,24 @@ export class VoiceEngine {
     this.endSegment();
   }
 
-  /** Does anything in the segment under way stand out like the speaker's own voice (within 12 dB of the request's loudness)? */
+  /** Does anything in the segment under way stand out like the speaker's own voice (within 12 dB of the request's loudness; in a follow-up, within 6 dB of the wake's)? */
   private segmentStandsOut(): boolean {
-    return this.loudFrames().first >= 0;
+    const { first, close } = this.loudFrames();
+    return this.mustBeClose() ? close >= 0 : first >= 0;
+  }
+
+  /** A follow-up hears only a voice about as loud as the one that woke Ember (the room's talk isn't a request). */
+  private mustBeClose(): boolean {
+    return this.mode.kind === "listening" && this.mode.reason === "follow-up" && this.voice > 0;
   }
 
   /**
    * The first and last frames of the segment under way loud enough to be the speaker's (the 9 frames around
    * them), or -1; and the first within 6 dB of the request's loudness (the wake phrase is said up close: what
-   * the pre-roll heard before it, quieter, is someone else).
+   * the pre-roll heard before it, quieter, is someone else), in a follow-up the wake's.
    */
   private loudFrames(): { first: number; last: number; close: number } {
-    const e = this.segment, half = LOUD_FRAMES >> 1, threshold = this.peak * QUIET_RATIO, closeThreshold = this.peak * CLOSE_RATIO;
+    const e = this.segment, half = LOUD_FRAMES >> 1, threshold = this.peak * QUIET_RATIO, closeThreshold = (this.mustBeClose() ? this.voice : this.peak) * CLOSE_RATIO;
     let first = -1, last = -1, close = -1;
     for (let i = 0; i < e.length; i++) {
       const m = median(e, i - half, i + half + 1);
@@ -654,12 +826,12 @@ export class VoiceEngine {
 
   /**
    * A segment as it goes to the recognizer: a flushed one (it ends with the last frame heard) loses what came
-   * after the speaker's voice left (bar 10 frames) and before it began; one with none of it is dropped. Natural
-   * ends (silence) are kept whole. Never more than 12 s.
+   * after the speaker's voice left (bar 10 frames) and before it began; one with none of it is dropped, and so
+   * is a follow-up's with nothing near the wake's loudness. Natural ends (silence) are kept whole. Never more than 21 s.
    */
   private trim(seg: Float32Array, flushed = true): Float32Array | null {
     const { first, last, close } = this.loudFrames();
-    if (first < 0 && this.segment.length) return null;
+    if (this.segment.length && (first < 0 || (this.mustBeClose() && close < 0))) return null;
     let from = 0, to = seg.length;
     if (flushed && first >= 0) {
       const n = this.segment.length, start = this.mode.kind === "listening" && this.mode.first && close >= 0 ? close : first;
@@ -669,10 +841,10 @@ export class VoiceEngine {
     return seg.subarray(from, Math.min(to, from + MAX_TRANSCRIBE));
   }
 
-  private handleSegment(seg: Float32Array | null): void {
+  private handleSegment(seg: Float32Array | null, cut = false): void {
     if (this.mode.kind !== "listening" || !seg?.length) return;
     const t0 = this.now();
-    const text = stripWake(this.backend.transcribe(seg), this.mode.first);
+    const text = stripWake(this.transcribe(seg), this.mode.first);
     this.mode.first = false;
     if (!text || /^[\s.,!?]*$/.test(text) || isFiller(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
@@ -691,8 +863,29 @@ export class VoiceEngine {
       this.endListening("timeout");
       return;
     }
-    this.emit({ type: "utterance", text, ms: this.now() - t0 });
+    // A wake's request sets the loudness its follow-up must come near; a follow-up's request gets no follow-up.
+    const window = this.mode.reason;
+    if (window === "wake") this.voice = this.peak;
+    this.afterFollowUp = window === "follow-up";
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}) });
     this.endListening("done");
+  }
+
+  /** At most 12 s at a time goes to the recognizer, split where it's quietest (between 6 and 12 s in). */
+  private transcribe(seg: Float32Array): string {
+    const parts: string[] = [];
+    let at = 0;
+    while (seg.length - at > TRANSCRIBE_CHUNK) {
+      let split = at + TRANSCRIBE_CHUNK, low = Infinity;
+      for (let i = at + TRANSCRIBE_CHUNK / 2; i + 1600 <= at + TRANSCRIBE_CHUNK; i += 512) {
+        const e = rmsOf(seg.subarray(i, i + 1600));
+        if (e < low) { low = e; split = i + 800; }
+      }
+      parts.push(this.backend.transcribe(seg.subarray(at, split)));
+      at = split;
+    }
+    parts.push(this.backend.transcribe(seg.subarray(at)));
+    return parts.map(p => p.trim()).filter(Boolean).join(" ");
   }
 
   private endListening(reason: "timeout" | "done" | "stop" | "rejected"): void {
@@ -716,4 +909,12 @@ function rmsOf(frame: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
   return Math.sqrt(sum / Math.max(1, frame.length));
+}
+
+/** Pearson's correlation of two series of the same length (0 when either is flat). */
+function correlation(x: number[], y: number[]): number {
+  const n = x.length, mx = x.reduce((a, v) => a + v, 0) / n, my = y.reduce((a, v) => a + v, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { sxy += (x[i] - mx) * (y[i] - my); sxx += (x[i] - mx) ** 2; syy += (y[i] - my) ** 2; }
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
 }

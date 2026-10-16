@@ -38,8 +38,13 @@ const CHECK_THRESHOLD = 0.35;
 /** The listening VAD ends a segment after 0.6 s of silence; a segment gets 0.3 s of what followed it (Moonshine drops a last word cut at its very end). */
 const MIN_SILENCE = 0.6;
 const AFTER_SEGMENT = Math.round(0.3 * SAMPLE_RATE);
-/** Neither VAD's own maximum is a hard cap: the listening one is flushed after 20 s of speech (the engine ends requests sooner), the voice check starts afresh after 10 s. */
-const VAD_MAX_SAMPLES = 20 * SAMPLE_RATE;
+/**
+ * Neither VAD's own maximum is a hard cap: the listening one is flushed after 25 s of speech (the engine ends requests
+ * sooner: 20 s at most), the voice check starts afresh after 10 s. Past its maximum, Silero ends speech at the next
+ * 0.1 s pause, so the listening one's is beyond the engine's (a long request isn't split mid-sentence).
+ */
+const VAD_MAX_SAMPLES = 25 * SAMPLE_RATE;
+const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
@@ -63,7 +68,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
   let micStream = kws.createStream();
   let monStream: any = null;
   const vad = sherpa.createVad({
-    sileroVad: { model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: 15, windowSize: 512 },
+    sileroVad: { model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: VAD_MAX_SPEECH_SECONDS, windowSize: 512 },
     sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
   });
   // The voice check for the idle spotter: a second Silero, eager (low threshold, a 64 ms onset), with its own state.
