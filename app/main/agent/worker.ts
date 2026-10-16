@@ -897,7 +897,10 @@ export class Worker {
             for (let i = 0; i < 60 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const wins = await place.perception.windows().catch(() => []);
-              const w = wins.find(x => pid !== undefined && x.pid === pid) ?? wins.find(x => !before.has(key(x)));
+              // LibreOffice shows a window with no name while it starts: the one with a name is its document's (one
+              // with none is taken only after a few seconds).
+              const named = (x: { name: string }) => !!x.name.trim() || i >= 20;
+              const w = wins.find(x => pid !== undefined && x.pid === pid && named(x)) ?? wins.find(x => !before.has(key(x)) && named(x));
               if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${app.name} on your desk (window ${q(w.name, 100)}). Everything you do now happens there. Save results in ${place.info.handOff}. Call perceive_window.`; }
             }
             return `Started ${app.name} on your desk, but its window hasn't appeared yet. Use list_windows.`;

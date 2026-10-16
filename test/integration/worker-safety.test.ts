@@ -426,11 +426,12 @@ describe("Ember's desk", () => {
   afterAll(() => { if (savedDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = savedDataHome; });
 
   /** A pretend desk with one app window, which appears once the app is opened. */
-  function fakeDesk(o: { inControl?: () => boolean; log?: string[]; onActivate?: () => void; dead?: boolean } = {}) {
+  function fakeDesk(o: { inControl?: () => boolean; log?: string[]; onActivate?: () => void; dead?: boolean; splash?: boolean } = {}) {
     const screen = fakeScreen([{ id: 1, role: "push button", name: "Apply" }, { id: 3, role: "text", name: "Doc" }], { title: "Scribble" });
     let opened = false;
     const win = { app: "scribble", pid: 4242, name: "Scribble", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
-    const perception = { ...screen.perception, windows: async () => (opened ? [win] : []) };
+    // `splash`: a window with no name comes first (LibreOffice's while it starts).
+    const perception = { ...screen.perception, windows: async () => (opened ? [...(o.splash ? [{ ...win, name: "", active: false }] : []), win] : []) };
     const place = {
       info: { handOff: dir }, perception, sidecar: screen.sidecar, input: fakeX({ log: o.log, onActivate: o.onActivate, dead: o.dead }),
       userInControl: o.inControl ?? (() => false), dead: false, onDead: () => undefined, close: () => undefined,
@@ -440,6 +441,14 @@ describe("Ember's desk", () => {
   }
   const onDesk = (goal: string, then: Reply[]) => scripts.set(goal, m => steps(m) === 0 ? { tool: { name: "open_on_desk", args: { name: "Scribble" } } }
     : steps(m) === 1 ? { tool: { name: "perceive_window", args: {} } } : then[steps(m) - 2] ?? { tool: { name: "finish_task", args: { success: true, summary: "done" } } });
+
+  it("open_on_desk works in the app's named window, not the one with no name it shows while it starts (DSK11-3)", async () => {
+    onDesk("Open Scribble on the desk", []);
+    const desk = fakeDesk({ splash: true });
+    await makeWorker(desk.screen, "Open Scribble on the desk", { desk: async () => desk.place as never }).run(new AbortController().signal);
+    const results = [...mock.requests].reverse().find(r => text(r.messages.find(m => m.role === "user")!).includes("Open Scribble on the desk"))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[0]).toMatch(/^Opened Scribble on your desk \(window "Scribble"\)/);
+  });
 
   it("“Take over” stops Ember's input on the desk at once, also a borrow already under way", async () => {
     onDesk("Save on the desk", [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
