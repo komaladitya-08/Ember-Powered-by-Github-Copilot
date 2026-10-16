@@ -1,0 +1,13 @@
+{
+  "_comment": "Options chosen in a secret drop-down ([option, the drop-down's name]) and whether they are what the user put in it, so looked for in every name of a read. Read by test/unit/perception.test.ts and sidecar/atspi/test_ember_atspi.py: chosenSecret and chosen_secret must agree on every row.",
+  "secret": [
+    ["2028", "Card expiry year"], ["07", "Card expiry month"], ["09/28", "Valid thru"], ["Maiden name Smithers", "Security question"],
+    ["City you were born in", "Security question"], ["Saved card ending 4242", "Card"], ["Fluffy 2", "Secret answer"]
+  ],
+  "plain": [
+    ["Month", "Card expiry month"], ["Year", "Card expiry year"], ["MM", "Expiry"], ["YYYY", "Expiry"], ["Select…", "Card type"],
+    ["-- Choose --", "Security question"], ["Please select", "PIN"], ["Mois", "Date d'expiration de la carte"], ["Año", "Caducidad de la tarjeta"],
+    ["Monat", "Ablaufdatum der Karte"], ["Visa Electron", "Card type"], ["March", "Card expiry month"], ["Engineering", "Security answer"],
+    ["", "Security question"], ["N/A", "Security question"], ["Выберите", "Номер карты"]
+  ]
+}

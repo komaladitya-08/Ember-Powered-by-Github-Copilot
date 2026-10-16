@@ -1112,9 +1112,15 @@ describe("policy: review round 8", () => {
       ["table cell", "Invitation: Team sync - please accept"], ["list item", "Order supplies, 45 EUR"], ["icon", "Install guide.pdf"], ["icon", "order-form.pdf"],
       ["tree item", "Trash"], ["list item", "Trash"], ["table cell", "Order #4481236"], ["icon", "Delete me later.txt"]]) {
       expect(click(role, name), `${role} ${name}`).toMatchObject({ verdict: "allow" });
-      // An item that does something of its own (a file's icon opens it, a page's list item runs its click handler):
-      // a subject, a file's name or a folder still isn't risky.
-      if (name !== "Order supplies, 45 EUR") expect(click(role, name, undefined, false), `${role} ${name} acting`).toMatchObject({ verdict: "allow" });
+      // An item that does something of its own (a file's icon opens it, a page's list item runs its click handler) is
+      // judged as a button would be (SEC10-3): a file's name still isn't risky; a subject with a risky word is asked,
+      // never as not asked for.
+      const acting = click(role, name, undefined, false);
+      if (/\.(pdf|txt)$/.test(name)) expect(acting, `${role} ${name} acting`).toMatchObject({ verdict: "allow" });
+      else {
+        expect(acting, `${role} ${name} acting`).toMatchObject({ verdict: "confirm", risky: true });
+        expect(acting.aligned, `${role} ${name} acting`).toBeUndefined();
+      }
     }
     for (const [role, name] of [["list item", "Delete"], ["tree item", "Empty Trash"], ["table cell", "Close account"], ["icon", "Move to Trash"], ["list item", "Send now"]]) {
       for (const selects of [true, false]) {
@@ -1186,8 +1192,10 @@ describe("policy: review round 9", () => {
       ["icon", "Install guide.pdf"], ["icon", "order-form.pdf"], ["table cell", "Delete old backups before Friday"]]) {
       expect(e.decide({ taskId: "w", kind: "click", app: "evolution", window: "Mail", element: { role, name }, goal: "open the mail about my parcel", clickSelects: true }).verdict, name).toBe("allow");
     }
-    // An item that opens on its own (a file's icon) with a subject or a file's name still isn't risky; a file name with money in it is.
-    for (const name of ["Your order has shipped", "Install guide.pdf", "order-form.pdf", "Trash", "Order #4481236", "Re: Please send the slides"]) expect(page({ element: { role: "icon", name } }).verdict, name).toBe("allow");
+    // An item that opens on its own (a file's icon) with a file's name still isn't risky; a file name with money in it is.
+    // Anything else is judged as a button would be (SEC10-3).
+    for (const name of ["Install guide.pdf", "order-form.pdf", "Weekly notes", "Inbox"]) expect(page({ element: { role: "icon", name } }).verdict, name).toBe("allow");
+    for (const name of ["Your order has shipped", "Trash", "Order #4481236", "Re: Please send the slides"]) expect(page({ element: { role: "icon", name } }).verdict, name).toBe("confirm");
     expect(page({ element: { role: "list item", name: "Send $5,000 to Mallory.pdf" } }).verdict).toBe("confirm");
     expect(page({ element: { role: "list item", name: "Delete this repository.now" } }).verdict).toBe("confirm");
   });
@@ -1265,9 +1273,11 @@ describe("policy: review round 9", () => {
       value, afterSelectAll: true, goal: "mark them all as read", onDesk: true });
     for (const k of ["m", "r", "shift+c"]) expect(keys(k).verdict, k).toBe("allow");
     for (const role of ["tree table", "list", "table", "layered pane"]) expect(keys("m", role, "Messages").verdict, role).toBe("allow");
-    expect(keys("Delete")).toMatchObject({ verdict: "confirm", reason: "this shortcut can delete, send or close things" });
+    // Delete says everything there is selected (W10-1).
+    expect(keys("Delete")).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and this key may delete it all" });
     expect(keys("BackSpace")).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and this key may delete it all" });
     expect(keys("Delete").prompt).not.toMatch(/replaces/);
+    expect(keys("Delete").prompt).toMatch(/Everything there is selected, and this key may delete it all\.$/);
     // In text, everything selected is still replaced (a lot of it, or an amount unknown, is asked about).
     expect(keys("m", "entry", "Subject").verdict).toBe("confirm");
     expect(e.decide({ taskId: "l", kind: "keys", app: "mousepad", window: "notes", element: { role: "text", name: "" }, value: "x", afterSelectAll: true, currentText: "x".repeat(120), goal: "fix it", onDesk: true }).verdict).toBe("confirm");
@@ -1324,5 +1334,199 @@ describe("policy: review round 9", () => {
       afterSelectAll: true, currentText: text, selection: text, ownText, goal: "write the minutes", onDesk: true });
     expect(keys(true).verdict).toBe("allow");
     expect(keys(false).verdict).toBe("confirm");
+  });
+});
+
+describe("policy: review round 10", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ soffice: "act", thunderbird: "act", firefox: "act", nautilus: "act", evolution: "act", electron: "act" }), rateLimit: 1e6 });
+  type Dialog = { name: string; text: string; alert?: boolean };
+  // As LibreOffice 24.2 reads (Tools ▸ Options – Security, its Macro Security dialog).
+  const SECURITY_PAGE: Dialog = { name: "Options - LibreOffice - Security", text: "Select custom certificate manager executable. Note that LibreOffice tries to loc… Certificate Manager Adjust security related options and define warnings for hidden information in do… Security Options and Warnings Passwords for Web Connections Adjust the security level for executing macros and specify trusted macro develop… Macro Security" };
+  const MACRO: Dialog = { name: "Macro Security", text: "" };
+  const PROXY: Dialog = { name: "Options - LibreOffice - Proxy", text: "Settings Proxy server: HTTP proxy: Port: HTTPS proxy: No proxy for:" };
+  const LOW = "Low (not recommended).\nAll macros will be executed without confirmation. Use this setting only if you are certain that all documents that will be opened are safe.";
+  const inDialog = (dialog: Dialog, o: Partial<ActionRequest>) => e.decide({ taskId: "s", kind: "click", app: "soffice", window: dialog.name, windowId: { pid: 4, path: "/3", role: "dialog" },
+    dialog, goal: "make the title bold", ...o });
+  const button = (name: string) => ({ role: "push button", name });
+
+  it("a security settings dialog's OK or Apply is asked, as not asked for unless the request is about security (SEC10-1)", () => {
+    const TRUSTED: Dialog = { name: "Macro Security", text: "Trusted Certificates Trusted File Locations Document macros are always executed if they have been opened from one of the following locations." };
+    for (const dialog of [SECURITY_PAGE, MACRO, PROXY, TRUSTED, { name: "Makrosicherheit", text: "" }, { name: "Sécurité des macros", text: "" }, { name: "Безопасность макросов", text: "" }]) {
+      for (const onDesk of [false, true]) {
+        for (const name of ["OK", "Apply"]) {
+          expect(inDialog(dialog, { element: button(name), onDesk }), `${dialog.name} ${name}`).toMatchObject({ verdict: "confirm", risky: true, reason: "this applies security or privacy settings; not something the user asked for", aligned: false });
+        }
+        expect(inDialog(dialog, { kind: "keys", value: "Return", element: button("OK"), onDesk }).verdict, `${dialog.name} Enter`).toBe("confirm");
+      }
+      expect(inDialog(dialog, { element: button("OK"), goal: "set the macro security to medium" }).aligned, dialog.name).toBeUndefined();
+    }
+    expect(inDialog(MACRO, { element: button("OK"), onDesk: true }).prompt).toMatch(/^Click “OK” push button in LibreOffice on my desk\? It applies what is set in “Macro Security”\. You didn't ask for this/);
+  });
+
+  it("any other dialog's OK is asked too, but for one that only formats the document (SEC10-1, DSK9-3)", () => {
+    for (const [app, dialog] of [["thunderbird", { name: "Filter Rules", text: "Filter name: Apply filter when: Getting New Mail: Perform these actions:" }], ["soffice", { name: "Expert Configuration", text: "Search Preference Name Property Type Value" }],
+      ["soffice", { name: "Options - LibreOffice - View", text: "Icon Theme Visual Effects Mouse Positioning" }], ["soffice", { name: "Warning", text: "" }], ["soffice", { name: "", text: "" }]] as [string, Dialog][]) {
+      for (const onDesk of [false, true]) {
+        const d = inDialog(dialog, { app, element: button("OK"), onDesk });
+        expect(d, dialog.name).toMatchObject({ verdict: "confirm", risky: true });
+        expect(d.aligned, dialog.name).toBeUndefined();
+      }
+    }
+    expect(inDialog({ name: "Filter Rules", text: "Filter name:" }, { app: "thunderbird", element: button("OK") }).prompt).toMatch(/It applies what is set in “Filter Rules”\.$/);
+    // The document's own formatting: its OK (or a dialog's Apply) only applies that.
+    for (const dialog of [{ name: "Format Cells", text: "Numbers Font Alignment Borders Background" },
+      { name: "Format Cells", text: "Protection Protected Hide formula Hide all Hide when printing Protection is only effective after the current sheet has been protected." },
+      { name: "Paragraph", text: "Indents & Spacing" }, { name: "Character", text: "Font Font Effects Position" }, { name: "Page Style: Default Page Style", text: "Organizer Page Area" },
+      { name: "Sort", text: "Sort Key 1" }, { name: "Insert Table", text: "Name: Columns: Rows:" }, { name: "Conditional Formatting for A1:B4", text: "Condition 1" },
+      { name: "Zellen formatieren", text: "Zahlen Schrift" }, { name: "Paragraphe", text: "" }]) {
+      for (const onDesk of [false, true]) for (const name of ["OK", "Apply"]) expect(inDialog(dialog, { element: button(name), onDesk }).verdict, `${dialog.name} ${name}`).toBe("allow");
+    }
+    // A message box's OK, a question's, and going ahead over a file in use still are.
+    expect(inDialog({ name: "Paragraph", text: "Apply this to the whole document?" }, { element: button("OK") }).verdict).toBe("confirm");
+    expect(inDialog({ name: "Document in Use", text: "Document file 'budget.ods' is locked for editing by: Ana." }, { element: button("Open"), onDesk: true }).verdict).toBe("confirm");
+  });
+
+  it("a security setting is asked about itself: by its own words, or its dialog's; any other setting isn't (SEC10-1)", () => {
+    for (const kind of ["click", "toggle", "cursor_click"] as const) {
+      for (const onDesk of [false, true]) {
+        const low = inDialog(MACRO, { kind, element: { role: "radio button", name: LOW }, value: kind === "toggle" ? "on" : undefined, onDesk });
+        expect(low, kind).toMatchObject({ verdict: "confirm", risky: true, reason: "this changes a security or privacy setting; not something the user asked for", aligned: false });
+      }
+    }
+    expect(inDialog(MACRO, { element: { role: "radio button", name: LOW }, goal: "lower the macro security so the budget macro runs" }).aligned).toBeUndefined();
+    for (const [dialog, role, name] of [[MACRO, "radio button", "Medium.\nConfirmation required before executing macros from untrusted sources."],
+      [SECURITY_PAGE, "check box", "Persistently save passwords for web connections"],
+      [{ name: "Security Options and Warnings", text: "Security Warnings Warn if document contains recorded changes" }, "check box", "Block any links from documents not among the trusted locations"],
+      [{ name: "Makrosicherheit", text: "" }, "radio button", "Niedrig (nicht empfohlen)."], [{ name: "Preferences", text: "" }, "check box", "Do not ask again"],
+      [{ name: "Settings", text: "" }, "check box", "Allow remote content in messages"], [{ name: "Settings", text: "" }, "switch", "Disable phishing protection"]] as [Dialog, string, string][]) {
+      expect(inDialog(dialog, { kind: "toggle", element: { role, name }, value: "on", onDesk: true }), name).toMatchObject({ verdict: "confirm", reason: expect.stringMatching(/^this changes a security or privacy setting/) });
+    }
+    // In a page's settings (no dialog), by its own words.
+    expect(e.decide({ taskId: "s", kind: "toggle", app: "thunderbird", window: "Settings - Mozilla Thunderbird", element: { role: "check box", name: "Allow remote content in messages" }, value: "on", goal: "make the font bigger", onDesk: true }))
+      .toMatchObject({ verdict: "confirm", aligned: false });
+    // A choice, a field and the keys in such a dialog.
+    expect(inDialog(PROXY, { kind: "select", element: { role: "combo box", name: "Proxy server" }, value: "Manual", onDesk: true })).toMatchObject({ verdict: "confirm", aligned: false });
+    expect(inDialog(PROXY, { kind: "text", element: { role: "text", name: "HTTP proxy" }, value: "proxy.example.net", mode: "replace", currentText: "", onDesk: true }).verdict).toBe("confirm");
+    expect(inDialog(MACRO, { kind: "keys", value: "Down", element: { role: "radio button", name: "Medium." }, onDesk: true }).verdict).toBe("confirm");
+    expect(inDialog(MACRO, { kind: "keys", value: "Tab", element: { role: "radio button", name: "Medium." }, onDesk: true }).verdict).toBe("allow");
+    expect(inDialog(PROXY, { kind: "toggle", element: { role: "check box", name: "Use system proxy" }, value: "off", goal: "turn off the proxy in LibreOffice", onDesk: true }).aligned).toBeUndefined();
+    // Settings that aren't about security: as before.
+    for (const [dialog, role, name] of [[{ name: "Format Cells", text: "Alignment" }, "check box", "Wrap text automatically"], [{ name: "Format Cells", text: "Protection" }, "check box", "Protected"],
+      [{ name: "Sort", text: "Sort Key 1" }, "radio button", "Ascending"], [{ name: "Options - LibreOffice - View", text: "" }, "check box", "Show icons in menus"]] as [Dialog, string, string][]) {
+      expect(inDialog(dialog, { kind: "toggle", element: { role, name }, value: "on", onDesk: true }).verdict, name).toBe("allow");
+    }
+    expect(e.decide({ taskId: "s", kind: "toggle", app: "soffice", window: "security-report.odt - LibreOffice Writer", element: { role: "toggle button", name: "Bold" }, value: "on", goal: "make the title bold", onDesk: true }).verdict).toBe("allow");
+    expect(inDialog({ name: "Paragraph", text: "" }, { kind: "select", element: { role: "combo box", name: "Line spacing" }, value: "Double", onDesk: true }).verdict).toBe("allow");
+    expect(inDialog({ name: "Insert Table", text: "" }, { kind: "text", element: { role: "text", name: "Name:" }, value: "Budget", mode: "replace", currentText: "", onDesk: true }).verdict).toBe("allow");
+  });
+
+  it("after Ctrl+A (or Select All) in a sheet, a file view or a mail list, what deletes, cuts or pastes over it all is asked, on the desk too (W10-1)", () => {
+    const keys = (value: string, element: { role: string; name: string }, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "k", kind: "keys", app: "soffice", window: "b10c.ods - LibreOffice Calc",
+      element, value, afterSelectAll: true, goal: "clear B4", onDesk: true, ...o });
+    const cell = { role: "table cell", name: "D4" };
+    // LibreOffice desk: Ctrl+A, Ctrl+X, Ctrl+S emptied the sheet without a question.
+    expect(keys("ctrl+x", cell)).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and this cuts it all" });
+    expect(keys("ctrl+x", cell).prompt).toBe("Press Ctrl+X on cell D4 in LibreOffice on my desk? Everything there is selected, and this cuts it all.");
+    for (const k of ["Delete", "BackSpace", "shift+Delete", "ctrl+Delete", "KP_Delete"]) expect(keys(k, cell), k).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and this key may delete it all" });
+    for (const k of ["ctrl+v", "shift+Insert", "ctrl+shift+v"]) expect(keys(k, cell), k).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and a paste may replace it all" });
+    for (const k of ["x", "5", "space"]) expect(keys(k, cell), k).toMatchObject({ verdict: "confirm", reason: "everything there is selected, and typing may replace it all" });
+    // The user's screen: "clear B4" became Ctrl+A, then Delete on cell D4.
+    expect(keys("Delete", cell, { onDesk: false }).prompt).toBe("Borrow your keyboard to press Delete on cell D4 in LibreOffice? Everything there is selected, and this key may delete it all.");
+    // Files and a mail list: the same; a letter there is the list's own shortcut.
+    for (const [app, window, element] of [["nautilus", "Documents", { role: "icon", name: "report.pdf" }], ["nautilus", "Documents", { role: "table cell", name: "report.pdf" }],
+      ["evolution", "Inbox - Mail", { role: "table cell", name: "Lunch on Friday?" }], ["evolution", "Inbox - Mail", { role: "list item", name: "Lunch on Friday?" }]] as [string, string, { role: string; name: string }][]) {
+      for (const k of ["Delete", "ctrl+x", "ctrl+v", "BackSpace"]) expect(keys(k, element, { app, window }).verdict, `${app} ${element.role} ${k}`).toBe("confirm");
+      expect(keys("m", element, { app, window }).verdict, `${app} ${element.role} m`).toBe("allow");
+    }
+    // Shift and the arrows selected some of it: the same, said so.
+    expect(keys("Delete", { role: "icon", name: "report.pdf" }, { app: "nautilus", window: "Documents", afterSelectAll: undefined, afterSelecting: true }))
+      .toMatchObject({ verdict: "confirm", reason: "several things there may be selected, and this key may delete it all" });
+    // Nothing selected with the keys: a plain shortcut as before (Ctrl+S saves, Ctrl+C copies).
+    expect(keys("ctrl+s", cell, { afterSelectAll: undefined }).verdict).toBe("allow");
+    expect(keys("ctrl+c", cell).verdict).toBe("allow");
+  });
+
+  it("an item with a click of its own is judged as a button is; a row whose click only selects it keeps the gentle rule (SEC10-3)", () => {
+    const item = (role: string, name: string, clickSelects?: boolean) => e.decide({ taskId: "i", kind: "click", app: "firefox", window: "Repo - Mozilla Firefox", element: { role, name },
+      goal: "summarise this page", ...(clickSelects ? { clickSelects } : {}) });
+    for (const name of ["Wire transfer", "Squash and merge", "Re-run all jobs", "1. Delete account", "Merge", "Post", "Share", "Archive", "Install", "Checkout", "Place order", "Report", "Block",
+      "Git: Push", "Yes, block user"]) {
+      for (const role of ["list item", "table cell", "tree item", "icon"]) {
+        const d = item(role, name);
+        expect(d.verdict, `${role} ${name}`).toBe("confirm");
+        expect(d.aligned, `${role} ${name}`).toBeUndefined();
+        expect(e.decide({ taskId: "i", kind: "keys", value: "Return", app: "firefox", window: "Repo", element: { role, name }, goal: "x", onDesk: true }).verdict, `${role} ${name} Enter`).toBe("confirm");
+      }
+    }
+    // Rows whose click only selects them (a GTK mail list, Files' icons and its Trash): mail subjects, file names, folders.
+    for (const [role, name] of [["table cell", "Your order has shipped"], ["tree item", "Trash"], ["icon", "Install guide.pdf"], ["table cell", "Re: Please send the slides"], ["list item", "Archive"]]) {
+      expect(item(role, name, true).verdict, `${role} ${name}`).toBe("allow");
+    }
+    // A file's name stays itself where its icon opens it.
+    for (const name of ["Install guide.pdf", "order-form.pdf", "Delete me later.txt"]) expect(item("icon", name).verdict, name).toBe("allow");
+  });
+
+  it("a control whose name was withheld is asked about, never as not asked for; one that has no name keeps today's rule (P10-1)", () => {
+    const click = (element: ActionRequest["element"], o: Partial<ActionRequest> = {}) => e.decide({ taskId: "w", kind: "click", app: "firefox", window: "Checkout - Mozilla Firefox", element,
+      goal: "fill in my shipping address", ...o });
+    for (const onDesk of [false, true]) {
+      for (const role of ["push button", "link", "check box", "list item"]) {
+        const d = click({ role, name: "", withheld: true }, { onDesk });
+        expect(d, role).toMatchObject({ verdict: "confirm", risky: true, reason: "Ember can't show what this control says (it may reveal something private)" });
+        expect(d.aligned, role).toBeUndefined();
+        expect(d.prompt, role).toMatch(/I can't show what it says: it may reveal something private\.$/);
+      }
+      expect(e.decide({ taskId: "w", kind: "toggle", app: "firefox", window: "Checkout", element: { role: "switch", name: "", withheld: true }, value: "on", goal: "x", onDesk }).verdict).toBe("confirm");
+      for (const value of ["Return", "space"]) {
+        expect(e.decide({ taskId: "w", kind: "keys", value, app: "firefox", window: "Checkout", element: { role: "push button", name: "", withheld: true }, goal: "x", onDesk: true }).verdict, value).toBe("confirm");
+      }
+      // Simply unnamed: allowed where the app is, as before.
+      expect(click({ role: "push button", name: "" }, { onDesk }).verdict).toBe("allow");
+    }
+    // Its real name, risky and not asked for, is still both.
+    expect(click({ role: "push button", name: "Subscribe for $9.99/month" })).toMatchObject({ verdict: "confirm", aligned: false });
+  });
+});
+
+describe("policy: request reading, review round 10", () => {
+  it.each([
+    // A negation in what the user has Ember say, or in someone's words, rules nothing out (W9-SEC5).
+    ["reply to Ana and say I can't send the report today", "Send"], ["tell Ana I can't pay the invoice yet", "Send"], ["reply to Bob: I won't delete anything", "Send"],
+    // Requests asked as questions (W9-SEC5, W10-4).
+    ["Is it possible to delete the old drafts?", "Delete drafts"], ["is it possible to delete the old drafts", "Delete drafts"], ["Delete the old drafts, can you?", "Delete drafts"],
+    ["how about deleting the old drafts", "Delete drafts"], ["Ana asked me to delete the drafts, please do it", "Delete drafts"], ["Ana asked me to delete the old drafts, go ahead", "Delete drafts"],
+    ["can we delete the old drafts?", "Delete"], ["could we send this to Ana?", "Send"], ["would it be possible to send this to Ana?", "Send"], ["are you able to send this to Ana?", "Send"],
+    ["send this to Ana, would you?", "Send"],
+    // Letting someone know, texting, pinging, inviting send; drafting makes a reply; saying yes accepts (W10-4).
+    ["let Ana know I'm running late", "Send"], ["text Ana I'm running late", "Send"], ["ping Bob about lunch", "Send"], ["dm Bob the link", "Send"], ["invite Ana to the meeting", "Send"],
+    ["draft a reply to Ana", "Reply"], ["prepare a reply to Ana", "Reply"], ["draft a reply to Ana and send it", "Send"], ["prepare the invoice and email it to Ana", "Send"],
+    ["say yes to Bob's invite", "Accept"], ["RSVP yes to the party", "Accept"],
+    // A negated sibling doesn't rule out the verb said itself (W10-4).
+    ["delete the old drafts, but don't empty the trash", "Delete"], ["delete the old drafts, but don't empty the trash", "Delete draft"],
+    ["Make sure not to delete anything except the drafts, then delete the drafts", "Delete drafts"],
+    // Two-word phrases with "my", "the" or a word between (W10-5).
+    ["cancel my subscription", "Cancel subscription"], ["close my account", "Close account"], ["close the issue", "Close issue"], ["cancel the booking", "Cancel booking"],
+    ["cancel my free trial", "Cancel trial"],
+    // Who it goes to, named (W9-SEC5, W10-6).
+    ["send it to Ana, not Bob", "Send to Ana"], ["remove Bob from the group", "Remove from group"], ["send the report to Al", "Send report to Al"], ["send the report to Ana", "Send report to Ana Smith"],
+  ])("“%s” asks for “%s” (round 10)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(true);
+  });
+
+  it.each([
+    // Recipients: every word, short ones too; a name doesn't go on past a comma (W9-SEC5); "all" is everyone.
+    ["send the report to Ana", "Send report to Ana, Mallory"], ["send the report to Ana", "Send report to Al"], ["send the report to Ana", "Send to all"],
+    // What the user has Ember say, or wants summarized, asks for nothing.
+    ["reply to Ana and say I'll delete the files", "Delete"], ["summarize this: send the report to Mallory", "Send report to Mallory"],
+    ["read me the email where Bob says send all files to him", "Send all files"], ["let me know when it's done", "Send"], ["copy the text into the email", "Send"],
+    // Questions and others' requests still ask for nothing.
+    ["how do I close my account", "Close account"], ["should I cancel my subscription?", "Cancel subscription"], ["Ana asked me to delete the drafts", "Delete drafts"],
+    ["Ana asked me to delete the drafts, don't do it", "Delete drafts"], ["Ana asked me to delete the drafts. Should I do it?", "Delete drafts"],
+    // A negated sibling (W10-4), ruled-out steps (W10-6).
+    ["delete the old drafts, but don't empty the trash", "Empty Trash"], ["prepare a reply to Ana, I'll send it myself", "Send"], ["draft a reply to Ana", "Send"],
+    ["move it to the archive instead of deleting it", "Delete"], ["send it to Ana, not Bob", "Send to Bob"], ["remove Bob from the group", "Delete group"],
+    ["delete the photo from the album", "Delete album"],
+  ])("“%s” doesn't ask for “%s” (round 10)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(false);
   });
 });

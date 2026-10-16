@@ -193,6 +193,79 @@ Gtk.main()
     }
   }, 20_000);
 
+  it("a list's check box is left to the mouse, and an icon is selected, never opened: GTK's own actions are a double click's (HND10-1)", async () => {
+    // firewall-config's services: a check box column whose "toggle" is row-activated; a template browser's icons,
+    // whose "activate" is item-activated.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-boxes-"));
+    const script = path.join(dir, "boxes.py");
+    fs.writeFileSync(script, `
+import json, sys, gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+def emit(**d):
+    sys.stdout.write(json.dumps(d) + "\\n"); sys.stdout.flush()
+w = Gtk.Window(title="Ember Boxes Bench")
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=12)
+store = Gtk.ListStore(bool, str)
+for n in ["ssh", "http"]:
+    store.append([n == "ssh", n])
+tv = Gtk.TreeView(model=store)
+r = Gtk.CellRendererToggle()
+r.connect("toggled", lambda c, p: emit(toggled=store[p][1]))
+tv.append_column(Gtk.TreeViewColumn("Enabled", r, active=0))
+tv.append_column(Gtk.TreeViewColumn("Service", Gtk.CellRendererText(), text=1))
+tv.connect("row-activated", lambda t, p, c: emit(activated=store[p][1]))
+box.add(tv)
+icons = Gtk.ListStore(str)
+for n in ["Report.odt", "Budget.ods"]:
+    icons.append([n])
+iv = Gtk.IconView(model=icons); iv.set_text_column(0)
+iv.connect("item-activated", lambda v, p: emit(opened=icons[p][0]))
+iv.connect("selection-changed", lambda v: emit(chosen=[icons[p][0] for p in v.get_selected_items()]))
+box.add(iv)
+w.add(box)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()
+`);
+    const app = spawn(python, [script], { stdio: ["ignore", "pipe", "inherit"] });
+    const said: Record<string, unknown>[] = [];
+    readline.createInterface({ input: app.stdout! }).on("line", l => { try { said.push(JSON.parse(l)); } catch { /* not json */ } });
+    try {
+      let r = await sidecar.readWindow({ pid: app.pid! }).catch(() => null);
+      for (let i = 0; i < 50 && !(r?.nodes.some(n => n.name === "http") && r.nodes.some(n => n.role === "icon")); i++) {
+        await new Promise(res => setTimeout(res, 200));
+        r = await sidecar.readWindow({ pid: app.pid! }).catch(() => null);
+      }
+      const nodes = r!.nodes;
+      const cells = nodes.filter(n => n.role === "table cell");
+      const http = cells.find(n => n.name === "http")!;
+      const httpBox = cells[cells.indexOf(http) - 1];
+      for (const kind of ["click", "toggle"] as const) {
+        const can = await sidecar.canDo(httpBox.id, kind);
+        expect([can.tier1, can.action], kind).toEqual([false, "toggle"]);
+        await expect(sidecar.doAction(httpBox.id, kind)).rejects.toThrow(/background_unavailable/);
+      }
+      // A toggle on the row's name turns nothing on.
+      expect((await sidecar.canDo(http.id, "toggle")).action).toBe("select row");
+      await expect(sidecar.doAction(http.id, "toggle")).rejects.toThrow(/no switch or check box/);
+      const icon = nodes.filter(n => n.role === "icon")[1];
+      const can = await sidecar.canDo(icon.id, "click");
+      expect(can.action).toBe("select item");
+      if (can.tier1) {
+        const res = await sidecar.doAction(icon.id, "click");
+        expect([res.ok, res.action]).toEqual([true, "select item"]);
+        await new Promise(res => setTimeout(res, 200));
+        expect(said.filter(s => "chosen" in s).pop()).toEqual({ chosen: ["Budget.ods"] });
+      }
+      await new Promise(res => setTimeout(res, 200));
+      expect(said.filter(s => "activated" in s || "toggled" in s || "opened" in s)).toEqual([]);
+    } finally {
+      app.kill();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it("finds the same window through X11 by pid", async () => {
     const x11 = openX11();
     if (!x11) return;

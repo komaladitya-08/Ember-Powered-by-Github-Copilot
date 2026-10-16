@@ -155,6 +155,13 @@ const ACTS_ITSELF = /^(push button|push button menu|button|split button|toggle b
 const FOCUS_IS_THE_STEP = /^(text|entry|password text|spin button|document text|paragraph|terminal)$/;
 /** How long an app gets to notice the pointer over its window before Ember looks where to click again. */
 const POINTER_SETTLE_MS = 100;
+/**
+ * How long a switch or check box gets to show it turned (GTK carries out an accessible click on its next turn, and a
+ * busy app later) before Ember says it didn't: a toggle is never reported done on the app's word alone.
+ */
+const TOGGLE_WAIT_MS = 1000;
+/** Is a switch, check box or toggle button on? */
+const isOn = (states: string[]) => states.includes("checked") || states.includes("pressed");
 /** The control around an element that a click on the element goes to (a link around its text, a row around its label). */
 type Handler = { role: string; name: string };
 /** Items the pointer selects (and focuses) by only passing over them: menus, and the lists of a drop-down. */
@@ -324,9 +331,9 @@ const STEERED = /\n\(The user then added: (.*)\)$/gm;
 /**
  * What has the keyboard in a window: its role and name (or the label beside it), and whether it holds a secret. A
  * spreadsheet's cell says so (`grid`, see isSheetCell) and which sheet it is in (`sheet`: the sheet's name, as a
- * number: it goes to the audit log, which keeps no screen text).
+ * number: it goes to the audit log, which keeps no screen text). `withheld`: its name was withheld (nameWithheld).
  */
-type Focus = { role: string; name: string; secret?: boolean; grid?: boolean; sheet?: number };
+type Focus = { role: string; name: string; secret?: boolean; withheld?: boolean; grid?: boolean; sheet?: number };
 /** A sheet's name as Focus keeps it (FNV-1a). */
 const sheetKey = (name: string) => { let h = 0x811c9dc5; for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193) >>> 0; return h; };
 /**
@@ -441,12 +448,31 @@ function inWebPage(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
   }
   return false;
 }
+/** Controls a click or Enter works, whose name says what they do. */
+const WORKED_CONTROL = /^(push button|push button menu|button|split button|toggle button|link|menu item|check box|radio button|switch)$/;
+/**
+ * Was the name of `n` (called `name`, its label's if it has none) withheld because it may say what a secret field holds
+ * (P10-1)? The reader says so; or it is a nameless control in a web page where the reader withheld names (`nodes`, those
+ * of that window), which may be one whose name it withheld unmarked. Such a control is asked about whatever it does.
+ */
+function nameWithheld(n: AxNode, name: string, nodes: Iterable<AxNode>, byId: (id: number) => AxNode | undefined): boolean {
+  if (n.withheld) return true;
+  if (name || !WORKED_CONTROL.test(n.role) || !inWebPage(n, byId)) return false;
+  for (const m of nodes) if (m.withheld) return true;
+  return false;
+}
 /** A spreadsheet cell's address as a model may give it ("B5", "$B$5", "b5"). */
 const CELL_ARG = /^\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6}$/;
 /** The most arrow keys Ember presses to reach a cell (from the cell with the keyboard, or from A1); a cell further off is reached through the Name Box. */
 const CELL_STEPS_MAX = 300;
-/** The most cells fill_cells fills in one go (one question, one borrow). */
-const FILL_CELLS_MAX = 30;
+/**
+ * The most cells fill_cells fills in one go (one question, one borrow): as many as its question shows in full in
+ * Ember's bubble and card on a 1024x600 screen (and reads aloud in well under a minute).
+ */
+const FILL_CELLS_MAX = 8;
+/** How many more times a cell that still shows what it held after Enter is read, CELL_SETTLE_MS apart (Calc commits an entry in its own time). */
+const CELL_SETTLE_LOOKS = 3;
+const CELL_SETTLE_MS = 150;
 /**
  * A spreadsheet cell to fill (typeInCell, fillCells): its address and place, its whole new content, what Ember expects
  * it holds (as the latest read listed it, or as found before; undefined: unknown), and the latest read's node for it.
@@ -473,14 +499,66 @@ const SHEET_SIZE = { rows: 1_048_576, columns: 1024 };
 const squashed = (s: string) => s.replace(/\s+/g, "");
 /** A plain number as typed ("1,200.50", "-3", "1e3"), else NaN. */
 const plainNumber = (s: string) => (/^\s*[-+]?(\d[\d,]*\.?\d*|\.\d+)(e[-+]?\d+)?\s*$/i.test(s) ? Number(s.replace(/[,\s]/g, "")) : NaN);
+/** A date's day number as a spreadsheet keeps it (days since 1899-12-30), NaN for no such day. */
+function dayNumber(y: number, m: number, d: number): number {
+  const year = y < 100 ? y + (y < 30 ? 2000 : 1900) : y;
+  const t = Date.UTC(year, m - 1, d);
+  const at = new Date(t);
+  return at.getUTCMonth() === m - 1 && at.getUTCDate() === d ? t / 86_400_000 + 25_569 : NaN;
+}
+/**
+ * The numbers a spreadsheet may take `s` as, typed or shown (none for text): a plain number ("1,200.50"), an amount of
+ * money ("$1,200.00"), a percentage ("5%": 0.05), a date ("2026-03-05", or "3/5/2026" either way round: its day number).
+ */
+export function sheetNumbers(s: string): number[] {
+  const t = s.trim();
+  const date = /^(\d{1,4})[/.-](\d{1,2})[/.-](\d{1,4})$/.exec(t);
+  if (date) {
+    const [a, b, c] = date.slice(1).map(Number);
+    return (date[1].length === 4 ? [dayNumber(a, b, c)] : [dayNumber(c, a, b), dayNumber(c, b, a)]).filter(Number.isFinite);
+  }
+  // Spacing (\s takes in the no-break spaces Calc puts in amounts) and currency signs aside.
+  const bare = t.replace(/[$€£¥\s]/g, "");
+  const percent = bare.endsWith("%");
+  const n = plainNumber(percent ? bare.slice(0, -1) : bare);
+  return Number.isFinite(n) ? [percent ? n / 100 : n] : [];
+}
+/**
+ * Does a cell that shows `shows` (and whose number is `value`, where the app tells it) hold what typing `typed` puts
+ * there: the same text (spacing aside), or the same number however it is shown ("1200" in a cell showing "$1,200.00",
+ * "0.05" in one showing "5%", "3/5/2026" in one showing "2026-03-05")? A text's number is 0: one only counts where it
+ * shows no number of its own.
+ */
+export function sameCellValue(typed: string, shows: string, value?: number): boolean {
+  if (squashed(shows) === squashed(typed)) return true;
+  const want = sheetNumbers(typed);
+  const shown = sheetNumbers(shows);
+  const has = shown.length ? shown : value !== undefined && Number.isFinite(value) && value !== 0 && shows.trim() ? [value] : [];
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  return want.some(w => has.some(h => near(w, h)));
+}
+/**
+ * Is a cell's formula as the app tells it (`formula`: LibreOffice's, without the "="; cut short at its first ":", which
+ * it escapes, as "SUM(B2\") the formula `typed`, case and spacing aside?
+ */
+export function formulaIn(typed: string, formula: string | undefined): boolean {
+  if (formula === undefined || !/^\s*=/.test(typed)) return false;
+  const norm = (s: string) => s.replace(/\s+/g, "").toUpperCase();
+  const want = norm(typed.replace(/^\s*=/, ""));
+  const told = norm(formula);
+  if (!told) return false;
+  return told.endsWith("\\") ? told.length > 1 && want.startsWith(told.slice(0, -1)) : told.replace(/\\(.)/g, "$1") === want;
+}
 /**
  * Did a spreadsheet cell take what was typed into it (`typed`, "" to clear it), by what it held before (`before`) and
- * shows now (`shows`)? It shows that (spacing aside), or something new: Calc shows a number or a date its own way
- * ("3.10" as "3.1") and a formula as what it works out to. Showing what it held is taking it only for the same number.
+ * shows now (`shows`)? It shows something new (Calc shows a number or a date its own way, "3.10" as "3.1", and a
+ * formula as what it works out to), or what it held where that is what was typed: the same text or number (see
+ * sameCellValue, `cell.value` its number), or a formula the cell now has (`cell.formula`, see formulaIn), whose result
+ * may be what was there or an error, which Calc shows as no text.
  */
-export function cellTook(typed: string, before: string, shows: string): boolean {
-  if (squashed(shows) === squashed(typed) || squashed(shows) !== squashed(before)) return true;
-  return Number.isFinite(plainNumber(typed)) && plainNumber(typed) === plainNumber(shows);
+export function cellTook(typed: string, before: string, shows: string, cell: { value?: number; formula?: string } = {}): boolean {
+  if (squashed(shows) !== squashed(before)) return true;
+  return sameCellValue(typed, shows, cell.value) || formulaIn(typed, cell.formula);
 }
 /** How much text is kept for each window a task reads: enough to recognise it when it is typed somewhere else. */
 const READ_TEXT_MAX = 20_000;
@@ -710,10 +788,10 @@ export class Worker {
           if (node) {
             const now = await this.sidecar.readElement(a.id).catch(() => null);
             if (this.isOver) return STOPPED();
-            const isOn = now ? now.states.includes("checked") || now.states.includes("pressed") : null;
-            if (isOn === a.on) return done(`Already ${a.on ? "on" : "off"}: ${describeAfter(now!)}`);
+            const on = now ? isOn(now.states) : null;
+            if (on === a.on) return done(`Already ${a.on ? "on" : "off"}: ${describeAfter(now!)}`);
             // Its action would do nothing (Chromium's "uncheck" on a radio button): a radio button goes off when another goes on.
-            if (isOn && /^radio/.test(now!.role)) return fail("A radio button turns off only when another one in its group is chosen: toggle that one on instead.");
+            if (on && /^radio/.test(now!.role)) return fail("A radio button turns off only when another one in its group is chosen: toggle that one on instead.");
           }
           return this.act("toggle", a.id, a.on ? "on" : "off", () => this.sidecar.doAction(a.id, "toggle"));
         }),
@@ -732,7 +810,7 @@ export class Worker {
           return this.act("text", target, a.text, () => this.sidecar.setText(target, a.text, a.mode), a.mode);
         }),
       this.tool("fill_cells",
-        `Fill several cells of the spreadsheet in your latest perceive_window at once, with one question to the user: each cell's address (like "B5") and its whole new content (text, a number or a formula; "" empties it). Prefer this to type_text whenever more than one cell is to be filled (at most ${FILL_CELLS_MAX}). The cells are filled in the order given; it stops at the first that can't be filled and says which were.`,
+        `Fill several cells of the spreadsheet in your latest perceive_window at once, with one question to the user: each cell's address (like "B5") and its whole new content (text, a number or a formula; "" empties it). Prefer this to type_text whenever more than one cell is to be filled: at most ${FILL_CELLS_MAX} in one call (the user sees each one in the question); for more, call it again with the next ones. The cells are filled in the order given; it stops at the first that can't be filled and says which were.`,
         z.object({
           cells: z.array(z.object({
             cell: z.string().regex(CELL_ARG, "a cell address like B5").describe("The cell's address"),
@@ -1148,14 +1226,21 @@ export class Worker {
     if (live.role !== node.role) return fail(`Element ${id} has changed (it is now a ${q(live.role, 40)}). Call perceive_window.`);
     if (isDisabled(live.states)) return fail(`Element ${id} is disabled right now, so it can't be used. Call perceive_window to see why.`);
     // Everything the policy looks at is current, including what a field holds now (replacing it may need the user's OK).
-    const current: AxNode = { ...node, name: live.name, states: live.states, bounds: live.bounds ?? node.bounds, text: live.text ?? node.text, secret: live.secret ?? node.secret };
+    // A name withheld by the read or now stays withheld (P10-1).
+    const current: AxNode = { ...node, name: live.name, states: live.states, bounds: live.bounds ?? node.bounds, text: live.text ?? node.text, secret: live.secret ?? node.secret,
+      ...(live.withheld || node.withheld ? { withheld: true } : {}) };
     this.known.set(id, current);
     return { node: current, element: this.elementOf(id, current) };
   }
 
-  /** Element `id` as the policy and the audit log see it: its name (or the label beside it), and whether the reader found it secret. */
-  private elementOf(id: number, n: Pick<AxNode, "role" | "name" | "secret" | "grid" | "parent">): Focus {
-    return { role: n.role, name: this.nameOf(id, n), ...(n.secret ? { secret: true } : {}), ...cellOf(n, p => this.known.get(p)) };
+  /**
+   * Element `id` as the policy and the audit log see it: its name (or the label beside it), whether the reader found it
+   * secret, and whether its name was withheld (nameWithheld).
+   */
+  private elementOf(id: number, n: AxNode): Focus {
+    const name = this.nameOf(id, n);
+    const byId = (p: number) => this.known.get(p);
+    return { role: n.role, name, ...(n.secret ? { secret: true } : {}), ...(nameWithheld(n, name, this.known.values(), byId) ? { withheld: true } : {}), ...cellOf(n, byId) };
   }
 
   /**
@@ -1281,10 +1366,12 @@ export class Worker {
     const route = await this.route(kind, id, node, element, mode);
     if (this.isOver) return STOPPED();
     if (!("via" in route)) return route;
-    const { handler, selects } = route;
+    const { handler, selects, box } = route;
+    // What a toggle must leave it: on or off as asked; a click on a list's check box, the other way (it flips it).
+    const turns: "on" | "off" | undefined = kind === "toggle" ? (value === "on" ? "on" : "off") : kind === "click" && box ? (isOn(node.states) ? "off" : "on") : undefined;
     if (route.via === "borrow") {
       this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: this.place ? "tier2-desk" : "tier3", kind, role: node.role, probed: true });
-      return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler, selects);
+      return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler, selects, turns);
     }
     const judged: TextMode = overSelection ? "replace" : mode ?? "replace";
     // Text added to a field is judged after what this task typed there before.
@@ -1306,8 +1393,7 @@ export class Worker {
     if (kind === "toggle" && this.asked) {
       const now = await this.sidecar.readElement(id).catch(() => null);
       if (this.isOver) return STOPPED();
-      const isOn = now ? now.states.includes("checked") || now.states.includes("pressed") : null;
-      if (now && isOn === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
+      if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
     }
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
@@ -1322,15 +1408,22 @@ export class Worker {
       // Edit ▸ Select All selects everything, as Ctrl+A does: a key that types replaces it all.
       if (kind === "click" && res.ok) this.noteSelectAll(element);
       // A click that closes its own dialog (Close, OK, Save) leaves nothing to read back: done, not an error.
-      const after = res.after as ElementInfo | null | undefined;
+      let after = res.after as ElementInfo | null | undefined;
       const busyAfter = (res as { busy?: boolean }).busy === true;
+      // A toggle is done once it shows, not on the app's word: it may say yes and change nothing.
+      const stuck = turns && res.ok && after ? await this.notTurned(id, turns, after) : null;
+      if (stuck) after = stuck;
       if (after) this.known.set(id, { ...node, name: after.name, states: after.states, bounds: after.bounds ?? node.bounds });
       // A field can say yes and still not take the text (read-only, or fewer characters allowed).
       const holds = kind === "text" && res.ok && after ? textNotTaken(after, value ?? "", mode ?? "replace") : null;
       // Done by accessibility on Ember's desk: "What Ember did" says so (tier 2), not that it was the user's own app.
-      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok && holds === null, ...(this.place ? { tier: 2 } : {}), ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }) });
+      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok && holds === null && !stuck, ...(this.place ? { tier: 2 } : {}), ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }), ...(stuck ? { error: `it didn't turn ${turns}` } : {}) });
       if (holds !== null) return fail(`The field didn't take the text as asked: it now holds ${q(holds, 200)} (it may be read-only, or take fewer characters). Tell the user in finish_task if it matters.`);
-      const outcome = res.ok ? "Done" : "The app reported it did not work";
+      if (stuck) return fail(Worker.stillTurned(turns!, "The app said it did it", stuck));
+      // A list's row or an icon is selected as a single click selects it: it isn't opened (GTK's own action would).
+      const selected = res.action === "select row" ? "Selected its row" : res.action === "select item" ? "Selected it" : "";
+      const outcome = !res.ok ? "The app reported it did not work"
+        : selected ? `${selected}, as a single click does; it wasn't opened: press Enter (press_keys) to open it if that's what the task needs` : "Done";
       if (!after) return done(`${outcome}. ${busyAfter ? "The app is busy, so the result can't be read yet: call perceive_window in a moment." : "The element is gone now (its dialog or window most likely closed). Call perceive_window."}`);
       return done(`${outcome}. Now: ${describeAfter(after)}`);
     } catch (err) {
@@ -1342,7 +1435,9 @@ export class Worker {
         const next = this.withoutTier1(kind, node, msg.replace("background_unavailable: ", ""));
         if (next !== "borrow") return next;
         this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: this.place ? "tier2-desk" : "tier3", kind, role: node.role });
-        return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler, selects);
+        // A list's check box the helper didn't say was one before: the click flips it.
+        const flips = turns ?? (kind === "click" && /check box in a list/.test(msg) ? (isOn(node.states) ? "off" : "on") : undefined);
+        return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler, selects, flips);
       }
       // A slow app may still carry out a request after Ember stopped waiting for it.
       if (/did not answer/.test(msg)) return fail("The app didn't answer in time, so it's unknown whether this happened. Call perceive_window to check before trying again.");
@@ -1358,16 +1453,26 @@ export class Worker {
    * How `kind` can be done on element `id`, found out before anything is asked: via "tier1" (by accessibility; also
    * when the helper can't tell, and then the mouse is borrowed if it can't after all), via "borrow" (the mouse is the
    * only way), or the tool result when neither can. For a click, `handler`: the control around the element that the
-   * click goes to, when the helper found one; `selects`: the click only selects it (a list's row, selected by
-   * accessibility; or what has no action of its own, clicked with the mouse), so a row's name is judged as what it holds.
+   * click goes to, when the helper found one; `selects`: the click only selects it (a list's row or an icon, selected by
+   * accessibility; or what has no action of its own, clicked with the mouse), so a row's name is judged as what it holds;
+   * `box`: a check box in a list, which only the mouse's click ticks (GTK's own action opens its row instead).
    */
-  private async route(kind: ActionKind, id: number, node: AxNode, element: Focus, mode?: TextMode): Promise<{ via: "tier1" | "borrow"; handler?: Handler; selects?: boolean } | ToolResultObject> {
+  private async route(kind: ActionKind, id: number, node: AxNode, element: Focus, mode?: TextMode): Promise<{ via: "tier1" | "borrow"; handler?: Handler; selects?: boolean; box?: boolean } | ToolResultObject> {
     if ((kind !== "click" && kind !== "toggle" && kind !== "text" && kind !== "value") || typeof this.sidecar.canDo !== "function") return { via: "tier1" };
     const insert = kind === "text" && mode === "insert";
     const can = await this.sidecar.canDo(id, kind, insert).catch(() => null);
     const clicks = kind === "click" || kind === "toggle";
     const handler = clicks && can?.handler ? { role: String(can.handler.role), name: String(can.handler.name ?? "") } : undefined;
-    const selects = clicks && !!can && !handler && (can.action === "select row" || (!can.tier1 && !can.action)) ? { selects: true } : {};
+    const selectsOnly = can?.action === "select row" || can?.action === "select item";
+    // A toggle on a list's row or an icon: a click there only selects it, so nothing would turn on or off.
+    if (kind === "toggle" && selectsOnly) {
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, ...(this.place ? { tier: 2 } : {}), error: "not a switch or check box" });
+      return fail(can?.action === "select item"
+        ? `Element ${id} is an icon, not a switch or check box: a click on it only selects it, and nothing turns on or off. To choose it, use click.`
+        : `Element ${id} is a cell of a list's row, not a switch or check box: a click on it only selects it, and nothing turns on or off. To tick a check box in a list, toggle the check box's own cell in that row (it may have no name); to choose the row, use click.`);
+    }
+    const selects = clicks && !!can && !handler && (selectsOnly || (!can.tier1 && !can.action)) ? { selects: true } : {};
+    const box = clicks && !!can && !can.tier1 && can.action === "toggle" ? { box: true } : {};
     // The click goes to a control around it that lies too deep for Ember to find: what it works can't be told, so it isn't done.
     if ((kind === "click" || kind === "toggle") && can?.handlerUnknown) {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, ...(this.place ? { tier: 2 } : {}), error: "the control a click goes to can't be found" });
@@ -1384,7 +1489,7 @@ export class Worker {
     if (insert && can.windowActive === true && can.focused === false) {
       return fail(`Ember can't put the caret in the right place in element ${id} with the mouse. Use mode "append" or "replace", or ask the user to click where the text should go.`);
     }
-    return { via: "borrow", ...(handler ? { handler } : {}), ...selects };
+    return { via: "borrow", ...(handler ? { handler } : {}), ...selects, ...box };
   }
 
   /**
@@ -1424,9 +1529,10 @@ export class Worker {
    * Tier 3: borrow the mouse (and keyboard) for one action, with the user's OK. `overSelection`: Ctrl+A selected
    * everything before this text goes in at the caret (it is judged as replacing it all). `toggle`: the click turns a
    * switch `value` ("on" or "off"). `handler`: the control around the element that the click goes to (see clickJudged).
-   * `selects`: the click only selects it (see route).
+   * `selects`: the click only selects it (see route). `turns`: what the click must leave it (a toggle's `value`; a list's
+   * check box, the other way): checked once the mouse is back, and the click isn't done until it shows that.
    */
-  private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace", overSelection = false, toggle = false, handler?: Handler, selects = false): Promise<ToolResultObject> {
+  private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace", overSelection = false, toggle = false, handler?: Handler, selects = false, turns?: "on" | "off"): Promise<ToolResultObject> {
     const text = value ?? "";
     // On the user's screen, text goes in by paste: typed keys depend on their keyboard layout (and Caps Lock). On the desk it is typed.
     // No text (clearing a field: Ctrl+A and Delete do it) needs no clipboard, so the user's is never touched for it.
@@ -1469,8 +1575,9 @@ export class Worker {
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
-    if (toggle && this.asked && (live.states.includes("checked") || live.states.includes("pressed")) === (value === "on")) {
-      return done(`Already ${value}: ${describeAfter(live)}`);
+    const goal = turns ?? (toggle && (value === "on" || value === "off") ? value : undefined);
+    if (goal && this.asked && isOn(live.states) === (goal === "on")) {
+      return done(`Already ${goal}: ${describeAfter(live)}`);
     }
     // The user's clipboard is saved before anything is borrowed: if it can't be saved in time, nothing is touched.
     let saved: ClipboardSnapshot | null = null;
@@ -1532,6 +1639,11 @@ export class Worker {
         pasting.pressed = true;
         await hand.keys("ctrl+v");
       }, id, async () => {
+        // A switch or check box: the click is done once it shows turned, never on the click alone.
+        if (goal && kind === "cursor_click") {
+          const stuck = await this.notTurned(id, goal);
+          if (stuck) throw new Error(Worker.stillTurned(goal, "Ember clicked it with the user's mouse (which is back where it was)", stuck));
+        }
         // The mouse is back; the clipboard goes back once the app has pasted (a slow app would paste the user's own clipboard).
         if (!pasting.pressed) return;
         const ok = await landed();
@@ -1555,6 +1667,27 @@ export class Worker {
     }
     if (!passwordDropped) return result;
     return { ...result, textResultForLlm: `${result.textResultForLlm} The user's clipboard held a password from their password manager, so Ember didn't put it back (its timer couldn't clear it again): tell the user it is no longer on the clipboard.` };
+  }
+
+  /**
+   * After a click that should leave element `id` `turns` ("on": checked or pressed): null once it shows that (read again
+   * for up to TOGGLE_WAIT_MS), or where it can't be read (gone, busy: nothing says it didn't); else the element as it
+   * still is. `first`: as the action left it (read again only if that isn't it yet).
+   */
+  private async notTurned(id: number, turns: "on" | "off", first?: ElementInfo): Promise<ElementInfo | null> {
+    const t0 = Date.now();
+    let now: ElementInfo | null = first ?? await this.sidecar.readElement(id).catch(() => null);
+    for (;;) {
+      if (!now || isOn(now.states) === (turns === "on")) return null;
+      if (Date.now() - t0 >= TOGGLE_WAIT_MS || this.isOver) return now;
+      await sleep(100);
+      now = await this.sidecar.readElement(id).catch(() => null);
+    }
+  }
+
+  /** What a toggle (or a list's check box clicked) that didn't turn says: `how` it was done, and how it still is. */
+  private static stillTurned(turns: "on" | "off", how: string, now: ElementInfo): string {
+    return `${how}, but it didn't turn ${turns}: it is still ${turns === "on" ? "off" : "on"} (${describeAfter(now)}). Call perceive_window to check before trying again, or tell the user in finish_task.`;
   }
 
   /** The user's clipboard, saved before Ember borrows anything (or the tool result when it can't be in time). */
@@ -1745,11 +1878,11 @@ export class Worker {
     const verdict = await this.authorize({ taskId: this.spec.id, kind: "cursor_text", app: this.window.app, window: this.window.name, element, value: text, mode: "replace",
       ...(expected !== undefined ? { currentText: expected, ...this.ownText(this.fieldOf(element), expected) } : {}) });
     if (verdict) return verdict;
-    let filled: { did: string; shows: string | undefined } | undefined;
+    let filled: { did: string; shows: string | undefined; says?: string } | undefined;
     const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true);
     if (result.resultType !== "success" || !filled) return result;
     if (filled.shows === undefined) return done(`Done: ${filled.did} (the cell cursor moved on), but Ember couldn't read ${cell} back. Call perceive_window to see what it shows now.`);
-    return done(`Done: ${filled.did} (the cell cursor moved on).${text ? ` It ${Worker.cellNowSays(text, filled.shows)}.` : ""}`);
+    return done(`Done: ${filled.did} (the cell cursor moved on).${text && filled.says ? ` It ${filled.says}.` : ""}`);
   }
 
   /**
@@ -1776,7 +1909,7 @@ export class Worker {
     const verdict = this.tainted ? "each" : await this.authorizeCells(jobs);
     if (verdict === "each") return this.fillEach(cells);
     if (verdict) return verdict;
-    const filled: { job: CellJob; shows: string | undefined }[] = [];
+    const filled: { job: CellJob; shows: string | undefined; says?: string }[] = [];
     const element: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
     const result = await this.withCursor("cursor_text", element, async hand => {
       for (const [i, job] of jobs.entries()) {
@@ -1784,7 +1917,8 @@ export class Worker {
         const prev = i > 0 ? jobs[i - 1].place : null;
         const near = prev ? [`${columnName(prev.col)}${prev.row + 1}`, `${columnName(prev.col + 1)}${prev.row}`, job.cell] : this.cursorHints(job.cell);
         try {
-          filled.push({ job, shows: (await this.fillCell(hand, job, near)).shows });
+          const { shows, says } = await this.fillCell(hand, job, near);
+          filled.push({ job, shows, says });
         } catch (err) {
           if (err instanceof BorrowStopped || err instanceof UserTookOver) throw err;
           const rest = jobs.slice(i + 1).map(j => j.cell);
@@ -1792,7 +1926,7 @@ export class Worker {
         }
       }
     }, undefined, undefined, true);
-    const told = filled.map(f => f.shows === undefined ? `${f.job.cell} couldn't be read back` : `${f.job.cell} ${Worker.cellNowSays(f.job.text, f.shows)}`).join(", ");
+    const told = filled.map(f => f.shows === undefined ? `${f.job.cell} couldn't be read back` : `${f.job.cell} ${f.says ?? `shows ${q(f.shows, 80)}`}`).join(", ");
     if (result.resultType !== "success") return filled.length ? { ...result, textResultForLlm: `Filled ${filled.length} cell${filled.length > 1 ? "s" : ""} first (${told}). ${result.textResultForLlm}` } : result;
     const unread = filled.some(f => f.shows === undefined) ? " Call perceive_window to see what the others show." : "";
     return done(`Done: filled ${filled.length} cell${filled.length > 1 ? "s" : ""}, pressing Enter after each: ${told}.${unread}`);
@@ -1838,10 +1972,16 @@ export class Worker {
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       return { job, req, d: i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req) };
     });
-    for (const { req, d } of judged) {
-      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}) });
-    }
+    // "What Ember did" shows the batch's decisions as one line (on the last cell's): refused (a cell isn't allowed),
+    // asked (the one question), or none where no question is asked of the batch (all allowed, or each cell on its own).
     const no = judged.find(j => j.d.verdict === "deny");
+    const asks = judged.find(j => j.d.verdict !== "allow");
+    const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
+    const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
+    for (const [i, { req, d }] of judged.entries()) {
+      const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
+      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...batch });
+    }
     if (no) return denied(`Not allowed in ${no.job.cell}: ${no.d.reason}. Nothing was typed. Don't try another way for that cell; fill the others without it if that still makes sense, and tell the user in finish_task.`);
     const out = jobs.find(j => reachesOut(j.text));
     if (out) return fail(`The formula for ${out.cell} can fetch from the internet or read other files, which the user is asked about on its own. Nothing was typed: fill ${out.cell} with type_text (cell ${out.cell}), and the other cells with fill_cells.`);
@@ -1896,11 +2036,11 @@ export class Worker {
 
   /**
    * Fills one cell in a borrow (see typeInCell): the cell cursor taken there (looked for at `near` first), checked,
-   * typed over, Enter, and the cell read back. Returns what was done and what the cell shows now (undefined: it couldn't
-   * be read back); throws (nothing typed into the cell) when it can't be reached or holds what the user wasn't asked
-   * about, and when it didn't take the text.
+   * typed over, Enter, and the cell read back. Returns what was done, what the cell shows now (undefined: it couldn't
+   * be read back) and what to say about it; throws (nothing typed into the cell) when it can't be reached, is on another
+   * sheet than the one read, is protected or holds what the user wasn't asked about, and when it didn't take the text.
    */
-  private async fillCell(hand: Hand, job: CellJob, near: string[]): Promise<{ did: string; shows: string | undefined }> {
+  private async fillCell(hand: Hand, job: CellJob, near: string[]): Promise<{ did: string; shows: string | undefined; says?: string }> {
     const { cell, place, text, expected, seenKey, listed } = job;
     const element: Focus = { role: "table cell", name: cell };
     const steps = (a: { col: number; row: number }, b: { col: number; row: number }) => Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
@@ -1910,6 +2050,11 @@ export class Worker {
     if (!start) {
       throw new Error(this.cellLookCut ? "The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed. Call perceive_window and try again."
         : "No cell of the spreadsheet has the keyboard in that window (a cell may be being edited: press Escape; or a dialog is open), so nothing was typed. Call perceive_window.");
+    }
+    // The cells asked about are the sheet's that was read: the user may have gone to another sheet since.
+    const sheet = this.readSheet();
+    if (sheet !== undefined && start.sheet !== undefined && start.sheet !== sheet) {
+      throw new Error(`The sheet in front is now ${q(start.sheet, 60)}, not ${q(sheet, 60)} that was read and asked about, so nothing was typed. Call perceive_window to see it, and tell the user in finish_task if the cells belong on the other sheet.`);
     }
     let at = cellPlace(start.name) ?? { col: 0, row: 1 };
     const fromA1 = place.col + place.row - 1;
@@ -1935,6 +2080,8 @@ export class Worker {
       if (listed) this.known.set(listed.id, { ...listed, text: there.text });
       throw new Error(`${cell} holds ${q(there.text, 80)}${expected === undefined ? "" : ` now, not ${q(expected, 40)}`}, which the user wasn't asked about, so nothing was typed. If it should be replaced, call type_text again: the question will say what goes.`);
     }
+    // A protected cell takes no keys (Calc puts up a message box at the first one): nothing is typed.
+    if (!there.states.includes("editable")) throw new Error(`${cell} is protected (the sheet doesn't take changes there), so nothing was typed. Tell the user in finish_task.`);
     // What it held right before typing, and the quick look's id that finds the cell again.
     const found = { text: there.text, id: there.id };
     if (!text) await this.clearCell(hand);
@@ -1944,31 +2091,86 @@ export class Worker {
       await hand.keys("Return");
     }
     const did = text ? `typed ${q(text, 80)} into ${cell} and pressed Enter` : `cleared ${cell} and pressed Enter`;
-    // What the cell holds now, read back: a sheet can take no keys (a read-only document, a protected cell) and say nothing.
-    const shows = await this.cellNow(cell, found.id);
+    // What the cell holds now, read back. Calc commits an entry in its own time: while it shows what it held and that
+    // isn't what was typed (see cellTook), it is read again a few times.
+    let now = await this.cellNow(cell, found.id);
+    for (let i = 0; i < CELL_SETTLE_LOOKS && now && !cellTook(text, found.text, now.text, now); i++) {
+      await sleep(CELL_SETTLE_MS);
+      if (this.isOver) throw new BorrowStopped();
+      now = await this.cellNow(cell, found.id) ?? now;
+    }
     if (this.isOver) throw new BorrowStopped();
-    if (shows === undefined) {
+    if (now === undefined) {
       this.cellsSeen.delete(seenKey);
       this.noteTyped(this.fieldOf(element), text);
-      return { did, shows };
+      return { did, shows: undefined };
     }
+    const shows = now.text;
     // What it shows now is what it holds (typed again, the question says so: no second question), taken or not.
     this.cellsSeen.set(seenKey, shows);
     if (listed) this.known.set(listed.id, { ...listed, text: shows });
-    const formula = /^\s*[=+\-@]/.test(text);
-    if (!cellTook(text, found.text, shows)) {
+    if (!cellTook(text, found.text, shows, now)) {
       const what = shows ? `still shows ${q(shows, 80)}` : "is still empty";
-      throw new Error(formula
-        ? `Ember ${did}, but ${cell} ${what}, as before: the sheet may not have taken it (a read-only document, or a protected cell), or the formula works out to what was there. Call perceive_window to check before trying again.`
-        : `Ember ${did}, but ${cell} ${what}: the sheet didn't take it (the document may be read-only, or the cell protected). Tell the user in finish_task.`);
+      // Why, as the app tells it: a message box (its validity rules), the cell still being edited.
+      const refused = await this.cellRefused(hand, cell);
+      if (refused) throw new Error(`Ember ${did}, but ${cell} ${what}: ${refused}`);
+      throw new Error(/^\s*[=+\-@]/.test(text)
+        ? `Ember ${did}, but ${cell} ${what}, as before: the sheet may not have taken it (a read-only document), or the formula works out to what was there. Call perceive_window to check before trying again.`
+        : `Ember ${did}, but ${cell} ${what}: the sheet didn't take it (the document may be read-only). Tell the user in finish_task.`);
     }
     this.noteTyped(this.fieldOf(element), text);
-    return { did, shows };
+    return { did, shows, says: Worker.cellNowSays(text, shows, found.text) };
   }
 
-  /** What a filled cell (see fillCell) is said to hold now: "holds “45”", "shows “3.1”" (Calc's own way, a formula's result). */
-  private static cellNowSays(text: string, shows: string): string {
-    return !shows ? "is empty" : squashed(shows) === squashed(text) ? `holds ${q(shows, 80)}` : `shows ${q(shows, 80)}`;
+  /**
+   * What a filled cell (see fillCell) is said to hold now, by what was typed and what it held before: "holds “45”",
+   * "shows “3.1”" (Calc's own way, a formula's result), "shows “$1,200.00” as before (the same value)"; a formula that
+   * shows nothing works out to an error (Calc shows #DIV/0! or #N/A as no text) or to nothing.
+   */
+  private static cellNowSays(text: string, shows: string, before: string): string {
+    if (!shows) return /^\s*=/.test(text) ? "shows nothing: its formula went in, and works out to an error (such as #DIV/0! or #N/A) or to nothing" : "is empty";
+    if (squashed(shows) === squashed(text)) return `holds ${q(shows, 80)}`;
+    return squashed(shows) === squashed(before) ? `shows ${q(shows, 80)} as before (the same value)` : `shows ${q(shows, 80)}`;
+  }
+
+  /**
+   * Why a cell that shows what it held before Enter didn't take what was typed, as the app tells it; null when nothing
+   * says so. A message box the Enter brought up (LibreOffice's for a value its validity rules refuse): its words, quoted
+   * as the app's; it is left for the user (Ember's keys only go to the window asked about). The cell still being edited:
+   * Escape leaves it as it was.
+   */
+  private async cellRefused(hand: Hand, cell: string): Promise<string | null> {
+    const seen = await this.perception.read(this.target, null, undefined, { keep: false, cells: [cell] }).catch(() => null);
+    if (this.isOver) throw new BorrowStopped();
+    const box = (seen?.others ?? []).find(o => o.active || o.modal);
+    if (box) {
+      const words = await this.windowWords(box.name);
+      const app = this.window.app ? friendlyApp(this.window.app) : "The app";
+      return `${app} put up a message ${q(box.name || "(untitled)", 60)}${words ? ` saying ${q(words, 200)}` : ""} (the value may be one the cell doesn't allow), and it is still open over the sheet. Tell the user in finish_task: closing it (Escape or its own button) leaves ${cell} as it was.`;
+    }
+    const nodes = seen?.window && !seen.blocked ? seen.nodes : [];
+    const f = focusedElement(nodes);
+    if (f && !isSheetCell(f) && intoSheet(f, id => nodes.find(n => n.id === id))) {
+      await hand.keys("Escape");
+      return `${cell} was still being edited, so Ember pressed Escape, which leaves it as it was. Call perceive_window to check before trying again.`;
+    }
+    return null;
+  }
+
+  /** The words a window of the working app shows (its labels and text, never a secret field's), read by its title: "" where it can't be read. */
+  private async windowWords(title: string): Promise<string> {
+    const seen = await this.perception.read({ ...(this.target.pid != null ? { pid: this.target.pid } : {}), title }, null, undefined, { keep: false }).catch(() => null);
+    if (!seen?.window || seen.blocked) return "";
+    return seen.nodes.filter(n => /^(label|static|paragraph|text|heading)$/.test(n.role) && !n.secret).map(n => n.name || n.text || "").filter(Boolean).join(" ").replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+
+  /** The sheet the latest perceive_window read (its name, as "Sheet Data"), undefined where it read none. */
+  private readSheet(): string | undefined {
+    for (const n of this.known.values()) {
+      const sheet = isSheetCell(n) && n.parent !== null ? this.known.get(n.parent) : undefined;
+      if (sheet?.role === "table") return sheet.name;
+    }
+    return undefined;
   }
 
   /** The sheet's size, as the latest read found it (see AxNode.size), else LibreOffice 6.4's (SHEET_SIZE). */
@@ -1981,15 +2183,16 @@ export class Worker {
   }
 
   /**
-   * What spreadsheet cell `cell` ("B5") holds now: asked of it by `id` (a quick look's, see cellWithKeyboard), else
-   * looked for in a quick read of the window; undefined when neither can tell (an empty cell isn't listed in a read).
+   * What spreadsheet cell `cell` ("B5") holds now (its text, its number and formula where the app tells them): asked of
+   * it by `id` (a quick look's, see cellWithKeyboard), else looked for in a quick read of the window; undefined when
+   * neither can tell (an empty cell isn't listed in a read).
    */
-  private async cellNow(cell: string, id: number): Promise<string | undefined> {
-    const e = await this.sidecar.readElement(id).catch(() => null);
-    if (e && e.role === "table cell" && e.name.replace(/\$/g, "").toUpperCase() === cell && !e.secret) return e.text ?? "";
+  private async cellNow(cell: string, id: number): Promise<{ text: string; value?: number; formula?: string } | undefined> {
+    const e = await this.sidecar.readElement(id, { formula: true }).catch(() => null);
+    if (e && e.role === "table cell" && e.name.replace(/\$/g, "").toUpperCase() === cell && !e.secret) return { text: e.text ?? "", value: e.value, formula: e.formula };
     const seen = await this.perception.read(this.target, null, undefined, { keep: false, cells: [cell] }).catch(() => null);
     const n = seen?.window && !seen.blocked ? seen.nodes.find(x => isSheetCell(x) && x.name.replace(/\$/g, "") === cell) : undefined;
-    return n && !n.secret ? n.text ?? "" : undefined;
+    return n && !n.secret ? { text: n.text ?? "", value: n.value } : undefined;
   }
 
   /**
@@ -2038,18 +2241,20 @@ export class Worker {
   }
 
   /**
-   * The spreadsheet cell with the keyboard in the working window (its address, what it holds, and its id in the quick
-   * look, good until the next quick look: it finds that cell of the sheet however the cursor moves), or null. `want`: the
-   * cell it should be by now: the app is given a moment to get there (a look may come before the last arrow key is seen).
-   * The read looks in `want` and `near` first (see cursorHints): in a big, zoomed-out sheet it can't ask every cell.
+   * The spreadsheet cell with the keyboard in the working window (its address, what it holds, its states, its sheet's
+   * name, and its id in the quick look, good until the next quick look: it finds that cell of the sheet however the
+   * cursor moves), or null. `want`: the cell it should be by now: the app is given a moment to get there (a look may
+   * come before the last arrow key is seen). The read looks in `want` and `near` first (see cursorHints): in a big,
+   * zoomed-out sheet it can't ask every cell.
    */
-  private async cellWithKeyboard(want?: string, near: string[] = []): Promise<{ name: string; text: string; id: number } | null> {
+  private async cellWithKeyboard(want?: string, near: string[] = []): Promise<{ name: string; text: string; id: number; states: string[]; sheet?: string } | null> {
     const cells = [...new Set([...(want ? [want] : []), ...near])];
     for (let i = 0; ; i++) {
       const seen = await this.perception.read(this.target, null, undefined, { keep: false, cells }).catch(() => null);
       if (this.isOver) throw new BorrowStopped();
       const f = seen?.window && !seen.blocked ? focusedElement(seen.nodes) : null;
-      const cell = f && isSheetCell(f) && !f.secret ? { name: f.name.replace(/\$/g, ""), text: f.text ?? "", id: f.id } : null;
+      const sheet = f && f.parent !== null ? seen!.nodes.find(n => n.id === f.parent && n.role === "table")?.name : undefined;
+      const cell = f && isSheetCell(f) && !f.secret ? { name: f.name.replace(/\$/g, ""), text: f.text ?? "", id: f.id, states: f.states, ...(sheet !== undefined ? { sheet } : {}) } : null;
       // No cell found because the read was cut short (a busy Calc), or while the keyboard is still on the window itself
       // (a Calc just opened or brought to the front moves it about): looked at again, a few times.
       this.cellLookCut = !cell && (!seen || seen.busy || !!seen.truncated);
@@ -2090,7 +2295,8 @@ export class Worker {
       this.focusMultiLine = !!f && f.states.includes("multi line");
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
       if (seen?.window && f) {
-        return { role: f.role, name: f.name || inferLabels(seen.nodes).get(f.id) || "", ...(f.secret ? { secret: true } : {}), ...cellOf(f, byId) };
+        const name = f.name || inferLabels(seen.nodes).get(f.id) || "";
+        return { role: f.role, name, ...(f.secret ? { secret: true } : {}), ...(nameWithheld(f, name, nodes, byId) ? { withheld: true } : {}), ...cellOf(f, byId) };
       }
       if (!wait || i >= 2 || this.isOver) return !seen ? "busy" : !seen.window ? (seen.busy ? "busy" : "gone") : undefined;
       await sleep(150);

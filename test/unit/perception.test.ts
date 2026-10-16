@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { inferLabels, serializeElements, isNeverLook, focusedElement, isSecretLabel, screenWord, secretIds, SECRET_WORDS, SECRET_ANYWHERE } from "../../app/main/perception/elements";
+import { inferLabels, serializeElements, isNeverLook, focusedElement, isSecretLabel, screenWord, secretIds, chosenSecret, SECRET_WORDS, SECRET_ANYWHERE } from "../../app/main/perception/elements";
 import { marksSvg } from "../../app/main/perception/marks";
 import { bgraToRgba, maskRect, imageToScreen, type Capture } from "../../app/main/perception/capture";
 import { pickPython, type AxNode, type AxWindow } from "../../app/main/perception/sidecar";
@@ -10,6 +10,8 @@ import { inspectEnvironment } from "../../app/main/environment";
 
 /** Field labels and whether they are secret (the sidecar's self-test reads the same table). */
 const labels = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/secret-labels.json"), "utf8")) as { secret: string[]; plain: string[] };
+/** Options chosen in secret drop-downs, and whether they are what the user put in them (the sidecar's self-test reads the same table). */
+const chosen = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/chosen-options.json"), "utf8")) as { secret: [string, string][]; plain: [string, string][] };
 const python = ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0);
 
 const node = (id: number, role: string, name: string, bounds: AxNode["bounds"], extra: Partial<AxNode> = {}): AxNode => ({
@@ -255,6 +257,29 @@ describe("secret fields", () => {
     expect(out).toContain('[7] push button (showing, visible)');
     expect(out).toContain('"Total: 42"');
     expect(out).toContain('"Order ABCDEF"');
+  });
+  it("looks elsewhere only for what the user put in a secret field, never a drop-down's placeholder (P10-1)", () => {
+    // A card's expiry drop-downs showing "Month" and "Year" took away every name with "month" or "year" in it.
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const page = (month: string, year: string) => serializeElements(win, [
+      node(1, "document web", "Subscribe", at(0, 0, 600, 400), { parent: null }),
+      node(2, "label", "Card expiry", at(0, 0, 90), { parent: 1 }),
+      node(3, "combo box", "", at(100, 0, 60), { parent: 1, selected: month }),
+      node(4, "combo box", "", at(170, 0, 60), { parent: 1, selected: year }),
+      node(5, "push button", "Subscribe for $9.99/month", at(0, 40, 200), { parent: 1 }),
+      node(6, "push button", "Start 1 year plan", at(0, 80, 200), { parent: 1 }),
+      node(7, "static", "Valid until 2028", at(0, 120, 200), { parent: 1 }),
+      node(8, "label", "Pay from", at(0, 160, 90), { parent: 1 }),
+      node(9, "combo box", "", at(100, 160, 200), { parent: 1, selected: "Card ending 2028" }),
+    ]);
+    const unchosen = page("Month", "Year");
+    for (const s of ['"Subscribe for $9.99/month"', '"Start 1 year plan"', '"Valid until 2028"', 'selected="Card ending 2028"']) expect(unchosen).toContain(s);
+    const chosenOut = page("07", "2028");
+    expect(chosenOut).toContain('"Subscribe for $9.99/month"');
+    expect(chosenOut).not.toMatch(/2028/);
+    expect(chosenOut).toMatch(/^ *\[9\] combo box "Pay from" \(label\) \(showing, visible\)$/m);
+    for (const [option, field] of chosen.secret) expect(chosenSecret(option, field), option).toBe(true);
+    for (const [option, field] of chosen.plain) expect(chosenSecret(option, field), option).toBe(false);
   });
   it("recognises secret labels in many languages, not look-alikes", () => {
     for (const s of labels.secret) expect(isSecretLabel(s), s).toBe(true);

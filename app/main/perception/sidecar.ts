@@ -33,6 +33,11 @@ export interface AxNode {
   editable?: boolean;
   /** A password, payment or one-time-code field: its contents are never read. */
   secret?: boolean;
+  /**
+   * Its name (and text) were withheld: they said, or may have said, what a secret field holds (a cell named after the
+   * card number in it, a button named after a PIN field). What it is called can't be told: `name` is "".
+   */
+  withheld?: boolean;
   /** The part of `bounds` that shows, where some of it is scrolled out of its list or lies outside its window. */
   shown?: Bounds;
   /**
@@ -111,10 +116,17 @@ export interface ElementInfo {
   selected?: string;
   /** Contents withheld (a password or payment field). */
   secret?: boolean;
+  /** Its name and text withheld, as AxNode.withheld says: what it is called can't be told. */
+  withheld?: boolean;
   /** readElement: the part of `bounds` that shows, where some of it is scrolled out of view or lies outside its window. */
   shown?: Bounds;
   /** A menu: whether it is open (its items show). */
   open?: boolean;
+  /**
+   * readElement with `formula`: a spreadsheet cell's formula as LibreOffice Calc tells it, without the "=" ("" for none).
+   * A formula that works out to an error (#DIV/0!, #N/A) shows no text: this says it went in.
+   */
+  formula?: string;
 }
 
 /**
@@ -124,7 +136,12 @@ export interface ElementInfo {
  */
 export interface CanDo {
   tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean;
-  /** A click: the action that would do it ("clickancestor": Chromium hands it to an ancestor). */
+  /**
+   * A click: the action that would do it ("clickancestor": Chromium hands it to an ancestor). Where a click does what
+   * the element's own action doesn't (GTK's is a double click's): "select row" or "select item" (a list's row, an icon:
+   * selected as a single click selects it; a toggle there turns nothing on or off), or "toggle" with no tier 1 (a check
+   * box in a list, which only a click on it ticks).
+   */
   action?: string;
   /** A click: the control around the element that the click goes to (a link around its text, a row around its label). */
   handler?: { role: string; name: string };
@@ -400,9 +417,12 @@ export class AtspiSidecar {
   }
 
   // Tier 1 actions on element ids from a previous readWindow.
-  /** `shown`: also the part of it that shows (where the mouse is to aim; a few more calls to the app). */
-  readElement(id: number, o: { shown?: boolean } = {}): Promise<ElementInfo> {
-    return this.request<ElementInfo>("read_element", o.shown ? { id, shown: true } : { id }).then(e => this.physical(id, e));
+  /**
+   * `shown`: also the part of it that shows (where the mouse is to aim; a few more calls to the app). `formula`: a
+   * spreadsheet cell's formula too (see ElementInfo.formula).
+   */
+  readElement(id: number, o: { shown?: boolean; formula?: boolean } = {}): Promise<ElementInfo> {
+    return this.request<ElementInfo>("read_element", { id, ...(o.shown ? { shown: true } : {}), ...(o.formula ? { formula: true } : {}) }).then(e => this.physical(id, e));
   }
   /** Could `kind` be done on element `id` by accessibility? Nothing is done. */
   canDo(id: number, kind: "click" | "toggle" | "text" | "value", caret = false): Promise<CanDo> {

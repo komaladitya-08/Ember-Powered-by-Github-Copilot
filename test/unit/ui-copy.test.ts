@@ -83,6 +83,18 @@ describe("settings window words", () => {
     expect(keyLabel("shift+F10")).toBe("Shift+F10");
     expect(describeEntry({ t, event: "decision", verdict: "allow" })).toBeNull();
   });
+
+  it("one question for several cells is one line, however many cells it covered (UI10-1)", () => {
+    const t = "2026-10-15T20:00:00.000Z";
+    const cell = (at: number, more: Record<string, unknown> = {}) => describeEntry({ t, event: "decision", kind: "cursor_text", verdict: "confirm", reason: "Ember needs your mouse or keyboard for this",
+      element: { role: "table cell", name: `A${at + 2}` }, app: "soffice", batch: 3, at, ...more });
+    expect([cell(0), cell(1)]).toEqual([null, null]);
+    expect(cell(2, { batchVerdict: "ask", batchReason: "Ember needs your mouse or keyboard for this" }))
+      .toEqual({ tag: "Asked you", cls: "ask", what: "Fill 3 cells (your keyboard) in LibreOffice", why: "Ember needs your mouse or keyboard for this" });
+    expect(cell(2, { batchVerdict: "deny", batchReason: "this app is read-only for Ember" })).toMatchObject({ tag: "Refused", cls: "no", what: "Fill 3 cells (your keyboard) in LibreOffice" });
+    // No question for the batch (each cell is asked on its own, or none needed): those lines say it.
+    expect(cell(2, { batchVerdict: "none" })).toBeNull();
+  });
 });
 
 describe("corner card (no compositor)", () => {

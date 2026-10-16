@@ -76,7 +76,7 @@ afterAll(async () => {
 });
 
 /** `selection`: the text selected in it, as the screen reader tells it for the field with the keyboard. */
-interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; selection?: string; secret?: boolean; bounds?: { x: number; y: number; width: number; height: number }; parent?: number }
+interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; selection?: string; secret?: boolean; withheld?: boolean; bounds?: { x: number; y: number; width: number; height: number }; parent?: number }
 
 /** A pretend window and accessibility helper that log every action (and when it happened). */
 function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string } = {}) {
@@ -85,8 +85,8 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
   const window = { app: "testapp", pid: 1, name: o.title ?? "Test Window", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
   const boundsOf = (n: FakeNode) => n.bounds ?? { x: 10, y: 10 * n.id, width: 60, height: 20 };
   const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: n.parent ?? null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}),
-    ...(n.text !== undefined ? { text: n.text } : {}), ...(n.selection && n.states.includes("focused") ? { selection: n.selection } : {}) }));
-  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}) }; };
+    ...(n.withheld ? { withheld: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}), ...(n.selection && n.states.includes("focused") ? { selection: n.selection } : {}) }));
+  const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}), ...(n.withheld ? { withheld: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}) }; };
   const perception = {
     perceive: async () => ({ window, x11Window: null, nodes: axNodes(), blocked: false, ms: 0, capture: null,
       text: `<screen untrusted="true">\n${axNodes().map(n => `[${n.id}] ${n.role} ${JSON.stringify(n.name)}`).join("\n")}\n</screen>` }),
@@ -1250,22 +1250,39 @@ describe("review round 3: what Ember asks about is what it does", () => {
          * cells not listed hold; `skipRow`: a hidden row the arrow keys pass over; `at`: the cell cursor's cell (the first
          * listed); `noNameBox`: Ctrl+Shift+F5 doesn't give the Name Box the keyboard (where an address and Enter go to);
          * `readOnly`: what is typed never goes in (a read-only document); `size`: the sheet (Sheet1) says how big it is.
+         * `sheet`: the sheet's name (renamed by `showSheet`: the user went to another sheet); `locked`: protected cells
+         * (not "editable"); `shows`: what Calc shows for what was typed into a cell (a number its own way, a formula's
+         * result: "" for an error), a formula's text told without "="; `lagMs`: Calc commits an entry that long after
+         * Enter; `refuse`: cells whose validity rules refuse what is typed, with what LibreOffice's message box says.
          */
-        const calc = (cells: Record<string, string>, o: { hidden?: Record<string, string>; skipRow?: number; at?: { col: number; row: number }; noNameBox?: boolean; range?: string[]; readOnly?: boolean; size?: { rows: number; columns: number } } = {}) => {
-          const sheetNode = o.size ? [{ id: 19, role: "table", name: "Sheet1" }] : [];
-          const screen = fakeScreen([...sheetNode, ...Object.entries(cells).map(([name, text], i) => ({ id: 20 + i, role: "table cell", name, text, ...(o.size ? { parent: 19 } : {}), states: [...EDITABLE, ...(i === 0 ? ["focused"] : [])] }))]);
+        const calc = (cells: Record<string, string>, o: { hidden?: Record<string, string>; skipRow?: number; at?: { col: number; row: number }; noNameBox?: boolean; range?: string[]; readOnly?: boolean; size?: { rows: number; columns: number };
+          sheet?: string; locked?: string[]; shows?: (typed: string) => string; lagMs?: number; refuse?: Record<string, string> } = {}) => {
+          const sheetNode = o.size || o.sheet ? [{ id: 19, role: "table", name: o.sheet ?? "Sheet1" }] : [];
+          const inSheet = sheetNode.length ? { parent: 19 } : {};
+          const statesOf = (name: string) => (o.locked?.includes(name) ? ["enabled", "sensitive"] : [...EDITABLE]);
+          const screen = fakeScreen([...sheetNode, ...Object.entries(cells).map(([name, text], i) => ({ id: 20 + i, role: "table cell", name, text, ...inSheet, states: [...statesOf(name), ...(i === 0 ? ["focused"] : [])] }))]);
           if (o.size) {
             const { perceive, read } = screen.perception;
             const sized = <T extends { nodes: { id: number }[] }>(r: T): T => ({ ...r, nodes: r.nodes.map(n => (n.id === 19 ? { ...n, size: o.size } : n)) });
             screen.perception.perceive = async () => sized(await perceive());
             screen.perception.read = async () => sized(await read());
           }
+          // LibreOffice's message box (a value the cell's validity rules refuse), over the sheet, readable by its title.
+          let box: { name: string; text: string } | null = null;
+          const read = screen.perception.read;
+          screen.perception.read = (async (target?: { title?: string }) => {
+            if (box && target?.title === box.name) return { window: { ...screen.window, name: box.name, role: "alert" }, x11Window: null, blocked: false, ms: 0, others: [], nodes: [{ id: 900, parent: null, depth: 1, role: "label", name: box.text, states: [], bounds: null }] };
+            return { ...(await read()), others: box ? [{ name: box.name, role: "alert", active: true, modal: true }] : [] };
+          }) as typeof read;
+          const formulas = new Map<string, string>();
+          const readElement = screen.sidecar.readElement;
+          screen.sidecar.readElement = async (id: number) => { const e = await readElement(id); return formulas.has(e.name) ? { ...e, formula: formulas.get(e.name) } : e; };
           screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
           let at = o.at ?? { col: 0, row: 1 }, pending: string | null = null, next = 100, nameBox: string | null = null, range = o.range ?? [];
           const column = (c: number): string => (c >= 26 ? column(Math.floor(c / 26) - 1) : "") + String.fromCharCode(65 + (c % 26));
           const nameOf = (p: typeof at) => `${column(p.col)}${p.row}`;
           const cellAt = (p: typeof at) => [...screen.live.values()].find(n => n.name === nameOf(p))
-            ?? (screen.live.set(next, { id: next, role: "table cell", name: nameOf(p), text: o.hidden?.[nameOf(p)] ?? "", ...(o.size ? { parent: 19 } : {}), states: [...EDITABLE] }), screen.live.get(next++)!);
+            ?? (screen.live.set(next, { id: next, role: "table cell", name: nameOf(p), text: o.hidden?.[nameOf(p)] ?? "", ...inSheet, states: statesOf(nameOf(p)) }), screen.live.get(next++)!);
           const focusAt = () => { for (const n of screen.live.values()) n.states = n.states.filter(s => s !== "focused"); cellAt(at).states.push("focused"); };
           const keys: string[] = [];
           const onKey = (k: string) => {
@@ -1293,7 +1310,18 @@ describe("review round 3: what Ember asks about is what it does", () => {
             else if (k === "Left") at = { ...at, col: at.col - 1 };
             else if (k === "Up") at = { ...at, row: at.row - 1 };
             else if (k === "Down" || k === "Return") {
-              if (k === "Return" && pending !== null) { if (!o.readOnly) cellAt(at).text = pending; pending = null; }
+              if (k === "Return" && pending !== null && o.refuse?.[nameOf(at)] !== undefined) {
+                // Refused: the message box comes up over the sheet, and the cell is still being edited.
+                box = { name: "Error", text: o.refuse[nameOf(at)] };
+                for (const n of screen.live.values()) n.states = n.states.filter(s => s !== "focused");
+                return;
+              }
+              if (k === "Return" && pending !== null) {
+                const cell = cellAt(at), typed = pending;
+                const commit = () => { cell.text = o.shows ? o.shows(typed) : typed; if (typed.startsWith("=")) formulas.set(cell.name, typed.slice(1)); };
+                if (!o.readOnly) { if (o.lagMs) setTimeout(commit, o.lagMs); else commit(); }
+                pending = null;
+              }
               at = { ...at, row: at.row + 1 + (at.row + 1 === o.skipRow ? 1 : 0) };
             } else if (k === "Delete" && pending === null) { cellAt(at).text = ""; for (const name of range) for (const n of screen.live.values()) if (n.name === name) n.text = ""; }
             focusAt();
@@ -1303,8 +1331,51 @@ describe("review round 3: what Ember asks about is what it does", () => {
           // Whether each borrow said it uses the keyboard only (the status then says "your keyboard": PR9-3).
           const keysOnly: boolean[] = [];
           borrow.borrow = (fn, b) => { keysOnly.push(!!b?.keysOnly); return real(hand => fn({ ...hand, keys: async k => onKey(k), type: async t => onKey(`type:${t}`), checkTyping: () => undefined }), { ...b, idleMs: 0 }); };
-          return { screen, keys, keysOnly, cursor: { borrow, findWindow: () => 1, setBorrowing: () => undefined }, text: (name: string) => [...screen.live.values()].find(n => n.name === name)?.text };
+          return { screen, keys, keysOnly, cursor: { borrow, findWindow: () => 1, setBorrowing: () => undefined }, text: (name: string) => [...screen.live.values()].find(n => n.name === name)?.text,
+            showSheet: (name: string) => { screen.live.get(19)!.name = name; }, box: () => box };
         };
+
+        it("a cell that shows what it held is taken where that is what was typed: the same value, a formula's result or error; Calc gets time to commit (HND10-2, W10-3, PR10-2)", async () => {
+          // Calc shows "$1,200.00" typed as "1200" (B2 held 1200), the formula =1+2.1 as 3.1 (B6 held 3.1), =1/0 as no text (its
+          // formula says it went in), and commits each entry a moment after Enter.
+          const shows = (t: string) => ({ "$1,200.00": "1200", "=1+2.1": "3.1", "=1/0": "" } as Record<string, string>)[t] ?? t;
+          const sheet = calc({ A1: "Item", B2: "1200", B6: "3.1" }, { shows, lagMs: 200 });
+          const cells = [["B2", "$1,200.00"], ["B6", "=1+2.1"], ["A14", "=1/0"], ["A15", "x"]].map(([cell, text]) => ({ cell, text }));
+          plan("Turn the totals into formulas", [perceive, { tool: { name: "fill_cells", args: { cells } } }]);
+          await makeWorker(sheet.screen, "Turn the totals into formulas", { confirmer: asking(["once"], []), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(toolResults("Turn the totals into formulas")[1]).toBe('Done: filled 4 cells, pressing Enter after each: B2 shows "1200" as before (the same value), B6 shows "3.1" as before (the same value), ' +
+            'A14 shows nothing: its formula went in, and works out to an error (such as #DIV/0! or #N/A) or to nothing, A15 holds "x".');
+          expect(["B2", "B6", "A14", "A15"].map(sheet.text)).toEqual(["1200", "3.1", "", "x"]);
+        });
+
+        it("a value the cell's rules refuse is blamed on them, with what the app says, and the batch stops (HND10-3)", async () => {
+          const sheet = calc({ A1: "Task" }, { refuse: { B4: "Pick Yes or No" } });
+          const cells = [["A4", "Ship box"], ["B4", "Maybe"], ["C4", "3"]].map(([cell, text]) => ({ cell, text }));
+          plan("Add the shipping task", [perceive, { tool: { name: "fill_cells", args: { cells } } }]);
+          await makeWorker(sheet.screen, "Add the shipping task", { confirmer: asking(["once"], []), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(toolResults("Add the shipping task")[1]).toBe('Filled 1 cell first (A4 holds "Ship box"). Ember typed "Maybe" into B4 and pressed Enter, but B4 is still empty: Testapp put up a message "Error" ' +
+            'saying "Pick Yes or No" (the value may be one the cell doesn\'t allow), and it is still open over the sheet. Tell the user in finish_task: closing it (Escape or its own button) leaves B4 as it was. The cells after it (C4) weren\'t typed.');
+          expect(sheet.keys.filter(k => k.startsWith("type:"))).toEqual(["type:Ship box", "type:Maybe"]);
+        });
+
+        it("cells go only into the sheet that was read and asked about, and never into a protected cell (HND10-4, HND10-2)", async () => {
+          const sheet = calc({ A1: "Item", B2: "1200" }, { sheet: "Sheet Data" });
+          plan("Fill B3 and B4", [perceive, { tool: { name: "fill_cells", args: { cells: [{ cell: "B3", text: "7" }, { cell: "B4", text: "77" }] } } }]);
+          // The user goes to Sheet2 while Ember waits for the answer.
+          const asked: { prompt: string; options: string[] }[] = [];
+          const confirmer = asking(["once"], asked);
+          const ask = confirmer.ask.bind(confirmer);
+          confirmer.ask = async q => { sheet.showSheet("Sheet Sheet2"); return ask(q); };
+          await makeWorker(sheet.screen, "Fill B3 and B4", { confirmer, cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked).toHaveLength(1);
+          expect(toolResults("Fill B3 and B4")[1]).toBe('The sheet in front is now "Sheet Sheet2", not "Sheet Data" that was read and asked about, so nothing was typed. Call perceive_window to see it, and tell the user in finish_task if the cells belong on the other sheet. The cells after it (B4) weren\'t typed.');
+          expect(sheet.keys).toEqual([]);
+          const locked = calc({ A1: "Item", B2: "1200" }, { locked: ["B2"] });
+          plan("Put 5 in B2", [perceive, { tool: { name: "type_text", args: { cell: "B2", text: "5", mode: "replace" } } }]);
+          await makeWorker(locked.screen, "Put 5 in B2", { confirmer: asking(["once"], []), cursor: locked.cursor }).run(new AbortController().signal);
+          expect(toolResults("Put 5 in B2")[1]).toBe("B2 is protected (the sheet doesn't take changes there), so nothing was typed. Tell the user in finish_task.");
+          expect(locked.keys).toEqual(["Right", "Down"]);
+        });
 
         it("a value goes into a listed cell, and into an empty one by its address, with one question each, by the keyboard", async () => {
           const sheet = calc({ A1: "Item", B2: "1200" });
@@ -1769,6 +1840,22 @@ describe("review round 9: policy and selections", () => {
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["once"], asked) }).run(new AbortController().signal);
       expect(asked.length, role).toBe(asks ? 1 : 0);
+    }
+  });
+
+  it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed isn't (P10-1)", async () => {
+    const page = { id: 1, role: "document web", name: "Checkout" };
+    for (const [goal, nodes, asks] of [
+      ["Fill in my shipping address (withheld)", [page, { id: 2, role: "push button", name: "", withheld: true, parent: 1 }], true],
+      ["Fill in my shipping address (in a page with names withheld)", [page, { id: 3, role: "label", name: "", withheld: true, parent: 1 }, { id: 2, role: "push button", name: "", parent: 1 }], true],
+      ["Fill in my shipping address (unnamed)", [page, { id: 2, role: "push button", name: "", parent: 1 }], false],
+    ] as [string, FakeNode[], boolean][]) {
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen(nodes);
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+      expect(asked, goal).toEqual(asks ? ["Click the push button in Testapp? I can't show what it says: it may reveal something private."] : []);
+      expect(screen.log.length, goal).toBe(asks ? 0 : 1);
     }
   });
 });

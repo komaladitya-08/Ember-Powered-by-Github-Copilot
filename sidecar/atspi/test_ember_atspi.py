@@ -17,6 +17,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Field labels and whether they are secret: the same table the TypeScript tests read.
 LABELS = os.path.join(HERE, "..", "..", "test", "fixtures", "secret-labels.json")
+# Options chosen in secret drop-downs and whether they are what the user put in them: the same table as the TypeScript's.
+CHOSEN = os.path.join(HERE, "..", "..", "test", "fixtures", "chosen-options.json")
 
 # A stand-in pyatspi, so the real one (and a desktop) are never needed.
 FAKE = types.ModuleType("pyatspi")
@@ -79,6 +81,7 @@ class Text(object):
 
     def getText(self, start, end):
         self.acc.reads += 1
+        time.sleep(getattr(self.acc, "delay", 0.0))  # an app slow to answer
         return self.acc.text[start:end]
 
     def getNSelections(self):
@@ -1440,6 +1443,131 @@ class Acting(unittest.TestCase):
         finally:
             e.settle = settle
 
+    def test_a_check_box_in_a_list_is_ticked_by_the_mouse_and_never_opens_its_row(self):
+        # HND10-1: GTK 3's check box cell (firewall-config's services) says "toggle", then what its other actions do;
+        # its "toggle" is the row's "activate" (row-activated): the box isn't ticked. Only a click on it ticks it.
+        names = ["ssh", "http", "https"]
+        settle, e.settle = e.settle, lambda: None
+        try:
+            table, named = self.file_list(names, window="active")
+            box = table.kids[1 * 2 + 1]
+            box.acts = ["toggle", "Expands or contracts the row in the tree view containing this cell",
+                        "Creates a widget in which the contents of the cell can be edited", "Activates the cell"]
+            box.name = ""
+            for kind in ("click", "toggle"):
+                out = self.act_on(box, "can_do", kind=kind)
+                self.assertEqual((out["tier1"], out["action"]), (False, "toggle"), kind)
+                self.assertIn("ticked only by a click on it", out["why"])
+                self.assertNotIn("handler", out)
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.act_on(box, "do_action", action=kind)
+                self.assertIn("background_unavailable", str(ctx.exception))
+            # A toggle on a cell of a row (its own action a double click's) turns nothing on: refused, nothing opened.
+            self.assertEqual(self.act_on(named[1], "can_do", kind="toggle"), {"tier1": True, "action": "select row"})
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(named[1], "do_action", action="toggle")
+            self.assertIn("no switch or check box", str(ctx.exception))
+            self.assertNotIn("background_unavailable", str(ctx.exception))
+            self.assertEqual((table.rows, table.activated), ([0], []))
+            # Qt's cells say "toggle" alone (it selects them): left to them.
+            qt = Acc("table cell", "x", acts=["toggle"])
+            self.assertIsNone(e.instead_of_action(qt, ["toggle"], "toggle"))
+        finally:
+            e.settle = settle
+
+    @staticmethod
+    def icon_grid(names, window="active", takes=True):
+        """GTK's icon view (a file or template browser): icons whose "activate" opens them (item-activated, a double
+        click), in a grid whose Selection selects them; an icon's grabFocus moves the grid's cursor there (it says
+        "focused" while its window is active). `takes`: whether the grid selects by accessibility."""
+        grid = Acc("layered pane", "", states=("showing", "visible", "enabled", "sensitive"))
+        grid.opened, grid.chosen, grid.cursor = [], [], None
+        frame = Acc("frame", "Icon Browser", states=("showing", "visible", "enabled") + (("active",) if window == "active" else ()))
+        frame.parent = types.SimpleNamespace(getRoleName=lambda: "application")
+        grid.parent = frame
+        icons = []
+        for i, name in enumerate(names):
+            icon = Acc("icon", name, acts=["activate"])
+            icon.parent = grid
+            icon.getIndexInParent = (lambda i: lambda: i)(i)
+            icon.queryAction = (lambda i: lambda: types.SimpleNamespace(
+                nActions=1, getName=lambda k: "activate", doAction=lambda k: grid.opened.append(i) or True))(i)
+
+            def grab(i=i):
+                grid.cursor = i
+                for k, other in enumerate(icons):
+                    if "focused" in other.states:
+                        other.states.remove("focused")
+                    if k == i and window == "active":
+                        other.states.append("focused")
+                return True
+            icon.queryComponent = (lambda g: lambda: types.SimpleNamespace(grabFocus=g))(grab)
+            icons.append(icon)
+        grid.kids = icons
+
+        def select(i):
+            if takes:
+                grid.chosen = [i]
+            return takes
+
+        def clear():
+            grid.chosen = []
+            return True
+        class Selection(object):
+            """Asked of the app each time, as pyatspi's is."""
+            nSelectedChildren = property(lambda s: len(grid.chosen))
+            isChildSelected = staticmethod(lambda i: i in grid.chosen)
+            selectChild = staticmethod(select)
+            clearSelection = staticmethod(clear)
+        grid.querySelection = Selection
+        return grid, icons
+
+    def test_a_click_on_an_icon_selects_it_and_never_opens_it(self):
+        # HND10-1: GTK's icon view's "activate" opens the icon (a double click); a click selects it alone instead,
+        # with the grid's cursor (where Enter goes), as a single click does.
+        settle, e.settle = e.settle, lambda: None
+        try:
+            grid, icons = self.icon_grid(["Report.odt", "Budget.ods", "Slides.odp"])
+            self.assertEqual(self.act_on(icons[1], "can_do", kind="click"), {"tier1": True, "action": "select item"})
+            res = self.act_on(icons[1], "do_action", action="click")
+            self.assertEqual((res["ok"], res["action"]), (True, "select item"))
+            self.assertEqual((grid.chosen, grid.cursor, grid.opened), ([1], 1, []))
+            res = self.act_on(icons[2], "do_action", action="click")
+            self.assertEqual((res["ok"], grid.chosen, grid.cursor, grid.opened), (True, [2], 2, []))
+            # A toggle on an icon turns nothing on: refused, nothing opened.
+            self.assertEqual(self.act_on(icons[0], "can_do", kind="toggle")["action"], "select item")
+            with self.assertRaises(RuntimeError):
+                self.act_on(icons[0], "do_action", action="toggle")
+            self.assertEqual(grid.opened, [])
+            # A window the user isn't in: choosing would bring it to the front, so the mouse does it (with their OK).
+            grid, icons = self.icon_grid(["Report.odt", "Budget.ods"], window="inactive")
+            out = self.act_on(icons[1], "can_do", kind="click")
+            self.assertEqual((out["tier1"], out["action"]), (False, "select item"))
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(icons[1], "do_action", action="click")
+            self.assertIn("background_unavailable", str(ctx.exception))
+            # A grid that won't select by accessibility: the mouse clicks it.
+            grid, icons = self.icon_grid(["Report.odt", "Budget.ods"], takes=False)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.act_on(icons[1], "do_action", action="click")
+            self.assertIn("background_unavailable", str(ctx.exception))
+            self.assertEqual(grid.opened, [])
+        finally:
+            e.settle = settle
+
+    def test_a_cells_formula_is_read_where_asked(self):
+        # W10-3: Calc shows a formula that works out to an error as no text; its "Formula" attribute says it went in
+        # (cut short at a ":", which LibreOffice escapes).
+        cell = Acc("table cell", "A14", states=("showing", "visible", "enabled", "editable"), text="")
+        cell.getAttributes = lambda: ["isdropdown:false", "Formula:1/0", "colindextext:A"]
+        self.assertNotIn("formula", self.act_on(cell, "read_element"))
+        self.assertEqual(self.act_on(cell, "read_element", formula=True)["formula"], "1/0")
+        cell.getAttributes = lambda: {"Formula": "SUM(B2\\"}
+        self.assertEqual(self.act_on(cell, "read_element", formula=True)["formula"], "SUM(B2\\")
+        # A cell that doesn't tell it: none.
+        cell.getAttributes = lambda: []
+        self.assertNotIn("formula", self.act_on(cell, "read_element", formula=True))
+
     def test_a_long_list_is_looked_through_in_time(self):
         # H9-2: GTK makes each row's cells as they are asked for. Listing stops in time and says how many rows were
         # left out; choosing stops at the row asked for, checks the rest for another of that name in time and says
@@ -2091,9 +2219,9 @@ class Windows(unittest.TestCase):
         checked = []
         saved = e.web_engine, e.name_says_secret, e.CONTENTS_S
 
-        def counted(acc, role, name, until):
+        def counted(acc, role, name, until, *layout):
             checked.append(name)
-            return saved[1](acc, role, name, until)
+            return saved[1](acc, role, name, until, *layout)
         e.web_engine, e.name_says_secret = (lambda acc: True), counted
         try:
             out = e.read_window({"pid": 20})
@@ -2177,6 +2305,187 @@ class Windows(unittest.TestCase):
             self.assertEqual(e.read_element({"id": ids[lead]})["name"], "Pay with")
         finally:
             e.web_engine = saved
+            e.WITHHELD = e.SecretFields()
+
+    def fresh(self, kids, bounds=(0, 0, 600, 400)):
+        """The notes window holding `kids` (told their parents), nothing known secret or withheld yet."""
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        e.WITHHELD = e.SecretFields()
+        e.PAGE_VALUES.clear()
+        win = self.notes.wins[0]
+        if "visible" not in win.states:
+            win.states.append("visible")
+        win.bounds, win.kids = bounds, list(kids)
+        self.linked(win)
+        return win
+
+    @staticmethod
+    def drop_down(name, options, bounds, chosen=0):
+        """A web page's <select> (`chosen`: the index of the option it shows, as .chosen too)."""
+        items = [Acc("menu item", o, states=("visible", "enabled")) for o in options]
+        for i, item in enumerate(items):
+            item.getIndexInParent = (lambda i=i: i)
+        c = Acc("combo box", name, bounds=bounds, kids=[Acc("menu", "", states=("visible",), kids=items)], acts=["open"])
+        c.chosen = chosen
+        c.querySelection = lambda: types.SimpleNamespace(nSelectedChildren=1, getSelectedChild=lambda i: items[c.chosen],
+                                                         isChildSelected=lambda i: i == c.chosen)
+        return c
+
+    def test_what_a_secret_drop_down_shows_unchosen_is_no_secret_elsewhere(self):
+        # A card's expiry drop-downs showing their "Month" and "Year" placeholders took every name with "month" or "year"
+        # in it away: "Subscribe for $9.99/month", "Start 1 year plan", "Pay every year"; a button left without a name
+        # was then clicked without a question (P10-1). Elsewhere in a read only what the user put in a secret field is
+        # looked for: what is typed in it, and an option chosen in it that says something (see chosen_secret). What
+        # holds the field is judged as before. A name withheld is marked so.
+        month = self.drop_down("Card expiry month", ["Month", "01", "02"], (120, 40, 80, 20))
+        year = self.drop_down("Card expiry year", ["Year", "2027", "2028"], (210, 40, 80, 20))
+        question = self.drop_down("Security question", ["Pick one", "Engineering", "Maiden name Smithers"], (120, 70, 160, 20))
+        said = ["Basic: $9.99/month, cancel any month", "Premium: $99 per year", "Valid until 2028", "Engineering team",
+                "Hint: maiden name Smithers"]
+        buttons = ["Pay every year", "Subscribe for $9.99/month", "Start 1 year plan"]
+        self.fresh([month, year, question] + [Acc("static", s, bounds=(10, 100 + 20 * i, 300, 16)) for i, s in enumerate(said)]
+                   + [Acc("push button", s, bounds=(10 + 130 * i, 220, 120, 24), acts=["press"]) for i, s in enumerate(buttons)])
+
+        def names(out):
+            return [n["name"] for n in out["nodes"] if n["role"] in ("static", "push button")]
+        out = e.read_window({"pid": 20})
+        self.assertEqual(names(out), said + buttons)
+        # The drop-downs' own names say what they show: withheld, as before, and marked.
+        self.assertEqual([(n["name"], n.get("secret"), n.get("withheld", False)) for n in out["nodes"] if n["role"] == "combo box"],
+                         [("", True, True), ("", True, True), ("Security question", True, False)])
+        self.assertEqual([n["name"] for n in out["nodes"] if n.get("withheld")], ["", ""])
+        # Chosen: a year (digits) and an answer of three words are looked for everywhere; a month's "02" is too short.
+        month.chosen, year.chosen, question.chosen = 2, 2, 2
+        out = e.read_window({"pid": 20})
+        self.assertEqual(names(out), ["Basic: $9.99/month, cancel any month", "Premium: $99 per year", "", "Engineering team", ""]
+                         + buttons)
+        self.assertNotRegex(json.dumps(out), r"(?i)2028|smithers")
+        self.assertEqual([n.get("withheld", False) for n in out["nodes"] if n["role"] == "static"], [False, False, True, False, True])
+        # A plain word chosen says nothing of its own.
+        question.chosen = 1
+        self.assertIn("Engineering team", names(e.read_window({"pid": 20})))
+
+    @unittest.skipUnless(os.path.exists(CHOSEN), "the repository's test table is not here")
+    def test_options_that_say_what_the_user_chose(self):
+        # The options a secret drop-down shows that are what the user put in it: the same table as perception.test.ts.
+        with open(CHOSEN, encoding="utf-8") as f:
+            table = json.load(f)
+        for option, field in table["secret"]:
+            self.assertTrue(e.chosen_secret(None, option, field), (option, field))
+        for option, field in table["plain"]:
+            self.assertFalse(e.chosen_secret(None, option, field), (option, field))
+        # Nor ever a drop-down's first option (what it shows until something is chosen).
+        first = Acc("menu item", "2028")
+        first.getIndexInParent = lambda: 0
+        self.assertFalse(e.chosen_secret(first, "2028", "Card expiry year"))
+
+    def test_what_a_read_withheld_stays_withheld_in_an_elements_own_look_and_options(self):
+        # A plain drop-down whose chosen option says what a secret field elsewhere holds ("Pay from: Card 4242 4242 4242
+        # 4242" beside the card number) said it as its selected option in a read, in its own look and among its options;
+        # an unnamed paragraph whose text a read withheld ("Your PIN 7Q4Z9X is active") said it in its own look, also
+        # after a helper started afresh (P10-3).
+        card = Acc("entry", "Card number", bounds=(120, 10, 200, 20), text="4242 4242 4242 4242")
+        pay = self.drop_down("Pay from", ["Card 4242 4242 4242 4242", "Bank transfer"], (120, 40, 200, 20))
+        pin = Acc("entry", "PIN", bounds=(120, 70, 100, 20), text="7Q4Z9X")
+        note = Acc("paragraph", "", bounds=(10, 100, 300, 16), text="Your PIN 7Q4Z9X is active")
+        self.fresh([card, pay, pin, note])
+        out = e.read_window({"pid": 20})
+        self.assertNotRegex(json.dumps(out), r"4242|7Q4Z9X")
+        by = dict((n["role"], n) for n in out["nodes"])
+        self.assertEqual((by["combo box"]["name"], by["combo box"].get("withheld", False)), ("Pay from", False))
+        self.assertEqual((by["paragraph"].get("text"), by["paragraph"].get("withheld")), (None, True))
+        ids = dict((e.SNAPSHOTS.get(n["id"]), n["id"]) for n in out["nodes"])
+        look = e.read_element({"id": ids[pay]})
+        self.assertEqual((look["name"], look.get("selected")), ("Pay from", ""))
+        self.assertEqual(e.list_options({"id": ids[pay]})["options"], ["", "Bank transfer"])
+        look = e.read_element({"id": ids[note]})
+        self.assertEqual((look["name"], look.get("text"), look.get("withheld")), ("", None, True))
+        # A helper started afresh is told what was withheld.
+        e.WITHHELD, e.SECRETS = e.SecretFields(), e.SecretFields()
+        e.remember_secrets({"keys": out["secretKeys"], "withheld": out["withheldKeys"]})
+        self.assertNotIn("7Q4Z9X", json.dumps(e.read_element({"id": ids[note]})))
+
+    def test_a_web_name_said_by_a_secret_field_out_of_view_or_past_a_reads_end_is_withheld(self):
+        # A button named after a card number field out of view (aria-labelledby) has nothing in it a read lists, and was
+        # never checked; nor was a cell named after an unnamed card field that only the label beside it makes secret,
+        # where a read stopped (P10-3). A button whose own text says its name is asked only for that (one call).
+        lead = Acc("static", "Pay with card", bounds=(10, 10, 90, 16))
+        far = Acc("entry", "Card number", states=("visible", "enabled", "sensitive"), bounds=(10, 3000, 200, 20),
+                  text="4000 0566 5566 5556")
+        pay = Acc("push button", "Pay with card 4000 0566 5566 5556", bounds=(10, 30, 60, 24), text="x", labelled_by=[lead, far])
+        pay.getAttributes = lambda: ["explicit-name:true"]
+        order = Acc("push button", "Order 12345", bounds=(80, 30, 100, 24), text="Order 12345")
+        asked = []
+        order.getAttributes = lambda: asked.append("order") or []
+        plain = Acc("push button", "Pay with card", bounds=(200, 30, 100, 24), text="Pay with card")
+        label = Acc("static", "Card number", bounds=(10, 100, 90, 16))
+        cell = Acc("table cell", "4111 1111 1111 1111", bounds=(120, 96, 220, 24),
+                   kids=[Acc("entry", "", bounds=(124, 98, 200, 20), text="4111 1111 1111 1111")])
+        doc = Acc("document web", "Checkout", bounds=(0, 0, 600, 400), kids=[lead, pay, order, plain, label, cell, far])
+        self.fresh([doc])
+        saved = e.web_engine
+        e.web_engine = lambda acc: True
+        try:
+            out = e.read_window({"pid": 20})
+            self.assertEqual([(n["name"], n.get("withheld", False)) for n in out["nodes"] if n["role"] == "push button"],
+                             [("", True), ("Order 12345", False), ("Pay with card", False)])
+            self.assertEqual(asked, [])
+            self.assertNotRegex(json.dumps(out), r"4000|5556|4111")
+            # Cut short right after the cell: its field isn't listed, and isn't named.
+            e.WITHHELD, e.SECRETS = e.SecretFields(), e.SecretFields()
+            cut = e.read_window({"pid": 20, "maxNodes": 8})
+            self.assertEqual((cut["truncated"], cut["nodes"][-1]["role"], cut["nodes"][-1]["name"]), (True, "table cell", ""))
+            self.assertNotRegex(json.dumps(cut), r"4000|5556|4111")
+        finally:
+            e.web_engine = saved
+            e.WITHHELD = e.SecretFields()
+
+    def test_a_reads_checks_stop_asking_an_app_that_stopped_answering(self):
+        # An app that stopped answering in the middle of a read was still asked about each name the read may not have
+        # listed all of, and about each secret field's value, a timeout each: a busy read of 1 s took 4 s, or the
+        # helper's 5 s, which lost every id (P10-2). Once a call of the read timed out, nothing more is asked (what may
+        # say what a secret field holds is withheld), and the checks after a walk stop asking at WITHHOLD_S.
+        class Stuck(Acc):
+            def getState(self):
+                time.sleep(e.SLOW_APP_S + 0.05)
+                return Acc.getState(self)
+        asked = []
+        cells, cards = [], []
+        for i in range(6):
+            card = Acc("entry", "Card number", bounds=(130, 20 + 30 * i, 150, 20), text="4111 1111 1111 111%d" % i)
+            cards.append(card)
+            cell = Acc("section", "Code 7Q4Z%d" % i, bounds=(10, 20 + 30 * i, 100, 24),
+                       kids=[Acc("static", "Code", bounds=(12, 22 + 30 * i, 40, 16))])
+            cell.getAttributes = (lambda i=i: asked.append(i) or [])
+            cells.append(cell)
+            cells.append(Acc("section", "Card", bounds=(120, 18 + 30 * i, 200, 24), kids=[card]))
+        stuck = Stuck("push button", "Pay", bounds=(10, 300, 60, 24))
+        doc = Acc("document web", "Checkout", bounds=(0, 0, 600, 400), kids=cells + [stuck])
+        self.fresh([doc])
+        saved = e.web_engine, e.WITHHOLD_S
+        e.web_engine = lambda acc: True
+        try:
+            t0 = time.monotonic()
+            out = e.read_window({"pid": 20})
+            self.assertTrue(out["busy"])
+            self.assertLess(time.monotonic() - t0, e.SLOW_APP_S + 0.3)
+            self.assertEqual((asked, sum(c.reads for c in cards)), ([], 0))
+            self.assertEqual([n["name"] for n in out["nodes"] if n["role"] == "section"], [""] * 12)
+            # An app slow to tell what its fields hold: asked until WITHHOLD_S, what is left withheld.
+            e.WITHHOLD_S = 0.3
+            stuck.__class__ = Acc
+            for c in cards:
+                c.delay = 0.15
+            e.WITHHELD = e.SecretFields()
+            t0 = time.monotonic()
+            out = e.read_window({"pid": 20})
+            self.assertLess(time.monotonic() - t0, 0.3 + 0.15 + 0.15)
+            self.assertLessEqual(sum(c.reads for c in cards), 3)
+            self.assertEqual([n["name"] for n in out["nodes"] if n["role"] == "section"][1::2], [""] * 6)
+            self.assertNotIn("4111", json.dumps(out))
+        finally:
+            (e.web_engine, e.WITHHOLD_S), stuck.__class__ = saved, Acc
             e.WITHHELD = e.SecretFields()
 
     def test_an_open_menu_in_libreoffices_menu_bar_is_on_top(self):
@@ -2579,6 +2888,84 @@ class Protocol(unittest.TestCase):
             self.assertIn("pyatspi is not installed", e.handle('{"id": 2, "method": "list_windows"}')["error"]["message"])
         finally:
             e.pyatspi = saved
+
+
+class Links(unittest.TestCase):
+    """Requests that run the app's own code go on a link the holder keeps open until the app waits on none (PR10-1)."""
+
+    def test_a_modal_window_that_shows(self):
+        bit = lambda *ns: [sum(1 << n for n in ns if n < 32), sum(1 << (n - 32) for n in ns if n >= 32)]
+        self.assertTrue(e.shows_modal(bit(e.STATE_MODAL, e.STATE_SHOWING, 30)))
+        self.assertFalse(e.shows_modal(bit(e.STATE_MODAL)))  # hidden
+        self.assertFalse(e.shows_modal(bit(e.STATE_SHOWING, 30)))
+        self.assertFalse(e.shows_modal([]))
+        if e.Atspi is not None:
+            self.assertEqual((e.STATE_MODAL, e.STATE_SHOWING), (int(e.Atspi.StateType.MODAL), int(e.Atspi.StateType.SHOWING)))
+
+    def test_a_stand_in_is_asked_as_libatspi_asks(self):
+        class Action(object):
+            obj = object()
+        self.assertEqual(e.on_link(Action(), "DoAction", (0,), lambda: "libatspi"), "libatspi")
+
+    def start_holder(self):
+        import socket
+        mine, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        holder = subprocess.Popen([sys.executable, os.path.join(HERE, "ember_atspi.py"), "--hold", str(theirs.fileno())],
+                                  pass_fds=(theirs.fileno(),), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        theirs.close()
+        self.addCleanup(lambda: holder.poll() is None and holder.kill())
+        return mine, holder
+
+    def hand_over(self, ctrl, pid):
+        """A link to app `pid` handed to the holder: our end of it."""
+        import array
+        import socket
+        ours, link = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(ours.close)
+        note = json.dumps({"pid": pid, "address": ""}).encode("utf-8")
+        ctrl.sendmsg([note], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [link.fileno()]))])
+        link.close()
+        ctrl.settimeout(10)
+        self.assertEqual(ctrl.recv(16), b"ok")
+        ours.settimeout(0.1)
+        return ours
+
+    def still_open(self, ours, seconds):
+        import socket
+        until = time.time() + seconds
+        while time.time() < until:
+            try:
+                if ours.recv(1) == b"":
+                    return False
+            except socket.timeout:
+                pass
+        return True
+
+    def test_the_holder_keeps_a_link_until_its_app_is_gone_even_after_the_sidecar(self):
+        app = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(lambda: app.poll() is None and app.kill())
+        ctrl, holder = self.start_holder()
+        ours = self.hand_over(ctrl, app.pid)
+        self.assertTrue(self.still_open(ours, 2.5))  # its app can't be asked: kept
+        ctrl.close()  # the sidecar has gone
+        self.assertTrue(self.still_open(ours, 1.5))
+        self.assertIsNone(holder.poll())
+        app.kill()
+        app.wait()
+        self.assertFalse(self.still_open(ours, 5))
+        holder.wait(timeout=5)  # nothing left to keep: it ends
+
+    def test_a_link_its_app_closed_is_let_go(self):
+        app = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(lambda: app.poll() is None and app.kill())
+        ctrl, holder = self.start_holder()
+        first = self.hand_over(ctrl, app.pid)
+        second = self.hand_over(ctrl, app.pid)
+        first.close()  # the app's end of it closed
+        self.assertTrue(self.still_open(second, 2.5))
+        ctrl.close()
+        second.close()
+        holder.wait(timeout=5)
 
 
 if __name__ == "__main__":

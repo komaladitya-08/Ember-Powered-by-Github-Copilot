@@ -204,10 +204,37 @@ const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file choose
 const WITHHELD_LEVELS = 12;
 /** Text as a secret's value is looked for in a name: normalised, without whitespace or U+FFFC (see squash in ember_atspi.py). */
 const squash = (s: string) => normalize(s).replace(/\ufffc/g, " ").replace(/\s+/g, "");
-/** What a secret field holds (only while it is still in the read: the sidecar sends none), squashed. */
-function secretValues(n: AxNode): string[] {
-  const found = [n.text, n.selected, n.value === undefined ? undefined : String(n.value)];
+/**
+ * What a secret field holds (only while it is still in the read: the sidecar sends none), squashed. `everywhere`: only
+ * what the user put in it, looked for in every name of a read (see withheldIds): what is typed in it, its number, and
+ * an option chosen in it that says something (see chosenSecret).
+ */
+function secretValues(n: AxNode, everywhere = false): string[] {
+  const chosen = n.selected !== undefined && (!everywhere || chosenSecret(n.selected, n.name)) ? n.selected : undefined;
+  const found = [n.text, chosen, n.value === undefined ? undefined : String(n.value)];
   return found.flatMap(v => (v ? [squash(v)] : [])).filter(Boolean);
+}
+/**
+ * What a drop-down shows before anything is chosen in it ("Month", "YYYY", "Select…", "-- Choose --"): a secret one's (a
+ * card's expiry) says nothing then. Matched on lowercase, NFKC-normalised text with single spaces. The same as
+ * PLACEHOLDER_OPTION in ember_atspi.py.
+ */
+const PLACEHOLDER_OPTION = new RegExp("^[^\\p{L}\\p{N}]*(?:(?:select|choose|pick|please|seleccion|elegir|choisi|sélection|w(ä|a)hle|auswahl|scegli|seleziona|kies|"
+  + "selecione|escolha|wybierz|выбер).*|mm|yy|yyyy|dd|jj|aa|aaaa|mes|month|year|day|mois|ann(é|e)e|jour|monat|jahr|tag|"
+  + "a(ñ|n)o|d(í|i)a|mese|anno|giorno|maand|jaar|dag|m(å|a)nad|(å|a)r|miesi(ą|a)c|rok|месяц|год|月|年|日|none|n/?a)[^\\p{L}\\p{N}]*$", "u");
+/** Fields whose chosen option is what the user put in them only with a digit in it (an expiry's "03", never a "Visa"). The same as CARD_FIELD in ember_atspi.py. */
+const CARD_FIELD = /card|cvv|cvc|csc|expir|valid (thru|through)|mm ?\/ ?yy|karte|carte|tarjeta|cart(ã|a)o|carta|karty|карт|卡|カード/u;
+/**
+ * Is the option `chosen`, chosen in a secret drop-down called `name`, what the user put in it (so looked for in every
+ * name of a read)? Never a placeholder; in a card's field only one with a digit; elsewhere one with a digit or of two
+ * words or more ("Engineering" or "March" says nothing of its own). See chosen_secret in ember_atspi.py, which also
+ * never counts a drop-down's first option.
+ */
+export function chosenSecret(chosen: string, name = ""): boolean {
+  const text = normalize(chosen).trim().split(/\s+/).join(" ");
+  if (!text || PLACEHOLDER_OPTION.test(text)) return false;
+  if (/\p{Nd}/u.test(text)) return true;
+  return !CARD_FIELD.test(normalize(name)) && (text.match(/[\p{L}\p{N}_]+/gu) ?? []).length >= 2;
 }
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Does `text` say one of a secret field's values? A short value (part of a code typed so far) only as a word of its own. */
@@ -236,10 +263,11 @@ function saysValue(text: string | undefined, values: string[]): boolean {
  * Elements whose names say what a secret field (of `secret`) holds: Chromium names a table's cell, an ARIA row or a
  * <div> after the values of the fields in it, GTK a combo box after the option it shows. Its listed containers whose
  * name or text has its value in it, and the field itself when its name has; and any other element whose name or text
- * says its value as words of their own (see saysValue). Only for a field whose contents the read still has (the
- * sidecar withholds these itself, and sends no contents of a field it knows is secret).
+ * says what the user put in it (see secretValues' `everywhere`) as words of their own (see saysValue). Only for a field
+ * whose contents the read still has (the sidecar withholds these itself, and sends no contents of a field it knows is
+ * secret). `selectedOut` gets the drop-downs whose chosen option says it (their names stay).
  */
-export function withheldIds(nodes: AxNode[], secret: Set<number>): Set<number> {
+export function withheldIds(nodes: AxNode[], secret: Set<number>, selectedOut?: Set<number>): Set<number> {
   const out = new Set<number>();
   const byId = new Map(nodes.map(n => [n.id, n]));
   const all: string[] = [];
@@ -247,14 +275,20 @@ export function withheldIds(nodes: AxNode[], secret: Set<number>): Set<number> {
     if (!secret.has(n.id)) continue;
     const values = secretValues(n);
     if (!values.length) continue;
-    all.push(...values);
+    all.push(...secretValues(n, true));
     let c: AxNode | undefined = n;
     for (let i = 0; c && i <= WITHHELD_LEVELS && !WINDOW_ROLES.has(c.role); i++) {
       if (holdsValue(c.name, values) || (c !== n && holdsValue(c.text, values))) out.add(c.id);
       c = c.parent === null ? undefined : byId.get(c.parent);
     }
   }
-  if (all.length) for (const n of nodes) if (!secret.has(n.id) && (saysValue(n.name, all) || saysValue(n.text, all))) out.add(n.id);
+  if (all.length) {
+    for (const n of nodes) {
+      if (secret.has(n.id)) continue;
+      if (saysValue(n.name, all) || saysValue(n.text, all)) out.add(n.id);
+      else if (saysValue(n.selected, all)) selectedOut?.add(n.id);
+    }
+  }
   return out;
 }
 
@@ -332,7 +366,8 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
   const readLabels = inferLabels(read);
   const secretSet = new Set(read.filter(n => isSecretNode(n, readLabels.get(n.id) ?? "")).map(n => n.id));
   const inside = insideSecrets(read, secretSet);
-  const withheld = withheldIds(read, secretSet);
+  const saysSelected = new Set<number>();
+  const withheld = withheldIds(read, secretSet, saysSelected);
   const nodes = inside.size ? read.filter(n => !inside.has(n.id)) : read;
   const labels = inside.size ? inferLabels(nodes) : readLabels;
   // Indented by the elements listed above it: a web page's unnamed layers of <div>s add nothing.
@@ -377,7 +412,7 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
     if (n.actions?.length) bits.push(`actions=${n.actions.map(screenWord).join("/")}`);
     if (n.text && !secret && !withheld.has(n.id)) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
     // What is selected in it: a drop-down's chosen option (as after choose_option), else the text selected in a field.
-    const selected = n.selected ?? n.selection;
+    const selected = saysSelected.has(n.id) ? n.selection : n.selected ?? n.selection;
     if (selected && !secret && !withheld.has(n.id)) bits.push(`selected=${quote(selected, n.selected !== undefined ? 80 : 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
     lines.push("  ".repeat(level.get(n.id)!) + bits.join(" "));

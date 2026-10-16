@@ -276,6 +276,26 @@ describe("reading a named window", () => {
     expect(JSON.stringify(seen.nodes)).not.toMatch(/hunter2|4821/);
     expect(marked).toEqual([[3, 6, 7]]);
     expect(calls).toEqual([{ pid: 42, ownPid: 999, keep: false, cells: ["C62", "B3"] }]);
+    // Marked, for the policy: what they are called can't be told (P10-1).
+    expect(seen.nodes.filter(n => n.withheld).map(n => n.id)).toEqual([2, 6]);
+  });
+
+  it("drops a drop-down's option that says what a field found secret here holds, and keeps names a placeholder says (P10-1, P10-3)", async () => {
+    const at = (x: number, y: number, width: number) => ({ x, y, width, height: 24 });
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "notes.txt", states: [], bounds: at(0, 0, 600) },
+      { id: 2, parent: 1, depth: 1, role: "label", name: "Card number", states: [], bounds: at(0, 30, 100) },
+      { id: 3, parent: 1, depth: 1, role: "entry", name: "", text: "4242 4242 4242 4242", states: [], bounds: at(110, 30, 200) },
+      { id: 4, parent: 1, depth: 1, role: "combo box", name: "Pay from", selected: "Card 4242 4242 4242 4242", states: [], bounds: at(110, 60, 200) },
+      { id: 5, parent: 1, depth: 1, role: "label", name: "Card expiry", states: [], bounds: at(0, 90, 100) },
+      { id: 6, parent: 1, depth: 1, role: "combo box", name: "", selected: "Month", states: [], bounds: at(110, 90, 80) },
+      { id: 7, parent: 1, depth: 1, role: "push button", name: "Subscribe for $9.99/month", states: [], bounds: at(0, 120, 200) },
+    ];
+    const { perception } = desktop({ window: win, nodes, stack: [] });
+    const seen = await perception.read({ pid: 42 });
+    expect(JSON.stringify(seen.nodes)).not.toMatch(/4242|Month"/);
+    expect(seen.nodes.map(n => [n.id, n.name, !!n.secret, !!n.withheld])).toEqual([[1, "notes.txt", false, false], [2, "Card number", false, false],
+      [3, "", true, false], [4, "Pay from", false, false], [5, "Card expiry", false, false], [6, "", true, false], [7, "Subscribe for $9.99/month", false, false]]);
   });
 
   it("never reads Ember's own windows, even when the user is in one", async () => {

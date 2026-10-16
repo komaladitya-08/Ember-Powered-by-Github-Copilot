@@ -189,15 +189,21 @@ export class Perception {
     const secret = secretIds(nodes);
     // What a secret field holds goes too (Chromium lists a text box's text as static text inside it).
     const inside = insideSecrets(nodes, secret);
-    const withheld = withheldIds(nodes, secret);
+    const saysSelected = new Set<number>();
+    const withheld = withheldIds(nodes, secret, saysSelected);
     const fresh = nodes.filter(n => secret.has(n.id) && !n.secret).map(n => n.id);
-    if (!fresh.length && !inside.size && !withheld.size) return nodes;
+    if (!fresh.length && !inside.size && !withheld.size && !saysSelected.size) return nodes;
     if (fresh.length) await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
     return nodes.flatMap(n => {
       if (inside.has(n.id)) return [];
       if (withheld.has(n.id)) {
+        // Marked, so what it is called counts as unknown (the policy asks before a click on it).
         const { text: _text, selection: _selection, selected: _selected, ...rest } = n;
-        n = { ...rest, name: "" };
+        n = { ...rest, name: "", withheld: true };
+      } else if (saysSelected.has(n.id)) {
+        // A drop-down showing what a secret field holds: the option goes, its name stays.
+        const { selected: _selected, ...rest } = n;
+        n = rest;
       }
       if (!secret.has(n.id) || n.secret) return [n];
       const { text: _text, selection: _selection, selected: _selected, value: _value, ...rest } = n;

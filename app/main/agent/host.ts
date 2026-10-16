@@ -23,7 +23,7 @@ import { Worker, type WorkerDeps } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, Bounds } from "../perception/sidecar";
-import type { PolicyEngine } from "../policy/policy";
+import { isRiskyLabel, type PolicyEngine } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 
 /** What workers need to see and act (absent when there is no desktop). */
@@ -246,6 +246,17 @@ const MAX_QUEUED = 20;
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
 interface UserRequest { target: (WindowTarget & { app?: string }) | null; words: string; screen: string[] }
+/** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
+const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
+/**
+ * A few words that name no action: only answer words, names and numbers ("Ana Lopez", "both of them", "yes please"). A
+ * name is capitalised where no sentence starts, or is followed by another one ("Ana Lopez"; not "Rename it").
+ */
+const onlyAnswers = (s: string) => {
+  const ws = s.normalize("NFKC").match(/[\p{L}\p{N}]+(?:['’][\p{L}]+)?/gu) ?? [];
+  const name = (w: string, i: number) => /^\p{Lu}/u.test(w) && (i > 0 || ws.length === 1 || /^\p{Lu}/u.test(ws[1]));
+  return ws.length > 0 && ws.length <= 6 && ws.every((w, i) => ANSWER_WORD.test(w) || /^\p{N}+$/u.test(w) || name(w, i));
+};
 
 export class AgentHost {
   private client: CopilotClient | null = null;
@@ -409,6 +420,32 @@ export class AgentHost {
   /** The last thing Ember said, in full. */
   lastAnswer(): string | null {
     return [...this.transcript].reverse().find(e => e.who === "ember")?.text ?? null;
+  }
+
+  /**
+   * What the user said for a task started in turn `r`, which its risky steps are checked against: their words in that
+   * turn, and where those only answer Ember ("yes please", "Ana Lopez", "both of them": Ember's last words before them
+   * asked a question and they name nothing risky of their own, or they are a few words that name no action at all), the
+   * user's words in the turn before too (and before that while those answered too: three turns at most, each within ten
+   * minutes of the next, none before a task's outcome). Only the user's own words, never what was read on the screen.
+   */
+  private userWordsOf(r: UserRequest | null): string | undefined {
+    if (!r) return undefined;
+    const said = [r.words];
+    const log = this.transcript;
+    let at = log.map(e => e.who === "you" && e.text === r.words.slice(0, 4000)).lastIndexOf(true);
+    for (let n = 0; at > 0 && n < 3; n++) {
+      const reply = log[at].text;
+      let k = at - 1;
+      const asked = log[k]?.who === "ember" && /\?\s*$/.test(log[k].text.trim());
+      while (k >= 0 && log[k].who === "ember") k--;
+      const before = log[k];
+      if (!before || before.who !== "you" || Date.parse(log[at].t) - Date.parse(before.t) > 10 * 60_000) break;
+      if (isRiskyLabel(reply) || !(asked || onlyAnswers(reply))) break;
+      said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
+      at = k;
+    }
+    return said.join("\n");
   }
 
   private remember(who: TranscriptEntry["who"], text: string): void {
@@ -659,10 +696,11 @@ export class AgentHost {
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
-          // Risky steps are checked against what the user said in this turn's request, not the goal (the conductor may
-          // have read it off the screen). A request sent meanwhile waits for its own turn: none of it goes with this task.
+          // Risky steps are checked against what the user said in this turn's request (and the one it answers), not the
+          // goal (the conductor may have read it off the screen). A request sent meanwhile waits for its own turn: none of
+          // it goes with this task.
           const r = this.turn;
-          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: r?.words, screen: r?.screen.join("\n") || undefined });
+          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: this.userWordsOf(r), screen: r?.screen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,

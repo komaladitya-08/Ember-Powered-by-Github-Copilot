@@ -1143,6 +1143,39 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     expect((host as any).turn).toBeNull();
     await host.stop();
   });
+
+  it("a task started by the user's answer to Ember's question carries the request it answers too; a request of its own doesn't (W10-2)", async () => {
+    const { host, specs, session, tool } = await withTasks();
+    const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };
+    await host.ask("delete the old drafts in Mail", mail);
+    say("Which account: work or home?");
+    await host.ask("yes please, the work one", mail);
+    await tool("start_task")({ goal: "delete the old drafts in the work account" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0].userWords).toBe("delete the old drafts in Mail.\nyes please, the work one");
+    // A few words that only answer, with no question before them ("Ana Lopez", "both of them").
+    await host.ask("send the report to Ana", mail);
+    say("I found two people called Ana.");
+    await host.ask("Ana Lopez", mail);
+    await tool("start_task")({ goal: "send the report to Ana Lopez" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].userWords).toBe("send the report to Ana.\nAna Lopez");
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    // A request of its own after a question, or one that names an action (and anything risky), carries only its own words.
+    await host.ask("delete the old drafts in Mail", mail);
+    say("Anything else?");
+    await host.ask("yes, empty the trash too", mail);
+    await tool("start_task")({ goal: "empty the trash" });
+    await vi.waitFor(() => expect(specs).toHaveLength(3));
+    expect(specs[2].userWords).toBe("yes, empty the trash too");
+    await host.ask("archive the newsletters", mail);
+    say("Done.");
+    await host.ask("Rename it", mail);
+    await tool("start_task")({ goal: "rename the folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(4));
+    expect(specs[3].userWords).toBe("Rename it");
+    await host.stop();
+  });
 });
 
 describe("review round 6: a task's bubbles say whose they are", () => {

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, aimedAt, atSpot, cellTook, seesInside, tabPage, takerInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, aimedAt, atSpot, cellTook, formulaIn, sameCellValue, seesInside, sheetNumbers, tabPage, takerInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
 import { marksSvg } from "../../app/main/perception/marks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -440,5 +440,106 @@ describe("a long list of rows (review round 9)", () => {
     expect(cellTook("=A1*2", "1200", "1200")).toBe(false);
     expect(cellTook("", "x", "x")).toBe(false);
     expect(cellTook("Phone", "", "")).toBe(false);
+  });
+});
+
+describe("a cell that shows what it held, and GTK's lists and icons (review round 10)", () => {
+  it("fill_cells takes at most 8 cells in one question, each of them shown in it (UI10-4)", async () => {
+    const { call, st } = app([]);
+    const cells = Array.from({ length: 9 }, (_, i) => ({ cell: `A${i + 2}`, text: String(i) }));
+    const r = await call("fill_cells", { cells });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/^Invalid arguments for fill_cells: cells: .*8/);
+    expect(st.asked).toBe(0);
+  });
+
+  it("the same value however the sheet shows it, or the formula typed, is taken (HND10-2, W10-3)", () => {
+    // Money, thousands, a percentage, a date: Calc shows each its own way, and tells the cell's number.
+    expect(sheetNumbers("$1,200.00")).toEqual([1200]);
+    expect(sheetNumbers("5%")).toEqual([0.05]);
+    expect(sheetNumbers("2026-03-05")).toEqual([46086]);
+    expect(sheetNumbers("3/5/2026")).toEqual([46086, 46145]);
+    expect(sheetNumbers("Rent")).toEqual([]);
+    expect(cellTook("$1,200.00", "1200", "1200", { value: 1200 })).toBe(true);
+    expect(cellTook("0.05", "5%", "5%", { value: 0.05 })).toBe(true);
+    expect(cellTook("3/5/2026", "2026-03-05", "2026-03-05", { value: 46086 })).toBe(true);
+    expect(sameCellValue("1200", "$1,200.00")).toBe(true);
+    // A text's number is 0: a 0 typed over it isn't the same.
+    expect(sameCellValue("0", "Item", 0)).toBe(false);
+    expect(sameCellValue("7", "Mar 5, 2026", 46086)).toBe(false);
+    expect(sameCellValue("46086", "Mar 5, 2026", 46086)).toBe(true);
+    // A formula whose result is what was there, or an error (Calc shows #DIV/0! as no text): its formula says it went in.
+    expect(cellTook("=1+2.1", "3.10", "3.10", { value: 3.1, formula: "1+2.1" })).toBe(true);
+    expect(cellTook("=1/0", "", "", { value: 0, formula: "1/0" })).toBe(true);
+    expect(cellTook("=sum(b2:b3)", "1550.5", "1550.5", { formula: "SUM(B2\\" })).toBe(true);
+    expect(formulaIn("=SUM(C2:C3)", "SUM(B2\\")).toBe(false);
+    expect(formulaIn("=A1*2", "")).toBe(false);
+    expect(formulaIn("5", "5")).toBe(false);
+    // Neither: still not taken (a read-only document).
+    expect(cellTook("999", "1200", "1200", { value: 1200, formula: "" })).toBe(false);
+    expect(cellTook("=A1*2", "1200", "1200", { value: 1200, formula: "" })).toBe(false);
+  });
+
+  /** A GTK list's check box at (10, 60), its row's name beside it, and a check box of its own (Chromium's "Urgent"). */
+  const listApp = (canDo: (id: number, kind: string) => object, o: { flips?: boolean; doAction?: (id: number) => object } = {}) => {
+    const box: Item = { role: "table cell", name: "", bounds: { x: 10, y: 60, width: 60, height: 20 }, states: ["enabled", "sensitive", "focusable"] };
+    const row: Item = { role: "table cell", name: "http", bounds: { x: 70, y: 60, width: 300, height: 20 }, states: ["enabled", "sensitive", "focusable"] };
+    const urgent: Item = { role: "check box", name: "Urgent", bounds: { x: 10, y: 100, width: 100, height: 20 }, states: ["enabled", "sensitive"] };
+    const made = app([box, row, urgent]);
+    const done: string[] = [];
+    Object.assign((made.w as unknown as { d: { sidecar: object } }).d.sidecar, {
+      canDo: async (id: number, kind: string) => canDo(id, kind),
+      doAction: async (id: number, a: string) => { done.push(`${id} ${a}`); return o.doAction?.(id) ?? { ok: true, after: null }; },
+    });
+    // The mouse's click ticks the box (or doesn't: an app that ignores it).
+    made.st.clicks = Object.assign([] as { x: number; y: number }[], { push: () => { if (o.flips !== false) box.states!.push("checked"); return 0; } });
+    return { ...made, box, row, urgent, done };
+  };
+  const BOX = { tier1: false, action: "toggle", why: "a check box in a list is ticked only by a click on it (its accessible action would open its row instead)" };
+
+  it("a list's check box is ticked with the mouse, asked first, and is done only once it shows ticked (HND10-1)", async () => {
+    const { call, st, box, done } = listApp(id => (id === 2 ? BOX : { tier1: true, action: "select row" }));
+    await call("perceive_window", {});
+    const r = await call("click", { id: 2 });
+    expect(r.textResultForLlm).toMatch(/^Done with the user's mouse, which is back where it was\. Now: table cell "" \(.*checked\)$/);
+    expect([st.asked, box.states!.includes("checked"), done]).toEqual([1, true, []]);
+    // The toggle tool: the same, and already on is left alone.
+    expect((await call("toggle", { id: 2, on: true })).textResultForLlm).toMatch(/^Already on/);
+  });
+
+  it("a list's check box the click didn't tick isn't reported done (HND10-1)", async () => {
+    const { call, box } = listApp(() => BOX, { flips: false });
+    await call("perceive_window", {});
+    const r = await call("toggle", { id: 2, on: true });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/^Ember clicked it with the user's mouse \(which is back where it was\), but it didn't turn on: it is still off \(table cell ""/);
+    expect(box.states).not.toContain("checked");
+  });
+
+  it("a toggle on a list's row or an icon is refused before anything is asked; a click selects it and says it wasn't opened (HND10-1, HND10-5)", async () => {
+    const after = (name: string) => ({ ok: true, action: "select row", after: { role: "table cell", name, states: ["selected", "focused"], bounds: { x: 70, y: 60, width: 300, height: 20 } } });
+    const { call, st, done } = listApp(id => (id === 3 ? { tier1: true, action: "select row" } : { tier1: true, action: "select item" }), { doAction: id => after(id === 3 ? "http" : "") });
+    await call("perceive_window", {});
+    const r = await call("toggle", { id: 3, on: true });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/^Element 3 is a cell of a list's row, not a switch or check box: a click on it only selects it/);
+    expect((await call("toggle", { id: 4, on: true })).textResultForLlm).toMatch(/^Element 4 is an icon, not a switch or check box/);
+    expect([st.asked, done]).toEqual([0, []]);
+    const c = await call("click", { id: 3 });
+    expect(c.textResultForLlm).toBe("Selected its row, as a single click does; it wasn't opened: press Enter (press_keys) to open it if that's what the task needs. Now: table cell \"http\" (selected, focused)");
+    expect(done).toEqual(["3 click"]);
+  });
+
+  it("a toggle the app says it did is done only once it shows turned (HND10-1)", async () => {
+    let flips = false;
+    const { call, urgent } = listApp(() => ({ tier1: true, action: "check" }), {
+      doAction: () => { if (flips) urgent.states!.push("checked"); return { ok: true, action: "check", after: { role: "check box", name: "Urgent", states: [...urgent.states!], bounds: urgent.bounds } }; },
+    });
+    await call("perceive_window", {});
+    const r = await call("toggle", { id: 4, on: true });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/^The app said it did it, but it didn't turn on: it is still off \(check box "Urgent"/);
+    flips = true;
+    expect((await call("toggle", { id: 4, on: true })).textResultForLlm).toMatch(/^Done\. Now: check box "Urgent" \(.*checked/);
   });
 });

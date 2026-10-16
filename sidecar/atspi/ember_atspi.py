@@ -12,6 +12,7 @@ The helpers (secret-field detection, ids, the walk) import without pyatspi or a
 display, so `python3 test_ember_atspi.py` can check them with stand-in objects.
 """
 
+import contextlib
 import io
 import json
 import math
@@ -19,6 +20,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import traceback
 import unicodedata
@@ -358,17 +360,54 @@ def squash(text):
     return "".join(normalize_label(text).replace(OBJECT_CHAR, " ").split())
 
 
-def secret_values(acc, role):
+def secret_values(acc, role, everywhere=None, name=""):
     """What a secret field holds, squashed (see squash): never reported, only looked for in the names of what is around
-    it. Its text, the option a drop-down shows, a spin button's number. A few calls."""
-    found = [text_of(acc, 2000)]
+    it. Its text, the option a drop-down shows, a spin button's number. A few calls. `everywhere` (a list) is given
+    those that are what the user put in it, which are looked for in every name of a read too (see says_value): what is
+    typed in it, its number, and an option chosen in it that says something (see chosen_secret; `name`: the field's)."""
+    typed = [text_of(acc, 2000)]
+    chosen = None
     if role == "combo box":
-        found.append(chosen_option(acc))
+        item, chosen = chosen_item(acc)
+        if chosen and everywhere is not None and chosen_secret(item, chosen, name):
+            typed.append(chosen)
     if role in VALUE_ROLES:
         v = value_of(acc)
         if v is not None:
-            found.append("%d" % v if v == int(v) else repr(v))
-    return [s for s in (squash(v) for v in found if v) if s]
+            typed.append("%d" % v if v == int(v) else repr(v))
+    if everywhere is not None:
+        everywhere.extend(s for s in (squash(v) for v in typed if v) if s and s not in everywhere)
+    return [s for s in (squash(v) for v in typed + ([chosen] if chosen not in typed else []) if v) if s]
+
+
+# What a drop-down shows before anything is chosen in it ("Month", "YYYY", "Select…", "-- Choose --"), in the languages
+# of SECRET_WORDS: a secret one's (a card's expiry) says nothing then, and is never looked for elsewhere in a read.
+# Matched on lowercase, NFKC-normalised text with single spaces. The same as PLACEHOLDER_OPTION in elements.ts.
+PLACEHOLDER_OPTION = re.compile(
+    r"^[\W_]*(?:(?:select|choose|pick|please|seleccion|elegir|choisi|sélection|w(ä|a)hle|auswahl|scegli|seleziona|kies|"
+    r"selecione|escolha|wybierz|выбер).*|mm|yy|yyyy|dd|jj|aa|aaaa|mes|month|year|day|mois|ann(é|e)e|jour|monat|jahr|tag|"
+    r"a(ñ|n)o|d(í|i)a|mese|anno|giorno|maand|jaar|dag|m(å|a)nad|(å|a)r|miesi(ą|a)c|rok|месяц|год|月|年|日|none|n/?a)[\W_]*$")
+# Fields whose chosen option is what the user put in them only with a digit in it: a card's expiry ("03", "2028"),
+# never its type ("Visa Electron"). Matched on the field's name, as above. The same as CARD_FIELD in elements.ts.
+CARD_FIELD = re.compile(r"card|cvv|cvc|csc|expir|valid (thru|through)|mm ?/ ?yy|karte|carte|tarjeta|cart(ã|a)o|carta|"
+                        r"karty|карт|卡|カード")
+
+
+def chosen_secret(item, chosen, name=""):
+    """Is the option `chosen` (`item`: the option itself), chosen in a secret drop-down called `name`, what the user put
+    in it? Not its first option (what a page shows until something is chosen), nor a placeholder (see
+    PLACEHOLDER_OPTION); in a card's field only one with a digit in it (see CARD_FIELD), elsewhere one with a digit or
+    of two words or more (a plain word, "Engineering" or "March", says nothing of its own). One call at most."""
+    text = " ".join(normalize_label(chosen).split())
+    if not text or PLACEHOLDER_OPTION.match(text):
+        return False
+    digits = any(c.isdigit() for c in text)
+    if not digits and (CARD_FIELD.search(normalize_label(name or "")) or len(WORD.findall(text)) < 2):
+        return False
+    try:
+        return item is None or item.getIndexInParent() != 0
+    except Exception:
+        return True
 
 
 def holds_value(text, values):
@@ -485,8 +524,23 @@ def fields_in(acc, until):
     return found
 
 
-def secret_inside(acc, until):
-    """Is a secret field (see is_secret) in acc, shown or not? None when that can't be told by `until` (see fields_in)."""
+def secret_by_labels(field, name, layout):
+    """Is the unnamed `field` next to or under a "Password" or "Card number" label of a read (`layout`: a function giving
+    its labels and those that name a control on their row, see secret_by_layout)? It stays secret then (see SECRETS).
+    One call (where it lies)."""
+    if name or layout is None:
+        return False
+    bounds = extents(field)
+    labels, claimed = layout()
+    if bounds is None or not labels or not looks_secret(nearby_label({"bounds": bounds}, labels, claimed)):
+        return False
+    SECRETS.add(object_key(field))
+    return True
+
+
+def secret_inside(acc, until, layout=None):
+    """Is a secret field (see is_secret; `layout`: or one secret by the read's labels, see secret_by_labels) in acc,
+    shown or not? None when that can't be told by `until` (see fields_in)."""
     fields = fields_in(acc, until)
     if fields is None:
         return None
@@ -497,14 +551,127 @@ def secret_inside(acc, until):
             role, name = f.getRoleName(), (f.name or "").strip()
         except Exception:
             return None
-        if is_secret(f, role, name):
+        if is_secret(f, role, name) or secret_by_labels(f, name, layout):
             return True
     return False
 
 
-def labelled_by_secret(acc, until):
+# After a walk, what the read says is checked for secrets a few calls at a time (see withhold_names): WITHHOLD_S at most
+# for all of it (the names a field's value can't be looked for in, in time, are withheld), each call given only the time
+# left, so a read never runs on past it when its app stops answering (see Asking and calls_by).
+WITHHOLD_S = 0.8
+# The least time a call is given (libatspi's timeout, see call_timeout): less is no time left.
+MIN_CALL_S = 0.02
+# How often the time a call is given is set again while a deadline is on (see calls_by).
+DEADLINE_TICK_S = 0.05
+
+
+def call_timeout(seconds=None):
+    """libatspi's timeout for each call to an app from now on: `seconds` (CALL_TIMEOUT_MS at most), or as configured
+    (None: see configure_atspi). Only with a real libatspi."""
+    if Atspi is None:
+        return
+    try:
+        if seconds is None:
+            Atspi.set_timeout(CALL_TIMEOUT_MS, STARTUP_TIMEOUT_MS)
+        else:
+            # No longer for an app that started a moment ago either (libatspi's app_startup_time).
+            Atspi.set_timeout(max(int(MIN_CALL_S * 1000), min(CALL_TIMEOUT_MS, int(seconds * 1000))), 0)
+    except Exception:
+        pass
+
+
+DEADLINES = []  # the deadlines (time.monotonic()) calls are made by now (see calls_by): the earliest counts
+DEADLINES_LOCK = threading.Lock()
+
+
+def deadline_timeout():
+    """Gives the next call the time left by the earliest deadline (MIN_CALL_S past it). DEADLINES_LOCK held."""
+    call_timeout(max(MIN_CALL_S, min(DEADLINES) - time.monotonic()))
+
+
+def deadline_ticks(stop):
+    """Keeps libatspi's timeout at the time left (see calls_by) until `stop` is set."""
+    while not stop.wait(DEADLINE_TICK_S):
+        with DEADLINES_LOCK:
+            if stop.is_set() or not DEADLINES:
+                return
+            deadline_timeout()
+
+
+@contextlib.contextmanager
+def calls_by(until):
+    """Inside, every call to an app is given only the time left until `until` (time.monotonic()), or an earlier
+    deadline around it, and MIN_CALL_S once that has passed: libatspi's timeout (see call_timeout), set again every
+    DEADLINE_TICK_S by a thread while the outermost is on. So no call runs past it by more than a tick, however many
+    are made: one that times out (the app stopped answering) leaves the rest the least time. None: nothing changes."""
+    if Atspi is None or until is None:
+        yield
+        return
+    stop = None
+    with DEADLINES_LOCK:
+        DEADLINES.append(until)
+        deadline_timeout()
+        if len(DEADLINES) == 1:
+            stop = threading.Event()
+    if stop is not None:
+        ticks = threading.Thread(target=deadline_ticks, args=(stop,))
+        ticks.daemon = True
+        ticks.start()
+    try:
+        yield
+    finally:
+        with DEADLINES_LOCK:
+            DEADLINES.remove(until)
+            if stop is not None:
+                stop.set()
+            if DEADLINES:
+                deadline_timeout()
+            else:
+                call_timeout(None)
+
+
+class Asking(object):
+    """What the checks after a walk (see withhold_names) may still ask the app: nothing once it stopped answering
+    (`busy`: a call of the walk's timed out, or one since took all the time it was given), nothing past `until`
+    (time.monotonic(): `seconds` from now). Inside calls_by(asking.until) (see calls), each call is given only the time
+    left."""
+
+    def __init__(self, busy=False, seconds=None):
+        self.busy = busy
+        self.until = time.monotonic() + (WITHHOLD_S if seconds is None else seconds)
+
+    def calls(self, until=None):
+        """The deadline for the calls made inside (see calls_by), by `until` too: past already once the app is busy (a
+        call made all the same is given the least time)."""
+        return calls_by(time.monotonic() if self.busy else self.until if until is None else min(self.until, until))
+
+    def left(self, until=None):
+        """The time left for calls, by `until` too: 0 when there is none (or the app is busy)."""
+        if self.busy:
+            return 0.0
+        left = (self.until if until is None else min(self.until, until)) - time.monotonic()
+        return left if left >= MIN_CALL_S else 0.0
+
+    def run(self, ask, until=None):
+        """(True, ask()) while there is time left by `until` too, (False, None) after: inside self.calls(until), its
+        calls are made by then. One that took all of it (or a timeout's time) timed out, most likely: the app stopped
+        answering, and isn't asked again."""
+        left = self.left(until)
+        if not left:
+            return False, None
+        t0 = time.monotonic()
+        try:
+            return True, ask()
+        finally:
+            took = time.monotonic() - t0
+            if took > SLOW_APP_S or took >= left - MIN_CALL_S:
+                self.busy = True
+
+
+def labelled_by_secret(acc, until, layout=None):
     """Is acc named after a secret field, or after an element with one in it (aria-labelledby: "Pay with" and the PIN
-    field)? None when that can't be told by `until`."""
+    field)? None when that can't be told by `until`. `layout`: see secret_by_labels."""
     try:
         relations = acc.getRelationSet() or []
     except Exception:
@@ -526,16 +693,18 @@ def labelled_by_secret(acc, until):
                 return None
             if role == "static":
                 continue  # a web page's text: nothing in it
-            found = is_secret(t, role, name) if role in FIELD_ROLES else secret_inside(t, until)
+            found = (is_secret(t, role, name) or secret_by_labels(t, name, layout)) if role in FIELD_ROLES \
+                else secret_inside(t, until, layout)
             if found is not False:
                 return found
     return False
 
 
-def name_says_secret(acc, role, name, until):
+def name_says_secret(acc, role, name, until, layout=None):
     """Does acc's name (`name`) say what a secret field holds, though that field wasn't read with it (see CONTENTS_S)?
     True too when that can't be told by `until` (time.monotonic()). Only a web engine's names are checked (a few calls
-    each); `role` None: asked for."""
+    each); `role` None: asked for. `layout`: a read's labels, which make an unnamed field in acc secret too (see
+    secret_by_labels)."""
     if not name or role in OWN_NAME_ROLES or not web_engine(acc):
         return False
     try:
@@ -547,8 +716,8 @@ def name_says_secret(acc, role, name, until):
     if time.monotonic() > until:
         return True
     if not named_from_contents(acc):
-        return labelled_by_secret(acc, until) is not False
-    return secret_inside(acc, until) is not False
+        return labelled_by_secret(acc, until, layout) is not False
+    return secret_inside(acc, until, layout) is not False
 
 
 def withhold_around(acc, role):
@@ -1547,17 +1716,21 @@ def redact_by_layout(nodes, accessible_of):
             make_secret(combo, accessible_of)
 
 
-def withhold_names(nodes, accessible_of):
+def withhold_names(nodes, accessible_of, asking=None):
     """Names that say what a secret field holds (Chromium names a table's cell, a row or a <div> after what the fields
     in it hold; GTK a combo box after the option it shows): the field's own and its listed containers', with their
-    text, are left out, and noted in WITHHELD (for what is under the wheel and actions). So are the names and texts
-    elsewhere in the read that say a field's value as words of their own (see says_value), and a web page's names
-    that may say what a field the read didn't list holds (see unlisted_secrets). The field's value is asked for here
-    (never reported). A read lists parents first. Returns the keys noted."""
+    text, are left out (marked `withheld`), and noted in WITHHELD (for what is under the wheel and actions). So are the
+    names and texts elsewhere in the read that say what the user put in a field as words of their own (see says_value;
+    the option a drop-down shows that says it goes, its name stays), and a web page's names that may say what a field
+    the read didn't list holds (see unlisted_secrets). The field's value is asked for here (never reported), as
+    `asking` allows (see Asking): a field that can't be asked about in time has every name around it withheld. A read
+    lists parents first. Returns the keys noted."""
     by_id, held = dict((n["id"], n) for n in nodes), set()
+    asking = asking or Asking()
 
     def withhold(c, acc):
         c["name"] = ""
+        c["withheld"] = True
         for k in ("text", "selection", "selected"):
             c.pop(k, None)
         key = object_key(acc) if acc is not None else None
@@ -1569,8 +1742,10 @@ def withhold_names(nodes, accessible_of):
         if not n.get("secret"):
             continue
         field = accessible_of(n["id"])
-        values = secret_values(field, n["role"]) if field is not None else []
-        values_of_all.extend(v for v in values if v not in values_of_all)
+        values = []
+        # (A call that timed out answers nothing: then nothing was told.)
+        asked = field is None or (asking.run(lambda: values.extend(secret_values(field, n["role"], values_of_all, n["name"])))[0]
+                                  and not asking.busy)
         short.extend((field, v) for v in values if len(v) < WORD_VALUE_MIN and v.strip(MASKS))
         chain = [n]
         p = by_id.get(n["parent"])
@@ -1581,31 +1756,67 @@ def withhold_names(nodes, accessible_of):
             acc = field if c is n else accessible_of(c["id"])
             if acc is None or not (c["name"] or c.get("text")):
                 continue
-            if says_secret(acc, c["name"], c.get("text"), values, c is n):
+            if not asked:
+                # What it holds wasn't told in time (its app stopped answering): what holds it may say it (not a page,
+                # named after its title), and so may a drop-down's own name (GTK's, after the option it shows).
+                if (c is not n and c["role"] not in DOCUMENT_ROLES) or c["role"] == "combo box":
+                    withhold(c, acc)
+            elif holds_value(c["name"], values) or holds_value(c.get("text"), values):
                 withhold(c, acc)
+            elif c is not n and c["name"]:
+                told, contents = asking.run(lambda: named_from_contents(acc))
+                if contents or not told:
+                    withhold(c, acc)
     # A short value ("42") is too common to withhold wherever it is a word (see says_value), but not what is named after
     # its field (aria-labelledby: "Pay with" and the field), which the field tells (one call) where the read says it.
     for field, v in short:
         if any(not c.get("secret") and (holds_value(c["name"], [v]) or holds_value(c.get("text"), [v])) for c in nodes):
-            for key in (object_key(t) for t in labels_by(field)):
+            for key in (object_key(t) for t in asking.run(lambda: labels_by(field))[1] or []):
                 if key is not None:
                     WITHHELD.add(key)
                     held.add(key)
     bus = None
     for c in nodes:
-        if c.get("secret") or not (c["name"] or c.get("text")):
+        if c.get("secret") or not (c["name"] or c.get("text") or c.get("selected")):
             continue
-        # Saying a field's value as words of its own, or found before (see WITHHELD).
+        # Saying what the user put in a field as words of its own, or found before (see WITHHELD).
         if says_value(c["name"], values_of_all) or says_value(c.get("text"), values_of_all):
             withhold(c, accessible_of(c["id"]))
-        elif WITHHELD.keys:
+            continue
+        if says_value(c.get("selected"), values_of_all):
+            del c["selected"]  # a drop-down that shows it ("Pay from: Card 4242 4242 4242 4242"): its name says nothing
+        if WITHHELD.keys and (c["name"] or c.get("text")):
             acc = accessible_of(c["id"])
             if bus is None and acc is not None:
                 bus = (object_key(acc) or ("",))[0]
             if acc is not None and (bus, getattr(acc, "path", None)) in WITHHELD:
                 withhold(c, acc)
-    unlisted_secrets(nodes, accessible_of, withhold)
+    if nodes:
+        remember_values(accessible_of(nodes[0]["id"]), values_of_all)
+    unlisted_secrets(nodes, accessible_of, withhold, asking)
     return held
+
+
+# What the user put in the secret fields an app's last read listed (see secret_values' `everywhere`), squashed, by its
+# bus name: never reported, only looked for in an option it lists or shows chosen later (see option_items, node_info),
+# which the read itself withholds (see withhold_names). Kept for a few apps, in this process only.
+PAGE_VALUES = OrderedDict()
+PAGE_VALUES_APPS = 8
+
+
+def remember_values(acc, values):
+    """Keeps `values` as what the secret fields of acc's app hold (see PAGE_VALUES)."""
+    bus = (object_key(acc) or ("",))[0] if acc is not None else ""
+    PAGE_VALUES.pop(bus, None)
+    if values:
+        PAGE_VALUES[bus] = list(values)
+        while len(PAGE_VALUES) > PAGE_VALUES_APPS:
+            PAGE_VALUES.popitem(last=False)
+
+
+def values_known(acc):
+    """What the secret fields of acc's app held when it was last read (see PAGE_VALUES)."""
+    return PAGE_VALUES.get((object_key(acc) or ("",))[0], []) if PAGE_VALUES and acc is not None else []
 
 
 def labels_by(field):
@@ -1623,37 +1834,70 @@ def words_of(text):
     return WORD.findall(normalize_label(text)) if text else []
 
 
-def unlisted_secrets(nodes, accessible_of, withhold):
+def unlisted_secrets(nodes, accessible_of, withhold, asking=None):
     """A web page's names that say words none of the elements the read listed in them say (`withhold` leaves them out),
     of elements the read may not have listed all of: some of it listed, or partly out of view (`shown`), or where the
     read stopped (the last element listed and what holds it). Named after what they hold, they may say what a secret
     field the read didn't list holds (scrolled out of view, or past where the read stopped), and so are checked (see
-    name_says_secret), CONTENTS_S at most for the read; so are ones named after other elements (aria-labelledby).
-    Children first: a row is checked once its cell's name is withheld. Elsewhere, and on a page where every name is
-    said by what is listed in it, no call is made."""
+    name_says_secret), CONTENTS_S at most for the read and as `asking` allows (see Asking: none once the app stopped
+    answering, when they are all withheld); so are ones named after other elements (aria-labelledby), and an element
+    with nothing listed in it whose name says what looks like a value (a word of 4 characters or more, with a digit)
+    that no text of the read says (a button named after a card number field out of view; see unlisted_leaf). An unnamed
+    field in one is judged by the read's labels too (see secret_by_labels). Children first: a row is checked once its
+    cell's name is withheld. Elsewhere, and on a page where every name is said by what is listed in it, no call is made."""
     first = accessible_of(nodes[0]["id"]) if nodes else None
     if first is None or not web_engine(first):
         return  # names are made from contents only in a web engine (see named_from_contents); a read is one app's
+    asking = asking or Asking()
     by_id, last = dict((n["id"], n) for n in nodes), nodes[-1]
     stop = set()
     while last is not None and last["id"] not in stop:
         stop.add(last["id"])
         last = by_id.get(last["parent"])
-    said, kids, until = {}, set(), time.monotonic() + CONTENTS_S
-    for n in reversed(nodes):
-        inner = said.pop(n["id"], None) or set()
-        if n["name"] and n["role"] not in OWN_NAME_ROLES and not n.get("secret") \
-                and (n["id"] in kids or "shown" in n or n["id"] in stop) and not inner.issuperset(words_of(n["name"])):
-            acc = accessible_of(n["id"])
-            if acc is not None and name_says_secret(acc, n["role"], n["name"], until):
-                withhold(n, acc)
-        p = n["parent"]
-        if p is not None:
-            kids.add(p)
-            words = said.setdefault(p, set())
-            words |= inner
-            for k in ("name", "text", "selected"):
-                words.update(words_of(n.get(k)))
+    until = time.monotonic() + CONTENTS_S
+    known = []  # (the read's labels, those naming a control on their row; the words its text says), once needed
+
+    def read_layout():
+        if not known:
+            labels = [n for n in nodes if n["role"] in LABEL_ROLES and n["name"] and n["bounds"]]
+            controls = [n for n in nodes if n["role"] in LABELLED_ROLES and n["bounds"]]
+            inside = inside_secrets(nodes)
+            heard = set()
+            for n in nodes:
+                if n["id"] not in inside:
+                    heard.update(words_of(n["name"] if n["role"] in LABEL_ROLES else None))
+                    heard.update(words_of(n.get("text")))
+            known.append((labels, claimed_labels(labels, controls), heard))
+        return known[0]
+    said, kids = {}, set()
+    with asking.calls(until):
+        for n in reversed(nodes):
+            inner = said.pop(n["id"], None) or set()
+            named = n["name"] and n["role"] not in OWN_NAME_ROLES and not n.get("secret")
+            check = named and (n["id"] in kids or "shown" in n or n["id"] in stop) and not inner.issuperset(words_of(n["name"]))
+            leaf = named and not check and n["id"] not in kids and any(len(w) >= WORD_VALUE_MIN and any(c.isdigit() for c in w)
+                                                                       and w not in read_layout()[2] for w in words_of(n["name"]))
+            if check or leaf:
+                acc = accessible_of(n["id"])
+                if acc is not None:
+                    told, says = asking.run(lambda: unlisted_leaf(acc, n, leaf, until, lambda: read_layout()[:2]), until)
+                    if says or not told:
+                        withhold(n, acc)
+            p = n["parent"]
+            if p is not None:
+                kids.add(p)
+                words = said.setdefault(p, set())
+                words |= inner
+                for k in ("name", "text", "selected"):
+                    words.update(words_of(n.get(k)))
+
+
+def unlisted_leaf(acc, node, leaf, until, layout):
+    """Does the name of acc (`node`, as read) say what a secret field the read didn't list holds (see
+    name_says_secret)? Not a `leaf`'s (nothing in it listed) that its own text says too (a button's: one call)."""
+    if leaf and set(words_of(node["name"])) <= set(words_of(cell_text(acc, 1000))):
+        return False
+    return name_says_secret(acc, node["role"], node["name"], until, layout)
 
 
 def withheld_name(acc, name, role=None):
@@ -2016,6 +2260,9 @@ def read_window(params):
     nodes = []
     max_nodes = int(params.get("maxNodes", MAX_NODES))
     if not budget.busy:
+        # (Its toolkit asked now, once an app, which the checks after the walk go by, see unlisted_secrets: so they
+        # need not ask it of an app that stops answering during the walk.)
+        web_engine(win)
         walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None, None, budget)
         budget.check()  # the last element asked may have been the one that timed out
     if budget.sheets and not budget.busy:
@@ -2026,13 +2273,17 @@ def read_window(params):
     latest = SNAPSHOTS.latest()
     accessible_of = lambda nid: stored(latest.get(nid))  # noqa: E731
     redact_by_layout(nodes, accessible_of)
-    held = withhold_names(nodes, accessible_of)
+    # What the read says is checked for secrets in WITHHOLD_S at most, and without asking an app that stopped answering.
+    asking = Asking(budget.busy)
+    with asking.calls():
+        held = withhold_names(nodes, accessible_of, asking)
     if WITHHELD.keys:
         # Names found to say what a secret field holds before (by Ember too: mark_secret).
         bus = (object_key(win) or ("",))[0]
         for n in nodes:
-            if n["name"] and (bus, getattr(accessible_of(n["id"]), "path", None)) in WITHHELD:
+            if (n["name"] or n.get("text")) and (bus, getattr(accessible_of(n["id"]), "path", None)) in WITHHELD:
                 n["name"] = ""
+                n["withheld"] = True
                 for k in ("text", "selection", "selected"):
                     n.pop(k, None)
     inside = inside_secrets(nodes)
@@ -2040,7 +2291,11 @@ def read_window(params):
         nodes = [n for n in nodes if n["id"] not in inside]
         for nid in inside:
             latest.pop(nid, None)  # nor are they read by id
-    others = [] if budget.busy or pid is None else other_windows(pid, win, Budget(0.3))
+    others = []
+    if not budget.busy and pid is not None:
+        # (Its calls by its deadline too: an app that stopped answering since the walk doesn't hold the read up.)
+        with calls_by(time.monotonic() + 0.3):
+            others = other_windows(pid, win, Budget(0.3))
     if budget.busy and pid not in SLOW_NOW:
         timed_out(pid)
     keys = set(object_key(stored(latest.get(n["id"]))) for n in nodes if n.get("secret"))
@@ -2482,10 +2737,13 @@ def node_info(acc, nid=None):
         name = (acc.name or "").strip()
     except Exception as err:
         raise unreachable(nid, err, t0)
-    # Not one that says what a secret field holds, even one that isn't in view (see withheld_name).
-    withheld = bool(name) and withheld_name(acc, name, role) == ""
+    # Not one that says what a secret field holds, even one that isn't in view (see withheld_name), nor one a read
+    # withheld (an unnamed paragraph whose text says it, see WITHHELD).
+    withheld = (bool(name) and withheld_name(acc, name, role) == "") or (bool(WITHHELD.keys) and object_key(acc) in WITHHELD)
     info = {"role": role, "name": "" if withheld else name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
+    if withheld:
+        info["withheld"] = True
     if is_secret(acc, role, name):
         info["secret"] = True
         return info
@@ -2504,9 +2762,9 @@ def node_info(acc, nid=None):
             sel = option_selection(acc, holder)
             for i in range(min(holder.childCount, 500) if sel is not None else 0):
                 if sel.isChildSelected(i):
-                    # Never a name that says what a secret field holds (see said_name).
+                    # Never a name that says what a secret field holds (see said_name), in it or in the app's last read.
                     item = holder.getChildAtIndex(i)
-                    info["selected"] = said_name(item, (item.name or "").strip(), secret_values_in(acc))
+                    info["selected"] = said_name(item, (item.name or "").strip(), secret_values_in(acc), values_known(acc))
                     break
         except Exception:
             pass
@@ -2728,6 +2986,37 @@ FIND_ROW_S = 2.0
 TWIN_ROWS_S = 2.5
 # What to do instead where a list is too long to look through in time.
 TYPE_INSTEAD = "in a long list, type the name instead (in a file dialog: Ctrl+L, or its name field)"
+# GTK's own actions on a list's cell (GTK 3's check box cell names them by what they do, after its "toggle").
+GTK_CELL_ACTIONS = ("expand or contract", "edit", "activate", "expands or contracts", "creates a widget", "activates")
+# A check box in a list of rows (GTK's toggle cell: firewall-config's services, Evolution's accounts): its "toggle"
+# action is the row's "activate" (row-activated, a double click), which never ticks the box. Only a click on it does:
+# the mouse clicks it, with the user's OK.
+LIST_CHECK_BOX = ("background_unavailable: a check box in a list is ticked only by a click on it (its accessible "
+                  "action would open its row instead)")
+# An item of a grid of icons (GTK's icon view: a file or template browser). Its "activate" action is item-activated, a
+# double click (it opens the item); a click selects it instead, as a single click does.
+ICON_ROLES = frozenset(["icon"])
+ITEM_IN_BACKGROUND = ("background_unavailable: its window isn't the active one, and an icon is chosen as a click "
+                      "chooses it (the cursor, which Enter follows, with it) only by bringing the window to the front")
+
+
+def instead_of_action(acc, names, picked):
+    """What a click on acc does where its own action `picked` (of its action `names`) is a double click's (GTK):
+    "select row" (a cell of a list of rows, see ROW_CELL_ROLES), "select item" (an icon in a grid, see ICON_ROLES),
+    "check box" (a check box in a list, see LIST_CHECK_BOX); None where its action is a click's own. Qt's cells say
+    "toggle" alone (it selects them): their action is left to them."""
+    try:
+        role = acc.getRoleName()
+    except Exception:
+        return None
+    if role in ROW_CELL_ROLES:
+        if picked == "toggle":
+            others = [n for n in names if n != "toggle"]
+            return "check box" if any(n.startswith(GTK_CELL_ACTIONS) for n in others) else None
+        return "select row" if picked in ("activate", "expand or contract", "edit") else None
+    if role in ICON_ROLES and picked == "activate":
+        return "select item"
+    return None
 
 
 def spreadsheet(acc):
@@ -2737,14 +3026,6 @@ def spreadsheet(acc):
         return "manages descendants" in state_names(acc) and acc.childCount > MAX_CHILDREN and scroll_fraction(acc) is None
     except Exception:
         return True
-
-
-def selects_row(acc, picked):
-    """Does a click on acc select its row (a cell whose own action is a double click's: see ROW_CELL_ROLES)?"""
-    try:
-        return picked == "activate" and acc.getRoleName() in ROW_CELL_ROLES
-    except Exception:
-        return False
 
 
 def row_of(acc):
@@ -2820,7 +3101,7 @@ def choose_row(t, row, holder=None, cell=None):
         raise RuntimeError(ROW_IN_BACKGROUND)
     if focus:
         try:
-            took = bool(cell.queryComponent().grabFocus())
+            took = bool(on_link(cell.queryComponent(), "GrabFocus", (), lambda: cell.queryComponent().grabFocus()))
         except Exception:
             took = False
         if took:
@@ -2828,15 +3109,67 @@ def choose_row(t, row, holder=None, cell=None):
             if selected_rows(t) == [row] and row_has_cursor(holder, t, row):
                 return True, False
     if row not in (selected_rows(t) or []):
-        t.addRowSelection(row)
+        on_link(t, "AddRowSelection", (row,), lambda: t.addRowSelection(row))
         settle()
         if row not in (selected_rows(t) or []):
             raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
     for other in selected_rows(t) or []:
         if other != row:
-            t.removeRowSelection(other)
+            on_link(t, "RemoveRowSelection", (other,), lambda: t.removeRowSelection(other))
     settle()
     return selected_rows(t) == [row], False
+
+
+def item_of(acc):
+    """(the grid of icons acc is in, its Selection, acc's index there), or None where it can't be chosen by
+    accessibility (no Selection)."""
+    try:
+        holder = acc.parent
+        if holder is None:
+            return None
+        sel = holder.querySelection()
+        index = acc.getIndexInParent()
+    except Exception:
+        return None
+    return (holder, sel, index) if index >= 0 else None
+
+
+def choose_item(acc, holder, sel, index):
+    """Selects icon `acc` (child `index` of grid `holder`, Selection `sel`) alone, as a single click does, and never
+    opens it: its grabFocus moves the grid's cursor there (where Enter goes), and the Selection selects it alone. Only in
+    the active window (see focuses_rows): elsewhere that brings the window to the front, so it is left to the mouse
+    (ITEM_IN_BACKGROUND). Returns whether it is the one selected now; background_unavailable where it can't be selected."""
+    def alone():
+        try:
+            return sel.nSelectedChildren == 1 and sel.isChildSelected(index)
+        except Exception:
+            return False
+    focus = focuses_rows(holder)
+    if alone() and (focus is not True or "focused" in state_names(acc)):
+        return True
+    if focus is False:
+        raise RuntimeError(ITEM_IN_BACKGROUND)
+    if focus:
+        try:
+            on_link(acc.queryComponent(), "GrabFocus", (), lambda: acc.queryComponent().grabFocus())
+        except Exception:
+            pass
+        settle()
+    if not alone():
+        try:
+            on_link(sel, "ClearSelection", (), lambda: sel.clearSelection())
+            on_link(sel, "SelectChild", (index,), lambda: sel.selectChild(index))
+        except Exception:
+            pass
+        settle()
+        try:
+            if not sel.isChildSelected(index):
+                raise RuntimeError("background_unavailable: it can't be selected by accessibility")
+        except RuntimeError:
+            raise
+        except Exception:
+            raise RuntimeError("background_unavailable: it can't be selected by accessibility")
+    return alone()
 
 
 # How many fields inside a list of options are looked at for secrets (see secret_values_in).
@@ -2874,12 +3207,13 @@ def secret_values_in(acc):
     return values
 
 
-def said_name(acc, name, values=()):
+def said_name(acc, name, values=(), elsewhere=()):
     """An option's or a row's name (acc's, where it is known) as it may be reported: none where it says what a secret
-    field holds (see WITHHELD; `values`: what the secret fields around it hold, see secret_values_in)."""
+    field holds (see WITHHELD; `values`: what the secret fields around it hold, see secret_values_in; `elsewhere`: what
+    the user put in the secret fields of the app's last read, said as words of their own, see values_known)."""
     if acc is not None:
         name = withheld_name(acc, name)
-    return "" if values and holds_value(name, values) else name
+    return "" if (values and holds_value(name, values)) or says_value(name, elsewhere) else name
 
 
 def cell_words(cell, depth=0):
@@ -3030,7 +3364,9 @@ def can_do(params):
     applies (to borrow the mouse, where that is the only way). With `caret`: whether the element has the keyboard
     (`focused`) and its window is the active one (`windowActive`), for text typed where the caret is. For a click:
     `action`, the action that would do it, and `handler`, the control around the element the click goes to (see
-    click_handler), which is what the user is asked about."""
+    click_handler), which is what the user is asked about. Where a click does something else than the element's own
+    action (see instead_of_action), `action` says what: "select row" or "select item" (a toggle there turns nothing on
+    or off), or "toggle" with no tier 1 (a check box in a list: the mouse clicks it)."""
     nid = int(params["id"])
     acc = SNAPSHOTS.get(nid)
     kind = params.get("kind")
@@ -3040,16 +3376,31 @@ def can_do(params):
         if kind in ("click", "toggle"):
             _, names, index = pick_action(acc, kind)
             picked = out["action"] = names[index]
-            if kind == "click" and selects_row(acc, picked):
-                # The click selects its row (see select_row), where accessibility can.
-                found = row_of(acc)
-                if found is None:
-                    raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
-                holder, t, row, _ = found
-                # A click selects its row, by accessibility or (its window in the background) with the mouse.
+            instead = instead_of_action(acc, names, picked)
+            if instead == "check box":
+                # Ticked by a click on it alone (see LIST_CHECK_BOX): the mouse does it.
+                out["action"], picked = "toggle", None
+                raise RuntimeError(LIST_CHECK_BOX)
+            if instead == "select row":
                 out["action"] = "select row"
-                if selected_rows(t) != [row] and focuses_rows(holder) is False:
-                    raise RuntimeError(ROW_IN_BACKGROUND)
+                if kind == "click":
+                    # The click selects its row (see select_row), where accessibility can.
+                    found = row_of(acc)
+                    if found is None:
+                        raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
+                    holder, t, row, _ = found
+                    # A click selects its row, by accessibility or (its window in the background) with the mouse.
+                    if selected_rows(t) != [row] and focuses_rows(holder) is False:
+                        raise RuntimeError(ROW_IN_BACKGROUND)
+            elif instead == "select item":
+                out["action"] = "select item"
+                if kind == "click":
+                    found = item_of(acc)
+                    if found is None:
+                        raise RuntimeError("background_unavailable: it can't be selected by accessibility")
+                    holder, sel, index = found
+                    if focuses_rows(holder) is False and not (sel.nSelectedChildren == 1 and sel.isChildSelected(index)):
+                        raise RuntimeError(ITEM_IN_BACKGROUND)
         elif kind == "text":
             editable_text(acc)
         elif kind == "value":
@@ -3079,10 +3430,18 @@ def do_action(params):
     acc = usable(nid)
     want = (params.get("action") or "click").lower()
     act, names, index = pick_action(acc, want)
-    if want == "click" and selects_row(acc, names[index]):
+    # Never an action that is a double click's (see instead_of_action): what a click does instead, or nothing.
+    instead = instead_of_action(acc, names, names[index])
+    if instead == "check box":
+        raise RuntimeError(LIST_CHECK_BOX)
+    if instead is not None and want != "click":
+        raise RuntimeError("element %s is no switch or check box: a click on it only selects it" % nid)
+    if instead == "select row":
         return select_row(acc, nid)
+    if instead == "select item":
+        return select_item(acc, nid)
     before = node_info(acc, nid)
-    ok = act.doAction(index)
+    ok = on_link(act, "DoAction", (index,), lambda: act.doAction(index))
     settle()
     res = after_action(acc, nid)
     res.update({"ok": bool(ok), "action": names[index], "before": before})
@@ -3103,6 +3462,19 @@ def select_row(acc, nid):
     return res
 
 
+def select_item(acc, nid):
+    """A click on an icon in a grid of them: it is selected alone (see ICON_ROLES, choose_item), and "ok" says whether
+    it is now; background_unavailable where that can't be done by accessibility (the mouse clicks it)."""
+    found = item_of(acc)
+    if found is None:
+        raise RuntimeError("background_unavailable: it can't be selected by accessibility")
+    before = node_info(acc, nid)
+    ok = choose_item(acc, *found)
+    res = after_action(acc, nid)
+    res.update({"ok": ok, "action": "select item", "before": before})
+    return res
+
+
 def set_text(params):
     nid = int(params["id"])
     acc = usable(nid)
@@ -3111,11 +3483,11 @@ def set_text(params):
     mode = params.get("mode", "replace")
     et = editable_text(acc)
     if mode == "replace":
-        ok = et.setTextContents(text)
+        ok = on_link(et, "SetTextContents", (text,), lambda: et.setTextContents(text))
     else:
         t = acc.queryText()
         offset = t.characterCount if mode == "append" else max(0, t.caretOffset)
-        ok = et.insertText(offset, text, len(text))
+        ok = on_link(et, "InsertText", (offset, text, len(text)), lambda: et.insertText(offset, text, len(text)))
     settle()
     res = after_action(acc, nid)
     res["ok"] = bool(ok)
@@ -3129,7 +3501,7 @@ def set_value(params):
     value = float(params["value"])
     if not math.isfinite(value) or value < v.minimumValue or value > v.maximumValue:
         raise ValueError("value %s is outside %s..%s" % (value, v.minimumValue, v.maximumValue))
-    v.currentValue = value
+    on_link(v, "CurrentValue", (value,), lambda: setattr(v, "currentValue", value))
     settle()
     return {"ok": True, "after": node_info(acc)}
 
@@ -3156,12 +3528,18 @@ def option_selection(acc, holder):
 
 
 def chosen_option(acc):
-    """The name of the option a combo box shows as chosen, or None: asked of the Selection of its list of options (a
-    web page's drop-down), else its own (GTK's), a few calls; the options aren't looked through one by one."""
+    """The name of the option a combo box shows as chosen, or None (see chosen_item)."""
+    return chosen_item(acc)[1]
+
+
+def chosen_item(acc):
+    """The option a combo box shows as chosen, and its name ((None, None) without one): asked of the Selection of its
+    list of options (a web page's drop-down), else its own (GTK's), a few calls; the options aren't looked through one
+    by one."""
     try:
         holder = option_holder(acc)
     except Exception:
-        return None
+        return None, None
     for owner in ((holder, acc) if holder is not acc else (acc,)):
         try:
             sel = owner.querySelection()
@@ -3174,8 +3552,8 @@ def chosen_option(acc):
         except Exception:
             continue
         if name:
-            return name
-    return None
+            return item, name
+    return None, None
 
 
 def combo_shows(acc):
@@ -3208,10 +3586,10 @@ def option_items(acc):
     element's (its options say what it holds), nor a name that says what a secret field holds (see said_name): those
     are listed nameless."""
     refuse_secret(acc)
-    values = secret_values_in(acc)
+    values, elsewhere = secret_values_in(acc), values_known(acc)
     rows = row_list(acc)
     if rows is not None:
-        return [said_name(None, n, values) for n in rows[1]]
+        return [said_name(None, n, values, elsewhere) for n in rows[1]]
     holder = option_holder(acc)
     if option_selection(acc, holder) is None:
         raise RuntimeError("background_unavailable: this element has no selectable options")
@@ -3222,7 +3600,7 @@ def option_items(acc):
             names.append("")
             continue
         name = (c.name or "").strip()
-        names.append("" if is_secret(c, c.getRoleName(), name) else said_name(c, name or inner_label(c), values))
+        names.append("" if is_secret(c, c.getRoleName(), name) else said_name(c, name or inner_label(c), values, elsewhere))
     return names
 
 
@@ -3303,7 +3681,7 @@ def select_option(params):
         res = after_action(acc, nid)
         res.update({"ok": True, "option": names[index], "already": True})
         return res
-    ok = bool(sel.selectChild(index))
+    ok = bool(on_link(sel, "SelectChild", (index,), lambda: sel.selectChild(index)))
     settle()
     if not ok:
         # Chromium's closed <select> refuses Selection: its option's own "select" action chooses it (and the
@@ -3318,7 +3696,7 @@ def select_option(params):
                 raise
         else:
             was = first_chosen(sel, holder)
-            act.doAction(i)
+            on_link(act, "DoAction", (i,), lambda: act.doAction(i))
             settle()
             ok = option_chosen(sel, holder, index)
             if not ok and was is not None and first_chosen(sel, holder) is None:
@@ -3347,7 +3725,7 @@ def choose_again(holder, index):
         item = holder.getChildAtIndex(index)
         if item is not None:
             act, _, i = pick_action(item, "select")
-            act.doAction(i)
+            on_link(act, "DoAction", (i,), lambda: act.doAction(i))
             settle()
     except Exception:
         pass
@@ -3367,20 +3745,40 @@ def list_options(params):
 
 def focus(params):
     acc = usable(int(params["id"]))
-    ok = acc.queryComponent().grabFocus()
+    ok = on_link(acc.queryComponent(), "GrabFocus", (), lambda: acc.queryComponent().grabFocus())
     settle()
     return {"ok": bool(ok), "after": node_info(acc)}
 
 
+def cell_formula(acc):
+    """A spreadsheet cell's formula as LibreOffice Calc tells it (its "Formula" attribute, without the "="; "" for a
+    cell without one), or None where it isn't told. Calc shows a formula that works out to an error (#DIV/0!, #N/A)
+    as no text at all: its formula says it went in."""
+    try:
+        attrs = acc.getAttributes()
+    except Exception:
+        return None
+    pairs = attrs.items() if isinstance(attrs, dict) else (a.partition(":")[::2] for a in attrs or [])
+    for key, value in pairs:
+        if key == "Formula":
+            return value
+    return None
+
+
 def read_element(params):
     """The element as it is now. With `shown` asked for (where the mouse is to aim): the part of it that shows, where
-    some of it is scrolled out of view or lies outside its window (a few more calls to the app)."""
+    some of it is scrolled out of view or lies outside its window (a few more calls to the app). With `formula`, for a
+    spreadsheet's cell whose text is told: its formula (see cell_formula), never a secret one's."""
     nid = int(params["id"])
     acc = SNAPSHOTS.get(nid)
     info = node_info(acc, nid)
     shown = visible_part(acc, info.get("bounds")) if params.get("shown") else None
     if shown is not None:
         info["shown"] = shown
+    if params.get("formula") and info.get("role") == "table cell" and not info.get("secret") and "text" in info:
+        formula = cell_formula(acc)
+        if formula is not None:
+            info["formula"] = formula[:2000]
     return info
 
 
@@ -3806,6 +4204,385 @@ METHODS = {
 }
 
 
+# ---------------------------------------------------------------- links (requests that run the app's own code)
+
+# A GTK app does what a button or menu item does while it handles Ember's request, and a modal dialog opened there with
+# gtk_dialog_run (Mousepad's File ▸ Save As…, an "Attach…" button) runs inside that handling: until the dialog closes,
+# nothing more on the connection the request came on is answered. Once anything waits on that connection (a request,
+# or the connection closing), the first key typed in the dialog hangs the app for good (at-spi2-atk's key snooper
+# dispatches every connection again from inside, and that one can't be). So a request that runs the app's own code (an
+# action, text put in, an option, a value or the keyboard given) goes on a link: a private connection to the app's
+# own address (at-spi2-atk's, see link_address), never on Ember's own, which only reads. A holder process (see
+# hold_main) keeps each link open, with nothing more sent on it, until the app is gone or shows no modal window any
+# more (nothing of it waits on the link's request then); a link closed earlier is what hangs the app.
+import array  # noqa: E402
+import select  # noqa: E402
+import socket  # noqa: E402
+import subprocess  # noqa: E402
+
+Gio = GLib = None
+if Atspi is not None:
+    try:
+        from gi.repository import Gio, GLib
+    except Exception:
+        Gio = GLib = None
+
+# The requests that go on a link: (D-Bus interface, method, argument types, answer types).
+LINK_CALLS = {
+    "DoAction": ("org.a11y.atspi.Action", "DoAction", "(i)", "(b)"),
+    "SetTextContents": ("org.a11y.atspi.EditableText", "SetTextContents", "(s)", "(b)"),
+    "InsertText": ("org.a11y.atspi.EditableText", "InsertText", "(isi)", "(b)"),
+    "SelectChild": ("org.a11y.atspi.Selection", "SelectChild", "(i)", "(b)"),
+    "ClearSelection": ("org.a11y.atspi.Selection", "ClearSelection", "()", "(b)"),
+    "AddRowSelection": ("org.a11y.atspi.Table", "AddRowSelection", "(i)", "(b)"),
+    "RemoveRowSelection": ("org.a11y.atspi.Table", "RemoveRowSelection", "(i)", "(b)"),
+    "GrabFocus": ("org.a11y.atspi.Component", "GrabFocus", "()", "(b)"),
+    "CurrentValue": ("org.freedesktop.DBus.Properties", "Set", "(ssv)", "()"),
+}
+ROOT_PATH = "/org/a11y/atspi/accessible/root"
+# at-spi2-atk answers an action before doing it, and the rest once done: no answer by then is a busy app.
+LINK_TIMEOUT_MS = CALL_TIMEOUT_MS
+# How long the holder may take to say it has a link (it starts with the first one), well within the time Ember gives a
+# request (5 s): one that takes longer is let be, and the link kept here (see hold_link).
+HOLDER_START_S = 2.0
+# The holder looks at the apps whose links it keeps this often (the first look a while after a link came), each look
+# waiting this long for an answer; links go once their app shows no modal window on this many looks in a row.
+HOLD_LOOK_S = 1.0
+HOLD_ASK_MS = 500
+HOLD_CLEAR_LOOKS = 2
+# The holder ends after this long with no link to keep (the sidecar starts a new one for its next link).
+HOLD_IDLE_S = 30.0
+# AT-SPI's state numbers (AtspiStateType) for a modal window that shows.
+STATE_MODAL = 16
+STATE_SHOWING = 25
+LINK_APPS = 256  # apps whose own address is remembered
+HOLDER_SCRIPT = os.path.abspath(__file__)
+
+A11Y_BUS = []  # the accessibility bus (a Gio connection of the links' own), once connected
+LINK_ADDRESSES = OrderedDict()  # app bus name -> its own address ("": it has none)
+HOLDER = []  # the holder process and the socket links are handed to it on, once started
+KEPT = []  # links the holder couldn't take: kept open here instead, until this process ends
+
+
+def a11y_bus():
+    """The accessibility bus, where an app is asked for its own address: a Gio connection kept for this (libatspi's
+    isn't to be had). Its address as libatspi finds it: AT_SPI_BUS_ADDRESS, else asked of the session bus (never one
+    started for it). None without one."""
+    if A11Y_BUS and not A11Y_BUS[0].is_closed():
+        return A11Y_BUS[0]
+    del A11Y_BUS[:]
+    flags = Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION
+    address = os.environ.get("AT_SPI_BUS_ADDRESS")
+    if not address:
+        session_address = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+        if not session_address:
+            return None
+        session = Gio.DBusConnection.new_for_address_sync(session_address, flags, None, None)
+        try:
+            address = session.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None,
+                                        GLib.VariantType("(s)"), Gio.DBusCallFlags.NO_AUTO_START, LINK_TIMEOUT_MS,
+                                        None).unpack()[0]
+        finally:
+            session.close_sync(None)
+    A11Y_BUS.append(Gio.DBusConnection.new_for_address_sync(address, flags, None, None))
+    return A11Y_BUS[0]
+
+
+def link_address(bus_name):
+    """App `bus_name`'s own address (at-spi2-atk's, the one libatspi reads it on), asked once over the accessibility
+    bus; "" where it has none (Qt's bridge, an app that couldn't make one) or can't be asked now (asked again next time)."""
+    address = LINK_ADDRESSES.get(bus_name)
+    if address is not None:
+        return address
+    try:
+        bus = a11y_bus()
+    except Exception:
+        bus = None
+    if bus is None:
+        return ""
+    try:
+        address = bus.call_sync(bus_name, ROOT_PATH, "org.a11y.atspi.Application", "GetApplicationBusAddress", None,
+                                GLib.VariantType("(s)"), Gio.DBusCallFlags.NO_AUTO_START, LINK_TIMEOUT_MS,
+                                None).unpack()[0]
+    except GLib.Error as err:
+        if timed_out_call(err):
+            return ""
+        address = ""  # no such method (or app): one with no address of its own
+    except Exception:
+        return ""
+    LINK_ADDRESSES[bus_name] = address
+    while len(LINK_ADDRESSES) > LINK_APPS:
+        LINK_ADDRESSES.popitem(last=False)
+    return address
+
+
+def timed_out_call(err):
+    """Is Gio error `err` a call that got no answer in time?"""
+    return getattr(err, "domain", None) == "g-io-error-quark" and getattr(err, "code", None) == Gio.IOErrorEnum.TIMED_OUT
+
+
+def open_link(acc):
+    """A link to acc's app (see the section's comment): (its Gio connection, the app's bus name, process id and own
+    address), or None where there can be none (no Gio, an app with no address of its own, one that isn't the process
+    libatspi names, a stand-in): the request then goes on Ember's own connection, as libatspi sends it."""
+    if Gio is None or not native(acc):
+        return None
+    bus_name = None
+    try:
+        bus_name = acc.app.bus_name
+        address = link_address(bus_name)
+        if not address:
+            return None
+        pid = acc.get_process_id()
+        conn = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT, None, None)
+    except Exception:
+        LINK_ADDRESSES.pop(bus_name, None)  # the app may have gone: asked again next time
+        return None
+    try:
+        peer = conn.get_stream().get_socket().get_credentials().get_unix_pid()
+    except Exception:
+        peer = None
+    if peer != pid:
+        conn.close_sync(None)
+        LINK_ADDRESSES.pop(bus_name, None)
+        return None
+    return conn, bus_name, pid, address
+
+
+def holder():
+    """The holder's control socket (see hold_main); the process is started with the first link. None if it can't be."""
+    if HOLDER and HOLDER[0].poll() is None:
+        return HOLDER[1]
+    drop_holder()
+    mine = theirs = None
+    try:
+        mine, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        # Its own session: it outlives this process (killed when a request takes too long) while it keeps links.
+        proc = subprocess.Popen([sys.executable, HOLDER_SCRIPT, "--hold", str(theirs.fileno())],
+                                pass_fds=(theirs.fileno(),), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True, cwd="/")
+    except Exception:
+        if mine is not None:
+            mine.close()
+        return None
+    finally:
+        if theirs is not None:
+            theirs.close()
+    HOLDER.extend([proc, mine])
+    return mine
+
+
+def drop_holder():
+    """Stops handing links to the holder (it keeps those it has, and ends once they are let go)."""
+    if HOLDER:
+        try:
+            HOLDER[1].close()
+        except Exception:
+            pass
+    del HOLDER[:]
+
+
+def hold_link(conn, pid, address):
+    """Hands link `conn` (to app `pid`, at its own `address`) to the holder, which keeps it open from now on: True once
+    it says it has it. Else it is kept open here (KEPT) until this process ends, and False."""
+    fd = conn.get_stream().get_socket().get_fd()
+    note = json.dumps({"pid": pid, "address": address}).encode("utf-8")
+    for _ in range(2):
+        ctrl = holder()
+        if ctrl is None:
+            break
+        try:
+            ctrl.sendmsg([note], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd]))])
+            answer = ctrl.recv(16) if select.select([ctrl], [], [], HOLDER_START_S)[0] else None
+        except OSError:
+            answer = b""
+        if answer == b"ok":
+            return True
+        drop_holder()
+        if answer is None:
+            break  # too slow: it keeps what it took, and the next link goes to a new one
+        # It had ended (idle, see hold_main) without taking it: a new one takes it (this end is still open).
+    KEPT.append(conn)
+    return False
+
+
+def on_link(acc, method, args, fallback):
+    """Request `method` (see LINK_CALLS) with `args` of acc (an element, or one of pyatspi's interfaces of it), sent on a
+    link (see open_link) and answered as libatspi answers it (for an action: whether it was taken); `fallback()`
+    (libatspi's own call, on Ember's connection) where there can be no link. The link is handed to the holder before
+    anything is sent on it. An app that doesn't answer in time may still do it."""
+    target = getattr(acc, "obj", acc)
+    link = open_link(target)
+    if link is None:
+        return fallback()
+    conn, bus_name, pid, address = link
+    held = hold_link(conn, pid, address)
+    iface, member, types, answer = LINK_CALLS[method]
+    if method == "CurrentValue":
+        args = ("org.a11y.atspi.Value", "CurrentValue", GLib.Variant("d", float(args[0])))
+    try:
+        reply = conn.call_sync(bus_name, target.path, iface, member, GLib.Variant(types, tuple(args)),
+                               GLib.VariantType(answer), Gio.DBusCallFlags.NO_AUTO_START, LINK_TIMEOUT_MS, None)
+    except GLib.Error as err:
+        if timed_out_call(err):
+            raise RuntimeError("the app did not answer in time (it may still do it)")
+        raise RuntimeError(err.message)
+    finally:
+        if held:
+            try:
+                conn.close_sync(None)  # this end only: the holder's stays open
+            except Exception:
+                pass
+    out = reply.unpack()
+    return out[0] if out else True
+
+
+def hold_main(fd):
+    """The holder: takes links from the sidecar on control socket `fd` (one per message, with its app's process id and
+    own address; answered "ok") and keeps them open, with nothing sent on them, until their app is gone or no modal
+    window of it shows on HOLD_CLEAR_LOOKS looks in a row (see look_at_app): then they are let go. Ends once none is
+    left and the sidecar has gone (the control socket closed) or sent none for HOLD_IDLE_S (it starts a new one)."""
+    ctrl = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET, 0, fd)
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_NOFILE, (resource.getrlimit(resource.RLIMIT_NOFILE)[1],) * 2)
+    except Exception:
+        pass
+    apps = {}  # app pid -> {"fds", "address", "since" (its latest link came), "clear" (looks in a row), "ask"}
+    listening = True
+    look_at = time.monotonic() + HOLD_LOOK_S
+    while listening or apps:
+        wait = max(0.0, look_at - time.monotonic()) if apps else HOLD_IDLE_S
+        if listening:
+            if select.select([ctrl], [], [], wait)[0]:
+                listening = take_link(ctrl, apps)
+            elif not apps:
+                return  # idle
+        else:
+            time.sleep(wait)
+        if apps and time.monotonic() >= look_at:
+            for pid in list(apps):
+                if look_at_app(pid, apps[pid]):
+                    let_go(apps.pop(pid))
+            look_at = time.monotonic() + HOLD_LOOK_S
+
+
+def take_link(ctrl, apps):
+    """Takes one link from the control socket into `apps` (see hold_main) and says so; False once the sidecar has gone."""
+    try:
+        data, anc, _, _ = ctrl.recvmsg(4096, socket.CMSG_SPACE(4 * array.array("i").itemsize))
+    except OSError:
+        return False
+    fds = array.array("i")
+    for level, kind, payload in anc:
+        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+            fds.frombytes(payload[:len(payload) - len(payload) % fds.itemsize])
+    if not data and not fds:
+        return False
+    try:
+        note = json.loads(data.decode("utf-8"))
+        pid, address = int(note["pid"]), str(note.get("address") or "")
+    except Exception:
+        pid, address = 0, ""  # whose it is can't be told: kept until it closes at the app's end
+    entry = apps.setdefault(pid, {"fds": [], "address": address, "since": 0.0, "clear": 0, "ask": None})
+    entry["fds"].extend(fds)
+    entry["since"] = time.monotonic()
+    entry["clear"] = 0
+    try:
+        ctrl.send(b"ok")
+    except OSError:
+        pass
+    return True
+
+
+def look_at_app(pid, entry):
+    """May app `pid`'s links (`entry`, see hold_main) be let go? Yes once it is gone (its end of every link closed), or
+    once it shows no modal window on HOLD_CLEAR_LOOKS looks in a row, the first HOLD_LOOK_S after its latest link
+    came: the app then waits on none of their requests (a modal dialog shows while one runs, and a busy app doesn't
+    answer)."""
+    entry["fds"] = [fd for fd in entry["fds"] if link_open(fd)]
+    if not entry["fds"] or (pid and not process_alive(pid)):
+        return True
+    if not pid or time.monotonic() - entry["since"] < HOLD_LOOK_S:
+        return False
+    entry["clear"] = entry["clear"] + 1 if modal_shown(entry) is False else 0
+    return entry["clear"] >= HOLD_CLEAR_LOOKS
+
+
+def process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    return True
+
+
+def link_open(fd):
+    """Is link `fd` still open at the app's end? What the app sends on it is read and dropped; one it closed is closed
+    here too."""
+    poller = select.poll()
+    poller.register(fd, select.POLLIN)
+    try:
+        for _, events in poller.poll(0):
+            if events & (select.POLLHUP | select.POLLERR | select.POLLNVAL) or not os.read(fd, 65536):
+                os.close(fd)
+                return False
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def modal_shown(entry):
+    """Does the app (`entry`, see hold_main) show a modal window: True, False, or None where that can't be told (it
+    didn't answer in time)? Asked on a connection of the holder's own to the app's own address, which no request that
+    runs the app's code goes on, so it never waits on the app; closed with the app's links (see let_go)."""
+    if Gio is None or not entry["address"]:
+        return None
+    try:
+        if entry["ask"] is None or entry["ask"].is_closed():
+            entry["ask"] = Gio.DBusConnection.new_for_address_sync(
+                entry["address"], Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT, None, None)
+        ask = entry["ask"]
+        windows = ask.call_sync(None, ROOT_PATH, "org.a11y.atspi.Accessible", "GetChildren", None,
+                                GLib.VariantType("(a(so))"), Gio.DBusCallFlags.NO_AUTO_START, HOLD_ASK_MS,
+                                None).unpack()[0]
+        for _, path in windows[:MAX_CHILDREN]:
+            bits = ask.call_sync(None, path, "org.a11y.atspi.Accessible", "GetState", None, GLib.VariantType("(au)"),
+                                 Gio.DBusCallFlags.NO_AUTO_START, HOLD_ASK_MS, None).unpack()[0]
+            if shows_modal(bits):
+                return True
+    except Exception:
+        return None
+    return False
+
+
+def shows_modal(bits):
+    """Do AT-SPI state bits (GetState's answer: 32-bit words) say a modal window that shows?"""
+    def has(n):
+        return len(bits) > n // 32 and bool(bits[n // 32] >> (n % 32) & 1)
+    return has(STATE_MODAL) and has(STATE_SHOWING)
+
+
+def let_go(entry):
+    """Closes an app's links (see hold_main) and the holder's own connection to it."""
+    for fd in entry["fds"]:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    if entry["ask"] is not None:
+        try:
+            entry["ask"].close_sync(None)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- protocol
 
 def configure_atspi():
@@ -3873,4 +4650,7 @@ def main():
 if __name__ == "__main__":
     # Keep stdout for protocol messages only.
     os.environ.setdefault("NO_AT_BRIDGE", "1")
-    main()
+    if sys.argv[1:2] == ["--hold"]:
+        hold_main(int(sys.argv[2]))  # the holder of links (see on_link)
+    else:
+        main()

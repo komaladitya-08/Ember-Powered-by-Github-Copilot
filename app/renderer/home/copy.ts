@@ -131,6 +131,12 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
       if (e.phase === "done") return { tag: "Finished", cls: "ok", what: String(e.summary ?? e.goal ?? "") };
       return { tag: e.phase === "cancelled" ? "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? e.summary : undefined };
     case "decision":
+      // Several cells filled with one question (fill_cells): one line for them all, on the last cell's decision.
+      if (typeof e.batch === "number") {
+        if (e.at !== e.batch - 1 || (e.batchVerdict !== "ask" && e.batchVerdict !== "deny")) return null;
+        const fill = [`Fill ${e.batch} cells (your keyboard)`, where].filter(Boolean).join(" ");
+        return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? e.batchReason : undefined };
+      }
       if (e.verdict === "allow") return null; // the action line that follows says it
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: e.reason };
     case "confirm":
