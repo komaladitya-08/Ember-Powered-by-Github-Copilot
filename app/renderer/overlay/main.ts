@@ -57,6 +57,8 @@ let stageShown = false;
 let drawnAt: { ember: { x: number; y: number }; cursor: { x: number; y: number } } | null = null;
 let lastInteractive = "";
 let taskRects: Rect[] = [];
+/** Ember's body while it holds still beside a control or asks (it catches clicks then), in this overlay's coordinates. */
+let bodyRect: Rect | null = null;
 let interactiveDirty = true;
 let bubbleShown = false;
 /** Ember's handle in the corner, in this overlay's coordinates (null: not on this display). */
@@ -331,10 +333,16 @@ function showStage(on: boolean): void {
   canvas.style.visibility = on ? "visible" : "hidden";
 }
 
+function setBody(r: Rect | null): void {
+  if (JSON.stringify(r) === JSON.stringify(bodyRect)) return;
+  bodyRect = r;
+  interactiveDirty = true;
+}
+
 function reportInteractive(): void {
   if (!interactiveDirty) return;
   interactiveDirty = false;
-  const rects = [...bubble.interactiveRects(), ...taskRects];
+  const rects = [...bubble.interactiveRects(), ...taskRects, ...(bodyRect ? [bodyRect] : [])];
   const key = JSON.stringify(rects);
   if (key !== lastInteractive) { lastInteractive = key; api.setInteractive(rects); }
 }
@@ -409,6 +417,10 @@ function draw(now: number): void {
     // Conversation section has its words); a question stays, wherever it must go.
     const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:"));
     if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows)) interactiveDirty = true;
+    // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
+    // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on
+    // Ember never lands on what it hides. Following the cursor, it lets them through.
+    setBody(f || (showBubble && asks) ? { x: Math.round(lx - size * 0.45), y: Math.round(ly - size * 0.55), width: Math.round(size * 0.9), height: Math.round(size * 1.05) } : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;
@@ -417,6 +429,7 @@ function draw(now: number): void {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);
     drawnAt = null;
+    setBody(null);
   }
   bubble.setVisible(showBubble);
   if (showBubble !== bubbleShown) { bubbleShown = showBubble; interactiveDirty = true; }

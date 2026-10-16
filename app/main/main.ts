@@ -406,8 +406,10 @@ function start(): void {
    * Focus goes back to `back` (the window that had it, Ember's settings or quit question included) while it is still
    * up; else to the user's window, or, when that has gone too, to the topmost app window that isn't Ember's.
    */
+  /** Windows on screen, bottom to top. */
+  const shownWindows = () => x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
   const giveFocusBack = (back: number) => {
-    const shown = x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
+    const shown = shownWindows();
     if (back && shown.some(w => w.client === back)) { xinputRef?.activate(back); return; }
     const apps = shown.filter(w => w.pid !== process.pid);
     const to = apps.some(w => w.client === userWindow) ? userWindow : apps.at(-1)?.client ?? userWindow;
@@ -1114,7 +1116,16 @@ function start(): void {
     const deskView = new DeskView(log.child("desk-view"), on => {
       deskInControl = on;
       overlay?.setState({ tasks: on ? [] : lastState.tasks });
-    }, { handleBounds: () => handle?.bounds ?? null });
+    }, {
+      handleBounds: () => handle?.bounds ?? null,
+      // Hand back returns the keyboard to the window the user was in. The click on "Take over" may already have given
+      // the view the keyboard: then it is the topmost app window (the one they were in, raised when they used it).
+      userFocus: () => {
+        const had = focusNow();
+        const back = had.ember ? shownWindows().filter(w => w.pid !== process.pid).at(-1)?.client ?? 0 : had.id;
+        return () => giveFocusBack(back);
+      },
+    });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;
     // A desk whose display died is gone: the next desk task starts a new one.

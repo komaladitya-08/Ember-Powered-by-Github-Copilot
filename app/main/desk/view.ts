@@ -90,12 +90,17 @@ export class DeskView {
   private buttons = new Set<number>();
   /** Keys were lent to characters the desk's keyboard lacks: they get their nothing back later. */
   private lentKeys = false;
+  /** Gives the keyboard back to where the user was before taking over (see `userFocus`). */
+  private focusBack: (() => void) | null = null;
 
   /**
    * `handleBounds`: where Ember's handle is now (global DIP), so the view keeps clear of it (the card without a
    * compositor is wider than the pill); the pill's place when not given.
+   * `userFocus`: called as the user takes over; what it returns gives the keyboard back to their window on hand back,
+   * when the view still has it.
    */
-  constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined, private o: { lingerMs?: number; handleBounds?: () => Box | null } = {}) {
+  constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined,
+    private o: { lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
@@ -209,12 +214,20 @@ export class DeskView {
       this.onControl(on);
       if (on) this.clearRestore(); else this.armRestore();
     }
+    const focusBack = changed && !on ? this.focusBack : null;
+    if (!on) this.focusBack = null;
     if (!win) return;
     if (changed) {
       const b = win.getBounds();
       // Grows up and to the right from its bottom-left corner, as large as the screen allows, staying on it.
       win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea, this.handle()));
-      if (on) win.focus();
+      if (on) {
+        try { this.focusBack = this.o.userFocus?.() ?? null; } catch { this.focusBack = null; }
+        win.focus();
+      } else if (focusBack && win.isFocused()) {
+        // Handed back: the user's next keys go to their own window, not to a view that no longer takes them.
+        try { focusBack(); } catch { /* their window may be gone */ }
+      }
     }
     // Always, so the view never shows the wrong button (e.g. after it was reopened).
     win.webContents.send(DESK.mode, { control: on });

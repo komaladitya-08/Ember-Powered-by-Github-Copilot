@@ -30,6 +30,7 @@ vi.mock("electron", async () => {
     showInactive() { this.visible = true; }
     hide() { this.visible = false; }
     focus() { this.focused = true; }
+    isFocused() { return this.focused; }
     getBounds() { return this.bounds; }
     setBounds(b: typeof this.bounds) { this.bounds = b; }
     close() { this.destroyed = true; this.visible = false; this.emit("closed"); }
@@ -192,6 +193,27 @@ describe("desk view", () => {
       // Ctrl and Alt are let go on the desk; the reserved key was never pressed there.
       expect(log).toEqual(["key Alt_L up", "key Control_L up"]);
     }
+  });
+
+  it("gives the keyboard back to the user's window on hand back, unless they already went elsewhere", () => {
+    const given: string[] = [];
+    let n = 0;
+    view = new DeskView(quiet, () => undefined, { userFocus: () => { const id = ++n; given.push(`took ${id}`); return () => given.push(`back ${id}`); } });
+    open();
+    const w = win as Win & { focused: boolean };
+    send(DESK.takeOver);
+    expect(w.focused).toBe(true);
+    send(DESK.handBack);
+    // The user clicked into another window while in control: theirs to keep.
+    send(DESK.takeOver);
+    w.focused = false;
+    send(DESK.handBack);
+    // Handed back by the kill switch with the view focused, then nothing left to give back.
+    send(DESK.takeOver);
+    w.focused = true;
+    view.handBack();
+    view.handBack();
+    expect(given).toEqual(["took 1", "back 1", "took 2", "took 3", "back 3"]);
   });
 
   it("stays up while any desk task works, and hides a little after the last one (or after the user hands back)", () => {

@@ -112,11 +112,18 @@ export function keyLabel(key: string): string {
 export function describeEntry(e: ActivityEntry): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
   const control = e.element ? (e.element.name ? `“${e.element.name}”` : ROLE[e.element.role] ?? e.element.role) : e.value ? `“${e.value}”` : "";
-  const target = [control, e.app ? `in ${friendlyApp(e.app)}` : ""].filter(Boolean).join(" ");
+  const where = e.app ? `in ${friendlyApp(e.app)}` : "";
+  const target = [control, where].filter(Boolean).join(" ");
+  const chosen = typeof e.value === "string" && e.value ? e.value : "";
   // Keys say which ("Press Ctrl+S in Mousepad"): the field they went to adds nothing.
   const what = e.kind === "keys"
-    ? [typeof e.value === "string" && e.value ? `Press ${keyLabel(e.value)}` : "Press keys", e.app ? `in ${friendlyApp(e.app)}` : ""].filter(Boolean).join(" ")
-    : `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
+    ? [chosen ? `Press ${keyLabel(chosen)}` : "Press keys", where].filter(Boolean).join(" ")
+    // The option chosen, and what it was chosen for: "Choose “Vegetarian” for “Meal” in Firefox".
+    : e.kind === "select" && chosen && e.element
+      ? [`Choose “${chosen}”`, e.element.name ? `for “${e.element.name}”` : "", where].filter(Boolean).join(" ")
+      // A guide step the user did themselves.
+      : e.kind === "user_clicked" ? `You clicked ${target || "it"}`
+        : `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
   switch (e.event) {
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };
