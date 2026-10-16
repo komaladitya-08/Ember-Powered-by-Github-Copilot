@@ -311,12 +311,15 @@ function start(): void {
   let handle: HandleWindow | null = null;
   let greetTimer: NodeJS.Timeout | null = null;
 
-  let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
+  // The handle says Ready only once Copilot is connected.
+  let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null, idle: "Not connected" };
   let confirmer: Confirmer | null = null;
   // While the user works on Ember's desk, the task cards stay out of the enlarged view's way.
   let deskInControl = false;
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
+    // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
+    if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
   };
@@ -378,7 +381,7 @@ function start(): void {
       { type: "separator" },
       { label: label("Settings…", "Control+Alt+E"), click: showHome },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
-      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { overlay?.setHidden(!hidden); presenceChanged(); } },
+      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
       { label: "Quit Ember", click: () => { void quitEmber(); } },
     ]).popup({ window: handle.win });
@@ -465,6 +468,8 @@ function start(): void {
   const captureContext = () => { callContext = perception && consented() ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
+    // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
+    if (overlay?.isHidden() && !shownForAnswer) { shownForAnswer = true; overlay.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 1.5 s.
@@ -507,6 +512,7 @@ function start(): void {
     hideIfStill(bubble, 3000);
   };
   let lastAskByVoice = false;
+  let shownForAnswer = false;
   /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
   const statusBy: { borrow: string | null; listen: string | null; mic: string | null } = { borrow: null, listen: null, mic: null };
   const setStatus = (owner: keyof typeof statusBy, text: string | null) => {
@@ -670,7 +676,7 @@ function start(): void {
   ipcMain.handle(IPC.presence, guard(presence));
   ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
     const want = (p && typeof p === "object" ? p : {}) as { hidden?: unknown; paused?: unknown };
-    if (typeof want.hidden === "boolean") overlay?.setHidden(want.hidden);
+    if (typeof want.hidden === "boolean") { shownForAnswer = false; overlay?.setHidden(want.hidden); }
     if (typeof want.paused === "boolean") { followPaused = want.paused; overlay?.setPaused(followPaused); }
     broadcast(IPC.presenceChanged, presence());
     return presence();

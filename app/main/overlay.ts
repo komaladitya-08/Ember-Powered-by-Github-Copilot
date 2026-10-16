@@ -85,7 +85,10 @@ export class OverlayManager {
     return this.hidden;
   }
 
+  private paused = false;
+
   setPaused(on: boolean): void {
+    this.paused = on;
     this.follower.setPaused(on);
   }
 
@@ -123,7 +126,8 @@ export class OverlayManager {
       // Otherwise it follows the cursor again.
       const c = this.cursor();
       const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
-      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? here() : null);
+      // ("Stay put": it answers where it already is.)
+      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }

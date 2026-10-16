@@ -7,6 +7,7 @@
  * desk counts as gone.
  */
 
+import fs from "node:fs";
 import { MessageChannel, Worker, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
 import type { X11, X11Image } from "../x11";
 import type { XInput } from "../hands/input";
@@ -59,6 +60,17 @@ if (child) {
 `;
 
 interface Reply { id: number; v?: unknown; e?: string; async?: boolean }
+
+/** The helper's scheduler state (R running, S sleeping, T stopped…) and CPU time so far, from /proc. */
+function helperState(pid: number): { state: string; cpu: number } | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return { state: f[0], cpu: Number(f[11]) + Number(f[12]) };
+  } catch {
+    return null;
+  }
+}
 
 export class DeskAgent {
   /** [0]: an answer is waiting; [1]: the helper is gone. */
@@ -125,7 +137,9 @@ export class DeskAgent {
     const id = ++this.seq;
     Atomics.store(this.sig, 0, 0);
     this.port.postMessage({ id, t: target, m: method, a: args });
-    const deadline = Date.now() + this.timeoutMs;
+    const start = Date.now();
+    let deadline = start + this.timeoutMs;
+    let cpu = this.pid ? helperState(this.pid)?.cpu : undefined;
     for (;;) {
       const r = receiveMessageOnPort(this.port)?.message as Reply | undefined;
       if (r) {
@@ -134,7 +148,17 @@ export class DeskAgent {
         return r.v as T;
       }
       if (Atomics.load(this.sig, 1)) throw new Error(DESK_STOPPED);
-      const left = deadline - Date.now();
+      let left = deadline - Date.now();
+      if (left <= 0) {
+        // Slow but working (a busy machine): a little longer, up to 5 s. Not moving at all (a stopped helper,
+        // a stopped X server) is hung.
+        const now = this.pid ? helperState(this.pid) : null;
+        if (now && Date.now() - start < 5000 && (now.state === "R" || (cpu !== undefined && now.cpu > cpu))) {
+          cpu = now.cpu;
+          deadline = Math.min(start + 5000, Date.now() + this.timeoutMs);
+          left = deadline - Date.now();
+        }
+      }
       if (left <= 0) {
         // A hung helper (a stopped X server) would hang Ember with it: it is ended, and the desk with it.
         this.kill();

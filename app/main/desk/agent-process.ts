@@ -102,7 +102,14 @@ function main(): void {
     if (process.connected) process.send!({ ready: false, error }, () => process.exit(1)); else process.exit(1);
     return;
   }
+  // Loaded now, while nothing waits on this thread: loading it at the first frame (a fraction of a second,
+  // more on a busy machine) would hold up the calls queued behind it.
   let sharp: typeof Sharp | null = null;
+  try {
+    sharp = requireCjs("sharp") as typeof Sharp;
+    sharp.concurrency(1); // a small picture a few times a second: one thread is plenty
+    sharp.cache(false);
+  } catch { /* loaded (or reported) at the first frame */ }
   const view = {
     /** The whole desk as a JPEG `width` pixels wide, and the active window's title (for the mini-view). */
     async snapshot(width: number, quality: number) {
