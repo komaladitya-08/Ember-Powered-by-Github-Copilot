@@ -95,8 +95,11 @@ export class DeskAgent {
     // The relay never keeps Ember running.
     this.worker.unref();
     this.worker.on("message", (m: Reply & { exit?: string; stderr?: string }) => {
-      if (m.exit !== undefined) this.ended(m.stderr ? `${m.exit}: ${m.stderr.trim()}` : m.exit);
-      else if (m.async) this.settle(m);
+      if (m.exit !== undefined) {
+        this.ended(m.stderr ? `${m.exit}: ${m.stderr.trim()}` : m.exit);
+        // The relay has reaped the helper (that is how it knows it exited): it can go now.
+        void this.worker.terminate();
+      } else if (m.async) this.settle(m);
     });
     this.worker.on("error", err => this.ended(`the desk's relay failed: ${err.message}`));
   }
@@ -187,8 +190,15 @@ export class DeskAgent {
     this.exitFns.clear();
     this.kill();
     this.rejectAll();
-    // The relay goes once the helper has gone (it reports the exit, which no one hears now).
-    setTimeout(() => void this.worker.terminate(), 1000).unref();
+    this.release();
+  }
+
+  /**
+   * The relay goes once it has reported the helper's exit: it reaps the helper first, so nothing is
+   * left defunct under Ember. A helper that won't die (stuck in the kernel) isn't waited for long.
+   */
+  private release(): void {
+    setTimeout(() => void this.worker.terminate(), 5000).unref();
   }
 
   /** Kills the helper, unless it has already exited (its id could then be someone else's). */
@@ -219,7 +229,8 @@ export class DeskAgent {
     const fns = [...this.exitFns];
     this.exitFns.clear();
     setImmediate(() => { for (const fn of fns) fn(why); });
-    void this.worker.terminate();
+    // Not now: a helper given up as hung has only just been killed, and the relay reaps it.
+    this.release();
   }
 }
 

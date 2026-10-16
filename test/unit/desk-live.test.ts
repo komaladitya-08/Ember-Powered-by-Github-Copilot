@@ -238,12 +238,56 @@ describe.skipIf(!available)("a real desk", () => {
     expect(await until(() => fs.readdirSync("/tmp/.X11-unix").length <= before)).toBe(true);
   });
 
+  const which = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`]).status === 0;
+  it.skipIf(!["metacity", "openbox", "xfwm4"].some(which) || !which("xev"))("starts once its window manager manages windows: one mapped at once is managed, and no test window is left", async () => {
+    const desk = make({ display: 243 });
+    const p = await place(desk, "profiles4");
+    // The window manager's test windows are gone.
+    expect(p.x11.clientWindows().map(w => w.title)).not.toContain("Ember's window manager check");
+    // (openbox 3.6 never manages a window mapped a few tens of milliseconds after it started.)
+    desk.run(["xev", "-event", "keyboard", "-geometry", "100x80+0+0"]);
+    expect(await until(() => p.x11.clientWindows().some(w => w.title === "Event Tester"))).toBe(true);
+    p.close();
+    desk.stop();
+  });
+
+  it("carries on without a window manager that never gets ready (3 s at most) or that exits at once", async () => {
+    const bin = path.join(dir, "fake-wm");
+    fs.mkdirSync(bin, { recursive: true });
+    const path0 = process.env.PATH;
+    const warned: { msg: string; f?: Record<string, unknown> }[] = [];
+    const log = { ...quiet, warn: (msg: string, f?: Record<string, unknown>) => { warned.push({ msg, f }); }, child: () => log } as unknown as Logger;
+    process.env.PATH = `${bin}:${path0}`;
+    try {
+      for (const [script, exited] of [["exec sleep 60", false], ["exit 1", true]] as const) {
+        fs.writeFileSync(path.join(bin, "metacity"), `#!/bin/sh\n${script}\n`, { mode: 0o755 }); // first choice: this one is used
+        warned.length = 0;
+        const desk = new DeskManager(log, { handOff: path.join(dir, "Ember"), display: 245, width: 320, height: 200, agent });
+        desks.push(desk);
+        const t0 = Date.now();
+        await desk.start();
+        const ms = Date.now() - t0;
+        expect(desk.alive()).toBe(true);
+        expect(warned).toEqual([{ msg: "desk.wm_not_ready", f: expect.objectContaining({ wm: "metacity", exited }) }]);
+        // How long the start waited for it: not at all for one that has exited.
+        const waited = warned[0].f!.ms as number;
+        if (exited) expect(waited).toBeLessThan(1000);
+        else { expect(waited).toBeGreaterThanOrEqual(3000); expect(ms).toBeLessThan(10_000); }
+        desk.stop();
+      }
+    } finally {
+      process.env.PATH = path0;
+    }
+  }, 30_000);
+
   it("kills what left the desk's process groups when it stops", async () => {
     const desk = make({ display: 252 });
     await desk.start();
     const id = desk.running!.env.EMBER_DESK_ID!;
     desk.run(["setsid", "-f", "sleep", "303"]);
-    expect(await until(() => deskProcesses(id).some(p => fs.readFileSync(`/proc/${p}/cmdline`, "utf8").includes("303")))).toBe(true);
+    // The sleep itself (setsid's own process, which has "303" in its arguments too, exits at once).
+    const cmdline = (p: number) => { try { return fs.readFileSync(`/proc/${p}/cmdline`, "utf8"); } catch { return ""; } };
+    expect(await until(() => deskProcesses(id).some(p => cmdline(p) === "sleep\u0000303\u0000"))).toBe(true);
     desk.stop();
     expect(await until(() => deskProcesses(id).length === 0, 3000)).toBe(true);
   });

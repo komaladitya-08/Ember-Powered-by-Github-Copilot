@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DESK_STOPPED, DeskAgent, deskInput, deskSnapshot } from "../../app/main/desk/agent";
-import { running } from "../../app/main/desk/desk";
+import { running, startTime } from "../../app/main/desk/desk";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-agent-test-"));
 const helper = path.join(dir, "helper.cjs");
@@ -102,13 +102,26 @@ describe("desk helper", () => {
     expect(await until(() => !running(a.pid))).toBe(true);
   });
 
+  it("reaps a helper it gave up on: a stopped one (SIGSTOP) leaves no defunct process behind", async () => {
+    const a = await start({ timeoutMs: 300 });
+    const pid = a.pid, born = startTime(pid);
+    expect(born).not.toBeNull();
+    process.kill(pid, "SIGSTOP");
+    expect(() => a.call("input", "move", [1, 1])).toThrow(DESK_STOPPED);
+    expect(a.alive).toBe(false);
+    // Out of the process table (reaped), not a zombie under Ember until Ember quits.
+    expect(await until(() => startTime(pid) !== born)).toBe(true);
+  });
+
   it("stops quietly: no more calls, no exit report, the helper gone", async () => {
     const a = await start();
     const why: string[] = [];
     a.onExit(w => why.push(w));
+    const born = startTime(a.pid);
     a.stop();
     expect(() => a.call("input", "move", [1, 1])).toThrow(DESK_STOPPED);
     expect(await until(() => !running(a.pid))).toBe(true);
+    expect(await until(() => startTime(a.pid) !== born)).toBe(true); // reaped
     await new Promise(r => setTimeout(r, 100));
     expect(why).toEqual([]);
   });

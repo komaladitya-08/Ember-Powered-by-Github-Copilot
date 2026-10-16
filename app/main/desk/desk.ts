@@ -392,11 +392,16 @@ export class DeskManager {
 
       const env: NodeJS.ProcessEnv = { ...baseEnv, DBUS_SESSION_BUS_ADDRESS: address };
       const wm = ["metacity", "openbox", "xfwm4"].find(c => which(c));
-      if (wm) this.track(spawn(wm, wm === "metacity" ? ["--replace", "--no-composite"] : [], { env, stdio: "ignore", detached: true }), wm);
+      let wmMs: number | null = null;
+      if (wm) {
+        const p = spawn(wm, wm === "metacity" ? ["--replace", "--no-composite"] : [], { env, stdio: "ignore", detached: true });
+        this.track(p, wm);
+        wmMs = await this.wmReady(agent, p, wm);
+      }
       if (!running(this.xvfb?.pid) || !agent.alive) throw new Error("the desk display didn't start");
 
       this.info = { display, width, height, env, handOff };
-      this.log.info("desk.started", { display, wm: wm ?? "none", ms: Date.now() - t0 });
+      this.log.info("desk.started", { display, wm: wm ?? "none", wmMs, ms: Date.now() - t0 });
       return this.info;
     } catch (err) {
       // Whatever had started goes again: no display, bus or cookie left behind.
@@ -426,6 +431,31 @@ export class DeskManager {
       return true;
     }
     throw new Error("the desk display didn't start");
+  }
+
+  /**
+   * Waits until the window manager manages new windows (see the helper's wm probe), 3 s at most: an app
+   * whose window is mapped while it is still starting could stay unmanaged and unseen (openbox 3.6).
+   * Not if it has exited (the desk then has none), and not with a helper that can't tell.
+   * The time it took; null if it didn't get ready.
+   */
+  private async wmReady(agent: DeskAgent, wm: ChildProcess, name: string): Promise<number | null> {
+    if (!agent.calls.wm?.includes("ready")) return null;
+    const t0 = Date.now();
+    try {
+      for (;;) {
+        if (agent.call<boolean>("wm", "ready")) return Date.now() - t0;
+        if (!running(wm.pid) || Date.now() - t0 >= 3000) {
+          this.log.warn("desk.wm_not_ready", { wm: name, exited: !running(wm.pid), ms: Date.now() - t0 });
+          return null;
+        }
+        await new Promise(r => setTimeout(r, 15));
+      }
+    } catch {
+      return null; // the helper has gone: the start fails just after
+    } finally {
+      try { if (agent.alive) agent.call("wm", "end"); } catch { /* gone meanwhile */ }
+    }
   }
 
   /** The desk died on its own (its display or its helper): everyone stops using it before anything else, then the rest is torn down. */
