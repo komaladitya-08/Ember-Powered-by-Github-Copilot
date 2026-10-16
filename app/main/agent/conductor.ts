@@ -47,6 +47,13 @@ export interface ConductorDeps {
   onAnswer?: (text: string) => void;
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
+  /**
+   * The runtime took a request and no turn began for it (see TurnWatch): the host says so and reconnects.
+   * Without it the conductor only says so.
+   */
+  onStuck?: () => void;
+  /** How long a request may wait for its turn to begin (TURN_START_MS). */
+  turnStartMs?: number;
 }
 
 export interface ConductorTasks {
@@ -124,6 +131,77 @@ export function within<T>(p: Promise<T>, ms: number): Promise<T | "timeout"> {
   return Promise.race([p.finally(() => clearTimeout(timer)), late]);
 }
 
+/** How long a request the runtime took may wait for its turn to begin (see TurnWatch). */
+export const TURN_START_MS = 20_000;
+/** Events of a turn under way: the model's (its first, assistant.turn_start, comes before the model is asked) and its tools'. */
+const IN_TURN = /^(assistant|tool|external_tool|permission|subagent|skill)\./;
+
+/**
+ * Notices a request the runtime accepted but never started a turn for: rarely, session.send returns and then
+ * nothing happens ("Thinking…" for ever) while the runtime still answers its health check. It waits while a
+ * request sent is still owed its turn and no turn is under way: the runtime holds a request sent during a turn
+ * until that turn ends, so a long turn never counts. Any event of the session is life and starts the wait again;
+ * a hook or a compaction under way gets six times as long. A slow model (its first token after a minute, a slow
+ * proxy) never counts either: its turn has begun by then. Fires once.
+ */
+export class TurnWatch {
+  /** Requests sent whose message hasn't come yet (the runtime sends one user.message per request, in order). */
+  private owed = 0;
+  /** A request's message came and its turn hasn't begun. */
+  private taken = false;
+  private inTurn = false;
+  /** Hooks and compaction under way (the runtime is at work before the turn). */
+  private readonly busy = new Set<string>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private over = false;
+
+  constructor(private readonly ms: number, private readonly onStuck: () => void) {}
+
+  /** A request is about to be sent (its message may come before session.send returns). */
+  sending(): void { this.owed++; }
+  /** session.send returned: the turn begins now, or when the one under way ends. */
+  sent(): void { this.check(); }
+  /** session.send failed: no turn comes for it. */
+  unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
+  /** Stop: the runtime drops the requests waiting. */
+  clear(): void { this.owed = 0; this.taken = false; this.check(); }
+  /** The session is let go: nothing fires any more. */
+  dispose(): void { this.over = true; this.disarm(); }
+
+  event(e: { type: string; agentId?: string; data?: unknown }): void {
+    if (this.over) return;
+    const t = e.type;
+    const id = (e.data as { hookInvocationId?: unknown } | undefined)?.hookInvocationId;
+    // A sub-agent's events are life, nothing more.
+    if (!e.agentId) {
+      if (t === "user.message") { this.owed = Math.max(0, this.owed - 1); this.taken = true; }
+      else if (t === "assistant.turn_end" || t === "assistant.idle") this.inTurn = false;
+      else if (t === "session.idle") { this.inTurn = false; this.taken = false; this.busy.clear(); }
+      // The runtime drops what was waiting (Stop does; an error may).
+      else if (t === "session.error" || t === "abort") { this.inTurn = false; this.taken = false; this.owed = 0; this.busy.clear(); }
+      else if (t === "hook.start") this.busy.add(`hook ${String(id)}`);
+      else if (t === "hook.end") this.busy.delete(`hook ${String(id)}`);
+      else if (t === "session.compaction_start") this.busy.add("compaction");
+      else if (t === "session.compaction_complete") this.busy.delete("compaction");
+      else if (IN_TURN.test(t)) { this.inTurn = true; this.taken = false; }
+    }
+    this.disarm();
+    this.check();
+  }
+
+  private check(): void {
+    if (this.over) return;
+    if (!(this.owed > 0 || this.taken) || this.inTurn) { this.disarm(); return; }
+    if (this.timer) return;
+    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.onStuck(); }, this.busy.size ? this.ms * 6 : this.ms);
+    this.timer.unref?.();
+  }
+
+  private disarm(): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  }
+}
+
 /** What Ember keeps in agent.json between runs. */
 export interface AgentState {
   conductorSessionId?: string;
@@ -172,6 +250,10 @@ export class Conductor {
   private stopping = false;
   /** A turn is in flight (sent, and no idle or error yet). */
   private busy = false;
+  /** Watches that each request sent gets its turn. */
+  private watch: TurnWatch | null = null;
+  /** No turn began for a request (TurnWatch): the session is being replaced, and nothing of it shows any more. */
+  private stuck = false;
 
   constructor(private deps: ConductorDeps) {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
@@ -223,7 +305,12 @@ export class Conductor {
     }
     const tools = await verifySessionTools(this.session, this.toolNames);
     d.log.info("conductor.tools", { tools });
+    const ms = d.turnStartMs ?? TURN_START_MS;
+    const watch = new TurnWatch(ms, () => this.notStarted(ms));
+    this.watch = watch;
     this.session.on(e => {
+      watch.event(e);
+      if (this.stuck) return;
       d.presenter.event(e as { type: string; data?: Record<string, unknown> });
       if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
       if (e.type === "assistant.message") {
@@ -251,9 +338,13 @@ export class Conductor {
     ];
     const prompt = parts.join("\n\n");
     this.busy = true;
+    const watch = this.watch;
+    watch?.sending();
     try {
       await session.send({ prompt });
+      watch?.sent();
     } catch (err) {
+      watch?.unsent();
       this.busy = false;
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
@@ -267,7 +358,23 @@ export class Conductor {
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
     if (this.session && this.busy) this.stopping = true;
+    // The runtime drops the requests waiting behind the turn: no turn is owed for them.
+    this.watch?.clear();
     await this.session?.abort();
+  }
+
+  /**
+   * The runtime took a request and no turn began for it within `ms` (TurnWatch), though it may still answer
+   * its health check: the host says so and reconnects (the conversation is resumed; the user asks again).
+   */
+  private notStarted(ms: number): void {
+    this.stuck = true;
+    this.busy = false;
+    this.stopping = false;
+    this.deps.log.warn("conductor.turn_not_started", { ms });
+    this.deps.onTurnEnd?.(true);
+    if (this.deps.onStuck) this.deps.onStuck();
+    else this.deps.presenter.fail("Copilot isn't answering. Ask me again in a moment.");
   }
 
   /** Another model from the next message on (no new session, the conversation stays). */
@@ -279,6 +386,8 @@ export class Conductor {
   async stop(): Promise<void> {
     const session = this.session;
     this.session = null;
+    this.watch?.dispose();
+    this.watch = null;
     if (session) await within(session.disconnect().catch(() => undefined), 3000);
   }
 

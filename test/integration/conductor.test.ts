@@ -40,7 +40,7 @@ afterAll(async () => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: { resume?: string | null } = {}) {
+function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: { resume?: string | null; turnStartMs?: number; onStuck?: () => void } = {}) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const conductor = new Conductor({
@@ -53,6 +53,8 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
     provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
     describeScreen,
     resume: o.resume,
+    turnStartMs: o.turnStartMs,
+    onStuck: o.onStuck,
   });
   return { conductor, settings };
 }
@@ -251,4 +253,24 @@ describe("the organisation's endpoint behind the system's proxy settings (host o
       lan.close();
     }
   }, 90000);
+  it("requests asked one after another (each waits for the turn before) are never taken for a turn that didn't begin, nor is Stop", async () => {
+    const states: Partial<EmberState>[] = [];
+    let stuck = 0;
+    const { conductor } = makeConductor(states, undefined, { turnStartMs: 1000, onStuck: () => { stuck++; } });
+    await conductor.start();
+    const before = mock.requests.length;
+    await conductor.ask("first question");
+    await conductor.ask("second question");
+    await conductor.ask("third question");
+    const asked = () => mock.requests.slice(before).map(r => JSON.stringify(r.messages.at(-1)?.content ?? ""));
+    for (let i = 0; i < 300 && !asked().some(m => m.includes("third question")); i++) await new Promise(r => setTimeout(r, 50));
+    expect(asked().filter(m => /(first|second|third) question/.test(m))).toHaveLength(3);
+    await conductor.ask("fourth question");
+    await conductor.ask("fifth question");
+    await conductor.abort();
+    await new Promise(r => setTimeout(r, 2500));
+    expect(stuck).toBe(0);
+    expect(states.some(s => s.bubble?.mood === "error")).toBe(false);
+    await conductor.stop();
+  }, 60000);
 });

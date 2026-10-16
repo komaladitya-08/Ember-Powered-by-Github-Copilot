@@ -8,6 +8,7 @@
  * dies (or hangs) and reconnects. Changing models doesn't restart anything.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
@@ -101,6 +102,10 @@ export interface HostOptions {
   resolveProxy?: (url: string) => Promise<string>;
   /** How often the runtime's health is checked (ms). */
   healthMs?: number;
+  /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
+  turnStartMs?: number;
+  /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
+  inotifyUsedUp?: () => boolean;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -132,6 +137,38 @@ const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrin
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
+/** The conversation's request was taken but its turn never began (TurnWatch). */
+const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
+/** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
+const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
+const NO_WATCHERS_DETAIL = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…";
+
+/**
+ * Whether this user's inotify instances are all in use (fs.inotify.max_user_instances: 128 on RHEL 8, and every
+ * app takes some). The Copilot runtime then takes requests but never begins them. Counted in `proc`: the
+ * instances held by processes of `uid`.
+ */
+export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+  try {
+    const max = Number(fs.readFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "utf8"));
+    if (!(max > 0)) return false;
+    let n = 0;
+    for (const pid of fs.readdirSync(proc)) {
+      if (!/^\d+$/.test(pid)) continue;
+      const dir = path.join(proc, pid, "fd");
+      try {
+        if (uid !== undefined && fs.statSync(path.join(proc, pid)).uid !== uid) continue;
+        for (const fd of fs.readdirSync(dir)) {
+          try { if (fs.readlinkSync(path.join(dir, fd)) === "anon_inode:inotify") n++; } catch { /* closed meanwhile */ }
+        }
+      } catch { /* gone, or another user's */ }
+    }
+    return n >= max;
+  } catch {
+    return false;
+  }
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const SOURCE_TEXT: Record<string, string> = { stored: "Ember's saved sign-in", environment: "a token from the environment", "github-cli": "the GitHub CLI sign-in" };
@@ -535,6 +572,7 @@ export class AgentHost {
           onDesk: hands.onDesk,
           onProgress: progress,
           onUsage: (i, o) => this.recordUsage(i, o),
+          ...(this.o.turnStartMs ? { limits: { turnStartMs: this.o.turnStartMs } } : {}),
         }, spec),
       }) : null;
       const tasks = this.tasks;
@@ -549,6 +587,15 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
+        // The runtime took a request and never began its turn, though it answers its health check: it is
+        // reconnected as a hung one is. The requests sent on it never run there (a reconnect resumes the conversation).
+        // Out of inotify instances, the runtime can't begin one (a reconnect doesn't help until apps close): Ember says so.
+        turnStartMs: this.o.turnStartMs,
+        onStuck: () => {
+          this.queued = [];
+          const full = (this.o.inotifyUsedUp ?? inotifyUsedUp)();
+          this.lost(gen, full ? "turn didn't start: inotify instances used up" : "turn didn't start", full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined);
+        },
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
@@ -679,16 +726,19 @@ export class AgentHost {
     this.health.unref?.();
   }
 
-  /** `gen`: the connection the failure belongs to (a newer one is left alone). */
-  private lost(gen: number, why: string): void {
+  /**
+   * `gen`: the connection the failure belongs to (a newer one is left alone). `says`: what the conversation
+   * tells the user (always shown), when it isn't that Copilot stopped; `detail`: what settings show then.
+   */
+  private lost(gen: number, why: string, says?: string, detail?: string): void {
     if (gen !== this.gen) return;
     this.o.log.error("agent.runtime_lost", { why });
     // Its tasks were cut off: they end as failed (the user stopped nothing), and the next conductor hears so.
     this.cutOff = true;
     // An answer cut off half-way says so, instead of vanishing.
-    if (this.presenter.busy || why === "send failed") this.presenter.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    if (says || this.presenter.busy || why === "send failed") this.presenter.fail(says ?? "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
     else this.presenter.reset();
-    this.setStatus({ phase: "error", detail: "Copilot stopped unexpectedly. Reconnecting…" });
+    this.setStatus({ phase: "error", detail: detail ?? (says ? "Copilot isn't answering. Reconnecting…" : "Copilot stopped unexpectedly. Reconnecting…") });
     const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
     if (recent.length >= 5) {
       this.setStatus({ phase: "error", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });

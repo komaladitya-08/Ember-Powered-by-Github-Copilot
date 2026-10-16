@@ -16,7 +16,7 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
-import { within } from "./conductor";
+import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { TOOL_STEPS, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
@@ -79,8 +79,11 @@ export interface WorkerDeps {
    * once the text is in the field.
    */
   clipboard?: PasteClipboard | TextClipboard;
-  /** Limits on one task (defaults: 150 tool calls, 20 minutes; a paste gets 10 s to show up in its field). */
-  limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number };
+  /**
+   * Limits on one task (defaults: 150 tool calls, 20 minutes; a paste gets 10 s to show up in its field; a request
+   * the runtime took gets TURN_START_MS for its turn to begin).
+   */
+  limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number };
 }
 
 export interface TaskSpec {
@@ -659,13 +662,30 @@ export class Worker {
         const where = t.title
           ? `\n<context untrusted="true">The user was in the window ${q(t.title, 160)}${t.app ? ` (app ${q(t.app, 60)})` : ""} when they asked; start there unless the goal needs another app.</context>`
           : "";
-        let wait = idle();
-        await session.send({ prompt: `Task: ${this.spec.goal}${where}` });
-        await wait;
-        if (!this.result && !this.halted) {
-          wait = idle();
-          await session.send({ prompt: "Call finish_task now with a short summary of what you did." });
+        // A request the runtime takes but never begins a turn for ends this task, plainly (the user can ask again);
+        // a slow model doesn't (its turn has begun). Other tasks and the conversation go on.
+        const watch = new TurnWatch(d.limits?.turnStartMs ?? TURN_START_MS, () => {
+          d.log.warn("worker.turn_not_started");
+          this.stopNow("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+        });
+        const unwatch = session.on(e => watch.event(e));
+        const send = async (prompt: string) => {
+          watch.sending();
+          try { await session.send({ prompt }); } catch (err) { watch.unsent(); throw err; }
+          watch.sent();
+        };
+        try {
+          let wait = idle();
+          await send(`Task: ${this.spec.goal}${where}`);
           await wait;
+          if (!this.result && !this.halted) {
+            wait = idle();
+            await send("Call finish_task now with a short summary of what you did.");
+            await wait;
+          }
+        } finally {
+          unwatch();
+          watch.dispose();
         }
       }
     } finally {

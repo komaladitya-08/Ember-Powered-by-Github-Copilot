@@ -29,6 +29,8 @@ const sim = vi.hoisted(() => ({
   onSend: (_session: any, _prompt: string) => undefined as void,
   /** A turn is running: a request sent now waits (its turn starts at session.nextTurn()). */
   holdTurns: false,
+  /** The runtime takes this request (send returns) but never begins its turn. */
+  stall: (_session: any, _prompt: string) => false as boolean,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -47,13 +49,17 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     // Like the runtime: a request's turn starts with its message (at once when nothing runs).
     async send(m: { prompt: string }) {
       this.sent.push(m.prompt); sim.onSend(this, m.prompt); if (sim.sendGate) await sim.sendGate;
-      if (sim.holdTurns) this.waiting.push(m.prompt); else this.emit("user.message", { content: m.prompt });
+      this.emit("pending_messages.modified");
+      if (sim.stall(this, m.prompt)) return "m";
+      if (sim.holdTurns) this.waiting.push(m.prompt); else this.begin(m.prompt);
       return "m";
     }
-    nextTurn() { const p = this.waiting.shift(); if (p !== undefined) this.emit("user.message", { content: p }); }
+    begin(prompt: string) { this.emit("user.message", { content: prompt }); this.emit("assistant.turn_start", { turnId: "0" }); }
+    nextTurn() { const p = this.waiting.shift(); if (p !== undefined) this.begin(p); }
     // Stop ends the turn, and the runtime drops the requests waiting behind it.
     async abort() { this.aborted++; this.waiting = []; }
-    async disconnect() { if (sim.stopHangs) await hang(); }
+    disconnected = false;
+    async disconnect() { this.disconnected = true; if (sim.stopHangs) await hang(); }
     async setModel() { /* nothing */ }
   }
   class FakeClient {
@@ -114,6 +120,7 @@ beforeEach(() => {
   sim.sendGate = null;
   sim.onSend = () => undefined;
   sim.holdTurns = false;
+  sim.stall = () => false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -1154,5 +1161,180 @@ describe("review round 6: a task's bubbles say whose they are", () => {
     expect(bubbles.at(-1)).toMatchObject({ thought: "Okay, I won't.", task: card.id });
     await asked;
     await host.stop();
+  });
+});
+
+describe("review round 7: a request the runtime takes but never begins", () => {
+  const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
+  const TASK_NOT_ANSWERING = "Copilot isn't answering, so I stopped this task. You can ask me again in a moment.";
+  /** Quits with tasks still running (their turns wind down on timers). */
+  const stopAll = async (host: AgentHost) => { const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done; };
+
+  it("no turn begins though the health check passes: Ember says so, reconnects, drops the request and resumes the conversation", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ healthMs: 5000, inotifyUsedUp: () => false });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const first = conductorSession();
+    sim.stall = () => true;
+    await host.ask("what time is it?", { target: { pid: 1, title: "Mail" }, text: "<screen>Mail</screen>" });
+    expect((host as any).queued).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…" });
+    expect(sim.clients).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NOT_ANSWERING });
+    expect(statuses.map(s => s.detail)).toContain("Copilot isn't answering. Reconnecting…");
+    // The stuck request never runs: it is no request's context any more.
+    expect((host as any).queued).toEqual([]);
+    sim.stall = () => false;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(sim.clients).toHaveLength(2);
+    expect(first.disconnected).toBe(true);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(sim.resumed).toEqual([first.sessionId]);
+    // The error stays to be read; asking again works on the new connection.
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NOT_ANSWERING });
+    await host.ask("what time is it?");
+    expect(conductorSession()).not.toBe(first);
+    expect(conductorSession().sent.at(-1)).toMatch(/what time is it\?$/);
+    expect((host as any).turn).toMatchObject({ words: "what time is it?", target: null });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sim.clients).toHaveLength(2);
+    await host.stop();
+  });
+
+  it("a slow model isn't cut: its turn began at 19 s and its first word comes a minute later", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(TOKEN, "stored");
+    const talk = conductorSession();
+    sim.stall = () => true;
+    await host.ask("summarise my week");
+    await vi.advanceTimersByTimeAsync(19_000);
+    talk.begin("summarise my week");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(screen().bubble).toMatchObject({ mood: "thinking" });
+    talk.emit("assistant.message_delta", { deltaContent: "A quiet week." });
+    talk.emit("assistant.message", { content: "A quiet week." });
+    talk.emit("assistant.turn_end", {});
+    talk.emit("session.idle", {});
+    expect(screen().bubble).toMatchObject({ thought: "A quiet week." });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a request asked during a long turn waits for it; one the runtime then never begins is noticed", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost({ inotifyUsedUp: () => false });
+    await host.start(TOKEN, "stored");
+    const talk = conductorSession();
+    await host.ask("read my screen");
+    sim.holdTurns = true;
+    await host.ask("and what time is it?");
+    // The first turn runs long (a slow tool, a slow model): the one waiting behind it isn't owed a turn yet.
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(sim.clients).toHaveLength(1);
+    talk.emit("assistant.turn_end", {});
+    talk.nextTurn();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sim.clients).toHaveLength(1);
+    // A third waits behind the second; the second ends and the runtime never begins the third.
+    await host.ask("thanks");
+    talk.emit("assistant.turn_end", {});
+    talk.emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(sim.clients).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: NOT_ANSWERING });
+    expect(sim.clients).toHaveLength(2);
+    await host.stop();
+  });
+
+  it("out of inotify instances (the runtime can't begin a turn then): Ember says so, in the bubble and in settings", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ inotifyUsedUp: () => true });
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    await host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again." });
+    expect(statuses.map(x => x.detail)).toContainEqual(expect.stringMatching(/fs\.inotify\.max_user_instances\) is used up/));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(sim.clients).toHaveLength(2);
+    await host.stop();
+  });
+
+  it("this user's inotify instances are counted in /proc against the system's limit", async () => {
+    const { inotifyUsedUp } = await import("../../app/main/agent/host");
+    const proc = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+    fs.mkdirSync(path.join(proc, "sys/fs/inotify"), { recursive: true });
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "3\n");
+    const fds = (pid: string, ...links: string[]) => { fs.mkdirSync(path.join(proc, pid, "fd"), { recursive: true }); links.forEach((l, i) => fs.symlinkSync(l, path.join(proc, pid, "fd", String(i)))); };
+    fds("10", "anon_inode:inotify", "/dev/null", "socket:[1]");
+    fds("11", "anon_inode:inotify");
+    fds("self");
+    const uid = process.getuid!();
+    expect(inotifyUsedUp(proc, uid)).toBe(false);
+    fds("12", "anon_inode:[eventfd]", "anon_inode:inotify");
+    expect(inotifyUsedUp(proc, uid)).toBe(true);
+    // Another user's processes don't count against this user's limit.
+    expect(inotifyUsedUp(proc, uid + 1)).toBe(false);
+    // No limit to read: nothing is blamed on it.
+    fs.rmSync(path.join(proc, "sys"), { recursive: true });
+    expect(inotifyUsedUp(proc, uid)).toBe(false);
+    fs.rmSync(proc, { recursive: true, force: true });
+  });
+
+  it("Stop drops the request waiting for its turn: nothing is owed, nothing reconnects", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    await host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(5000);
+    await host.abortAll();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sim.clients).toHaveLength(1);
+    expect(statuses.map(s => s.detail)).not.toContain("Copilot isn't answering. Reconnecting…");
+    await host.stop();
+  });
+
+  it("a task whose turn never begins fails plainly and lets go of its session; the other task and the conversation go on", async () => {
+    vi.useFakeTimers();
+    sim.stall = (s, prompt) => s.sessionId.startsWith("ember-task-") && prompt.includes("the stuck one");
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const stuck = host.tasks!.start("the stuck one");
+    const fine = host.tasks!.start("the fine one");
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(host.tasks!.get(stuck.id)?.status).toBe("running");
+    // 20 s, then the aborted turn's grace.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(host.tasks!.get(stuck.id)).toMatchObject({ status: "failed", result: { success: false, summary: TASK_NOT_ANSWERING } });
+    const session = sim.sessions.find(s => s.sessionId === `ember-task-${stuck.id}`);
+    expect(session.aborted).toBeGreaterThan(0);
+    expect(session.disconnected).toBe(true);
+    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: failed. ${TASK_NOT_ANSWERING}`);
+    expect(host.tasks!.get(fine.id)?.status).toBe("running");
+    expect(sim.clients).toHaveLength(1);
+    expect(host.getStatus().phase).toBe("ready");
+    await stopAll(host);
+  });
+
+  it("a task whose turn begins late (just inside the limit, which the host sets) keeps going", async () => {
+    vi.useFakeTimers();
+    sim.stall = s => s.sessionId.startsWith("ember-task-");
+    const { host } = makeHost({ hands: hands(), turnStartMs: 5000 });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(4500);
+    const session = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    session.begin("Task: tidy my desktop");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    expect(session.aborted).toBe(0);
+    await stopAll(host);
   });
 });

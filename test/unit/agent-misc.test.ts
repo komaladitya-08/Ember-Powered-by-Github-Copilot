@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -261,5 +261,110 @@ describe("the user's own words (review round 5)", () => {
     release();
     await new Promise(r => setTimeout(r, 50));
     expect(specs[1]).toMatchObject({ goal: "tidy the drafts\n(The user then added: delete them)", userWords: "tidy my drafts\nand delete the drafts" });
+  });
+});
+
+describe("a request the runtime takes but never begins (review round 7)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  // Event sequences as the real runtime sends them (one user.message per request, in order; a request sent
+  // during a turn begins after its turn_end; idle only once nothing waits).
+  async function watch(ms = 20_000) {
+    vi.useFakeTimers();
+    const { TurnWatch } = await import("../../app/main/agent/conductor");
+    let stuck = 0;
+    const w = new TurnWatch(ms, () => { stuck++; });
+    const ev = (...types: string[]) => { for (const type of types) w.event({ type, data: {} }); };
+    const send = () => { w.sending(); ev("pending_messages.modified"); w.sent(); };
+    return { w, ev, send, stuck: () => stuck, wait: (t: number) => vi.advanceTimersByTime(t) };
+  }
+
+  it("a turn that begins (also with its first word a minute later) is left alone; one that never does is noticed once", async () => {
+    const a = await watch();
+    a.send();
+    a.ev("user.message", "assistant.turn_start");
+    a.wait(120_000);
+    a.ev("assistant.message", "assistant.turn_end", "assistant.idle", "session.idle");
+    a.wait(120_000);
+    expect(a.stuck()).toBe(0);
+    a.send();
+    a.wait(19_000);
+    expect(a.stuck()).toBe(0);
+    a.wait(1000);
+    expect(a.stuck()).toBe(1);
+    a.ev("pending_messages.modified");
+    a.wait(60_000);
+    expect(a.stuck()).toBe(1);
+  });
+
+  it("its message came but no turn began: noticed; any event is life and starts the wait again", async () => {
+    const a = await watch();
+    a.send();
+    a.ev("user.message");
+    a.wait(15_000);
+    a.ev("session.info");
+    a.wait(15_000);
+    expect(a.stuck()).toBe(0);
+    a.wait(5000);
+    expect(a.stuck()).toBe(1);
+  });
+
+  it("requests sent during a long turn wait for it; the runtime not beginning the next one after it ends is noticed", async () => {
+    const a = await watch();
+    a.send();
+    a.ev("user.message", "assistant.turn_start");
+    a.send();
+    a.send();
+    a.wait(300_000);
+    a.ev("assistant.turn_end", "pending_messages.modified", "user.message", "assistant.turn_start");
+    a.wait(300_000);
+    expect(a.stuck()).toBe(0);
+    a.ev("assistant.turn_end", "pending_messages.modified");
+    a.wait(20_000);
+    expect(a.stuck()).toBe(1);
+  });
+
+  it("Stop or an error drops what waits; a failed send owes nothing; a sub-agent's events are only life", async () => {
+    const a = await watch();
+    a.send();
+    a.ev("user.message", "assistant.turn_start");
+    a.send();
+    a.w.clear();
+    a.ev("abort", "agent.interrupted", "assistant.turn_end", "assistant.idle", "session.idle");
+    a.wait(60_000);
+    a.send();
+    a.ev("user.message", "assistant.turn_start", "assistant.turn_retry");
+    a.send();
+    a.ev("session.error", "session.idle");
+    a.wait(60_000);
+    a.w.sending();
+    a.w.unsent();
+    a.wait(60_000);
+    expect(a.stuck()).toBe(0);
+    a.send();
+    a.w.event({ type: "assistant.turn_start", agentId: "helper", data: {} });
+    a.wait(20_000);
+    expect(a.stuck()).toBe(1);
+  });
+
+  it("a hook or a compaction under way before the turn gets longer; a disposed watch never fires", async () => {
+    const a = await watch();
+    a.send();
+    a.ev("user.message");
+    a.w.event({ type: "hook.start", data: { hookInvocationId: "h1" } });
+    a.wait(100_000);
+    expect(a.stuck()).toBe(0);
+    a.w.event({ type: "hook.end", data: { hookInvocationId: "h1" } });
+    a.ev("session.compaction_start");
+    a.wait(100_000);
+    a.ev("session.compaction_complete");
+    a.wait(19_000);
+    expect(a.stuck()).toBe(0);
+    a.wait(1000);
+    expect(a.stuck()).toBe(1);
+    const b = await watch();
+    b.send();
+    b.w.dispose();
+    b.wait(60_000);
+    expect(b.stuck()).toBe(0);
   });
 });
