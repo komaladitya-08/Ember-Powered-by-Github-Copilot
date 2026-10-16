@@ -1,10 +1,11 @@
 /**
- * Hidden microphone window: captures audio with echo cancellation (gain control
- * and noise suppression stay off: they distort speech enough to miss the wake
- * word), resamples to 16 kHz (the AudioContext does it), and streams
- * 512-sample frames to the voice process. Also speaks Ember's replies (speechSynthesis). Nothing is
- * stored; the stream stops (and the mic is released) when Ember stops listening. Without an audio
- * port (listening off) the page only speaks. If the microphone goes away, capture starts again (capture.ts).
+ * Hidden microphone window: captures audio with echo cancellation (for sound the browser itself plays; gain
+ * control and noise suppression stay off: they distort speech enough to miss the wake word), resamples to
+ * 16 kHz (the AudioContext does it), and streams 512-sample frames to the voice process. Also speaks Ember's
+ * replies (speechSynthesis). Those play through speech-dispatcher, outside the browser's echo cancellation:
+ * the voice process is told while Ember speaks instead. Nothing is stored; the stream stops (and the mic is
+ * released) when Ember stops listening. Without an audio port (listening off) the page only speaks. If the
+ * microphone goes away, or isn't there yet, capture starts again (capture.ts).
  */
 
 import type { MicApi } from "../../shared/voice";

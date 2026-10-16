@@ -86,16 +86,33 @@ describe("frame watchdog", () => {
     let t = 0;
     const stalls: number[] = [];
     const w = new FrameWatchdog(ms => stalls.push(ms), () => t);
-    t = 9000; w.check();
+    const seconds = (n: number) => { for (let i = 0; i < n; i++) { t += 1000; w.check(); } }; // checked every second
+    seconds(10);
     expect(stalls).toEqual([]);
-    t = 10_500; w.check(); w.check();
-    expect(stalls).toEqual([10_500]);
+    seconds(1);
+    expect(stalls).toEqual([11_000]);
     w.frame();
     for (let i = 0; i < 90; i++) { t += 32; w.frame(); w.check(); } // audio flows
     expect(stalls).toHaveLength(1);
-    t += 2900; w.check();
+    seconds(3);
     expect(stalls).toHaveLength(1);
-    t += 200; w.check(); w.check();
-    expect(stalls).toEqual([10_500, 3100]);
+    seconds(2);
+    expect(stalls).toEqual([11_000, 4000]);
+  });
+
+  it("says nothing after the computer slept (its own checks came late), unless frames still don't come", () => {
+    let t = 0;
+    const stalls: number[] = [];
+    const w = new FrameWatchdog(ms => stalls.push(ms), () => t);
+    w.frame();
+    for (let i = 0; i < 5; i++) { t += 1000; w.frame(); w.check(); }
+    t += 3_600_000; w.check(); // an hour asleep: the first check after waking
+    expect(stalls).toEqual([]);
+    t += 500; w.frame(); t += 500; w.check(); // the microphone is back
+    for (let i = 0; i < 5; i++) { t += 1000; w.frame(); w.check(); }
+    expect(stalls).toEqual([]);
+    t += 3_600_000; w.check(); // asleep again, and this time no frames follow
+    for (let i = 0; i < 4; i++) { t += 1000; w.check(); }
+    expect(stalls).toEqual([4000]);
   });
 });

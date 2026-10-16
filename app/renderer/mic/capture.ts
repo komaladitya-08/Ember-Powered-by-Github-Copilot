@@ -2,8 +2,9 @@
  * Keeps the microphone captured. The device can go away (unplugged, or a track that stays muted), the
  * default device can change (a headset plugged in), and the audio context can stop: each starts capture
  * again. A device that keeps failing is tried after 1 s, 5 s, then every 30 s (sooner when devices change),
- * and main is told meanwhile ("lost") so the user sees it. A microphone that never opened is an error for
- * main to show, not retried here.
+ * and main is told meanwhile ("lost") so the user sees it. A microphone that never opened because there is
+ * none yet (no headset plugged in, PulseAudio still starting at login) or it's busy is tried the same way;
+ * one Ember isn't allowed to use is an error for main to show, not retried here.
  */
 
 import type { MicStatus } from "../../shared/voice";
@@ -70,7 +71,7 @@ export class Capture {
       if (stream && this.stream !== stream) stopTracks(stream);
       if (attempt !== this.attempt) return;
       const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      if (this.worked) this.lost(message);
+      if (this.worked || /NotFound|NotReadable|TrackStart|AbortError|DevicesNotFound/i.test(message)) this.lost(message);
       else this.d.status({ state: "error", message });
     }
   }
@@ -86,7 +87,8 @@ export class Capture {
   /** Sound went away: main is told, and capture starts again (1 s, 5 s, then every 30 s while it keeps failing). */
   private lost(reason: string): void {
     this.release();
-    if (Date.now() - this.since > 60_000) this.failures = 0; // it had been working: start the backoff over
+    if (this.since && Date.now() - this.since > 60_000) this.failures = 0; // it had been working: start the backoff over
+    this.since = 0;
     this.d.status({ state: "lost", message: reason });
     clearTimeout(this.retry);
     this.retry = setTimeout(() => void this.start(), RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]);

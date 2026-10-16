@@ -122,6 +122,33 @@ describe("microphone capture", () => {
     expect(c.statuses.at(-1)).toBe("capturing");
   });
 
+  it("keeps trying a microphone that isn't there yet (no headset, PulseAudio late at login), at once when a device appears", async () => {
+    const c = setup();
+    for (let i = 0; i < 4; i++) c.failures.push(notFound());
+    await c.capture.start();
+    expect(c.statuses).toEqual(["lost"]); // main shows "No microphone was found. Trying again…" and keeps the page
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(29_900);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(3); // then every 30 s, not every second
+    await vi.advanceTimersByTimeAsync(100);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(4);
+    c.devicesChanged(); // the headset is plugged in
+    await vi.advanceTimersByTimeAsync(600);
+    expect(c.deps.getUserMedia).toHaveBeenCalledTimes(5);
+    expect(c.statuses.at(-1)).toBe("capturing");
+  });
+
+  it("tries a busy microphone again too", async () => {
+    const c = setup();
+    c.failures.push(Object.assign(new Error("Could not start audio source"), { name: "NotReadableError" }));
+    await c.capture.start();
+    expect(c.statuses).toEqual(["lost"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(c.statuses).toEqual(["lost", "capturing"]);
+  });
+
   it("leaves a microphone that never opened to main (an error, not retried)", async () => {
     const c = setup();
     c.failures.push(Object.assign(new Error("Permission denied"), { name: "NotAllowedError" }));

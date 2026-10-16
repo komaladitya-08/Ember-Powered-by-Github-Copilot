@@ -32,8 +32,13 @@ const parent = process.parentPort;
 const send = (m: VoiceProcessMessage) => parent.postMessage(m);
 
 let engine: VoiceEngine | null = null;
-const speakers = new SpeakerMonitor(f => engine?.feedMonitor(f), (on, reason) => send({ type: "monitor", on, ...(reason ? { reason } : {}) }));
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
+/** The speakers' stream counts in the CPU report too (its spotter runs while a wake or stop is checked). */
+const speakers = new SpeakerMonitor(f => {
+  const t0 = performance.now();
+  engine?.feedMonitor(f);
+  cpuMs += performance.now() - t0;
+}, (on, reason) => send({ type: "monitor", on, ...(reason ? { reason } : {}) }));
 /** Development builds only (installed Ember never keeps audio): EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32). */
 let dump: fs.WriteStream | null = null;
 

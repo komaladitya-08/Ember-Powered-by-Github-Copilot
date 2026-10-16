@@ -170,7 +170,7 @@ describe("VoiceService", () => {
     electron.net.fetch.mockRejectedValue(new Error("net::ERR_PROXY_CONNECTION_FAILED"));
     await expect(v.downloadModels(() => undefined)).rejects.toThrow(/ERR_PROXY/);
     expect(states.map(s => s.s)).toContain("downloading");
-    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models: net::ERR_PROXY_CONNECTION_FAILED" });
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
     expect(v.micState).toBe("needs-models");
     expect(fs.readdirSync(root)).toEqual([]);
   });
@@ -244,6 +244,20 @@ describe("VoiceService keeps listening going", () => {
     expect(electron.procs).toHaveLength(2);
   });
 
+  it("keeps the mic page while it waits for a microphone that isn't there yet (no headset, PulseAudio late at login)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    micStatus({ state: "lost", message: "NotFoundError: Requested device not found" });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "No microphone was found. Trying again…" });
+    electron.procs[0].emit("message", { type: "stalled", ms: 10_100 }); // no frames, of course
+    expect(electron.procs[0].kill).not.toHaveBeenCalled();
+    expect(micWindow().destroyed).toBe(false);
+    micStatus({ state: "capturing", device: "USB Headset", rate: 16000, context: "running" });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+  });
+
   it("doesn't start again once listening was turned off (or muted)", async () => {
     vi.useFakeTimers();
     const { v, states } = service();
@@ -270,6 +284,50 @@ describe("VoiceService keeps listening going", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(electron.procs).toHaveLength(1);
     expect(states.at(-1)).toEqual({ s: "error", detail: "Invalid model file" });
+  });
+});
+
+describe("a failed download, in plain words", () => {
+  it.each([
+    ["net::ERR_CERT_AUTHORITY_INVALID", /can't verify the download site's certificate.*ask IT/],
+    ["self signed certificate in certificate chain", /can't verify the download site's certificate/],
+    ["net::ERR_PROXY_CONNECTION_FAILED", /can't reach the download site/],
+    ["net::ERR_INTERNET_DISCONNECTED", /can't reach the download site/],
+    ["nothing arrived for 30 seconds (check the network or proxy)", /can't reach the download site/],
+    ["download failed: HTTP 503", /can't reach the download site/],
+    ["download failed: HTTP 407", /proxy asked for a sign-in/],
+    ["download failed: HTTP 403", /refused the request/],
+    ["ENOSPC: no space left on device, write", /enough free disk space for the speech models \(about \d+ MB\)/],
+    ["Command failed: tar -xjf x.tar.bz2\ntar: Cannot write: No space left on device", /enough free disk space/],
+    ["EACCES: permission denied, open '/x'", /permission denied/],
+    ["Moonshine: checksum mismatch (got 0123456789ab…). The download was not used.", /arrived damaged or changed/],
+  ])("%s", async (raw, plain) => {
+    const { downloadHelp } = await import("../../app/main/voice");
+    expect(downloadHelp(raw)).toMatch(plain);
+    expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES/);
+  });
+});
+
+describe("the speech-only window", () => {
+  const speechWindow = () => electron.windows.find(w => w.title === "Ember speech")!;
+
+  it("goes when listening starts (the mic window speaks from then on)", async () => {
+    const { v } = service();
+    v.speak("Night Light is on.");
+    await flush();
+    await v.setWanted(true);
+    expect(speechWindow().destroyed).toBe(true);
+  });
+
+  it("finishes what it's saying first", async () => {
+    const { v } = service();
+    v.speak("Here is a long answer.");
+    await flush();
+    speaking(speechWindow(), true);
+    await v.setWanted(true);
+    expect(speechWindow().destroyed).toBe(false);
+    speaking(speechWindow(), false);
+    expect(speechWindow().destroyed).toBe(true);
   });
 });
 

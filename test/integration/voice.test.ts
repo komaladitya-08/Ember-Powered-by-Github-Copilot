@@ -17,16 +17,19 @@ const clips = path.resolve("test/fixtures/voice");
 const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(clips, "wake.wav"));
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
 
-describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", () => {
+// Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
+describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
   beforeAll(() => { backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true }); }, 60_000);
 
-  /** Plays a clip through the engine in 32 ms frames, like the microphone would, with real time. */
-  const play = (name: string, opts: { monitor?: boolean; followUp?: boolean } = {}) => {
-    const { samples } = sherpa.readWave(path.join(clips, `${name}.wav`));
+  const read = (name: string): Float32Array => sherpa.readWave(path.join(clips, `${name}.wav`)).samples;
+  /** Plays a clip (or audio) through the engine in 32 ms frames, like the microphone would, with real time; `at`: when each event came (ms). */
+  const play = (clip: string | Float32Array, opts: { monitor?: boolean; followUp?: boolean } = {}) => {
+    const samples = typeof clip === "string" ? read(clip) : clip;
     const events: VoiceEvent[] = [];
+    const at: number[] = [];
     let t = 0;
-    const engine = new VoiceEngine(backend, e => { if (e.type !== "level" && e.type !== "speech") events.push(e); }, { now: () => t });
+    const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") { events.push(e); at.push(t); } }, { now: () => t });
     if (opts.followUp) engine.followUp(8000);
     const tail = new Float32Array(16000 * 2);
     const all = new Float32Array(samples.length + tail.length);
@@ -41,7 +44,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       t += 32;
     }
     backend.resetVad();
-    return { events, rtf: cpu / (all.length / 16) };
+    return { events, at, rtf: cpu / (all.length / 16) };
   };
 
   it("wakes on 'Hey Ember' and hears the request in the same breath", () => {
@@ -58,6 +61,33 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
 
   it("stops on 'Ember stop'", () => {
     expect(play("stop").events).toContainEqual({ type: "stop" });
+  });
+
+  it("doesn't stop on 'Ember, stop' that comes out of the speakers", () => {
+    const { events } = play("stop", { monitor: true });
+    expect(events).not.toContainEqual({ type: "stop" });
+    expect(events).toContainEqual({ type: "rejected", keyword: "ember_stop", reason: "speakers" });
+  });
+
+  it("ends a request when the speaker does, though someone keeps talking in the background", () => {
+    // Another voice 14 dB down (the test clips' other lines, back to back) starts with the request and goes on for 20 s.
+    const trim = (s: Float32Array) => { let a = 0, b = s.length; while (a < b && Math.abs(s[a]) < 0.01) a++; while (b > a && Math.abs(s[b - 1]) < 0.01) b--; return s.subarray(a, b); };
+    const talk = ["chat", "remember", "bigger", "followup", "amber"].map(n => trim(read(n)));
+    const wake = read("wake"), lead = 16000;
+    const audio = new Float32Array(lead + 22 * 16000);
+    for (let at = lead + 8000, k = 0; at < audio.length; k++) {
+      const s = talk[k % talk.length];
+      for (let i = 0; i < s.length && at + i < audio.length; i++) audio[at + i] += s[i] * 0.2;
+      at += s.length + 2400;
+    }
+    audio.set(wake.map((x, i) => x + audio[lead + i]), lead);
+    const { events, at } = play(audio);
+    const sent = events.findIndex(e => e.type === "utterance");
+    expect(events[sent]).toMatchObject({ text: expect.stringMatching(/night ?light/i) });
+    expect((events[sent] as { text: string }).text.length).toBeLessThan(60);
+    let end = wake.length;
+    while (end > 0 && Math.abs(wake[end - 1]) < 0.01) end--;
+    expect(at[sent] / 1000 - (lead + end) / 16000).toBeLessThan(2.5); // not when the talk pauses (20 s on)
   });
 
   it("ignores similar words and ordinary speech", () => {

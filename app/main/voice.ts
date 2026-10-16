@@ -3,8 +3,11 @@
  * The mic is opened only when the user turned listening on, agreed to it,
  * the models are verified and Ember isn't muted; muting closes the stream,
  * which releases the microphone (GNOME's mic indicator goes away).
- * Replies are spoken from the mic window (so echo cancellation removes them),
- * or, while listening is off, from a hidden window that never opens the mic.
+ * Replies are spoken from the mic window, or, while listening is off, from a
+ * hidden window that never opens the mic. The browser's echo cancellation
+ * doesn't remove them (speech-dispatcher plays outside Chromium): the voice
+ * process is told while Ember speaks and doesn't take what it hears then as a
+ * request.
  */
 
 import { app, BrowserWindow, MessageChannelMain, ipcMain, net, session, utilityProcess, type UtilityProcess } from "electron";
@@ -59,8 +62,8 @@ export const electronDownloader: Downloader = async (url, dest, progress) => {
   }
 };
 
-/** A hidden window that only speaks (its page and the sender to recognize it by). */
-type Speaker = { win: BrowserWindow; wc: Electron.WebContents; loaded: Promise<void> };
+/** A hidden window that only speaks (its page, the sender to recognize it by, and whether it's speaking). */
+type Speaker = { win: BrowserWindow; wc: Electron.WebContents; loaded: Promise<void>; saying: boolean };
 
 export class VoiceService {
   private proc: UtilityProcess | null = null;
@@ -98,6 +101,11 @@ export class VoiceService {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
       this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
+      if (this.speaker && e.sender === this.speaker.wc) {
+        this.speaker.saying = !!on;
+        // Listening started while it spoke: the mic window speaks from now on.
+        if (!on && this.mic) this.closeSpeaker();
+      }
       this.openFollowUp();
     });
   }
@@ -141,7 +149,7 @@ export class VoiceService {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
           const message = err instanceof Error ? err.message : String(err);
           this.o.log.warn("voice.download_failed", { message });
-          this.setState(!this.wanted ? "off" : this.muted ? "muted" : "needs-models", `Couldn't download the speech models: ${message}`);
+          this.setState(!this.wanted ? "off" : this.muted ? "muted" : "needs-models", `Couldn't download the speech models. ${downloadHelp(message)}`);
           throw err;
         })
         .finally(() => { this.downloading = null; });
@@ -196,7 +204,7 @@ export class VoiceService {
     if (this.speaker && !this.speaker.win.isDestroyed()) return this.speaker;
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
-    this.speaker = { win, wc: win.webContents, loaded: win.loadFile(path.join(appDir, "renderer", "mic", "index.html")) };
+    this.speaker = { win, wc: win.webContents, loaded: win.loadFile(path.join(appDir, "renderer", "mic", "index.html")), saying: false };
     return this.speaker;
   }
 
@@ -229,7 +237,7 @@ export class VoiceService {
       if (m.type === "wake") this.dropFollowUp(); // a new request: the old answer's follow-up is moot
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason });
-      if (m.type !== "level") this.o.log.debug("voice.event", { type: m.type });
+      this.o.log.debug("voice.event", { type: m.type });
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
@@ -237,6 +245,8 @@ export class VoiceService {
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
+    // The mic window speaks from now on: the speech-only window isn't needed (once it has finished).
+    if (!this.speaker?.saying) this.closeSpeaker();
     mic.webContents.on("render-process-gone", (_e, d) => {
       if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
     });
@@ -280,8 +290,13 @@ export class VoiceService {
     this.wanted = false;
     this.cancelRetry();
     this.teardown();
-    if (this.speaker && !this.speaker.win.isDestroyed()) this.speaker.win.destroy();
+    this.closeSpeaker();
+  }
+
+  private closeSpeaker(): void {
+    const s = this.speaker;
     this.speaker = null;
+    if (s && !s.win.isDestroyed()) s.win.destroy();
   }
 
   private setState(s: MicState, detail?: string): void {
@@ -303,10 +318,27 @@ function hiddenWindow(title: string): BrowserWindow {
   });
 }
 
+/** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
+export function downloadHelp(message: string): string {
+  if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {
+    return "Ember can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
+  }
+  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asked for a sign-in Ember can't give. Ask IT to allow github.com for Ember.";
+  if (/nothing arrived for|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_|HTTP 5\d\d/i.test(message)) {
+    return "Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
+  }
+  if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
+  if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(VOICE_MODELS_BYTES / 1e6)} MB).`;
+  if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "Ember can't write the speech models to its data folder (permission denied).";
+  if (/checksum mismatch/i.test(message)) return "The download arrived damaged or changed, so it wasn't used. Try again; if it keeps happening, something on the network may be altering downloads.";
+  if (/\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
+  return message;
+}
+
 function micHelp(message: string): string {
   if (/NotAllowed|Permission/i.test(message)) return "Ember wasn't allowed to use the microphone.";
   if (/NotFound|DevicesNotFound/i.test(message)) return "No microphone was found.";
-  if (/NotReadable|TrackStart/i.test(message)) return "The microphone is in use by another app or unavailable.";
+  if (/NotReadable|TrackStart|AbortError/i.test(message)) return "The microphone is in use by another app or unavailable.";
   return message;
 }
 

@@ -99,7 +99,7 @@ GNOME; RHEL 8 has none, so it falls back to GTK 3 (or pass `--gtk-version=3`).
 | Wake word, VAD, STT | **sherpa-onnx** open-vocabulary keyword spotting ("hey ember", "ember stop") + Silero VAD + streaming Zipformer ASR. The prebuilt `sherpa-onnx-node` addon needs glibc 2.32 → use the WASM `sherpa-onnx` package first, rebuild the native addon in a UBI8 container later | same (PipeWire-pulse is transparent) |
 | Background actions | AT-SPI `doAction` / `EditableText` / `Value` / `Selection` on the user's display, never `grabFocus` | same |
 | Agent desk | Xvnc (`tigervnc-server-minimal`) or Xvfb display under `dbus-run-session` with its own AT-SPI bus; XTest on that display only | Xvfb (still in EL10) or headless Mutter |
-| TTS | `speechSynthesis` (same renderer as the mic, so echo cancellation works) | same |
+| TTS | `speechSynthesis` (plays through speech-dispatcher, outside Chromium's echo cancellation: Ember's own voice is gated by its speaking state and the speakers' stream) | same |
 
 Why Electron (not Tauri) still holds on Linux: a mature transparent overlay, `desktopCapturer`,
 a native-addon ecosystem in TypeScript, and the same code base for the macOS/Windows ports.
@@ -265,8 +265,9 @@ Test with fractional scaling and mixed-DPI dual monitors early.
 Pipeline, all on-device until the wake word fires:
 
 1. **Capture:** renderer `getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}})` →
-   `AudioWorklet` at 16 kHz → 2–3 s RAM-only ring buffer (never written to disk). TTS plays from the same
-   renderer so Chromium's echo cancellation removes Ember's own voice. Fallback: `parec --rate=16000`.
+   `AudioWorklet` at 16 kHz → 2–3 s RAM-only ring buffer (never written to disk). TTS plays through
+   speech-dispatcher's own PulseAudio stream, outside Chromium's echo cancellation, so Ember ignores what it
+   hears while it speaks (plus a short tail) and checks wakes against the speakers' stream. Fallback: `parec --rate=16000`.
 2. **Wake word:** sherpa-onnx keyword spotting with `sherpa-onnx-kws-zipformer-gigaspeech-3.3M`
    (≈5 MB int8). Open vocabulary, so "hey ember" and "ember stop" are just lines in `keywords.txt`
    with a boost and threshold, with no training. **Second-stage check:** run ASR over the ~1.5 s around the

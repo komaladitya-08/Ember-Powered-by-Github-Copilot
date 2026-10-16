@@ -43,7 +43,7 @@ import { AgentHost, explainStartError, gitHubReachable, type Hands } from "./age
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
-import { plainText } from "./agent/presenter";
+import { spokenText } from "../voice/spoken";
 
 const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
 
@@ -430,7 +430,7 @@ function start(): void {
     if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
     if (settings.get().speak || screenReaderOn()) {
       const keys = heldKeys().map(k => k.say);
-      voice?.speak(`Ember asks: ${q.question.prompt}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
+      voice?.speak(`Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
     }
     if (userAway()) notify("Ember needs your OK", q.question.prompt);
   };
@@ -992,7 +992,8 @@ function start(): void {
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
-      onAnswer: text => { if (settings.get().speak || screenReaderOn()) voice?.speak(plainText(text)); },
+      // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
+      onAnswer: text => { if (settings.get().speak || screenReaderOn()) voice?.speak(spokenText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
       onStatus: status => {
@@ -1002,7 +1003,7 @@ function start(): void {
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       onTaskFinished: t => {
-        if (settings.get().speak || screenReaderOn()) voice?.speak(t.text);
+        if (settings.get().speak || screenReaderOn()) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),

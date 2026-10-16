@@ -207,7 +207,7 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       /** `at`: audio time when the frame that caused the event was complete, plus the compute spent before the event. */
       const events: (VoiceEvent & { at: number })[] = [];
       let t = 0, cpu = 0, frameStart = 0;
-      const engine = new VoiceEngine(backend, e => { if (e.type !== "level" && e.type !== "speech") events.push({ ...e, at: t + 32 + (performance.now() - frameStart) }); }, { now: () => t });
+      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: t + 32 + (performance.now() - frameStart) }); }, { now: () => t });
       const all = new Float32Array(samples.length + 16000 * 2);
       all.set(samples);
       const silence = new Float32Array(512);
@@ -232,7 +232,7 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
     const wake = play(wp).events.find(e => e.type === "wake");
     const delay = wake ? wake.at - (speechEnd / 16) : null;
     add({ id: "wake-latency", name: "Wake → listening", target: "< 300 ms", blocking: false, value: delay !== null ? ms(Math.max(0, delay)) : "no wake", status: delay !== null ? (delay < 300 ? "pass" : "fail") : "fail",
-      note: "end of “Hey Ember” to the listening cue, with real compute time; most of it is the keyword model's own chunk latency" });
+      note: "end of “Hey Ember” to the listening cue, with real compute time; at the pause the spotter decides at once, without waiting for its next chunk" });
     // Missed and false wakes: fixture clips, plus many synthesized renderings when the TTS voice is here.
     const positives: Float32Array[] = ["wake", "wake_pause", "dnd"].map(clip);
     const negatives: Float32Array[] = ["amber", "remember", "chat", "bigger", "followup"].map(clip);
