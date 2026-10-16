@@ -141,4 +141,9 @@ export class AskWindow {
   owns(sender: Electron.WebContents): boolean {
     return !!this.win && !this.win.isDestroyed() && this.win.webContents === sender;
   }
+
+  /** Is X window `xid` the box (it closes when it loses focus, so focus never goes back to it)? */
+  isWindow(xid: number): boolean {
+    try { return !!this.win && !this.win.isDestroyed() && this.win.getNativeWindowHandle().readUInt32LE(0) === xid; } catch { return false; }
+  }
 }

@@ -389,18 +389,27 @@ function start(): void {
   let menuOpen = false;
   /** The app window the user was last in (an X client window), for giving focus back after Ember's own windows. */
   let userWindow = 0;
-  /** Notes the window with the keyboard now when it is the user's (not Ember's). Returns whether it was. */
-  const rememberUserWindow = (): boolean => {
+  /**
+   * The window with the keyboard now (an X client window, 0 if none), noted as the user's when it isn't Ember's.
+   * `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
+   */
+  const focusNow = (): { id: number; ember: boolean } => {
     const f = x11Ref?.focusWindow();
-    if (!f || f.pid === process.pid) return false;
-    userWindow = f.id;
-    return true;
+    if (!f) return { id: 0, ember: false };
+    if (f.pid !== process.pid) userWindow = f.id;
+    return { id: f.id, ember: f.pid === process.pid };
   };
-  /** Focus goes back to the user's window, or, when that has gone, to the topmost app window that isn't Ember's. */
-  const giveFocusBack = () => {
-    const shown = x11Ref?.stack().filter(w => w.pid !== process.pid && w.title && w.width > 1 && w.height > 1) ?? [];
-    const back = shown.some(w => w.client === userWindow) ? userWindow : shown.at(-1)?.client ?? userWindow;
-    if (back) xinputRef?.activate(back);
+  const rememberUserWindow = () => { focusNow(); };
+  /**
+   * Focus goes back to `back` (the window that had it, Ember's settings or quit question included) while it is still
+   * up; else to the user's window, or, when that has gone too, to the topmost app window that isn't Ember's.
+   */
+  const giveFocusBack = (back: number) => {
+    const shown = x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
+    if (back && shown.some(w => w.client === back)) { xinputRef?.activate(back); return; }
+    const apps = shown.filter(w => w.pid !== process.pid);
+    const to = apps.some(w => w.client === userWindow) ? userWindow : apps.at(-1)?.client ?? userWindow;
+    if (to) xinputRef?.activate(to);
   };
   const showMenu = () => {
     if (!handle || menuOpen) return;
@@ -432,16 +441,20 @@ function start(): void {
     // window, so straight from X then), and gives it back after unless a menu item opened something that took
     // it (the ask box, settings, the quit question). The menu opens once the focus has come: a focus change
     // under an open menu closes it.
-    // The user's window, and what "Ask Ember…" will read there, taken now: once the handle has focus they're
-    // gone. In one of Ember's own windows (the ask box, settings) the user's window is the one they came from.
-    if (rememberUserWindow()) captureContext();
+    // The window with the keyboard, and what "Ask Ember…" will read there, taken now: once the handle has focus
+    // they're gone. From settings (or another of Ember's windows) Ember reads nothing; from the ask box, what the
+    // box was opened over still stands. The ask box hides when it loses focus, so focus goes back past it.
+    const had = focusNow();
+    const fromAskBox = had.ember && askWindow.isWindow(had.id);
+    if (!fromAskBox) captureContext();
+    const back = fromAskBox ? 0 : had.id;
     menuOpen = true;
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
-      if (kept && !opens && !quitAsking) giveFocusBack();
+      if (kept && !opens) giveFocusBack(back);
     }, 150) });
     win.setFocusable(true);
     if (win.isFocused()) { open(); return; }
@@ -591,6 +604,8 @@ function start(): void {
     hideIfStill(bubble, 3000);
   };
   let lastAskByVoice = false;
+  /** Said on the status line when a spoken request ran past the longest Ember listens. */
+  const CUT_NOTE = "I only caught the first part: say the rest after my answer.";
   let shownForAnswer = false;
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
@@ -631,7 +646,8 @@ function start(): void {
         break;
       case "listening":
         if (e.on && e.reason === "follow-up") { setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
-        if (!e.on) setStatus("listen", null);
+        // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
+        if (!e.on && statusBy.listen !== CUT_NOTE) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
         // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…"),
         // with its own hide timer still running. What is put back gets a hide of its own.
@@ -659,9 +675,8 @@ function start(): void {
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
-          const note = "I only caught the first part: say the rest after my answer.";
-          setStatus("listen", note);
-          setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
+          setStatus("listen", CUT_NOTE);
+          setTimeout(() => { if (statusBy.listen === CUT_NOTE) setStatus("listen", null); }, 10_000).unref?.();
         }
         // A follow-up (no wake word) keeps the context from the last call.
         void askEmber(e.text);
