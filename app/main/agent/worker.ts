@@ -565,6 +565,18 @@ export function cellTook(typed: string, before: string, shows: string, cell: { v
   if (squashed(shows) !== squashed(before)) return true;
   return sameCellValue(typed, shows, cell.value) || formulaIn(typed, cell.formula);
 }
+/**
+ * Is a cell read back after Enter (see cellTook) done changing: it took what was typed, it shows text where text was
+ * typed, and a formula's cell no longer shows what it held? Calc may show no text for a moment after Enter, and tells a
+ * new formula a moment before it shows what it works out to (an empty cell shows "" until then), so those are read
+ * again too; a formula whose result is what was there (or an error, shown as no text) still shows it once the looks
+ * run out.
+ */
+export function cellSettled(typed: string, before: string, cell: { text: string; value?: number; formula?: string }): boolean {
+  if (!cellTook(typed, before, cell.text, cell)) return false;
+  if (squashed(typed) && !squashed(cell.text)) return false;
+  return !/^\s*=/.test(typed) || squashed(cell.text) !== squashed(before);
+}
 /** How much text is kept for each window a task reads: enough to recognise it when it is typed somewhere else. */
 const READ_TEXT_MAX = 20_000;
 
@@ -1417,6 +1429,8 @@ export class Worker {
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
       const res = await run();
       if (kind === "text" && res.ok) this.noteTyped(field, prior + (value ?? ""));
+      // A row or an icon chosen by a click is all that is selected there now: what the keys selected before is gone.
+      if (kind === "click" && res.ok && (res.action === "select row" || res.action === "select item")) this.keyed = { window: "", selected: null };
       // Edit ▸ Select All selects everything, as Ctrl+A does: a key that types replaces it all.
       if (kind === "click" && res.ok) this.noteSelectAll(element);
       // A click that closes its own dialog (Close, OK, Save) leaves nothing to read back: done, not an error.
@@ -1672,6 +1686,8 @@ export class Worker {
       }
     }
     if (kind === "cursor_text" && result.resultType === "success") this.noteTyped(field, prior + text);
+    // The mouse's click on a cell (a sheet's, a list's row) selects it alone: what the keys selected before is gone.
+    if (kind === "cursor_click" && result.resultType === "success" && element.role === "table cell") this.keyed = { window: "", selected: null };
     if (kind === "cursor_click" && result.resultType === "success") this.noteSelectAll(element);
     // What the click hit, as the app said where the pointer was: not only the element meant.
     if (landedOn && kind === "cursor_click" && result.resultType === "success") {
@@ -2104,9 +2120,10 @@ export class Worker {
     }
     const did = text ? `typed ${q(text, 80)} into ${cell} and pressed Enter` : `cleared ${cell} and pressed Enter`;
     // What the cell holds now, read back. Calc commits an entry in its own time: while it shows what it held and that
-    // isn't what was typed (see cellTook), it is read again a few times.
+    // isn't what was typed (see cellTook), or it shows no text yet or a formula's result isn't shown yet (see
+    // cellSettled), it is read again a few times.
     let now = await this.cellNow(cell, found.id);
-    for (let i = 0; i < CELL_SETTLE_LOOKS && now && !cellTook(text, found.text, now.text, now); i++) {
+    for (let i = 0; i < CELL_SETTLE_LOOKS && now && !cellSettled(text, found.text, now); i++) {
       await sleep(CELL_SETTLE_MS);
       if (this.isOver) throw new BorrowStopped();
       now = await this.cellNow(cell, found.id) ?? now;
@@ -2131,15 +2148,19 @@ export class Worker {
         : `Ember ${did}, but ${cell} ${what}: the sheet didn't take it (the document may be read-only). Tell the user in finish_task.`);
     }
     this.noteTyped(this.fieldOf(element), text);
-    return { did, shows, says: Worker.cellNowSays(text, shows, found.text) };
+    return { did, shows, says: Worker.cellNowSays(text, shows, found.text, now.value) };
   }
 
   /**
-   * What a filled cell (see fillCell) is said to hold now, by what was typed and what it held before: "holds “45”",
-   * "shows “3.1”" (Calc's own way, a formula's result), "shows “$1,200.00” as before (the same value)"; a formula that
-   * shows nothing works out to an error (Calc shows #DIV/0! or #N/A as no text) or to nothing.
+   * What a filled cell (see fillCell) is said to hold now, by what was typed, what it held before and its number where
+   * the app tells it (`value`): "holds “45”", "shows “3.1”" (Calc's own way, a formula's result), "shows “$1,200.00” as
+   * before (the same value)". A formula that shows nothing works out to the number the app tells, where that isn't 0
+   * (Calc may not show it yet); else to an error (Calc shows #DIV/0! or #N/A as no text, and tells 0) or to nothing.
    */
-  private static cellNowSays(text: string, shows: string, before: string): string {
+  private static cellNowSays(text: string, shows: string, before: string, value?: number): string {
+    if (!shows && /^\s*=/.test(text) && value !== undefined && Number.isFinite(value) && value !== 0) {
+      return `works out to ${Number(value.toPrecision(15))}, as the app tells it (the cell showed no text for it yet)`;
+    }
     if (!shows) return /^\s*=/.test(text) ? "shows nothing: its formula went in, and works out to an error (such as #DIV/0! or #N/A) or to nothing" : "is empty";
     if (squashed(shows) === squashed(text)) return `holds ${q(shows, 80)}`;
     return squashed(shows) === squashed(before) ? `shows ${q(shows, 80)} as before (the same value)` : `shows ${q(shows, 80)}`;

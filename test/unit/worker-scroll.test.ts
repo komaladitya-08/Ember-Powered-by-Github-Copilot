@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, aimedAt, atSpot, cellTook, formulaIn, sameCellValue, seesInside, sheetNumbers, tabPage, takerInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, aimedAt, atSpot, cellSettled, cellTook, formulaIn, sameCellValue, seesInside, sheetNumbers, tabPage, takerInside, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
 import { marksSvg } from "../../app/main/perception/marks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -561,5 +561,113 @@ describe("a busy spreadsheet (review round 11)", () => {
     const none = app([], { extra: [{ id: 60, parent: 1, depth: 2, role: "text", name: "Name Box", states: ["enabled", "focused"], bounds: { x: 0, y: 40, width: 80, height: 20 } }] });
     expect(await (none.w as unknown as Looks).cellWithKeyboard()).toBeNull();
     expect(none.st.reads).toBe(1);
+  });
+});
+
+describe("a formula's result read back, and a click that ends Ctrl+A (review round 11)", () => {
+  /**
+   * Calc with B8 (holding `held`, else empty, with the keyboard) and C3. What is typed into B8 is told at once (a
+   * formula's Formula attribute, and its number `value`: 0 for an error), and `result` shows from the `showsAt`th read of
+   * the cell on (never, without it): no text until then. The mouse's click on C3 gives C3 the keyboard.
+   */
+  const calc = (o: { held?: string; result?: string; value?: number; showsAt?: number } = {}) => {
+    const states = ["enabled", "sensitive", "editable", "focusable"];
+    const b8: Item = { role: "table cell", name: "B8", text: o.held ?? "", bounds: { x: 100, y: 200, width: 80, height: 20 }, states: [...states, "focused"] };
+    const c3: Item = { role: "table cell", name: "C3", text: "x", bounds: { x: 180, y: 100, width: 80, height: 20 }, states: [...states] };
+    const made = app([b8, c3]);
+    const prompts: string[] = [];
+    let reads = 0;
+    const d = (made.w as unknown as { d: { sidecar: { readElement: (id: number, o?: object) => Promise<object> }; confirmer: object } }).d;
+    const plain = d.sidecar.readElement;
+    Object.assign(d.sidecar, {
+      readElement: async (id: number, opt?: { formula?: boolean }) => {
+        const typed = made.st.typed.join("");
+        if (id !== 2 || !typed) return plain(id, opt);
+        reads++;
+        const shown = o.showsAt !== undefined && reads >= o.showsAt;
+        return { role: "table cell", name: "B8", states: b8.states, bounds: b8.bounds, text: shown ? o.result : "", value: o.value, ...(opt?.formula ? { formula: typed.startsWith("=") ? typed.slice(1) : "" } : {}) };
+      },
+      canDo: async () => ({ tier1: false, why: "it has no action of its own" }),
+    });
+    d.confirmer = { ask: async (q: { prompt: string }) => { prompts.push(q.prompt); return "once"; } };
+    made.st.clicks = Object.assign([] as { x: number; y: number }[], { push: () => { b8.states = [...states]; c3.states = [...states, "focused"]; return 0; } });
+    return { ...made, prompts, reads: () => reads };
+  };
+  const total = { cell: "B8", text: "=SUM(B2:B7)", mode: "replace" };
+
+  it("a formula's result Calc shows a moment after it tells the formula is read back, not called an error (W11-1)", async () => {
+    const { call, reads } = calc({ result: "1655", value: 1655, showsAt: 3 });
+    await call("perceive_window", {});
+    expect((await call("type_text", total)).textResultForLlm).toBe('Done: typed "=SUM(B2:B7)" into B8 and pressed Enter (the cell cursor moved on). It shows "1655".');
+    expect(reads()).toBe(3);
+  });
+
+  it("a result Calc doesn't show in time is told by the number the app tells (W11-1)", async () => {
+    const { call } = calc({ result: "1655", value: 1655 });
+    await call("perceive_window", {});
+    expect((await call("type_text", total)).textResultForLlm).toBe('Done: typed "=SUM(B2:B7)" into B8 and pressed Enter (the cell cursor moved on). It works out to 1655, as the app tells it (the cell showed no text for it yet).');
+  });
+
+  it("a formula that works out to an error (no text, and 0) still says so, once Calc had its time (W11-1)", async () => {
+    const { call, reads } = calc({ result: "", value: 0 });
+    await call("perceive_window", {});
+    expect((await call("type_text", { cell: "B8", text: "=1/0", mode: "replace" })).textResultForLlm).toBe(
+      'Done: typed "=1/0" into B8 and pressed Enter (the cell cursor moved on). It shows nothing: its formula went in, and works out to an error (such as #DIV/0! or #N/A) or to nothing.');
+    expect(reads()).toBe(4);
+  });
+
+  it("a cell that shows no text yet after Enter is read again, not called empty (HND11-3)", async () => {
+    const { call, reads } = calc({ held: "5%", result: "7%", value: 0.07, showsAt: 2 });
+    await call("perceive_window", {});
+    expect((await call("type_text", { cell: "B8", text: "7%", mode: "replace" })).textResultForLlm).toBe('Done: typed "7%" into B8 and pressed Enter (the cell cursor moved on). It holds "7%".');
+    expect(reads()).toBe(2);
+  });
+
+  it("a cell is done changing once it shows text where text was typed, and a formula's once it shows something new (W11-1, HND11-3)", () => {
+    expect(cellSettled("=SUM(B2:B7)", "", { text: "", value: 1655, formula: "SUM(B2\\" })).toBe(false);
+    expect(cellSettled("=SUM(B2:B7)", "", { text: "1655", value: 1655, formula: "SUM(B2\\" })).toBe(true);
+    expect(cellSettled("=B5-15", "30", { text: "30", value: 30, formula: "B5-15" })).toBe(false);
+    expect(cellSettled("=1/0", "45", { text: "", value: 0, formula: "1/0" })).toBe(false);
+    expect(cellSettled("30", "30", { text: "30", value: 30, formula: "" })).toBe(true);
+    expect(cellSettled("Total", "", { text: "", value: 0, formula: "" })).toBe(false);
+    expect(cellSettled("7%", "5%", { text: "", value: 0, formula: "" })).toBe(false);
+    expect(cellSettled("7%", "5%", { text: "7%", value: 0.07, formula: "" })).toBe(true);
+    expect(cellSettled("", "x", { text: "", value: 0, formula: "" })).toBe(true);
+  });
+
+  it("the mouse's click on a cell ends what Ctrl+A selected: Delete there isn't asked about as taking everything (W11-3)", async () => {
+    const { call, prompts } = calc();
+    await call("perceive_window", {});
+    await call("press_keys", { keys: "ctrl+a" });
+    expect((await call("click", { id: 3 })).textResultForLlm).toMatch(/^Done with the user's mouse/);
+    await call("perceive_window", {});
+    const asked = prompts.length;
+    await call("press_keys", { keys: "Delete" });
+    expect(prompts.slice(asked).join(" ")).not.toMatch(/everything there is selected/i);
+  });
+
+  it("a list's row chosen by accessibility is all that is selected after Ctrl+A (W11-3)", async () => {
+    const states = ["enabled", "sensitive", "focusable"];
+    const a: Item = { role: "table cell", name: "a.txt", bounds: { x: 10, y: 60, width: 300, height: 20 }, states: [...states, "focused"] };
+    const b: Item = { role: "table cell", name: "b.txt", bounds: { x: 10, y: 80, width: 300, height: 20 }, states: [...states] };
+    const { w, call } = app([a, b]);
+    const prompts: string[] = [];
+    const d = (w as unknown as { d: { sidecar: object; confirmer: object } }).d;
+    Object.assign(d.sidecar, {
+      canDo: async () => ({ tier1: true, action: "select row" }),
+      doAction: async () => {
+        a.states = [...states];
+        b.states = [...states, "selected", "focused"];
+        return { ok: true, action: "select row", after: { role: b.role, name: b.name, states: b.states, bounds: b.bounds } };
+      },
+    });
+    d.confirmer = { ask: async (q: { prompt: string }) => { prompts.push(q.prompt); return "once"; } };
+    await call("perceive_window", {});
+    await call("press_keys", { keys: "ctrl+a" });
+    expect((await call("click", { id: 3 })).textResultForLlm).toMatch(/^Selected its row/);
+    await call("perceive_window", {});
+    const asked = prompts.length;
+    await call("press_keys", { keys: "Delete" });
+    expect(prompts.slice(asked).join(" ")).not.toMatch(/everything there is selected/i);
   });
 });
