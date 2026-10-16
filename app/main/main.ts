@@ -55,7 +55,10 @@ const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling"
 const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name]);
 
 // An installed Ember never opens a debugging port (anyone on the machine could drive it through one).
-if (app.isPackaged && process.argv.some(a => /^--(remote-debugging-(port|pipe)|inspect(-brk|-port)?)\b/.test(a))) {
+// (Chromium also takes these with a single dash, and hasSwitch() sees every spelling it accepts.)
+const debugSwitch = ["remote-debugging-port", "remote-debugging-pipe", "remote-debugging-address", "inspect", "inspect-brk", "inspect-port"]
+  .some(name => app.commandLine.hasSwitch(name)) || process.argv.some(a => /^--?(remote-debugging-[a-z-]+|inspect(-brk|-port)?)\b/.test(a));
+if (app.isPackaged && debugSwitch) {
   process.stderr.write("Ember doesn't start with debugging switches.\n");
   app.exit(2);
 }
