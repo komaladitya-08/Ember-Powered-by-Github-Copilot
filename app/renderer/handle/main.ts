@@ -91,7 +91,7 @@ api.onState(s => {
   }
   announce(b);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
-  const task = cardTask(s.tasks);
+  const task = cardTask(s.tasks, b.visible ? b.title : undefined);
   const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;

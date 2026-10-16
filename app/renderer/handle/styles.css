@@ -36,6 +36,8 @@ body.fallback #line {
 /* The words: upright and at full contrast, line breaks kept, scrolling when they don't fit. */
 body.fallback .thought {
   display: block; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  /* Room for the scrollbar always: sized without it but laid out with it, the last line was cut. */
+  scrollbar-gutter: stable;
   white-space: pre-line; overflow-wrap: anywhere; color: #fbeee3;
   scrollbar-width: thin; scrollbar-color: rgba(255, 154, 61, 0.6) transparent;
 }
@@ -54,6 +56,7 @@ body.fallback .step[hidden] { display: none; }
 .actions { display: flex; flex: none; gap: 6px; flex-wrap: wrap; margin: 0 12px 10px; }
 .actions button, .task-actions button {
   all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; font-weight: 600; font-size: 12px; border: 1px solid rgba(255, 220, 190, 0.6);
+  max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere;
 }
 .actions button:hover, .task-actions button:hover { border-color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
 .actions button.primary { background: #b77bff; color: #1a0f0b; border-color: transparent; }

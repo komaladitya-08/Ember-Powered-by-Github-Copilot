@@ -101,6 +101,13 @@ describe("corner card (no compositor)", () => {
     expect(cardTask([task("a", "failed", [{ id: "task:a:dismiss", label: "Close" }]), task("b", "done")])?.id).toBe("a");
     expect(cardTask([task("b", "done")])).toBeNull();
   });
+  it("shows the running task whose work the bubble shows, so its Stop stops what the user sees", () => {
+    const task = (id: string, status: TaskCard["status"]): TaskCard => ({ id, title: `Task ${id}`, status, detail: "", actions: [] });
+    const both = [task("a", "running"), task("b", "running")];
+    expect(cardTask(both, "Task a")?.id).toBe("a");
+    expect(cardTask(both, "Cinder")?.id).toBe("b");
+    expect(cardTask([task("a", "done"), task("b", "running")], "Task a")?.id).toBe("b");
+  });
 });
 
 describe("corner card with a task", () => {

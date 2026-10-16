@@ -31,12 +31,15 @@ export function cardText(b: BubbleState, name: string, status: string | null, ta
 }
 
 /**
- * The one task the card shows: the newest that is still under way (it has
- * Stop), else the newest that has something to click (a failure's Close).
+ * The one task the card shows: the one under way whose work the bubble shows (`bubbleTitle`), so the
+ * Stop under it stops what the user sees working; else the newest still under way (it has Stop), else
+ * the newest that has something to click (a failure's Close).
  */
-export function cardTask(tasks: readonly TaskCard[]): TaskCard | null {
+export function cardTask(tasks: readonly TaskCard[], bubbleTitle?: string): TaskCard | null {
   const newest = [...tasks].reverse();
-  return newest.find(t => t.status === "running" || t.status === "waiting")
+  const busy = (t: TaskCard) => t.status === "running" || t.status === "waiting";
+  return (bubbleTitle ? newest.find(t => busy(t) && t.title === bubbleTitle) : undefined)
+    ?? newest.find(busy)
     ?? newest.find(t => (t.actions ?? []).length > 0)
     ?? null;
 }

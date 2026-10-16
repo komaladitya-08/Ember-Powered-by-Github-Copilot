@@ -185,6 +185,9 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-mood="attention"] { --eb-mood: #b77bff; }
 .ember-bubble[data-mood="error"]     { --eb-mood: #ff6a45; }
 .ember-bubble[data-mood="done"]      { --eb-mood: #ffe08a; }
+/* A grid item is as wide as its longest word by default: one long unbroken word (an app's name on a
+   button) would widen the bubble past its edge. */
+.ember-bubble > * { min-width: 0; }
 .eb-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .eb-chip {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
@@ -238,6 +241,7 @@ export const BUBBLE_CSS = `
 .eb-actions[hidden] { display: none; }
 .eb-actions button {
   font: 600 12px/1 var(--ember-font, system-ui, sans-serif); padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  max-width: 100%; overflow-wrap: anywhere;
   border: 1px solid color-mix(in srgb, var(--eb-mood) 85%, transparent); background: transparent; color: #fbeee3;
 }
 .eb-actions button.eb-primary { background: var(--eb-mood); border-color: var(--eb-mood); color: #1a0f0b; }
