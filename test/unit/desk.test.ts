@@ -92,6 +92,11 @@ describe("desk", () => {
     expect(xcu.match(/MacroSecurityLevel/g)).toHaveLength(1);
     expect(xcu).toContain('<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>');
     expect(xcu).toContain('<prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop>');
+    // No lock file next to what Ember saves (the user's LibreOffice would open it read-only); nothing fetched on load.
+    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="UseLocking" oor:op="fuse"><value>false</value></prop></item>');
+    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>');
+    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>0</value></prop></item>');
+    expect(xcu.match(/UseLocking/g)).toHaveLength(1);
     for (const c of ["BasicIDEAppear", "MacroDialog", "RunMacro", "ScriptOrganizer"]) expect(xcu.match(new RegExp(`<value>${c}</value>`, "g")), c).toHaveLength(1);
     expect(xcu).toContain('oor:name="FirstRun"');
     expect(xcu).toMatch(/^<\?xml[\s\S]*<\/oor:items>\n$/);

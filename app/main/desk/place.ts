@@ -53,6 +53,14 @@ const LIBREOFFICE_LOCKDOWN = [
   ["/org.openoffice.Office.Common/Security/Scripting", "MacroSecurityLevel", "3"],
   ["/org.openoffice.Office.Common/Security/Scripting", "DisableMacrosExecution", "true"],
   ["/org.openoffice.Office.ExtensionManager/ExtensionSecurity", "DisableExtensionInstallation", "true"],
+  // Documents opened on the desk fetch nothing on their own: external links and DDE aren't updated when they load
+  // (Calc: 1 = never; Writer: 0 = never), and links in documents from outside the trusted places don't open.
+  ["/org.openoffice.Office.Calc/Content/Update", "Link", "1"],
+  ["/org.openoffice.Office.Writer/Content/Update", "Link", "0"],
+  ["/org.openoffice.Office.Common/Security/Scripting", "BlockUntrustedRefererLinks", "true"],
+  // No ".~lock.<name>#" next to what Ember saves in ~/Ember: left behind (the document stays open on the desk, and
+  // stale after a quit), it made the user's own LibreOffice open Ember's file read-only, "locked by yourself".
+  ["/org.openoffice.Office.Common/Misc", "UseLocking", "false"],
 ] as const;
 /** Commands switched off: the macro editors and runners, extensions, and Tools > Options (where the above could be undone). */
 const LIBREOFFICE_OFF = ["BasicIDEAppear", "MacroDialog", "RunMacro", "ScriptOrganizer", "MacroOrganizer", "MacroRecorder", "PackageManager", "OptionsTreeDialog"];
