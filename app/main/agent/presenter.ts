@@ -485,6 +485,12 @@ export class Presenter {
     this.hideLater(n.ms ?? 12000);
   }
 
+  /** A notice still up that says `text` goes (what it said no longer holds: Copilot is back). Anything else stays. */
+  withdraw(text: string): void {
+    const b = this.state.bubble;
+    if (b.visible && b.mood === "error" && b.thought === text && !this.busy) this.hide();
+  }
+
   /** The session went away mid-turn (restart, sign-out): nothing is left streaming or "thinking". */
   reset(): void {
     const wasBusy = this.busy;

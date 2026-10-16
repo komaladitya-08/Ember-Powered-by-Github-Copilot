@@ -1763,6 +1763,8 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(finished).toEqual([expect.objectContaining({ status: "cancelled" })]);
     expect(sim.clients).toHaveLength(2);
     expect(host.getStatus()).toMatchObject({ phase: "ready", waitingForTasks: false });
+    // Its notice saying it can't reach Copilot goes with it, not the rest of its 12 s (MN11-2).
+    expect(screen().bubble?.title).not.toBe("I can't reach Copilot");
     await host.ask("how's the tidying going?");
     expect(conductorSession().sent.at(-1)).toMatch(/how's the tidying going\?$/);
     expect(conductorSession().sent.at(-1)).not.toContain(CUT_OFF);

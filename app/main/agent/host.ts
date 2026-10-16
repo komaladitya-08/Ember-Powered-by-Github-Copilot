@@ -330,6 +330,8 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** What the last "I can't reach Copilot" (or "I need Copilot first") notice said, until Ember is connected again. */
+  private unreachable: string | null = null;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
@@ -490,6 +492,8 @@ export class AgentHost {
 
   private setStatus(patch: Partial<AgentStatus>): void {
     this.status = { ...this.status, ...patch, waitingForTasks: this.reconnectAfterTasks !== null };
+    // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
+    if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
     this.o.onStatus(this.status);
   }
 
@@ -961,11 +965,9 @@ export class AgentHost {
     }
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
       const signedOut = this.status.phase === "signed-out" || /sign-in|signed in|sign in/i.test(this.status.detail);
-      this.presenter.notice({
-        title: signedOut ? "I need Copilot first" : "I can't reach Copilot",
-        text: signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail,
-        actions: [{ id: "ui:settings", label: "Open settings" }],
-      });
+      const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
+      this.presenter.notice({ title: signedOut ? "I need Copilot first" : "I can't reach Copilot", text: why, actions: [{ id: "ui:settings", label: "Open settings" }] });
+      this.unreachable = why;
       return;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
