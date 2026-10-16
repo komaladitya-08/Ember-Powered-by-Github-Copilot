@@ -164,6 +164,18 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(sent(user.events)).toMatchObject([{ window: "wake" }, { text: expect.stringMatching(/do not disturb/i), window: "follow-up" }]);
   });
 
+  it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
+    // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
+    for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {
+      const s = session();
+      s.hear(inRoom(cat(read("wake"), silence(1))));
+      s.engine.followUp(8000);
+      s.hear(inRoom(cat(silence(0.5), word, silence(2))));
+      s.end();
+      expect(s.events.filter(e => e.type === "utterance" || e.type === "stop").map(e => e.type), then).toEqual(["utterance", then]);
+    }
+  });
+
   it("stops on 'Hey Ember, stop' said while Ember speaks, and takes no wake then", () => {
     const heyStop = cat(read("wake_pause").subarray(0, at(1.52)), silence(0.1), read("stop").subarray(at(1.09)), silence(1));
     const stop = session();
@@ -189,6 +201,16 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === endFrame) { s.engine.selfSpeaking(false); s.engine.followUp(8000); } } });
     s.end();
     expect(sent(s.events).map(u => u.text)).toEqual([expect.stringMatching(/^and turn on,? do not disturb/i)]);
+  });
+
+  it("takes a long request whose pauses are short and few (a breath every 4–5 s) whole", () => {
+    const long = cat(read("wake").subarray(0, at(2.7)), silence(0.25), trimmed("followup"), silence(0.15), trimmed("chat"), silence(0.25), trimmed("bigger"), silence(0.15), trimmed("remember"), silence(2));
+    expect(long.length / 16000).toBeGreaterThan(12);
+    const s = session();
+    s.hear(inRoom(long));
+    s.end();
+    expect(sent(s.events)).toEqual([expect.objectContaining({ text: expect.stringMatching(/night ?light.*weather was nice/i), window: "wake" })]);
+    expect(sent(s.events)[0]).not.toHaveProperty("cut");
   });
 
   it("takes a long request in a quiet room whole (over 10 s)", () => {

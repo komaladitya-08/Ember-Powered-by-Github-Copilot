@@ -76,8 +76,9 @@ export class VoiceService {
   private downloading: Promise<void> | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
-  /** A follow-up window (ms) waiting for Ember to finish speaking, and its timer. */
+  /** A follow-up window (ms) waiting for Ember to finish speaking, its timer, and whether the answer asked something. */
   private followUpMs = 0;
+  private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
   private cancelledAt = Number.NEGATIVE_INFINITY;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
@@ -159,9 +160,13 @@ export class VoiceService {
     else if (this.state === "downloading") this.setState("off");
   }
 
-  /** A follow-up window (no wake word needed). It opens once Ember has finished speaking its answer, or it would hear itself. */
-  followUp(ms = 8000): void {
+  /**
+   * A follow-up window (no wake word needed). It opens once Ember has finished speaking its answer, or it would hear
+   * itself. `afterQuestion`: the answer asked something, so "Okay." or "Fine." is a reply to send (not "that's all").
+   */
+  followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
     this.followUpMs = ms;
+    this.followUpAsked = !!o.afterQuestion;
     this.openFollowUp();
   }
 
@@ -171,7 +176,7 @@ export class VoiceService {
     if (!this.followUpMs) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
-    this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs });
+    this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
     this.followUpMs = 0;
   }
 

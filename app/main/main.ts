@@ -45,7 +45,7 @@ import { AgentHost, explainStartError, gitHubReachable, inotifyUse, type Hands }
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
-import { spokenText } from "../voice/spoken";
+import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 
 const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
@@ -626,6 +626,8 @@ function start(): void {
     hideIfStill(bubble, 3000);
   };
   let lastAskByVoice = false;
+  /** This turn's answer: its follow-up takes "Okay." as the reply it is when the answer asked something. */
+  let turnAnswer = "";
   /**
    * Said on the status line when a spoken request ran past the longest Ember listens: after a "Hey Ember" request a
    * follow-up window comes, after a follow-up none does.
@@ -1184,9 +1186,13 @@ function start(): void {
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
-      onAnswer: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
+      onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
-      onTurnEnd: aborted => { if (lastAskByVoice && !aborted) voice?.followUp(8000); lastAskByVoice = false; },
+      onTurnEnd: aborted => {
+        if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
+        lastAskByVoice = false;
+        turnAnswer = "";
+      },
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready".

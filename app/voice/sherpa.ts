@@ -35,9 +35,14 @@ export const KEYWORDS = [
 const PAD_SAMPLES = Math.round(0.32 * SAMPLE_RATE);
 /** The idle voice check's speech threshold (Silero's probability; 0.5 is its usual). */
 const CHECK_THRESHOLD = 0.35;
-/** The listening VAD ends a segment after 0.6 s of silence; a segment gets 0.3 s of what followed it (Moonshine drops a last word cut at its very end). */
+/**
+ * The listening VAD ends a segment after 0.6 s of silence; a segment gets 0.3 s of what followed it (Moonshine drops a
+ * last word cut at its very end), and the 0.1 s before it is kept aside (a second try at a short one Moonshine heard
+ * nothing in: see the engine's handleSegment).
+ */
 const MIN_SILENCE = 0.6;
 const AFTER_SEGMENT = Math.round(0.3 * SAMPLE_RATE);
+const BEFORE_SEGMENT = Math.round(0.1 * SAMPLE_RATE);
 /**
  * Neither VAD's own maximum is a hard cap: the listening one is flushed after 25 s of speech (the engine ends requests
  * sooner: 20 s at most), the voice check starts afresh after 10 s. Past its maximum, Silero ends speech at the next
@@ -122,8 +127,12 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
   };
   let pending: Float32Array = new Float32Array(0);
   let checkPending: Float32Array = new Float32Array(0);
-  /** What the listening VAD was fed lately (for the audio that followed a segment), how much since its reset, and how long it has heard speech. */
-  const recent = new Ring(1);
+  /**
+   * What the listening VAD was fed lately (for the audio around a segment), how much since its reset, and how long it
+   * has heard speech; and what it heard before each segment it gave (while the segment is still about).
+   */
+  const recent = new Ring(2);
+  const before = new WeakMap<Float32Array, Float32Array>();
   let fed = 0, speechFrom = -1, checkSpeech = 0;
   const drain = (): Float32Array[] => {
     if (vad.isEmpty()) return [];
@@ -138,6 +147,8 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
       const seg = new Float32Array(samples.length + after.length);
       seg.set(samples);
       seg.set(after, samples.length);
+      const ago = fed - start;
+      if (ago < heard.length) before.set(seg, heard.slice(Math.max(0, heard.length - ago - BEFORE_SEGMENT), heard.length - ago));
       out.push(seg);
     }
     return out;
@@ -209,6 +220,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
         s.free();
       }
     },
+    before: seg => before.get(seg) ?? null,
     free() {
       micStream.free(); monStream?.free(); kws.free(); vad.free(); check.free(); asr.free();
     },

@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { spokenText } from "../../app/voice/spoken";
+import { endsWithQuestion, spokenText } from "../../app/voice/spoken";
 
 describe("spokenText", () => {
   it.each([
@@ -15,4 +15,15 @@ describe("spokenText", () => {
     ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted\nEnd old new"],
     ["snake_case_name and 2*3*4 stay", "snake_case_name and 2*3*4 stay"],
   ])("%j", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+});
+
+describe("endsWithQuestion", () => {
+  it.each([
+    "There are three of them, and one is still running a command. Should I close that one too?",
+    "Want me to open it? ",
+    "Should I run this?\n\n```bash\nsudo dnf update\n```",
+    "Which one: **the first** or *the second*?",
+    "Shall I send it to “Sarah”?”",
+  ])("%j asks something", t => expect(endsWithQuestion(t)).toBe(true));
+  it.each(["Done. Night Light is on.", "What? No, that's already done.", "Here it is:\n\n```\nls -la\n```", ""])("%j doesn't", t => expect(endsWithQuestion(t)).toBe(false));
 });

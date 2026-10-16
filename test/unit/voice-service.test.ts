@@ -92,6 +92,16 @@ describe("VoiceService", () => {
     expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
   });
 
+  it("tells the follow-up window that the answer asked something", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    v.followUp(8000, { afterQuestion: true });
+    expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000, afterQuestion: true }]);
+    v.followUp(8000);
+    expect(posted(proc, "follow-up").at(-1)).toEqual({ type: "follow-up", ms: 8000 });
+  });
+
   it("doesn't wait for speech that never starts (no voices installed)", async () => {
     vi.useFakeTimers();
     const { v } = service();

@@ -16,7 +16,8 @@ type FromMain =
   /** `dev`: an unpackaged (development) build. */
   | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean }
   | { type: "self-speaking"; on: boolean }
-  | { type: "follow-up"; ms: number }
+  /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
+  | { type: "follow-up"; ms: number; afterQuestion?: boolean }
   | { type: "cancel" };
 
 /** Messages for main (VoiceService); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone frames for `ms`. */
@@ -78,7 +79,7 @@ parent.on("message", e => {
   } else if (m.type === "self-speaking") {
     engine?.selfSpeaking(m.on);
   } else if (m.type === "follow-up") {
-    engine?.followUp(m.ms);
+    engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
   } else if (m.type === "cancel") {
     engine?.cancel();
   }

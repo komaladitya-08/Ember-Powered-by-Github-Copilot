@@ -26,3 +26,14 @@ export function spokenText(markdown: string): string {
     .replace(/\n{2,}/g, "\n")
     .trim();
 }
+
+/**
+ * Does the answer end by asking something ("…Should I close that one too?")? Its follow-up window then takes
+ * "Okay." or "Fine." as the reply it is, not as the end of the conversation. What is only shown (code, a table)
+ * after the question doesn't count.
+ */
+export function endsWithQuestion(answer: string): boolean {
+  let said = spokenText(answer);
+  for (let shown = [CODE, TABLE].find(p => said.endsWith(p)); shown; shown = [CODE, TABLE].find(p => said.endsWith(p))) said = said.slice(0, -shown.length).trimEnd();
+  return /\?[\s"'”’)\]*_]*$/.test(said);
+}
