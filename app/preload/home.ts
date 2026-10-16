@@ -34,6 +34,7 @@ const api: EmberHomeApi = {
   setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),
   onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
   onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
+  onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
 };
 

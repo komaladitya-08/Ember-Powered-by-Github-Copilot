@@ -3,6 +3,9 @@ import type { EmberAskApi } from "../../shared/ipc";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
+// No compositor (main says so in the address): an opaque panel, as a transparent window would paint black.
+document.documentElement.classList.toggle("opaque", new URLSearchParams(location.search).has("opaque"));
+
 const input = document.getElementById("q") as HTMLInputElement;
 const sees = document.getElementById("sees")!;
 let history: string[] = [];

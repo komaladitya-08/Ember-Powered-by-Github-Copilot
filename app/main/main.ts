@@ -236,6 +236,10 @@ function start(): void {
     revive(home, reason => log.warn("window.home.renderer_gone", { reason }));
     // While the user works in settings, Ember waits beside the window instead of over it.
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
+    // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
+    const win = home;
+    const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
+    win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       home = null;
       stepAside();
@@ -462,7 +466,7 @@ function start(): void {
   const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
 
   // ───── Copilot brain ─────
-  const askWindow = new AskWindow();
+  const askWindow = new AskWindow({ keepOff: () => handle?.bounds ?? null });
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
@@ -819,6 +823,7 @@ function start(): void {
     x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
+    askWindow.setOpaque(!compositing);
     let keptHidden = false;
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
@@ -856,6 +861,7 @@ function start(): void {
       handle = new HandleWindow(() => settings.get(), !overlay);
       handle.sendState(lastState);
       old?.destroy();
+      deskViewRef?.handleMoved();
     };
     if (compositing) makeOverlay();
     else log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
@@ -867,6 +873,7 @@ function start(): void {
         const now = x11.hasCompositor();
         if (now === compositing) return;
         compositing = now;
+        askWindow.setOpaque(!now);
         log.warn("overlay.compositor_changed", { compositing: now });
         // "Hide Ember" outlives the switch (the overlay that knew it is gone while there is no compositor).
         if (overlay) keptHidden = overlay.isHidden();
@@ -970,7 +977,7 @@ function start(): void {
     const deskView = new DeskView(log.child("desk-view"), on => {
       deskInControl = on;
       overlay?.setState({ tasks: on ? [] : lastState.tasks });
-    });
+    }, { handleBounds: () => handle?.bounds ?? null });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;
     // A desk whose display died is gone: the next desk task starts a new one.

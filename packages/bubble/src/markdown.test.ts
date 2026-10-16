@@ -36,4 +36,14 @@ describe("plainMarkdown and plainStream", () => {
     // Finished text keeps what turned out not to be markdown.
     expect(plainMarkdown("Here: **Ste")).toBe("Here: **Ste");
   });
+
+  it("while streaming, keeps a lone marker that can't open emphasis (globs, file names, paths)", () => {
+    for (const t of [
+      "Rename every *.md", "Match **/*.ts", "Match src/**/*.ts", "C:\\Users\\_temp", "Open ./_build", "a *b and *.md", "5 * 2", "Files: *",
+    ]) expect(plainStream(t), t).toBe(t);
+    // A marker a word starts right after still opens emphasis.
+    expect(plainStream("Then **2 GB")).toBe("Then 2 GB");
+    expect(plainStream("some _more")).toBe("some more");
+    expect(plainStream("Click **“Sa")).toBe("Click “Sa");
+  });
 });

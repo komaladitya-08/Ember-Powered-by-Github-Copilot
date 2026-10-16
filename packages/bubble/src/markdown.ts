@@ -13,9 +13,13 @@
 const STARS = /(?<![\w*])(\*{1,3})(?=[^\s*])([^*\n]*?[^\s*])\1(?![\w*])/g;
 /** The same with underscores, which also stay when attached to a "/" or a "." (paths, file names). */
 const UNDERSCORES = /(?<![\w./])(_{1,3})(?=[^\s_])([^_\n]*?[^\s_])\1(?![\w/]|\.\w)/g;
-/** While text streams: an opening marker at the end whose other half hasn't arrived ("**Ste", "**Steps:*"). */
-const OPEN_STARS = /(?<![\w*])\*{1,3}(?=[^\s*])([^*\n]*?)\**$/;
-const OPEN_UNDERSCORES = /(?<![\w./])_{1,3}(?=[^\s_])([^_\n]*?)_*$/;
+/**
+ * While text streams: an opening marker at the end whose other half hasn't arrived ("**Ste", "**Steps:*").
+ * Only one a word starts right after (a letter, digit or opening quote) and that isn't attached to a word,
+ * "." or a slash before it, so "*.md", a "**" glob and "C:\Users\_temp" keep their markers while they arrive.
+ */
+const OPEN_STARS = /(?<![\w*./\\])\*{1,3}(?=[\p{L}\p{N}"'“‘«])([^*\n]*?)\**$/u;
+const OPEN_UNDERSCORES = /(?<![\w./\\])_{1,3}(?=[\p{L}\p{N}"'“‘«])([^_\n]*?)_*$/u;
 const HEADING = /(^|\n)[ \t]{0,3}#{1,6}[ \t]+/g;
 const BULLET = /(^|\n)[ \t]{0,3}[-*+][ \t]+/g;
 const LINK = /\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g;

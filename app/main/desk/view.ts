@@ -17,22 +17,32 @@ const SMALL = { width: 340, height: 238 };
 const LARGE = { width: 980, height: 646 };
 /** Gap to the screen's edges. */
 const EDGE = 16;
-/** Room left free in the bottom-right corner for Ember's handle (200 px wide, 12 px in) beside a view along the bottom. */
-const HANDLE_ROOM = 224;
+/** Gap kept between the view and Ember's handle beside it. */
+const HANDLE_GAP = 12;
 
 interface Box { x: number; y: number; width: number; height: number }
 
+/** Ember's handle when nothing says where it is: the 200 × 56 pill, 12 px in from the bottom-right corner. */
+const pillIn = (wa: Box): Box => ({ x: wa.x + wa.width - 212, y: wa.y + wa.height - 68, width: 200, height: 56 });
+
 /**
  * The view's bounds at its small or large size, from where it is now (`b`): it grows and shrinks from its
- * bottom-left corner, as large as the work area allows (same shape, with room for the handle in the
- * corner), and its bottom edge is always on screen.
+ * bottom-left corner, as large as the work area allows (same shape, left of Ember's handle in the corner:
+ * the pill, or the 360 px card without a compositor), and its bottom edge is always on screen.
+ * `handle`: the handle's bounds (global DIP); the pill's place when not known or on another screen.
  */
-export function deskViewBounds(b: Box, large: boolean, wa: Box): Box {
+export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | null): Box {
+  const h = handle && handle.x < wa.x + wa.width && handle.x + handle.width > wa.x && handle.y < wa.y + wa.height && handle.y + handle.height > wa.y
+    ? handle : pillIn(wa);
   const want = large ? LARGE : SMALL;
-  const scale = Math.min(1, (wa.width - EDGE - HANDLE_ROOM) / want.width, (wa.height - 2 * EDGE) / want.height);
-  const width = Math.round(want.width * scale), height = Math.round(want.height * scale);
+  const scale = Math.min(1, (h.x - HANDLE_GAP - wa.x - EDGE) / want.width, (wa.height - 2 * EDGE) / want.height);
+  const width = Math.max(1, Math.round(want.width * scale)), height = Math.max(1, Math.round(want.height * scale));
   const bottom = Math.min(Math.max(b.y + b.height, wa.y + height + EDGE), wa.y + wa.height - EDGE);
-  return { width, height, x: Math.max(wa.x, Math.min(b.x, wa.x + wa.width - width)), y: bottom - height };
+  const y = bottom - height;
+  // Level with the handle, the view stays left of it (its buttons are where a dialog's OK and Cancel are).
+  const level = y < h.y + h.height + HANDLE_GAP && bottom > h.y - HANDLE_GAP;
+  const right = level ? h.x - HANDLE_GAP : wa.x + wa.width;
+  return { width, height, x: Math.max(wa.x, Math.min(b.x, right - width)), y };
 }
 /** How long the view stays up after the last desk task ends, so the user sees the result. */
 const LINGER_MS = 10_000;
@@ -81,7 +91,11 @@ export class DeskView {
   /** Keys were lent to characters the desk's keyboard lacks: they get their nothing back later. */
   private lentKeys = false;
 
-  constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined, private o: { lingerMs?: number } = {}) {
+  /**
+   * `handleBounds`: where Ember's handle is now (global DIP), so the view keeps clear of it (the card without a
+   * compositor is wider than the pill); the pill's place when not given.
+   */
+  constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined, private o: { lingerMs?: number; handleBounds?: () => Box | null } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
@@ -118,7 +132,7 @@ export class DeskView {
       const wa = screen.getPrimaryDisplay().workArea;
       const win = new BrowserWindow({
         // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
-        ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa),
+        ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa, this.handle()),
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
         backgroundColor: "#1a0f0b",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
@@ -162,6 +176,19 @@ export class DeskView {
     if (this.win && !this.win.isDestroyed()) this.win.hide();
   }
 
+  /** Ember's handle changed (the pill became the card or back): the view keeps clear of it at its size now. */
+  handleMoved(): void {
+    const win = this.win && !this.win.isDestroyed() ? this.win : null;
+    if (!win) return;
+    const b = win.getBounds();
+    const next = deskViewBounds(b, this.control, screen.getDisplayMatching(b).workArea, this.handle());
+    if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
+  }
+
+  private handle(): Box | null {
+    try { return this.o.handleBounds?.() ?? null; } catch { return null; }
+  }
+
   /** Gives the desk back to Ember (the kill switch calls this too). */
   handBack(): void {
     this.setControl(false);
@@ -186,7 +213,7 @@ export class DeskView {
     if (changed) {
       const b = win.getBounds();
       // Grows up and to the right from its bottom-left corner, as large as the screen allows, staying on it.
-      win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea));
+      win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea, this.handle()));
       if (on) win.focus();
     }
     // Always, so the view never shows the wrong button (e.g. after it was reopened).

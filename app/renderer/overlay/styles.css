@@ -16,6 +16,8 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
 }
+/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
+.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 154, 61, 0.6) transparent; }
 /* min-width 0 and wrapping anywhere: a long unbroken word wraps inside the 260 px card instead of stretching it off screen. */
 .task {
   display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
@@ -25,6 +27,11 @@ body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-seri
 .task b { font-size: 13px; }
 .task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
 .task span[hidden] { display: none; }
+/* The older ended cards folded into one line at the top of the stack, with Close all for the failures among them. */
+.task.more { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; }
+.more-text { flex: 1; min-width: 0; display: grid; }
+.task.more .task-actions { flex: none; margin-top: 0; }
+.tasks > [hidden] { display: none; }
 /* Stop / Close: the overlay is click-through except over these (reported to the main process). */
 .task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .task-actions[hidden] { display: none; }

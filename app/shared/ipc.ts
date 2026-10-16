@@ -39,6 +39,8 @@ export const IPC = {
   presenceChanged: "ember:presence-changed",
   /** The settings file couldn't be used as it is (a hand edit that isn't valid JSON): what Ember did about it. */
   settingsNotice: "ember:settings-notice",
+  /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
+  homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
 } as const;
 
@@ -135,6 +137,8 @@ export interface EmberHomeApi {
   conversation(): Promise<TranscriptEntry[]>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
   onFocusSection(fn: (section: string) => void): () => void;
+  /** The window was minimised or hidden (false), or shown again (true): nothing is drawn while it can't be seen. */
+  onVisibility(fn: (visible: boolean) => void): () => void;
 }
 
 export interface Presence { hidden: boolean; paused: boolean; overlay: boolean }

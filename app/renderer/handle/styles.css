@@ -7,8 +7,10 @@ body { font: 13px/1.35 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-ser
   box-shadow: 0 0 14px rgba(255, 138, 42, 0.22);
 }
 .handle:hover { border-color: #ff9a3d; }
-.handle:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
-#face { width: 46px; height: 46px; flex: none; }
+.menu { all: unset; flex: none; display: block; cursor: pointer; border-radius: 50%; }
+.menu:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+#face { display: block; width: 46px; height: 46px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .text { display: grid; min-width: 0; }
 .text b { font-size: 13px; }
 #line { color: rgba(251, 238, 227, 0.72); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -17,9 +19,10 @@ body { font: 13px/1.35 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-ser
 
 /* ── No compositor: the card is Ember's only surface (what it says, its questions, the running task) ── */
 body.fallback { background: #1a120e; display: flex; flex-direction: column; }
-/* Face and words on top, sized to what they hold; the buttons come straight after the words. */
+/* Face and words on top, sized to what they hold; the buttons come straight after the words. Never shorter than
+   the face (96 px and the padding): a squeezed top row would put the face over a question's buttons. */
 body.fallback .handle {
-  position: relative; inset: auto; flex: 0 1 auto; min-height: 0;
+  position: relative; inset: auto; flex: 0 1 auto; min-height: 116px;
   border-radius: 0; align-items: flex-start; padding: 12px 14px 8px 8px; border: 0; box-shadow: none; background: transparent;
 }
 body.fallback #face { width: 96px; height: 96px; }

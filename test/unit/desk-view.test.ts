@@ -45,7 +45,7 @@ vi.mock("electron", async () => {
 const { DeskView } = await import("../../app/main/desk/view");
 const { DESK } = await import("../../app/shared/desk");
 
-type Win = EventEmitter & { visible: boolean; sent: [string, unknown][]; webContents: object; close(): void; bounds: { width: number }; ignoreMouse: boolean };
+type Win = EventEmitter & { visible: boolean; sent: [string, unknown][]; webContents: object; close(): void; bounds: { x: number; width: number }; ignoreMouse: boolean };
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 
 /** The fake keyboard's keycode for a keysym. */
@@ -115,6 +115,25 @@ describe("desk view", () => {
     win.close();
     expect(view.userInControl).toBe(false);
     expect(control).toEqual([true, false]);
+  });
+
+  it("grows clear of Ember's handle where it really is, and keeps clear when the handle changes", () => {
+    // A 360 px card whose left edge is at 1100 (a narrow handle's place would leave the view its full 980 px).
+    let handle: { x: number; y: number; width: number; height: number } | null = { x: 1100, y: 930, width: 360, height: 138 };
+    view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000, handleBounds: () => handle });
+    open();
+    send(DESK.takeOver);
+    const right = () => win.bounds.x + win.bounds.width;
+    expect(right()).toBeLessThanOrEqual(1100 - 12);
+    expect(win.bounds.width).toBeGreaterThan(340);
+    // The card moves further in (another card size, another place): the enlarged view keeps clear of it.
+    handle = { x: 800, y: 930, width: 360, height: 138 };
+    view.handleMoved();
+    expect(right()).toBeLessThanOrEqual(800 - 12);
+    // Unknown: room for the pill in the corner.
+    handle = null;
+    view.handleMoved();
+    expect(win.bounds.width).toBe(980);
   });
 
   it("always tells the page which mode it is in", () => {

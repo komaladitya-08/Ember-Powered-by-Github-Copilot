@@ -311,7 +311,10 @@ async function refreshActivity(): Promise<void> {
   $("activity-note").textContent = today ? `${today} today` : "";
 }
 void refreshActivity();
-setInterval(() => { if (document.visibilityState === "visible") void refreshActivity(); }, 3000);
+/** Main says whether the window can be seen: minimised, X11 still reports the page visible. */
+let windowShown = true;
+const canBeSeen = () => windowShown && document.visibilityState === "visible";
+setInterval(() => { if (canBeSeen()) void refreshActivity(); }, 3000);
 
 // ───── Drawing the characters ─────
 // Only while the window shows and a character is on screen (not hidden or scrolled away); every frame while something
@@ -325,7 +328,7 @@ let drawTimer: ReturnType<typeof setTimeout> | null = null;
 let drawPending = false;
 /** Draw on the next frame, or after `gap` ms (a sooner draw already asked for wins). */
 function drawSoon(gap = 0): void {
-  if (drawPending || document.hidden || !onScreen.size) return;
+  if (drawPending || !canBeSeen() || !onScreen.size) return;
   if (gap > 0) {
     if (!drawTimer) drawTimer = setTimeout(() => { drawTimer = null; drawSoon(); }, gap);
     return;
@@ -336,6 +339,10 @@ function drawSoon(gap = 0): void {
 }
 window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; looking = true; drawSoon(); });
 document.addEventListener("visibilitychange", () => drawSoon());
+window.ember.onVisibility(shown => {
+  windowShown = shown;
+  if (shown) { void refreshActivity(); drawSoon(); }
+});
 const seen = new IntersectionObserver(entries => {
   for (const e of entries) {
     if (e.isIntersecting) onScreen.add(e.target);
@@ -369,8 +376,8 @@ function frame(now: number): void {
   drawPending = false;
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
   last = now;
-  // Hidden or scrolled away: nothing is drawn until it shows again (drawSoon is called then).
-  if (document.hidden || !onScreen.size) return;
+  // Hidden, minimised or scrolled away: nothing is drawn until it shows again (drawSoon is called then).
+  if (!canBeSeen() || !onScreen.size) return;
   const drawn: Rig[] = [];
   if (onScreen.has(heroCanvas)) { paint(heroCanvas, heroRig, heroChars[settings?.character ?? "cinder"], dt, 170); drawn.push(heroRig); }
   for (const c of cards) if (onScreen.has(c.canvas)) { paint(c.canvas, c.rig, c.character, dt, 175); drawn.push(c.rig); }

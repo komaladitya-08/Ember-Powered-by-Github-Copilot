@@ -12,6 +12,7 @@ import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, ty
 import { ReasoningBubble, plainStream } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
+import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -138,18 +139,33 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
 });
 
 // ── Task cards: stacked just above the handle; kept (not rebuilt) across updates, so a click is never lost to a re-render ──
+// Tasks under way sit nearest the handle; when the stack would run off the top of the screen, the oldest ended
+// cards fold into one "+N more" line (with Close all), and if even the tasks under way don't fit, the stack scrolls.
+
+/** Space between cards (the stack's CSS gap) and kept free above the stack. */
+const CARD_GAP = 8;
+const TOP_ROOM = 12;
+/** The height the stack may take above the handle (px). */
+let tasksRoom = Infinity;
 
 function placeTasks(): void {
   const h = handleRect;
+  const bottom = h ? Math.max(8, viewport.height - h.y + 10) : 80;
   tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width)) : 12}px`;
-  tasksEl.style.bottom = `${h ? Math.max(8, viewport.height - h.y + 10) : 80}px`;
+  tasksEl.style.bottom = `${bottom}px`;
+  tasksRoom = Math.max(80, viewport.height - bottom - TOP_ROOM);
+  tasksEl.style.maxHeight = `${tasksRoom}px`;
+  fitTasks();
   measureTasks();
 }
 
 let lastCards = "null";
 /** Where the cards' buttons are (they take clicks) and what the bubble keeps off. */
 function measureTasks(): void {
-  taskRects = [...tasksEl.querySelectorAll<HTMLElement>(".task-actions:not([hidden])")].map(el => {
+  // A stack that scrolls takes the wheel (and clicks) over all of it; otherwise only its buttons do.
+  const scrolls = tasksEl.classList.contains("scroll");
+  const hot = scrolls ? [tasksEl] : [...tasksEl.querySelectorAll<HTMLElement>(".task:not([hidden]) .task-actions:not([hidden])")];
+  taskRects = hot.map(el => {
     const r = el.getBoundingClientRect();
     return { x: r.x - 4, y: r.y - 4, width: r.width + 8, height: r.height + 8 };
   });
@@ -175,12 +191,69 @@ function measureTasks(): void {
 interface CardEls { li: HTMLLIElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string }
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
+/** The cards in stack order (top first), as last rendered. */
+let stacked: TaskCard[] = [];
+/** The ended cards folded into the "+N more" line now (Close all closes the failures among them). */
+let folded: TaskCard[] = [];
+
+/** The "+N more" line at the top of the stack: one element, kept, so its Close all is never lost to a re-render. */
+const more = (() => {
+  const li = document.createElement("li");
+  li.className = "task more";
+  li.hidden = true;
+  const text = document.createElement("div");
+  text.className = "more-text";
+  const title = document.createElement("b");
+  const detail = document.createElement("span");
+  text.append(title, detail);
+  const actions = document.createElement("div");
+  actions.className = "task-actions";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Close all";
+  close.addEventListener("click", () => { for (const id of foldedLine(folded).close) api.bubbleAction(id); });
+  actions.append(close);
+  li.append(text, actions);
+  return { li, title, detail, actions, close };
+})();
+
+/** The "+N more" line says what is folded into it now. */
+function showFolded(list: TaskCard[]): void {
+  const line = foldedLine(list);
+  more.title.textContent = line.title;
+  more.detail.textContent = line.detail;
+  more.actions.hidden = line.close.length === 0;
+  more.close.setAttribute("aria-label", `Close all: ${line.close.length === 1 ? "1 earlier task" : `${line.close.length} earlier tasks`}`);
+}
+
+/** Folds the oldest ended cards into the "+N more" line until the stack fits above the handle; scrolls if still too tall. */
+function fitTasks(): void {
+  const items = stacked.map(t => cards.get(t.id)?.li).filter((li): li is HTMLLIElement => !!li);
+  const ended = stacked.filter(t => !underWay(t)).length;
+  // Everything shown once to measure it (one layout read), the line as it would read, then what doesn't fit folds away.
+  for (const li of items) li.hidden = false;
+  more.li.hidden = ended === 0;
+  if (!items.length) { folded = []; tasksEl.classList.remove("scroll"); return; }
+  if (ended) showFolded(stacked.slice(0, ended));
+  const heights = items.map(li => li.offsetHeight);
+  const k = foldCount(heights, ended, tasksRoom, CARD_GAP, more.li.hidden ? 0 : more.li.offsetHeight);
+  folded = stacked.slice(0, k);
+  items.slice(0, k).forEach(li => { li.hidden = true; });
+  more.li.hidden = k === 0;
+  if (k) showFolded(folded);
+  const scrolls = tasksEl.scrollHeight > tasksEl.clientHeight + 1;
+  const was = tasksEl.classList.contains("scroll");
+  tasksEl.classList.toggle("scroll", scrolls);
+  // When it starts scrolling, the cards nearest the handle (the newest under way) are the ones in view.
+  if (scrolls && !was) tasksEl.scrollTop = tasksEl.scrollHeight;
+}
 
 function renderTasks(tasks: TaskCard[]): boolean {
   const key = JSON.stringify(tasks);
   if (key === tasksKey) return false;
   tasksKey = key;
-  const items = tasks.map(t => {
+  stacked = stackOrder(tasks);
+  const items = stacked.map(t => {
     let c = cards.get(t.id);
     if (!c) {
       const li = document.createElement("li");
@@ -216,8 +289,11 @@ function renderTasks(tasks: TaskCard[]): boolean {
   });
   const ids = new Set(tasks.map(t => t.id));
   for (const id of [...cards.keys()]) if (!ids.has(id)) cards.delete(id);
-  const same = items.length === tasksEl.children.length && items.every((li, i) => tasksEl.children[i] === li);
-  if (!same) tasksEl.replaceChildren(...items);
+  // The "+N more" line heads the stack whenever there are ended cards that could fold.
+  const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;
+  const same = all.length === tasksEl.children.length && all.every((li, i) => tasksEl.children[i] === li);
+  if (!same) tasksEl.replaceChildren(...all);
+  fitTasks();
   return true;
 }
 

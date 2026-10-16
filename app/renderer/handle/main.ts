@@ -1,8 +1,8 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { plainStream } from "@ember/bubble";
-import type { HandleApi } from "../../shared/overlay";
+import { announcement, plainStream } from "@ember/bubble";
+import type { BubbleState, HandleApi } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import type { Settings } from "../../main/settings";
 
@@ -60,6 +60,19 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 
 const thoughtEl = $("thought");
 let wasStreaming = false;
+/**
+ * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once
+ * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
+ */
+let announced = "";
+function announce(b: BubbleState): void {
+  // What was said while the card showed nothing new isn't repeated when it shows again.
+  if (!b.visible) return;
+  const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
+  if (text === announced) return;
+  announced = text;
+  $("live").textContent = text;
+}
 api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
@@ -76,6 +89,7 @@ api.onState(s => {
     $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
     return;
   }
+  announce(b);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks);
   const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);

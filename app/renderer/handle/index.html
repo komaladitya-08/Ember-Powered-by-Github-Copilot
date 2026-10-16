@@ -7,8 +7,9 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <button id="handle" class="handle" type="button" aria-label="Ember menu">
-    <canvas id="face" aria-hidden="true"></canvas>
+  <!-- A click anywhere on it opens Ember's menu; the menu button is the face, so the words stay readable text. -->
+  <div id="handle" class="handle">
+    <button id="menu" class="menu" type="button" aria-label="Ember menu"><canvas id="face" aria-hidden="true"></canvas></button>
     <i id="mic" class="mic" hidden aria-hidden="true"></i>
     <span class="text">
       <b id="name">Ember</b>
@@ -16,7 +17,9 @@
       <span id="thought" class="thought"></span>
       <span id="step" class="step" hidden></span>
     </span>
-  </button>
+  </div>
+  <!-- Without a compositor the card is Ember's only surface: screen readers hear its answers and questions here. -->
+  <div id="live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="actions" class="actions" hidden></div>
   <div id="task" class="task" hidden>
     <span class="task-text"><b id="task-title"></b><span id="task-detail"></span></span>

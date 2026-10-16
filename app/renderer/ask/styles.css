@@ -19,3 +19,8 @@ input:focus { border-color: #ff9a3d; }
 .sees { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #ffd2a8; }
 .hint { flex: none; color: rgba(243, 220, 203, 0.82); }
 .hint [hidden] { display: none; }
+/* No compositor: the whole window is an opaque panel in the handle card's colours (no glow to fit around). */
+html.opaque, html.opaque body { background: #1a120e; }
+html.opaque body { box-shadow: inset 0 0 0 1px rgba(255, 154, 61, 0.45); }
+html.opaque input { box-shadow: none; }
+html.opaque .meta { background: transparent; }
