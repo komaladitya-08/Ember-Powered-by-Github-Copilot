@@ -604,8 +604,15 @@ function start(): void {
     hideIfStill(bubble, 3000);
   };
   let lastAskByVoice = false;
-  /** Said on the status line when a spoken request ran past the longest Ember listens. */
-  const CUT_NOTE = "I only caught the first part: say the rest after my answer.";
+  /**
+   * Said on the status line when a spoken request ran past the longest Ember listens: after a "Hey Ember" request a
+   * follow-up window comes, after a follow-up none does.
+   */
+  const CUT_NOTES = {
+    wake: "I only caught the first part: say the rest after my answer.",
+    "follow-up": "I only caught the first part: say “Hey Ember” and the rest.",
+  } as const;
+  const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"];
   let shownForAnswer = false;
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
@@ -647,7 +654,7 @@ function start(): void {
       case "listening":
         if (e.on && e.reason === "follow-up") { setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
-        if (!e.on && statusBy.listen !== CUT_NOTE) setStatus("listen", null);
+        if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
         // A follow-up window that heard nothing leaves the answer up (unless it had started showing "Listening…"),
         // with its own hide timer still running. What is put back gets a hide of its own.
@@ -675,8 +682,9 @@ function start(): void {
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
-          setStatus("listen", CUT_NOTE);
-          setTimeout(() => { if (statusBy.listen === CUT_NOTE) setStatus("listen", null); }, 10_000).unref?.();
+          const note = CUT_NOTES[e.window];
+          setStatus("listen", note);
+          setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
         }
         // A follow-up (no wake word) keeps the context from the last call.
         void askEmber(e.text);
