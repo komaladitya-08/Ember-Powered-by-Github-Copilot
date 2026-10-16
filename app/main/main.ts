@@ -1044,6 +1044,12 @@ function start(): void {
       // A proxy set only in GNOME Settings reaches the Copilot runtime too (it reads only HTTPS_PROXY).
       resolveProxy: url => session.defaultSession.resolveProxy(url),
     });
+    // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
+    // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
+    let wasOnline = net.isOnline();
+    const netWatch = setInterval(() => { const on = net.isOnline(); if (on !== wasOnline) { wasOnline = on; agent?.networkChanged(on); } }, 5000);
+    netWatch.unref?.();
+    powerMonitor.on("resume", () => agent?.networkChanged(true));
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;
     const startBrain = async () => {

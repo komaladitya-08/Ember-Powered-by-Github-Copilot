@@ -334,3 +334,88 @@ describe("plainText (review round 3)", () => {
     expect(plainText("**Bold** and *soft*, __strong__ and _light_.")).toBe("Bold and soft, strong and light.");
   });
 });
+
+describe("Presenter: tasks and guides sharing the bubble (review round 4)", () => {
+  function shared() {
+    vi.useFakeTimers();
+    const states: { who: string; s: Partial<EmberState> }[] = [];
+    const owner = new BubbleOwner();
+    const make = (who: string, name: string, task: boolean) => new Presenter(s => states.push({ who, s }), undefined, () => name, owner, undefined, false, { task });
+    const talk = make("ember", "Ember", false);
+    const a = make("a", "Night light", true);
+    const b = make("b", "Calculator", true);
+    const shown = () => states.filter(x => x.s.bubble).map(x => `${x.who}:${x.s.bubble!.visible ? x.s.bubble!.thought : "(hidden)"}`).filter((x, i, arr) => x !== arr[i - 1]);
+    const work = (p: Presenter, text: string) => {
+      p.event({ type: "assistant.reasoning_delta", data: { deltaContent: text } });
+      p.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
+      p.event({ type: "tool.execution_complete", data: { success: true } });
+    };
+    return { owner, talk, a, b, states, shown, work };
+  }
+
+  it("two tasks at work: one task's work is in the bubble at a time; the other's shows once the first is done", () => {
+    const { a, b, shown, work } = shared();
+    a.taskStarted();
+    b.taskStarted();
+    for (let i = 0; i < 5; i++) { work(a, `a${i} `); work(b, `b${i} `); }
+    expect(shown().every(s => s.startsWith("a:"))).toBe(true);
+    a.outcome({ title: "Night light", text: "It's on.", emotion: "proud", gesture: "thumbsUp", mood: "done" });
+    work(b, "b5 ");
+    expect(shown().at(-1)).toBe("a:It's on.");
+    vi.advanceTimersByTime(6000 + 8 * 50);
+    expect(shown().at(-1)).toBe("b:b5 ");
+    work(b, "b6 ");
+    expect(shown().at(-1)).toBe("b:b6 ");
+  });
+
+  it("a task that goes quiet hands the bubble to one still at work", () => {
+    const { a, b, shown, work } = shared();
+    a.taskStarted();
+    work(a, "a0 ");
+    b.taskStarted();
+    work(b, "b0 ");
+    expect(shown().at(-1)).toBe("a:a0 ");
+    vi.advanceTimersByTime(16_000);
+    work(b, "b1 ");
+    expect(shown().at(-1)).toBe("b:b1 ");
+    work(a, "a1 ");
+    expect(shown().at(-1)).toBe("b:b1 ");
+  });
+
+  it("a guide step stays up while it waits for the click: neither its own tool events nor another task's work replace it, and it comes back after an answer", () => {
+    const { talk, a: guide, b: task, shown, work } = shared();
+    task.taskStarted();
+    work(task, "t0 ");
+    guide.event({ type: "tool.execution_start", data: { toolName: "point_at" } });
+    guide.guide("Click Display", "Step 1");
+    guide.event({ type: "tool.execution_complete", data: { success: true } });
+    guide.event({ type: "tool.execution_start", data: { toolName: "wait_for_click" } });
+    for (let i = 1; i < 6; i++) work(task, `t${i} `);
+    vi.advanceTimersByTime(20_000);
+    for (let i = 6; i < 9; i++) work(task, `t${i} `);
+    expect(shown().at(-1)).toBe("a:Click Display");
+    // The user asks something meanwhile: the answer shows, then the step again (not the other task's work).
+    talk.userPrompt("and the time?");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Three." } });
+    talk.event({ type: "assistant.message", data: { content: "Three." } });
+    talk.event({ type: "session.idle", data: {} });
+    work(task, "t9 ");
+    expect(shown().at(-1)).toBe("ember:Three.");
+    vi.advanceTimersByTime(6000 + 6 * 50);
+    expect(shown().at(-1)).toBe("a:Click Display");
+    // The guide ends: its outcome, then the other task's work.
+    guide.event({ type: "tool.execution_complete", data: { success: true } });
+    guide.outcome({ title: "Display", text: "You got as far as Display.", emotion: "neutral", gesture: "rest", mood: "idle" });
+    work(task, "t10 ");
+    expect(shown().at(-1)).toBe("a:You got as far as Display.");
+    vi.advanceTimersByTime(6000 + 26 * 50);
+    expect(shown().at(-1)).toMatch(/^b:.*t10 $/);
+  });
+
+  it("errors: a connection disposed under a pending request, and a server error, in plain words", async () => {
+    const { friendlyError } = await import("../../app/main/agent/presenter");
+    expect(friendlyError("Pending response rejected since connection got disposed")).toMatch(/can't reach Copilot/);
+    expect(friendlyError("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 502 Bad gateway")).toBe("Copilot had a problem on its side. Try again in a moment.");
+    expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's AI endpoint had a problem/);
+  });
+});

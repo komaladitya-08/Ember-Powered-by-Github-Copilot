@@ -23,6 +23,8 @@ const sim = vi.hoisted(() => ({
   ping: async (): Promise<unknown> => ({}),
   stopHangs: false,
   createGate: null as Promise<void> | null,
+  /** A request being sent waits for this (a hung runtime never answers it). */
+  sendGate: null as Promise<void> | null,
   /** A prompt reached a session. */
   onSend: (_session: any, _prompt: string) => undefined as void,
 }));
@@ -38,7 +40,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     constructor(public sessionId: string, public config: any) {}
     on(fn: (e: any) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
     emit(type: string, data: Record<string, unknown> = {}) { for (const l of [...this.listeners]) l({ type, data }); }
-    async send(m: { prompt: string }) { this.sent.push(m.prompt); sim.onSend(this, m.prompt); return "m"; }
+    async send(m: { prompt: string }) { this.sent.push(m.prompt); sim.onSend(this, m.prompt); if (sim.sendGate) await sim.sendGate; return "m"; }
     async abort() { this.aborted++; }
     async disconnect() { if (sim.stopHangs) await hang(); }
     async setModel() { /* nothing */ }
@@ -97,6 +99,7 @@ beforeEach(() => {
   sim.ping = async () => ({});
   sim.stopHangs = false;
   sim.createGate = null;
+  sim.sendGate = null;
   sim.onSend = () => undefined;
 });
 afterEach(() => { vi.useRealTimers(); });
@@ -299,10 +302,10 @@ describe("a runtime that dies or hangs", () => {
     sim.auth = async () => ({ isAuthenticated: reach, login: "octo" });
     const { host, statuses } = makeHost({ reachable: async () => reach, healthMs: 1000 });
     await host.start(TOKEN, "stored");
-    for (const wait of [15_000, 30_000, 60_000, 120_000]) await vi.advanceTimersByTimeAsync(wait + 100);
+    for (const wait of [15_000, 30_000, 60_000, 60_000]) await vi.advanceTimersByTimeAsync(wait + 100);
     expect(sim.clients).toHaveLength(5);
     reach = true;
-    await vi.advanceTimersByTimeAsync(240_100);
+    await vi.advanceTimersByTimeAsync(60_100);
     expect(host.getStatus().phase).toBe("ready");
     let once = true;
     sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
@@ -619,5 +622,190 @@ describe("review round 3", () => {
     } finally {
       if (saved.HTTPS_PROXY === undefined) delete process.env.HTTPS_PROXY;
     }
+  });
+});
+
+describe("review round 4", () => {
+  const presenterOf = (host: AgentHost) => (host as unknown as { presenter: Presenter }).presenter;
+  const taskSessions = () => sim.sessions.filter(x => x.sessionId.startsWith("ember-task-"));
+  const tool = (session: any, name: string) => session.config.tools.find((t: any) => t.name === name);
+  const shown = (patches: Partial<EmberState>[]) => patches.filter(p => p.bubble).map(p => p.bubble!.visible ? `${p.bubble!.title}: ${p.bubble!.thought}` : "(hidden)");
+  /** A question with buttons that the test puts up and answers, as the confirmer does. */
+  function question() {
+    let up = false;
+    const waiters: (() => void)[] = [];
+    return {
+      confirmer: { get waiting() { return up; }, settled: () => (up ? new Promise<void>(r => waiters.push(r)) : Promise.resolve()), cancelAll() {} },
+      ask() { up = true; },
+      answer() { up = false; for (const w of waiters.splice(0)) w(); },
+    };
+  }
+  /** The user asks for a task; the conversation starts it and says "On it…" while the task's question is up. */
+  async function onItBehindQuestion(seenFirst = false) {
+    vi.useFakeTimers();
+    const q = question();
+    const made = makeHost({ hands: { ...hands(), confirmer: q.confirmer as never } });
+    await made.host.start(TOKEN, "stored");
+    await made.host.ask("save my document");
+    const talk = conductorSession();
+    await tool(talk, "start_task").handler({ goal: "save my document" });
+    await vi.advanceTimersByTimeAsync(50);
+    const say = () => {
+      const onIt = "On it: saving your document…";
+      talk.emit("assistant.message_delta", { deltaContent: onIt });
+      talk.emit("assistant.message", { content: onIt });
+      talk.emit("session.idle", {});
+    };
+    if (seenFirst) say();
+    q.ask(); // the worker's "May I?" (main shows it)
+    if (seenFirst) taskSessions()[0].emit("assistant.reasoning_delta", { deltaContent: "Asking first. " });
+    else say();
+    return { ...made, q, task: taskSessions()[0] };
+  }
+  async function finish(task: any, summary: string) {
+    await tool(task, "finish_task").handler({ success: true, summary });
+    task.emit("session.idle", { aborted: true });
+    await vi.advanceTimersByTimeAsync(100);
+  }
+
+  it("an “On it…” kept off screen by the task's question isn't shown after the answer; the task's own result is", async () => {
+    const { host, patches, q, task } = await onItBehindQuestion();
+    const n = patches.length;
+    q.answer(); // "Allow"; main shows "Thanks! Carrying on." for a moment
+    await vi.advanceTimersByTimeAsync(300);
+    await finish(task, "Saved as report.odt.");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(shown(patches.slice(n))).toEqual(["save my document: Saved as report.odt."]);
+    await host.stop();
+  });
+
+  it("the same when the task ends a while after the answer (a slower model): its work, then its result, never the stale “On it…”", async () => {
+    const { host, patches, q, task } = await onItBehindQuestion();
+    const n = patches.length;
+    q.answer(); // "Not now"
+    await vi.advanceTimersByTimeAsync(3000);
+    task.emit("assistant.reasoning_delta", { deltaContent: "The user said no. " });
+    await finish(task, "You said not now, so I left it.");
+    await vi.advanceTimersByTimeAsync(1000);
+    const after = shown(patches.slice(n));
+    expect(after.some(s => s.includes("On it"))).toBe(false);
+    expect(after.at(-1)).toBe("save my document: You said not now, so I left it.");
+    await host.stop();
+  });
+
+  it("an “On it…” already read before the question doesn't come back after the answer either", async () => {
+    const { host, patches, q, task } = await onItBehindQuestion(true);
+    const n = patches.length;
+    q.answer(); // "Not now"
+    await vi.advanceTimersByTimeAsync(3000);
+    await finish(task, "You said not now, so I left it.");
+    await vi.advanceTimersByTimeAsync(1000);
+    const after = shown(patches.slice(n));
+    expect(after.some(s => s.includes("On it"))).toBe(false);
+    expect(after.at(-1)).toBe("save my document: You said not now, so I left it.");
+    await host.stop();
+  });
+
+  it("closing a failed card drops its result still waiting behind an answer", async () => {
+    vi.useFakeTimers();
+    const { host, patches } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const t = host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    const p = presenterOf(host);
+    p.userPrompt("what time is it?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Three o'clock." } });
+    p.event({ type: "assistant.message", data: { content: "Three o'clock." } });
+    p.event({ type: "session.idle", data: {} });
+    await tool(taskSessions()[0], "finish_task").handler({ success: false, summary: "The switch wasn't there." });
+    taskSessions()[0].emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(100);
+    expect(host.tasks!.get(t.id)?.status).toBe("failed");
+    host.tasks!.dismiss(t.id);
+    const n = patches.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(shown(patches.slice(n))).toEqual(["(hidden)"]);
+    await host.stop();
+  });
+
+  it("offline: the wait between tries stays within a minute, and asking (or the network coming back) tries at once", async () => {
+    vi.useFakeTimers();
+    let reach = false;
+    sim.auth = async () => ({ isAuthenticated: reach, login: "octo" });
+    const { host, screen } = makeHost({ reachable: async () => reach });
+    await host.start(TOKEN, "stored");
+    for (const wait of [15_000, 30_000, 60_000, 60_000, 60_000]) await vi.advanceTimersByTimeAsync(wait + 100);
+    expect(sim.clients).toHaveLength(6);
+    // The VPN is up: asking connects now and the question goes out.
+    reach = true;
+    const asked = host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(100);
+    await asked;
+    expect(sim.clients).toHaveLength(7);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(conductorSession().sent.at(-1)).toContain("what time is it?");
+    expect(screen().bubble?.title).toBe("Thinking…");
+    await host.stop();
+    // Main hears the network is back: a waiting retry runs now.
+    reach = false;
+    const other = makeHost({ reachable: async () => reach });
+    await other.host.start(TOKEN, "stored");
+    const n = sim.clients.length;
+    reach = true;
+    other.host.networkChanged(false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sim.clients).toHaveLength(n);
+    other.host.networkChanged(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sim.clients).toHaveLength(n + 1);
+    expect(other.host.getStatus().phase).toBe("ready");
+    await other.host.stop();
+  });
+
+  it("the organisation's endpoint: one the system reaches directly bypasses GitHub's proxy; one with its own proxy uses that", async () => {
+    const saved = { ...process.env };
+    for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"]) delete process.env[k];
+    try {
+      const provider = { type: "openai" as const, baseUrl: "https://llm.corp.example.com/v1", apiKey: "k" };
+      const asked: string[] = [];
+      const direct = makeHost({ provider, resolveProxy: async url => { asked.push(url); return url.includes("corp.example.com") ? "DIRECT" : "PROXY proxy.corp:3128"; } });
+      await direct.host.start(null);
+      expect(asked).toEqual(["https://api.github.com/", "https://llm.corp.example.com/v1"]);
+      expect(sim.clients.at(-1).opts.env).toMatchObject({ HTTPS_PROXY: "http://proxy.corp:3128", NO_PROXY: "127.0.0.1,localhost,llm.corp.example.com", no_proxy: "127.0.0.1,localhost,llm.corp.example.com" });
+      await direct.host.stop();
+      const own = makeHost({ provider, resolveProxy: async url => (url.includes("corp.example.com") ? "PROXY llm-proxy.corp:8080" : "PROXY proxy.corp:3128") });
+      await own.host.start(null);
+      expect(sim.clients.at(-1).opts.env).toMatchObject({ HTTPS_PROXY: "http://llm-proxy.corp:8080", NO_PROXY: "127.0.0.1,localhost" });
+      await own.host.stop();
+      const none = makeHost({ provider, resolveProxy: async () => "DIRECT" });
+      await none.host.start(null);
+      expect(sim.clients.at(-1).opts.env.HTTPS_PROXY).toBeUndefined();
+      await none.host.stop();
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  });
+
+  it("a question sent while the runtime hung, rejected once that connection was replaced, adds no second error", async () => {
+    vi.useFakeTimers();
+    const { host, patches } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    let reject!: (e: Error) => void;
+    sim.sendGate = new Promise<void>((_r, j) => { reject = j; });
+    sim.ping = () => new Promise(() => undefined);
+    const asked = host.ask("are you there?");
+    await vi.advanceTimersByTimeAsync(3500);
+    sim.ping = async () => ({});
+    sim.sendGate = null;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(host.getStatus().phase).toBe("ready");
+    const n = patches.length;
+    reject(new Error("Pending response rejected since connection got disposed"));
+    await asked;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown(patches.slice(n))).toEqual([]);
+    expect(shown(patches).filter(s => s.startsWith("Something went wrong"))).toEqual(["Something went wrong: Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment."]);
+    await host.stop();
   });
 });

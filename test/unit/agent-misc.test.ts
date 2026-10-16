@@ -172,3 +172,74 @@ describe("review round 2", () => {
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 });
+
+describe("the clipboard (review round 4)", () => {
+  const raw = (name: string) => `electron application/osclipboard;format="${name}"`;
+  class Item { constructor(readonly data: Record<string, unknown>) {} get types() { return Object.keys(this.data); } async getType(t: string) { return this.data[t]; } }
+  /** A clipboard as Electron 44 lists it; `reads` keeps every format read. */
+  const board = (initial: Record<string, unknown>[], reads: string[] = []) => {
+    const state = { items: initial.map(d => ({ types: Object.keys(d), getType: async (t: string) => { reads.push(t); return d[t]; } })) as { types: string[]; getType(t: string): Promise<unknown> }[], written: 0, cleared: 0 };
+    return { state, reads };
+  };
+  const clip = async (b: ReturnType<typeof board>, timeoutMs?: number) => {
+    const { electronClipboard } = await import("../../app/main/agent/clipboard");
+    return electronClipboard<Item>({
+      read: async () => b.state.items,
+      write: async items => { b.state.items = items.map(i => ({ types: i.types, getType: async (t: string) => i.data[t] })); b.state.written++; },
+      writeText: async t => { b.state.items = [{ types: ["text/plain"], getType: async () => t }]; },
+      clear: () => { b.state.items = []; b.state.cleared++; },
+    }, Item as unknown as new (d: Record<string, never>) => Item, timeoutMs);
+  };
+
+  it("an app's own formats (LibreOffice cells, file lists) and the password marker are kept; raw X targets and extra pictures are not read", async () => {
+    const cells = { "text/plain": "6", "text/html": "<td>6</td>", "image/png": new Blob([new Uint8Array([9])]), [raw("application/x-openoffice-embed-source-xml;windows_formatname=\"Star Embed Source (XML)\"")]: "<cells/>",
+      [raw("application/x-libreoffice-tsvc")]: "6", [raw("application/x-openoffice-bitmap;windows_formatname=\"Bitmap\"")]: "BMP", [raw("image/bmp")]: "BMP",
+      [raw("x-special/gnome-copied-files")]: "copy\nfile:///x", [raw("x-kde-passwordManagerHint")]: "secret", [raw("PIXMAP")]: 1, [raw("TARGETS")]: 2, [raw("STRING")]: "6" };
+    const b = board([cells]);
+    const saved = await (await clip(b)).save();
+    expect(Object.keys(saved.items[0]).sort()).toEqual(["image/png", "text/html", "text/plain", raw("application/x-libreoffice-tsvc"),
+      raw("application/x-openoffice-embed-source-xml;windows_formatname=\"Star Embed Source (XML)\""), raw("x-kde-passwordManagerHint"), raw("x-special/gnome-copied-files")].sort());
+    for (const never of [raw("PIXMAP"), raw("TARGETS"), raw("STRING"), raw("image/bmp"), raw("application/x-openoffice-bitmap;windows_formatname=\"Bitmap\"")]) expect(b.reads).not.toContain(never);
+  });
+
+  it("a picture of copied text that takes too long to make is left out instead of failing the save; a copied picture alone is still required", async () => {
+    const { ClipboardTimeout } = await import("../../app/main/agent/clipboard");
+    const slow = board([]);
+    slow.state.items = [{ types: ["text/plain", "image/png"], getType: (t: string) => (t === "image/png" ? new Promise(() => undefined) : Promise.resolve("cells")) }];
+    const t0 = Date.now();
+    expect((await (await clip(slow, 200)).save()).items).toEqual([{ "text/plain": "cells" }]);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    const picture = board([]);
+    picture.state.items = [{ types: ["image/png"], getType: () => new Promise(() => undefined) }];
+    await expect((await clip(picture, 200)).save()).rejects.toBeInstanceOf(ClipboardTimeout);
+  });
+
+  it("tells whether the clipboard changed since it was saved, and puts it back only over Ember's own text", async () => {
+    const b = board([{ "text/plain": "old copy", "text/html": "<b>old copy</b>" }]);
+    const cb = await clip(b);
+    const saved = await cb.save();
+    expect(await cb.unchanged(saved)).toBe(true);
+    b.state.items = [{ types: ["text/plain"], getType: async () => "new copy" }];
+    expect(await cb.unchanged(saved)).toBe(false);
+    // Still Ember's text: put back.
+    await cb.writeText("Ember");
+    await cb.restore(saved, "Ember");
+    expect(b.state.written).toBe(1);
+    expect(await b.state.items[0].getType("text/plain")).toBe("old copy");
+    // Cleared meanwhile (a password manager's timer), or a new copy: left as it is.
+    await cb.writeText("Ember");
+    b.state.items = [];
+    await cb.restore(saved, "Ember");
+    expect(b.state.items).toEqual([]);
+    b.state.items = [{ types: ["text/plain"], getType: async () => "newer copy" }];
+    await cb.restore(saved, "Ember");
+    expect(await b.state.items[0].getType("text/plain")).toBe("newer copy");
+    expect(b.state.written).toBe(1);
+  });
+});
+
+describe("startup errors (review round 4)", () => {
+  it("a runtime connection disposed under a pending request reads as the runtime stopping", () => {
+    expect(explainStartError(new Error("Pending response rejected since connection got disposed"))).toBe("Ember's Copilot runtime stopped while connecting. Press Check again.");
+  });
+});

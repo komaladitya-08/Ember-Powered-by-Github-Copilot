@@ -237,7 +237,8 @@ export class Conductor {
 
   /** `context`: a snapshot of where the user was when they called Ember (untrusted). */
   async ask(text: string, context?: string): Promise<void> {
-    if (!this.session) throw new Error("Ember's brain is not connected yet.");
+    const session = this.session;
+    if (!session) throw new Error("Ember's brain is not connected yet.");
     // A new request: an earlier Stop doesn't refuse what the user asks for now.
     this.stopping = false;
     this.deps.presenter.userPrompt(text);
@@ -251,13 +252,14 @@ export class Conductor {
     const prompt = parts.join("\n\n");
     this.busy = true;
     try {
-      await this.session.send({ prompt });
+      await session.send({ prompt });
     } catch (err) {
       this.busy = false;
-      // The runtime went away (crash, restart): say so instead of "Thinking…" forever.
+      // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
+      // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
-      this.deps.log.warn("conductor.send_failed", { err });
-      this.deps.presenter.fail(friendlyError(msg));
+      this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider }));
       throw new ConnectionLost(msg);
     }
   }

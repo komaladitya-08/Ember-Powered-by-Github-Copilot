@@ -115,6 +115,11 @@ export function proxyFromChromium(rule: string): { url: string | null; socks?: s
   return { url: `${kind === "HTTPS" ? "https" : "http"}://${m[2]}` };
 }
 
+/** The host name of a URL, as NO_PROXY lists it (null if it isn't one). */
+function hostOf(url: string): string | null {
+  try { return new URL(url).hostname.replace(/^\[|\]$/g, "") || null; } catch { return null; }
+}
+
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 
@@ -140,7 +145,7 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
   if (/^None of the models/.test(msg)) return msg;
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
-  if (/client not connected|connection is disposed|connection (closed|lost)/i.test(msg)) return "Ember's Copilot runtime stopped while connecting. Press Check again.";
+  if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "Ember's Copilot runtime stopped while connecting. Press Check again.";
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
   if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
@@ -209,14 +214,29 @@ export class AgentHost {
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
   private readonly stoppedByAll = new Set<string>();
+  /** Tasks the conversation's latest turn started (its reply announces them: "On it…"). */
+  private readonly announced = new Set<string>();
+  /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
+  private readonly outcomes = new Map<string, Presenter>();
   private readonly stateFile: string;
 
   constructor(private o: HostOptions) {
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = o.hands?.confirmer;
-    this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled() } : undefined);
+    this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => NAMES[o.settings.get().character] ?? "Ember", this.owner, text => this.remember("ember", text), !!o.provider);
+  }
+
+  /**
+   * The conversation's reply announcing a task ("On it…") is stale once a question was answered (`task`
+   * absent: a task has spoken to the user since) or, if it never got on screen, once that task finished.
+   * It isn't shown again after them.
+   */
+  private dropAnnouncement(task?: string): void {
+    const p = this.presenter;
+    if (p.busy) return;
+    if (task ? this.announced.has(task) && p.waiting : this.announced.size > 0 && p.visible) p.drop();
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -422,10 +442,19 @@ export class AgentHost {
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
           this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text });
+          this.dropAnnouncement(task.id);
           // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
           const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];
           presenter.outcome({ title: task.title, text: summary || o.empty, emotion: o.emotion, gesture: o.gesture, mood: o.mood });
+          this.outcomes.set(task.id, presenter);
         },
+        onRemoved: (task, byUser) => {
+          const p = this.outcomes.get(task.id);
+          this.outcomes.delete(task.id);
+          // The user closed the card: its result, if it hasn't shown yet, doesn't pop up afterwards.
+          if (byUser && p?.waiting) p.drop();
+        },
+        provider: !!this.o.provider,
         makeWorker: (spec, progress) => new Worker({
           client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, vision: workerVision(), provider: this.o.provider,
           workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -457,10 +486,12 @@ export class AgentHost {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           const t = tasks.start(goal, { target: this.askTarget ?? undefined });
+          this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? goal => {
           const t = tasks.start(goal, { target: this.askTarget ?? undefined, mode: "guide" });
+          this.announced.add(t.id);
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],
@@ -504,31 +535,62 @@ export class AgentHost {
   /**
    * The runtime's environment. Localhost never goes through a proxy (both spellings: the runtime reads the
    * lowercase one first). The runtime reads only HTTPS_PROXY, not GNOME's proxy settings or a PAC file, so
-   * without one in the environment the system's proxy for GitHub is passed on.
+   * without one in the environment the system's proxy is passed on: GitHub's, or with the organisation's own
+   * endpoint that endpoint's (Ember's requests go only there then). An endpoint the system reaches directly
+   * (GNOME's exceptions, a PAC file) is added to NO_PROXY.
    */
   private async runtimeEnv(): Promise<NodeJS.ProcessEnv> {
     const e = process.env;
-    const localhost = (v: string | undefined) => [v, "127.0.0.1", "localhost"].filter(Boolean).join(",");
-    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: localhost(e.NO_PROXY), no_proxy: localhost(e.no_proxy ?? e.NO_PROXY) };
+    const noProxy = (v: string | undefined, more: string[] = []) => [v, "127.0.0.1", "localhost", ...more].filter(Boolean).join(",");
+    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
     this.proxy = undefined;
     if (e.HTTPS_PROXY || e.https_proxy || !this.o.resolveProxy) return env;
     const resolve = this.o.resolveProxy;
-    const rule = await within(Promise.resolve().then(() => resolve("https://api.github.com/")).catch(() => "DIRECT"), 3000);
-    const p = proxyFromChromium(rule === "timeout" ? "DIRECT" : rule);
-    if (!p.url && !p.socks) return env;
+    const proxyFor = async (url: string) => {
+      const rule = await within(Promise.resolve().then(() => resolve(url)).catch(() => "DIRECT"), 3000);
+      return proxyFromChromium(rule === "timeout" ? "DIRECT" : rule);
+    };
+    let p = await proxyFor("https://api.github.com/");
+    let direct: string[] = [];
+    const endpoint = this.o.provider?.baseUrl ? hostOf(this.o.provider.baseUrl) : null;
+    if (endpoint) {
+      const own = await proxyFor(this.o.provider!.baseUrl!);
+      if (own.url || own.socks) p = own;
+      else direct = [endpoint];
+    }
+    const out: NodeJS.ProcessEnv = direct.length ? { ...env, NO_PROXY: noProxy(e.NO_PROXY, direct), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY, direct) } : env;
+    if (!p.url && !p.socks) return out;
     this.proxy = p;
-    this.o.log.info("agent.system_proxy", { kind: p.socks ? "socks" : "http" });
-    if (!p.url) return env;
-    return { ...env, HTTPS_PROXY: p.url, https_proxy: p.url, ...(e.HTTP_PROXY || e.http_proxy ? {} : { HTTP_PROXY: p.url, http_proxy: p.url }) };
+    this.o.log.info("agent.system_proxy", { kind: p.socks ? "socks" : "http", endpointDirect: direct.length > 0 });
+    if (!p.url) return out;
+    return { ...out, HTTPS_PROXY: p.url, https_proxy: p.url, ...(e.HTTP_PROXY || e.http_proxy ? {} : { HTTP_PROXY: p.url, http_proxy: p.url }) };
   }
 
   private retryLater(): void {
     if (this.retry) return;
     const recent = this.offline.filter(t => Date.now() - t < 30 * 60_000);
     this.offline = [...recent, Date.now()];
-    const ms = Math.min(5 * 60_000, 15_000 * 2 ** Math.min(recent.length, 4));
+    // 15 s, 30 s, then every minute: the network (or the VPN) is often back within minutes.
+    const ms = Math.min(60_000, 15_000 * 2 ** Math.min(recent.length, 2));
     this.retry = setTimeout(() => { this.retry = null; void this.launch(this.token, this.source); }, ms);
     this.retry.unref?.();
+  }
+
+  /** A start that failed for want of a network and waits to try again tries now. Returns whether one did. */
+  private retryNow(): boolean {
+    if (!this.retry) return false;
+    clearTimeout(this.retry);
+    this.retry = null;
+    void this.launch(this.token, this.source);
+    return true;
+  }
+
+  /**
+   * The network changed (main: on Electron's online/offline change). Back online, a start waiting to
+   * retry tries at once instead of waiting out its time.
+   */
+  networkChanged(online = true): void {
+    if (online && this.status.phase === "error" && this.retryNow()) this.o.log.info("agent.network_back");
   }
 
   /** The runtime is a separate process: if it dies or stops answering, Ember says so and reconnects. */
@@ -608,6 +670,8 @@ export class AgentHost {
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
     if (epoch !== this.stopEpoch) return;
     this.askTarget = context?.target ?? null;
+    // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
+    if (this.status.phase === "error") this.retryNow();
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);
@@ -627,6 +691,7 @@ export class AgentHost {
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
     this.remember("you", text);
+    this.announced.clear();
     try {
       await this.conductor.ask(text, context?.text);
     } catch (err) {
@@ -700,6 +765,7 @@ export class AgentHost {
     // The cards go with their manager: a failed card's Close would reach nobody after a restart.
     this.tasks?.close();
     this.tasks = null;
+    this.outcomes.clear();
     this.presenter.reset();
     await this.conductor?.stop();
     this.conductor = null;

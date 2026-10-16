@@ -1,6 +1,8 @@
 // Runs the real Copilot runtime against the offline mock model server.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
+import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
@@ -203,6 +205,50 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
       expect(seen).not.toContain("pineapple");
     } finally {
       await host.stop();
+    }
+  }, 90000);
+});
+
+/** This machine's first non-loopback IPv4 address (an "internal host" the proxy settings can exempt). */
+const lanIp = Object.values(os.networkInterfaces()).flat().find(a => a && a.family === "IPv4" && !a.internal)?.address;
+
+describe("the organisation's endpoint behind the system's proxy settings (host on the real runtime)", () => {
+  it.skipIf(!lanIp)("an endpoint the system reaches directly is reached directly, though GitHub goes through a proxy", async () => {
+    // GitHub's proxy refuses everything: an answer can only come straight from the endpoint.
+    const through: string[] = [];
+    const proxy = http.createServer((q, r) => { through.push(String(q.url)); r.writeHead(403); r.end(); });
+    proxy.on("connect", (q, sock) => { through.push(String(q.url)); sock.end("HTTP/1.1 403 Forbidden\r\n\r\n"); });
+    await new Promise<void>(r => proxy.listen(0, "127.0.0.1", () => r()));
+    // The mock model, on this machine's LAN address.
+    const lan = net.createServer(c => { const u = net.connect(Number(new URL(mock.baseUrl).port), "127.0.0.1"); c.pipe(u).pipe(c); c.on("error", () => u.destroy()); u.on("error", () => c.destroy()); });
+    await new Promise<void>(r => lan.listen(0, lanIp, () => r()));
+    const endpoint = `http://${lanIp}:${(lan.address() as net.AddressInfo).port}/v1`;
+    const keys = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"];
+    const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    const userData = fs.mkdtempSync(path.join(dir, "byok-"));
+    const settings = new SettingsStore(path.join(userData, "settings.json"));
+    settings.load();
+    const states: Partial<EmberState>[] = [];
+    const host = new AgentHost({
+      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      log: createLogger({ dir: path.join(userData, "logs") }),
+      setState: p => states.push(p), onStatus: () => undefined,
+      provider: { type: "openai", baseUrl: endpoint, apiKey: "test" },
+      // GNOME: a proxy for the internet, the internal endpoint among its exceptions.
+      resolveProxy: async url => (url.startsWith(endpoint) ? "DIRECT" : `PROXY 127.0.0.1:${(proxy.address() as net.AddressInfo).port}`),
+    });
+    try {
+      expect(await host.start(null)).toBe("ready");
+      await host.ask("hello?");
+      await idle(states, 0);
+      expect(states.filter(s => s.bubble).at(-1)?.bubble).toMatchObject({ mood: "idle", title: "Cinder", streaming: false });
+      expect(through).toEqual([]);
+    } finally {
+      await host.stop();
+      for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+      proxy.close();
+      lan.close();
     }
   }, 90000);
 });

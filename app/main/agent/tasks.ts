@@ -14,6 +14,7 @@ import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
 import type { AuditLog } from "../policy/audit";
+import { friendlyError } from "./presenter";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -39,6 +40,10 @@ export interface TaskManagerDeps {
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   setCards: (cards: TaskCard[]) => void;
   onFinished?: (task: Task) => void;
+  /** A finished card went: the user closed it (`byUser`), or its time was up. */
+  onRemoved?: (task: Task, byUser: boolean) => void;
+  /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
+  provider?: boolean;
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
   maxRunning?: number;
@@ -134,7 +139,7 @@ export class TaskManager {
   /** A finished card the user closed. */
   dismiss(id: string): void {
     const t = this.tasks.get(id);
-    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.publish(); }
+    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.publish(); this.d.onRemoved?.(t, true); }
   }
 
   /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
@@ -213,7 +218,8 @@ export class TaskManager {
       result = await worker.run(abort.signal);
     } catch (err) {
       this.d.log.error("task.error", { id: task.id, err });
-      result = { success: false, summary: `Something went wrong: ${err instanceof Error ? err.message : String(err)}` };
+      // One plain sentence for the card, the bubble, speech and the conversation (the log keeps the raw error).
+      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider }) };
     }
     this.running.delete(task.id);
     if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
@@ -245,7 +251,7 @@ export class TaskManager {
     // Finished cards stay on screen briefly, then go; a failure stays until the user closes it.
     if (status === "failed") return;
     const timer = setTimeout(() => {
-      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); }
+      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
     }, this.d.cardMs ?? 15_000);
     timer.unref?.();
   }

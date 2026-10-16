@@ -45,7 +45,9 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return "The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).";
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
-  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is )?(disposed|closed|lost|refused)|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
+  // The runtime's own connection went away ("Pending response rejected since connection got disposed").
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
+  if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's AI endpoint" : "Copilot"} had a problem on its side. Try again in a moment.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
   const who = ctx.provider ? "The AI endpoint" : "Copilot";
   return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
@@ -53,12 +55,15 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
 
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
 const ACK_MS = 1500;
+/** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
+const QUIET_MS = 15_000;
 
 /**
  * How a write claims the shared bubble.
- * - "progress": a task at work. It shows only while nobody holds the bubble (the task's card shows it meanwhile).
- * - "reply": something to read (the conversation's turn and answer, a task's result). It shows when nobody
- *   else holds the bubble, then holds it until it goes.
+ * - "progress": a task at work. It shows only while nobody holds the bubble and no other task's work is
+ *   in it (the task's card shows it meanwhile).
+ * - "reply": something to read (the conversation's turn and answer, a task's result, a guide between its
+ *   steps). It shows when nobody else holds the bubble, then holds it until it goes.
  * - "step": a guide step. Like a reply, and it also replaces an answer that has finished.
  * - "take": the user asked, or Ember itself has to say something: it shows now.
  * Main's own bubble ("Listening…") holds off all but "take"; a question with buttons holds off everything.
@@ -70,6 +75,8 @@ export type Claim = "progress" | "reply" | "step" | "take";
  * presenter's timer only hides the bubble it still owns. `holder` holds it: an answer being read, a
  * task's result, a guide step, or main's own bubble. A write it holds off waits; when the bubble is
  * free again, the latest one waiting shows (an answer or a result before a task's progress).
+ * One task's work is in the bubble at a time: it stays there until that task's bubble goes (it
+ * finished, or stopped) or it goes quiet; the other tasks' work shows on their cards meanwhile.
  */
 export class BubbleOwner {
   /** The shared bubble for `o`: a plain `{ current }` object (as older tests share) gets one of its own. */
@@ -87,11 +94,14 @@ export class BubbleOwner {
   /** A question was answered just now: its answer stays a moment before anything replaces it. */
   private acking = false;
   private waitingForAnswer = false;
+  /** The task whose work the bubble shows, and when it last wrote. */
+  private stage: { p: Presenter; at: number } | null = null;
 
   constructor(
     /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
     private question?: { up: () => boolean; answered: () => Promise<void> },
     private timers: { set: typeof setTimeout; clear: typeof clearTimeout } = { set: setTimeout, clear: clearTimeout },
+    private now: () => number = Date.now,
   ) {}
 
   /** Main writes the bubble itself now ("Listening…", the kill switch's message). */
@@ -104,6 +114,9 @@ export class BubbleOwner {
   allows(p: Presenter, claim: Claim): boolean {
     if (this.questionUp()) return false;
     const h = this.holder;
+    // Another task's work is in the bubble and still going: this task's work shows on its card.
+    const s = this.stage;
+    if (claim === "progress" && s && s.p !== p && s.p.visible && this.now() - s.at < QUIET_MS) return false;
     if (h === null || h === p || claim === "take") return true;
     // A guide step replaces an answer that has finished (not one still coming, nor main's bubble).
     return claim === "step" && h instanceof Presenter && !h.busy;
@@ -114,6 +127,8 @@ export class BubbleOwner {
     this.showing = this.showing.filter(x => x !== p);
     if (p.visible) this.showing.push(p);
     if (claim === "take") this.holder = p;
+    // The task on stage is still at work even while something else covers its bubble.
+    if (claim === "progress" && (onScreen || this.stage?.p === p)) this.stage = { p, at: this.now() };
     if (!onScreen) return;
     this.current = p;
     if (claim !== "progress") this.holder = p;
@@ -124,6 +139,7 @@ export class BubbleOwner {
   forget(p: Presenter): void {
     this.showing = this.showing.filter(x => x !== p);
     if (this.holder === p) this.holder = null;
+    if (this.stage?.p === p) this.stage = null;
   }
 
   /** `p`'s bubble went: if it was on screen, the latest one waiting shows instead. Returns whether one did. */
@@ -217,6 +233,8 @@ export class Presenter {
   private unseen = false;
   /** Stopped by the kill switch: nothing more is shown until the next request. */
   private silent = false;
+  /** A guide step is up: the guide holds the bubble until its next step or its outcome (not just while pointing). */
+  private guiding = false;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
   /** How the bubble this presenter shows claimed it (see Claim). */
   kind: Claim = "progress";
@@ -242,7 +260,7 @@ export class Presenter {
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
-  private apply(patch: Partial<EmberState>, claim: Claim = this.work): boolean {
+  private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}) } };
     if (this.silent) return false;
     if (!patch.bubble) {
@@ -307,6 +325,7 @@ export class Presenter {
   /** Its bubble was replaced for good (main showed something else): it isn't shown again. */
   drop(): void {
     this.cancelHide();
+    this.guiding = false;
     this.unseen = false;
     this.state = { ...this.state, bubble: { ...IDLE_BUBBLE } };
     this.owner.forget(this);
@@ -315,6 +334,7 @@ export class Presenter {
   /** The kill switch's message is up: this turn (or task) shows nothing more. The next request speaks again. */
   quiet(): void {
     this.cancelHide();
+    this.guiding = false;
     this.answering = false;
     this.silent = true;
     this.owner.forget(this);
@@ -331,6 +351,7 @@ export class Presenter {
   /** This presenter's bubble goes. If it was on screen, the latest one waiting shows instead, or the bubble empties. */
   private hide(): void {
     this.cancelHide();
+    this.guiding = false;
     const onScreen = this.owner.current === this && !this.unseen;
     this.unseen = false;
     this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } };
@@ -341,6 +362,7 @@ export class Presenter {
   /** Something went wrong outside the session's own events (the runtime died, a send failed). */
   fail(message: string): void {
     this.cancelHide();
+    this.guiding = false;
     this.answering = false;
     this.silent = false;
     this.apply({
@@ -353,6 +375,7 @@ export class Presenter {
   /** A short message from Ember itself (not the model), with optional buttons; it goes away on its own. */
   notice(n: { title: string; text: string; actions?: { id: string; label: string }[]; ms?: number }): void {
     this.cancelHide();
+    this.guiding = false;
     this.answering = false;
     this.silent = false;
     this.apply({
@@ -388,6 +411,7 @@ export class Presenter {
     this.cancelHide();
     this.answering = false;
     this.silent = false;
+    this.guiding = true;
     this.apply({
       emotion: "happy", talking: true, gesture: "point",
       bubble: { visible: true, mood: "guiding", title: this.name(), thought: say, step, streaming: false, actions: [] },
@@ -398,6 +422,7 @@ export class Presenter {
   /** A worker started on a task: its bubble is titled with the task (this presenter's name). */
   taskStarted(): void {
     this.cancelHide();
+    this.guiding = false;
     this.answering = false;
     this.answer = "";
     this.silent = false;
@@ -412,6 +437,7 @@ export class Presenter {
     if (this.silent) return;
     this.cancelHide();
     this.answering = false;
+    this.guiding = false;
     this.apply({
       emotion: o.emotion, talking: false, gesture: o.gesture,
       bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: [] },

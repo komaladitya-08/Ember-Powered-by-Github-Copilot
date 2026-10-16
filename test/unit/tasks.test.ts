@@ -323,3 +323,38 @@ describe("review round 3: how tasks end", () => {
     expect(settled).toBe(true);
   });
 });
+
+describe("review round 4: how tasks end", () => {
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) => {
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0, ...extra });
+    return { tm, cards };
+  };
+
+  it("a task that fails on a service error says so in plain words, not the SDK's text", async () => {
+    const fails = (msg: string) => () => fakeWorker(async () => { throw new Error(msg); });
+    const rate = manager(fails("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 429 Rate limit exceeded"));
+    const a = rate.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(a.status).toBe("failed"));
+    expect(a.result?.summary).toBe("Copilot's usage limit was reached for now. Try again a bit later.");
+    const key = manager(fails("Authentication failed with provider at http://llm.corp/v1 (HTTP 401). Check your COPILOT_PROVIDER_API_KEY."), { provider: true });
+    const b = key.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(b.status).toBe("failed"));
+    expect(b.result?.summary).toBe("Your organisation's AI endpoint refused the request. Ask your administrator to check Ember's endpoint settings.");
+    expect(key.cards.at(-1)?.[0].detail).toBe(b.result?.summary);
+  });
+
+  it("says when a finished card goes, and whether the user closed it", async () => {
+    vi.useFakeTimers();
+    const removed: [string, boolean][] = [];
+    const { tm } = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })), { cardMs: 100, onRemoved: (t: { id: string }, byUser: boolean) => removed.push([t.id, byUser]) });
+    const failed = tm.start("a");
+    await vi.advanceTimersByTimeAsync(10);
+    tm.dismiss(failed.id);
+    const ok = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { cardMs: 100, onRemoved: (t: { id: string }, byUser: boolean) => removed.push([t.id, byUser]) });
+    const done = ok.tm.start("b");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(removed).toEqual([[failed.id, true], [done.id, false]]);
+    vi.useRealTimers();
+  });
+});
