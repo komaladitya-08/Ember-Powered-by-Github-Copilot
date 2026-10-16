@@ -688,8 +688,9 @@ export class VoiceEngine {
         this.pendingStop = { ...s, checkAt: now + NAMED_STOP_WAIT_MS, again: true };
         return;
       }
-      // Nothing made out is no "Ember, stop" (a TV's "Amber, stop that…" came out empty after a silence).
-      if (empty || (s.again && !emberSpeaking ? !stopSaidAlone(heard) : heardOtherStop(heard, emberSpeaking))) { this.emit({ type: "rejected", keyword: "ember_stop", reason: "check", heard }); return; }
+      // Nothing made out even at the pause: the spotter's "Ember, stop" stands (the kill switch errs on the safe side; a
+      // quiet "Ember stop" can come out empty). Words that say it wasn't one reject it.
+      if (!empty && (s.again && !emberSpeaking ? !stopSaidAlone(heard) : heardOtherStop(heard, emberSpeaking))) { this.emit({ type: "rejected", keyword: "ember_stop", reason: "check", heard }); return; }
     }
     this.emit({ type: "stop" });
     if (this.mode.kind === "listening") this.endListening("stop");

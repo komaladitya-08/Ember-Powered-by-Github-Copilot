@@ -835,8 +835,9 @@ describe("'Ember, stop' is checked", () => {
     expect(events).toEqual([{ type: "stop" }]);
   });
 
-  it("doesn't take a transcript with nothing in it as 'Ember, stop': it looks again at the pause, and stops only on words", () => {
-    for (const [first, then, stops] of [["", "", false], ["", "Ember, stop what you're doing.", true], [" . ", "Amber, stop hitting your brother.", false]] as const) {
+  it("looks again at the pause when the first look makes nothing out; words decide, and nothing still made out stops (VO9-1)", () => {
+    // A quiet "Ember stop" can come out empty both times: the kill switch errs on the safe side.
+    for (const [first, then, stops] of [["", "", true], ["", "Ember, stop what you're doing.", true], [" . ", "Amber, stop hitting your brother.", false]] as const) {
       const b = fake([first, then]);
       const events: VoiceEvent[] = [];
       const c = { t: 0 };
