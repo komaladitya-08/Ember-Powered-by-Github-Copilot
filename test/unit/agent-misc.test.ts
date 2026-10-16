@@ -407,6 +407,16 @@ describe("a turn that began and then hears nothing from Copilot (review round 8)
     expect(a.whys).toEqual(["silent"]);
   });
 
+  it("asking again while a turn is silent doesn't put off its end: the runtime's echo of the queued request isn't life (AC10-1)", async () => {
+    const a = await watch();
+    a.begin();
+    for (let i = 0; i < 4; i++) { a.wait(40_000); a.w.sending(); a.ev("pending_messages.modified"); a.w.sent(); }
+    expect(a.whys).toEqual([]);
+    // 180 s since Copilot was last heard from.
+    a.wait(20_000);
+    expect(a.whys).toEqual(["silent"]);
+  });
+
   it("streaming (reasoning, the answer) is life: heard from again, the bubble's note goes and the waits start over", async () => {
     const a = await watch();
     a.begin();

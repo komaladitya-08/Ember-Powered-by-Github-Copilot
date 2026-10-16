@@ -163,6 +163,8 @@ export const TURN_END_GRACE_MS = 10_000;
 export const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
 /** Events of a turn under way: the model's (its first, assistant.turn_start, comes before the model is asked) and its tools'. */
 const IN_TURN = /^(assistant|tool|external_tool|permission|subagent|skill)\./;
+/** Events the runtime sends back about Ember's own sends (a request queued behind the turn under way). */
+const OWN_ECHOES = new Set(["pending_messages.modified"]);
 
 /** Why TurnWatch gave up: no turn began for a request taken, or the turn under way went silent. */
 export type Stuck = "not-started" | "silent";
@@ -245,6 +247,9 @@ export class TurnWatch {
   event(e: { type: string; agentId?: string; data?: unknown }): void {
     if (this.over) return;
     const t = e.type;
+    // The runtime's echo of Ember's own queued request is no sign of life: asking again while a turn is silent
+    // doesn't put off its end.
+    if (OWN_ECHOES.has(t)) return;
     const data = e.data as { hookInvocationId?: unknown; toolCallId?: unknown; requestId?: unknown } | undefined;
     const id = data?.hookInvocationId;
     // A tool under way is work (a sub-agent's too).

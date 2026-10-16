@@ -512,6 +512,27 @@ describe("Presenter: a question asked while the turn before is still ending (rev
     vi.useRealTimers();
   });
 
+  it("asked after the answer's words came but before its message: the late message doesn't put the old answer under the new Thinking (AC10-2)", () => {
+    const { p, last } = setup();
+    p.userPrompt("tell me about alpha");
+    p.event({ type: "user.message", data: { content: "tell me about alpha" } });
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Alpha answer with quite a few words." } });
+    p.userPrompt("and beta?");
+    p.event({ type: "assistant.message", data: { content: "Alpha answer with quite a few words." } });
+    expect(last().bubble).toMatchObject({ title: "Thinking…", thought: "“and beta?”" });
+    p.event({ type: "assistant.turn_end", data: {} });
+    p.event({ type: "session.idle", data: {} });
+    p.event({ type: "user.message", data: { content: "and beta?" } });
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Thinking about beta" } });
+    expect(last().bubble?.thought ?? "").not.toContain("Alpha answer");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Beta." } });
+    p.event({ type: "assistant.message", data: { content: "Beta." } });
+    expect(last().bubble).toMatchObject({ thought: "Beta.", streaming: false });
+    vi.useRealTimers();
+  });
+
   it("a turn beginning after the question's own has begun, or after a Stop, changes nothing", () => {
     const { p, last } = setup();
     p.userPrompt("hello");

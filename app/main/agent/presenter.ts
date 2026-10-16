@@ -302,6 +302,8 @@ export class Presenter {
   private stalledTitle = "";
   /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
   private asked: string | null = null;
+  /** That request was asked while the answer before it was still coming (see userPrompt). */
+  private askedOverAnswer = false;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -502,6 +504,8 @@ export class Presenter {
   /** The user asked something (voice or text). */
   userPrompt(text: string): void {
     this.cancelHide();
+    // Asked while the turn before was answering: that answer's own message may still come, after this "Thinking…".
+    this.askedOverAnswer = this.answering || this.answer.length > 0;
     this.answering = false;
     this.answer = "";
     this.silent = false;
@@ -573,7 +577,7 @@ export class Presenter {
             });
           }
           const said = typeof d.content === "string" ? d.content.trimEnd() : null;
-          if (said === null || said.endsWith(asked.trim())) this.asked = null;
+          if (said === null || said.endsWith(asked.trim())) { this.asked = null; this.askedOverAnswer = false; }
         }
         this.answering = false;
         this.answer = "";
@@ -625,6 +629,9 @@ export class Presenter {
         if (this.answering || (content && !toolCall)) {
           const full = plainText(content || this.answer.trim());
           this.onFinalAnswer?.(full);
+          // A newer question is owed its turn (asked after this answer's words came, before this message): its
+          // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
+          if (this.asked !== null && this.askedOverAnswer) break;
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
             actions: full.length > LONG_ANSWER ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
