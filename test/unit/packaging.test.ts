@@ -30,6 +30,7 @@ describe("ember doctor", () => {
     const low = byId(doctorChecks({ ...probes(), fileWatchers: { used: 124, max: 128 } }), "file-watchers");
     expect(low.status).toBe("warn");
     expect(low.fix).toMatch(/max_user_instances=512/);
+    expect(byId(doctorChecks({ ...probes(), fileWatchers: { used: 128, max: 128 } }), "file-watchers").status).toBe("fail");
     expect(doctorChecks({ ...probes(), fileWatchers: null }).some(c => c.id === "file-watchers")).toBe(false);
   });
 

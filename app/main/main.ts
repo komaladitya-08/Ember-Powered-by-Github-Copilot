@@ -390,6 +390,8 @@ function start(): void {
   let menuOpen = false;
   /** The app window the user was last in (an X client window), for giving focus back after Ember's own windows. */
   let userWindow = 0;
+  /** The window the ask box was opened over (it may be one of Ember's: settings, the quit question). */
+  let askOver = 0;
   /**
    * The window with the keyboard now (an X client window, 0 if none), noted as the user's when it isn't Ember's.
    * `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
@@ -400,7 +402,6 @@ function start(): void {
     if (f.pid !== process.pid) userWindow = f.id;
     return { id: f.id, ember: f.pid === process.pid };
   };
-  const rememberUserWindow = () => { focusNow(); };
   /**
    * Focus goes back to `back` (the window that had it, Ember's settings or quit question included) while it is still
    * up; else to the user's window, or, when that has gone too, to the topmost app window that isn't Ember's.
@@ -424,7 +425,7 @@ function start(): void {
     let opens = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false }); } },
+      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false, over: back }); } },
       { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
@@ -448,7 +449,8 @@ function start(): void {
     const had = focusNow();
     const fromAskBox = had.ember && askWindow.isWindow(had.id);
     if (!fromAskBox) captureContext();
-    const back = fromAskBox ? 0 : had.id;
+    // From the ask box (it hides when it loses focus), focus goes back to what the box was opened over.
+    const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
@@ -458,18 +460,25 @@ function start(): void {
       if (kept && !opens) giveFocusBack(back);
     }, 150) });
     win.setFocusable(true);
-    if (win.isFocused()) { open(); return; }
-    let opened = false;
+    const xid = Number(win.getNativeWindowHandle().readUInt32LE(0));
+    // Open once the keyboard is really on the handle, and has stayed there: the X server says so, and Electron has
+    // seen the focus come (each can come first; a focus change after the menu opened closed it at once, and with no
+    // window manager its keys went to the app behind).
+    let focusSeen = win.isFocused();
+    const onFocus = () => { focusSeen = true; };
+    win.on("focus", onFocus);
+    const hasKeyboard = () => focusSeen && win.isFocused() && (!x11Ref || x11Ref.focusWindow()?.id === xid);
+    let opened = false, steady = 0;
     const go = () => {
       if (opened) return;
-      opened = true; win.off("focus", go); clearTimeout(late);
+      opened = true; clearInterval(poll); clearTimeout(late); win.off("focus", onFocus);
       if (win.isDestroyed()) menuOpen = false; else open();
     };
+    const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
     // No focus within a moment (no X input here): the menu opens anyway, as it did before.
     const late = setTimeout(go, 250);
-    win.once("focus", go);
     win.focus();
-    if (xinputRef?.focusInput) xinputRef.focusInput(Number(win.getNativeWindowHandle().readUInt32LE(0)));
+    if (xinputRef?.focusInput) xinputRef.focusInput(xid);
   };
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
@@ -565,12 +574,17 @@ function start(): void {
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 1500))]);
     return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
   };
-  /** `look: false`: what the user is in was read already (the handle's menu reads it before taking focus). */
-  const openAsk = ({ look = true }: { look?: boolean } = {}) => {
+  /**
+   * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
+   * `over` is the window it had the keyboard.
+   */
+  const openAsk = ({ look = true, over = 0 }: { look?: boolean; over?: number } = {}) => {
     if (!consented()) { showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
-    if (look) { rememberUserWindow(); captureContext(); }
+    // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
+    askOver = look ? focusNow().id : over;
+    if (look) captureContext();
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {

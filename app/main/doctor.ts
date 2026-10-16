@@ -109,9 +109,12 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
   // and never answers them.
   const w = p.fileWatchers;
+  const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
   if (w) out.push(w.max - w.used >= 8
     ? { id: "file-watchers", status: "ok", label: "File watchers", detail: `${w.used} of ${w.max} in use.` }
-    : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it" });
+    : w.used >= w.max
+      ? { id: "file-watchers", status: "fail", label: "File watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 
