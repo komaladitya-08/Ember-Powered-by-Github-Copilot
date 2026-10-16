@@ -336,6 +336,25 @@ describe("Presenter: one bubble, held while it's read (review round 3)", () => {
     expect(shown().at(-1)).toBe("task:Click Add to save the contact");
   });
 
+  it("a guide step waiting behind an answer that finished under main's bubble shows a moment after the answer is back (review round 7)", () => {
+    const { owner, talk, task, shown } = shared();
+    talk.userPrompt("show me how to change the display");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Sure, " } });
+    task.guide("Click Display", "Step 1");
+    // A wake that was another word: main's "Listening…" covers the answer while it finishes.
+    const main = {};
+    owner.claim(main);
+    talk.event({ type: "assistant.message", data: { content: "Sure, I'll show you." } });
+    talk.event({ type: "session.idle", data: {} });
+    // Main lets go (as host.releaseBubble does): the answer shows again, then the step 1.5 s later.
+    owner.holder = null;
+    owner.uncover(() => true);
+    expect(talk.reshow()).toBe(true);
+    expect(shown().at(-1)).toBe("ember:Sure, I'll show you.");
+    vi.advanceTimersByTime(1500);
+    expect(shown().at(-1)).toBe("task:Click Display");
+  });
+
   it("a guide step waiting behind an answer waits while the conversation is still at work after it", () => {
     const { talk, task, shown } = shared();
     talk.userPrompt("show me how to save");

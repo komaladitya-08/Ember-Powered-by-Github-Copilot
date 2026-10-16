@@ -395,6 +395,9 @@ export class Presenter {
     this.owner.wrote(this, claim, true);
     this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
     if (this.pendingHide !== null) this.hideLater(this.pendingHide);
+    // A complete answer back on screen (it finished under main's "Listening…" or a question): a guide step waiting
+    // behind it shows a moment later, as when it finishes on screen.
+    if (claim !== "progress" && !this.busy) this.owner.finished(this);
     return true;
   }
 
