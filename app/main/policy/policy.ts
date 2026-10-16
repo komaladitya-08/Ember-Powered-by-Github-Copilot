@@ -1720,7 +1720,9 @@ export class PolicyEngine {
         if (r.formula !== undefined && reachesOut(r.formula) && !/^(escape|backspace)$/.test(k)) return REACHES_OUT;
         // In a security setting's dialog, on such a setting or in such a field, a key may change it (an arrow picks another
         // radio button, Space ticks a box, a letter types an address): asked, but for moving on (Tab) or backing out (Escape).
-        const keyed = (TEXT_FIELD.test(role) ? secureField : secureDialog) || (SETTING_ROLES.test(role) && securitySetting(name));
+        // (A setting in a dialog that talks of security, as for a click; a field, or anything else (a tree of pages, a
+        // list), by its own name or the dialog's title.)
+        const keyed = (TEXT_FIELD.test(role) ? secureField : SETTING_ROLES.test(role) ? secureDialog : secureTitle) || (SETTING_ROLES.test(role) && securitySetting(name));
         if (keyed && !/^(shift\+)?(tab|escape)$/.test(k)) return secure(name);
         // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
         // type_text's "replace"): judged by the real selection where the screen reader tells it.

@@ -1633,6 +1633,20 @@ describe("policy: review round 11", () => {
     }
   });
 
+  it("keys in a dialog: a setting's by the dialog's words, anything else by its own name or the dialog's title (DSK11-1)", () => {
+    const keys = (dialog: { name: string; text: string }, role: string, name: string, value = "Down") => e.decide({ taskId: "s", kind: "keys", app: "soffice", window: dialog.name,
+      windowId: { pid: 4, path: "/3", role: "dialog" }, dialog, goal: "Set my name in LibreOffice to Ana Lopez", value, element: { role, name }, onDesk: true }).verdict;
+    const USER_DATA = { name: "Options - LibreOffice - User Data", text: "First name: Last name: Cryptography OpenPGP signing key: When encrypting documents, always encrypt to self" };
+    const SECURITY = { name: "Options - LibreOffice - Security", text: "Security Options and Warnings Macro Security" };
+    // Going through the tree of pages: asked on the Security page only.
+    expect(keys(USER_DATA, "tree item", "Memory")).toBe("allow");
+    expect(keys(SECURITY, "tree item", "Memory")).toBe("confirm");
+    // A check box on a page that talks of security, as a click on it.
+    expect(keys(USER_DATA, "check box", "Use data for document properties", "space")).toBe("confirm");
+    // Enter on a message box's OK, or going ahead over a file changed by someone else.
+    expect(keys({ name: "Question", text: "The file has been changed since it was opened for editing. Do you want to save anyway?" }, "push button", "Save Anyway", "Return")).toBe("confirm");
+  });
+
   it("only LibreOffice's Zoom & View Layout is a formatting dialog, not one titled Zoom (SEC11-3)", () => {
     const ok = (app: string, dialog: { name: string; text: string }) => e.decide({ taskId: "s", kind: "click", app, window: dialog.name, windowId: { pid: 4, path: "/3", role: "dialog" },
       dialog, element: { role: "push button", name: "OK" }, goal: "join the meeting", onDesk: false });

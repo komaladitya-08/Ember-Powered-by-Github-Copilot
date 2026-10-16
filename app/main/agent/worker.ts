@@ -446,6 +446,26 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
   return false;
 }
 /** Is `n` in a web page (inside a "document web": Chromium's, Firefox's, an Electron app's), where Enter in a field can send? */
+/** A dialog as the policy reads it (ActionRequest.dialog): its title, its words, and whether it is a message box or a page's own. */
+type Dialog = { name: string; text: string; alert?: boolean };
+const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
+/** The dialog `start` sits in (see Worker.dialogOf), looked up through `get` among `all` the nodes read. */
+function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>): Dialog | undefined {
+  let cur = start;
+  for (let i = 0; cur && i < 40; i++) {
+    if (DIALOG_ROLE.test(cur.role)) {
+      const top = cur.id;
+      const inside = (n: AxNode) => { let p = n.parent; for (let j = 0; p !== null && j < 40; j++) { if (p === top) return true; p = get(p)?.parent ?? null; } return false; };
+      const words = [...all].filter(n => inside(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
+        .map(n => n.name || n.text || "").filter(Boolean).join(" ");
+      const alert = cur.role === "alert" || inWebPage(cur, get);
+      return { name: cur.name, text: words.slice(0, 400), ...(alert ? { alert } : {}) };
+    }
+    cur = cur.parent !== null ? get(cur.parent) : undefined;
+  }
+  return undefined;
+}
+
 function inWebPage(n: AxNode | undefined, byId: (id: number) => AxNode | undefined): boolean {
   for (let i = 0; n && i < 80; i++) {
     n = n.parent !== null ? byId(n.parent) : undefined;
@@ -682,6 +702,8 @@ export class Worker {
   /** At that look: the focused element takes several lines, and it is in a web page (ActionRequest.multiLine, inPage). */
   private focusMultiLine = false;
   private focusInPage = false;
+  /** At that look: the dialog the focused element is in (Enter or Space there answers it, as a click does: dialogOf). */
+  private focusDialog: Dialog | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
   private cellLookCut = false;
   /** The user said yes to a key that only moves (onlyMoves) in this window (windowKey): more of those there go without a question. */
@@ -1219,21 +1241,8 @@ export class Worker {
    * dialog says, so the policy reads the dialog, not just the window's title. `alert`: a message box, or a web page's
    * own dialog (whatever its OK agrees to is asked about).
    */
-  private dialogOf(id: number): { name: string; text: string; alert?: boolean } | undefined {
-    const DIALOG = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
-    let cur = this.known.get(id);
-    for (let i = 0; cur && i < 40; i++) {
-      if (DIALOG.test(cur.role)) {
-        const top = cur.id;
-        const inside = (n: AxNode) => { let p = n.parent; for (let j = 0; p !== null && j < 40; j++) { if (p === top) return true; p = this.known.get(p)?.parent ?? null; } return false; };
-        const words = [...this.known.values()].filter(n => inside(n) && /label|static|heading|paragraph|text/.test(n.role) && !n.secret)
-          .map(n => n.name || n.text || "").filter(Boolean).join(" ");
-        const alert = cur.role === "alert" || inWebPage(cur, p => this.known.get(p));
-        return { name: cur.name, text: words.slice(0, 400), ...(alert ? { alert } : {}) };
-      }
-      cur = cur.parent !== null ? this.known.get(cur.parent) : undefined;
-    }
-    return undefined;
+  private dialogOf(id: number): Dialog | undefined {
+    return dialogAround(this.known.get(id), p => this.known.get(p), this.known.values());
   }
 
   /**
@@ -2328,6 +2337,7 @@ export class Worker {
       this.focusFormula = !f || f.secret ? undefined : editing ? editing.text ?? "" : isSheetCell(f) ? "" : intoSheet(f, byId) ? f.text ?? "" : undefined;
       this.focusMultiLine = !!f && f.states.includes("multi line");
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
+      this.focusDialog = f ? dialogAround(f, byId, nodes) : undefined;
       if (seen?.window && f) {
         const name = f.name || inferLabels(seen.nodes).get(f.id) || "";
         return { role: f.role, name, ...(f.secret ? { secret: true } : {}), ...(nameWithheld(f, name, nodes, byId) ? { withheld: true } : {}), ...cellOf(f, byId) };
@@ -2391,6 +2401,8 @@ export class Worker {
         ...(this.focusFormula !== undefined ? { formula: this.focusFormula + (keyText(keys) ?? "") } : {}),
         // Where Enter can send (a page's field), or only starts a line (an editor's text); and text that is all Ember's own.
         ...(element ? { inPage: this.focusInPage, ...(this.focusMultiLine ? { multiLine: true } : {}), ...this.ownText(this.fieldOf(element), this.focusText) } : {}),
+        // The dialog the keys go to: Enter on its focused "Save Anyway" or "OK" answers it, as a click on it does.
+        ...(element && this.focusDialog ? { dialog: this.focusDialog } : {}),
       };
       // On the user's screen, once they said yes to a key that only moves here, more of those go without a question.
       const moves = !this.place && onlyMoves(keys, element);

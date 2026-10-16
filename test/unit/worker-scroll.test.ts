@@ -671,3 +671,24 @@ describe("a formula's result read back, and a click that ends Ctrl+A (review rou
     expect(prompts.slice(asked).join(" ")).not.toMatch(/everything there is selected/i);
   });
 });
+
+describe("keys in a dialog (review round 11)", () => {
+  it("Enter on a dialog's focused button is judged with the dialog, as a click on it is (DSK11-1)", async () => {
+    // LibreOffice's question when the file changed on disk since it was opened: "Save Anyway" has the keyboard.
+    const at = (y: number) => ({ x: 100, y, width: 200, height: 20 });
+    const extra: AxNode[] = [
+      { id: 70, parent: 1, depth: 1, role: "alert", name: "Question", states: [], bounds: { x: 50, y: 100, width: 400, height: 150 } },
+      { id: 71, parent: 70, depth: 2, role: "label", name: "The file has been changed since it was opened for editing. Saving your version of the document will overwrite changes made by others. Do you want to save anyway?", states: [], bounds: at(110) },
+      { id: 72, parent: 70, depth: 2, role: "push button", name: "Save Anyway", states: ["enabled", "focusable", "focused"], bounds: at(200) },
+      { id: 73, parent: 70, depth: 2, role: "push button", name: "Cancel", states: ["enabled", "focusable"], bounds: at(225) },
+    ];
+    const { w, call } = app([], { extra });
+    const prompts: string[] = [];
+    (w as unknown as { d: { confirmer: object } }).d.confirmer = { ask: async (q: { prompt: string }) => { prompts.push(q.prompt); return "deny"; } };
+    await call("perceive_window", {});
+    const r = await call("press_keys", { keys: "Return" });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatch(/It says: “The file has been changed since it was opened/);
+    expect(r.textResultForLlm).not.toMatch(/^Done/);
+  });
+});
