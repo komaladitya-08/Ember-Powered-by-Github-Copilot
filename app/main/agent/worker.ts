@@ -25,7 +25,7 @@ import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElem
 import type { PolicyEngine, ActionKind, ActionRequest, ReadSource, TextMode, WindowId } from "../policy/policy";
 import type { AuditEntry, AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
-import { canonicalKeys, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, replacesSelection, typedChar } from "../policy/policy";
+import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, replacesSelection, takesFormula, typedChar } from "../policy/policy";
 import { SETTINGS, changeSetting, execArgv, findApp, isTerminalApp, launchApp, listApps, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
 import type { DeskPlace } from "../desk/place";
@@ -74,8 +74,11 @@ export interface WorkerDeps {
     findWindow: (title: string, pid?: number) => number;
     /** "waiting": for the user to be still; "active": Ember's windows stop taking clicks and the status says so. */
     setBorrowing: (state: "waiting" | "active" | "off") => void;
-    /** The window with keyboard focus on the user's screen (an auth prompt there pauses Ember's input). */
-    activeWindow?: () => { app: string; title: string } | null;
+    /**
+     * The window with keyboard focus on the user's screen (an auth prompt there pauses Ember's input), and its process
+     * (Ember's own windows are its own process's).
+     */
+    activeWindow?: () => { app: string; title: string; pid?: number | null } | null;
   };
   onUsage?: (input: number, output: number) => void;
   /**
@@ -265,10 +268,11 @@ const HOLDERS = /^(panel|filler|unknown|redundant object|glass pane|layered pane
  * that isn't another control (its text, its picture, its label); "other": something else is there (a row scrolled almost
  * out of its list, with a button below it; a fixed header's button over it; a button inside the row aimed at); "unknown":
  * the app's answer stopped at what holds it (one of `ancestors`, the elements round it in the read, or a plain holder
- * of others: a pane, a list), or told nothing.
+ * of others: a pane, a list), or told nothing. `spot`: where the mouse goes (see atSpot).
  */
-export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestors: { role: string; bounds: Bounds | null }[] = []): "yes" | "other" | "unknown" {
-  const last = chain[chain.length - 1];
+export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestors: { role: string; bounds: Bounds | null }[] = [], spot?: { x: number; y: number }): "yes" | "other" | "unknown" {
+  const here = spot ? atSpot(chain, spot) : chain;
+  const last = here[here.length - 1];
   if (!last?.bounds || last.empty) return "unknown";
   if (last.role === role && sameRect(last.bounds, b)) return "yes";
   // Inside it: its own text, picture or label; or another control in it, which a click there would work instead.
@@ -277,6 +281,15 @@ export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestor
   // Round it: what holds it (the app stopped there), or something else lying over it (a header's button).
   const holds = ancestors.some(a => a.role === last.role && !!a.bounds && sameRect(a.bounds, last.bounds!));
   return holds || HOLDERS.test(last.role) ? "unknown" : "other";
+}
+/**
+ * The elements of `chain` (from atPoint, outermost first) down to the deepest that lies at `spot`: GTK's answer goes on
+ * from a notebook's selected tab into the page it holds, which lies beside the tab (one without a position is kept).
+ */
+export function atSpot(chain: PointElement[], spot: { x: number; y: number }): PointElement[] {
+  let end = chain.length;
+  while (end > 1 && chain[end - 1].bounds && !insideOf({ ...spot, width: 0, height: 0 }, chain[end - 1].bounds!)) end--;
+  return end === chain.length ? chain : chain.slice(0, end);
 }
 /** Interpreters and launchers: an app started through one isn't known by their name. */
 const LAUNCHERS = /^(python[\d.]*|sh|bash|env|flatpak|java|perl|ruby|node|gjs|mono|gtk-launch)$/;
@@ -340,8 +353,11 @@ export function afterKeys(keys: string, typed: string, selected: Selected): { ty
   if (k === "backspace") return { typed: replaced ? kept : kept.slice(0, -1), selected: null };
   return { typed: kept, selected: still };
 }
-/** Keys that only move the caret or the cell cursor (arrows, Home, End, Page Up and Down, with Ctrl too). */
-const MOVE_KEY = /^(ctrl\+)?(up|down|left|right|home|end|prior|next)$/;
+/**
+ * Keys that only move the caret or the cell cursor (arrows, Home, End, Page Up and Down, with Ctrl too), and with Shift
+ * select as they go (Shift+End): what a key then does to the selection is judged when it comes (afterSelecting).
+ */
+const MOVE_KEY = /^(ctrl\+)?(shift\+)?(up|down|left|right|home|end|prior|next)$/;
 /** Text fields where those keys only move the caret, and where Tab only moves on (one-line fields; a cell, as below). */
 const MOVES_IN = new Set(["text", "entry", "paragraph", "document text"]);
 /** Does `keys` only move, in what has the keyboard (`focus`)? Never in lists, menus, sliders, spin buttons or combo boxes (an arrow there picks). */
@@ -354,9 +370,50 @@ function onlyMoves(keys: string, focus: Focus | undefined): boolean {
 }
 /** Roles whose text the screen reader reads (an empty one it leaves out: it holds ""), and the selection in it when it has the keyboard. */
 const READ_TEXT_ROLES = new Set(["text", "entry", "paragraph", "document text", "spin button"]);
+/** A document's blocks whose "selected" state says text in them is selected (Writer marks those Edit ▸ Select All took in). */
+const TEXT_BLOCKS = new Set(["paragraph", "heading", "block quote"]);
+/** Where a document's text may be selected: these, editable (a "text" only with several lines; a one-line one is a field). */
+const DOCUMENT_ROLES = new Set(["document text", "document web", "document frame", "paragraph", "section", "static", "heading", "block quote", "text"]);
+const editableDocument = (n: AxNode) => n.states.includes("editable") && DOCUMENT_ROLES.has(n.role) && (n.role !== "text" || n.states.includes("multi line"));
+/** What a window says has the keyboard while it comes to the front (LibreOffice: its root pane, then the paragraph): not yet known. */
+const unsureFocus = (f: Focus | undefined) => !f || /^(root pane|frame|window)$/.test(f.role);
+/** How long the keyboard focus gets to settle before Ember takes what it sees (LibreOffice moves it about as its window comes to the front). */
+const FOCUS_SETTLE_MS = 500;
+/**
+ * "Select All" on a menu item or a button, in the languages of the policy's word lists (and GTK's, LibreOffice's and
+ * the browsers' own words): it selects everything, as Ctrl+A does.
+ */
+const SELECT_ALL = new RegExp(`^\\s*(${foldLabel(["select all", "select everything", "tout sélectionner", "sélectionner tout", "alles auswählen",
+  "alles markieren", "seleccionar todo", "seleziona tutto", "selecionar tudo", "selecionar todos", "alles selecteren", "zaznacz wszystko",
+  "выделить всё", "выбрать всё", "markera allt", "välj alla", "vælg alt", "marker alt", "merk alt", "velg alt", "valitse kaikki", "vybrat vše",
+  "označit vše", "tümünü seç", "すべて選択", "すべてを選択", "全选", "全部选择", "全選", "모두 선택", "전체 선택"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
+/** Does clicking this select everything in its window? */
+const selectsAll = (el: Focus) => /^(menu item|push button|button|toggle button|link)$/.test(el.role) && SELECT_ALL.test(foldLabel(el.name));
+/** What a key types in a formula, symbols too ("parenleft" types "("): null for a key that types nothing. */
+const KEY_TEXT: Record<string, string> = { equal: "=", plus: "+", minus: "-", at: "@", parenleft: "(", parenright: ")", quotedbl: "\"", apostrophe: "'",
+  colon: ":", slash: "/", backslash: "\\", period: ".", comma: ",", semicolon: ";", numbersign: "#", dollar: "$", ampersand: "&", bracketleft: "[",
+  bracketright: "]", underscore: "_", asterisk: "*", percent: "%", question: "?", exclam: "!", less: "<", greater: ">", asciicircum: "^",
+  asciitilde: "~", grave: "`", bar: "|", braceleft: "{", braceright: "}" };
+function keyText(keys: string): string | null {
+  const c = typedChar(keys);
+  if (c !== null) return c;
+  const m = /^(shift\+)?(\w+)$/.exec(keyFamily(canonicalKeys(keys) ?? ""));
+  return m ? KEY_TEXT[m[2]] ?? null : null;
+}
+/**
+ * Is `n` where text goes into a spreadsheet's cell: a sheet's cell, what edits one (LibreOffice's "Cell B4" paragraph,
+ * inside the spreadsheet document), or Calc's input line? A formula typed there runs as it goes in.
+ */
+function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefined): boolean {
+  for (let i = 0; n && i < 8; i++) {
+    if (n.role === "document spreadsheet" || takesFormula(n)) return true;
+    n = n.parent !== null ? byId(n.parent) : undefined;
+  }
+  return false;
+}
 /** A spreadsheet cell's address as a model may give it ("B5", "$B$5", "b5"). */
 const CELL_ARG = /^\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6}$/;
-/** The most arrow keys Ember presses to reach a cell (from the cell with the keyboard, or from A1). */
+/** The most arrow keys Ember presses to reach a cell (from the cell with the keyboard, or from A1); a cell further off is reached through the Name Box. */
 const CELL_STEPS_MAX = 300;
 /** A cell's column (from 0) and row (from 1), by its address ("B5" → 1, 5). */
 function cellPlace(address: string): { col: number; row: number } | null {
@@ -459,6 +516,10 @@ export class Worker {
   /** What the focused field held, and what is selected in it, at the latest look for keys (undefined: unknown or secret). */
   private focusText: string | undefined;
   private focusSelection: string | undefined;
+  /** At that look: text may be selected beyond what the focused element tells (ActionRequest.selectionBeyond). */
+  private focusBeyond: "selected" | "unknown" | undefined;
+  /** At that look: the focus is where text goes into a spreadsheet's cell, which holds this so far ("" for a cell not being edited). */
+  private focusFormula: string | undefined;
   /** The user said yes to a key that only moves (onlyMoves) in this window (windowKey): more of those there go without a question. */
   private moving: string | null = null;
   /** What spreadsheet cells the latest read didn't list were found to hold, by window (windowKey) and address: the next question says it. */
@@ -858,9 +919,14 @@ export class Worker {
       ...(HOVER_SELECTS.test(node.role) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
     const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
     const reached = (e: ElementInfo | null) => !!e && (e.states.includes("focused") || e.states.includes("selected"));
-    let wasReached = reached(before);
+    // Reached during this step, by a look after it began: a dialog's default button had the keyboard before, untouched.
+    let wasReached = false;
+    let reachedNow = before ? reached(before) : null;
     const activeWindow = () => { try { return this.d.cursor?.activeWindow?.() ?? null; } catch { return null; } };
-    const windowBefore = activeWindow();
+    // Ember's own windows (the ask box the user opens, its settings) are never where they chose something.
+    const own = (w: { pid?: number | null } | null) => w?.pid != null && w.pid === process.pid;
+    let windowBefore = activeWindow();
+    if (own(windowBefore)) windowBefore = null;
     const keyDown = () => { try { return this.d.activationKey?.() === true; } catch { return false; } };
     const usedIt = async (how: string) => {
       await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
@@ -888,10 +954,17 @@ export class Worker {
           return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
         }
         if (now?.bounds && now.role === node.role) b = now.bounds;
-        wasReached ||= reached(now);
-        // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title).
-        const w = wasReached && windowBefore ? activeWindow() : null;
-        if (w && w.title.trim() && (w.title !== windowBefore!.title || w.app !== windowBefore!.app)) {
+        if (now) {
+          const r = reached(now);
+          if (r && reachedNow === false) wasReached = true;
+          reachedNow = r;
+        }
+        // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title). The
+        // step began in Ember's own window: the user's is the first other one seen, while they hadn't reached it yet.
+        const active = activeWindow();
+        const w = active && !own(active) ? active : null;
+        if (w && !windowBefore && !wasReached) windowBefore = w;
+        if (w && wasReached && windowBefore && w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app)) {
           return done(`Another window has the keyboard now (${q(w.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
         }
       }
@@ -1012,6 +1085,20 @@ export class Worker {
   }
 
   /**
+   * Text going into `node` where it goes into a spreadsheet's cell (what edits one, or Calc's input line): what the
+   * cell will hold, judged as a formula ({} anywhere else).
+   */
+  private formulaOf(node: AxNode, value: string | undefined, mode: TextMode): { formula?: string } {
+    if (!intoSheet(node, p => this.known.get(p))) return {};
+    return { formula: mode === "replace" ? value ?? "" : `${node.text ?? ""}${value ?? ""}` };
+  }
+
+  /** A click on "Select All" (a menu item, a toolbar button) selected everything in the working window, as Ctrl+A does. */
+  private noteSelectAll(element: Focus): void {
+    if (selectsAll(element)) this.keyed = { window: this.windowKey, selected: "all" };
+  }
+
+  /**
    * What this task has typed into `field` now (its end), kept for the last TYPED_FIELDS fields; what it added there
    * goes on the window's record too (typedWindows), after what went into its other fields.
    */
@@ -1092,7 +1179,7 @@ export class Worker {
     const prior = kind === "text" && judged !== "replace" ? this.typedIn.get(field) ?? "" : "";
     const base: ActionRequest = {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
-      ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}) } : {}),
+      ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged) } : {}),
       ...(dialog ? { dialog } : {}),
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
@@ -1118,6 +1205,8 @@ export class Worker {
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
       const res = await run();
       if (kind === "text" && res.ok) this.noteTyped(field, prior + (value ?? ""));
+      // Edit ▸ Select All selects everything, as Ctrl+A does: a key that types replaces it all.
+      if (kind === "click" && res.ok) this.noteSelectAll(element);
       // A click that closes its own dialog (Close, OK, Save) leaves nothing to read back: done, not an error.
       const after = res.after as ElementInfo | null | undefined;
       const busyAfter = (res as { busy?: boolean }).busy === true;
@@ -1162,10 +1251,15 @@ export class Worker {
     const insert = kind === "text" && mode === "insert";
     const can = await this.sidecar.canDo(id, kind, insert).catch(() => null);
     const handler = (kind === "click" || kind === "toggle") && can?.handler ? { role: String(can.handler.role), name: String(can.handler.name ?? "") } : undefined;
+    // The click goes to a control around it that lies too deep for Ember to find: what it works can't be told, so it isn't done.
+    if ((kind === "click" || kind === "toggle") && can?.handlerUnknown) {
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, ...(this.place ? { tier: 2 } : {}), error: "the control a click goes to can't be found" });
+      return fail(`Ember can't tell what a click on element ${id} works: the page hands it to a control around it that lies too deep for Ember to find, so nothing was clicked. Click the link or button itself instead, or tell the user in finish_task.`);
+    }
     if (!can || can.tier1) return { via: "tier1", ...(handler ? { handler } : {}) };
     const next = this.withoutTier1(kind, node, can.why ?? "");
     if (next !== "borrow") {
-      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, error: `background_unavailable: ${can.why ?? ""}` });
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, ...(this.place ? { tier: 2 } : {}), error: `background_unavailable: ${can.why ?? ""}` });
       return next;
     }
     // Typed where the caret is: a click would move it, so the caret must be in this field already. In the window the
@@ -1245,7 +1339,7 @@ export class Worker {
       }
     }
     const base: ActionRequest = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
-      ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}) } : {}),
+      ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged) } : {}),
       ...(dialog ? { dialog } : {}) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
     if (verdict) return verdict;
@@ -1335,6 +1429,7 @@ export class Worker {
       }
     }
     if (kind === "cursor_text" && result.resultType === "success") this.noteTyped(field, prior + text);
+    if (kind === "cursor_click" && result.resultType === "success") this.noteSelectAll(element);
     // What the click hit, as the app said where the pointer was: not only the element meant.
     if (landedOn && kind === "cursor_click" && result.resultType === "success") {
       result = { ...result, textResultForLlm: `${result.textResultForLlm} The click landed on ${screenWord(landedOn.role)}${landedOn.name ? ` ${q(landedOn.name, 80)}` : ""}.` };
@@ -1401,8 +1496,8 @@ export class Worker {
    * out of its list, with a button below it; a fixed header's button or a popover over it; another control inside it,
    * such as a row's own "Remove" button), its left part (where a row's label is) and its middle are tried too, and
    * when none shows it, nothing is done. Where the app can't tell (no answer; a web page in a HiDPI window, whose
-   * positions don't compare), the mouse goes ahead at `spot`. Returns the spot to use, and what shows there when the
-   * app said.
+   * positions don't compare), the mouse goes ahead at `spot`, unless a spot tried before was seen covered. Returns the
+   * spot to use, and what shows there when the app said.
    */
   private async mustAimAt(id: number, now: ElementInfo, spot: { x: number; y: number }, shown?: Bounds): Promise<{ x: number; y: number; there?: PointElement }> {
     // The app reports k physical pixels per pixel (HiDPI); a Chromium page in a HiDPI window reports physical ones
@@ -1417,10 +1512,20 @@ export class Worker {
     for (const s of spots) {
       const chain = await this.perception.atPoint(this.target, s, k).catch(() => null);
       if (this.isOver) throw new BorrowStopped();
-      if (!chain?.length) return spot;
-      const seen = aimedAt(chain, now.role, now.bounds, ancestors);
-      if (seen !== "other") return { ...s, ...(seen === "yes" ? { there: chain[chain.length - 1] } : {}) };
-      other ??= chain[chain.length - 1];
+      // Where the app can't tell (no answer, or one that stops at what holds it), the mouse goes ahead only while no
+      // spot tried before was seen covered: once one was (a notification over the row), only a spot that shows it will do.
+      if (!chain?.length) {
+        if (other) break;
+        return spot;
+      }
+      const here = atSpot(chain, s);
+      const seen = aimedAt(here, now.role, now.bounds, ancestors);
+      if (seen === "yes") return { ...s, there: here[here.length - 1] };
+      if (seen === "unknown") {
+        if (other) continue;
+        return s;
+      }
+      other ??= here[here.length - 1];
       // An open menu over it (the app's answer starts in it): a click beside the menu would only close it.
       if (/^(menu|window)$/.test(chain[0].role)) {
         const what = `${q(other.name || other.role, 60)} (${q(other.role, 40)})`;
@@ -1479,7 +1584,8 @@ export class Worker {
   /**
    * Fills a spreadsheet's cell (`address`, "B5") with the keyboard, empty or not, with one question. In one borrow the
    * cell cursor goes there with the arrow keys (from the cell with the keyboard, or from A1 by Ctrl+Home, whichever
-   * is nearer), Ember checks that the cell with the keyboard is that one and holds what the question said, then types
+   * is nearer), or through the Name Box when both are far (see toCellByName), Ember checks that the cell with the
+   * keyboard is that one and holds what the question said, then types
    * over it (typing over a selected cell replaces it: no Ctrl+A), presses Delete (drops what LibreOffice's AutoInput
    * offers to complete it with) and Enter. Nothing is typed when the cell can't be reached, or holds something the
    * question didn't say would go (its text is noted: asked again, the question says it). Empty text clears the cell.
@@ -1494,7 +1600,6 @@ export class Worker {
     if (!typeableText(text)) return fail("Ember fills a cell with the keyboard, and can only type plain ASCII letters, digits and punctuation there. Tell the user in finish_task.");
     if (!this.place && !this.d.cursor) return fail("Filling a cell needs the keyboard, which isn't available here. Try open_on_desk.");
     if (![...this.known.values()].some(n => isSheetCell(n))) return fail("Your latest perceive_window shows no spreadsheet cells. Call perceive_window in the spreadsheet's window first.");
-    if (place.col + place.row - 1 > CELL_STEPS_MAX) return fail(`Cell ${cell} is too far from A1 for Ember to reach with the arrow keys (it presses ${CELL_STEPS_MAX} at most). Tell the user in finish_task.`);
     // What it holds: as the latest read listed it, or as Ember found it before; unknown for a cell not listed (empty, or scrolled away).
     const listed = [...this.known.values()].find(n => isSheetCell(n) && n.name.replace(/\$/g, "") === cell);
     const seenKey = `${this.windowKey}\n${cell}`;
@@ -1508,40 +1613,100 @@ export class Worker {
     const result = await this.withCursor("cursor_text", element, async hand => {
       // Text the keyboard layout can't type is refused before any key goes in.
       if (typeof hand.checkTyping === "function") hand.checkTyping(text);
-      const start = await this.cellWithKeyboard();
-      if (!start) throw new Error("No cell of the spreadsheet has the keyboard in that window (a cell may be being edited, or a dialog is open), so nothing was typed. Call perceive_window.");
+      const start = await this.cellWithKeyboard(undefined, this.cursorHints(cell));
+      if (!start) throw new Error("No cell of the spreadsheet has the keyboard in that window (a cell may be being edited: press Escape; or a dialog is open), so nothing was typed. Call perceive_window.");
       let at = cellPlace(start.name) ?? { col: 0, row: 1 };
-      if (steps(at, place) > place.col + place.row - 1) { await hand.keys("ctrl+Home"); at = { col: 0, row: 1 }; }
-      for (let i = 0; i < Math.abs(place.col - at.col); i++) await hand.keys(place.col > at.col ? "Right" : "Left");
-      for (let i = 0; i < Math.abs(place.row - at.row); i++) await hand.keys(place.row > at.row ? "Down" : "Up");
+      const fromA1 = place.col + place.row - 1;
+      // Far from both the cell cursor and A1: the Name Box takes it there.
+      const byName = Math.min(steps(at, place), fromA1) > CELL_STEPS_MAX;
+      if (byName) await this.toCellByName(hand, cell);
+      else {
+        if (steps(at, place) > fromA1) { await hand.keys("ctrl+Home"); at = { col: 0, row: 1 }; }
+        for (let i = 0; i < Math.abs(place.col - at.col); i++) await hand.keys(place.col > at.col ? "Right" : "Left");
+        for (let i = 0; i < Math.abs(place.row - at.row); i++) await hand.keys(place.row > at.row ? "Down" : "Up");
+      }
       const there = await this.cellWithKeyboard(cell);
       if (there?.name !== cell) {
-        throw new Error(`Ember couldn't reach ${cell} with the arrow keys (hidden rows or columns, or merged cells, may be in the way): the cell cursor is on ${there ? there.name : "no cell Ember can see"} now, and nothing was typed. Tell the user in finish_task.`);
+        const how = byName ? "through the Name Box" : "with the arrow keys (hidden rows or columns, or merged cells, may be in the way)";
+        // No cell has the keyboard: one may still be being edited (the arrow keys then move in its text).
+        const editing = there ? "" : " A cell may still be being edited: press Escape, call perceive_window, and try again.";
+        throw new Error(`Ember couldn't reach ${cell} ${how}: the cell cursor is on ${there ? there.name : "no cell Ember can see"} now, and nothing was typed.${editing || " Tell the user in finish_task."}`);
       }
       if (there.text !== (expected ?? "")) {
         this.cellsSeen.set(seenKey, there.text);
         throw new Error(`${cell} holds ${q(there.text, 80)}${expected === undefined ? "" : ` now, not ${q(expected, 40)}`}, which the user wasn't asked about, so nothing was typed. If it should be replaced, call type_text again: the question will say what goes.`);
       }
-      if (!text) { await hand.keys("Delete"); return; }
+      if (!text) { await this.clearCell(hand); return; }
       await hand.type(text);
       await hand.keys("Delete");
       await hand.keys("Return");
     });
     if (result.resultType === "success") {
-      this.cellsSeen.delete(seenKey);
+      // What Ember just put there is what it holds now (typed again, the question says so: no second question); a
+      // formula shows what it works out to, unknown here.
+      if (/^\s*[=+\-@]/.test(text)) this.cellsSeen.delete(seenKey);
+      else {
+        this.cellsSeen.set(seenKey, text);
+        if (listed) this.known.set(listed.id, { ...listed, text });
+      }
       this.noteTyped(this.fieldOf(element), text);
-      return done(`Done: ${text ? `typed ${q(text, 80)} into ${cell} and pressed Enter (the cell cursor moved on)` : `cleared ${cell}`}. Call perceive_window to see what the cell shows now.`);
+      return done(`Done: ${text ? `typed ${q(text, 80)} into ${cell} and pressed Enter (the cell cursor moved on)` : `cleared ${cell} and pressed Enter (the cell cursor moved on)`}. Call perceive_window to see what the cell shows now.`);
     }
     return result;
   }
 
   /**
+   * Clears the cell with the keyboard, and only it: Delete would clear every cell selected with it (B2:B5, B2 the cell
+   * cursor's). Typing starts an entry in that cell alone, whatever is selected; Space, Backspace and Enter leave it empty.
+   */
+  private async clearCell(hand: Hand): Promise<void> {
+    await hand.type(" ");
+    await hand.keys("BackSpace");
+    await hand.keys("Return");
+  }
+
+  /**
+   * Where the cell cursor is likely to be before Ember moves it to `cell`: the cell that had the keyboard in the latest
+   * perceive_window, and `cell` itself.
+   */
+  private cursorHints(cell: string): string[] {
+    const last = [...this.known.values()].find(n => isSheetCell(n) && n.states.includes("focused"));
+    return [...(last ? [last.name.replace(/\$/g, "")] : []), cell];
+  }
+
+  /**
+   * Takes the cell cursor to `cell` through the spreadsheet's Name Box: Ctrl+Shift+F5 gives it the keyboard
+   * (LibreOffice Calc), then the address and Enter go there. Only once the sheet has lost the keyboard in a window still
+   * active, with no dialog in front, to nothing Ember can see (LibreOffice doesn't expose its Name Box) or to the Name
+   * Box itself: the address is never typed into a cell or another field. Otherwise Escape, and an error.
+   */
+  private async toCellByName(hand: Hand, cell: string): Promise<void> {
+    await hand.keys("ctrl+shift+F5");
+    for (let i = 0; ; i++) {
+      await sleep(100);
+      const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+      if (this.isOver) throw new BorrowStopped();
+      const f = seen?.window && !seen.blocked ? focusedElement(seen.nodes) : null;
+      const inFront = !!seen?.window?.active && !seen.blocked && !(seen.others ?? []).some(o => o.active);
+      if (inFront && (!f || (/^(text|entry|combo box)$/.test(f.role) && /name box/i.test(f.name)))) break;
+      if (i >= 4) {
+        await hand.keys("Escape");
+        throw new Error(`Cell ${cell} is too far from the cell cursor and A1 for the arrow keys (Ember presses ${CELL_STEPS_MAX} at most), and the spreadsheet's Name Box didn't take the keyboard, so nothing was typed. Tell the user in finish_task.`);
+      }
+    }
+    await hand.type(cell);
+    await hand.keys("Return");
+  }
+
+  /**
    * The spreadsheet cell with the keyboard in the working window (its address and what it holds), or null. `want`: the
    * cell it should be by now: the app is given a moment to get there (a look may come before the last arrow key is seen).
+   * The read looks in `want` and `near` first (see cursorHints): in a big, zoomed-out sheet it can't ask every cell.
    */
-  private async cellWithKeyboard(want?: string): Promise<{ name: string; text: string } | null> {
+  private async cellWithKeyboard(want?: string, near: string[] = []): Promise<{ name: string; text: string } | null> {
+    const cells = [...new Set([...(want ? [want] : []), ...near])];
     for (let i = 0; ; i++) {
-      const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+      const seen = await this.perception.read(this.target, null, undefined, { keep: false, cells }).catch(() => null);
       if (this.isOver) throw new BorrowStopped();
       const f = seen?.window && !seen.blocked ? focusedElement(seen.nodes) : null;
       const cell = f && isSheetCell(f) && !f.secret ? { name: f.name.replace(/\$/g, ""), text: f.text ?? "" } : null;
@@ -1555,7 +1720,10 @@ export class Worker {
    * "gone" for one that can't be read (closed), "busy" for an app that didn't answer. `wait`: give a window just brought
    * to the front a moment to say. Notes what the focused field holds and what is selected in it (focusText,
    * focusSelection): an empty field's text is "" (the reader leaves it out), and its selection is "" when nothing is
-   * selected, for a field whose text the reader reads.
+   * selected, for a field whose text the reader reads (a heading's or a quotation's, when the reader tells it). Notes
+   * too whether text may be selected beyond that (focusBeyond: the document's paragraphs say they are selected, as after
+   * Edit ▸ Select All in Writer; or nothing says it has the keyboard where an editable document is), and what a
+   * spreadsheet's cell being typed into holds so far (focusFormula).
    */
   private async focusIn(wait = false): Promise<Focus | undefined | "blocked" | "gone" | "busy"> {
     for (let i = 0; ; i++) {
@@ -1565,13 +1733,37 @@ export class Worker {
       const f = seen?.window ? focusedElement(seen.nodes) : null;
       const read = !!f && !f.secret && READ_TEXT_ROLES.has(f.role);
       this.focusText = f && !f.secret ? f.text ?? (read ? "" : undefined) : undefined;
-      this.focusSelection = read ? f!.selection ?? "" : undefined;
+      this.focusSelection = read ? f!.selection ?? "" : f && !f.secret ? f.selection : undefined;
+      const nodes = seen?.window ? seen.nodes : [];
+      const byId = (id: number) => nodes.find(n => n.id === id);
+      const selectedBlocks = nodes.some(n => TEXT_BLOCKS.has(n.role) && n.states.includes("selected"));
+      const known = f && !unsureFocus(f) ? f : null;
+      this.focusBeyond = known ? (DOCUMENT_ROLES.has(known.role) && (known.states.includes("selected") || selectedBlocks) ? "selected" : undefined)
+        : nodes.some(editableDocument) ? (selectedBlocks ? "selected" : "unknown") : undefined;
+      // A cell being typed into: LibreOffice says both the cell and what edits it (a paragraph) have the keyboard.
+      const editing = nodes.find(n => n.states.includes("focused") && !n.secret && READ_TEXT_ROLES.has(n.role) && intoSheet(n, byId));
+      this.focusFormula = !f || f.secret ? undefined : editing ? editing.text ?? "" : isSheetCell(f) ? "" : intoSheet(f, byId) ? f.text ?? "" : undefined;
       if (seen?.window && f) {
-        const byId = (id: number) => seen.nodes.find(n => n.id === id);
         return { role: f.role, name: f.name || inferLabels(seen.nodes).get(f.id) || "", ...(f.secret ? { secret: true } : {}), ...cellOf(f, byId) };
       }
       if (!wait || i >= 2 || this.isOver) return !seen ? "busy" : !seen.window ? (seen.busy ? "busy" : "gone") : undefined;
       await sleep(150);
+    }
+  }
+
+  /**
+   * focusIn, given a moment to settle (FOCUS_SETTLE_MS): LibreOffice moves the keyboard focus between its paragraph, its
+   * root pane and nothing as its window comes to the front. Looks again while what it finds is nothing, a frame or a
+   * root pane (not yet known), or, with `o.want`, isn't that (unless that was nothing and now a real element has it).
+   */
+  private async steadyFocus(wait: boolean, o?: { want: Focus | undefined }): Promise<Focus | undefined | "blocked" | "gone" | "busy"> {
+    const t0 = Date.now();
+    for (;;) {
+      const look = await this.focusIn(wait);
+      if (look === "blocked" || look === "gone" || look === "busy" || this.isOver) return look;
+      const settled = o ? sameFocus(look, o.want) || (o.want === undefined && !unsureFocus(look)) : !unsureFocus(look);
+      if (settled || Date.now() - t0 >= FOCUS_SETTLE_MS) return look;
+      await sleep(100);
     }
   }
 
@@ -1583,7 +1775,7 @@ export class Worker {
    */
   private async pressKeys(keys: string): Promise<ToolResultObject> {
     if (this.place?.userInControl()) return this.deskTaken("keys");
-    const seen = await this.focusIn();
+    const seen = await this.steadyFocus(false);
     if (this.isOver) return STOPPED();
     if (seen === "blocked") {
       return this.refuse("keys", "private window (never-look list or a password prompt)", "This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.", { value: keys });
@@ -1607,6 +1799,9 @@ export class Worker {
         ...(this.focusText !== undefined ? { currentText: this.focusText } : {}),
         ...(this.focusSelection !== undefined ? { selection: this.focusSelection } : {}),
         ...(selected === "all" ? { afterSelectAll: true } : selected === "some" ? { afterSelecting: true } : {}),
+        ...(this.focusBeyond ? { selectionBeyond: this.focusBeyond } : {}),
+        // In a spreadsheet's cell: what it will hold, symbols too (a formula typed key by key).
+        ...(this.focusFormula !== undefined ? { formula: this.focusFormula + (keyText(keys) ?? "") } : {}),
       };
       // On the user's screen, once they said yes to a key that only moves here, more of those go without a question.
       const moves = !this.place && onlyMoves(keys, element);
@@ -1618,7 +1813,8 @@ export class Worker {
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
       const result = await this.withCursor("keys", approved, async hand => {
-        const look = await this.focusIn(approved !== undefined || activating);
+        // LibreOffice moves the focus about as its window comes to the front: what the user said yes to gets a moment to come back.
+        const look = await this.steadyFocus(approved !== undefined || activating, { want: approved });
         if (look === "blocked") throw new Error("That window is private now (a password prompt, or on the never-look list), so nothing was pressed.");
         if (look === "gone" || look === "busy") throw new Error(`That window ${look === "gone" ? "can't be read any more (it may have closed)" : "isn't answering"}, so nothing was pressed. Call perceive_window.`);
         const now = look;
@@ -1969,7 +2165,9 @@ export class Worker {
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
     if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
-      const prompt = `${decision.prompt} (I'm checking each step: a step came up that you didn't ask for.)`;
+      // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
+      const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
+      const prompt = `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
       decision = decision.verdict === "allow"
         ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; a step came up that the user didn't ask for`, prompt }
         : { ...decision, everyTime: true, remember: false, prompt };

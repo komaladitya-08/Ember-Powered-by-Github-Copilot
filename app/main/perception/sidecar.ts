@@ -126,6 +126,8 @@ export interface CanDo {
   action?: string;
   /** A click: the control around the element that the click goes to (a link around its text, a row around its label). */
   handler?: { role: string; name: string };
+  /** A click the app hands to a control around the element that lies too deep to find: what it works can't be told. */
+  handlerUnknown?: boolean;
 }
 
 /** `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering. */
@@ -175,6 +177,8 @@ export class AtspiSidecar {
    * the sidecar remembers that it was one, and so does this list, for whichever process comes next.
    */
   private secrets = new Map<string, SecretKey>();
+  /** Elements whose names say what a secret field holds (a table's cell named after the card number in it): withheld by whichever process comes next too. */
+  private withheld = new Map<string, SecretKey>();
   /** stop() was called: no helper is started again on its own (see revive). */
   private stopped = false;
   private reviving = false;
@@ -210,20 +214,23 @@ export class AtspiSidecar {
       this.retire(h, "accessibility helper stopped", "SIGKILL");
     });
     // Before anything else it is asked: the secret fields earlier processes knew (its answer isn't needed).
-    if (this.secrets.size) child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params: { keys: [...this.secrets.values()] } }) + "\n");
+    if (this.secrets.size || this.withheld.size) {
+      const params = { keys: [...this.secrets.values()], ...(this.withheld.size ? { withheld: [...this.withheld.values()] } : {}) };
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params }) + "\n");
+    }
     return h;
   }
 
-  /** Keeps secret fields' keys (the most recent few thousand). */
-  private remember(keys: unknown): void {
+  /** Keeps secret fields' keys (the most recent few thousand), or (`into`) those of names withheld. */
+  private remember(keys: unknown, into = this.secrets): void {
     if (!Array.isArray(keys)) return;
     for (const k of keys) {
       if (!Array.isArray(k) || k.length !== 2 || typeof k[0] !== "string" || typeof k[1] !== "string") continue;
       const key = `${k[0]} ${k[1]}`;
-      this.secrets.delete(key);
-      this.secrets.set(key, [k[0], k[1]]);
+      into.delete(key);
+      into.set(key, [k[0], k[1]]);
     }
-    while (this.secrets.size > 4096) this.secrets.delete(this.secrets.keys().next().value!);
+    while (into.size > 4096) into.delete(into.keys().next().value!);
   }
 
   private answer(h: Helper, line: string): void {
@@ -339,9 +346,10 @@ export class AtspiSidecar {
    * aren't acted on (what has the keyboard before a key): it doesn't push the reads acted on out of the sidecar's
    * last few, so the ids of the latest perceive_window stay known.
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean } = {}): Promise<ReadWindowResult> {
-    return this.request<ReadWindowResult & { secretKeys?: unknown }>("read_window", params).then(({ secretKeys, ...r }) => {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[] } = {}): Promise<ReadWindowResult> {
+    return this.request<ReadWindowResult & { secretKeys?: unknown; withheldKeys?: unknown }>("read_window", params).then(({ secretKeys, withheldKeys, ...r }) => {
       this.remember(secretKeys);
+      this.remember(withheldKeys, this.withheld);
       if (params.keep === false) this.newQuickLook();
       return r;
     });
@@ -350,7 +358,10 @@ export class AtspiSidecar {
   /** These elements (from the last few reads) hold secrets: the sidecar refuses to type into them from now on. */
   markSecret(ids: number[]): Promise<void> {
     if (!ids.length) return Promise.resolve();
-    return this.request<{ keys?: unknown }>("mark_secret", { ids }).then(r => this.remember(r.keys));
+    return this.request<{ keys?: unknown; withheldKeys?: unknown }>("mark_secret", { ids }).then(r => {
+      this.remember(r.keys);
+      this.remember(r.withheldKeys, this.withheld);
+    });
   }
 
   /**
@@ -377,7 +388,10 @@ export class AtspiSidecar {
    * `menus: false`: none of the app's popup windows covers the point, so its open menus aren't looked through.
    */
   atPoint(params: { pid: number; path: string; x: number; y: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; menus?: boolean }): Promise<AtPointResult> {
-    return this.request("at_point", params);
+    return this.request<AtPointResult & { withheldKeys?: unknown }>("at_point", params).then(({ withheldKeys, ...r }) => {
+      this.remember(withheldKeys, this.withheld);
+      return r;
+    });
   }
 
   // Tier 1 actions on element ids from a previous readWindow.

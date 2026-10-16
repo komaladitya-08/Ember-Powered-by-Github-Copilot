@@ -204,6 +204,35 @@ describe("secret fields", () => {
     expect(out).toContain('[2] entry "API key" (showing, visible, secret)');
     expect(out).toContain('[7] entry (showing, visible) text="plain"');
   });
+  it("never lists a name that says what a secret field holds: a cell or row named after it, a combo box showing it (PERC8-1, PERC8-5)", () => {
+    const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });
+    const out = serializeElements(win, [
+      node(1, "document web", "Checkout", at(0, 0, 600, 400), { parent: null }),
+      node(2, "section", "737", at(100, 0, 200), { parent: 1 }),
+      node(3, "entry", "CVV", at(104, 0), { parent: 2, text: "737" }),
+      node(4, "table row", "IBAN DE89 3704 0044 0532 0130 00", at(0, 40, 400), { parent: 1 }),
+      node(5, "table cell", "IBAN", at(0, 40, 90), { parent: 4 }),
+      node(6, "table cell", "DE89 3704 0044 0532 0130 00", at(100, 40, 300), { parent: 4 }),
+      node(7, "entry", "IBAN", at(104, 40), { parent: 6, text: "DE89370400440532013000" }),
+      node(8, "label", "Card expiry", at(0, 80, 90), { parent: 1 }),
+      node(9, "combo box", "09/28", at(100, 80), { parent: 1, selected: "09/28" }),
+      node(10, "label", "Country", at(0, 120, 90), { parent: 1 }),
+      node(11, "combo box", "France", at(100, 120), { parent: 1, selected: "France" }),
+      node(12, "section", "Order 7374", at(0, 160, 300), { parent: 1 }),
+      node(13, "label", "PIN", at(0, 200, 40), { parent: 1 }),
+      node(14, "combo box", "4821", at(100, 200), { parent: 1, selected: "4821" }),
+      node(15, "text", "", at(104, 200), { parent: 14, text: "4821" }),
+    ]);
+    expect(out).not.toMatch(/737"|DE89|09\/28|4821/);
+    expect(out).toContain('[2] section (showing, visible)');
+    expect(out).toContain('[4] table row (showing, visible)');
+    expect(out).toContain('[5] table cell "IBAN"');
+    expect(out).toContain('[9] combo box "Card expiry" (label) (showing, visible, secret)');
+    expect(out).toContain('[11] combo box "France" (showing, visible) selected="France"');
+    expect(out).toContain('[12] section "Order 7374"');
+    expect(out).toContain('[14] combo box "PIN" (label) (showing, visible, secret)');
+    expect(inferLabels([node(1, "label", "Country", at(0, 0, 90)), node(2, "combo box", "France", at(100, 0), { selected: "France" })]).get(2)).toBe("Country");
+  });
   it("recognises secret labels in many languages, not look-alikes", () => {
     for (const s of labels.secret) expect(isSecretLabel(s), s).toBe(true);
     for (const s of labels.plain) expect(isSecretLabel(s), s).toBe(false);

@@ -343,6 +343,99 @@ def is_secret(acc, role, name):
     return False
 
 
+# Elements whose names say what a secret field in them holds (see withhold_names): their names are never reported, in
+# a read, under the wheel or about an action. Kept like SECRETS.
+WITHHELD = SecretFields()
+# How far up from a secret field its containers are looked at (see withhold_names).
+WITHHELD_LEVELS = 12
+# The window itself (its title is reported as the window's): where looking up from a field stops.
+WINDOW_ROLES = frozenset(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"])
+
+
+def squash(text):
+    """Text as a secret's value is looked for in a name: lowercase, NFKC, without whitespace (a card number spaced
+    or not) or what stands for an element inside it (see OBJECT_CHAR)."""
+    return "".join(normalize_label(text).replace(OBJECT_CHAR, " ").split())
+
+
+def secret_values(acc, role):
+    """What a secret field holds, squashed (see squash): never reported, only looked for in the names of what is around
+    it. Its text, the option a drop-down shows, a spin button's number. A few calls."""
+    found = [text_of(acc, 2000)]
+    if role == "combo box":
+        found.append(chosen_option(acc))
+    if role in VALUE_ROLES:
+        v = value_of(acc)
+        if v is not None:
+            found.append("%d" % v if v == int(v) else repr(v))
+    return [s for s in (squash(v) for v in found if v) if s]
+
+
+def holds_value(text, values):
+    """Does `text` (an element's name or text) say one of a secret field's values (see secret_values)? A short value
+    (part of a code typed so far) only as a word of its own."""
+    if not text or not values:
+        return False
+    whole, words = squash(text), " ".join(normalize_label(text).split())
+    for v in values:
+        if v in whole if len(v) >= 4 else re.search(r"(?<!\w)" + re.escape(v) + r"(?!\w)", words):
+            return True
+    return False
+
+
+def named_from_contents(acc):
+    """Was acc's name made from what it holds? A web engine says which of its names its page gave ("explicit-name"):
+    the rest are made from their contents (Chromium names a table's cell, an ARIA row or a <div> after its text and
+    the values of the fields in it). Elsewhere names are given."""
+    if not web_engine(acc):
+        return False
+    try:
+        attrs = acc.getAttributes()
+    except Exception:
+        return True
+    pairs = attrs.items() if isinstance(attrs, dict) else (a.partition(":")[::2] for a in attrs or [])
+    return not any(k == "explicit-name" and v == "true" for k, v in pairs)
+
+
+def says_secret(acc, name, text, values, field):
+    """Does the name or text of acc, the secret field holding `values` or what holds it (`field`: acc is the field),
+    say what the field holds: the value is in it, or (a container) a web engine made its name from its contents (see
+    named_from_contents)? A field's own name made from contents is still its label."""
+    return holds_value(name, values) or holds_value(text, values) or (not field and bool(name) and named_from_contents(acc))
+
+
+def withhold_around(acc, role):
+    """Notes in WITHHELD the names that say what secret field acc holds (see withhold_names), looking up from its
+    accessible (a few calls for each level): for a field Ember found secret after a read (mark_secret). Returns their
+    keys."""
+    values = secret_values(acc, role)
+    cur, held = acc, []
+    for _ in range(WITHHELD_LEVELS + 1):
+        try:
+            name = (cur.name or "").strip()
+            r = cur.getRoleName()
+        except Exception:
+            break
+        if r in WINDOW_ROLES:
+            break
+        if name and says_secret(cur, name, None, values, cur is acc):
+            held.append(object_key(cur))
+            WITHHELD.add(held[-1])
+        try:
+            cur = cur.parent
+        except Exception:
+            break
+        if cur is None:
+            break
+    return [k for k in held if k is not None]
+
+
+def named_by_value(node):
+    """A combo box named after the option it shows (GTK names one so): judged by the label beside it, as an unnamed
+    field is (see secret_by_layout)."""
+    return node["role"] == "combo box" and bool(node["name"]) and node["name"] in (node.get("selected"), node.get("text"))
+
+
 # ---------------------------------------------------------------- element ids
 
 def first_id(env=None):
@@ -497,6 +590,12 @@ def node_of(acc, role, name, states, bounds):
             txt = cell_text(acc)
             if txt:
                 node["text"] = txt
+    if "selection" not in node and not secret and "focused" in states and "editable" in states and role not in TEXT_ROLES:
+        # Editable text of another kind with the keyboard (a page's editable heading or section): what is selected in it,
+        # which a key that types would replace.
+        sel = selection_of(acc)
+        if sel:
+            node["selection"] = sel
     if role in VALUE_ROLES and not secret:
         val = value_of(acc)
         if val is not None:
@@ -840,17 +939,58 @@ def note_cursor(table, row, col):
         CURSORS.popitem(last=False)
 
 
-def cursor_cell(table, grid, start, until):
+# Cells Ember says the cursor should be in (a read's `cells`), looked at first: this many at most.
+CURSOR_HINTS = 4
+# A spreadsheet's last row and column (LibreOffice Calc 24.2: 1048576 rows, 16384 columns).
+SHEET_ROWS, SHEET_COLUMNS = 1048576, 16384
+
+
+def cell_places(addresses):
+    """(row, column) of each cell address ("C62", "$AB$7") of `addresses`, CURSOR_HINTS at most; [] for anything else."""
+    out = []
+    for a in addresses if isinstance(addresses, list) else []:
+        a = a.replace("$", "").upper() if isinstance(a, str) else ""
+        m = re.match(r"^([A-Z]{1,3})([1-9][0-9]{0,6})$", a)
+        if not m:
+            continue
+        col = 0
+        for ch in m.group(1):
+            col = col * 26 + ord(ch) - 64
+        place = (int(m.group(2)) - 1, col - 1)
+        if place[0] < SHEET_ROWS and place[1] < SHEET_COLUMNS and place not in out:
+            out.append(place)
+        if len(out) >= CURSOR_HINTS:
+            break
+    return out
+
+
+def scan_order(grid, start, around):
+    """The cells on screen from `start` (row, column) on (see grid_of; the ones before were looked at), row by row: the
+    rows nearest row `around` first, else the first and the last rows on screen alternately, inwards (every cell asked
+    takes longer the more cells show: a zoomed-out sheet's lower rows were never reached from the top in time)."""
+    first, last = start[0], grid[1]
+    rows = list(range(first, last + 1))
+    if around is not None and first <= around <= last:
+        rows.sort(key=lambda r: (abs(r - around), r))
+    else:
+        rows = [rows[i // 2] if i % 2 == 0 else rows[-1 - i // 2] for i in range(len(rows))]
+    for r in rows:
+        for c in range(start[1] if r == first else grid[2], grid[3] + 1):
+            yield r, c
+
+
+def cursor_cell(table, grid, start, until, hints=()):
     """The cell of spreadsheet `table` (see grid_of) that has the keyboard, as (row, column, cell, states), or None.
     No cell says so to anything but its states (the sheet's Selection is empty without a range selected, and Calc's
-    Name Box is out of reach of accessibility), so cells are asked: where it was last found and around it first (a key
-    moves it a cell), then those on screen from `start` (row, column) on, row by row (the ones before were looked at),
+    Name Box is out of reach of accessibility), so cells are asked: those Ember expects it in (`hints`, (row, column):
+    where it moved it to, where it saw it), then where it was last found, wherever they are (scrolled away too), then the
+    cells around each (a key moves it a cell), then those on screen from `start` (row, column) on (see scan_order),
     until `until` (time.monotonic()), two calls a cell. None too once the app takes a timeout's time to answer."""
-    near = []
     last = CURSORS.get(object_key(table))
-    if last is not None:
-        r, c = last
-        near = [(r, c), (r + 1, c), (r, c + 1), (r - 1, c), (r, c - 1), (r + 1, grid[2])]
+    first = list(hints) + ([last] if last is not None else [])
+    near = list(first)
+    for r, c in first:
+        near += [(r + 1, c), (r, c + 1), (r - 1, c), (r, c - 1), (r + 1, grid[2])]
     tried = set()
 
     def ask(r, c):
@@ -868,27 +1008,25 @@ def cursor_cell(table, grid, start, until):
         return r, c, cell, states
 
     for r, c in near:
-        if r >= 0 and c >= 0 and (r, c) not in tried:
+        if 0 <= r < SHEET_ROWS and 0 <= c < SHEET_COLUMNS and (r, c) not in tried:
             tried.add((r, c))
             found = ask(r, c)
             if found is not None:
                 return found or None
-    r, c = start
-    while r <= grid[1]:
+    for r, c in scan_order(grid, start, first[0][0] if first else None):
         if (r, c) not in tried:
             found = ask(r, c)
             if found is not None:
                 return found or None
-        r, c = next_place(grid, r, c)
     return None
 
 
-def add_cursors(nodes, sheets, until):
+def add_cursors(nodes, sheets, until, hints=()):
     """The cell with the keyboard of each spreadsheet in `sheets` (noted by walk_grid: a read that didn't come to it),
     put in `nodes` after the sheet's other cells: wherever it is (scrolled away too: keys go there), as long as it is
-    found before `until` (see cursor_cell)."""
+    found before `until` (see cursor_cell; `hints`: the cells Ember expects it in)."""
     for s in reversed(sheets):  # from the last, so the places noted for the others stay right
-        found = cursor_cell(s["table"], s["grid"], s["start"], until)
+        found = cursor_cell(s["table"], s["grid"], s["start"], until, hints)
         if found is None:
             continue
         row, col, cell, states = found
@@ -968,6 +1106,7 @@ class Budget(object):
         self.why = []
         self.grid = 0
         self.sheets = []
+        self.panes = {}  # a spreadsheet's panes by object path: "next" (to be read now), "read" (see read_panes)
 
     def cut_short(self, why):
         self.cut = True
@@ -1010,8 +1149,60 @@ def shows(acc, states, in_pane=False):
         return False
 
 
-def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False):
-    """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
+# LibreOffice Calc shows a sheet with frozen rows or columns in panes, a document each (the frozen ones hold the column
+# and row headings), and lists the scrolled pane first: read in that order, its cells take the read's GRID_CELLS and the
+# headings are never read. The panes of a sheet are siblings among a few other children.
+PANE_ROLE = "document spreadsheet"
+PANE_SIBLINGS = 24
+
+
+def sibling_panes(acc):
+    """The panes of the spreadsheet document acc is one of (see PANE_ROLE), top left first by where they show (frozen
+    rows above, frozen columns to the left), as (pane, bounds); [] for a sheet in one pane. A few calls for each of its
+    siblings."""
+    try:
+        parent = acc.parent
+        count = parent.childCount if parent is not None else 0
+    except Exception:
+        return []
+    if count < 2 or count > PANE_SIBLINGS:
+        return []
+    panes = []
+    for i in range(count):
+        child = child_at(parent, i)
+        try:
+            if child is None or child.getRoleName() != PANE_ROLE:
+                continue
+        except Exception:
+            continue
+        b = extents(child)
+        panes.append((((b["y"], b["x"]) if b is not None else (2 ** 31, 2 ** 31)), i, child, b))
+    if len(panes) < 2:
+        return []
+    panes.sort(key=lambda p: (p[0], p[1]))
+    return [(p[2], p[3]) for p in panes]
+
+
+def read_panes(panes, depth, out, max_depth, max_nodes, parent_id, clip, budget, in_pane):
+    """Reads a spreadsheet's panes (see sibling_panes) in their order, where the first of them is met in the tree; the
+    rest are not read again where they are met. LibreOffice says a frozen pane a row high doesn't show (nor its sheet)
+    while its cells do: one that is visible and lies on screen is read all the same (see walk's `pane`). Returns
+    whether any of them shows."""
+    for p, _ in panes:
+        budget.panes[getattr(p, "path", None)] = "next"
+    shown = False
+    for p, b in panes:
+        on = b is not None and in_view(b, clip)
+        shown = walk(p, depth, out, max_depth, max_nodes, parent_id, clip, budget, in_pane, on) or shown
+        budget.panes[getattr(p, "path", None)] = "read"
+        if budget.busy or budget.over:
+            break
+    return shown
+
+
+def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False, pane=False):
+    """Reports acc and what it contains, depth first. Returns whether acc is on screen. `pane`: a spreadsheet's pane
+    (or its sheet) found on screen by where it lies, which shows if it is visible (see read_panes)."""
     budget = budget or Budget()
     if len(out) - budget.grid >= max_nodes:
         budget.cut_short("nodes")
@@ -1019,11 +1210,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     if budget.tick():
         return False
     states = state_names(acc)
-    if not shows(acc, states, in_pane):
+    if not shows(acc, states, in_pane) and not (pane and "visible" in states):
         # Invisible elements are a known prompt-injection channel; never report them.
         return False
     # A viewport GTK misjudged (see shows): not listed itself, and on screen only if something in it is.
-    judged = "showing" in states
+    judged = "showing" in states or pane
     if depth > max_depth:
         # It shows, but is nested deeper than a read goes: the read says it is incomplete.
         budget.cut_short("depth")
@@ -1033,6 +1224,15 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         name = (acc.name or "").strip()
     except Exception:
         return False
+    if role == PANE_ROLE and depth > 0:
+        # A spreadsheet with frozen rows or columns, in panes: read top left first (see sibling_panes).
+        done = budget.panes.get(getattr(acc, "path", None))
+        if done == "read":
+            return True
+        if done is None:
+            panes = sibling_panes(acc)
+            if panes:
+                return read_panes(panes, depth, out, max_depth, max_nodes, parent_id, clip, budget, in_pane)
     my_id = parent_id
     listed = judged and (role not in SKIP_ROLES or bool(name))
     bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES else None
@@ -1080,7 +1280,8 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         if child is None:
             continue
         last = (i, child)
-        on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, role == "scroll pane")
+        on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, role == "scroll pane",
+                             pane and role == PANE_ROLE)
         if budget.busy or budget.over:
             return True
         judged = judged or on_screen_now
@@ -1146,21 +1347,72 @@ def nearby_label(node, labels, claimed=frozenset()):
 
 
 def secret_by_layout(fields, labels, controls):
-    """The unnamed fields, of `fields`, next to or under a "Password" or "Card number" label."""
+    """The unnamed fields, of `fields`, next to or under a "Password" or "Card number" label (a combo box named after
+    the option it shows counts as unnamed: see named_by_value)."""
     claimed = claimed_labels(labels, controls)
-    return [f for f in fields if not f["name"] and looks_secret(nearby_label(f, labels, claimed))]
+    return [f for f in fields if (not f["name"] or named_by_value(f)) and looks_secret(nearby_label(f, labels, claimed))]
+
+
+def make_secret(node, accessible_of):
+    """A listed field found secret after the walk: what it holds goes, and it stays secret (see SECRETS)."""
+    for k in ("text", "selection", "value", "selected"):
+        node.pop(k, None)
+    node["secret"] = True
+    SECRETS.add(object_key(accessible_of(node["id"])))
 
 
 def redact_by_layout(nodes, accessible_of):
-    """Unnamed text fields next to or under a "Password" or "Card number" label: their contents are secret too."""
+    """Unnamed text fields next to or under a "Password" or "Card number" label: their contents are secret too. So is a
+    combo box whose text field is secret (GTK's combo box with an entry, named after what is typed in it)."""
     labels = [n for n in nodes if n["role"] in LABEL_ROLES and n["name"] and n["bounds"]]
     controls = [n for n in nodes if n["role"] in LABELLED_ROLES and n["bounds"]]
     fields = [n for n in nodes if n["role"] in FIELD_ROLES and n["bounds"] and not n.get("secret")]
     for n in secret_by_layout(fields, labels, controls):
-        for k in ("text", "selection", "value", "selected"):
-            n.pop(k, None)
-        n["secret"] = True
-        SECRETS.add(object_key(accessible_of(n["id"])))
+        make_secret(n, accessible_of)
+    by_id = dict((n["id"], n) for n in nodes)
+    for n in nodes:
+        combo = by_id.get(n["parent"]) if n.get("secret") else None
+        if combo is not None and combo["role"] == "combo box" and not combo.get("secret"):
+            make_secret(combo, accessible_of)
+
+
+def withhold_names(nodes, accessible_of):
+    """Names that say what a secret field holds (Chromium names a table's cell, a row or a <div> after what the fields
+    in it hold; GTK a combo box after the option it shows): the field's own and its listed containers', with their
+    text, are left out, and noted in WITHHELD (for what is under the wheel and actions). The field's value is asked
+    for here (never reported), for a field with a named container or name only. A read lists parents first. Returns
+    the keys noted."""
+    by_id, held = dict((n["id"], n) for n in nodes), set()
+    for n in nodes:
+        if not n.get("secret"):
+            continue
+        chain = [n]
+        p = by_id.get(n["parent"])
+        while p is not None and len(chain) <= WITHHELD_LEVELS and p["role"] not in WINDOW_ROLES:
+            chain.append(p)
+            p = by_id.get(p["parent"])
+        if not any(c["name"] or c.get("text") for c in chain):
+            continue
+        field = accessible_of(n["id"])
+        values = secret_values(field, n["role"]) if field is not None else []
+        for c in chain:
+            acc = field if c is n else accessible_of(c["id"])
+            if acc is None or not (c["name"] or c.get("text")):
+                continue
+            if says_secret(acc, c["name"], c.get("text"), values, c is n):
+                c["name"] = ""
+                for k in ("text", "selection", "selected"):
+                    c.pop(k, None)
+                key = object_key(acc)
+                if key is not None:
+                    WITHHELD.add(key)
+                    held.add(key)
+    return held
+
+
+def withheld_name(acc, name):
+    """acc's name as it may be reported: none for one that says what a secret field holds (see WITHHELD)."""
+    return "" if name and WITHHELD.keys and object_key(acc) in WITHHELD else name
 
 
 def inside_secrets(nodes):
@@ -1512,10 +1764,22 @@ def read_window(params):
         walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None, None, budget)
         budget.check()  # the last element asked may have been the one that timed out
     if budget.sheets and not budget.busy:
-        # A spreadsheet's cell with the keyboard that the look at its cells didn't come to (keys go there).
-        add_cursors(nodes, budget.sheets, time.monotonic() + min(CURSOR_SCAN_S, max(0.3, READ_TOTAL_S - (time.time() - t0))))
+        # A spreadsheet's cell with the keyboard that the look at its cells didn't come to (keys go there): the cells
+        # Ember expects it in (`cells`: where it moved it to, where it last saw it) are asked first.
+        add_cursors(nodes, budget.sheets, time.monotonic() + min(CURSOR_SCAN_S, max(0.3, READ_TOTAL_S - (time.time() - t0))),
+                    cell_places(params.get("cells")))
     latest = SNAPSHOTS.latest()
-    redact_by_layout(nodes, lambda nid: stored(latest.get(nid)))
+    accessible_of = lambda nid: stored(latest.get(nid))  # noqa: E731
+    redact_by_layout(nodes, accessible_of)
+    held = withhold_names(nodes, accessible_of)
+    if WITHHELD.keys:
+        # Names found to say what a secret field holds before (by Ember too: mark_secret).
+        bus = (object_key(win) or ("",))[0]
+        for n in nodes:
+            if n["name"] and (bus, getattr(accessible_of(n["id"]), "path", None)) in WITHHELD:
+                n["name"] = ""
+                for k in ("text", "selection", "selected"):
+                    n.pop(k, None)
     inside = inside_secrets(nodes)
     if inside:
         nodes = [n for n in nodes if n["id"] not in inside]
@@ -1532,6 +1796,7 @@ def read_window(params):
         "cut": budget.why,
         "others": others,
         "secretKeys": [list(k) for k in keys if k is not None],
+        "withheldKeys": [list(k) for k in held],
         "ms": int((time.time() - t0) * 1000),
     }
     if budget.busy:
@@ -1708,8 +1973,14 @@ def secret_fields(params):
         if b is None or b["width"] <= 0 or b["height"] <= 0:
             continue
         node = {"role": role, "name": name, "bounds": b, "acc": acc}
-        (secret if is_secret(acc, role, name) else plain).append(node)
-    if any(not n["name"] for n in plain) and not (budget.busy or budget.over):
+        if is_secret(acc, role, name):
+            secret.append(node)
+            continue
+        if role == "combo box" and name:
+            # GTK names a combo box after what it shows: then it is judged by its label (see named_by_value).
+            node["selected"] = combo_shows(acc)
+        plain.append(node)
+    if any(not n["name"] or named_by_value(n) for n in plain) and not (budget.busy or budget.over):
         labels = list(found["labels"])
         for doc in found["docs"]:
             labels.extend(collection_matches(doc, LABEL_ROLES) or [])
@@ -1742,25 +2013,35 @@ def secret_fields(params):
 
 
 def remember_secrets(params):
-    """Secret fields an earlier helper process knew (Ember hands them over when it starts a new one)."""
-    for key in params.get("keys") or []:
-        if isinstance(key, list) and len(key) == 2:
-            SECRETS.add((key[0], key[1]))
+    """Secret fields an earlier helper process knew (Ember hands them over when it starts a new one), and the elements
+    whose names it withheld (`withheld`: see WITHHELD)."""
+    for known, keys in ((SECRETS, params.get("keys")), (WITHHELD, params.get("withheld"))):
+        for key in keys or []:
+            if isinstance(key, list) and len(key) == 2:
+                known.add((key[0], key[1]))
     return {"count": len(SECRETS.keys)}
 
 
 def mark_secret(params):
-    """Elements Ember found to hold secrets (a field beside a "Show password" toggle): nothing is typed into them."""
-    keys = []
-    for nid in params.get("ids") or []:
+    """Elements Ember found to hold secrets (a field beside a "Show password" toggle): nothing is typed into them. The
+    names around one that say what it holds are withheld from now on (see withhold_around)."""
+    keys, held = [], []
+    for nid in (params.get("ids") or [])[:64]:
         try:
-            key = object_key(SNAPSHOTS.get(int(nid)))
+            acc = SNAPSHOTS.get(int(nid))
         except (KeyError, ValueError, TypeError):
             continue
-        if key is not None:
-            SECRETS.add(key)
-            keys.append(list(key))
-    return {"keys": keys}
+        key = object_key(acc)
+        if key is None:
+            continue
+        SECRETS.add(key)
+        keys.append(list(key))
+        try:
+            role = acc.getRoleName()
+        except Exception:
+            continue
+        held.extend(list(k) for k in withhold_around(acc, role))
+    return {"keys": keys, "withheldKeys": held}
 
 
 # GNOME Shell draws its own dialogs (polkit, keyring, end session) and notifications inside its stage
@@ -1946,10 +2227,14 @@ def node_info(acc, nid=None):
         name = (acc.name or "").strip()
     except Exception as err:
         raise unreachable(nid, err, t0)
-    info = {"role": role, "name": name[:200], "states": [s for s in states if s in INTERESTING_STATES],
+    withheld = bool(name) and withheld_name(acc, name) == ""
+    info = {"role": role, "name": "" if withheld else name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
     if is_secret(acc, role, name):
         info["secret"] = True
+        return info
+    if withheld:
+        # A container named after what a secret field in it holds: what it says is withheld too.
         return info
     txt = text_of(acc, 2000)
     if txt is not None:
@@ -1965,6 +2250,18 @@ def node_info(acc, nid=None):
                 if sel.isChildSelected(i):
                     info["selected"] = (holder.getChildAtIndex(i).name or "").strip()
                     break
+        except Exception:
+            pass
+    elif role in ROW_LIST_ROLES and not spreadsheet(acc):
+        # A list of rows: its row selected (the first), by its first cell with words in it (see row_list).
+        try:
+            rows = acc.queryTable().getSelectedRows()
+            if len(rows):
+                for c in range(min(acc.queryTable().nColumns, 8)):
+                    words = cell_words(table_cell_at(acc, rows[0], c))
+                    if words:
+                        info["selected"] = words[:200]
+                        break
         except Exception:
             pass
     elif role == "menu":
@@ -2088,7 +2385,29 @@ CLICK_CONTROLS = frozenset(INTERACTIVE_ROLES - TEXT_ROLES - frozenset(["terminal
 # Where looking for the control around an element stops: its page or window.
 HANDLER_STOP = frozenset(["document web", "document frame", "frame", "window", "dialog", "alert", "file chooser",
                           "application", "desktop frame"])
-HANDLER_LEVELS = 12
+# How far up to look: a page's own elements can nest deep (Chromium's clickAncestor finds its control however deep);
+# a click handed further up than this is judged unknown (see click_handler), never by what was clicked.
+HANDLER_LEVELS = 64
+
+
+def mouse_spot(acc):
+    """Where the mouse lands on acc, as Ember aims (Worker.landingSpot: its middle, at most 120 px in from its left
+    edge), or None without a position."""
+    b = extents(acc)
+    if b is None or b["width"] <= 0 or b["height"] <= 0:
+        return None
+    return b["x"] + min(b["width"] // 2, 120), b["y"] + b["height"] // 2
+
+
+def takes_click_at(acc, role, spot):
+    """Does the control acc (role `role`) around an element take a mouse click at `spot` on that element (None: it has
+    no position)? Only where it covers the spot: a page tab takes clicks on its own tab, never on the page it holds
+    (GTK's notebook tab is the parent of its whole page, at the tab alone). One without a position is taken at its
+    word, a page tab excepted (one whose tab doesn't show still holds its page)."""
+    b = extents(acc)
+    if spot is None or b is None or b["width"] <= 0 or b["height"] <= 0:
+        return role != "page tab"
+    return contains(b, spot[0], spot[1])
 
 
 def click_handler(acc, picked):
@@ -2096,7 +2415,8 @@ def click_handler(acc, picked):
     or nothing around it does. `picked`: the action a click by accessibility would do (None: it can't, and the mouse
     clicks it). Chromium's "clickAncestor" clicks the nearest ancestor with an action of its own (a link around its
     text, an element with a click handler: listed or not); the mouse on a label, text or a picture lands on the control
-    it is in (a list's row around its label)."""
+    it is in (a list's row around its label), only one that covers where the mouse lands (see takes_click_at).
+    {"unknown": True}: by accessibility, handed on further up than HANDLER_LEVELS (what it works can't be told)."""
     try:
         role = acc.getRoleName()
     except Exception:
@@ -2106,6 +2426,8 @@ def click_handler(acc, picked):
     if picked is None and role in CLICK_CONTROLS:
         return None  # the mouse clicks the control itself
     by_action = picked is not None
+    # By accessibility the click goes up the page's elements (Chromium's click bubbles), wherever they are drawn.
+    spot = None if by_action else mouse_spot(acc)
     cur = acc
     for _ in range(HANDLER_LEVELS):
         try:
@@ -2119,13 +2441,129 @@ def click_handler(acc, picked):
             return None
         # Chromium hands the click to the nearest ancestor that acts (a row of a list doesn't, a link does).
         acts = OWN_ACTIONS.intersection(n.lower() for n in actions(cur))
-        if acts or (not by_action and r in CLICK_CONTROLS):
+        if (acts or (not by_action and r in CLICK_CONTROLS)) and (by_action or takes_click_at(cur, r, spot)):
             try:
-                name = (cur.name or "").strip()
+                name = withheld_name(cur, (cur.name or "").strip())
             except Exception:
                 name = ""
             return {"role": r, "name": name[:200]}
-    return None
+    # Handed on by accessibility to a control further up than Ember looks: what the click works can't be told.
+    return {"unknown": True} if by_action else None
+
+
+# ---------------------------------------------------------------- rows of a list or table
+
+# A cell of a list of rows (GTK's tree view: file dialogs, file and mail lists, a preferences list). Its "activate"
+# action is GTK's row-activated, a double click: in a file dialog it opens (or saves as) the row selected before, not
+# this one, and in a plain list it may do nothing. A click on it selects its row instead, as a single click does.
+ROW_CELL_ROLES = frozenset(["table cell", "tree item"])
+# Lists of rows whose options (choose_option) are their rows, named after their first cell with words in it.
+ROW_LIST_ROLES = frozenset(["table", "tree table", "tree"])
+ROWS_MAX = 500
+
+
+def spreadsheet(acc):
+    """Is acc a spreadsheet's sheet (as grid_of tells one: its cells made as they are asked for, millions of them, with
+    no scroll bar beside it), whose cells aren't rows to choose? GTK's tree view makes its cells as asked for too."""
+    try:
+        return "manages descendants" in state_names(acc) and acc.childCount > MAX_CHILDREN and scroll_fraction(acc) is None
+    except Exception:
+        return True
+
+
+def selects_row(acc, picked):
+    """Does a click on acc select its row (a cell whose own action is a double click's: see ROW_CELL_ROLES)?"""
+    try:
+        return picked == "activate" and acc.getRoleName() in ROW_CELL_ROLES
+    except Exception:
+        return False
+
+
+def row_of(acc):
+    """(list, its Table interface, the row) for a cell of a list of rows (a cell may be inside another: GTK puts a
+    file's icon and name in one column's cell), or None where the row can't be told or chosen by accessibility."""
+    top = acc
+    try:
+        for _ in range(4):
+            holder = top.parent
+            if holder is None or holder.getRoleName() not in ROW_CELL_ROLES:
+                break
+            top = holder
+        if holder is None or spreadsheet(holder):
+            return None
+        holder.querySelection()
+        t = holder.queryTable()
+        row = t.getRowAtIndex(top.getIndexInParent())
+    except Exception:
+        return None
+    return (holder, t, row) if row >= 0 else None
+
+
+def selected_rows(t):
+    try:
+        return sorted(t.getSelectedRows())
+    except Exception:
+        return None
+
+
+def choose_row(t, row):
+    """Selects `row` alone in a list (Table `t`), as a single click on it does: the rows selected before are
+    unselected (a list that lets several be chosen would keep them: a file dialog would open those too). Returns
+    (it is the one selected now, it was already); background_unavailable where it can't be selected at all."""
+    if selected_rows(t) == [row]:
+        return True, True
+    if row not in (selected_rows(t) or []):
+        t.addRowSelection(row)
+        settle()
+        if row not in (selected_rows(t) or []):
+            raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
+    for other in selected_rows(t) or []:
+        if other != row:
+            t.removeRowSelection(other)
+    settle()
+    return selected_rows(t) == [row], False
+
+
+def cell_words(cell, depth=0):
+    """What a cell says: its name, or the first name in a cell inside it (GTK's icon and file name in one column)."""
+    if cell is None:
+        return ""
+    try:
+        name = (cell.name or "").strip()
+        if name or depth >= 2:
+            return name
+        for i in range(min(cell.childCount, 4)):
+            inner = cell_words(cell.getChildAtIndex(i), depth + 1)
+            if inner:
+                return inner
+    except Exception:
+        pass
+    return ""
+
+
+def row_list(acc):
+    """A list of rows whose rows are its options (see ROW_LIST_ROLES): (its Table interface, each row's name, after
+    its first cell with words in it), or None for anything else. Only one whose rows can be selected (a Selection),
+    never a spreadsheet's sheet."""
+    try:
+        if acc.getRoleName() not in ROW_LIST_ROLES or spreadsheet(acc):
+            return None
+        acc.querySelection()
+        t = acc.queryTable()
+        nrows, ncols = t.nRows, t.nColumns
+    except Exception:
+        return None
+    if nrows < 0 or ncols <= 0:
+        return None
+    names = []
+    for r in range(min(nrows, ROWS_MAX)):
+        name = ""
+        for c in range(min(ncols, 8)):
+            name = cell_words(table_cell_at(acc, r, c))
+            if name:
+                break
+        names.append(name)
+    return t, names
 
 
 def can_do(params):
@@ -2144,6 +2582,11 @@ def can_do(params):
         if kind in ("click", "toggle"):
             _, names, index = pick_action(acc, kind)
             picked = out["action"] = names[index]
+            if kind == "click" and selects_row(acc, picked):
+                # The click selects its row (see select_row), where accessibility can.
+                if row_of(acc) is None:
+                    raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
+                out["action"] = "select row"
         elif kind == "text":
             editable_text(acc)
         elif kind == "value":
@@ -2156,7 +2599,9 @@ def can_do(params):
     if kind in ("click", "toggle"):
         # Whichever way it is clicked: by accessibility, or with the mouse where it can't be (picked is None).
         handler = click_handler(acc, picked)
-        if handler is not None:
+        if handler is not None and handler.get("unknown"):
+            out["handlerUnknown"] = True
+        elif handler is not None:
             out["handler"] = handler
     if params.get("caret"):
         out["focused"] = "focused" in state_names(acc)
@@ -2171,11 +2616,27 @@ def do_action(params):
     acc = usable(nid)
     want = (params.get("action") or "click").lower()
     act, names, index = pick_action(acc, want)
+    if want == "click" and selects_row(acc, names[index]):
+        return select_row(acc, nid)
     before = node_info(acc, nid)
     ok = act.doAction(index)
     settle()
     res = after_action(acc, nid)
     res.update({"ok": bool(ok), "action": names[index], "before": before})
+    return res
+
+
+def select_row(acc, nid):
+    """A click on a cell of a list of rows: its row is selected alone (see ROW_CELL_ROLES, choose_row), and "ok" says
+    whether it is now; background_unavailable where that can't be done by accessibility (the mouse clicks it)."""
+    found = row_of(acc)
+    if found is None:
+        raise RuntimeError("background_unavailable: its row can't be selected by accessibility")
+    _, t, row = found
+    before = node_info(acc, nid)
+    ok, _ = choose_row(t, row)
+    res = after_action(acc, nid)
+    res.update({"ok": ok, "action": "select row", "before": before})
     return res
 
 
@@ -2254,6 +2715,22 @@ def chosen_option(acc):
     return None
 
 
+def combo_shows(acc):
+    """What a combo box shows: its chosen option, else what its text field holds (GTK's combo box with an entry)."""
+    chosen = chosen_option(acc)
+    if chosen:
+        return chosen
+    try:
+        count = acc.childCount
+        for i in range(min(count, 2)):
+            child = acc.getChildAtIndex(i)
+            if child is not None and child.getRoleName() in ("text", "entry"):
+                return (text_of(child) or "").strip() or None
+    except Exception:
+        pass
+    return None
+
+
 def option_chosen(sel, holder, index):
     """Is option `index` the chosen one now?"""
     try:
@@ -2263,15 +2740,48 @@ def option_chosen(sel, holder, index):
 
 
 def option_items(acc):
-    """The names of a combo box's or list's options: the children its Selection chooses among."""
+    """The names of a combo box's or list's options: the children its Selection chooses among, an unnamed one by the
+    label inside it (GTK's list row), as a read names it; a list of rows' rows (see row_list)."""
+    rows = row_list(acc)
+    if rows is not None:
+        return rows[1]
     holder = option_holder(acc)
     if option_selection(acc, holder) is None:
         raise RuntimeError("background_unavailable: this element has no selectable options")
     names = []
     for i in range(min(holder.childCount, 500)):
         c = holder.getChildAtIndex(i)
-        names.append((c.name or "").strip() if c is not None else "")
+        name = (c.name or "").strip() if c is not None else ""
+        names.append(name or (inner_label(c) if c is not None else ""))
     return names
+
+
+INNER_LABEL_LEVELS = 4
+
+
+def inner_label(acc, level=1):
+    """The first label with a letter or digit in it inside acc, a few levels down (GTK's list row holds its label).
+    Keep in step with inferLabels in elements.ts."""
+    try:
+        count = min(acc.childCount, 16)
+    except Exception:
+        return ""
+    for i in range(count):
+        c = child_at(acc, i)
+        if c is None:
+            continue
+        try:
+            if c.getRoleName() in LABEL_ROLES:
+                name = (c.name or "").strip()
+                if any(ch.isalnum() for ch in name):
+                    return name
+        except Exception:
+            continue
+        if level < INNER_LABEL_LEVELS:
+            name = inner_label(c, level + 1)
+            if name:
+                return name
+    return ""
 
 
 def option_index(names, want):
@@ -2290,11 +2800,22 @@ def select_option(params):
     nid = int(params["id"])
     acc = usable(nid)
     refuse_secret(acc)
-    names = option_items(acc)
+    rows = row_list(acc)
+    names = rows[1] if rows is not None else option_items(acc)
     index = option_index(names, str(params.get("option", "")))
     if index is None:
         # The options themselves are app text: they are listed with list_options, not in an error.
         raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % len(names))
+    if rows is not None:
+        # A row, selected alone as a click on it does (choose_row): two of that name can't be told apart.
+        if sum(1 for n in names if n.lower() == names[index].lower()) > 1:
+            raise ValueError("several rows are called that; click a cell of the one meant instead")
+        ok, already = choose_row(rows[0], index)
+        res = after_action(acc, nid)
+        res.update({"ok": ok, "option": names[index]})
+        if already:
+            res["already"] = True
+        return res
     holder = option_holder(acc)
     sel = option_selection(acc, holder)
     if option_chosen(sel, holder, index):
@@ -2392,10 +2913,16 @@ def visible_part(acc, bounds):
     """The part of acc's rectangle `bounds` that shows: inside each scroll pane and viewport it is in, and inside its
     window. GTK reports a row scrolled almost out of its list as showing, at its full size: a click at its middle
     lands below the list. None without a position (or when it would be all of `bounds`); a rectangle of no size
-    when nothing of it shows."""
+    when nothing of it shows. A web page's content is clipped by its page (and a frame's by its frame), never by
+    what holds the page: on a HiDPI screen Chromium's window reports logical pixels around a page that reports
+    physical ones (Ember clips by the window itself, in its own units: Worker.landingSpot)."""
     if bounds is None:
         return None
     shown, cur = bounds, acc
+    try:
+        web = acc.getRoleName() in DOCUMENT_ROLES
+    except Exception:
+        web = False
     for _ in range(AT_POINT_LEVELS):
         try:
             parent = cur.parent
@@ -2404,10 +2931,14 @@ def visible_part(acc, bounds):
             break
         if role == "application":
             # cur is the window: what lies outside its frame doesn't show either.
-            if cur is not acc:
+            if cur is not acc and not web:
                 shown = clip_to(shown, extents(cur))
             break
-        if role in CLIP_ROLES:
+        if role in DOCUMENT_ROLES:
+            # The page (or a frame in it) clips what is in it, in the page's own units.
+            shown = clip_to(shown, extents(parent))
+            web = True
+        elif role in CLIP_ROLES and not web:
             # GTK's viewport scrolled past its first screen has no position (see shows): its scroll pane clips.
             shown = clip_to(shown, extents(parent))
         cur = parent
@@ -2610,10 +3141,11 @@ def popup_at(app, win, x, y, budget):
 
 # An open menu lies over the rest of its window (GTK draws it in a popup window of its own, its items outside the
 # bounds of the menu bar they are reached through): what it shows at a point is on top. Looked for in the window's
-# top few levels of containers and menu bars (never inside its documents, lists or tables).
+# top few levels of containers and menu bars (never inside its documents, lists or tables). LibreOffice 24.2 (gtk3)
+# keeps its menu bar in a scroll pane's viewport, five levels down: frame > panel > panel > scroll pane > viewport.
 MENU_HOLDERS = frozenset(["filler", "panel", "root pane", "layered pane", "glass pane", "menu bar", "split pane",
-                          "unknown"])
-MENU_DEPTH = 5
+                          "unknown", "scroll pane", "viewport"])
+MENU_DEPTH = 6
 MENU_CHILDREN = 40
 
 
@@ -2657,6 +3189,24 @@ def open_menu_at(win, x, y, budget):
     return []
 
 
+def secret_around(el, top):
+    """The secret field `el` is in, below `top` (where it was looked for), or None: the levels between, when the app
+    answered with an element further down than a child of `top` (Chromium's deepest element). A few calls a level."""
+    cur = el
+    for _ in range(AT_POINT_LEVELS):
+        try:
+            cur = cur.parent
+            if cur is None or same_object(cur, top):
+                return None
+            role = cur.getRoleName()
+            name = (cur.name or "").strip()
+        except Exception:
+            return None
+        if role in TEXT_ROLES and is_secret(cur, role, name):
+            return cur
+    return None
+
+
 def at_point(params):
     """What shows at screen point (`x`, `y`) in one window (`pid` and `path`), outermost first: each element's
     role, name and bounds, as deep as the app tells. For the wheel: is a control it would change there? A read
@@ -2673,17 +3223,23 @@ def at_point(params):
     if never_looked(describe_window(app, pid, acc, budget), params):
         return {"chain": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
     x, y = int(params["x"]), int(params["y"])
-    chain = []
+    chain, accs, noted = [], [], []
+    # Names found to say what a secret field holds (see WITHHELD) are left out: the app's, by object path.
+    bus = (object_key(acc) or ("",))[0]
+
+    def name_of(el, name):
+        return "" if name and WITHHELD.keys and (bus, getattr(el, "path", None)) in WITHHELD else name[:200]
     # The app's own popup (a drop-down's list), or an open menu, lies over its windows: what shows there is in it.
     # (`menus`: false when Ember knows none of the app's popup windows is there: a big app's menus cost dozens of calls.)
     popup = popup_at(app, acc, x, y, budget)
     over = [popup] if popup is not None else open_menu_at(acc, x, y, budget) if params.get("menus", True) is not False else []
     for el in over:
         try:
-            role, name = el.getRoleName(), (el.name or "").strip()[:200]
+            role, name = el.getRoleName(), (el.name or "").strip()
         except Exception:
             role, name = "", ""
-        chain.append({"role": role, "name": name, "bounds": extents(el)})
+        chain.append({"role": role, "name": name_of(el, name), "bounds": extents(el)})
+        accs.append(el)
         acc = el
     try:
         role = acc.getRoleName()
@@ -2694,6 +3250,10 @@ def at_point(params):
         step = child_at_point(acc, role, x, y, budget)
         if not step or budget.busy or budget.over:
             break
+        # Chromium answers with the deepest element there: a secret drop-down's option, a secret text box's text.
+        holder = secret_around(step[-1], acc)
+        if holder is not None:
+            step = [holder]
         for el in step:
             try:
                 role, name = el.getRoleName(), (el.name or "").strip()
@@ -2702,10 +3262,18 @@ def at_point(params):
             # A secret field: neither its name nor what is in it (Chromium's text children hold its contents) leaves,
             # and nothing in it is looked at.
             secret = role in TEXT_ROLES and is_secret(el, role, name)
-            node = {"role": role, "name": "" if secret else name[:200], "bounds": extents(el)}
+            node = {"role": role, "name": "" if secret else name_of(el, name), "bounds": extents(el)}
             if secret:
                 node["secret"] = True
+                # Nor do the names of what holds it that say what it holds (see withhold_names).
+                values = secret_values(el, role) if any(n["name"] for n in chain) else []
+                for n, held in zip(chain, accs):
+                    if n["name"] and says_secret(held, n["name"], None, values, False):
+                        n["name"] = ""
+                        WITHHELD.add((bus, getattr(held, "path", None)))
+                        noted.append([bus, getattr(held, "path", None)])
             chain.append(node)
+            accs.append(el)
             if secret:
                 break
         if secret:
@@ -2714,6 +3282,8 @@ def at_point(params):
     if chain and not secret and dead_end(acc):
         chain[-1]["empty"] = True
     out = {"chain": chain, "ms": int((time.time() - t0) * 1000)}
+    if noted:
+        out["withheldKeys"] = noted
     if budget.busy or budget.over:
         out["busy"] = True
     return out

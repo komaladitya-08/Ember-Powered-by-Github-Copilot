@@ -50,6 +50,13 @@ function labelFor(b: Bounds, labels: AxNode[], claimed: Set<number>, anyAbove = 
   return left?.name ?? above?.name ?? null;
 }
 
+/**
+ * A combo box named after the option it shows (GTK names one so): that name is its value, not its label, so it is
+ * labelled as an unnamed control is. Keep in step with named_by_value in ember_atspi.py.
+ */
+export const namedByValue = (n: Pick<AxNode, "role" | "name" | "selected" | "text">) =>
+  n.role === "combo box" && !!n.name && (n.name === n.selected || n.name === n.text);
+
 /** Rows and cells: what labels one is inside it (GTK's list rows hold their label), never the row above it. */
 const ROW_ROLES = new Set(["list item", "table cell", "tree item"]);
 /** How deep inside a control its own label is looked for. */
@@ -81,7 +88,7 @@ export function inferLabels(nodes: AxNode[], { anyAbove = false } = {}): Map<num
   }
   const out = new Map<number, string>();
   for (const n of nodes) {
-    if (n.name || !n.bounds || !INTERACTIVE.has(n.role)) continue;
+    if ((n.name && !namedByValue(n)) || !n.bounds || !INTERACTIVE.has(n.role)) continue;
     const name = inner.get(n.id) ?? (ROW_ROLES.has(n.role) ? null : labelFor(n.bounds, labels, claimed, anyAbove));
     if (name) out.set(n.id, name);
   }
@@ -182,6 +189,53 @@ export function secretIds(nodes: AxNode[], labels = inferLabels(nodes, { anyAbov
     const keyish = KEYISH.test(normalize(n.name || label));
     if (reveals.some(r => (r.kind === "password" || keyish) && besideField(n.bounds!, r.b))) out.add(n.id);
   }
+  // A combo box whose text field is secret is too (GTK's combo box with an entry is named after what is typed in it).
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  for (const id of [...out]) {
+    const parent = byId.get(byId.get(id)!.parent ?? NaN);
+    if (parent?.role === "combo box") out.add(parent.id);
+  }
+  return out;
+}
+
+/** The window itself (its title is reported as the window's): where looking up from a field stops. */
+const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"]);
+/** How far up from a secret field its containers are looked at. Keep in step with WITHHELD_LEVELS in ember_atspi.py. */
+const WITHHELD_LEVELS = 12;
+/** Text as a secret's value is looked for in a name: normalised, without whitespace or U+FFFC (see squash in ember_atspi.py). */
+const squash = (s: string) => normalize(s).replace(/\ufffc/g, " ").replace(/\s+/g, "");
+/** What a secret field holds (only while it is still in the read: the sidecar sends none), squashed. */
+function secretValues(n: AxNode): string[] {
+  const found = [n.text, n.selected, n.value === undefined ? undefined : String(n.value)];
+  return found.flatMap(v => (v ? [squash(v)] : [])).filter(Boolean);
+}
+/** Does `text` say one of a secret field's values? A short value (part of a code typed so far) only as a word of its own. */
+function holdsValue(text: string | undefined, values: string[]): boolean {
+  if (!text || !values.length) return false;
+  const whole = squash(text), words = normalize(text).replace(/\s+/g, " ");
+  return values.some(v => v.length >= 4 ? whole.includes(v)
+    : new RegExp(`(?<![\\p{L}\\p{N}_])${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "u").test(words));
+}
+
+/**
+ * Elements whose names say what a secret field (of `secret`) holds: Chromium names a table's cell, an ARIA row or a
+ * <div> after the values of the fields in it, GTK a combo box after the option it shows. Its listed containers whose
+ * name or text has its value in it, and the field itself when its name has. Only for a field whose contents the read
+ * still has (the sidecar withholds these itself, and sends no contents of a field it knows is secret).
+ */
+export function withheldIds(nodes: AxNode[], secret: Set<number>): Set<number> {
+  const out = new Set<number>();
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  for (const n of nodes) {
+    if (!secret.has(n.id)) continue;
+    const values = secretValues(n);
+    if (!values.length) continue;
+    let c: AxNode | undefined = n;
+    for (let i = 0; c && i <= WITHHELD_LEVELS && !WINDOW_ROLES.has(c.role); i++) {
+      if (holdsValue(c.name, values) || (c !== n && holdsValue(c.text, values))) out.add(c.id);
+      c = c.parent === null ? undefined : byId.get(c.parent);
+    }
+  }
   return out;
 }
 
@@ -254,9 +308,12 @@ function weight(n: AxNode, labels: Map<number, string>): number {
 
 export function serializeElements(window: AxWindow, read: AxNode[], opts: SerializeOptions = {}): string {
   const maxLines = opts.maxLines ?? 150;
-  // What secret fields hold is never listed, whatever the sidecar sent (nor does it label anything).
+  // What secret fields hold is never listed, whatever the sidecar sent (nor does it label anything), nor are the names
+  // that say it (a table's cell named after the card number in it).
   const readLabels = inferLabels(read);
-  const inside = insideSecrets(read, new Set(read.filter(n => isSecretNode(n, n.name || readLabels.get(n.id) || "")).map(n => n.id)));
+  const secretSet = new Set(read.filter(n => isSecretNode(n, readLabels.get(n.id) ?? "")).map(n => n.id));
+  const inside = insideSecrets(read, secretSet);
+  const withheld = withheldIds(read, secretSet);
   const nodes = inside.size ? read.filter(n => !inside.has(n.id)) : read;
   const labels = inside.size ? inferLabels(nodes) : readLabels;
   // Indented by the elements listed above it: a web page's unnamed layers of <div>s add nothing.
@@ -286,21 +343,22 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
     }
     const n = unit[0];
     if (isSheetCell(n)) { lines.push("  ".repeat(level.get(n.id)!) + cellRow(unit)); continue; }
-    const name = n.name || labels.get(n.id) || "";
+    const own = withheld.has(n.id) ? "" : n.name;
+    const name = own || labels.get(n.id) || "";
     const bits = [`[${n.id}] ${screenWord(n.role)}`];
-    if (name) bits.push(quote(name, 80) + (n.name ? "" : " (label)"));
+    if (name) bits.push(quote(name, 80) + (own ? "" : " (label)"));
     const states = n.states.filter(s => !["enabled", "sensitive", "focusable"].includes(s));
     if (!n.states.includes("sensitive") && !n.states.includes("enabled")) states.push("disabled");
     // Contents of password and payment fields are never shown, whatever the sidecar sent.
-    const secret = isSecretNode(n, name);
+    const secret = secretSet.has(n.id) || isSecretNode(n, name);
     if (secret) states.push("secret");
     if (states.length) bits.push(`(${states.join(", ")})`);
     if (n.value !== undefined && !secret) bits.push(`value=${n.value}`);
     if (n.actions?.length) bits.push(`actions=${n.actions.map(screenWord).join("/")}`);
-    if (n.text && !secret) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
+    if (n.text && !secret && !withheld.has(n.id)) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
     // What is selected in it: a drop-down's chosen option (as after choose_option), else the text selected in a field.
     const selected = n.selected ?? n.selection;
-    if (selected && !secret) bits.push(`selected=${quote(selected, n.selected !== undefined ? 80 : 300)}`);
+    if (selected && !secret && !withheld.has(n.id)) bits.push(`selected=${quote(selected, n.selected !== undefined ? 80 : 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
     lines.push("  ".repeat(level.get(n.id)!) + bits.join(" "));
   }

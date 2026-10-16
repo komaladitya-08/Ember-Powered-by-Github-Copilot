@@ -9,7 +9,7 @@
 import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
-import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
+import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { StackedWindow, X11, X11Window } from "../x11";
@@ -104,9 +104,10 @@ export class Perception {
   /**
    * A window's tree (see WindowTarget); with an empty target, the active window's. `stack`: the
    * X11 windows when the caller has them (undefined: looked up when needed). `keep: false`: a quick
-   * look whose ids aren't acted on, which keeps the ids of the reads that are (AtspiSidecar.readWindow).
+   * look whose ids aren't acted on, which keeps the ids of the reads that are (AtspiSidecar.readWindow). `cells`: the
+   * spreadsheet cells ("C62") the cell with the keyboard is expected in, asked first when a read doesn't come to it.
    */
-  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean } = {}): Promise<Seen> {
+  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean; cells?: string[] } = {}): Promise<Seen> {
     const t0 = Date.now();
     const params = target.pid != null && target.path ? { pid: target.pid, path: target.path }
       : target.pid != null || target.title ? { ...(target.pid != null ? { pid: target.pid } : {}), ...(target.title ? { title: target.title } : {}) }
@@ -117,7 +118,7 @@ export class Perception {
     // "electron"): those processes aren't read at all.
     if (list.length && stack === undefined) stack = this.stackNow();
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}) })
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}), ...(o.cells?.length ? { cells: o.cells } : {}) })
       : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
     let res = await ask();
     if (res.busy) {
@@ -181,17 +182,23 @@ export class Perception {
   /**
    * Fields the sidecar didn't know were secret (a revealed password beside its "Show password"
    * toggle, an unnamed field under a "Card number" label): their contents are dropped here, and
-   * the sidecar is told, so nothing is typed into them either.
+   * the sidecar is told, so nothing is typed into them either. So are the names that say what they
+   * hold (a table's cell named after the card number in it: see withheldIds).
    */
   private async withSecrets(nodes: AxNode[]): Promise<AxNode[]> {
     const secret = secretIds(nodes);
     // What a secret field holds goes too (Chromium lists a text box's text as static text inside it).
     const inside = insideSecrets(nodes, secret);
+    const withheld = withheldIds(nodes, secret);
     const fresh = nodes.filter(n => secret.has(n.id) && !n.secret).map(n => n.id);
-    if (!fresh.length && !inside.size) return nodes;
+    if (!fresh.length && !inside.size && !withheld.size) return nodes;
     if (fresh.length) await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
     return nodes.flatMap(n => {
       if (inside.has(n.id)) return [];
+      if (withheld.has(n.id)) {
+        const { text: _text, selection: _selection, selected: _selected, ...rest } = n;
+        n = { ...rest, name: "" };
+      }
       if (!secret.has(n.id) || n.secret) return [n];
       const { text: _text, selection: _selection, selected: _selected, value: _value, ...rest } = n;
       return [{ ...rest, secret: true }];

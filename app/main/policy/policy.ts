@@ -58,6 +58,18 @@ export interface ActionRequest {
    * when it can't tell): a key that types replaces it. In a paragraph it is only the part in that paragraph.
    */
   selection?: string;
+  /**
+   * For keys: text may be selected beyond what the focused element tells: "selected" when the focused paragraph (or
+   * another one) says it is selected (Edit ▸ Select All in Writer), "unknown" when nothing says it has the keyboard in a
+   * window with an editable document (a page's plain editable text).
+   */
+  selectionBeyond?: "selected" | "unknown";
+  /**
+   * Text going into a spreadsheet's cell where the element doesn't say so (what edits the cell, Calc's input line), and
+   * keys into one: what the cell will hold, symbols too (for keys, what it holds so far followed by what this key types:
+   * a formula typed key by key is judged as one, as type_text's is).
+   */
+  formula?: string;
   /** The dialog the element sits in (its title and text): "OK" there agrees to what the dialog says. */
   dialog?: { name: string; text: string };
   /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
@@ -97,6 +109,8 @@ export interface Decision {
   everyTime?: boolean;
   /** The on-screen words that make it risky (checked against what the user asked for). */
   about?: string;
+  /** For the first action in an app: the question about the step alone (the app may be allowed for this task already). */
+  stepPrompt?: string;
 }
 
 export type Grant = "observe" | "act";
@@ -558,6 +572,8 @@ const appList = (apps: string[]) => (apps.length > 1 ? `${apps.slice(0, -1).join
 const DIALOG_WINDOW = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /** Apps whose window shows one page, message or chat after another, its title saying which: there another title is another place. */
 const TABBED_APP = /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|thunderbird|evolution|geary|claws|mail|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram/i;
+/** A window's title with each path in it as its file's name ("/tmp/x/notes.txt - Mousepad" → "notes.txt - Mousepad"). */
+const shortTitle = (t: string) => t.replace(/(^|[\s*•(])(?:~|\.{1,2})?(?:\/[^/\s]+)+\/([^/\s]+)/g, "$1$2");
 /** Did the task read `s` somewhere other than where `r` acts: another app, another window, or (in a browser or mail client) another tab or message? */
 function elsewhere(s: ReadSource, r: ActionRequest): boolean {
   if (s.described || s.app.trim().toLowerCase() !== r.app.trim().toLowerCase()) return true;
@@ -704,23 +720,32 @@ const words = (s: string) => foldLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w 
 const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 /** A Korean verb's stem without the "-기" that makes it a button's noun ("보내기" → "보내", as in "보내 줘"). */
 const hangulStem = (t: string) => (/\p{Script=Hangul}{2,}기$/u.test(t) ? t.slice(0, -1) : t);
-/** Rough stem, so "deleting", "deleted" and "delete" match. */
-const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "");
-/** Endings that make another word of a verb, not another form of it ("clearly", "emptiness", "careless"). */
-const ANOTHER_WORD = /(ly|ness|ful|less)$/;
+/** Rough stem, so "deleting", "deleted" and "delete" match (and "replies", "replied" and "reply"). */
+const stem = (w: string) => w.replace(/i(es|ed)$/, "y").replace(/(ing|ed|es|s|e)$/, "");
 /**
- * The same word, roughly: one stem, or one stem of five letters or more starts the other ("invia" and "inviare",
- * "lösche" and "löschen"), but not as another word ("clear" and "clearly").
+ * Endings that make another form of a word, not another word: English inflections, and the endings of the other
+ * languages' verbs ("invia" and "inviare", "lösche" and "löschen", "удали" and "удалить", "supprime" and "supprimer").
+ * Not "checkout" for "check", "authorize" for "author", "executive" for "execute", "clearly" for "clear".
  */
+const INFLECTION = /^(s|es|d|ed|ing|er|ers|ion|ions|al|ment|ments|n|en|r|re|ez|t|te|ть|те|ите)$/;
+/** The same word, roughly: one stem, or one stem of five letters or more and the other that stem with an inflection. */
 const sameWord = (a: string, b: string) => {
   const x = stem(a), y = stem(b);
   if (x === y) return true;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  return short.length >= 5 && long.startsWith(short) && !ANOTHER_WORD.test(long.slice(short.length));
+  return short.length >= 5 && long.startsWith(short) && INFLECTION.test(long.slice(short.length));
 };
 /** Phrases that say one risky thing in several words, as one word: in the request and on the control alike. */
 const PHRASES: [RegExp, string][] = [
-  [/\b(move|send|put|throw|drag)( (it|them|this|these|that|those|the files?|the folders?|everything))? (to|in|into) (the )?(trash|bin|wastebasket|rubbish bin)\b/g, " trash "],
+  // "throw away my changes" (before "throw away" is trashing).
+  [/\b(throw away|lose|drop|scrap|forget|discard) (the |my |all |any |your |these |those )?(unsaved |recent )?(changes|edits)\b/g, " nosave "],
+  // "sign up for the newsletter", "write back to Ana", "put the settings back to default".
+  [/\bsign ?(me |us |you )?up\b/g, " subscribe "],
+  [/\bwrite back\b/g, " reply "],
+  [/\b(put|set|change|turn|bring|switch)((?: \S+){0,3}?) back to (the )?(factory )?defaults?\b/g, " reset$2 defaults "],
+  [/\brestore (the )?(factory )?defaults?\b/g, " reset defaults "],
+  // "move report.txt to the trash" (what is moved stays: it names what the request acts on).
+  [/\b(move|send|put|throw|drag)((?: \S+){0,3}?) (to|in|into) (the )?(trash|bin|wastebasket|rubbish bin)\b/g, " trash$2 "],
   [/\b(throw (it |them |this |these |that |those )?away|get rid of)\b/g, " trash "],
   [/\b(log ?(me |us |you |him |her |them )?(out|off)|sign ?(me |us |you |him |her |them )?out)\b/g, " logout "],
   [/\b(shut ?down|power ?off)\b/g, " shutdown "],
@@ -735,17 +760,116 @@ const SAME_ASK = [["delete", "remove", "erase", "trash", "discard", "wipe", "pur
   ["send", "submit"], ["quit", "exit", "close"], ["restart", "reboot"], ["nosave", "discard"]];
 /**
  * Requests that ask for a control's word too, one way only: replying, answering, mailing, telling or forwarding asks
- * for "Send" ("Reply" for an answer); ordering or buying asks for "Buy now", "Place order", "Checkout" and "Pay"
- * ("Forward" isn't asked for by "reply to Ana", nor "Buy" by "pay my bill").
+ * for "Send" ("Reply" for an answer); commenting for "Post"; ordering or buying asks for "Buy now", "Place order",
+ * "Checkout" and "Pay"; changing, fixing or correcting text for "Replace" (Find & Replace's "Replace All") ("Forward"
+ * isn't asked for by "reply to Ana", nor "Buy" by "pay my bill", nor "Change" by "replace the logo").
  */
 const ASKS_FOR: [string[], string[]][] = [
   [["reply", "answer", "respond", "email", "mail", "message", "tell", "forward"], ["send"]],
   [["answer", "respond"], ["reply"]],
+  [["comment"], ["post", "submit"]],
   [["order", "buy", "purchase", "checkout"], ["order", "buy", "purchase", "checkout", "pay"]],
+  [["change", "fix", "correct", "update", "edit", "swap", "substitute"], ["replace"]],
 ];
 /** Does the asked word `a` ask for the control's word `b`? */
 const sameAsk = (a: string, b: string) => sameWord(a, b) || SAME_ASK.some(g => g.some(x => sameWord(x, a)) && g.some(x => sameWord(x, b)))
   || ASKS_FOR.some(([asks, controls]) => asks.some(x => sameWord(x, a)) && controls.some(x => sameWord(x, b)));
+
+/**
+ * Request words that are as often a noun or an adjective as the verb: "summarize this email", "the status of my
+ * order", "in order to", "fill in the empty cells", "read the comments". Where they aren't the verb they ask for nothing.
+ */
+const NOT_ALWAYS_VERB = /^(e?mails?|messages?|orders?|answers?|repl(y|ies)|posts?|reports?|comments?|invites?|invitations?|checkouts?|purchases?|transfers?|shares?|sharing|archives?|trash|empty|clear|changes?|updates?|edits?|fix(es)?|correct|corrections?|merges?|commits?|push(es)?|blocks?|tweets?|retweets?|deletions?|removals?|replacements?|installations?|installs?|submissions?)$/;
+/** What a noun comes after ("this email", "my new messages", "Ana's reply"; at most two words between: "the last two emails"). */
+const DETERMINER = /^(the|a|an|this|that|these|those|my|your|his|her|its|our|their|any|some|every|each|another|which|what|whose|all)$|'s?$/;
+const PREPOSITION = /^(of|for|from|in|on|about|into|at|by|via|with|within|without|under|over|regarding|like|than|per|between|among|inside|through)$/;
+/** Words that end a phrase: what comes after them is said anew ("the file, then email it", "the report and email it"). */
+const PHRASE_BREAK = /^(and|or|then|but|so|to|please|also|if|when|while|after|before|because|it|them|me|us|him|you|i|we|they|is|are|was|were|be|not)$/;
+/** Words that name a control ("click the reply button"): the word before them is what it does, asked for. */
+const CONTROL_WORD = /^(buttons?|links?|icons?|keys?|tabs?|options?|menus?|commands?)$/;
+/** Verbs that ask for what they make: "add a comment", "place an order", "write an email to Ana". */
+const MAKES = /^(add|write|leave|post|make|create|compose|place|put|send|submit|give|file|type|enter)$/;
+/** Asking about what was done ("what did Ana answer?", "has Bob replied?"): the words after it, up to four, ask for nothing. */
+const ASKS_ABOUT = /^(did|does|didn't|doesn't|has|have|had|hasn't|haven't|hadn't)$/;
+const NEGATION = /^(not|never|don't|dont|doesn't|didn't|won't|wont|shouldn't|mustn't|can't|cannot)$/;
+/** A spreadsheet cell's address in a request ("merge A1 to C1"). */
+const CELL_IN_REQUEST = /(^|[^\p{L}\p{N}])\$?[a-z]{1,3}\$?[1-9]\d{0,6}(?=$|[^\p{L}\p{N}])/u;
+
+/** What a request asks for (readRequest). */
+interface Request {
+  /** Its words where they may be the verb. */
+  verbs: string[];
+  /** Every word it names something with. */
+  names: string[];
+  /** All of it as said (scripts without spaces are looked for in it). */
+  said: string;
+  /** It names a spreadsheet cell. */
+  cells: boolean;
+}
+
+/**
+ * What a request asks for: its words, but a word that is often a noun only where it is the verb (not after "the",
+ * "my" or "of": "summarize this email", "the status of my order"; but "click the reply button", "add a comment",
+ * "place an order"); none in a question about what was done ("what did Ana answer?"), after "don't", or "tell" in
+ * "tell me". Every word names something, whatever it is.
+ */
+function readRequest(goal: string): Request {
+  const text = asOneWord(goal).replace(/\bwi-?fi\b/g, "wifi").replace(/\be-mail/g, "email");
+  const tokens = text.match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*'?|[^\s\p{L}\p{N}]/gu) ?? [];
+  const word = (i: number) => i >= 0 && i < tokens.length && /[\p{L}\p{N}]/u.test(tokens[i]);
+  const anchor = (t: string) => DETERMINER.test(t) || PREPOSITION.test(t);
+  const not = new Set<number>();
+  tokens.forEach((t, i) => {
+    if (ASKS_ABOUT.test(t) && tokens[i + 1] !== "to") {
+      for (let j = i + 1; j <= i + 4 && word(j) && !/^(and|or|then|but|so|to|please|if|when|because)$/.test(tokens[j]); j++) not.add(j);
+    }
+    if (NEGATION.test(t) && word(i + 1)) not.add(i + 1);
+    if (t === "tell" && /^(me|us)$/.test(tokens[i + 1] ?? "")) not.add(i);
+    if (!NOT_ALWAYS_VERB.test(t) || CONTROL_WORD.test(tokens[i + 1] ?? "")) return;
+    let j = i - 1;
+    while (j > i - 3 && word(j) && !anchor(tokens[j]) && !PHRASE_BREAK.test(tokens[j])) j--;
+    if (!word(j) || !anchor(tokens[j])) return;
+    // "by email" says how to send it; "add a comment" asks for one.
+    const noun = DETERMINER.test(tokens[j]) ? !MAKES.test(tokens[j - 1] ?? "") : !(/^(by|via)$/.test(tokens[j]) && /^(e?mail|message)/.test(t));
+    if (noun) not.add(i);
+  });
+  const verbs = tokens.filter((_t, i) => word(i) && !not.has(i)).flatMap(t => words(t));
+  return { verbs, names: words(text), said: `${normalizeLabel(goal)} ${foldLabel(goal)} ${text}`, cells: CELL_IN_REQUEST.test(text) };
+}
+
+/** Words on a control that don't say what it acts on: pointing words, "permanently", "selected", files in general. */
+const ANY_THING = new Set(["it", "them", "these", "those", "everything", "anything", "both", "each", "every", "any", "some", "here", "there", "again",
+  "anyway", "permanently", "forever", "immediately", "today", "yes", "okay", "link", "from", "into", "onto", "out", "off", "via", "per", "his", "her",
+  "its", "our", "their", "mine", "yours", "only", "just", "also", "more", "still", "too", "then", "later", "selected", "selection", "items", "file",
+  "files", "entry", "entries", "content", "contents", "current", "checked", "marked", "highlighted", "unsaved", "changes"]);
+/** Controls that send or post, and what they send in general (a message, an email, a reply: "Send message"). */
+const SENDS = ["send", "reply", "forward", "post", "submit", "share", "publish", "comment", "respond", "answer", "tweet"];
+const MESSAGE_THING = /^(e?mails?|messages?|repl(y|ies)|responses?|answers?|comments?|posts?|notes?|texts?|chats?|tweets?)$/;
+/** Controls that order or pay, and what they act on in general ("Place order", "Complete purchase", "Confirm and pay", the cart, its total). */
+const BUYS = ["order", "buy", "purchase", "checkout", "pay"];
+const ORDER_THING = /^(place|complete|proceed|secure|securely|confirm|continue|submit|review|finish|finali[sz]e|orders?|purchases?|payments?|carts?|baskets?|bags?|total|checkout|usd|eur|gbp|chf|jpy|cad|aud)$/;
+/** Money on a control ("Send $500"): there an amount is what it sends. */
+const MONEY = /[$€£¥₹]|\b(usd|eur|gbp|chf|jpy|cad|aud|inr)\b/i;
+/** Things named in other words: "forget the CoffeeShop wifi" names "Forget Connection"'s connection, "clear my browsing history" "Clear data"'s data. */
+const SAME_THING = [["connection", "network", "wifi", "wlan", "hotspot", "ssid", "vpn"], ["data", "history", "cookies", "cache", "browsing"],
+  ["message", "email", "mail", "conversation", "thread", "draft"], ["row", "line"], ["folder", "directory"], ["picture", "photo", "image"],
+  ["app", "application", "program", "package", "software"]];
+const sameThing = (a: string, b: string) => sameWord(a, b) || SAME_THING.some(g => g.some(x => sameWord(x, a)) && g.some(x => sameWord(x, b)));
+
+/**
+ * Does a risky control (its words `all`, its verbs that were asked for `verbs`) act on what the request names? Its
+ * other words must name something the request names too, in these or other words ("Send report" for "send the report
+ * to Ana", "Merge Cells" for "merge A1 to C1"; not "Send money to Mallory", nor "Delete account" for "delete the old
+ * drafts", nor "Empty Trash" for "empty the search field"), unless they name nothing in particular ("Delete
+ * permanently", "Replace All", "Place order", "Send message").
+ */
+function actsOnWhatWasNamed(req: Request, element: string, all: string[], verbs: string[]): boolean {
+  const sends = verbs.some(v => SENDS.some(x => sameWord(x, v))), buys = verbs.some(v => BUYS.some(x => sameWord(x, v)));
+  const money = MONEY.test(element);
+  const things = all.filter(w => !verbs.includes(w) && !ANY_THING.has(w) && !(sends && MESSAGE_THING.test(w)) && !(buys && ORDER_THING.test(w))
+    && !(/^\d+$/.test(w) && (buys || !money)));
+  return !things.length || things.some(w => req.names.some(a => sameThing(a, w)) || (/^(cells?|range)$/.test(w) && req.cells) || (SPACELESS.test(w) && req.said.includes(w)));
+}
 /** The risky words and phrases in a label, in any of the languages above ("log out", "ta bort", "删除"). */
 function riskyTerms(s: string): string[] {
   const out: string[] = [];
@@ -760,28 +884,40 @@ function riskyTerms(s: string): string[] {
 
 /**
  * Task alignment: did the user ask for the risky thing a control does? Its risky verb (or a word that asks for the
- * same, SAME_ASK and ASKS_FOR) must be in the request: "Send" in "send the report to Ana" or "reply to Ana" is;
- * "Delete all" while filling in a form isn't, and the question then says so (words on screen can't make it look
- * asked-for: "Delete all my form data" doesn't become asked-for by sharing "form" with "fill in the form"). What the
- * verb acts on may be named otherwise ("merge A1 to C1" asks for "Merge Cells", "forget the CoffeeShop wifi" for
- * "Forget Connection"): a question about it is still asked, it only isn't marked as not asked for. Nothing to
- * check where nothing risky is named (an "OK" whose dialog says nothing risky). `setting`: a check box or switch, whose
- * name says what it sets: any word of it in the request will do ("no offers" asks to untick "Send me offers").
- * `disk`: formatting a disk, whose "Format" is the risky verb.
+ * same, SAME_ASK and ASKS_FOR) must be in the request as a verb: "Send" in "send the report to Ana" or "reply to Ana"
+ * is; "Delete all" while filling in a form isn't, nor "Send" in "summarize this email" or "Pay now" in "what's the
+ * status of my order?", and the question then says so (words on screen can't make it look asked-for: "Delete all my
+ * form data" doesn't become asked-for by sharing "form" with "fill in the form"). What it acts on must be named too, in
+ * these or other words, or be nothing in particular (actsOnWhatWasNamed): "Send money to Mallory" isn't "send the
+ * report to Ana". Nothing to check where nothing risky is named (an "OK" whose dialog says nothing risky). `setting`: a
+ * check box or switch, whose name says what it sets: any word of it in the request will do ("no offers" asks to untick
+ * "Send me offers"). `disk`: formatting a disk, whose "Format" is the risky verb. `says`: what a dialog or a window's
+ * title says ("OK" there agrees to it): judged by its verb only, the rest being its wording.
  */
-export function alignedWithGoal(goal: string | undefined, element: string, o: { setting?: boolean; disk?: boolean } = {}): boolean {
+export function alignedWithGoal(goal: string | undefined, element: string, o: { setting?: boolean; disk?: boolean; says?: boolean } = {}): boolean {
   if (!goal) return true;
-  const asked = words(asOneWord(goal));
-  const said = `${normalizeLabel(goal)} ${foldLabel(goal)} ${asOneWord(goal)}`;
+  const req = readRequest(goal);
+  const said = req.said;
   const saidTerm = (t: string) => said.includes(t) || said.includes(hangulStem(t));
   // Scripts without spaces: the word (or the risky term in it) inside the request ("インストールして", "보내 줘").
-  const wanted = (w: string) => asked.some(a => sameAsk(a, w)) || (SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm)));
+  const spaceless = (w: string) => SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm));
+  const wanted = (w: string) => req.verbs.some(a => sameAsk(a, w)) || spaceless(w);
   const all = words(asOneWord(element));
-  if (o.setting && all.some(wanted)) return true;
+  if (o.setting && all.some(w => wanted(w) || req.names.some(a => sameAsk(a, w)))) return true;
   let risky = all.filter(w => isRiskyLabel(w) || PHRASE_VERBS.has(w) || (o.disk && FORMAT_LABEL.test(w)));
   // "Comment", "Block user": the verb, unless another risky word is ("Delete comment" acts on a comment).
   if (!risky.length) risky = all.filter(w => isRiskyActLabel(w));
-  if (risky.length) return risky.some(wanted);
+  if (risky.length) {
+    // The verbs said themselves; or else those asked for in other words ("delete report.txt" asks for "Move to Trash").
+    // A risky word asked for only through another is what the verb acts on ("Empty Trash" for "empty the search field").
+    const direct = risky.filter(w => req.verbs.some(a => sameWord(a, w)) || spaceless(w));
+    const verbs = direct.length ? direct : risky.filter(wanted);
+    if (verbs.length) return !!o.says || actsOnWhatWasNamed(req, element, all, verbs);
+    // Its risky words are what it acts on, named in the request, and its verb is the one asked for: "Cancel order" for
+    // "cancel my order" (but not "Place order" for "where is my order?").
+    const others = all.filter(w => !risky.includes(w) && !ANY_THING.has(w));
+    return !o.says && risky.every(w => NOT_ALWAYS_VERB.test(w) && req.names.some(a => sameWord(a, w))) && others.some(w => req.verbs.some(a => sameAsk(a, w)));
+  }
   // A risky phrase, or a word in a script without spaces: the request must say it too (a phrase of three words or more
   // may have other words between).
   const terms = riskyTerms(element);
@@ -798,6 +934,8 @@ const KEY_LABELS: Record<string, string> = {
   ctrl: "Ctrl", alt: "Alt", shift: "Shift", super: "Super", return: "Enter", iso_enter: "Enter", escape: "Esc", backspace: "Backspace",
   prior: "Page Up", next: "Page Down", space: "Space", plus: "+", minus: "-", equal: "=", comma: ",", period: ".", slash: "/",
   backslash: "\\", semicolon: ";", apostrophe: "'", grave: "`", bracketleft: "[", bracketright: "]", asterisk: "*",
+  parenleft: "(", parenright: ")", quotedbl: "\"", colon: ":", numbersign: "#", dollar: "$", ampersand: "&", at: "@", underscore: "_",
+  percent: "%", question: "?", exclam: "!", less: "<", greater: ">",
 };
 const keyWord = (p: string): string => KEY_LABELS[p] ?? (p.length === 1 ? p.toUpperCase() : p.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
 /** A key combination for the user to read, built from its canonical form (never the model's own spelling); null if Ember can't press it. */
@@ -848,6 +986,7 @@ const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|termina
 const SELECTS_MORE: Risk = { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
 const KEYS_SELECT_MORE: Risk = { reason: "replacing with the keyboard selects everything (Ctrl+A), which here may be the whole document", note: "To replace it I select everything with Ctrl+A, which here may be the whole document." };
 const SELECTED_MORE: Risk = { reason: "text is selected there, and in a document it may run on past what Ember can see, so this may replace a lot", note: "Text there is selected, and it may run on past what I can see, so this may replace a lot." };
+const MAY_BE_SELECTED: Risk = { reason: "nothing says it has the keyboard in a window with an editable document, where text may be selected, so this may replace a lot", note: "I can't tell what has the keyboard there, and text there may be selected, so this may replace a lot." };
 /** "all 120 characters", or "all the characters" for text read only in part (the screen reader tells the first 200). */
 const howMany = (n: number) => (n >= 200 ? "all the characters" : `all ${n} characters`);
 
@@ -857,12 +996,14 @@ const howMany = (n: number) => (n >= 200 ? "all the characters" : `all ${n} char
  * tells, or else as much as there is; otherwise the selection the screen reader tells (made from a menu, by the mouse,
  * or by a search), exact in a field that holds all its text. What the keys selected counts whatever the reader tells (an
  * app may not tell its selection). In a paragraph or a page any selection may run on past what it holds (Ctrl+A selects
- * the whole document), so it is asked about whatever it shows.
+ * the whole document), so it is asked about whatever it shows; and so is one the document's paragraphs say they are in,
+ * or one that may be there where nothing says it has the keyboard (selectionBeyond).
  */
 function replacedBySelection(r: ActionRequest, role: string): Risk | null {
   const sel = r.selection ?? "";
-  if (!sel && !r.afterSelectAll && !r.afterSelecting) return null;
-  if (!HOLDS_ALL_TEXT.test(role)) return r.afterSelectAll ? SELECTS_MORE : SELECTED_MORE;
+  if (!sel && !r.afterSelectAll && !r.afterSelecting && !r.selectionBeyond) return null;
+  if (!r.afterSelectAll && !sel && !r.afterSelecting && r.selectionBeyond === "unknown") return MAY_BE_SELECTED;
+  if (!HOLDS_ALL_TEXT.test(role) || r.selectionBeyond) return r.afterSelectAll ? SELECTS_MORE : SELECTED_MORE;
   const current = r.currentText;
   // The field's text as read is its first 200 characters; the selection read is its first 500.
   const replaced = r.afterSelectAll ? (current === undefined || sel.length > current.length ? sel || current : current) : sel || current;
@@ -892,6 +1033,62 @@ const ENDS_SESSION = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["log ?out", "l
   "logg ut", "start på nytt", "kirjaudu ulos", "kaynnista uudelleen", "sammuta", "odhlasit", "restartovat", "vypnout", "oturumu kapat",
   "çıkış yap", "yeniden başlat"].join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(["ログアウト", "再起動", "シャットダウン", "注销", "註銷", "登出",
   "重新启动", "重新啟動", "关机", "關機", "로그아웃", "다시 시작", "시스템 종료"].join("|"))}`, "u");
+/** Rows, cells, icons and list items: named by what they hold (a mail's subject, a file's name, a folder, a contact). */
+const CONTENT_ROLES = /^(icon|table cell|tree item|list item)$/;
+/**
+ * Is an element named by its content risky to use? Only by a risky phrase ("Close account", "Move to Trash", "Log
+ * out"), or a label of one or two words that starts with a risky verb ("Delete", "Send now", "Block user"): not a
+ * mail's subject ("Your order has shipped", "Re: Please send the slides"), a file's name ("Install guide.pdf",
+ * "order-form.pdf"), a folder ("Trash"), or an order ("Order #4481236"). What it says isn't the user's request either:
+ * it never marks a step as not asked for (PolicyEngine.judge).
+ */
+function riskyContent(name: string): boolean {
+  const label = plainText(name).trim();
+  if (/\.[a-z0-9]{1,5}$/.test(label)) return false;
+  if (RISKY_ACT.test(normalizeLabel(name)) || PHRASES.some(([re]) => new RegExp(re.source).test(foldLabel(name)))) return true;
+  const [first, second, ...more] = label.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (first === undefined || more.length) return false;
+  // A word that is a noun too, alone or with a number, names a thing ("Trash", "Archive", "Order #4481236").
+  if (NOT_ALWAYS_VERB.test(first) && (second === undefined || /^\d+$/.test(second))) return false;
+  return riskyTerms(name).some(t => label.startsWith(plainText(t))) || RISKY_ACT_LEAD.test(normalizeLabel(name)) || formatsDisk(name);
+}
+
+/** Calc's input line, by its name in the languages of RISKY_WORDS: a formula typed there goes into the cell. */
+const INPUT_LINE = anyOf(["input line", "eingabezeile", "ligne de saisie", "línea de entrada", "riga di immissione", "linha de entrada", "invoerregel",
+  "wiersz wprowadzania", "строка ввода", "inmatningsrad", "indtastningslinje", "inndatalinje", "syöttörivi", "vstupní řádek", "giriş satırı"]);
+/** Does text typed into this element go into a spreadsheet as a formula: a sheet's cell, or Calc's input line? */
+export const takesFormula = (el?: { role: string; name: string; grid?: boolean }) => !!el && (isSheetCell(el) || INPUT_LINE.test(foldLabel(el.name)));
+/**
+ * Spreadsheet functions that reach outside the sheet, by their English and common localized names: fetching from the
+ * internet (WEBSERVICE, FILTERXML, HYPERLINK, the IMPORT functions), another program (DDE, CALL, RTD), or a reference
+ * built from text (INDIRECT can name another file).
+ */
+const OUTSIDE_FUNCTION = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["webservice", "webdienst", "serviceweb", "servicioweb", "servizio\\.web", "servicoweb",
+  "filterxml", "xmlfiltern", "filtre\\.xml", "xmlfiltro", "filtro\\.xml", "filtrarxml", "dde", "ddeaut", "hyperlink", "hipervinculo", "hiperlink",
+  "lien_hypertexte", "lien\\.hypertexte", "collegamento\\.ipertestuale", "colleg\\.ipertestuale", "hiperłącze", "hiperlacze", "import\\w*", "indirect[oa]?",
+  "indirekt", "indiretto", "indireto", "adr\\.pośr", "adr\\.posr", "call", "register(\\.id)?", "rtd", "вебслужба", "гиперссылка", "двссыл"].join("|"))})\\s*\\(`, "u");
+/**
+ * A formula (`text` as typed) that reaches outside its sheet: through OUTSIDE_FUNCTION, a URL, or a reference to another
+ * file ('file:///…'#$Sheet1.A1, [book.xlsx]Sheet1!A1, a quoted path). LibreOffice runs it as it goes in, and what it
+ * fetches or sends can carry what this sheet, or another file, holds. =SUM(B2:B5) and =A1*2 don't.
+ */
+export function reachesOut(text: string): boolean {
+  const t = foldLabel(text);
+  if (!/^\s*[=+\-@]/.test(t)) return false;
+  // What is quoted, pair by pair: a sheet's name can't hold a slash, a file's path can.
+  const quoted = (q: string) => [...t.matchAll(new RegExp(`${q}([^${q}]*)${q}`, "g"))].map(m => m[1]);
+  return OUTSIDE_FUNCTION.test(t) || /(^|[^\p{L}\p{N}])(https?|ftps?|file|smb|sftp|ssh|webdavs?|davs?|nfs|ldaps?)\s*:/u.test(t) || /#\s*\$/.test(t)
+    || /\[[^\]]+\.\w{2,5}\s*\]/.test(t) || /\\\\|(^|[^\p{L}\p{N}])[a-z]:[\\/]/u.test(t) || quoted("'").some(s => /[/\\]/.test(s))
+    || quoted('"').some(s => /[/\\].*\.(ods|ots|fods|xls[xmb]?|xlt[xm]?|csv|odt|txt|xml)$/.test(s));
+}
+const REACHES_OUT: Risk = { reason: "this formula can fetch from the internet or read other files", note: "This formula can fetch from the internet or read other files." };
+/** Where Enter is a line break typed: text fields, a page's editable text, a combo box's own text. */
+const TEXT_FIELD = /^(entry|text|paragraph|section|document text|document web|document frame|spin button|combo box|heading|block quote|static)$/;
+/** LibreOffice, and the text of its documents (Writer's paragraphs and headings, Impress's text boxes). */
+const OFFICE_APP = /soffice|libreoffice/i;
+const OFFICE_TEXT = /^(paragraph|heading|document text)$/;
+const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit what is in it", note: "Enter there may send or submit it." };
+
 /** Does this menu item only open a dialog, where what it would do is asked about? */
 const opensDialog = (role: string, name: string) => /^(menu item|check menu item|radio menu item)$/.test(role) && OPENS_DIALOG.test(name)
   && !ENDS_SESSION.test(foldLabel(name)) && !ENDS_SESSION.test(plainText(name));
@@ -919,7 +1116,11 @@ export class PolicyEngine {
     // switch names a setting (any of its words will do); "Format" is the risky verb where it formats a disk.
     const role = r.element?.role ?? "";
     const disk = ACTIVATING_ROLES.test(role) && formatsDisk(r.element?.name ?? "", `${r.app} ${DIALOG_WINDOW.test(r.windowId?.role ?? "") ? r.window : ""} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`);
-    if (d.about && !alignedWithGoal(r.goal, d.about, { setting: TOGGLE_ROLES.test(role), disk })) {
+    // What a dialog or the window's title says, for an "OK" there (not the control's own name, nor the option chosen).
+    const says = !!d.about && d.about !== r.element?.name && !(r.kind === "select" && d.about === r.value);
+    // A row, cell, icon or list item is named by what it holds (a mail's subject): that isn't a request to check against.
+    const content = CONTENT_ROLES.test(role) && d.about === r.element?.name;
+    if (d.about && !content && !alignedWithGoal(r.goal, d.about, { setting: TOGGLE_ROLES.test(role), disk, says })) {
       return { ...d, remember: false, aligned: false, everyTime: true, reason: `${d.reason}; not something the user asked for`, prompt: `${d.prompt} You didn't ask for this, so say no if it looks wrong.` };
     }
     // The administrator wants a click before every action.
@@ -949,10 +1150,11 @@ export class PolicyEngine {
     const dialogTitle = DIALOG_WINDOW.test(r.windowId?.role ?? "") ? r.window : "";
     // A click goes to whatever handles it (a link or a clickable row around text, a heading or a picture): the words
     // that post or act on others (RISKY_ACT) count on anything clicked but a check box, radio button or switch. A file's
-    // icon or a mail list's cell is named by its content ("report.pdf", "Report for March"): there only the phrases count.
-    const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role)
-      && (/^(icon|table cell|tree item)$/.test(role) ? RISKY_ACT.test(normalizeLabel(name)) || RISKY_ACT_INTL.test(foldLabel(name)) : isRiskyActLabel(name));
-    const riskyNamed = isRiskyControl(role, name) || clicked || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+    // icon or a mail list's row is named by its content ("report.pdf", "Your order has shipped"): see riskyContent.
+    const content = CONTENT_ROLES.test(role);
+    const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
+    const riskyNamed = (content ? riskyContent(name) : isRiskyControl(role, name) || clicked)
+      || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = riskyNamed && !opensDialog(role, name);
     switch (r.kind) {
@@ -963,6 +1165,8 @@ export class PolicyEngine {
       case "select":
         return isRiskyLabel(r.value ?? "") ? { reason: "this choice may be hard to undo or visible to others", about: r.value } : null;
       case "text": case "cursor_text": {
+        // A formula that fetches from the internet or reads another file runs as it goes into the sheet: asked every time.
+        if ((takesFormula(r.element) && reachesOut(r.value ?? "")) || (r.formula !== undefined && reachesOut(r.formula))) return REACHES_OUT;
         // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
         if (r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         const current = r.currentText ?? "";
@@ -977,6 +1181,9 @@ export class PolicyEngine {
       case "keys": {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
         const k = keyFamily(canonicalKeys(r.value ?? "") ?? "");
+        // A formula typed key by key that reaches outside the sheet: every key that goes on with it, or enters it, is
+        // asked about (Escape drops it, Backspace takes from it).
+        if (r.formula !== undefined && reachesOut(r.formula) && !/^(escape|backspace)$/.test(k)) return REACHES_OUT;
         // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
         // type_text's "replace"): judged by the real selection where the screen reader tells it.
         const replaces = replacesSelection(k) ? replacedBySelection(r, role) : null;
@@ -987,6 +1194,11 @@ export class PolicyEngine {
           if (ACTIVATING_ROLES.test(role) && named) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
           if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog, and Ember can't be sure what it agrees to", about: asks, note };
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
+          // Enter in a text field is a typed line break (as type_text's is): it may send a chat message or submit a form.
+          // Not in a spreadsheet's cell, where it enters what was typed, nor in a LibreOffice document's text, where it
+          // only starts a new paragraph.
+          if (!/space$/.test(k) && TEXT_FIELD.test(role) && r.formula === undefined && !isSheetCell(r.element)
+            && !(OFFICE_APP.test(r.app) && OFFICE_TEXT.test(role))) return ENTER_IN_FIELD;
           return null;
         }
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
@@ -1021,7 +1233,12 @@ export class PolicyEngine {
     const from = runs ? others.filter(s => [...runsIn(runs, s.text ?? s.window)].some(g => !own.has(g))) : others;
     if (!from.length) return risk;
     const read = [...new Map(from.filter(s => !s.listed && !s.described).map(s => [`${s.app}\n${s.window}`, s])).values()];
-    const named = read.slice(0, 2).map(s => { const app = friendlyApp(s.app); return `the window ${quote(s.window, 50)}${s.window.toLowerCase().includes(app.toLowerCase()) ? "" : ` (${app})`}`; });
+    // Each by its app first, then its title, short (a path as its file's name): "Mousepad (“*notes.txt”)"; a title that
+    // still names its app once cut says it alone ("the window “Inbox - Thunderbird”").
+    const named = read.slice(0, 2).map(s => {
+      const app = friendlyApp(s.app), title = quote(shortTitle(s.window), 50);
+      return title.toLowerCase().includes(app.toLowerCase()) ? `the window ${title}` : `${app} (${title})`;
+    });
     if (read.length > 2) named.push(`${read.length - 2} more`);
     if (from.some(s => s.listed)) named.push("the list of open windows");
     if (from.some(s => s.described)) named.push("your screen when you asked");
@@ -1091,6 +1308,7 @@ export class PolicyEngine {
     return {
       tier: "reversible", verdict: "confirm", reason: `first action in ${app}`,
       prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false)).replace(/\?$/, ".")}`,
+      stepPrompt: prompt,
       needsGrant: true,
     };
   }

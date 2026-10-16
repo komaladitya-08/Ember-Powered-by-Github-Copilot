@@ -17,11 +17,11 @@ function makeWorker(o: {
   blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide";
   /** More of what readElement says (a menu's `open`). */
   extra?: () => Record<string, unknown>;
-  canDo?: (id: number, kind: string, caret: boolean) => { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean; action?: string; handler?: { role: string; name: string } };
+  canDo?: (id: number, kind: string, caret: boolean) => { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean; action?: string; handler?: { role: string; name: string }; handlerUnknown?: boolean };
   /** The user's answer to every question (default "once"), and the app's grant. */
   answer?: string; grants?: Record<string, "act">; noCursor?: boolean;
   /** The window with the keyboard on the user's screen, and whether Enter or Space is held down there (guides). */
-  activeWindow?: () => { app: string; title: string } | null; activationKey?: () => boolean;
+  activeWindow?: () => { app: string; title: string; pid?: number } | null; activationKey?: () => boolean;
 } = {}) {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
@@ -174,6 +174,30 @@ describe("guides (review round 5)", () => {
     setTimeout(() => { switched = true; }, 100);
     expect((await left).textResultForLlm).toMatch(/hasn't clicked it yet/);
   }, 12_000);
+
+  it("only a step's own reaching counts: a dialog's default button that had the keyboard, or Ember's own window, ends nothing (HND8-5)", async () => {
+    // "OK" has the keyboard from the start; the user goes to another window: they didn't choose it.
+    let away = false;
+    const ok = makeWorker({ name: "OK", states: () => ["enabled", "focused"], pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activeWindow: () => (away ? { app: "firefox", title: "News", pid: 9 } : { app: "gedit", title: "Confirm", pid: 2 }), mode: "guide" });
+    await ok.call("perceive_window", {});
+    const waiting = ok.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { away = true; }, 700);
+    expect((await waiting).textResultForLlm).toMatch(/hasn't clicked it yet/);
+    // Tabbed onto "Cancel", then the user opens Ember's ask box (Ember's own window): the step waits; then the
+    // window they were in gives the keyboard to another one of theirs: chosen with the keyboard.
+    let focused = false, own = false, other = false;
+    const cancel = makeWorker({ name: "Cancel", states: () => (focused ? ["enabled", "focused"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activeWindow: () => (other ? { app: "gedit", title: "Saved", pid: 2 } : own ? { app: "ember", title: "Ask Ember", pid: process.pid } : { app: "gedit", title: "Confirm", pid: 2 }), mode: "guide" });
+    await cancel.call("perceive_window", {});
+    const t0 = Date.now();
+    const step = cancel.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { focused = true; }, 100);
+    setTimeout(() => { own = true; }, 900);
+    setTimeout(() => { own = false; other = true; }, 2200);
+    expect((await step).textResultForLlm).toMatch(/^Another window has the keyboard now \("Saved"\)/);
+    expect(Date.now() - t0).toBeGreaterThan(2100);
+  }, 15_000);
 });
 
 describe("guides through menus with the keyboard (review round 6)", () => {
@@ -222,6 +246,18 @@ describe("a click goes to the control that handles it (SEC7-1)", () => {
     await plain.call("perceive_window", {});
     expect((await plain.call("click", { id: 1 })).textResultForLlm).toMatch(/^Done/);
     expect([plain.asked, plain.audit.filter(e => e.event === "action").map(e => e.element)]).toEqual([[], [{ role: "link", name: "Help" }]]);
+  });
+});
+
+describe("a click handed further than Ember can see (SEC8-5)", () => {
+  it("text whose click the page hands to a control too deep to find is refused, never judged by its own words", async () => {
+    const { call, asked, events, audit } = makeWorker({ role: "static", name: "Learn about it", canDo: () => ({ tier1: true, action: "clickancestor", handlerUnknown: true }) });
+    await call("perceive_window", {});
+    const r = await call("click", { id: 1 });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/can't tell what a click on element 1 works: .* too deep for Ember to find, so nothing was clicked/);
+    expect([asked, events]).toEqual([[], []]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "action", kind: "click", ok: false }));
   });
 });
 

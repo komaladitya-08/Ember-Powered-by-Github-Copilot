@@ -51,6 +51,17 @@ ${'<div role="group" aria-label="layer">'.repeat(40)}Card number <input style="f
 ${Array.from({ length: 250 }, (_, i) => `<p style="margin:2px">Item ${i}</p>`).join("")}
 <div style="position:fixed;right:10px;top:50px;width:330px;background:#eef;padding:8px">Pay now<br>
 Card number <input style="font:16px monospace;width:220px;color:#00b000" value="5500 0000 0000 0004"><br><button>Pay</button></div></body>`;
+// Fields in a table (PERC8-1): Chromium names a table's cell, an ARIA grid's row and cell, a <label> or a <div> after the
+// values of the fields in it, a secret drop-down's chosen option too.
+const TABLE_PAGE = `<!doctype html><title>Ember test: Table</title><body style="font:14px sans-serif">
+<table><tr><td>Card number</td><td><input value="4111 1111 1111 1111"></td></tr>
+<tr><td>Security answer</td><td><select><option>x</option><option selected>Fluffy the cat</option></select></td></tr>
+<tr><td>PIN</td><td><input value="4821"></td></tr>
+<tr><td>CVV</td><td style="padding-right:80px"><input value="737" size=4></td></tr>
+<tr><td>Wi-Fi</td><td><input value="hunter2-x" size=12></td><td><label><input type=checkbox> Show password</label></td></tr></table>
+<div role=grid><div role=row><div role=gridcell>IBAN</div><div role=gridcell><input aria-label="IBAN" value="DE89 3704 0044 0532 0130 00"></div></div></div>
+<div onclick="1"><label>One-time code <input value="918273"></label></div>
+<p>Ordinary <select><option selected>Blue</option></select></p></body>`;
 // A form as in an Electron app (review round 6): Chromium names a check box's, radio button's and switch's action
 // "check" or "uncheck", and keeps a <select>'s options (and their Selection) on a child menu. What the page hears
 // shows in its last paragraph.
@@ -197,6 +208,39 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     const shallow = await sidecar.readWindow({ pid: pids.Deep, maxDepth: 20 });
     expect([shallow.truncated, shallow.cut]).toEqual([true, ["depth"]]);
   }, 40_000);
+
+  it("never says what a secret field holds through the name of what holds it: a table's cell or row, a label (PERC8-1)", async () => {
+    start("Ember test: Table", TABLE_PAGE, true, 1);
+    await appear(Object.keys(pids).length + 1);
+    if (!pids.Table) throw new Error("the table page never appeared on the accessibility bus");
+    const leaks = /4111|Fluffy|4821|737|hunter2|DE89|918273/;
+    let seen = await perception.perceive({ image: false, scope: "window", target: { pid: pids.Table } });
+    for (let i = 0; i < 20 && seen.nodes.filter(n => n.role === "entry").length < 6; i++) {
+      await new Promise(r => setTimeout(r, 250)); // the page is still being handed over
+      seen = await perception.perceive({ image: false, scope: "window", target: { pid: pids.Table } });
+    }
+    expect(seen.text).not.toMatch(leaks);
+    expect(seen.text).toContain('selected="Blue"');
+    expect(seen.nodes.filter(n => n.secret).length, seen.text).toBeGreaterThanOrEqual(7);
+    // Nor anywhere else: an element's own read, what is under the mouse in a cell beside its field (a helper started
+    // afresh too: it is told), a quick look.
+    for (const n of seen.nodes) expect(JSON.stringify(await sidecar.readElement(n.id).catch(() => null)), n.role).not.toMatch(leaks);
+    const path = seen.window!.path!;
+    const cells = seen.nodes.filter(n => n.bounds && /section|table cell|table row|label/.test(n.role));
+    expect(cells.length).toBeGreaterThan(8);
+    const spots = (b: { x: number; y: number; width: number; height: number }) => [[b.x + 2, b.y + b.height / 2], [b.x + b.width - 3, b.y + b.height / 2]];
+    for (const restart of [false, true]) {
+      if (restart) sidecar.stop();
+      for (const n of cells) {
+        for (const [x, y] of spots(n.bounds!)) {
+          const chain = await perception.atPoint({ pid: pids.Table, path }, { x: Math.round(x), y: Math.round(y) });
+          expect(JSON.stringify(chain), `${n.role} at ${x},${y}`).not.toMatch(leaks);
+        }
+      }
+    }
+    const raw = await sidecar.readWindow({ pid: pids.Table, keep: false });
+    expect(JSON.stringify(raw.nodes)).not.toMatch(leaks);
+  }, 60_000);
 
   it("fills in a web form by accessibility: check boxes, radio buttons, switches and drop-downs; text only with the mouse, asked once (review round 6)", async () => {
     start("Ember test: Form", FORM_PAGE, true, 1);

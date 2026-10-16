@@ -256,6 +256,28 @@ describe("reading a named window", () => {
     expect(marked).toEqual([[3]]);
   });
 
+  it("withholds the names that say what a field found secret here holds, and passes cell hints on (PERC8-1, PERC8-4)", async () => {
+    // Chromium names a table's cell after the value of the field in it; GTK a combo box after what its (secret) entry holds.
+    const at = (x: number, y: number, width: number) => ({ x, y, width, height: 24 });
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "notes.txt", states: [], bounds: at(0, 0, 600) },
+      { id: 2, parent: 1, depth: 1, role: "table cell", name: "hunter2-x", states: [], bounds: at(0, 30, 200) },
+      { id: 3, parent: 2, depth: 2, role: "entry", name: "", states: [], text: "hunter2-x", bounds: at(4, 30, 150) },
+      { id: 4, parent: 1, depth: 1, role: "check box", name: "Show password", states: [], bounds: at(4, 56, 120) },
+      { id: 5, parent: 1, depth: 1, role: "label", name: "PIN", states: [], bounds: at(0, 100, 40) },
+      { id: 6, parent: 1, depth: 1, role: "combo box", name: "4821", selected: "4821", states: [], bounds: at(60, 100, 200) },
+      { id: 7, parent: 6, depth: 2, role: "text", name: "", text: "4821", states: [], bounds: at(64, 100, 150) },
+      { id: 8, parent: 1, depth: 1, role: "table cell", name: "Total 9", states: [], bounds: at(0, 140, 200) },
+    ];
+    const { perception, marked, calls } = desktop({ window: win, nodes, stack: [] });
+    const seen = await perception.read({ pid: 42 }, null, undefined, { keep: false, cells: ["C62", "B3"] });
+    expect(seen.nodes.map(n => [n.id, n.name, !!n.secret])).toEqual([[1, "notes.txt", false], [2, "", false], [3, "", true], [4, "Show password", false],
+      [5, "PIN", false], [6, "", true], [8, "Total 9", false]]);
+    expect(JSON.stringify(seen.nodes)).not.toMatch(/hunter2|4821/);
+    expect(marked).toEqual([[3, 6, 7]]);
+    expect(calls).toEqual([{ pid: 42, ownPid: 999, keep: false, cells: ["C62", "B3"] }]);
+  });
+
   it("never reads Ember's own windows, even when the user is in one", async () => {
     const { perception, calls } = desktop({ window: win, stack: [], active: { pid: 999, title: "Ember settings", wmClass: "ember" } });
     const seen = await perception.focused();

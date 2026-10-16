@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, aimedAt, seesInside, tabPage, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, aimedAt, atSpot, seesInside, tabPage, wheelControls, wheelTarget, type WorkerDeps } from "../../app/main/agent/worker";
 import { marksSvg } from "../../app/main/perception/marks";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -280,6 +280,41 @@ describe("where the wheel and the mouse go (review round 6)", () => {
     const row = { x: 0, y: 100, width: 360, height: 38 };
     expect(aimedAt([page, { role: "list item", name: "", bounds: row }, { role: "push button", name: "Remove", bounds: { x: 100, y: 102, width: 85, height: 34 } }], "list item", row)).toBe("other");
     expect(aimedAt([page, { role: "list item", name: "", bounds: row }, { role: "label", name: "Bob", bounds: { x: 2, y: 102, width: 100, height: 34 } }], "list item", row)).toBe("yes");
+  });
+
+  it("what the app's answer goes on to beside the spot doesn't count: a GTK notebook's selected tab (HND8-6)", () => {
+    // GTK's hit test on the selected tab goes on into the page the tab holds, which lies below the tab.
+    const tab = { role: "page tab", name: "Controls", bounds: { x: 66, y: 95, width: 53, height: 30 } };
+    const chain = [{ role: "page tab list", name: "", bounds: { x: 45, y: 91, width: 560, height: 723 } }, tab,
+      { role: "panel", name: "", bounds: { x: 54, y: 137, width: 542, height: 668 } }];
+    expect(aimedAt(chain, "page tab", tab.bounds)).toBe("other");
+    expect(aimedAt(chain, "page tab", tab.bounds, [], { x: 93, y: 110 })).toBe("yes");
+    expect(atSpot(chain, { x: 93, y: 110 })).toEqual(chain.slice(0, 2));
+    // What lies at the spot stays (a button over a row), and so does what has no position.
+    const row = { x: 0, y: 100, width: 300, height: 30 };
+    const over = [{ role: "scroll pane", name: "", bounds: FRAME }, { role: "push button", name: "Undo", bounds: { x: 100, y: 95, width: 68, height: 34 } }];
+    expect(aimedAt(over, "list item", row, [], { x: 120, y: 115 })).toBe("other");
+    expect(atSpot([...over, { role: "label", name: "", bounds: null }], { x: 120, y: 115 })).toHaveLength(3);
+  });
+
+  it("once a spot was seen covered, one the app can't tell about doesn't let the click go ahead (HND8-3)", async () => {
+    // An in-app notification's "Undo" over "Row 1"; asked at the next spot, the app is busy, or answers only with the
+    // notification's box round the row's label.
+    const label: Item = { role: "label", name: "Row 1", bounds: { x: 3, y: 127, width: 356, height: 17 } };
+    for (const later of [null, [{ role: "scroll pane", name: "", bounds: FRAME }, { role: "filler", name: "", bounds: { x: 1, y: 120, width: 360, height: 54 } }]]) {
+      const { w, st, call } = app([label], { atPoint: true });
+      const answers: (PointElement[] | null)[] = [[{ role: "scroll pane", name: "", bounds: FRAME }, { role: "push button", name: "Undo", bounds: { x: 102, y: 120, width: 68, height: 34 } }], later, later];
+      (w as unknown as { perception: { atPoint: () => Promise<PointElement[] | null> } }).perception.atPoint = async () => answers.shift() ?? null;
+      await call("perceive_window", {});
+      expect((await call("click", { id: 2 })).textResultForLlm).toMatch(/^Something else shows where element 2 should be \("Undo" \("push button"\)\)/);
+      expect([st.asked, st.clicks]).toEqual([0, []]);
+    }
+    // No answer at the first spot (nothing seen covered): the mouse goes ahead, as before.
+    const { w, st, call } = app([label], { atPoint: true });
+    (w as unknown as { perception: { atPoint: () => Promise<PointElement[] | null> } }).perception.atPoint = async () => null;
+    await call("perceive_window", {});
+    expect((await call("click", { id: 2 })).resultType).toBe("success");
+    expect(st.clicks).toHaveLength(1);
   });
 
   it("a row is clicked beside its own button, and what refuses a click refuses it before the user is asked (SEC7-6, W7-3)", async () => {

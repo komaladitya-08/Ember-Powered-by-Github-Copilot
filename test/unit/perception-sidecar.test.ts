@@ -13,6 +13,7 @@ const FAKE = `
 const readline = require("node:readline");
 let stuck = false;
 let remembered = [];
+let withheld = [];
 const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
@@ -31,10 +32,12 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       process.stdout.write('{"jsonrpc": "2.0", "id": 999999, "result": NaN}\\n');
       return ok("after noise");
     case "fail": return send({ jsonrpc: "2.0", id: req.id, error: { message: "no such element" } });
-    case "remember_secrets": remembered = req.params.keys; return ok({ count: remembered.length });
+    case "remember_secrets": remembered = req.params.keys; withheld = req.params.withheld || []; return ok({ count: remembered.length });
     case "remembered": return ok(remembered);
-    case "read_window": return ok({ window: null, nodes: [], ms: 1, secretKeys: [[":1.42", "/org/a11y/atspi/accessible/" + req.params.n]] });
-    case "mark_secret": return ok({ keys: req.params.ids.map(id => [":1.7", "/x/" + id]) });
+    case "withheld": return ok(withheld);
+    case "read_window": return ok({ window: null, nodes: [], ms: 1, secretKeys: [[":1.42", "/org/a11y/atspi/accessible/" + req.params.n]], withheldKeys: [[":1.42", "/row/" + req.params.n]] });
+    case "mark_secret": return ok({ keys: req.params.ids.map(id => [":1.7", "/x/" + id]), withheldKeys: req.params.ids.map(id => [":1.7", "/cell/" + id]) });
+    case "at_point": return ok({ chain: [], ms: 1, withheldKeys: [[":1.9", "/p"]] });
     case "read_element": return ok({ role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } });
     case "do_action": {
       const info = { role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } };
@@ -186,10 +189,14 @@ describe("AtspiSidecar", () => {
     expect(await s.request("remembered")).toEqual([]);
     const r = await s.readWindow({ n: 5 } as never);
     expect(r).not.toHaveProperty("secretKeys");
+    expect(r).not.toHaveProperty("withheldKeys");
     await s.markSecret([9]);
     await s.markSecret([]);
+    expect(await s.atPoint({ pid: 1, path: "/w", x: 1, y: 1 })).toEqual({ chain: [], ms: 1 });
     expect(await failure(s.request("die"))).toMatch(/stopped/);
     expect(await s.request("remembered")).toEqual([[":1.42", "/org/a11y/atspi/accessible/5"], [":1.7", "/x/9"]]);
+    // And the elements whose names say what a secret field holds (a table's cell named after the card number in it).
+    expect(await s.request("withheld")).toEqual([[":1.42", "/row/5"], [":1.7", "/cell/9"], [":1.9", "/p"]]);
   });
 
   it("runs Python with UTF-8 stdio and gives every helper its own id range", async () => {
