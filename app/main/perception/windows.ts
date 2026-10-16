@@ -115,11 +115,13 @@ export function coveringRects(stack: StackedWindow[], index: number, rect: Bound
  * What GNOME Shell's own drawings (not X11 windows, but in every screenshot) mean for a picture:
  * a system dialog (polkit's or the keyring's password prompt, most likely) means none at all, so
  * does the Activities overview or the window switcher (pictures of every window, private ones
- * too), and notifications are blacked out.
+ * too), and notifications are blacked out. A shell that couldn't be looked through in time
+ * (`complete` false) may hide a dialog: that counts as one (`unchecked` says why).
  */
-export function shellCovers(overlays: ShellOverlay[]): { dialog: boolean; overview: boolean; masks: Bounds[] } {
+export function shellCovers(overlays: ShellOverlay[], complete = true): { dialog: boolean; unchecked: boolean; overview: boolean; masks: Bounds[] } {
   return {
-    dialog: overlays.some(o => o.role !== "notification" && o.role !== "overview"),
+    dialog: !complete || overlays.some(o => o.role !== "notification" && o.role !== "overview"),
+    unchecked: !complete,
     overview: overlays.some(o => o.role === "overview"),
     masks: overlays.flatMap(o => (o.role !== "overview" && o.bounds && o.bounds.width > 0 && o.bounds.height > 0 ? [o.bounds] : [])),
   };

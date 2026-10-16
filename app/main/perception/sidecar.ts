@@ -54,6 +54,8 @@ export interface ReadWindowResult {
   nodes: AxNode[];
   /** Cut short: at maxNodes elements, or because reading took too long. */
   truncated?: boolean;
+  /** What on screen was left out for want of room: "nodes" (the element limit), "depth" (nested deeper than a read goes). */
+  cut?: string[];
   /** It was the time (the app answered, slowly). */
   slow?: boolean;
   /** The app stopped answering (busy or hung): the tree is partial, or there is no window at all. */
@@ -278,8 +280,11 @@ export class AtspiSidecar {
     });
   }
 
-  /** What GNOME Shell shows over the windows right now (none without GNOME Shell). */
-  shellOverlays(): Promise<{ overlays: ShellOverlay[] }> { return this.request("shell_overlays"); }
+  /**
+   * What GNOME Shell shows over the windows right now (none without GNOME Shell). `complete` is false when the
+   * shell couldn't be looked through in time: a password prompt may be up unseen.
+   */
+  shellOverlays(): Promise<{ overlays: ShellOverlay[]; complete?: boolean }> { return this.request("shell_overlays"); }
 
   // Tier 1 actions on element ids from a previous readWindow.
   readElement(id: number): Promise<ElementInfo> { return this.request<ElementInfo>("read_element", { id }).then(e => this.physical(id, e)); }

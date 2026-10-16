@@ -51,8 +51,8 @@ export interface Seen {
   blocked: boolean;
   /** The app didn't answer in time, even when asked again (busy or hung): `nodes` are partial, or there is no window. */
   busy: boolean;
-  /** Cut short: "nodes" at the element limit, "time" when reading took too long. */
-  truncated: "nodes" | "time" | null;
+  /** Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is nested deeper than a read goes. */
+  truncated: "nodes" | "time" | "depth" | null;
   /** The app's other windows the user is in or must answer first (an Open dialog); private ones left out. */
   others: OtherWindow[];
   ms: number;
@@ -139,7 +139,7 @@ export class Perception {
     const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
       window: { ...window, bounds: frame }, x11Window, nodes, blocked, busy: !!res.busy,
-      truncated: res.slow ? "time" : res.truncated ? "nodes" : null,
+      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
       others: (res.others ?? []).filter(w => !this.isPrivate(window.app, w.name, list)),
       ms: Date.now() - t0, axScale: k,
     };
@@ -288,6 +288,7 @@ export class Perception {
     if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
+    if (shell.unchecked) return noShot("GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment");
     if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
     if (shell.overview) return noShot("the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed");
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
@@ -313,15 +314,17 @@ export class Perception {
       return noShot("Ember couldn't check for private windows");
     }
     const secrets = seen.nodes.filter(n => n.secret && n.bounds);
-    // A read cut short (too many elements, too slow, a busy app) may not have reached every secret field: those
-    // are looked for on their own (in the app's own pixels), and without all of them there is no picture.
+    const k = seen.axScale;
+    // Before every picture the window's secret fields are looked for on their own too (in the app's own pixels): a
+    // read can miss some, cut short or not. Without all of them there is no picture.
     let unread: { id: number; bounds: Bounds }[] = [];
-    if (seen.truncated || seen.busy) {
+    if (seen.window) {
       const more = await this.unreadSecrets(seen);
       if (typeof more === "string") return noShot(more);
-      unread = more;
+      // The ones the read found are blacked out (and looked at again) already.
+      const known = new Set(secrets.map(n => rectKey(n.bounds!)));
+      unread = more.filter(f => !physical(f.bounds, k).some(b => known.has(rectKey(b))));
     }
-    const k = seen.axScale;
     const blacked = [...mask, ...covers, ...shell.masks];
     let coveredAfter = false;
     const capture = await captureRect(x11, rect, {
@@ -362,13 +365,16 @@ export class Perception {
   }
 
   /**
-   * After a read that was cut short: the window's secret fields it may not have reached, or why they can't
-   * all be known (then no picture is taken).
+   * The window's secret fields on screen, looked for on their own, or why they can't all be known (then no
+   * picture is taken). A window without a process or path can't be looked through: then a complete read's own do.
    */
   private async unreadSecrets(seen: Seen): Promise<{ id: number; bounds: Bounds }[] | string> {
     const w = seen.window;
     const busy = "the app is busy, so Ember can't check it for password fields; try again in a moment";
-    if (!w || w.pid == null || !w.path) return seen.busy ? busy : "Ember couldn't check the whole window for password fields";
+    if (!w || w.pid == null || !w.path) {
+      if (!seen.truncated && !seen.busy) return [];
+      return seen.busy ? busy : "Ember couldn't check the whole window for password fields";
+    }
     try {
       const r = await this.o.sidecar.secretFields({ pid: w.pid, path: w.path });
       if (r.complete) return r.fields;
@@ -379,17 +385,21 @@ export class Perception {
     }
   }
 
-  /** GNOME Shell's dialogs and notifications now (best effort: nothing is known when the check fails). */
-  private async shellOverlays(): Promise<{ dialog: boolean; overview: boolean; masks: Bounds[] }> {
+  /**
+   * GNOME Shell's dialogs and notifications now (a shell too busy to be looked through counts as a dialog;
+   * best effort otherwise: nothing is known when the check fails, without GNOME Shell for one).
+   */
+  private async shellOverlays(): Promise<ReturnType<typeof shellCovers>> {
     try {
-      return shellCovers((await this.o.sidecar.shellOverlays()).overlays);
+      const r = await this.o.sidecar.shellOverlays();
+      return shellCovers(r.overlays, r.complete !== false);
     } catch (err) {
       this.o.log.warn("perception.shell_check_failed", { err });
-      return { dialog: false, overview: false, masks: [] };
+      return shellCovers([]);
     }
   }
 
-  /** Is a GNOME Shell system dialog (a polkit or keyring password prompt, most likely) on screen? */
+  /** Is a GNOME Shell system dialog (a polkit or keyring password prompt, most likely) on screen, or may one be? */
   async systemDialogOpen(): Promise<boolean> {
     return (await this.shellOverlays()).dialog;
   }
@@ -470,6 +480,8 @@ export class Perception {
 
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
 
+const rectKey = (b: Bounds) => `${b.x},${b.y},${b.width},${b.height}`;
+
 /** A secret field's rectangle, a little larger: its border and focus ring go too. */
 const pad = (b: Bounds): Bounds => ({ x: b.x - 3, y: b.y - 3, width: b.width + 6, height: b.height + 6 });
 
@@ -498,5 +510,6 @@ function notes(seen: Seen): string {
   if (seen.busy) out.push("(The app was busy and stopped answering partway, so this list may be incomplete. Try again in a moment.)");
   if (seen.truncated === "nodes") out.push(`(The window has more elements than Ember reads at once; only the first ${seen.nodes.length} are listed. Scroll to the part you need, open it, or work in a smaller window, then look again.)`);
   if (seen.truncated === "time") out.push("(Reading the window took too long, so only part of it is listed. Scroll to the part you need or close what you don't need, then look again.)");
+  if (seen.truncated === "depth") out.push("(Part of the window is nested too deeply for Ember to read, so elements there are missing from this list. Use the screenshot for that part.)");
   return out.length ? `\n${out.join("\n")}` : "";
 }

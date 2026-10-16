@@ -127,12 +127,13 @@ describe("covering windows", () => {
 function desktop(o: {
   window: AxWindow | null; nodes?: AxNode[]; stack: StackedWindow[] | (() => StackedWindow[]);
   answers?: Partial<ReadWindowResult>[]; neverLook?: string[]; active?: { pid: number | null; title: string; wmClass: string } | null;
-  shell?: ShellOverlay[] | Error; element?: (id: number) => Partial<ElementInfo>; scan?: SecretFieldsResult | Error;
+  shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>; scan?: SecretFieldsResult | Error;
 }) {
   const calls: Record<string, unknown>[] = [];
   const scans: unknown[] = [];
   const scaled: [number[], number][] = [];
   const marked: number[][] = [];
+  const rechecked: number[] = [];
   const sidecar = {
     readWindow: async (params: Record<string, unknown>): Promise<ReadWindowResult> => {
       calls.push(params);
@@ -142,10 +143,10 @@ function desktop(o: {
     listWindows: async () => ({ windows: o.window ? [o.window] : [] }),
     scaleElements: (ids: number[], k: number) => { scaled.push([ids, k]); },
     markSecret: async (ids: number[]) => { marked.push(ids); },
-    readElement: async (id: number) => ({ role: "text", name: "", states: [], bounds: null, ...o.element?.(id) }),
+    readElement: async (id: number) => { rechecked.push(id); return { role: "text", name: "", states: [], bounds: null, ...o.element?.(id) }; },
     shellOverlays: async () => {
       if (o.shell instanceof Error) throw o.shell;
-      return { overlays: o.shell ?? [] };
+      return Array.isArray(o.shell) || !o.shell ? { overlays: o.shell ?? [] } : o.shell;
     },
     secretFields: async (w: unknown) => {
       scans.push(w);
@@ -161,7 +162,7 @@ function desktop(o: {
     capture: (x: number, y: number, width: number, height: number) => ({ x, y, width, height, bgra: Buffer.alloc(width * height * 4, 200) }),
   } as unknown as X11;
   const perception = new Perception({ sidecar, x11, neverLook: () => o.neverLook ?? [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999 });
-  return { perception, calls, scaled, marked, scans };
+  return { perception, calls, scaled, marked, scans, rechecked };
 }
 
 async function pixel(data: Buffer, x: number, y: number): Promise<number> {
@@ -386,10 +387,27 @@ describe("secret fields a cut-short read didn't reach", () => {
     expect(unnamed.capture).toBeNull();
   });
 
-  it("aren't looked for after a complete read", async () => {
-    const { p, scans } = shot(new Error("not asked"), {});
-    expect((await p).capture).not.toBeNull();
-    expect(scans).toEqual([]);
+  it("are looked for before every picture, after a complete read too", async () => {
+    // A read can miss them without knowing (a field it never saw): the window is looked through all the same.
+    const { p, scans } = shot({ fields: [card], complete: true, ms: 5 }, {});
+    const r = await p;
+    expect(scans).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/1" }]);
+    expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
+    expect((await shot({ fields: [], complete: false, ms: 2000 }, {}).p).capture).toBeNull();
+    expect((await shot(new Error("accessibility helper stopped"), {}).p).capture).toBeNull();
+    // A window that can't be named to the scan: a complete read's own fields do.
+    const unnamed = shot(new Error("not asked"), {}, { ...win, path: undefined });
+    expect((await unnamed.p).capture).not.toBeNull();
+    expect(unnamed.scans).toEqual([]);
+  });
+
+  it("the read found are looked at again once, not twice", async () => {
+    const read: AxNode = { id: 7, parent: 1, depth: 1, role: "password text", name: "", states: [], bounds: card.bounds };
+    const d = desktop({ window: win, nodes: [...nodes, read], stack: [top(1, 42, target, "Checkout")], scan: { fields: [card, { ...card, id: 51, bounds: { x: 20, y: 20, width: 50, height: 20 } }], complete: true, ms: 5 } });
+    const r = await d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(d.rechecked.sort((a, b) => a - b)).toEqual([7, 51]);
+    expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
+    expect(await pixel(r.capture!.data, 40, 30)).toBeLessThan(30);
   });
 });
 
@@ -445,6 +463,12 @@ describe("busy, cut short, and other windows", () => {
     expect(cut.text).toContain("more elements than Ember reads at once");
     const slow = await desktop({ window: win, nodes, stack: [], answers: [{ truncated: true, slow: true }] }).perception.perceive({ image: false, scope: "window", target: { pid: 42 } });
     expect(slow.text).toContain("took too long");
+    // Something on screen nested deeper than a read goes (a web page's layers of <div>s).
+    const deep = await desktop({ window: win, nodes, stack: [], answers: [{ truncated: true, cut: ["depth"] }] }).perception.perceive({ image: false, scope: "window", target: { pid: 42 } });
+    expect(deep.truncated).toBe("depth");
+    expect(deep.text).toContain("nested too deeply for Ember to read");
+    const both = await desktop({ window: win, nodes, stack: [], answers: [{ truncated: true, cut: ["depth", "nodes"] }] }).perception.read({ pid: 42 });
+    expect(both.truncated).toBe("nodes");
   });
 
   it("mentions the app's other windows (an Open dialog), quoted, never private ones", async () => {
@@ -460,11 +484,11 @@ describe("busy, cut short, and other windows", () => {
 describe("GNOME Shell's own dialogs and notifications", () => {
   const target = { x: 0, y: 0, width: 300, height: 200 };
   const win = axWin(42, "notes.txt", target);
-  const shot = (shell: ShellOverlay[] | Error) => desktop({ window: win, stack: [top(1, 42, target, "notes.txt")], shell })
-    .perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+  const shell = (s: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error) => desktop({ window: win, stack: [top(1, 42, target, "notes.txt")], shell: s }).perception;
+  const shot = (s: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error) => shell(s).perceive({ image: true, scope: "window", target: { pid: 42 } });
 
   it("mean no picture while a system dialog is up, and blacked-out notifications", async () => {
-    expect(shellCovers([])).toEqual({ dialog: false, overview: false, masks: [] });
+    expect(shellCovers([])).toEqual({ dialog: false, unchecked: false, overview: false, masks: [] });
     expect(shellCovers([{ role: "dialog", name: "", text: "Authentication Required", bounds: null }]).dialog).toBe(true);
     const n = await shot([{ role: "notification", name: "", text: "New mail", bounds: { x: 200, y: 0, width: 100, height: 40 } }]);
     expect(await pixel(n.capture!.data, 250, 20)).toBeLessThan(30);
@@ -475,7 +499,7 @@ describe("GNOME Shell's own dialogs and notifications", () => {
   });
 
   it("mean no picture while the overview or the window switcher shows every window", async () => {
-    expect(shellCovers([{ role: "overview", name: "overviewGroup", text: "", bounds: null }])).toEqual({ dialog: false, overview: true, masks: [] });
+    expect(shellCovers([{ role: "overview", name: "overviewGroup", text: "", bounds: null }])).toEqual({ dialog: false, unchecked: false, overview: true, masks: [] });
     const o = await shot([{ role: "overview", name: "", text: "", bounds: null }]);
     expect(o.capture).toBeNull();
     expect(o.text).toContain("the Activities overview or the window switcher is open");
@@ -483,6 +507,17 @@ describe("GNOME Shell's own dialogs and notifications", () => {
 
   it("don't stop pictures when GNOME Shell isn't there or can't be asked", async () => {
     expect((await shot([])).capture).not.toBeNull();
+    expect((await shot({ overlays: [], complete: true })).capture).not.toBeNull();
     expect((await shot(new Error("no gnome-shell"))).capture).not.toBeNull();
+    expect(await shell([]).systemDialogOpen()).toBe(false);
+  });
+
+  it("count as a dialog when the shell couldn't be looked through in time: no picture, no borrowing", async () => {
+    expect(shellCovers([], false)).toEqual({ dialog: true, unchecked: true, overview: false, masks: [] });
+    const busy = { overlays: [{ role: "notification", name: "", text: "New mail", bounds: { x: 200, y: 0, width: 100, height: 40 } }], complete: false };
+    const p = await shot(busy);
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain("GNOME Shell didn't answer in time");
+    expect(await shell(busy).systemDialogOpen()).toBe(true);
   });
 });

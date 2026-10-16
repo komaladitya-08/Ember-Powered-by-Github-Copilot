@@ -391,6 +391,99 @@ class Reading(unittest.TestCase):
         e.walk(root, 0, [], e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
         self.assertFalse(budget.cut)
 
+    def test_what_shows_too_deep_down_makes_a_read_incomplete(self):
+        def nested(levels, leaf):
+            for i in range(levels):
+                leaf = Acc("panel", "g%d" % i, bounds=(0, 0, 400, 300), kids=[leaf])
+            return Acc("frame", "Pay", bounds=(0, 0, 400, 300), kids=[leaf])
+        # A web page's thirty layers of <div>s are read through.
+        budget, nodes = e.Budget(), []
+        e.walk(nested(30, Acc("entry", "Card number", text="4111")), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertEqual(nodes[-1]["role"], "entry")
+        self.assertFalse(budget.cut)
+        # Deeper than a read goes: what shows there is missing, and the read says so.
+        budget, nodes = e.Budget(), []
+        e.walk(nested(e.MAX_DEPTH + 5, Acc("entry", "Card number")), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertNotIn("entry", [n["role"] for n in nodes])
+        self.assertEqual((budget.cut, budget.why), (True, ["depth"]))
+        # What doesn't show there leaves the read complete.
+        budget = e.Budget()
+        e.walk(nested(e.MAX_DEPTH, Acc("entry", "Card number", states=("visible",))), 0, [], e.MAX_DEPTH,
+               e.MAX_NODES, None, None, budget)
+        self.assertFalse(budget.cut)
+        # Neither can the secret scan look through it: then nothing can be shown.
+        found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(nested(e.MAX_DEPTH + 5, Acc("entry", "")), 0, found, None, budget, [0])
+        self.assertEqual((found["fields"], budget.cut), ([], True))
+
+    def fixed_panel(self, rows=250, visible=25):
+        """A web page of `rows` paragraphs scrolled to the top, and a fixed "Pay now" panel last in it."""
+        paras = [Acc("paragraph", "Item %d" % i, bounds=(10, 60 + 18 * i, 400, 16),
+                     states=("showing", "visible") if i < visible else ("visible",)) for i in range(rows)]
+        self.card = Acc("entry", "", bounds=(560, 150, 260, 24), text="4111 1111 1111 1111")
+        panel = Acc("section", "", bounds=(540, 100, 420, 120), kids=[
+            Acc("static", "Card number", bounds=(550, 130, 90, 18)), self.card, Acc("push button", "Pay", bounds=(550, 180, 40, 24))])
+        doc = Acc("document web", "Fixed", bounds=(0, 50, 1000, 450), kids=paras + [panel])
+        return Acc("frame", "Fixed", bounds=(0, 0, 1000, 500), kids=[doc]), doc, panel
+
+    def test_what_shows_after_a_long_list_is_read_too(self):
+        root, doc, _ = self.fixed_panel()
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        names = [n["name"] for n in nodes]
+        self.assertIn("Item 24", names)
+        self.assertNotIn("Item 40", names)
+        self.assertIn("Pay", names)
+        self.assertTrue(budget.cut)  # without the app's own search, the paragraphs between can't be vouched for
+        self.assertLess(doc.child_reads, 100)
+        # Nothing showing after the rows on screen: complete, as before.
+        root, doc, panel = self.fixed_panel()
+        panel.states = ["visible"]
+        budget, nodes = e.Budget(), []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
+        self.assertNotIn("Pay", [n["name"] for n in nodes])
+        self.assertFalse(budget.cut)
+        # The secret scan (where the app can't search the page itself) looks through the panel the app says shows
+        # after the paragraphs on screen; without the app's answer, it can't vouch for the window (no picture).
+        saved = e.collection_matches, e.showing_after
+        e.collection_matches = lambda acc, roles, limit=e.SCAN_NODES: None
+        try:
+            for answer, finds in ((saved[1], False), (lambda acc, *a: ([acc.kids[-1]], True), True)):
+                root, _, _ = self.fixed_panel()
+                e.showing_after = answer
+                found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+                e.scan_fields(root, 0, found, None, budget, [0])
+                self.assertEqual(([acc for _, acc in found["fields"]], budget.cut), ([self.card] if finds else [], not finds))
+        finally:
+            e.collection_matches, e.showing_after = saved
+
+    def test_the_app_finds_what_shows_after_a_long_list(self):
+        root, doc, panel = self.fixed_panel()
+        asked = []
+
+        def get_matches_from(acc, child, rule, sort, tree, count, traverse):
+            asked.append((acc, tree, traverse))
+            after = acc.kids[acc.kids.index(child) + 1:]
+            return [k for k in after if "showing" in k.states][:count]
+        fake = types.SimpleNamespace(
+            MatchRule=types.SimpleNamespace(new=lambda *a: "rule"), StateSet=types.SimpleNamespace(new=lambda s: s),
+            StateType=types.SimpleNamespace(SHOWING=1, VISIBLE=2), CollectionMatchType=types.SimpleNamespace(ALL=0),
+            CollectionSortOrder=types.SimpleNamespace(CANONICAL=0), CollectionTreeTraversalType=types.SimpleNamespace(RESTRICT_SIBLING=1),
+            Collection=types.SimpleNamespace(get_matches_from=get_matches_from))
+        saved = e.Atspi, e.native
+        e.Atspi, e.native = fake, lambda acc: acc is doc
+        try:
+            rest, complete = e.showing_after(doc, doc.kids[30], 30, len(doc.kids), e.Budget())
+            self.assertEqual((rest, complete), ([panel], True))
+            self.assertEqual(asked, [(doc, 1, False)])
+            # More of them than a read takes: not all of them.
+            for k in doc.kids[100:130]:
+                k.states.append("showing")
+            rest, complete = e.showing_after(doc, doc.kids[30], 30, len(doc.kids), e.Budget())
+            self.assertEqual((len(rest), complete), (e.STRAGGLERS, False))
+        finally:
+            e.Atspi, e.native = saved
+
     def test_secret_scan_reads_only_the_rows_on_screen(self):
         root, lst = self.scrolled_list()
         lst.kids[2510].kids = [Acc("password text", "", bounds=(20, 302, 100, 16))]  # in row 2509, on screen
@@ -596,6 +689,7 @@ class Windows(unittest.TestCase):
 
     def setUp(self):
         e.HUNG.clear()
+        e.PROBED.clear()
         e.STRIKES.clear()
         e.KNOWN.clear()
         e.new_request()
@@ -661,10 +755,29 @@ class Windows(unittest.TestCase):
             # Asked for by its own pid, it is still tried.
             self.assertIsNone(self.name_of({"pid": 30}))
             self.assertEqual(hung.asked, asked + 1)
+            # A few seconds on, a list asks it once more (one timeout); it is still hung.
+            e.PROBED[30] -= e.REPROBE_S
+            self.assertEqual(len(e.list_windows({})["windows"]), 3)
+            self.assertEqual(hung.asked, asked + 2)
+            self.assertTrue(e.is_hung(30))
+            e.list_windows({})
+            self.assertEqual(hung.asked, asked + 2)
             e.HUNG[30] = time.monotonic() - 1  # 30 s later
             self.assertFalse(e.is_hung(30))
         finally:
             e.SLOW_APP_S = old
+
+    def test_a_hung_app_that_answers_again_is_listed_again_within_seconds(self):
+        self.assertEqual(len(e.list_windows({})["windows"]), 3)
+        e.mark_hung(20)
+        asked = self.notes.asked
+        self.assertEqual(e.list_windows({})["windows"][-1].get("busy"), True)
+        self.assertTrue(e.read_window({"title": "notes.txt"})["busy"])
+        self.assertEqual(self.notes.asked, asked)
+        e.PROBED[20] -= e.REPROBE_S
+        self.assertEqual(self.name_of({"title": "notes.txt"}), "notes.txt - Text Editor")
+        self.assertFalse(e.is_hung(20))
+        self.assertNotIn("busy", e.list_windows({})["windows"][-1])
 
     def test_busy_apps_stay_listed(self):
         old = e.SLOW_APP_S
@@ -737,7 +850,7 @@ class Windows(unittest.TestCase):
         self.assertEqual(out["secretKeys"], [[pw.app.bus_name, pw.path]])
 
     def test_gnome_shell_dialogs_and_notifications(self):
-        self.assertEqual(e.shell_overlays({}), {"overlays": []})
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": True})
         prompt = Acc("dialog", "", bounds=(400, 300, 480, 260),
                      kids=[Acc("label", "Authentication Required"), Acc("password text", "Password")])
         banner = Acc("notification", "", bounds=(500, 0, 400, 80), kids=[Acc("label", "New mail")])
@@ -753,6 +866,29 @@ class Windows(unittest.TestCase):
                          [("dialog", {"x": 400, "y": 300, "width": 480, "height": 260}),
                           ("notification", {"x": 500, "y": 0, "width": 400, "height": 80})])
         self.assertIn("Authentication Required", out[0]["text"])
+
+    def test_a_shell_not_looked_through_in_time_is_incomplete(self):
+        saved = e.SHELL_ACTORS, e.SHELL_BUDGET_S
+        try:
+            # Without GNOME Shell there is nothing to look through, however little time there is.
+            e.SHELL_ACTORS, e.SHELL_BUDGET_S = 3, -1.0
+            self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": True})
+            stage = Acc("window", "", kids=[Acc("panel", "Top bar", kids=[Acc("label", "12:00")]),
+                                            Acc("dialog", "", kids=[Acc("label", "Authentication Required")])])
+            shell = self.AppNode(99, [stage])
+            shell.name = "gnome-shell"
+            shell.getRoleName = lambda: "application"
+            shell.getState = lambda: States([])
+            self.desktop.kids.append(shell)
+            e.SHELL_ACTORS, e.SHELL_BUDGET_S = 3, 1.0
+            self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+            e.SHELL_ACTORS, e.SHELL_BUDGET_S = 1000, -1.0
+            self.assertFalse(e.shell_overlays({})["complete"])
+            e.SHELL_ACTORS, e.SHELL_BUDGET_S = saved
+            out = e.shell_overlays({})
+            self.assertEqual(([o["role"] for o in out["overlays"]], out["complete"]), (["dialog"], True))
+        finally:
+            e.SHELL_ACTORS, e.SHELL_BUDGET_S = saved
 
     def test_shell_overview_and_switcher(self):
         stage = Acc("window", "", states=("showing", "visible", "focused"),
@@ -865,6 +1001,17 @@ class Windows(unittest.TestCase):
         self.assertEqual(sorted(f["bounds"]["y"] for f in out["fields"]), [220, 250])
         self.assertEqual(asked, [("document web", True), ("document web", False)])
         self.assertEqual(doc.child_reads, 0)
+
+    def test_no_secret_fields_answer_for_a_page_not_handed_over_yet(self):
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds = (0, 0, 900, 400)
+        win.kids = [Acc("document web", "", bounds=(0, 30, 0, 0))]  # painted, but its contents aren't exposed yet
+        out = e.secret_fields({"pid": 20, "path": win.path})
+        self.assertEqual((out["complete"], out["busy"]), (False, True))
+        self.assertNotIn(20, e.STRIKES)  # loading, not hung
+        win.kids[0].bounds = (0, 30, 900, 370)  # an empty page
+        self.assertTrue(e.secret_fields({"pid": 20, "path": win.path})["complete"])
 
     def test_no_secret_fields_answer_without_the_whole_window(self):
         win = self.checkout()

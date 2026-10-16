@@ -3,7 +3,8 @@
  * X11: a decorated window is found inside its window manager's frame, a page at
  * scale 2 keeps the physical pixels Chromium reports, and secret fields (other
  * languages, a label above the field, a password revealed before Ember looked)
- * are withheld, refused and blacked out, also where a read cut short never reached them. Needs an X11 display with an
+ * are withheld, refused and blacked out, also where a read cut short never reached them, and a field deep in a
+ * page's layers or a fixed panel after a long list is read like any other. Needs an X11 display with an
  * accessibility bus and a Python with pyatspi; skipped otherwise
  * (EMBER_ATSPI_TEST=1 requires them).
  */
@@ -41,6 +42,12 @@ const CHECKOUT_PAGE = `<!doctype html><title>Ember test: Checkout</title><body s
 ${Array.from({ length: 6 }, (_, d) => `<div>${Array.from({ length: 80 }, (_, i) => `<a href="#${d}-${i}">L${d}.${i}</a>`).join(" ")}</div>`).join("")}
 <div style="font:16px sans-serif">Card number<br><input style="font:16px monospace;width:300px;color:#00b000" value="4111 1111 1111 1111"></div>
 <div style="font:16px sans-serif">Security code <input style="font:16px monospace;width:80px;color:#00b000" value="737"></div></body>`;
+// A card field 40 layers of <div>s down, and a fixed "Pay now" panel after 250 paragraphs: both on screen.
+const DEEP_PAGE = `<!doctype html><title>Ember test: Deep</title><body style="margin:0;padding:4px;font:13px sans-serif">
+${'<div role="group" aria-label="layer">'.repeat(40)}Card number <input style="font:16px monospace;width:260px;color:#00b000" value="4111 1111 1111 1111">${"</div>".repeat(40)}
+${Array.from({ length: 250 }, (_, i) => `<p style="margin:2px">Item ${i}</p>`).join("")}
+<div style="position:fixed;right:10px;top:50px;width:330px;background:#eef;padding:8px">Pay now<br>
+Card number <input style="font:16px monospace;width:220px;color:#00b000" value="5500 0000 0000 0004"><br><button>Pay</button></div></body>`;
 const MAIN = `
 const { app, BrowserWindow } = require("electron");
 app.commandLine.appendSwitch("force-renderer-accessibility");
@@ -60,6 +67,13 @@ describe.skipIf(!available && !required)("Electron windows through the real side
   let x11: X11;
   let perception: Perception;
   const pids: Record<string, number> = {};
+  const appear = async (n: number) => {
+    for (let i = 0; i < 100 && Object.keys(pids).length < n; i++) {
+      const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
+      for (const w of windows) if (w.name.startsWith("Ember test: ") && w.pid != null) pids[w.name.slice(12)] = w.pid;
+      await new Promise(r => setTimeout(r, 200));
+    }
+  };
 
   const start = (title: string, html: string, frame: boolean, scale: number, big = false) => {
     // Chromium joins the accessibility bus only when asked: by the desktop's accessibility setting, which a bare
@@ -78,13 +92,6 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     x11 = openX11()!;
     sidecar = new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), quiet, python);
     perception = new Perception({ sidecar, x11, log: quiet, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 4000, height: 4000 }) });
-    const appear = async (n: number) => {
-      for (let i = 0; i < 100 && Object.keys(pids).length < n; i++) {
-        const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
-        for (const w of windows) if (w.name.startsWith("Ember test: ") && w.pid != null) pids[w.name.slice(12)] = w.pid;
-        await new Promise(r => setTimeout(r, 200));
-      }
-    };
     await appear(2);
     // Last, so it opens on top of the scale-2 window (which covers most of the screen).
     start("Ember test: Checkout", CHECKOUT_PAGE, true, 1, true);
@@ -147,4 +154,30 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     expect(fresh.secret).toBe(true);
     await expect(sidecar.setText(fresh.id, "x")).rejects.toThrow(/password/);
   });
+
+  it("reads and blacks out what shows deep in a page's layers, or out of order after a long list", async () => {
+    // Last, on top of the other windows (their tests are done).
+    start("Ember test: Deep", DEEP_PAGE, true, 1);
+    await appear(4);
+    if (!pids.Deep) throw new Error("the deep page never appeared on the accessibility bus");
+    let p = await perception.perceive({ image: true, scope: "window", target: { pid: pids.Deep } });
+    for (let i = 0; i < 20 && p.nodes.filter(n => n.role === "entry").length < 2; i++) {
+      await new Promise(r => setTimeout(r, 250)); // the page is still being handed over
+      p = await perception.perceive({ image: true, scope: "window", target: { pid: pids.Deep } });
+    }
+    expect(p.truncated, p.text).toBeNull();
+    const entries = p.nodes.filter(n => n.role === "entry");
+    expect(entries.map(n => n.secret)).toEqual([true, true]);
+    expect(Math.max(...entries.map(n => n.depth))).toBeGreaterThan(40);
+    expect(p.nodes.some(n => n.role === "push button" && n.name === "Pay")).toBe(true);
+    for (const leak of ["4111", "5500"]) expect(p.text).not.toContain(leak);
+    expect(p.capture, p.text).not.toBeNull();
+    const { data, info } = await sharp(p.capture!.data).raw().toBuffer({ resolveWithObject: true });
+    let green = 0;
+    for (let i = 0; i < data.length; i += info.channels) if (data[i + 1] > 140 && data[i] < 90 && data[i + 2] < 90) green++;
+    expect(green).toBeLessThan(5);
+    // Deeper than a read goes: the read says what it left out.
+    const shallow = await sidecar.readWindow({ pid: pids.Deep, maxDepth: 20 });
+    expect([shallow.truncated, shallow.cut]).toEqual([true, ["depth"]]);
+  }, 40_000);
 });

@@ -81,6 +81,16 @@ describe("serializeElements", () => {
     // Every element when there's room (workers get all a read returns).
     expect(serializeElements(win, nodes, { maxLines: 400 })).not.toContain("not shown");
   });
+  it("indents by the elements listed above, not by the unnamed layers between (a web page's <div>s)", () => {
+    const out = serializeElements(win, [
+      node(1, "frame", "Pay", null, { depth: 0, parent: null }),
+      node(2, "push button", "Pay now", null, { depth: 45, parent: 1 }),
+      node(3, "label", "Total", null, { depth: 60, parent: 2 }),
+      node(4, "label", "Help", null, { depth: 3, parent: 1 }),
+    ]);
+    expect(out.split("\n").slice(1, 5)).toEqual(['[1] frame "Pay" (showing, visible)', '  [2] push button "Pay now" (showing, visible)',
+      '    [3] label "Total" (showing, visible)', '  [4] label "Help" (showing, visible)']);
+  });
   it("adds bounds for workers", () => {
     expect(serializeElements(win, bench, { withBounds: true })).toContain("@10,10 60x30");
   });

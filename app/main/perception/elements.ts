@@ -189,7 +189,9 @@ function weight(n: AxNode, labels: Map<number, string>): number {
 export function serializeElements(window: AxWindow, nodes: AxNode[], opts: SerializeOptions = {}): string {
   const maxLines = opts.maxLines ?? 150;
   const labels = inferLabels(nodes);
-  const minDepth = Math.min(...nodes.map(n => n.depth), 0);
+  // Indented by the elements listed above it: a web page's unnamed layers of <div>s add nothing.
+  const level = new Map<number, number>();
+  for (const n of nodes) level.set(n.id, n.parent !== null && level.has(n.parent) ? level.get(n.parent)! + 1 : 0);
   // Too many to list: what says least is left out first (unnamed containers, then text, then rows), in tree order.
   let shown: Set<number> | null = null;
   if (nodes.length > maxLines) {
@@ -214,7 +216,7 @@ export function serializeElements(window: AxWindow, nodes: AxNode[], opts: Seria
     if (n.text && !secret) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
     if (n.selection && !secret) bits.push(`selected=${quote(n.selection, 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
-    lines.push("  ".repeat(Math.max(0, n.depth - minDepth)) + bits.join(" "));
+    lines.push("  ".repeat(level.get(n.id)!) + bits.join(" "));
   }
   if (shown) {
     const kinds = [[left[0], "without a name"], [left[1], "text"], [left[2], "rows or cells"], [left[3], "controls"]] as const;

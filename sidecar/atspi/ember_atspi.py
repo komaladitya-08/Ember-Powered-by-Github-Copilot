@@ -37,10 +37,14 @@ if pyatspi is not None:
         pass
 
 VERSION = 3
-# Deep enough for GTK 3.22's gedit, whose text view sits 15 levels down under fillers and panels.
-MAX_DEPTH = 24
+# Deep enough for web pages (Firefox lists every <div> as a section; a card field can sit 40 levels down) and
+# GTK 3.22's gedit, whose text view sits 15 levels down under fillers and panels. A read that finds something
+# showing deeper than this says it is incomplete.
+MAX_DEPTH = 64
 MAX_NODES = 400
 MAX_CHILDREN = 200
+# Children of a long list that show after the ones that don't (a web page's fixed panel), read per list at most.
+STRAGGLERS = 16
 
 # libatspi waits up to 15 s for apps it saw start recently ("app_startup_time"),
 # and Ember asks one thing at a time, so one hung app would stall everything.
@@ -52,6 +56,9 @@ STARTUP_TIMEOUT_MS = 1000
 SLOW_APP_S = 0.7
 STRIKES_WITHIN_S = 60.0
 HUNG_FOR_S = 30.0
+# Meanwhile a list or a look by title asks it once more every so often (one call that times out, at most),
+# so an app that answers again is back in the list within seconds.
+REPROBE_S = 4.0
 # Timeouts closer together than this are one episode and one strike: Ember asks a busy app once more right
 # away, and a look at a window asks it several things.
 STRIKE_GAP_S = 5.0
@@ -500,17 +507,18 @@ def on_screen(acc, i, clip):
 
 
 def child_indices(acc, count, clip, cap=MAX_CHILDREN):
-    """Which children to read (at most `cap`), and whether some on screen had to be left out.
+    """Which children to read (at most `cap`), whether some on screen had to be left out, and whether they
+    are a run of children taken to be laid out in order (see showing_after).
     Long lists and tables (thousands of rows) are read from the first row on screen, not from
     the top: rows are laid out top to bottom, so a binary search finds where the visible ones
     start. Leading children on screen (column headers) are kept."""
     if count <= MAX_CHILDREN:
-        return list(range(count)), False
+        return list(range(count)), False, False
     in_table = table_indices(acc, count)
     if in_table is not None:
-        return in_table[:cap], len(in_table) > cap
+        return in_table[:cap], len(in_table) > cap, False
     if clip is None:
-        return list(range(min(count, cap))), cap < count and on_screen(acc, cap, clip)
+        return list(range(min(count, cap))), cap < count and on_screen(acc, cap, clip), True
     top = clip["y"]
     lead = 0
     while lead < min(count, 16) and not ends_above(acc, lead, top) and "showing" in state_names(child_at(acc, lead)):
@@ -523,7 +531,34 @@ def child_indices(acc, count, clip, cap=MAX_CHILDREN):
         else:
             hi = mid
     end = min(count, lo + cap - lead)
-    return list(range(lead)) + list(range(lo, end)), end < count and on_screen(acc, end, clip)
+    return list(range(lead)) + list(range(lo, end)), end < count and on_screen(acc, end, clip), True
+
+
+def showing_rule():
+    return Atspi.MatchRule.new(Atspi.StateSet.new([Atspi.StateType.SHOWING, Atspi.StateType.VISIBLE]),
+                               Atspi.CollectionMatchType.ALL, {}, Atspi.CollectionMatchType.ALL, [],
+                               Atspi.CollectionMatchType.ALL, [], Atspi.CollectionMatchType.ALL, False)
+
+
+def showing_after(acc, child, index, count, budget, limit=STRAGGLERS):
+    """The children of a long list after child `index` (`child`) that show although the ones just before them
+    don't: laid out out of order, like a web page's fixed "Pay now" panel last in its document. The app finds
+    them in one call (AT-SPI's Collection); without it, the last few children are looked at. Returns (those
+    children, whether they are all of them)."""
+    if native(acc):
+        try:
+            found = list(Atspi.Collection.get_matches_from(
+                acc, child, showing_rule(), Atspi.CollectionSortOrder.CANONICAL,
+                Atspi.CollectionTreeTraversalType.RESTRICT_SIBLING, limit + 1, False))
+            budget.last = time.monotonic()  # one call for all of them, not a timeout
+            return found[:limit], len(found) <= limit
+        except Exception:
+            if budget.check():
+                return [], False
+    tail = [c for c in (child_at(acc, i) for i in range(max(index + 1, count - 3), count)) if c is not None]
+    shows = [c for c in tail if "showing" in state_names(c)]
+    # One showing out of order, and the children between may too.
+    return shows, not shows or count - index - 1 <= len(tail)
 
 
 # Containers whose extents bound what their children show: scrolled lists stop at their edges.
@@ -533,8 +568,9 @@ CLIP_ROLES = frozenset(["scroll pane", "viewport"])
 class Budget(object):
     """The time one read may take. Between two ticks the app is asked only a few things, so a gap
     longer than SLOW_APP_S was a call that timed out: the app is busy (or hung), and asking it more
-    would only time out again. Either way the read stops where it is. `cut` notes elements left out
-    for want of room (the node limit, a long list's row limit) rather than time."""
+    would only time out again. Either way the read stops where it is. `cut` notes elements on screen left
+    out for want of room rather than time, and `why` says which room: "nodes" (the node limit, a long list's
+    row limit) or "depth" (nested deeper than a read goes)."""
 
     def __init__(self, seconds=READ_BUDGET_S):
         self.last = time.monotonic()
@@ -542,6 +578,12 @@ class Budget(object):
         self.busy = False
         self.over = False
         self.cut = False
+        self.why = []
+
+    def cut_short(self, why):
+        self.cut = True
+        if why not in self.why:
+            self.why.append(why)
 
     def check(self):
         """Did the app take a timeout's time to answer what it was asked since the last look? (True: stop.)"""
@@ -564,10 +606,8 @@ class Budget(object):
 def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
     budget = budget or Budget()
-    if depth > max_depth:
-        return False
     if len(out) >= max_nodes:
-        budget.cut = True
+        budget.cut_short("nodes")
         return False
     if budget.tick():
         return False
@@ -575,6 +615,10 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     if "showing" not in states or "visible" not in states:
         # Invisible elements are a known prompt-injection channel; never report them.
         return False
+    if depth > max_depth:
+        # It shows, but is nested deeper than a read goes: the read says it is incomplete.
+        budget.cut_short("depth")
+        return True
     try:
         role = acc.getRoleName()
         name = (acc.name or "").strip()
@@ -599,17 +643,18 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     except Exception:
         count = 0
     long_list = count > MAX_CHILDREN
-    indices, left_out = child_indices(acc, count, clip)
-    shown, misses = False, 0
+    indices, left_out, ordered = child_indices(acc, count, clip)
+    shown, misses, last = False, 0, None
     for i in indices:
         if len(out) >= max_nodes:
-            budget.cut = True
+            budget.cut_short("nodes")
             return True
         if budget.tick():
             return True
         child = child_at(acc, i)
         if child is None:
             continue
+        last = (i, child)
         on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
         if budget.busy or budget.over:
             return True
@@ -617,10 +662,24 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
             # Past the rows on screen: the rest of a long list is scrolled away too.
             shown, misses = (True, 0) if on_screen_now else (shown, misses + 1 if shown else 0)
             if misses >= 3:
-                return True
+                break
     if left_out:
         # More of a long list is on screen than one read takes.
-        budget.cut = True
+        budget.cut_short("nodes")
+    elif long_list and ordered and last is not None and last[0] < count - 1:
+        # The rest was taken to be scrolled away; what of it shows all the same is read too.
+        rest, complete = showing_after(acc, last[1], last[0], count, budget)
+        if not complete:
+            budget.cut_short("nodes")
+        for child in rest:
+            if len(out) >= max_nodes:
+                budget.cut_short("nodes")
+                return True
+            if budget.tick():
+                return True
+            walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+            if budget.busy or budget.over:
+                return True
     return True
 
 
@@ -681,6 +740,7 @@ def redact_by_layout(nodes, accessible_of):
 # ---------------------------------------------------------------- windows
 
 HUNG = {}  # pid -> time.monotonic() until which the app is skipped
+PROBED = {}  # hung pid -> time.monotonic() it was last asked (or marked hung)
 STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one counted)
 SLOW_NOW = set()  # apps that timed out during the current request: not asked again before the next one
 SKIPPED_NOW = set()  # hung apps the current request left out
@@ -702,13 +762,25 @@ def is_hung(pid):
         return False
     if time.monotonic() >= until:
         del HUNG[pid]
+        PROBED.pop(pid, None)
         return False
+    return True
+
+
+def reprobe(pid):
+    """Is it time to ask this hung app again (see REPROBE_S)? Then it counts as asked."""
+    now = time.monotonic()
+    if now - PROBED.get(pid, now) < REPROBE_S:
+        return False
+    PROBED[pid] = now
     return True
 
 
 def mark_hung(pid):
     if pid is not None:
-        HUNG[pid] = time.monotonic() + HUNG_FOR_S
+        now = time.monotonic()
+        HUNG[pid] = now + HUNG_FOR_S
+        PROBED[pid] = now
 
 
 def timed_out(pid):
@@ -729,6 +801,7 @@ def answered(pid):
     """The app answered: it isn't hung (any more)."""
     STRIKES.pop(pid, None)
     HUNG.pop(pid, None)
+    PROBED.pop(pid, None)
 
 
 def note_answer(pid, t0, ok):
@@ -776,8 +849,9 @@ def app_windows(app, pid):
 
 def frames(only_pid=None, skip_pid=None, until=None):
     """(app, pid, window) for every top-level window. The process id is checked before an app is
-    asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for.
-    Past `until` (time.monotonic()), busy apps took the time already: the rest wait for the next request."""
+    asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for, or due to be
+    asked again (see reprobe). Past `until` (time.monotonic()), busy apps took the time already: the rest wait
+    for the next request."""
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
@@ -799,7 +873,7 @@ def frames(only_pid=None, skip_pid=None, until=None):
             continue
         if pid in SLOW_NOW:
             continue
-        if only_pid is None and is_hung(pid):
+        if only_pid is None and is_hung(pid) and not reprobe(pid):
             SKIPPED_NOW.add(pid)
             continue
         for win in app_windows(app, pid):
@@ -1004,6 +1078,7 @@ def read_window(params):
         "window": window,
         "nodes": nodes,
         "truncated": budget.cut or budget.over,
+        "cut": budget.why,
         "others": others,
         "secretKeys": [list(k) for k in keys if k is not None],
         "ms": int((time.time() - t0) * 1000),
@@ -1042,18 +1117,34 @@ def collection_matches(acc, roles, limit=SCAN_NODES):
         return None
 
 
+def not_ready(doc):
+    """A web document that shows with neither contents nor size: its page is painted (still loading, a very big
+    one for a minute) before the browser hands it over to accessibility."""
+    try:
+        if doc.childCount != 0:
+            return False
+    except Exception:
+        return False
+    b = extents(doc)
+    return b is not None and (b["width"] <= 0 or b["height"] <= 0)
+
+
 def scan_fields(acc, depth, found, clip, budget, seen):
     """Collects (role, accessible) for the input fields and labels on screen under acc into found["fields"] and
     found["labels"]; web documents searched by the app go to found["docs"] (their labels are asked for later,
     if needed). Stops short (budget.busy, .over or .cut) rather than miss part of the window unsaid."""
-    if depth > MAX_DEPTH or budget.tick():
+    if budget.tick():
         return
     seen[0] += 1
     if seen[0] > SCAN_NODES:
-        budget.cut = True
+        budget.cut_short("nodes")
         return
     states = state_names(acc)
     if "showing" not in states or "visible" not in states:
+        return
+    if depth > MAX_DEPTH:
+        # It shows, and what it holds can't be looked through.
+        budget.cut_short("depth")
         return
     try:
         role = acc.getRoleName()
@@ -1066,11 +1157,16 @@ def scan_fields(acc, depth, found, clip, budget, seen):
         found["labels"].append(acc)
         return
     if role in DOCUMENT_ROLES:
+        if not_ready(acc):
+            # The page shows, but the browser hasn't handed over what it holds yet: none of it can be checked.
+            budget.cut_short("loading")
+            return
         t0 = time.monotonic()
         matches = collection_matches(acc, FIELD_ROLES)
         if matches is not None:
             budget.last = time.monotonic()  # one call for the whole document, not a timeout
-            budget.cut = budget.cut or len(matches) >= SCAN_NODES
+            if len(matches) >= SCAN_NODES:
+                budget.cut_short("nodes")
             found["fields"].extend((None, m) for m in matches)
             found["docs"].append(acc)
             return
@@ -1085,23 +1181,36 @@ def scan_fields(acc, depth, found, clip, budget, seen):
         count = acc.childCount
     except Exception:
         count = 0
-    indices, left_out = child_indices(acc, count, clip, SCAN_CHILDREN)
-    budget.cut = budget.cut or left_out
-    long_list, misses = count > MAX_CHILDREN, 0
+    indices, left_out, ordered = child_indices(acc, count, clip, SCAN_CHILDREN)
+    if left_out:
+        budget.cut_short("nodes")
+    long_list, misses, last = count > MAX_CHILDREN, 0, None
     for i in indices:
         if budget.busy or budget.over or budget.cut:
             return
         child = child_at(acc, i)
         if child is None:
             continue
+        last = (i, child)
         if long_list and not overlaps(extents(child), clip):
             # Rows scrolled away show nothing in the picture; a few of them in a row, and the rest are too.
             misses += 1
             if misses >= 3:
-                return
+                break
             continue
         misses = 0
         scan_fields(child, depth + 1, found, clip, budget, seen)
+    if not (long_list and ordered and last is not None and last[0] < count - 1) or budget.busy or budget.over or budget.cut:
+        return
+    # Except what shows all the same (a fixed panel last in a web page): those are looked through too.
+    rest, complete = showing_after(acc, last[1], last[0], count, budget)
+    if not complete:
+        budget.cut_short("nodes")
+    for child in rest:
+        if budget.busy or budget.over or budget.cut:
+            return
+        if overlaps(extents(child), clip):
+            scan_fields(child, depth + 1, found, clip, budget, seen)
 
 
 def secret_fields(params):
@@ -1162,7 +1271,7 @@ def secret_fields(params):
     return {
         "fields": [{"id": SNAPSHOTS.add(n["acc"]), "role": n["role"], "bounds": n["bounds"]} for n in secret],
         "complete": not (budget.busy or budget.over or budget.cut),
-        "busy": budget.busy,
+        "busy": budget.busy or "loading" in budget.why,
         "secretKeys": [list(k) for k in keys if k is not None],
         "ms": int((time.time() - t0) * 1000),
     }
@@ -1200,29 +1309,43 @@ SHELL_DEPTH = 6
 # name), and while the shell has the keyboard (the switcher, a menu of the top bar) an actor under the stage
 # has the focus.
 SHELL_OVERVIEW = "overviewGroup"
+# The shell is looked through for this long and this many actors at most. Past either (a busy shell), what
+# wasn't looked at may be a password prompt: the answer says it is incomplete.
+SHELL_BUDGET_S = 1.0
+SHELL_ACTORS = 1000
+
+
+def is_shell(app):
+    """Is this application GNOME Shell? By its name, or by its process when it doesn't answer."""
+    try:
+        return (app.name or "") == "gnome-shell"
+    except Exception:
+        pass
+    try:
+        with open("/proc/%d/comm" % process_id(app)) as f:
+            return f.read().strip() == "gnome-shell"
+    except Exception:
+        return False
 
 
 def shell_overlays(params):
     """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
     text (for the password-prompt check), and "overview" while the overview or the window switcher may be
-    up. Empty without GNOME Shell."""
-    out = []
+    up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time."""
+    out, complete = [], True
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
     except Exception:
-        return {"overlays": out}
-    budget = Budget(0.4)
+        return {"overlays": out, "complete": complete}
     for a in range(napps):
         app = child_at(desktop, a)
-        try:
-            if app is None or (app.name or "") != "gnome-shell":
-                continue
-        except Exception:
+        if app is None or not is_shell(app):
             continue
+        budget = Budget(SHELL_BUDGET_S)
         stack = [(app, 0)]
         seen, modal = 0, False
-        while stack and seen < 400 and not budget.tick():
+        while stack and seen < SHELL_ACTORS and not budget.tick():
             acc, depth = stack.pop()
             seen += 1
             states = state_names(acc)
@@ -1251,7 +1374,9 @@ def shell_overlays(params):
                     child = child_at(acc, i)
                     if child is not None:
                         stack.append((child, depth + 1))
-    return {"overlays": out}
+        if stack or budget.check():
+            complete = False
+    return {"overlays": out, "complete": complete}
 
 
 def shell_text(acc, words, depth):
