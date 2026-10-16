@@ -98,8 +98,9 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
 
 /**
  * The journal is readable by more people than the user's own 0600 audit file: what the user asked,
- * window titles, element names (an email's subject) and chosen values (a form's answers) go there as
- * sizes only (the full text stays in ~/.config/ember/audit).
+ * window titles, element names (an email's subject), chosen values (a form's answers) and error messages
+ * (they can quote the app's own text) go there as sizes only (the full text stays in ~/.config/ember/audit).
+ * Reasons stay: they are Ember's own words and app names.
  */
 export function journalLine(line: string): string {
   try {
@@ -107,7 +108,7 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error"]) size(e, k);
     if (!PLAIN_VALUE_KINDS.has(String(e.kind))) size(e, "value");
     for (const k of ["element", "after"]) {
       if (e[k] && typeof e[k] === "object") {

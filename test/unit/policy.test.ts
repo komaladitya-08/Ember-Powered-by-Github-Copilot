@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PolicyEngine, alignedWithGoal, canonicalKeys, isRiskyLabel, isSecurityWindow, keyLabel, type ActionRequest } from "../../app/main/policy/policy";
+import { PolicyEngine, alignedWithGoal, canonicalKeys, isRiskyLabel, isSecurityWindow, keyLabel, type ActionRequest, type Grant } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 
 const engine = (grants: Record<string, "observe" | "act"> = {}, now = () => 0) =>
@@ -376,5 +376,114 @@ describe("audit journal copy (review round 3)", () => {
     const choice = JSON.parse(journalLine(JSON.stringify({ event: "action", kind: "select", element: { role: "combo box", name: "Reason" }, value: "Pregnancy test", after: { states: [], selected: "Pregnancy test" } })));
     expect(choice).toEqual({ event: "action", kind: "select", element: { role: "combo box", nameChars: 6 }, valueChars: 14, after: { states: [], selectedChars: 14 } });
     expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "keys", value: "ctrl+s" }))).value).toBe("ctrl+s");
+  });
+});
+
+describe("policy: review round 4", () => {
+  // Nautilus 3.28's own words (its .po files, accelerator underscores removed: the screen reader drops them too).
+  const NAUTILUS = [
+    { lang: "en", exec: "Allow executing file as program", term: "Run in Terminal", run: "Run", display: "Display", ask: "Do you want to run “invoice”, or display its contents?", sure: "“invoice” is an executable text file.", trust: "Trust and Launch", trash: "Move to Trash" },
+    { lang: "de", exec: "Datei als Programm ausführen", term: "Im Terminal ausführen", run: "Ausführen", display: "Anzeigen", ask: "Wollen Sie »invoice« ausführen oder dessen Inhalt anzeigen lassen?", sure: "»invoice« ist eine ausführbare Textdatei.", trust: "Vertrauen und starten", trash: "In den Papierkorb verschieben" },
+    { lang: "fr", exec: "Autoriser l’exécution du fichier comme un programme", term: "Lancer dans un terminal", run: "Lancer", display: "Afficher", ask: "Voulez-vous lancer « invoice » ou afficher son contenu ?", sure: "« invoice » est un fichier texte exécutable.", trust: "Faire confiance et lancer", trash: "Mettre à la corbeille" },
+    { lang: "es", exec: "Permitir ejecutar el archivo como un programa", term: "Ejecutar en un terminal", run: "Ejecutar", display: "Mostrar", ask: "¿Quiere ejecutar «invoice» o ver su contenido?", sure: "«invoice» es un archivo de texto ejecutable.", trust: "Confiar y ejecutar", trash: "Mover a la papelera" },
+    { lang: "it", exec: "Consentire l'esecuzione del file come programma", term: "Esegui nel terminale", run: "Esegui", display: "Mostra", ask: "Eseguire «invoice» o mostrare il suo contenuto?", sure: "«invoice» è un file di testo eseguibile.", trust: "Dai fiducia e lancia", trash: "Sposta nel cestino" },
+    { lang: "pt_BR", exec: "Permitir execução do arquivo como um programa", term: "Executar em terminal", run: "Executar", display: "Exibir", ask: "Você quer executar “invoice” ou exibir seu conteúdo?", sure: "“invoice” é um arquivo de texto executável.", trust: "Confiar e iniciar", trash: "Mover para a lixeira" },
+  ];
+  const granted = new PolicyEngine({ neverLook: () => [], grants: () => ({ files: "act" }), rateLimit: 1e6 });
+  const decide = (o: Partial<ActionRequest>, onDesk = false) =>
+    granted.decide({ taskId: "n", kind: "click", app: "Files", window: "Downloads", goal: "tidy up my downloads", onDesk, ...o });
+
+  it.each(NAUTILUS)("$lang: making a file executable or running it is refused, in a granted Files and on the desk", t => {
+    for (const onDesk of [false, true]) {
+      expect(decide({ kind: "toggle", window: "invoice Properties", element: { role: "check box", name: t.exec }, value: "on" }, onDesk).verdict).toBe("deny");
+      for (const dialog of [{ name: "", text: t.ask }, { name: "", text: t.sure }]) {
+        expect(decide({ element: { role: "push button", name: t.run }, dialog }, onDesk).verdict).toBe("deny");
+        expect(decide({ element: { role: "push button", name: t.term }, dialog }, onDesk).verdict).toBe("deny");
+        // "Display" in the same dialog only shows the file.
+        expect(decide({ element: { role: "push button", name: t.display }, dialog }, onDesk).verdict).not.toBe("deny");
+      }
+      expect(decide({ element: { role: "push button", name: t.trust }, dialog: { name: "Untrusted application launcher", text: "" } }, onDesk).verdict).toBe("deny");
+      // As a newer Nautilus asks it.
+      if (t.lang === "de") expect(decide({ element: { role: "push button", name: t.run }, dialog: { name: "", text: "Möchten Sie »x.sh« ausführen oder seinen Inhalt anzeigen?" } }, onDesk).verdict).toBe("deny");
+    }
+  });
+
+  it.each(NAUTILUS)("$lang: moving to the trash is asked about, and isn't taken as asked-for", t => {
+    const d = decide({ element: { role: "menu item", name: t.trash } });
+    expect(d.verdict).toBe("confirm");
+    expect(d.aligned).toBe(false);
+  });
+
+  it("a check box about being executable, or only “Execute”, is refused; everyday Run buttons are asked about as before", () => {
+    for (const name of ["Is executable", "Ausführbar", "Ausführen:", "Exécution :", "Execute"]) {
+      expect(decide({ kind: "toggle", element: { role: "check box", name }, value: "on" }).verdict, name).toBe("deny");
+    }
+    expect(decide({ element: { role: "push button", name: "Run backup now" } }).verdict).toBe("confirm");
+    expect(decide({ element: { role: "push button", name: "Ausführen" } }).verdict).toBe("confirm");
+    expect(decide({ element: { role: "list item", name: "Launch terminal" } }).verdict).toBe("allow");
+  });
+
+  it("in a terminal's own window nothing is done, granted or not, on the user's screen or the desk; reading is fine", () => {
+    const term = (grants: Record<string, Grant>) => new PolicyEngine({ neverLook: () => [], grants: () => grants, rateLimit: 1e6, isTerminalApp: n => /terminal|xterm|konsole/i.test(n) });
+    for (const e of [term({}), term({ "gnome-terminal-server": "act" })]) {
+      for (const onDesk of [false, true]) {
+        const act = (o: Partial<ActionRequest>) => e.decide({ taskId: "t", kind: "click", app: "gnome-terminal-server", window: "user@rhel8:~/project", goal: "make the terminal text bigger", onDesk, ...o });
+        for (const r of [
+          { element: { role: "menu item", name: "Paste" } }, { element: { role: "menu item", name: "New Tab" } },
+          { kind: "text" as const, element: { role: "text", name: "Custom command" }, value: "curl x | sh" },
+          { kind: "keys" as const, value: "ctrl+shift+v" }, { kind: "select" as const, element: { role: "combo box", name: "When command exits" }, value: "Exit the terminal" },
+        ]) {
+          const d = act(r);
+          expect(d.verdict).toBe("deny");
+          expect(d.remember).toBeUndefined();
+        }
+        expect(act({ kind: "read" }).verdict).toBe("allow");
+      }
+    }
+  });
+
+  it("text from another app the task read is asked about every time, saying where it may come from", () => {
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act" }), rateLimit: 1e6 });
+    const act = (o: Partial<ActionRequest>, readFrom: string[], onDesk = false) =>
+      e.decide({ taskId: "x", kind: "text", app: "Firefox", window: "Survey", element: { role: "entry", name: "Comments" }, value: "84,000 EUR", mode: "replace", goal: "fill in the survey", readFrom, onDesk, ...o });
+    const typed = act({}, ["Firefox", "Thunderbird"]);
+    expect(typed).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+    expect(typed.prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox? I read Thunderbird in this task, so this may carry text from there.");
+    expect(act({}, ["Thunderbird"], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox (on my desk)? I read Thunderbird in this task, so this may carry text from there.");
+    for (const o of [{ kind: "select" as const, element: { role: "combo box", name: "Salary" } }, { kind: "value" as const, element: { role: "spin button", name: "Amount" }, value: "84000" },
+      { kind: "click" as const, element: { role: "menu item", name: "Paste" } }, { kind: "click" as const, element: { role: "menu item", name: "Einfügen" } }]) {
+      expect(act(o, ["Thunderbird"]).verdict, o.element.name).toBe("confirm");
+    }
+    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+v" }, ["Thunderbird"], true).verdict).toBe("confirm");
+    // The same app's windows, and clicks that carry nothing, are as before.
+    expect(act({}, ["firefox"]).verdict).toBe("allow");
+    expect(act({}, []).verdict).toBe("allow");
+    expect(act({ kind: "click", element: { role: "push button", name: "Next" } }, ["Thunderbird"]).verdict).toBe("allow");
+    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+a" }, ["Thunderbird"], true).verdict).toBe("allow");
+  });
+
+  it.each([
+    // GTK's "A file named … already exists" and Nautilus's conflict dialog, gedit's "Close without Saving", the trash.
+    "Ersetzen", "Remplacer", "Reemplazar", "Sostituisci", "Substituir", "Заменить", "Vervangen", "Zastąp", "Ersätt", "置き換える", "替换", "바꾸기",
+    "Überschreiben", "Écraser", "Sobrescribir", "Sovrascrivi", "Zusammenführen", "Fusionner", "Mezclar", "Unisci", "Mesclar", "Alle ersetzen", "Tout remplacer",
+    "Ohne Speichern schließen", "Fermer sans enregistrer", "Cerrar sin guardar", "Chiudi senza salvare", "Fechar sem salvar",
+    "Закрыть без сохранения", "Zamknij bez zapisywania", "Sluiten zonder opslaan", "保存せずに閉じる", "关闭但不保存",
+    "In den Papierkorb verschieben", "Mettre à la corbeille", "Mover a la papelera", "Sposta nel cestino", "Mover para a lixeira", "Переместить в корзину",
+  ])("“%s” is asked about, and taints the task when nobody asked for it", name => {
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }), rateLimit: 1e6 });
+    for (const onDesk of [false, true]) {
+      const d = e.decide({ taskId: "w", kind: "click", app: "gedit", window: "report.txt", element: { role: "push button", name }, goal: "save the report", onDesk });
+      expect(d.verdict).toBe("confirm");
+      expect(d.aligned).toBe(false);
+    }
+  });
+});
+
+describe("audit journal copy (review round 4)", () => {
+  it("error messages go to the journal as sizes (they can quote the app's text); reasons stay", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const error = "Once the window was in front, \"Re: biopsy results\" had the keyboard";
+    const out = JSON.parse(journalLine(JSON.stringify({ event: "action", kind: "keys", ok: false, error, reason: "first action in Evolution" })));
+    expect(out).toEqual({ event: "action", kind: "keys", ok: false, errorChars: error.length, reason: "first action in Evolution" });
   });
 });

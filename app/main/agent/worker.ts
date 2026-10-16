@@ -121,12 +121,38 @@ const TYPING_ROLES = new Set(["text", "entry", "paragraph", "document text", "se
 const typable = (role: string, states: string[]) => TYPING_ROLES.has(role) && states.includes("editable");
 /** Controls the mouse wheel changes (a scroll over one picks another value). */
 const WHEEL_VALUE_ROLES = new Set(["combo box", "slider", "spin button", "page tab list"]);
+/** How long content gets to move after one wheel notch before Ember looks again. */
+const NOTCH_SETTLE_MS = 150;
+const isUnder = (p: { x: number; y: number }, b: Bounds) => p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
+
+/**
+ * The middle of the widest lane across `b` (a column when scrolling up or down, a row when scrolling sideways), inside
+ * `frame`, that none of `controls` touches; null when there is none.
+ */
+export function clearLane(b: Bounds, controls: Bounds[], vertical: boolean, frame: Bounds | null): number | null {
+  const span = (r: Bounds): [number, number] => (vertical ? [r.x, r.x + r.width] : [r.y, r.y + r.height]);
+  const [lo, hi] = span(b);
+  const [flo, fhi] = frame ? span(frame) : [-Infinity, Infinity];
+  const start = Math.max(lo, flo) + 2, end = Math.min(hi, fhi) - 2;
+  const gaps: [number, number][] = [];
+  let at = start;
+  for (const [s, e] of controls.map(span).sort((x, y) => x[0] - y[0])) {
+    gaps.push([at, Math.min(s - 2, end)]);
+    at = Math.max(at, e + 2);
+  }
+  gaps.push([at, end]);
+  const widest = gaps.filter(([s, e]) => e - s >= 4).sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0];
+  return widest ? Math.round((widest[0] + widest[1]) / 2) : null;
+}
 /** Interpreters and launchers: an app started through one isn't known by their name. */
 const LAUNCHERS = /^(python[\d.]*|sh|bash|env|flatpak|java|perl|ruby|node|gjs|mono|gtk-launch)$/;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** The accessibility helper's word for an app that didn't answer in time (busy), as opposed to an element that is gone. */
 const isBusy = (err: unknown) => /\bbusy\b|did not (receive a reply|answer)|timeout was reached/i.test(err instanceof Error ? err.message : String(err));
 const BUSY = "The app is busy (it didn't answer in time). Wait a moment, then call perceive_window.";
+
+/** How a waiting task's goal carries what the user added (tasks.ts). */
+const STEERED = /\n\(The user then added: (.*)\)$/gm;
 
 /** What has the keyboard in a window: its role and name (or the label beside it), and whether it holds a secret. */
 type Focus = { role: string; name: string; secret?: boolean };
@@ -166,6 +192,14 @@ function describeAfter(a: ElementInfo): string {
   return bits.join(" ");
 }
 
+/** What a field holds after type_text when that isn't the text asked for (spacing aside); null when it is, or can't be read. */
+function textNotTaken(after: ElementInfo, value: string, mode: TextMode): string | null {
+  if (after.secret || after.text === undefined || after.text.length >= TEXT_READ_LIMIT) return null;
+  const squash = (s: string) => s.replace(/\s+/g, "");
+  const has = squash(after.text), want = squash(value);
+  return (mode === "replace" ? has === want : has.includes(want)) ? null : after.text;
+}
+
 const isDisabled = (states: string[]) => states.length > 0 && !states.includes("sensitive") && !states.includes("enabled");
 
 export class Worker {
@@ -200,10 +234,13 @@ export class Worker {
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   private clipboard: PasteClipboard | null;
+  /** Apps whose windows this task has read (by lower-case name): text it puts into another app may come from them. */
+  private readApps = new Map<string, string>();
 
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
     this.target = { ...spec.target };
-    this.goal = spec.goal;
+    // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
+    this.goal = spec.goal.replace(STEERED, "\n$1");
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
     this.clipboard = d.clipboard ? asPasteClipboard(d.clipboard) : null;
   }
@@ -509,7 +546,7 @@ export class Worker {
     if (!this.session || this.halted || this.result) return false;
     const said = text.replace(/</g, "‹");
     // What the user added is part of what they asked for: "and then send it" makes Send asked-for.
-    this.goal = `${this.goal}\n(The user then added: ${said})`;
+    this.goal = `${this.goal}\n${said}`;
     await this.session.send({ prompt: `<user_update>The user changed the task: ${said}</user_update>`, mode: "immediate" });
     return true;
   }
@@ -568,6 +605,7 @@ export class Worker {
       return fail(`No open window has ${q(expectTitle, 100)} in its title. Use list_windows and pick one of those titles.`);
     }
     this.window = { app: p.window.app, name: p.window.name };
+    if (p.window.app) this.readApps.set(p.window.app.toLowerCase(), p.window.app);
     this.frame = p.window.bounds;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
@@ -687,7 +725,10 @@ export class Worker {
       const after = res.after as ElementInfo | null | undefined;
       const busyAfter = (res as { busy?: boolean }).busy === true;
       if (after) this.known.set(id, { ...node, name: after.name, states: after.states, bounds: after.bounds ?? node.bounds });
-      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok, ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }) });
+      // A field can say yes and still not take the text (read-only, or fewer characters allowed).
+      const holds = kind === "text" && res.ok && after ? textNotTaken(after, value ?? "", mode ?? "replace") : null;
+      this.audit({ event: "action", task: this.spec.id, kind, app: req.app, window: req.window, element: req.element, ok: res.ok && holds === null, ...auditValue(req), ...(after ? { after: { states: after.states, selected: after.selected } } : busyAfter ? { busy: true } : { gone: true }) });
+      if (holds !== null) return fail(`The field didn't take the text as asked: it now holds ${q(holds, 200)} (it may be read-only, or take fewer characters). Tell the user in finish_task if it matters.`);
       const outcome = res.ok ? "Done" : "The app reported it did not work";
       if (!after) return done(`${outcome}. ${busyAfter ? "The app is busy, so the result can't be read yet: call perceive_window in a moment." : "The element is gone now (its dialog or window most likely closed). Call perceive_window."}`);
       return done(`${outcome}. Now: ${describeAfter(after)}`);
@@ -749,6 +790,8 @@ export class Worker {
       return await this.withCursor(kind, element, async hand => {
         // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
         if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
+        // The user may have copied something new while Ember waited for its turn: that is what goes back afterwards.
+        if (paste && !(await this.clipboard!.unchanged(saved!).catch(() => false))) saved = await this.clipboard!.save();
         // And where it is once its window is in front (Ember may have waited seconds for its turn and for the user to be still).
         const spot = this.landingSpot(id, node, element, await this.sidecar.readElement(id).catch(() => null));
         if (kind === "cursor_text" && mode === "insert") {
@@ -783,7 +826,8 @@ export class Worker {
       if (pasting.written) {
         // Stopped or taken over right after Ctrl+V: the app still reads the clipboard when it gets to it.
         if (pasting.pressed && !pasting.waited) await landed().catch(() => null);
-        await this.clipboard!.restore(saved!).catch(err => this.d.log.warn("worker.clipboard_restore_failed", { err }));
+        // Only over Ember's own text: a clipboard cleared meanwhile (a password manager's timer) stays cleared.
+        await this.clipboard!.restore(saved!, text).catch(err => this.d.log.warn("worker.clipboard_restore_failed", { err }));
       }
     }
   }
@@ -911,7 +955,7 @@ export class Worker {
 
   /** Would these keys on this element be pressed without a question where nothing needs borrowing (judged as on the desk)? */
   private harmlessKeys(req: ActionRequest): boolean {
-    return this.d.policy.recheck({ ...req, onDesk: true, goal: this.goal }).verdict === "allow";
+    return this.d.policy.recheck({ ...req, onDesk: true, goal: this.goal, readFrom: [...this.readApps.values()] }).verdict === "allow";
   }
 
   private async scroll(id: number, direction: "up" | "down" | "left" | "right", steps: number): Promise<ToolResultObject> {
@@ -923,15 +967,38 @@ export class Worker {
     if (verdict) return verdict;
     return this.withCursor("scroll", element, async hand => {
       // Where it is now, once its window is in front (bounds read earlier may scroll something else).
-      const spot = this.landingSpot(id, node, element, await this.sidecar.readElement(id).catch(() => null));
+      const now = await this.sidecar.readElement(id).catch(() => null);
+      let spot: { x: number; y: number } = this.landingSpot(id, node, element, now);
       // The wheel changes a combo box, slider or spin button under the pointer: only the one asked for.
-      if (!WHEEL_VALUE_ROLES.has(node.role)) {
-        const seen = await this.perception.read(this.target).catch(() => null);
-        const under = seen?.nodes.find(n => WHEEL_VALUE_ROLES.has(n.role) && n.bounds && spot.x >= n.bounds.x && spot.y >= n.bounds.y && spot.x < n.bounds.x + n.bounds.width && spot.y < n.bounds.y + n.bounds.height);
-        if (under) throw new Error(`The wheel would land on ${q(under.name || under.role, 60)} (${q(under.role, 40)}), which scrolling would change, so nothing was scrolled. Scroll another element, or use set_value or choose_option for that control.`);
+      if (WHEEL_VALUE_ROLES.has(node.role)) {
+        await hand.glideTo(spot.x, spot.y);
+        await hand.scroll(direction, steps);
+        return;
       }
-      await hand.glideTo(spot.x, spot.y);
-      await hand.scroll(direction, steps);
+      const controls = async () => {
+        const seen = await this.perception.read(this.target).catch(() => null);
+        if (!seen || seen.blocked) throw new Error("Ember couldn't see what would be under the wheel (the window didn't answer), so it scrolled no further. Call perceive_window.");
+        return seen.nodes.filter(n => WHEEL_VALUE_ROLES.has(n.role) && n.bounds);
+      };
+      const vertical = direction === "up" || direction === "down";
+      let found = await controls();
+      // Content moves along the scroll, so the wheel goes in a lane across it that none of those on screen touches
+      // (a label column, the scroll bar); and one notch at a time, looking again once the content has moved, for
+      // ones scrolled into view: never with one under the wheel.
+      const lane = clearLane(now!.bounds!, found.map(n => n.bounds!), vertical, this.frame);
+      if (lane !== null) spot = vertical ? { x: lane, y: spot.y } : { x: spot.x, y: lane };
+      for (let i = 0; i < steps; i++) {
+        if (i > 0) { await sleep(NOTCH_SETTLE_MS); found = await controls(); }
+        const under = found.find(n => isUnder(spot, n.bounds!));
+        if (under) {
+          const what = `${q(under.name || under.role, 60)} (${q(under.role, 40)})`;
+          throw new Error(i === 0
+            ? `The wheel would land on ${what}, which scrolling would change, so nothing was scrolled. Scroll another element, or use set_value or choose_option for that control.`
+            : `Scrolled ${i} of ${steps} steps, then stopped: ${what} came under the wheel, and scrolling would change it. Call perceive_window.`);
+        }
+        if (i === 0) await hand.glideTo(spot.x, spot.y);
+        await hand.scroll(direction, 1);
+      }
     });
   }
 
@@ -1099,7 +1166,7 @@ export class Worker {
   private async authorize(request: ActionRequest): Promise<ToolResultObject | null> {
     this.asked = false;
     if (this.isOver) return STOPPED();
-    const req = { ...request, onDesk: !!this.place, goal: this.goal };
+    const req = { ...request, onDesk: !!this.place, goal: this.goal, readFrom: [...this.readApps.values()] };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
     // After something on screen tried to steer Ember, nothing more happens without the user's click.

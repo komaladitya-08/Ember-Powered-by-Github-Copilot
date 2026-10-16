@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, pickOption, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, clearLane, pickOption, type WorkerDeps } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
@@ -67,5 +67,20 @@ describe("worker tools", () => {
     const r = await call("press_keys", { keys: "Return" });
     expect(r.resultType).toBe("denied");
     expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "keys", verdict: "deny", tier: "never", value: "Return" }));
+  });
+});
+
+describe("where the wheel goes (review round 4)", () => {
+  const list = { x: 0, y: 0, width: 400, height: 300 };
+  it("the widest lane across the list that no wheel-changed control touches, inside the window", () => {
+    // Rows with a label column (0–150) and a combo box or spin button filling the rest.
+    expect(clearLane(list, [{ x: 156, y: 40, width: 244, height: 30 }, { x: 156, y: 900, width: 244, height: 30 }], true, list)).toBe(78);
+    // Sideways, a row no control spans.
+    expect(clearLane(list, [{ x: 0, y: 0, width: 400, height: 100 }], false, list)).toBe(200);
+    // The window cuts the list: only its visible part counts.
+    expect(clearLane(list, [{ x: 0, y: 0, width: 200, height: 20 }], true, { x: 0, y: 0, width: 300, height: 300 })).toBe(250);
+  });
+  it("none when controls cover every column", () => {
+    expect(clearLane(list, [{ x: 0, y: 40, width: 220, height: 30 }, { x: 200, y: 400, width: 200, height: 30 }], true, list)).toBeNull();
   });
 });

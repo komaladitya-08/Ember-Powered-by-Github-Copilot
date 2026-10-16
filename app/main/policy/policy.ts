@@ -41,6 +41,8 @@ export interface ActionRequest {
   onDesk?: boolean;
   /** The user's request this action serves (for the task-alignment check). */
   goal?: string;
+  /** Apps whose windows this task has read: text, choices and pastes in another app may carry what was read there. */
+  readFrom?: string[];
 }
 
 export interface Decision {
@@ -112,8 +114,10 @@ export function foldLabel(s: string): string {
  * The same in the languages RHEL desktops commonly use: infinitives and imperatives (the forms buttons
  * use) for deleting, removing, emptying, sending, submitting, replying, forwarding, sharing, publishing,
  * buying, ordering, paying, transferring money, installing, resetting, formatting, signing out, confirming,
- * accepting, discarding and quitting. Whole words only; words that are also everyday labels ("Formato",
- * "Zahlen", "Ordina" = sort) are left out. Written with their accents (folded when the pattern is built).
+ * accepting, discarding, closing without saving, replacing and overwriting, merging, quitting, running programs, moving to
+ * the trash, archiving, restarting, subscribing, signing and uploading (GTK's and Nautilus's own words where they have them).
+ * Whole words only; words that are also everyday labels ("Formato", "Zahlen", "Ordina" = sort, "Firma") are left out.
+ * Written with their accents (folded when the pattern is built).
  */
 export const RISKY_WORDS: Record<string, string[]> = {
   fr: ["supprimer", "supprimez", "supprime", "suppression", "effacer", "effacez", "efface", "retirer", "retirez", "enlever", "enlevez",
@@ -121,63 +125,77 @@ export const RISKY_WORDS: Record<string, string[]> = {
     "transférer", "transférez", "partager", "partagez", "publier", "publiez", "commander", "commandez", "passer (la )?commande",
     "acheter", "achetez", "payer", "payez", "installer", "installez", "désinstaller", "désinstallez", "réinitialiser", "réinitialisez",
     "formater", "formatez", "déconnecter", "déconnexion", "confirmer", "confirmez", "accepter", "acceptez", "accepte",
-    "ne pas enregistrer", "sans enregistrer", "quitter"],
+    "ne pas enregistrer", "sans enregistrer", "quitter", "exécuter", "exécutez", "lancer", "lancez",
+    "(mettre|déplacer|jeter) (à|dans|vers) la corbeille", "remplacer", "remplacez", "écraser", "écrasez", "fusionner", "archiver",
+    "redémarrer", "éteindre", "s'abonner", "se désabonner", "signer", "téléverser"],
   de: ["löschen", "lösche", "loeschen", "entfernen", "entferne", "leeren", "senden", "sende", "absenden", "versenden", "abschicken",
     "verschicken", "einreichen", "übermitteln", "antworten", "antworte", "weiterleiten", "teilen", "freigeben", "veröffentlichen",
     "kaufen", "bestellen", "bestelle", "zahlungspflichtig", "bezahlen", "jetzt zahlen", "überweisen", "überweisung", "installieren",
     "deinstallieren", "zurücksetzen", "formatieren", "abmelden", "ausloggen", "bestätigen", "akzeptieren", "annehmen", "zustimmen",
-    "verwerfen", "nicht speichern", "ohne speichern", "beenden"],
+    "verwerfen", "nicht speichern", "ohne speichern", "beenden", "ausführen", "in den papierkorb", "ersetzen", "ersetze", "überschreiben",
+    "zusammenführen", "ohne zu speichern", "archivieren", "neu starten", "herunterfahren", "abonnieren", "abbestellen", "unterschreiben",
+    "signieren", "hochladen"],
   es: ["eliminar", "elimina", "elimine", "borrar", "borra", "borre", "suprimir", "suprime", "suprima", "quitar", "quita", "quite",
     "vaciar", "enviar", "envía", "envíe", "responder", "responde", "responda", "reenviar", "reenvía", "compartir", "comparte",
     "comparta", "publicar", "publique", "comprar", "compra", "compre", "(realizar|hacer|tramitar|finalizar) pedido", "pagar", "paga",
     "pague", "transferir", "transfiere", "instalar", "instala", "instale", "desinstalar", "restablecer", "restablece", "formatear",
     "cerrar sesión", "desconectar", "confirmar", "confirma", "confirme", "aceptar", "acepta", "acepte", "acepto", "descartar",
-    "descarta", "no guardar", "sin guardar", "salir"],
+    "descarta", "no guardar", "sin guardar", "salir", "ejecutar", "ejecuta", "ejecute", "ejecutarlo", "ejecutarlos",
+    "(mover|tirar) a la papelera", "reemplazar", "reemplaza", "reemplace", "reemplazarlo", "sustituir", "sobrescribir", "sobreescribir",
+    "mezclar", "fusionar", "archivar", "reiniciar", "apagar", "suscribirse", "darse de baja", "firmar", "subir"],
   it: ["eliminare", "elimina", "elimini", "cancellare", "cancella", "rimuovere", "rimuovi", "svuotare", "svuota", "inviare", "invia",
     "spedire", "spedisci", "rispondere", "rispondi", "inoltrare", "inoltra", "condividere", "condividi", "pubblicare", "pubblica",
     "acquistare", "acquista", "comprare", "ordina ora", "effettua (l')?ordine", "pagare", "paga", "bonifico", "installare", "installa",
     "disinstallare", "disinstalla", "reimpostare", "reimposta", "formattare", "formatta", "disconnetti", "esci", "confermare",
-    "conferma", "accettare", "accetta", "accetto", "scarta", "scartare", "non salvare", "senza salvare"],
+    "conferma", "accettare", "accetta", "accetto", "scarta", "scartare", "non salvare", "senza salvare", "eseguire", "esegui", "eseguirlo",
+    "eseguirli", "(sposta|spostare|spostalo|spostali) nel cestino", "cestina", "sostituisci", "sostituire", "sostituirlo", "sovrascrivi",
+    "sovrascrivere", "unisci", "archivia", "riavvia", "spegni", "iscriviti", "annulla (l')?iscrizione", "carica file"],
   pt: ["excluir", "exclua", "exclui", "apagar", "apague", "apaga", "deletar", "remover", "remova", "esvaziar", "esvazie", "envie",
     "responda", "encaminhar", "encaminhe", "compartilhar", "compartilhe", "partilhar", "partilhe", "comprar", "compre",
     "(fazer|finalizar) pedido", "pague", "transfira", "redefinir", "redefina", "(terminar|encerrar) sessão", "sair", "aceitar",
-    "aceite", "aceito", "concordo", "concordar", "não salvar", "não guardar", "sem salvar", "sem guardar"],
+    "aceite", "aceito", "concordo", "concordar", "não salvar", "não guardar", "sem salvar", "sem guardar", "executar", "executa",
+    "mover para (a lixeira|o lixo|a reciclagem)", "substituir", "substitua", "sobrescrever", "sobrescreva", "mesclar", "arquivar",
+    "reiniciar", "desligar", "inscrever-se", "assinar"],
   nl: ["verwijderen", "verwijder", "leegmaken", "prullenbak legen", "verzenden", "verzend", "versturen", "verstuur", "indienen",
     "beantwoorden", "antwoorden", "doorsturen", "delen", "publiceren", "publiceer", "kopen", "koop", "bestellen", "bestel",
     "afrekenen", "betalen", "betaal", "overmaken", "overboeken", "installeren", "installeer", "de-installeren", "resetten",
     "opnieuw instellen", "formatteren", "afmelden", "uitloggen", "bevestigen", "bevestig", "accepteren", "accepteer", "akkoord",
-    "niet opslaan", "verwerpen", "afsluiten"],
+    "niet opslaan", "verwerpen", "afsluiten", "vervangen", "vervang", "overschrijven", "zonder opslaan", "naar (de )?prullenbak",
+    "samenvoegen"],
   pl: ["usuń", "usunąć", "skasuj", "opróżnij", "wyślij", "wysłać", "odpowiedz", "przekaż", "udostępnij", "opublikuj", "kup",
     "kupuję", "zamów", "zamawiam", "zapłać", "płacę", "przelew", "zainstaluj", "odinstaluj", "resetuj", "zresetuj", "formatuj",
-    "sformatuj", "wyloguj", "potwierdź", "zatwierdź", "akceptuj", "zaakceptuj", "zgadzam się", "odrzuć", "nie zapisuj"],
+    "sformatuj", "wyloguj", "potwierdź", "zatwierdź", "akceptuj", "zaakceptuj", "zgadzam się", "odrzuć", "nie zapisuj", "zastąp", "zastąpić",
+    "nadpisz", "nadpisać", "bez zapisywania", "do kosza", "scal"],
   ru: ["удалить", "удали", "удалите", "убрать", "очистить", "очисти", "отправить", "отправь", "отправьте", "послать", "ответить",
     "ответь", "ответьте", "переслать", "перешли", "поделиться", "поделись", "опубликовать", "опубликуй", "купить", "купи",
     "оформить заказ", "заказать", "закажи", "оплатить", "оплати", "заплатить", "установить", "установи", "сбросить", "сбрось",
     "форматировать", "выйти", "выход", "подтвердить", "подтверди", "подтвердите", "принять", "прими", "согласен", "согласиться",
-    "не сохранять"],
+    "не сохранять", "заменить", "замени", "перезаписать", "без сохранения", "в корзину", "объединить"],
   sv: ["ta bort", "radera", "töm papperskorgen", "skicka", "svara", "vidarebefordra", "publicera", "köp nu", "köpa", "beställ",
-    "betala", "installera", "avinstallera", "återställ", "logga ut", "bekräfta", "acceptera", "godkänn", "spara inte"],
+    "betala", "installera", "avinstallera", "återställ", "logga ut", "bekräfta", "acceptera", "godkänn", "spara inte", "ersätt",
+    "skriv över", "utan att spara", "till papperskorgen"],
   da: ["slet", "fjern", "tøm", "svar", "videresend", "køb", "bestil", "betal", "installer", "afinstaller", "nulstil", "log ud",
-    "bekræft", "accepter", "godkend", "gem ikke"],
-  nb: ["slett", "kjøp", "bestill", "avinstaller", "tilbakestill", "logg ut", "bekreft", "godta", "aksepter", "ikke lagre"],
+    "bekræft", "accepter", "godkend", "gem ikke", "erstat", "overskriv", "uden at gemme", "i papirkurven"],
+  nb: ["slett", "kjøp", "bestill", "avinstaller", "tilbakestill", "logg ut", "bekreft", "godta", "aksepter", "ikke lagre", "erstatt",
+    "overskriv", "uten å lagre", "i papirkurven"],
   fi: ["poista", "tyhjennä", "lähetä", "vastaa", "välitä", "jaa", "julkaise", "osta", "tilaa nyt", "maksa", "asenna", "nollaa",
-    "kirjaudu ulos", "vahvista", "hyväksy", "älä tallenna"],
+    "kirjaudu ulos", "vahvista", "hyväksy", "älä tallenna", "korvaa", "tallentamatta", "roskakoriin"],
   cs: ["smazat", "smaž", "odstranit", "odstraň", "vysypat", "odeslat", "odešli", "odpovědět", "přeposlat", "sdílet", "publikovat",
     "zveřejnit", "koupit", "objednat", "zaplatit", "nainstalovat", "instalovat", "odinstalovat", "resetovat", "formátovat",
-    "naformátovat", "odhlásit", "potvrdit", "přijmout", "souhlasím", "neukládat"],
+    "naformátovat", "odhlásit", "potvrdit", "přijmout", "souhlasím", "neukládat", "nahradit", "přepsat", "bez uložení", "do koše"],
   tr: ["sil", "kaldır", "boşalt", "gönder", "yanıtla", "cevapla", "ilet", "paylaş", "yayınla", "satın al", "sipariş ver", "ödeme yap",
     "ödemeyi tamamla", "havale", "yükle", "sıfırla", "biçimlendir", "çıkış yap", "oturumu kapat", "onayla", "kabul et",
-    "kabul ediyorum", "kaydetme"],
+    "kabul ediyorum", "kaydetme", "üzerine yaz", "kaydetmeden", "çöpe taşı"],
 };
 /** Scripts without spaces between words: matched anywhere in the label. */
 export const RISKY_ANYWHERE: Record<string, string[]> = {
   ja: ["削除", "消去", "送信", "返信", "転送", "共有", "公開", "投稿", "購入", "注文", "決済", "支払", "振込", "送金", "インストール",
-    "リセット", "初期化", "フォーマット", "ログアウト", "サインアウト", "確定", "同意", "承認", "破棄", "保存しない", "空にする", "終了"],
+    "リセット", "初期化", "フォーマット", "ログアウト", "サインアウト", "確定", "同意", "承認", "破棄", "保存しない", "空にする", "終了", "置き換え", "置換", "上書き", "保存せず", "ゴミ箱"],
   zh: ["删除", "刪除", "移除", "清空", "清除", "发送", "發送", "提交", "回复", "回覆", "转发", "轉發", "分享", "共享", "发布", "發佈",
     "發布", "发表", "發表", "购买", "購買", "下单", "下單", "结算", "結算", "支付", "付款", "转账", "轉帳", "汇款", "匯款", "安装",
-    "安裝", "卸载", "卸載", "重置", "格式化", "注销", "註銷", "登出", "退出", "同意", "接受", "放弃", "放棄", "不保存"],
+    "安裝", "卸载", "卸載", "重置", "格式化", "注销", "註銷", "登出", "退出", "同意", "接受", "放弃", "放棄", "不保存", "替换", "替換", "覆盖", "覆蓋", "回收站", "废纸篓", "廢紙簍"],
   ko: ["삭제", "제거", "비우기", "전송", "보내기", "제출", "답장", "전달", "공유", "게시", "구매", "구입", "주문", "결제", "이체",
-    "송금", "설치", "초기화", "포맷", "로그아웃", "동의", "수락", "저장 안 함", "종료"],
+    "송금", "설치", "초기화", "포맷", "로그아웃", "동의", "수락", "저장 안 함", "종료", "바꾸기", "덮어쓰기", "저장하지 않", "휴지통"],
 };
 const all = (lists: Record<string, string[]>) => foldLabel(Object.values(lists).flat().join("|"));
 const RISKY_INTL_SOURCE = `(^|[^\\p{L}\\p{N}])(?<word>${all(RISKY_WORDS)})(?=$|[^\\p{L}\\p{N}])|(?<cjk>${all(RISKY_ANYWHERE)})`;
@@ -300,10 +318,51 @@ const SAFE_COMBOS = canonicalSet(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+
 /** Shortcuts that delete, send, close or quit, whatever has focus. */
 const DESTRUCTIVE_KEYS = canonicalSet(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
   "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
-/** Making a file executable or running one (a file manager's "Allow executing file as program", "Run in Terminal"). */
-const RUNS_PROGRAM = /\b(allow(ed)? execut(ing|e)|execut(able|e) as (a )?program|run as (a )?program|run in (a )?terminal|launch as (a )?program|make (it |the file |file )?executable)\b/;
-/** The file manager's "Do you want to run …, or display its contents?" question: its "Run" runs the file. */
-const RUN_FILE_DIALOG = /\b(do you want to run|or display its contents)\b/;
+/** Keys that paste whatever the clipboard holds. */
+const PASTE_KEYS = canonicalSet(["ctrl+v", "ctrl+shift+v", "shift+insert"]);
+
+/** Whole words or phrases (written with their accents, folded like RISKY_WORDS) anywhere in a text. */
+const anyOf = (list: string[]) => new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(list.join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u");
+/** A label for the checks below: look-alikes mapped, then accents dropped ("Ausführen" is "ausfuhren"). */
+const plainText = (s: string) => foldLabel(normalizeLabel(s));
+/**
+ * Making a file executable or running one: "Allow executing file as program", "Run in Terminal", "Trust and Launch",
+ * and the same in the languages of RHEL's file manager (its own words, from Nautilus 3.28's translations).
+ */
+const RUNS_PROGRAM = /\b(allow(ed)? execut(ing|e)|execut(able|e) as (a )?program|run as (a )?program|run in (a )?terminal|launch as (a )?program|make (it |the file |file )?executable|trust and launch)\b/;
+const TRUST_AND_LAUNCH = anyOf(["vertrauen und starten", "faire confiance et lancer", "confiar y ejecutar", "dai fiducia e lancia", "confiar e iniciar"]);
+/** By its words: running with a program or a terminal ("Datei als Programm ausführen", "Lancer dans un terminal", "Esegui nel terminale"). */
+const RUN_WORDS = ["run", "execute", "executing", "execution", "launch", "ausführen", "ausführung", "exécuter", "exécution", "lancer", "ejecutar",
+  "ejecución", "eseguire", "esegui", "esecuzione", "executar", "execução"];
+const RUN_WORD = anyOf(RUN_WORDS);
+const PROGRAM_WORD = anyOf(["programs?", "programm", "programmes?", "programas?", "programma", "terminal", "terminale"]);
+/** A check box that is only "Execute" ("Ausführen:", "Exécution :"), or says the file is executable ("Is executable", "Ausführbar"). */
+const RUN_ONLY = new RegExp(`^\\s*(${foldLabel(RUN_WORDS.join("|"))})\\s*:?\\s*$`, "u");
+const EXECUTABLE_WORD = anyOf(["executables?", "ausführbar(e[nrs]?)?", "exécutables?", "ejecutables?", "eseguibil[ei]", "executáve(l|is)"]);
+const TOGGLE_ROLES = /check box|toggle|switch/;
+/**
+ * The file manager's "Do you want to run …, or display its contents?" question (and its autorun one), as Nautilus
+ * versions word it: its "Run" runs the file.
+ */
+const RUN_FILE_DIALOG = anyOf(["do you want to run", "display its contents", "would you like to run it", "inhalt anzeigen",
+  "automatisch ausgeführt werden soll", "afficher son contenu", "souhaitez-vous le lancer", "(ver|mostrar) su contenido", "quiere ejecutarlo",
+  "il suo contenuto", "visualizzarne il contenuto", "eseguirlo", "(exibir|mostrar) (o )?seu conteúdo", "gostaria de executá-lo"]);
+/** That dialog's "Run" ("Ausführen", "Lancer", "Ejecutar", "Esegui", "Executar"). */
+const RUN_ANSWER = /^(run|execute|launch|ausfuhren|lancer|ejecutar|esegui|executar)\b/;
+/** Does activating this control make a file executable or run one? */
+function runsProgram(role: string, name: string, dialog?: { name: string; text: string }): boolean {
+  const label = plainText(name);
+  if (RUNS_PROGRAM.test(label) || TRUST_AND_LAUNCH.test(label)) return true;
+  if (ACTIVATING_ROLES.test(role) && RUN_WORD.test(label) && PROGRAM_WORD.test(label)) return true;
+  // The file's execute bit, by a check box on its Permissions page.
+  if (TOGGLE_ROLES.test(role) && (RUN_ONLY.test(label) || EXECUTABLE_WORD.test(label))) return true;
+  const asks = plainText(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
+  return RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks));
+}
+/** "Paste" menu items and buttons, in the languages above. */
+const PASTE_LABEL = /^(paste|einfugen|coller|pegar|incolla|colar|plakken|wklej)(?=$|[^\p{L}])/u;
+/** Apps named in a question: "Thunderbird", "Thunderbird and Files", "A, B and C". */
+const appList = (apps: string[]) => (apps.length > 1 ? `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}` : apps[0] ?? "");
 const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
 const words = (s: string) => foldLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
 /** Rough stem, so "deleting", "deleted" and "delete" match. */
@@ -386,6 +445,9 @@ function describe(r: ActionRequest, withApp = true): string {
   }
 }
 
+/** Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question. */
+type Risk = { reason: string; about?: string; note?: string };
+
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
 
@@ -422,7 +484,7 @@ export class PolicyEngine {
    * Is this request hard to undo or visible to others, whatever the app's grant?
    * `about`: the on-screen words that make it so, when there are any.
    */
-  private riskOf(r: ActionRequest): { reason: string; about?: string; note?: string } | null {
+  private riskOf(r: ActionRequest): Risk | null {
     const name = r.element?.name ?? "";
     const role = r.element?.role ?? "";
     // "OK" / "Yes" agrees to whatever its dialog asks (in-page dialogs keep the browser's title), and in a
@@ -468,6 +530,22 @@ export class PolicyEngine {
     }
   }
 
+  /**
+   * Moving data between apps (PLAN.md §5): once the task has read another app, what it types, chooses or pastes
+   * here may carry that app's text (a page told it to copy an email into a form), so it is asked about every time.
+   */
+  private withCarried(r: ActionRequest, risk: Risk | null): Risk | null {
+    const here = r.app.trim().toLowerCase();
+    const others = [...new Set((r.readFrom ?? []).map(a => a.trim()).filter(a => a && a.toLowerCase() !== here))];
+    if (!others.length) return risk;
+    const pastes = r.kind === "keys" ? PASTE_KEYS.has(keyFamily(canonicalKeys(r.value ?? "") ?? ""))
+      : (r.kind === "click" || r.kind === "cursor_click") && PASTE_LABEL.test(plainText(r.element?.name ?? ""));
+    if (!pastes && !["text", "cursor_text", "select", "value"].includes(r.kind)) return risk;
+    const from = appList(others.slice(0, 3));
+    const note = `I read ${from} in this task, so this may carry text from there.`;
+    return { reason: risk?.reason ?? `this may carry text from ${from} into ${r.app || "this app"}`, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note };
+  }
+
   private decideBase(r: ActionRequest, count = true): Decision {
     const plain = describe(r);
     const win = { app: r.app, name: r.window };
@@ -479,10 +557,10 @@ export class PolicyEngine {
     if (r.element?.role === "password text") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
-    if (r.kind !== "read" && r.element) {
-      const label = normalizeLabel(r.element.name);
-      const runFile = /^run\b/.test(label) && RUN_FILE_DIALOG.test(normalizeLabel(`${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
-      if (RUNS_PROGRAM.test(label) || runFile) return never("Ember doesn't run programs, so it never makes files executable or runs them");
+    // Not their menus or settings either: Paste puts the clipboard into the shell, a profile's command runs.
+    if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't run commands, so it never acts in terminals or apps with a shell built in");
+    if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog)) {
+      return never("Ember doesn't run programs, so it never makes files executable or runs them");
     }
     if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "select" || r.kind === "value" || r.kind === "keys") && r.element && (r.element.secret || isSecretField(r.element.name))) {
       return never("this looks like a password or payment field");
@@ -498,7 +576,7 @@ export class PolicyEngine {
 
     if (count && !this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
 
-    const risk = this.riskOf(r);
+    const risk = this.withCarried(r, this.riskOf(r));
     const prompt = risk?.note ? `${plain} ${risk.note}` : plain;
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
