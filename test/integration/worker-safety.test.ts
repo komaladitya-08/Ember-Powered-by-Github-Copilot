@@ -467,6 +467,14 @@ describe("Ember's desk", () => {
     expect(audited).toContainEqual(expect.objectContaining({ task: "desk-ambiguous", event: "action", kind: "keys", ok: false, tier: 2, error: expect.stringMatching(/couldn't be told apart/) }));
   });
 
+  it("a key pressed on the desk is named on its action line, so \"What Ember did\" says which (review round 7)", async () => {
+    onDesk("Save the document", [{ tool: { name: "press_keys", args: { keys: "ctrl+s" } } }]);
+    const desk = fakeDesk({ log: [] });
+    await makeWorker(desk.screen, "Save the document", { id: "desk-keys-named", desk: async () => desk.place as never }).run(new AbortController().signal);
+    const audited = fs.readFileSync(new AuditLog(path.join(dir, "audit")).file, "utf8").trim().split("\n").map(l => JSON.parse(l));
+    expect(audited).toContainEqual(expect.objectContaining({ task: "desk-keys-named", event: "action", kind: "keys", ok: true, tier: 2, value: "ctrl+s" }));
+  }, 20_000);
+
   it("two tasks on one desk take turns with its keyboard; a new desk after one died gets its own", async () => {
     const log: string[] = [];
     const desk = fakeDesk({ log });

@@ -65,13 +65,23 @@ let wasStreaming = false;
  * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
  */
 let announced = "";
-function announce(b: BubbleState): void {
+let announcedStatus = "";
+/**
+ * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
+ * caught the first part…"), which the card shows even under a bubble. Both at once go out together (one live update).
+ */
+function announce(b: BubbleState, status: string | null): void {
+  const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
-  if (!b.visible) return;
-  const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
-  if (text === announced) return;
-  announced = text;
-  $("live").textContent = text;
+  if (b.visible) {
+    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
+    if (text && text !== announced) { announced = text; parts.push(text); }
+  }
+  if ((status ?? "") !== announcedStatus) {
+    announcedStatus = status ?? "";
+    if (status) parts.push(status);
+  }
+  if (parts.length) $("live").textContent = parts.join(" ");
 }
 api.onState(s => {
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
@@ -89,7 +99,7 @@ api.onState(s => {
     $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
     return;
   }
-  announce(b);
+  announce(b, s.status ?? null);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
   const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
@@ -104,12 +114,14 @@ api.onState(s => {
   wasStreaming = b.visible && b.streaming;
   document.body.dataset.mood = b.visible ? b.mood : "idle";
   document.body.classList.toggle("streaming", b.visible && b.streaming);
-  // A step the task row already shows isn't repeated.
-  const step = b.visible && b.step !== task?.detail ? b.step : null;
+  const actions = b.visible ? b.actions : [];
+  // Under a bubble the status line ("Using your mouse: move it to take over", "Waiting until you let go of the
+  // mouse…", "I only caught the first part…") takes the step's place: without a compositor it has nowhere else to
+  // show. A question keeps its keyboard hint there. A step the task row already shows isn't repeated.
+  const step = b.visible && s.status && actions.length === 0 ? s.status : b.visible && b.step !== task?.detail ? b.step : null;
   $("step").hidden = !step;
   $("step").textContent = step ?? "";
 
-  const actions = b.visible ? b.actions : [];
   document.body.classList.toggle("asking", actions.length > 0);
   $("actions").hidden = actions.length === 0;
   buttons($("actions"), actions, a => a.label);

@@ -1248,6 +1248,7 @@ export class Worker {
       if (verdict) return verdict;
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
+      this.inputValue = { value: keys };
       const result = await this.withCursor("keys", approved, async hand => {
         const now = await this.focusIn(approved !== undefined || activating);
         if (now === "blocked") throw new Error("That window is private now (a password prompt, or on the never-look list), so nothing was pressed.");
@@ -1259,7 +1260,7 @@ export class Worker {
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
         turn.into = now;
         await hand.keys(keys);
-      });
+      }).finally(() => { this.inputValue = {}; });
       if (!turn.moved) {
         if (result.resultType === "success") {
           const into = this.fieldOf(turn.into ?? approved);
@@ -1401,6 +1402,9 @@ export class Worker {
   }
 
   /** `afterBorrow`: runs once the mouse is given back, before the result is told (a paste waits for its text there). */
+  /** What the action lines of the input under way record beyond its kind (the keys pressed: "What Ember did" names them). */
+  private inputValue: Record<string, unknown> = {};
+
   private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>): Promise<ToolResultObject> {
     if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId, afterBorrow);
@@ -1450,12 +1454,12 @@ export class Worker {
       borrowOver();
       await afterBorrow?.();
       const after = verifyId !== undefined ? await this.sidecar.readElement(verifyId).catch(() => null) : null;
-      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 3 });
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 3, ...this.inputValue });
       return done(`Done with the user's mouse, which is back where it was.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
     } catch (err) {
       const tookOver = err instanceof UserTookOver;
       const msg = err instanceof Error ? err.message : String(err);
-      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: msg, ...(tookOver ? { tookOverAfterMs: err.afterMs } : {}) });
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 3, error: msg, ...this.inputValue, ...(tookOver ? { tookOverAfterMs: err.afterMs } : {}) });
       if (tookOver) this.userTookOver = true;
       if (tookOver) return denied("The user took the mouse back, so you stopped. Don't try again; finish the task and say what's left.");
       if (err instanceof BorrowStopped) return STOPPED();
@@ -1493,11 +1497,11 @@ export class Worker {
       await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check)); }, { idleMs: 0, window: win, signal: this.overSignal });
       await afterBorrow?.();
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
-      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2 });
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2, ...this.inputValue });
       return done(`Done on your desk.${after ? ` Now: ${describeAfter(after)}` : " Call perceive_window to check the result."}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: msg });
+      this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: msg, ...this.inputValue });
       if (err instanceof UserTookOver) return denied("The user took over your desk. Stop and finish the task, saying where you got to.");
       if (err instanceof BorrowStopped) return STOPPED();
       return fail(msg);
@@ -1575,7 +1579,7 @@ export class Worker {
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     this.asked = true;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id }, this.overSignal);
-    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, answer: this.isOver ? "stopped" : answer ?? "expired" });
+    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
