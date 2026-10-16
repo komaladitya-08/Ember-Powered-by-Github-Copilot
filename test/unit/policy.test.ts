@@ -1530,3 +1530,69 @@ describe("policy: request reading, review round 10", () => {
     expect(alignedWithGoal(goal, label)).toBe(false);
   });
 });
+
+describe("policy: review round 11", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act", firefox: "act", "gnome-control-center": "act", soffice: "act", zoom: "act" }), rateLimit: 1e6 });
+  const KONTO = "Kontoeinstellungen - Mozilla Thunderbird";
+  const BROKEN = "Meine E-Mails kommen nicht an, bitte repariere das";
+
+  it("a security setting is known in the languages that join words, and by more of its words (SEC11-1, SEC11-4)", () => {
+    const toggle = (name: string, onDesk: boolean) => e.decide({ taskId: "s", kind: "toggle", app: "thunderbird", window: KONTO, element: { role: "check box", name }, value: "on", goal: BROKEN, onDesk });
+    for (const name of ["Externe Inhalte in Nachrichten erlauben", "Gefährliche und betrügerische Inhalte blockieren", "Hauptpasswort verwenden", "Kontosicherheit",
+      "Zwei-Faktor-Authentifizierung", "Verbindingsbeveiliging", "Anslutningssäkerhet", "Forbindelsessikkerhed", "Tilkoblingssikkerhet", "Bağlantı güvenliği",
+      "Защита от фишинга", "保護を無効にする", "Autenticación en dos pasos", "Autoriser le contenu distant", "Screen Sharing", "Personal File Sharing",
+      "Block dangerous downloads", "Warn you about unwanted and uncommon software", "Don't enable HTTPS-Only Mode", "Bildschirmfreigabe"]) {
+      for (const onDesk of [false, true]) {
+        expect(toggle(name, onDesk), name).toMatchObject({ verdict: "confirm", reason: expect.stringMatching(/^this changes a security or privacy setting/), aligned: false });
+      }
+    }
+    // A choice: the connection's security from SSL/TLS to none.
+    expect(e.decide({ taskId: "s", kind: "select", app: "thunderbird", window: KONTO, element: { role: "combo box", name: "Verbindungssicherheit" }, value: "Keine", goal: BROKEN, onDesk: true }))
+      .toMatchObject({ verdict: "confirm", aligned: false });
+    // Other settings: as before.
+    for (const name of ["Nachrichten im Thread anzeigen", "Sicherungskopie erstellen", "Show icons in menus", "Schriftgröße anpassen"]) {
+      expect(toggle(name, true).verdict, name).toBe("allow");
+    }
+  });
+
+  it("a field or OK is a security setting's by its own name or its dialog's title, not by what else the page says (W11-2)", () => {
+    // Tools ▸ Options opens on User Data, whose Cryptography section is on the same page as the name fields.
+    const USER_DATA = { name: "Options - LibreOffice - User Data", text: "Address Company: First name: Last name: Initials: Street: City: Cryptography OpenPGP signing key: OpenPGP encryption key: When encrypting documents, always encrypt to self" };
+    const NAME = "Set my name in LibreOffice to Ana Lopez";
+    const inUserData = (o: Partial<ActionRequest>) => e.decide({ taskId: "s", kind: "click", app: "soffice", window: USER_DATA.name, windowId: { pid: 4, path: "/3", role: "dialog" },
+      dialog: USER_DATA, goal: NAME, ...o });
+    for (const onDesk of [false, true]) {
+      expect(inUserData({ kind: "text", element: { role: "text", name: "First name:" }, value: "Ana", mode: "replace", currentText: "", onDesk }).verdict).toBe("allow");
+      // A key on the user's own screen borrows their keyboard (asked for that alone); on the desk it's let be.
+      expect(inUserData({ kind: "keys", value: "A", element: { role: "text", name: "Last name:" }, onDesk }).reason).not.toMatch(/security/);
+      // Its OK is still asked, as any settings dialog's, but not as a security setting the user didn't ask for.
+      const ok = inUserData({ element: { role: "push button", name: "OK" }, onDesk });
+      expect(ok).toMatchObject({ verdict: "confirm", reason: "this applies what is set in a dialog, which may be the app's own settings" });
+      expect(ok.aligned).toBeUndefined();
+      expect(ok.prompt).not.toMatch(/You didn't ask/);
+      // The page's own security settings still are, by their names.
+      expect(inUserData({ kind: "toggle", element: { role: "check box", name: "When encrypting documents, always encrypt to self" }, value: "off", onDesk }))
+        .toMatchObject({ verdict: "confirm", reason: expect.stringMatching(/^this changes a security or privacy setting/), aligned: false });
+      expect(inUserData({ kind: "select", element: { role: "combo box", name: "OpenPGP signing key:" }, value: "None", onDesk }).verdict).toBe("confirm");
+      // A security page's fields and OK: as before.
+      const proxy = { name: "Options - LibreOffice - Proxy", text: "Settings Proxy server: HTTP proxy: Port:" };
+      expect(e.decide({ taskId: "s", kind: "text", app: "soffice", window: proxy.name, windowId: { pid: 4, path: "/3", role: "dialog" }, dialog: proxy, goal: NAME,
+        element: { role: "spin button", name: "Port:" }, value: "8080", mode: "replace", currentText: "", onDesk })).toMatchObject({ verdict: "confirm", aligned: false });
+    }
+    expect(inUserData({ kind: "keys", value: "A", element: { role: "text", name: "Last name:" }, onDesk: true }).verdict).toBe("allow");
+    // A request that names the setting in other words: asked, but not as something the user didn't ask for.
+    for (const [app, name, goal] of [["thunderbird", "Allow remote content in messages", "stop Thunderbird loading remote images"],
+      ["firefox", "Ask to save logins and passwords for websites", "make Firefox stop saving my logins"]]) {
+      const d = e.decide({ taskId: "s", kind: "toggle", app, window: "Settings", element: { role: "check box", name }, value: "off", goal, onDesk: true });
+      expect(d.verdict, goal).toBe("confirm");
+      expect(d.aligned, goal).toBeUndefined();
+    }
+  });
+
+  it("only LibreOffice's Zoom & View Layout is a formatting dialog, not one titled Zoom (SEC11-3)", () => {
+    const ok = (app: string, dialog: { name: string; text: string }) => e.decide({ taskId: "s", kind: "click", app, window: dialog.name, windowId: { pid: 4, path: "/3", role: "dialog" },
+      dialog, element: { role: "push button", name: "OK" }, goal: "join the meeting", onDesk: false });
+    expect(ok("zoom", { name: "Zoom", text: "This meeting is being recorded" }).verdict).toBe("confirm");
+    expect(ok("soffice", { name: "Zoom & View Layout", text: "Zoom factor Optimal Fit width and height" }).verdict).toBe("allow");
+  });
+});

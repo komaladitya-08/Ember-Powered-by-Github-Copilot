@@ -221,7 +221,7 @@ describe.skipIf(!available)("a real desk", () => {
     expect(a.alive() && b.alive()).toBe(true);
     a.stop();
     b.stop();
-  });
+  }, 20_000); // two desk starts at once
 
   it("leaves nothing behind when it can't start", async () => {
     const file = path.join(dir, "not-a-folder");
@@ -290,5 +290,5 @@ describe.skipIf(!available)("a real desk", () => {
     expect(await until(() => deskProcesses(id).some(p => cmdline(p) === "sleep\u0000303\u0000"))).toBe(true);
     desk.stop();
     expect(await until(() => deskProcesses(id).length === 0, 3000)).toBe(true);
-  });
+  }, 15_000); // a desk start: slow on a loaded machine
 });

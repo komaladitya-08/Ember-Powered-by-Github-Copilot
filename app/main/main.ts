@@ -1196,8 +1196,8 @@ function start(): void {
       },
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
-        // The handle says why Ember can't answer yet, instead of "Ready".
-        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : status.waitingForTasks ? "Reconnecting after the tasks" : "Not connected" });
+        // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
+        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : status.waitingForTasks ? "Waiting for tasks" : "Not connected" });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).

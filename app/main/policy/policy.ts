@@ -418,7 +418,7 @@ const formatsDisk = (label: string, context = "") => FORMAT_LABEL.test(foldLabel
  */
 const SECURITY_STEMS = ["secur", "insecur", "unsafe", "macro", "trust", "untrust", "distrust", "proxy", "proxies", "certificat", "password",
   "passphrase", "passcode", "encrypt", "decrypt", "cryptograph", "privacy", "permission", "firewall", "authenticat", "two-factor", "2fa",
-  "remote content", "phishing", "malware", "virus", "scam", "fraud", "deceptive",
+  "remote content", "remote image", "logins", "phishing", "malware", "virus", "scam", "fraud", "deceptive",
   "sicherheit", "unsicher", "makro", "vertrau", "zertifikat", "passwort", "kennwort", "verschlüssel", "datenschutz", "privatsphäre", "berechtigung",
   "confiance", "approuvé", "mandataire", "certificat", "mot de passe", "mots de passe", "chiffr", "confidentialité", "vie privée", "autorisation",
   "pare-feu", "seguridad", "insegur", "confianza", "fiable", "certificad", "contraseña", "cifrad", "privacidad", "permiso", "cortafuegos",
@@ -430,10 +430,23 @@ const SECURITY_STEMS = ["secur", "insecur", "unsafe", "macro", "trust", "untrust
   "usikker", "betroe", "klarert", "mellomtjener", "sertifikat", "adgangskode", "passord", "kryptering", "privatliv", "personvern", "tilladelse",
   "tillatelse", "brannmur", "suojaus", "tietoturva", "turvaton", "luotet", "välityspalvelin", "varmen", "salasan", "salaus", "yksityisyy",
   "käyttöoikeu", "palomuuri", "zabezpeč", "bezpečnost", "nebezpeč", "důvěryhodn", "certifikát", "hesl", "šifrován", "soukrom", "oprávnění",
-  "güvenlik", "güvensiz", "güvenilir", "vekil sunucu", "sertifika", "şifre", "gizlilik", "izinler"];
+  "güvenlik", "güvenliğ", "güvensiz", "güvenilir", "vekil sunucu", "sertifika", "şifre", "gizlilik", "izinler",
+  // Authentication, protection, remote content, deception and sharing the screen or files, besides English.
+  "authentifi", "autentic", "autentis", "uwierzytelni", "аутентифик", "защит", "externe inhalt", "entfernte inhalt", "contenu distant",
+  "contenus distant", "contenido remot", "contenuti remot", "contenuto remot", "conteúdo remot", "externe inhoud", "fjärrinnehåll", "betrüger",
+  "trompeu", "ingannevol", "enganos", "misleidend",
+  "dangerous", "unwanted software", "uncommon software", "https-only", "safe browsing", "screen shar", "file shar", "remote desktop",
+  "remote access", "remote login", "remote control", "control your screen", "bildschirmfreigabe"];
+/**
+ * The same that are also the end of a word, in the languages that join words ("Verbindungssicherheit", "Hauptpasswort",
+ * "Verbindingsbeveiliging", "Anslutningssäkerhet", "Forbindelsessikkerhed", "pääsalasana").
+ */
+const SECURITY_INSIDE = ["sicherheit", "passwort", "kennwort", "zertifikat", "verschlüssel", "datenschutz", "berechtigung", "beveilig", "wachtwoord",
+  "versleutel", "säkerhet", "lösenord", "certifikat", "krypter", "sikkerhed", "sikkerhet", "adgangskode", "passord", "sertifikat", "salasan",
+  "tietoturva", "suojaus"];
 const SECURITY_ANYWHERE = ["セキュリティ", "マクロ", "信頼", "プロキシ", "証明書", "パスワード", "暗号", "プライバシー", "権限", "ファイアウォール", "安全", "信任",
   "代理", "证书", "證書", "密码", "密碼", "加密", "隐私", "隱私", "权限", "權限", "防火墙", "防火牆", "보안", "매크로", "신뢰", "프록시", "인증서", "암호",
-  "비밀번호", "개인 정보", "권한", "방화벽"];
+  "비밀번호", "개인 정보", "권한", "방화벽", "保護", "認証", "保护", "验证", "인증", ...SECURITY_INSIDE];
 const SECURITY_WORD = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(SECURITY_STEMS.join("|"))})|${foldLabel(SECURITY_ANYWHERE.join("|"))}`, "u");
 /**
  * A setting that says it weakens a protection: "Low (not recommended)", "Allow all", "Never ask", "Disable phishing
@@ -1492,7 +1505,7 @@ const FORMAT_DIALOGS = ["format cells", "cell style", "paragraph", "paragraph st
   "text attributes", "position and size", "border / background", "borders", "wrap", "frame", "image", "image properties", "insert table",
   "insert cells", "insert rows?", "insert columns?", "insert break", "insert sheet", "insert caption", "caption", "insert footnote/endnote",
   "split cells", "split table", "sort", "standard filter", "fill series", "format number", "number format", "conditional formatting( for .*)?",
-  "autoformat", "zoom & view layout", "zoom", "go to page", "go to sheet", "go to line", "special characters", "insert character", "font",
+  "autoformat", "zoom & view layout", "go to page", "go to sheet", "go to line", "special characters", "insert character", "font",
   "fonts", "font features", "select (a )?font", "choose (a )?font", "pick a font", "select (a )?colou?r", "pick a colou?r", "choose (a )?colou?r",
   "text colou?r", "background colou?r", "page colou?rs and background", "hyperlink", "insert link", "link properties", "insert image",
   "text import", "line numbering", "headers/footers", "headers", "footers", "title page", "watermark",
@@ -1586,6 +1599,11 @@ export class PolicyEngine {
     // Security, a proxy's), or one that says it weakens a protection ("Low (not recommended)", "Allow all"): asked
     // whatever the grant, and checked against the request with its dialog's title where its own words say no more.
     const secureDialog = !!r.dialog && securityTalk(told);
+    // A field (or the dialog's OK) is a security setting's by its own name or the dialog's title ("Options - LibreOffice -
+    // Proxy", "Macro Security"), not because the page says so somewhere: User Data's name fields sit beside its
+    // Cryptography section.
+    const secureTitle = !!r.dialog && securityTalk(r.dialog.name);
+    const secureField = secureTitle || securityTalk(name);
     const secure = (what: string): Risk => ({ reason: SECURITY_SETTING, about: securityTalk(what) || !r.dialog ? what : `${what} ${r.dialog.name}`.trim() });
     // A dialog about a file someone else is using or has changed (LibreOffice's "Document in Use", "Document Has Been
     // Changed by Others"): going ahead anyway ("Open", "Save Anyway") is asked; backing off (Cancel, read-only) isn't.
@@ -1612,8 +1630,9 @@ export class PolicyEngine {
     // A dialog asked about only as one that may hold the app's settings: its title says which.
     const settings = !!r.dialog && !questions && !lone && !!r.dialog.name.trim();
     const answer: Risk | false = (agrees || lone) && (settings ? {
-      reason: secureDialog ? "this applies security or privacy settings" : "this applies what is set in a dialog, which may be the app's own settings",
-      about: asks, note: `It applies what is set in ${quote(r.dialog!.name.replace(/\s+/g, " ").trim(), 70)}.`,
+      reason: secureTitle ? "this applies security or privacy settings" : "this applies what is set in a dialog, which may be the app's own settings",
+      // Checked against the request by its title: the page's other words (a Cryptography section) don't make it off-task.
+      about: secureTitle ? asks : `${name} ${r.dialog!.name}`, note: `It applies what is set in ${quote(r.dialog!.name.replace(/\s+/g, " ").trim(), 70)}.`,
     } : {
       reason: r.dialog && !isRiskyLabel(lone ? says : asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo",
       about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note,
@@ -1641,7 +1660,7 @@ export class PolicyEngine {
         // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
         if (r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         // A field of a security setting (a proxy's address, Macro Security's trusted places).
-        if (r.element && (secureDialog || securityTalk(name))) return secure(name);
+        if (r.element && secureField) return secure(name);
         const current = r.currentText ?? "";
         // What this task typed there itself is no one else's: rewriting it is no loss.
         if (r.mode === "replace" && !r.ownText && (current.length > 80 || current.includes("\n"))) {
@@ -1662,7 +1681,7 @@ export class PolicyEngine {
         if (r.formula !== undefined && reachesOut(r.formula) && !/^(escape|backspace)$/.test(k)) return REACHES_OUT;
         // In a security setting's dialog, on such a setting or in such a field, a key may change it (an arrow picks another
         // radio button, Space ticks a box, a letter types an address): asked, but for moving on (Tab) or backing out (Escape).
-        const keyed = secureDialog || (SETTING_ROLES.test(role) && securitySetting(name)) || (TEXT_FIELD.test(role) && securityTalk(name));
+        const keyed = (TEXT_FIELD.test(role) ? secureField : secureDialog) || (SETTING_ROLES.test(role) && securitySetting(name));
         if (keyed && !/^(shift\+)?(tab|escape)$/.test(k)) return secure(name);
         // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
         // type_text's "replace"): judged by the real selection where the screen reader tells it.
