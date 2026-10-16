@@ -116,6 +116,8 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
   const where = e.app ? `in ${friendlyApp(e.app)}` : "";
   const target = [control, where].filter(Boolean).join(" ");
   const chosen = typeof e.value === "string" && e.value ? e.value : "";
+  // On Ember's desk the keyboard and the mouse are the desk's own, not the user's.
+  const deskless = (s: string) => (e.tier === 2 || e.onDesk === true ? s.replace(/ \(your (keyboard|mouse)\)$/, "") : s);
   // Keys say which ("Press Ctrl+S in Mousepad"): the field they went to adds nothing.
   const what = e.kind === "keys"
     ? [chosen ? `Press ${keyLabel(chosen)}` : "Press keys", where].filter(Boolean).join(" ")
@@ -124,7 +126,7 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
       ? [`Choose “${chosen}”`, e.element.name ? `for “${e.element.name}”` : "", where].filter(Boolean).join(" ")
       // A guide step the user did themselves (a click, or Enter or Space on it).
       : e.kind === "user_clicked" ? `You used ${target || "it"}`
-        : `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
+        : `${deskless(KIND[e.kind ?? ""] ?? e.kind ?? "")} ${target}`.trim();
   switch (e.event) {
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };
@@ -134,7 +136,7 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
       // Several cells filled with one question (fill_cells): one line for them all, on the last cell's decision.
       if (typeof e.batch === "number") {
         if (e.at !== e.batch - 1 || (e.batchVerdict !== "ask" && e.batchVerdict !== "deny")) return null;
-        const fill = [`Fill ${e.batch} cells (your keyboard)`, where].filter(Boolean).join(" ");
+        const fill = [deskless(`Fill ${e.batch} cells (your keyboard)`), where].filter(Boolean).join(" ");
         return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? e.batchReason : undefined };
       }
       if (e.verdict === "allow") return null; // the action line that follows says it

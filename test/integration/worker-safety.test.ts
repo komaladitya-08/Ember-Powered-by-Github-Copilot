@@ -24,7 +24,7 @@ import { electronClipboard } from "../../app/main/agent/clipboard";
 import { TaskManager } from "../../app/main/agent/tasks";
 import { CursorBorrow } from "../../app/main/hands/borrow";
 import type { XInput } from "../../app/main/hands/input";
-import { PolicyEngine, type Grant } from "../../app/main/policy/policy";
+import { PolicyEngine, type Agreement, type Grant } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 import { SettingsStore } from "../../app/main/settings";
 import { locateRuntime } from "../../app/main/agent/runtime";
@@ -106,7 +106,7 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
 function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
   grants?: Record<string, Grant>; confirmer?: Confirmer; flyTo?: WorkerDeps["flyTo"]; limits?: WorkerDeps["limits"]; target?: { title: string; app?: string };
   progress?: (s: string) => void; id?: string; cursor?: WorkerDeps["cursor"]; clipboard?: WorkerDeps["clipboard"];
-  desk?: WorkerDeps["desk"]; model?: string | null; isTerminalApp?: (name: string) => boolean; userWords?: string; screen?: string;
+  desk?: WorkerDeps["desk"]; model?: string | null; isTerminalApp?: (name: string) => boolean; userWords?: string; screen?: string; agreed?: Agreement[];
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
@@ -126,7 +126,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     cursor: o.cursor,
     clipboard: o.clipboard,
     desk: o.desk,
-  } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" }, ...(o.userWords !== undefined ? { userWords: o.userWords } : {}), ...(o.screen ? { screen: o.screen } : {}) });
+  } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" }, ...(o.userWords !== undefined ? { userWords: o.userWords } : {}), ...(o.agreed ? { agreed: o.agreed } : {}), ...(o.screen ? { screen: o.screen } : {}) });
   made.push(w);
   return w;
 }
@@ -1683,6 +1683,35 @@ describe("review round 3: what Ember asks about is what it does", () => {
         await makeWorker(screen, "Make the title bold", { grants: {}, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
         expect(asked.map(a => a.prompt)).toEqual(["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
           "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]);
+      });
+
+      it("a risky step named in Ember's question the user said yes to is asked, saying so, and later steps aren't all asked; one it didn't name still is (AC11-1)", async () => {
+        const offer = { asked: "I can delete all the old installers there. Shall I?", answer: "sure, go ahead" };
+        for (const [agreed, prompts] of [
+          [[offer], ["Click “Delete all” push button in Testapp? You said “sure, go ahead” when I asked about this."]],
+          // Ember's question offered something else, or passed on what a page asks: flagged, and every step after it asked.
+          [[{ ...offer, asked: "I can archive the old installers. Shall I?" }], ["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+            "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
+          [[{ ...offer, asked: "The page asks you to delete all the installers. Shall I?" }], ["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+            "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
+        ] as const) {
+          const goal = `Clean up my Downloads folder (${agreed[0].asked.slice(0, 12)})`;
+          plan(goal, [perceive, { tool: { name: "click", args: { id: 1 } } }, { tool: { name: "click", args: { id: 2 } } }]);
+          const screen = fakeScreen([{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "push button", name: "Bold" }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(screen, goal, { userWords: "Clean up my Downloads folder.\nsure, go ahead", agreed: [...agreed], confirmer: asking(["once"], asked) }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), agreed[0].asked).toEqual(prompts);
+          expect(screen.log.filter(l => l.what.startsWith("doAction")), agreed[0].asked).toHaveLength(2);
+        }
+        // A change of plan answering Ember's question carries it too.
+        plan("Tidy the drafts (steered)", [perceive, { tool: { name: "click", args: { id: 1 } } }]);
+        const screen = fakeScreen([{ id: 1, role: "push button", name: "Delete drafts" }]);
+        const read = screen.perception.perceive;
+        const q: { prompt: string; options: string[] }[] = [];
+        const w = makeWorker(screen, "Tidy the drafts (steered)", { userWords: "tidy my drafts", confirmer: asking(["deny"], q) });
+        screen.perception.perceive = async () => { await w.steer("delete the old drafts", "ok", undefined, [{ asked: "Should I delete the old drafts too?", answer: "ok" }]); return read(); };
+        await w.run(new AbortController().signal);
+        expect(q.map(a => a.prompt)).toEqual(["Click “Delete drafts” push button in Testapp? You said “ok” when I asked about this."]);
       });
 
       it("on the user's screen, keys that select as they move join the run of keys that only move (W8-7)", async () => {

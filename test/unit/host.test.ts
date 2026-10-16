@@ -89,6 +89,7 @@ import { AgentHost, CUT_OFF, proxyFromChromium, type AgentStatus, type HostOptio
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
+import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -1065,20 +1066,25 @@ describe("review round 6: a request sent while the conversation is busy waits fo
   async function withTasks(extra: Partial<HostOptions> = {}) {
     const made = makeHost({ hands: hands(), ...extra });
     await made.host.start(TOKEN, "stored");
-    const specs: { goal: string; userWords?: string; screen?: string; target?: { title: string }; mode?: string }[] = [];
+    const specs: { goal: string; userWords?: string; agreed?: Agreement[]; screen?: string; target?: { title: string }; mode?: string }[] = [];
     const steered: [string, string | undefined, string | undefined][] = [];
+    /** What Ember's questions each change of plan carried as agreed to (AC11-1). */
+    const steeredAgreed: (Agreement[] | undefined)[] = [];
+    /** Tasks with these goals finish at once, saying this. */
+    const results = new Map<string, string>();
     const d = (made.host.tasks as any).d;
     d.makeWorker = (spec: (typeof specs)[number]) => {
       specs.push(spec);
+      const said = results.get(spec.goal);
       return {
-        run: (signal: AbortSignal) => new Promise(r => signal.addEventListener("abort", () => r({ success: false, summary: "Stopped." }))),
-        steer: async (text: string, words?: string, screen?: string) => { steered.push([text, words, screen]); return true; },
+        run: (signal: AbortSignal) => said !== undefined ? Promise.resolve({ success: true, summary: said }) : new Promise(r => signal.addEventListener("abort", () => r({ success: false, summary: "Stopped." }))),
+        steer: async (text: string, words?: string, screen?: string, agreed?: Agreement[]) => { steered.push([text, words, screen]); steeredAgreed.push(agreed); return true; },
         dispose: async () => undefined,
       };
     };
     const session = conductorSession();
     const tool = (name: string) => (args: Record<string, unknown> = {}) => session.config.tools.find((t: { name: string }) => t.name === name).handler(args, {});
-    return { ...made, specs, steered, session, tool };
+    return { ...made, specs, steered, steeredAgreed, results, session, tool };
   }
   const mail = { target: { pid: 1, title: "Mail" }, text: "<screen>Mail: Inbox (3)</screen>" };
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
@@ -1175,6 +1181,111 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await vi.waitFor(() => expect(specs).toHaveLength(4));
     expect(specs[3].userWords).toBe("Rename it");
     await host.stop();
+  });
+
+  describe("an answer or a yes to Ember's question carries that question as agreed to (review round 11, AC11-1)", () => {
+    async function talk() {
+      const made = await withTasks();
+      const { host, specs, session, tool } = made;
+      const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };
+      /** The spec of the task started now; the tasks so far stop (two run at a time). */
+      const started = async (goal: string) => {
+        const n = specs.length;
+        await tool("start_task")({ goal });
+        await vi.waitFor(() => expect(specs).toHaveLength(n + 1));
+        for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+        return specs[n];
+      };
+      /** Asks these in turn, Ember answering each (but the last) with the line after it. */
+      const convo = async (...lines: string[]) => {
+        for (let i = 0; i < lines.length; i += 2) {
+          await host.ask(lines[i], mail);
+          if (i + 1 < lines.length) say(lines[i + 1]);
+        }
+      };
+      return { ...made, say, started, convo };
+    }
+    const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
+    const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({ nautilus: "act", thunderbird: "act" }) });
+    const judge = (spec: { userWords?: string; agreed?: Agreement[] }, app: string, name: string) =>
+      engine.decide({ taskId: "x", kind: "click", app, window: "W", element: { role: "push button", name }, goal: spec.userWords, agreed: spec.agreed });
+
+    it("a yes to Ember's offer: the step it offered is asked, saying so, not flagged as unasked", async () => {
+      const { host, convo, started } = await talk();
+      await convo("Clean up my Downloads folder", SHALL_I, "sure, go ahead");
+      const spec = await started("delete the old installers in Downloads");
+      expect(spec).toMatchObject({ userWords: "Clean up my Downloads folder.\nsure, go ahead", agreed: [{ asked: SHALL_I, answer: "sure, go ahead" }] });
+      const d = judge(spec, "nautilus", "Delete");
+      expect(d).toMatchObject({ verdict: "confirm", agreed: true });
+      expect(d.aligned).toBeUndefined();
+      expect(d.prompt).toMatch(/You said “sure, go ahead” when I asked about this\.$/);
+      // Without the question it was flagged (W10-2 carried only the user's own words).
+      expect(judge({ userWords: spec.userWords }, "nautilus", "Delete").aligned).toBe(false);
+      await host.stop();
+    });
+
+    it("a task's result asking: the reply right after it agrees to it, not one later; a question with a sentence after it is one", async () => {
+      const { host, results, convo, started } = await talk();
+      results.set("draft the lunch email to Ana", "Drafted the email to Ana about lunch. Want me to send it?");
+      await convo("Write an email to Ana about lunch");
+      await started("draft the lunch email to Ana");
+      await vi.waitFor(() => expect(host.getTranscript().at(-1)?.who).toBe("task"));
+      await convo("yes");
+      const yes = await started("send the lunch email to Ana");
+      expect(yes).toMatchObject({ userWords: "yes", agreed: [{ asked: "Drafted the email to Ana about lunch. Want me to send it?", answer: "yes" }] });
+      expect(judge(yes, "thunderbird", "Send")).toMatchObject({ verdict: "confirm", agreed: true });
+      // The title the conversation wrote isn't what the task asked.
+      expect(yes.agreed![0].asked).not.toMatch(/lunch email to Ana:/);
+      results.set("draft the memo", "Drafted the memo. Want me to send it?");
+      await convo("Draft the memo");
+      await started("draft the memo");
+      await vi.waitFor(() => expect(host.getTranscript().at(-1)?.who).toBe("task"));
+      await convo("is it raining?", "No, it's sunny. Anything else?", "ok");
+      const later = await started("send the memo");
+      expect(later.agreed).toEqual([{ asked: "No, it's sunny. Anything else?", answer: "ok" }]);
+      expect(judge(later, "thunderbird", "Send").aligned).toBe(false);
+      // (c) A question followed by a sentence still asks: the request it answers comes with the answer.
+      await convo("Email the report to the team", "Sure. Which report: the Q3 summary or the forecast? I can also attach both.", "the forecast");
+      const report = await started("email the forecast to the team");
+      expect(report.userWords).toBe("Email the report to the team.\nthe forecast");
+      expect(judge(report, "thunderbird", "Send").aligned).toBeUndefined();
+      await host.stop();
+    });
+
+    it("a no, something else, thanks or a new request carries none of Ember's words; nor a question over ten minutes old", async () => {
+      const { host, convo, started } = await talk();
+      for (const reply of ["no", "No thanks", "not now", "something else", "Open Firefox", "later", "delete my mail instead"]) {
+        await convo("Clean up my Downloads folder", SHALL_I, reply);
+        const spec = await started("delete the old installers");
+        expect(spec.agreed, reply).toBeUndefined();
+        expect(judge(spec, "nautilus", "Delete").agreed, reply).toBeUndefined();
+      }
+      // Ember's words that ask nothing.
+      await convo("Clean up my Downloads folder", "I can delete the 12 installers there older than a month.", "ok");
+      expect((await started("delete the old installers")).agreed).toBeUndefined();
+      // A question answered over ten minutes later.
+      await convo("Clean up my Downloads folder", SHALL_I);
+      const log = (host as any).transcript as { t: string }[];
+      log.at(-1)!.t = new Date(Date.now() - 11 * 60_000).toISOString();
+      await convo("yes");
+      expect((await started("delete the old installers")).agreed).toBeUndefined();
+      await host.stop();
+    });
+
+    it("(a) a change of plan takes the request the answer answers, and the question agreed to", async () => {
+      const { host, steered, steeredAgreed, convo, tool, specs } = await talk();
+      await convo("Tidy my inbox");
+      await tool("start_task")({ goal: "tidy the inbox" });
+      await vi.waitFor(() => expect(specs).toHaveLength(1));
+      await convo("Also delete the old drafts", "Which account, work or home?", "work");
+      await tool("steer_task")({ id: host.tasks!.list()[0].id, instruction: "also delete the old drafts in the work account" });
+      expect(steered.at(-1)!.slice(0, 2)).toEqual(["also delete the old drafts in the work account", "Also delete the old drafts.\nwork"]);
+      expect(steeredAgreed.at(-1)).toEqual([{ asked: "Which account, work or home?", answer: "work" }]);
+      await convo("Should I tidy the archive too?", "I can empty the archive folder too. Want me to?", "yes please");
+      await tool("steer_task")({ id: host.tasks!.list()[0].id, instruction: "empty the archive folder too" });
+      expect(steeredAgreed.at(-1)).toEqual([{ asked: "I can empty the archive folder too. Want me to?", answer: "yes please" }]);
+      await host.stop();
+    });
   });
 });
 

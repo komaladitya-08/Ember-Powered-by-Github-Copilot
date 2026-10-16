@@ -258,6 +258,12 @@ export const TOOL_STEPS: Record<string, string> = {
   finish_task: "Wrapping up",
 };
 
+/** A tool's step as the bubble and the card say it: on Ember's desk the keyboard and the mouse are the desk's own, not the user's. */
+export function stepOf(tool: string, onDesk = false): string | undefined {
+  const step = TOOL_STEPS[tool];
+  return step && onDesk ? step.replace(/ \(your (keyboard|mouse)\)$/, "") : step;
+}
+
 /** The bubble's title while a turn under way hears nothing from Copilot (see TurnWatch). */
 export const STILL_WAITING = "Still waiting for Copilot…";
 
@@ -291,6 +297,8 @@ export class Presenter {
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
   /** How the bubble this presenter shows claimed it (see Claim). */
   kind: Claim = "progress";
+  /** Its task works on Ember's desk now: its steps don't say "your keyboard" or "your mouse" (stepOf). */
+  onDesk = false;
   /** How this presenter's own work claims the bubble. */
   private readonly work: Claim;
   /** Shared by every presenter writing the same bubble. */
@@ -597,6 +605,9 @@ export class Presenter {
         break;
       }
       case "assistant.message_delta": {
+        // The answer before goes on after a newer question was asked (its turn hasn't begun): its words replace that
+        // question's "Thinking…" from mid-sentence, so its message, when it comes, shows it whole (with "Read all").
+        if (this.asked !== null) this.askedOverAnswer = false;
         if (!this.answering) { this.answering = true; this.answer = ""; }
         this.answer += String(d.deltaContent ?? "");
         this.apply({
@@ -613,7 +624,7 @@ export class Presenter {
         const guiding = name === "wait_for_click" || name === "point_at";
         this.apply({
           emotion: guiding ? "happy" : "focused", talking: false, gesture: TOOL_GESTURES[name] ?? "rest",
-          bubble: { ...this.state.bubble, visible: true, mood: guiding ? "guiding" : "acting", step: TOOL_STEPS[name] ?? name, streaming: !guiding },
+          bubble: { ...this.state.bubble, visible: true, mood: guiding ? "guiding" : "acting", step: stepOf(name, this.onDesk) ?? name, streaming: !guiding },
         });
         break;
       }

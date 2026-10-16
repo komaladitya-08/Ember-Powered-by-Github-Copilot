@@ -18,11 +18,11 @@ import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
-import { TOOL_STEPS, type Presenter } from "./presenter";
+import { stepOf, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import type { AuditEntry, AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
@@ -106,6 +106,11 @@ export interface TaskSpec {
    * them (tests) the goal stands in.
    */
   userWords?: string;
+  /**
+   * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
+   * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
+   */
+  agreed?: Agreement[];
   /** What Ember's conversation read on the user's screen in that turn (untrusted): text from it typed into a window is asked about. */
   screen?: string;
   /** The window the user was in when they asked. */
@@ -633,6 +638,8 @@ export class Worker {
   private tainted = false;
   /** What the user asked for in their own words, with what they added since (steer): what the policy checks risky steps against. */
   private userWords: string;
+  /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
+  private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
   private declined = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
@@ -674,6 +681,7 @@ export class Worker {
     this.target = { ...spec.target };
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
+    this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
@@ -704,6 +712,8 @@ export class Worker {
     this.labels = new Map();
     this.window = { app: "", name: "" };
     this.frame = null;
+    // Its steps there use the desk's own keyboard and mouse, not the user's.
+    this.d.presenter.onDesk = place !== null;
     this.d.onDesk?.(place, previous);
   }
 
@@ -969,7 +979,8 @@ export class Worker {
         // The task card follows the current step ("Typing…"); the model's own progress notes replace it.
         if (e.type === "tool.execution_start") {
           const name = String((e.data as { toolName?: string }).toolName ?? "");
-          if (name !== "report_progress" && name !== "finish_task" && TOOL_STEPS[name]) d.onProgress(`${TOOL_STEPS[name]}…`);
+          const step = stepOf(name, !!this.place);
+          if (name !== "report_progress" && name !== "finish_task" && step) d.onProgress(`${step}…`);
         }
       });
       if (!this.halted) {
@@ -1033,10 +1044,11 @@ export class Worker {
 
   /**
    * The user's new instruction for this running task ("use Firefox instead"); `userWords`: what the user said in that
-   * turn; `screen`: what the conversation read on the screen then.
+   * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec).
    */
-  async steer(text: string, userWords?: string, screen?: string): Promise<boolean> {
+  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[]): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
+    if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
       const had = this.read.get("described")?.text;
       this.read.set("described", { app: "", window: "", text: (had ? `${screen}\n${had}` : screen).slice(0, READ_TEXT_MAX), described: true });
@@ -1960,7 +1972,7 @@ export class Worker {
     this.keyed = { window: "", selected: null };
     this.moving = null;
     const base = { taskId: this.spec.id, kind: "cursor_text" as const, app: this.window.app, window: this.window.name, mode: "replace" as const,
-      onDesk: !!this.place, goal: this.userWords, readFrom: [...this.read.values()], windowId: this.windowId };
+      onDesk: !!this.place, goal: this.userWords, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
     const judged = jobs.map((job, i) => {
@@ -1980,7 +1992,7 @@ export class Worker {
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     for (const [i, { req, d }] of judged.entries()) {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...batch });
+      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...batch });
     }
     if (no) return denied(`Not allowed in ${no.job.cell}: ${no.d.reason}. Nothing was typed. Don't try another way for that cell; fill the others without it if that still makes sense, and tell the user in finish_task.`);
     const out = jobs.find(j => reachesOut(j.text));
@@ -2005,7 +2017,7 @@ export class Worker {
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     this.asked = true;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id }, this.overSignal);
-    this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", answer: this.isOver ? "stopped" : answer ?? "expired" });
+    this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
     this.declined = true;
@@ -2727,7 +2739,7 @@ export class Worker {
     // Text going into a field is judged after what this task typed into the window's other fields too.
     const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "") ?? "" : "";
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
-    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
+    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
@@ -2748,7 +2760,7 @@ export class Worker {
     }
     // "Allow" earlier in this task covers ordinary steps in that app, but not once something on screen tried to steer Ember.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted && this.allowedApps.has(req.app.toLowerCase());
-    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}) });
+    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
     if (decision.verdict === "allow" || sessionAllowed) return null;
     // "Always in this app" isn't offered once something on screen tried to steer Ember.
@@ -2759,7 +2771,7 @@ export class Worker {
     const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
     this.asked = true;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id }, this.overSignal);
-    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), answer: this.isOver ? "stopped" : answer ?? "expired" });
+    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });

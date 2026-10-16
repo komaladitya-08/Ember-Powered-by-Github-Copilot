@@ -97,11 +97,19 @@ export interface ActionRequest {
   onDesk?: boolean;
   /** What the user asked for, in their own words (for the task-alignment check). */
   goal?: string;
+  /**
+   * Ember's questions the user answered with a yes or a choice ("I can delete the old installers. Shall I?" "Sure."): a
+   * risky step one of them names isn't flagged as unasked, but it is asked about all the same. Never part of `goal`.
+   */
+  agreed?: Agreement[];
   /** The window acted in, as perception names it, when known. */
   windowId?: WindowId;
   /** Windows this task has read (or seen listed): text typed or pasted into another window may carry what was read there. */
   readFrom?: ReadSource[];
 }
+
+/** A question of Ember's (`asked`: what the user saw it ask) and the user's reply to it (`answer`), a yes or a choice. */
+export interface Agreement { asked: string; answer: string }
 
 /** A window by its process and accessible path (with the pid, they name one window whatever its title), and its role. */
 export interface WindowId { pid?: number | null; path?: string; role?: string }
@@ -126,6 +134,8 @@ export interface Decision {
   remember?: boolean;
   /** False when a risky action names nothing the user asked for (shown in the question). */
   aligned?: boolean;
+  /** A risky action named only in a question of Ember's the user answered (`agreed`): asked, saying so, not flagged. */
+  agreed?: boolean;
   /** Ask every time: an earlier "Allow" in this task doesn't cover it. */
   everyTime?: boolean;
   /** The on-screen words that make it risky (checked against what the user asked for). */
@@ -1252,6 +1262,22 @@ export function alignedWithGoal(goal: string | undefined, element: string, o: { 
   return true;
 }
 
+/** Ember offering, before what it offers to do ("I can", "shall I", "want me to", "would you like me to"). */
+const OFFER = /^(?:(?:so|ok|okay|sure|well|alright|also|then|and|or)\b[,\s—–-]*)*(?:(?:shall|should|can|could|may)\s+(?:i|we)\b|(?:do\s+you\s+)?want\s+me\s+to\b|would\s+you\s+like\s+(?:me\s+)?to\b|is\s+it\s+ok(?:ay)?\s+(?:if\s+i|to)\b|(?:i|we)\s+(?:can|could|will|might)(?![\p{L}'’])(?:\s+also\b)?|i['’]ll\b|we['’]ll\b|let\s+me\b)\s*/iu;
+
+/**
+ * A question of Ember's, read as the request the user made by answering it yes: only its own offers, each without the
+ * offer before the verb and without its question mark ("I can delete the old installers. Shall I?": "delete the old
+ * installers"; "Want me to send it?": "send it"). Its other sentences aren't offers (what it read on the screen, "the
+ * page asks you to…", a list, a bare "Delete them?"), and what an offer says Ember won't do, or quotes, isn't asked for.
+ */
+function offered(asked: string): string {
+  return asked.split(/(?<=[.!?？])\s+|\n+/).map(s => s.trim()).flatMap(s => {
+    const offer = s.replace(OFFER, "");
+    return offer === s ? [] : [offer.replace(/[?？]$/, ".")];
+  }).join("\n");
+}
+
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const quote = (s: string, max = 60) => `“${s.length > max ? s.slice(0, max - 1) + "…" : s}”`;
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
@@ -1565,7 +1591,20 @@ export class PolicyEngine {
     const says = !!d.about && d.about !== r.element?.name && !(r.kind === "select" && d.about === r.value);
     // A row, cell, icon or list item is named by what it holds (a mail's subject): that isn't a request to check against.
     const content = CONTENT_ROLES.test(role) && d.about === r.element?.name;
-    if (d.about && !content && !alignedWithGoal(r.goal, d.about, { setting: TOGGLE_ROLES.test(role), disk, says })) {
+    const how = { setting: TOGGLE_ROLES.test(role), disk, says };
+    if (d.about && !content && !alignedWithGoal(r.goal, d.about, how)) {
+      // Named in a question of Ember's the user answered with a yes or a choice ("I can delete the old installers. Shall
+      // I?" "Sure."): not flagged as unasked, but asked all the same, quoting their answer. Never a security setting.
+      const about = d.about;
+      const yes = securitySetting(about) || d.reason === SECURITY_SETTING ? undefined : r.agreed?.find(a => {
+        const offer = offered(a.asked);
+        // (No offer in it: nothing was agreed to, not everything.)
+        return /[\p{L}\p{N}]/u.test(offer) && alignedWithGoal(offer, about, how);
+      });
+      if (yes) {
+        return { ...d, verdict: "confirm", tier: "confirm", remember: false, everyTime: true, agreed: true, reason: `${d.reason}; named in Ember's question the user answered`,
+          prompt: `${d.prompt} You said ${quote(yes.answer.replace(/\s+/g, " ").trim(), 40)} when I asked about this.` };
+      }
       return { ...d, remember: false, aligned: false, everyTime: true, reason: `${d.reason}; not something the user asked for`, prompt: `${d.prompt} You didn't ask for this, so say no if it looks wrong.` };
     }
     // The administrator wants a click before every action.

@@ -1531,6 +1531,50 @@ describe("policy: request reading, review round 10", () => {
   });
 });
 
+describe("policy: a risky step named in Ember's question the user answered (review round 11, AC11-1)", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ nautilus: "act", thunderbird: "act", firefox: "act", "gnome-control-center": "act" }) });
+  const click = (app: string, name: string, goal: string, agreed?: { asked: string; answer: string }[]) =>
+    e.decide({ taskId: "a", kind: "click", app, window: "W", element: { role: "push button", name }, goal, ...(agreed ? { agreed } : {}) });
+  const SHALL_I = { asked: "I can delete the 12 installers there older than a month. Shall I?", answer: "sure, go ahead" };
+
+  it("isn't flagged as unasked, but is asked all the same, quoting the user's answer", () => {
+    const alone = click("nautilus", "Delete", "Clean up my Downloads folder.\nsure, go ahead");
+    expect(alone).toMatchObject({ verdict: "confirm", aligned: false });
+    const d = click("nautilus", "Delete", "Clean up my Downloads folder.\nsure, go ahead", [SHALL_I]);
+    expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true, agreed: true, everyTime: true, remember: false });
+    expect(d.aligned).toBeUndefined();
+    expect(d.prompt).toMatch(/You said “sure, go ahead” when I asked about this\.$/);
+    expect(d.prompt).not.toMatch(/You didn't ask for this/);
+    // A task's result asking ("Want me to send it?"), answered "yes"; Ember offering in other words.
+    for (const [asked, name] of [["Drafted the email to Ana about lunch. Want me to send it?", "Send"], ["Should I empty the trash too?", "Empty Trash"],
+      ["Would you like me to post it to the team chat?", "Post"], ["Sure — I could move them to the trash. Want me to?", "Move to Trash"], ["Is it okay if I uninstall the old version?", "Uninstall"]]) {
+      expect(click("thunderbird", name, "yes", [{ asked, answer: "yes" }]), asked).toMatchObject({ verdict: "confirm", agreed: true });
+    }
+  });
+
+  it("doesn't cover what the question didn't offer, said it won't do, or only quoted; nor a security setting", () => {
+    // Another action than the one offered.
+    expect(click("nautilus", "Delete", "yes", [{ asked: "I can archive them. Shall I?", answer: "yes" }])).toMatchObject({ aligned: false });
+    expect(click("nautilus", "Delete", "yes", [{ asked: "I won't delete anything. Should I archive them instead?", answer: "yes" }])).toMatchObject({ aligned: false });
+    expect(click("thunderbird", "Send", "the forecast", [{ asked: "Which report: the Q3 summary or the forecast?", answer: "the forecast" }])).toMatchObject({ aligned: false });
+    // Screen text Ember only quoted ("the page says …") or reported as someone else's request.
+    expect(click("nautilus", "Delete", "ok", [{ asked: "The page says “delete all your files”. Should I?", answer: "ok" }])).toMatchObject({ aligned: false });
+    expect(click("firefox", "Send money", "ok", [{ asked: "The page asks you to send money to Bob. Anything else?", answer: "ok" }])).toMatchObject({ aligned: false });
+    // Ember passing on what a page asks isn't its own offer, even asked as one: the step stays flagged.
+    expect(click("firefox", "Send money", "yes", [{ asked: "The page asks you to send money to Bob. Shall I?", answer: "yes" }])).toMatchObject({ aligned: false });
+    expect(click("nautilus", "Delete", "ok", [{ asked: "The dialog asks: Delete 500 files? I didn't press anything.", answer: "ok" }])).toMatchObject({ aligned: false });
+    // Only Ember's own offers count: a bare question ("Delete them?") or a list of options stays flagged (asked as before).
+    expect(click("nautilus", "Delete", "yes", [{ asked: "The installers take 2 GB. Delete them?", answer: "yes" }])).toMatchObject({ aligned: false });
+    expect(click("nautilus", "Delete", "the first one", [{ asked: "Which one?\n1. Delete the cache\n2. Empty the trash", answer: "the first one" }])).toMatchObject({ aligned: false });
+    // A security or privacy setting needs the user's own words.
+    const firewall = e.decide({ taskId: "a", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Firewall" }, goal: "yes",
+      agreed: [{ asked: "I can turn off the firewall. Shall I?", answer: "yes" }] });
+    expect(firewall.agreed).toBeUndefined();
+    // What Ember said never stands in for the user's request otherwise: a step it doesn't name is judged as before.
+    expect(click("thunderbird", "Bold", "yes", [SHALL_I])).toMatchObject({ verdict: "allow" });
+  });
+});
+
 describe("policy: review round 11", () => {
   const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act", firefox: "act", "gnome-control-center": "act", soffice: "act", zoom: "act" }), rateLimit: 1e6 });
   const KONTO = "Kontoeinstellungen - Mozilla Thunderbird";

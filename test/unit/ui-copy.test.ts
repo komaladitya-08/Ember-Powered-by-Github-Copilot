@@ -95,6 +95,19 @@ describe("settings window words", () => {
     // No question for the batch (each cell is asked on its own, or none needed): those lines say it.
     expect(cell(2, { batchVerdict: "none" })).toBeNull();
   });
+
+  it("on Ember's desk the lines don't say “your keyboard” or “your mouse” (AC11-4)", () => {
+    const t = "2026-10-15T20:00:00.000Z";
+    expect(describeEntry({ t, event: "decision", kind: "cursor_text", verdict: "confirm", reason: "r", element: { role: "table cell", name: "A4" }, app: "soffice", batch: 3, at: 2,
+      batchVerdict: "ask", onDesk: true })?.what).toBe("Fill 3 cells in LibreOffice");
+    expect(describeEntry({ t, event: "action", kind: "cursor_click", ok: true, tier: 2, element: { role: "push button", name: "Send" }, app: "thunderbird" })?.what)
+      .toBe("Click “Send” in Thunderbird (on Ember's desk)");
+    expect(describeEntry({ t, event: "confirm", kind: "cursor_text", answer: "once", onDesk: true, element: { role: "text", name: "To" }, app: "thunderbird" })?.what)
+      .toBe("Type “To” in Thunderbird");
+    // On the user's screen they still do.
+    expect(describeEntry({ t, event: "action", kind: "cursor_click", ok: true, element: { role: "push button", name: "Send" }, app: "thunderbird" })?.what)
+      .toBe("Click (your mouse) “Send” in Thunderbird");
+  });
 });
 
 describe("corner card (no compositor)", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, Presenter, STILL_WAITING, plainText } from "../../app/main/agent/presenter";
+import { BubbleOwner, Presenter, STILL_WAITING, plainText, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -533,6 +533,31 @@ describe("Presenter: a question asked while the turn before is still ending (rev
     vi.useRealTimers();
   });
 
+  it("asked while the answer's words are still coming: the rest of them streams, and its message shows it whole, with Read all (AC11-2)", () => {
+    const { p, last } = setup();
+    const ALPHA = "Alpha is the first letter of the Greek alphabet, and it is used all over science and mathematics. ".repeat(4).trim();
+    p.userPrompt("tell me about alpha");
+    p.event({ type: "user.message", data: { content: "tell me about alpha" } });
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: ALPHA.slice(0, 40) } });
+    p.userPrompt("and beta?");
+    expect(last().bubble).toMatchObject({ title: "Thinking…", thought: "“and beta?”" });
+    // The rest of the answer before comes after the question (its turn hasn't begun).
+    p.event({ type: "assistant.message_delta", data: { deltaContent: ALPHA.slice(40) } });
+    p.event({ type: "assistant.message", data: { content: ALPHA } });
+    expect(last().bubble).toMatchObject({ thought: ALPHA, streaming: false, actions: [{ id: "ui:more", label: "Read all" }] });
+    p.event({ type: "assistant.turn_end", data: {} });
+    p.event({ type: "session.idle", data: {} });
+    // The question's own turn: thinking again, then its answer.
+    p.event({ type: "user.message", data: { content: "and beta?" } });
+    expect(last().bubble).toMatchObject({ title: "Thinking…", thought: "“and beta?”" });
+    p.event({ type: "assistant.turn_start", data: {} });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Beta." } });
+    p.event({ type: "assistant.message", data: { content: "Beta." } });
+    expect(last().bubble).toMatchObject({ thought: "Beta.", streaming: false });
+    vi.useRealTimers();
+  });
+
   it("a turn beginning after the question's own has begun, or after a Stop, changes nothing", () => {
     const { p, last } = setup();
     p.userPrompt("hello");
@@ -547,6 +572,25 @@ describe("Presenter: a question asked while the turn before is still ending (rev
     p.event({ type: "session.idle", data: { aborted: true } });
     p.event({ type: "user.message", data: { content: "and again" } });
     expect(p.busy).toBe(false);
+    vi.useRealTimers();
+  });
+});
+
+describe("Presenter: a task's steps on Ember's desk (review round 11, AC11-4)", () => {
+  it("don't say “your keyboard” or “your mouse” there; on the user's screen they do", () => {
+    expect(stepOf("press_keys")).toBe("Pressing keys (your keyboard)");
+    expect(stepOf("press_keys", true)).toBe("Pressing keys");
+    expect(stepOf("scroll", true)).toBe("Scrolling");
+    expect(stepOf("fill_cells", true)).toBe("Filling cells");
+    expect(stepOf("click", true)).toBe("Clicking");
+    expect(stepOf("no_such_tool", true)).toBeUndefined();
+    const { p, last } = setup();
+    p.taskStarted();
+    p.event({ type: "tool.execution_start", data: { toolName: "scroll" } });
+    expect(last().bubble?.step).toBe("Scrolling (your mouse)");
+    p.onDesk = true;
+    p.event({ type: "tool.execution_start", data: { toolName: "press_keys" } });
+    expect(last().bubble?.step).toBe("Pressing keys");
     vi.useRealTimers();
   });
 });

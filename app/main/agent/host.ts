@@ -23,7 +23,7 @@ import { Worker, type WorkerDeps } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, Bounds } from "../perception/sidecar";
-import { isRiskyLabel, type PolicyEngine } from "../policy/policy";
+import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 
 /** What workers need to see and act (absent when there is no desktop). */
@@ -248,14 +248,34 @@ const MAX_QUEUED = 20;
 interface UserRequest { target: (WindowTarget & { app?: string }) | null; words: string; screen: string[] }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
+/** The words of what someone said ("don't" is one). */
+const wordsOf = (s: string) => s.normalize("NFKC").match(/[\p{L}\p{N}]+(?:['’][\p{L}]+)?/gu) ?? [];
 /**
  * A few words that name no action: only answer words, names and numbers ("Ana Lopez", "both of them", "yes please"). A
  * name is capitalised where no sentence starts, or is followed by another one ("Ana Lopez"; not "Rename it").
  */
 const onlyAnswers = (s: string) => {
-  const ws = s.normalize("NFKC").match(/[\p{L}\p{N}]+(?:['’][\p{L}]+)?/gu) ?? [];
+  const ws = wordsOf(s);
   const name = (w: string, i: number) => /^\p{Lu}/u.test(w) && (i > 0 || ws.length === 1 || /^\p{Lu}/u.test(ws[1]));
   return ws.length > 0 && ws.length <= 6 && ws.every((w, i) => ANSWER_WORD.test(w) || /^\p{N}+$/u.test(w) || name(w, i));
+};
+/** Does a reply of Ember's ask the user something: a sentence of it ends with "?" ("Which report? I can also attach both.")? */
+const asks = (s: string) => /[?？](?=\s|$)/.test(s);
+/** What a reply of Ember's asked: its paragraphs with a question ("I can delete the old installers. Shall I?"). */
+const questionOf = (s: string) => s.split(/\n\s*\n/).filter(asks).join("\n\n").trim();
+/** Words that say no, or not that ("not now", "something else", "later", "no thanks"): such a reply agrees to nothing. */
+const NOT_AGREEING = /^(no|nope|nah|not|neither|nor|none|nothing|never|don['’]t|dont|cancel|stop|wait|later|else|other|instead|skip|hold|thanks|thank)$/i;
+/**
+ * Does the user's reply agree to Ember's question `asked`, or answer it ("yes", "sure, go ahead", "the forecast", "the
+ * second", "April")? A few words, none saying no, each an answer word, a number or a word of the question; or a name
+ * where the question asks who or which ("Ana Lopez"). Not "no", "something else", or a new request ("Open Firefox" to "Shall I?").
+ */
+const agrees = (reply: string, asked: string): boolean => {
+  const ws = wordsOf(reply);
+  if (!ws.length || ws.length > 6 || ws.some(w => NOT_AGREEING.test(w))) return false;
+  const theirs = new Set(wordsOf(asked).map(w => w.toLowerCase()));
+  if (ws.every(w => ANSWER_WORD.test(w) || /^\p{N}+$/u.test(w) || theirs.has(w.toLowerCase()))) return true;
+  return /\b(who|whom|which|what)\b/i.test(asked) && ws.length <= 3 && ws.every(w => /^\p{Lu}/u.test(w));
 };
 
 export class AgentHost {
@@ -310,6 +330,8 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
+  private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
@@ -423,35 +445,47 @@ export class AgentHost {
   }
 
   /**
-   * What the user said for a task started in turn `r`, which its risky steps are checked against: their words in that
-   * turn, and where those only answer Ember ("yes please", "Ana Lopez", "both of them": Ember's last words before them
-   * asked a question and they name nothing risky of their own, or they are a few words that name no action at all), the
-   * user's words in the turn before too (and before that while those answered too: three turns at most, each within ten
-   * minutes of the next, none before a task's outcome). Only the user's own words, never what was read on the screen.
+   * What the user said for a task started in turn `r`, which its risky steps are checked against (`words`): their words
+   * in that turn, and where those only answer Ember ("yes please", "Ana Lopez", "the forecast": Ember's last words before
+   * them asked a question, a sentence ending with "?", and they name nothing risky of their own, or they are a few words
+   * that name no action at all), the user's words in the turn before too (and before that while those answered too:
+   * three turns at most, each within ten minutes of the next, none before a task's outcome). Only the user's own words,
+   * never what was read on the screen.
+   *
+   * `agreed`: Ember's questions in those turns that the user's reply agreed to or answered ("I can delete the old
+   * installers. Shall I?" "Sure, go ahead."), the reply within ten minutes; a task's result asking ("Want me to send
+   * it?") counts for the reply right after it only. A risky step one of them names is still asked about (PolicyEngine).
    */
-  private userWordsOf(r: UserRequest | null): string | undefined {
-    if (!r) return undefined;
+  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[] } {
+    if (!r) return {};
     const said = [r.words];
+    const agreed: Agreement[] = [];
     const log = this.transcript;
+    const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
     let at = log.map(e => e.who === "you" && e.text === r.words.slice(0, 4000)).lastIndexOf(true);
     for (let n = 0; at > 0 && n < 3; n++) {
       const reply = log[at].text;
+      const last = log[at - 1];
+      const question = last.who === "ember" ? questionOf(last.text) : n === 0 && last.who === "task" ? questionOf(this.results.get(last) ?? "") : "";
+      if (question && apart(log[at], last) <= 10 * 60_000 && agrees(reply, question)) agreed.unshift({ asked: question, answer: reply });
       let k = at - 1;
-      const asked = log[k]?.who === "ember" && /\?\s*$/.test(log[k].text.trim());
+      const asked = last.who === "ember" && asks(last.text);
       while (k >= 0 && log[k].who === "ember") k--;
       const before = log[k];
-      if (!before || before.who !== "you" || Date.parse(log[at].t) - Date.parse(before.t) > 10 * 60_000) break;
+      if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
       if (isRiskyLabel(reply) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
       at = k;
     }
-    return said.join("\n");
+    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}) };
   }
 
-  private remember(who: TranscriptEntry["who"], text: string): void {
-    this.transcript.push({ t: new Date().toISOString(), who, text: text.slice(0, 4000) });
+  private remember(who: TranscriptEntry["who"], text: string): TranscriptEntry {
+    const entry: TranscriptEntry = { t: new Date().toISOString(), who, text: text.slice(0, 4000) };
+    this.transcript.push(entry);
     if (this.transcript.length > 60) this.transcript.splice(0, this.transcript.length - 60);
     this.o.onTranscript?.(this.getTranscript());
+    return entry;
   }
 
   private setStatus(patch: Partial<AgentStatus>): void {
@@ -612,7 +646,8 @@ export class AgentHost {
           const text = taskOutcome(task);
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal);
           this.taskPresenters.delete(task.id);
-          this.remember("task", text);
+          const said = this.remember("task", text);
+          if (summary) this.results.set(said, summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
@@ -700,7 +735,8 @@ export class AgentHost {
           // goal (the conductor may have read it off the screen). A request sent meanwhile waits for its own turn: none of
           // it goes with this task.
           const r = this.turn;
-          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: this.userWordsOf(r), screen: r?.screen.join("\n") || undefined });
+          const said = this.userWordsOf(r);
+          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
@@ -713,7 +749,8 @@ export class AgentHost {
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
-          steer: (id, text) => tasks.steer(id, text, this.turn?.words, this.turn?.screen.join("\n") || undefined),
+          // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
+          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed); },
         } : undefined,
       });
       await this.conductor.start();
