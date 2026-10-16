@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { freeDisplay, removeTree, running } from "../../app/main/desk/desk";
+import { clearDeskLocks, freeDisplay, removeTree, running } from "../../app/main/desk/desk";
 import { deskRecipe, guardX, lockDownLibreOffice } from "../../app/main/desk/place";
 import { keysymFor, wheelButtons, xButton } from "../../app/main/desk/view";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -92,8 +92,8 @@ describe("desk", () => {
     expect(xcu.match(/MacroSecurityLevel/g)).toHaveLength(1);
     expect(xcu).toContain('<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>');
     expect(xcu).toContain('<prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop>');
-    // No lock file next to what Ember saves (the user's LibreOffice would open it read-only); nothing fetched on load.
-    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="UseLocking" oor:op="fuse"><value>false</value></prop></item>');
+    // Lock files stay on (LibreOffice's "Changed by Others" check needs them); nothing fetched on load.
+    expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="UseLocking" oor:op="fuse"><value>true</value></prop></item>');
     expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>');
     expect(xcu).toContain('<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>0</value></prop></item>');
     expect(xcu.match(/UseLocking/g)).toHaveLength(1);
@@ -101,6 +101,34 @@ describe("desk", () => {
     expect(xcu).toContain('oor:name="FirstRun"');
     expect(xcu).toMatch(/^<\?xml[\s\S]*<\/oor:items>\n$/);
     for (const d of [p, presets]) expect(removeTree(d)).toBe(true);
+  });
+
+  it("clears the lock files a desk's LibreOffice left beside documents, never the user's own (DSK9-2)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ember-handoff-"));
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "ember-elsewhere-"));
+    const lock = (dir: string, name: string, profile: string) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `.~lock.${name}#`), `,Ana,host,16.10.2026 10:00,${profile};`);
+    };
+    lock(home, "letter.odt", "file:///tmp/ember-desk-abc123/runtime/libreoffice");
+    lock(path.join(home, "Reports", "2026"), "budget.ods", "file:///tmp/ember-desk-abc123/runtime/libreoffice");
+    lock(home, "notes.odt", "file:///tmp/ember-desk-zzz999/runtime/libreoffice");
+    lock(home, "mine.odt", "file:///home/ana/.config/libreoffice/4");
+    lock(elsewhere, "linked.odt", "file:///tmp/ember-desk-abc123/runtime/libreoffice");
+    fs.symlinkSync(elsewhere, path.join(home, "link"));
+    fs.writeFileSync(path.join(home, "letter.odt"), "doc");
+    // (Listed without going through the link: what lies behind it is checked on its own below.)
+    const left = () => fs.readdirSync(home, { recursive: true }).map(String).filter(n => n.includes(".~lock.") && !n.startsWith("link/")).sort();
+    // One desk's (as it stops): only its own.
+    expect(clearDeskLocks(home, "ember-desk-abc123")).toBe(2);
+    expect(left()).toEqual([".~lock.mine.odt#", ".~lock.notes.odt#"]);
+    // Any desk's (as a desk starts): the user's own stays, and nothing behind a link is touched.
+    expect(clearDeskLocks(home)).toBe(1);
+    expect(left()).toEqual([".~lock.mine.odt#"]);
+    expect(fs.existsSync(path.join(elsewhere, ".~lock.linked.odt#"))).toBe(true);
+    expect(fs.readFileSync(path.join(home, "letter.odt"), "utf8")).toBe("doc");
+    expect(clearDeskLocks(path.join(home, "missing"))).toBe(0);
+    for (const d of [home, elsewhere]) fs.rmSync(d, { recursive: true, force: true });
   });
 
   it("never runs terminals", () => {

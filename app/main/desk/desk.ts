@@ -163,6 +163,37 @@ function lazyUnmount(p: string): void {
   }
 }
 
+/** LibreOffice's lock file for a document: ".~lock.<name>#" beside it. */
+const LOCK_FILE = /^\.~lock\..+#$/;
+
+/**
+ * Removes LibreOffice's lock files in `dir` (and folders in it, a few levels down) that a desk's LibreOffice left:
+ * those naming a desk's profile (`desk`: that desk's id, else any desk's). A desk stopped with documents open leaves
+ * them, and the user's own LibreOffice would then open those documents read-only, "locked by" themselves. Never
+ * follows links; never throws. Returns how many went.
+ */
+export function clearDeskLocks(dir: string, desk?: string): number {
+  const mark = desk ?? "ember-desk-";
+  let removed = 0, seen = 0;
+  const walk = (d: string, depth: number) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (++seen > 5000) return;
+      const p = path.join(d, e.name);
+      if (e.isDirectory() && depth < 4) walk(p, depth + 1);
+      else if (e.isFile() && LOCK_FILE.test(e.name)) {
+        try {
+          // ",user,host,date,profile URL;": the profile is the desk's (its folder's name), never the user's own.
+          if (fs.readFileSync(p, "utf8").slice(0, 4096).includes(mark)) { fs.unlinkSync(p); removed++; }
+        } catch { /* gone, or not ours to read */ }
+      }
+    }
+  };
+  walk(dir, 0);
+  return removed;
+}
+
 /**
  * Removes a folder Ember made. Anything mounted inside it (gvfs's FUSE mount in the desk's
  * runtime folder, the document portal) is let go first, lazily; what can't be is left alone:
@@ -331,6 +362,9 @@ export class DeskManager {
     fs.mkdirSync(handOff, { recursive: true });
     // A desk an earlier Ember left running (it was killed) goes first: its display number is free again.
     await reapDesks(this.log);
+    // And the lock files its LibreOffice left beside documents in the hand-off folder.
+    const stale = clearDeskLocks(handOff);
+    if (stale) this.log.info("desk.locks_cleared", { files: stale });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-desk-"));
     fs.chmodSync(dir, 0o700);
     this.dir = dir;
@@ -494,6 +528,9 @@ export class DeskManager {
       // Only processes not yet exited: their ids (and groups) can't have been reused yet.
       for (const p of procs) if (p.exitCode === null && p.signalCode === null) signal(p, "SIGKILL");
       if (id) { killAll(deskProcesses(id, groups), "SIGKILL"); this.leaving.delete(id); }
+      // Its LibreOffice is gone: the locks it left on documents in the hand-off folder go too (the next start
+      // clears them if Ember quits before this).
+      if (id && info) clearDeskLocks(info.handOff, id);
       // Apps that save as they quit may have put files back.
       if (dir && !removeTree(dir)) this.log.warn("desk.folder_left", { dir });
     }, 1500).unref();
