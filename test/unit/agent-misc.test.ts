@@ -243,3 +243,23 @@ describe("startup errors (review round 4)", () => {
     expect(explainStartError(new Error("Pending response rejected since connection got disposed"))).toBe("Ember's Copilot runtime stopped while connecting. Press Check again.");
   });
 });
+
+describe("the user's own words (review round 5)", () => {
+  it("a waiting task changed by the user starts with what they said then, beside the conductor's wording", async () => {
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const specs: { goal: string; userWords?: string }[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, maxRunning: 1,
+      makeWorker: spec => { specs.push(spec); return { run: async () => { await gate; return { success: true, summary: "ok" }; }, dispose: async () => undefined, sessionId: spec.id } as never; },
+    });
+    tm.start("first", { userWords: "do the first thing" });
+    const waiting = tm.start("tidy the drafts", { userWords: "tidy my drafts" });
+    expect(await tm.steer(waiting.id, "delete them", "and delete the drafts")).toBe(true);
+    release();
+    await new Promise(r => setTimeout(r, 50));
+    expect(specs[1]).toMatchObject({ goal: "tidy the drafts\n(The user then added: delete them)", userWords: "tidy my drafts\nand delete the drafts" });
+  });
+});

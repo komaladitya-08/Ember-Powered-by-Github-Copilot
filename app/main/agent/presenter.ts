@@ -96,6 +96,8 @@ export class BubbleOwner {
   private waitingForAnswer = false;
   /** The task whose work the bubble shows, and when it last wrote. */
   private stage: { p: Presenter; at: number } | null = null;
+  /** The presenter whose bubble was on screen when main took the bubble: main's own covers it until main's hold ends. */
+  private covered: Presenter | null = null;
 
   constructor(
     /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
@@ -104,10 +106,27 @@ export class BubbleOwner {
     private now: () => number = Date.now,
   ) {}
 
-  /** Main writes the bubble itself now ("Listening…", the kill switch's message). */
+  /**
+   * Main writes the bubble itself now ("Listening…", the kill switch's message). The bubble it covers keeps
+   * its reading time for when it shows again: under main's, it isn't being read (and main may put it back).
+   */
   claim(by: object): void {
+    if (this.holder !== by) this.covered = this.current instanceof Presenter ? this.current : null;
+    this.covered?.letGo();
     this.current = by;
     this.holder = by;
+  }
+
+  /**
+   * Main's hold is over: the bubble it covered stays (to show again, its reading time starting over) if `keep`
+   * says so; otherwise main replaced it for good. Returns the one kept.
+   */
+  uncover(keep: (p: Presenter) => boolean): Presenter | null {
+    const c = this.covered;
+    this.covered = null;
+    if (!c || keep(c)) return c;
+    c.drop();
+    return null;
   }
 
   /** May `p` write the bubble now? */
@@ -126,7 +145,11 @@ export class BubbleOwner {
   wrote(p: Presenter, claim: Claim, onScreen: boolean): void {
     this.showing = this.showing.filter(x => x !== p);
     if (p.visible) this.showing.push(p);
-    if (claim === "take") this.holder = p;
+    if (claim === "take") {
+      // Taken from main's own bubble (the user asked meanwhile): what main covered is over, unless it's still at work.
+      if (this.holder !== null && !(this.holder instanceof Presenter)) this.uncover(c => c === p || c.atWork || c.waiting);
+      this.holder = p;
+    }
     // The task on stage is still at work even while something else covers its bubble.
     if (claim === "progress" && (onScreen || this.stage?.p === p)) this.stage = { p, at: this.now() };
     if (!onScreen) return;
@@ -286,6 +309,11 @@ export class Presenter {
     return this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
   }
 
+  /** Its turn or task is under way: busy, or a guide step waiting for the user's click. */
+  get atWork(): boolean {
+    return this.busy || this.guiding;
+  }
+
   /** It has a bubble to show (on screen or waiting). */
   get visible(): boolean {
     return !this.silent && this.state.bubble.visible;
@@ -294,6 +322,11 @@ export class Presenter {
   /** Its latest bubble is waiting to show (it hasn't been on screen). */
   get waiting(): boolean {
     return this.unseen && this.visible;
+  }
+
+  /** Its latest bubble (on screen or waiting), or the idle one when it has nothing to show. */
+  get bubble(): Readonly<BubbleState> {
+    return this.visible ? this.state.bubble : IDLE_BUBBLE;
   }
 
   /** Is `b` this presenter's bubble (main showing it again)? */

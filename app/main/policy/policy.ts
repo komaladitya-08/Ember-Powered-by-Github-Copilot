@@ -11,6 +11,7 @@
 
 import { isNeverLook, isSecretLabel } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
+import { friendlyApp } from "../../shared/apps";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -33,17 +34,32 @@ export interface ActionRequest {
   value?: string;
   /** For text: replace everything, insert at the caret, or append. */
   mode?: TextMode;
-  /** For text: what the field holds now (replacing a lot of it is confirmed). */
+  /** For text (and keys): what the field holds now (replacing a lot of it is confirmed). */
   currentText?: string;
+  /** For keys: the letters and digits typed into this window by keys, this one included (checked like typed text). */
+  typed?: string;
+  /** For keys: the last keys pressed here were Ctrl+A, so this one may replace everything selected. */
+  afterSelectAll?: boolean;
   /** The dialog the element sits in (its title and text): "OK" there agrees to what the dialog says. */
   dialog?: { name: string; text: string };
   /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
   onDesk?: boolean;
-  /** The user's request this action serves (for the task-alignment check). */
+  /** What the user asked for, in their own words (for the task-alignment check). */
   goal?: string;
-  /** Apps whose windows this task has read: text, choices and pastes in another app may carry what was read there. */
-  readFrom?: string[];
+  /** The window acted in, as perception names it, when known. */
+  windowId?: WindowId;
+  /** Windows this task has read (or seen listed): text typed or pasted into another window may carry what was read there. */
+  readFrom?: ReadSource[];
 }
+
+/** A window by its process and accessible path (with the pid, they name one window whatever its title), and its role. */
+export interface WindowId { pid?: number | null; path?: string; role?: string }
+
+/**
+ * A window a task has read: its app, its title then, and the text read there (bounded). `listed`: only its title
+ * was seen (list_windows); `described`: what Ember's conversation read on the user's screen (no window known).
+ */
+export interface ReadSource extends WindowId { app: string; window: string; text?: string; listed?: boolean; described?: boolean }
 
 export interface Decision {
   tier: Tier;
@@ -79,6 +95,8 @@ export interface PolicyInputs {
   allowGrants?: () => boolean;
   /** Is this app a terminal (Ember never opens or types into one)? */
   isTerminalApp?: (name: string) => boolean;
+  /** Ember's own process (default: this one): a task never acts in Ember's own windows. */
+  ownPid?: number;
 }
 
 /** Latin look-alikes from Cyrillic and Greek, enough to keep "Dеlete" (Cyrillic е) from passing as harmless. */
@@ -155,7 +173,7 @@ export const RISKY_WORDS: Record<string, string[]> = {
     "(fazer|finalizar) pedido", "pague", "transfira", "redefinir", "redefina", "(terminar|encerrar) sessão", "sair", "aceitar",
     "aceite", "aceito", "concordo", "concordar", "não salvar", "não guardar", "sem salvar", "sem guardar", "executar", "executa",
     "mover para (a lixeira|o lixo|a reciclagem)", "substituir", "substitua", "sobrescrever", "sobrescreva", "mesclar", "arquivar",
-    "reiniciar", "desligar", "inscrever-se", "assinar"],
+    "reiniciar", "desligar", "inscrever-se", "assinar", "formatar", "formate"],
   nl: ["verwijderen", "verwijder", "leegmaken", "prullenbak legen", "verzenden", "verzend", "versturen", "verstuur", "indienen",
     "beantwoorden", "antwoorden", "doorsturen", "delen", "publiceren", "publiceer", "kopen", "koop", "bestellen", "bestel",
     "afrekenen", "betalen", "betaal", "overmaken", "overboeken", "installeren", "installeer", "de-installeren", "resetten",
@@ -195,11 +213,83 @@ export const RISKY_ANYWHERE: Record<string, string[]> = {
     "發布", "发表", "發表", "购买", "購買", "下单", "下單", "结算", "結算", "支付", "付款", "转账", "轉帳", "汇款", "匯款", "安装",
     "安裝", "卸载", "卸載", "重置", "格式化", "注销", "註銷", "登出", "退出", "同意", "接受", "放弃", "放棄", "不保存", "替换", "替換", "覆盖", "覆蓋", "回收站", "废纸篓", "廢紙簍"],
   ko: ["삭제", "제거", "비우기", "전송", "보내기", "제출", "답장", "전달", "공유", "게시", "구매", "구입", "주문", "결제", "이체",
-    "송금", "설치", "초기화", "포맷", "로그아웃", "동의", "수락", "저장 안 함", "종료", "바꾸기", "덮어쓰기", "저장하지 않", "휴지통"],
+    "송금", "설치", "초기화", "포맷", "로그아웃", "동의", "수락", "저장 안 함", "종료", "모두 바꾸기", "찾아 바꾸기", "덮어쓰기", "저장하지 않", "휴지통"],
 };
 const all = (lists: Record<string, string[]>) => foldLabel(Object.values(lists).flat().join("|"));
-const RISKY_INTL_SOURCE = `(^|[^\\p{L}\\p{N}])(?<word>${all(RISKY_WORDS)})(?=$|[^\\p{L}\\p{N}])|(?<cjk>${all(RISKY_ANYWHERE)})`;
+const intlSource = (words: Record<string, string[]>, anywhere: Record<string, string[]>) =>
+  `(^|[^\\p{L}\\p{N}])(?<word>${all(words)})(?=$|[^\\p{L}\\p{N}])|(?<cjk>${all(anywhere)})`;
+const RISKY_INTL_SOURCE = intlSource(RISKY_WORDS, RISKY_ANYWHERE);
 const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
+
+/**
+ * Words on controls that post or answer for the user, invite or act on other people, change their account, or
+ * change a shared repository. Risky on a button, link or menu item only: a "Comments" heading or tab, or a
+ * "Block selection" check item, isn't one. English verbs that are nouns too count where they lead the label
+ * ("Report", "Block user"; not "Download report", "Add block").
+ */
+const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick)\b/u;
+const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream))\b/;
+/** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
+export const RISKY_ACT_WORDS: Record<string, string[]> = {
+  fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
+    "fermer (le |mon |votre )?compte", "désactiver (le |mon |votre )?compte", "créer (une )?(pull|merge) request", "créer une demande de (fusion|tirage)",
+    "demander (une )?(revue|relecture)", "pousser", "tweeter", "retweeter", "reposter", "republier", "passer en direct", "lancer (le )?direct",
+    "bloquer", "signaler", "bannir", "expulser"],
+  de: ["kommentieren", "einladen", "ablehnen", "zurückziehen", "kündigen", "konto schließen", "konto deaktivieren", "pull request erstellen",
+    "merge request erstellen", "review anfordern", "überprüfung anfordern", "pushen", "committen", "twittern", "tweeten", "retweeten", "reposten",
+    "live gehen", "blockieren", "melden", "bannen", "verbannen"],
+  es: ["comentar", "comenta", "invitar", "invita", "rechazar", "rechaza", "declinar", "retirar", "retira", "cancelar (la |mi |tu |su )?suscripción",
+    "cerrar (la |mi |tu |su )?cuenta", "desactivar (la |mi |tu |su )?cuenta", "crear (una )?(pull|merge) request",
+    "crear (una )?solicitud de (extracción|incorporación|fusión|cambios)", "solicitar (una )?revisión", "hacer push", "revertir", "tuitear", "retuitear",
+    "republicar", "repostear", "transmitir en (vivo|directo)", "bloquear", "denunciar", "reportar", "banear", "expulsar"],
+  it: ["commenta", "commentare", "invita", "invitare", "rifiuta", "rifiutare", "declina", "ritira", "ritirare", "annulla (l')?abbonamento", "disdici",
+    "chiudi (l')?account", "disattiva (l')?account", "crea (una )?(pull|merge) request", "richiedi (una )?revisione", "twitta", "ritwitta", "ripubblica",
+    "vai in diretta", "avvia (la )?diretta", "blocca", "segnala", "banna", "espelli"],
+  pt: ["comentar", "comente", "convidar", "convide", "recusar", "recuse", "declinar", "retirar", "cancelar (a |minha |sua )?(assinatura|inscrição)",
+    "(encerrar|fechar) (a |minha |sua )?conta", "desativar (a |minha |sua )?conta", "criar (uma )?(pull|merge) request",
+    "criar (uma )?solicitação de (pull|merge|mesclagem)", "solicitar (uma )?revisão", "fazer push", "reverter", "tuitar", "retuitar", "republicar",
+    "repostar", "transmitir ao vivo", "bloquear", "denunciar", "reportar", "banir", "expulsar"],
+  nl: ["reageren", "uitnodigen", "nodig uit", "afwijzen", "weigeren", "terugtrekken", "intrekken", "opzeggen", "account (sluiten|opheffen|deactiveren)",
+    "pull request aanmaken", "merge request aanmaken", "review aanvragen", "pushen", "terugdraaien", "tweeten", "retweeten", "reposten", "live gaan",
+    "blokkeren", "rapporteren", "melden", "verbannen"],
+  pl: ["skomentuj", "komentuj", "zaproś", "odmów", "wycofaj", "anuluj subskrypcję", "zamknij konto", "dezaktywuj", "utwórz (pull|merge) request",
+    "poproś o recenzję", "wypchnij", "tweetuj", "podaj dalej", "rozpocznij transmisję", "transmisja na żywo", "zablokuj", "zgłoś", "zbanuj", "wyrzuć"],
+  ru: ["комментировать", "прокомментировать", "пригласить", "пригласи", "отклонить", "отклони", "отказаться", "отозвать", "вывести средства",
+    "отменить подписку", "отписаться", "закрыть аккаунт", "деактивировать", "создать (pull|merge) request", "создать запрос на (слияние|включение)",
+    "запросить (ревью|проверку)", "запушить", "откатить", "твитнуть", "ретвитнуть", "репост", "сделать репост", "начать трансляцию", "выйти в эфир",
+    "заблокировать", "заблокируй", "пожаловаться", "забанить", "выгнать"],
+  sv: ["kommentera", "bjud in", "avböj", "neka", "dra tillbaka", "säg upp", "avsluta prenumeration(en)?", "(avsluta|stäng|inaktivera) (mitt |ditt )?konto",
+    "skapa pull request", "begär granskning", "pusha", "tweeta", "retweeta", "gå live", "blockera", "rapportera", "anmäl", "bannlys"],
+  da: ["kommenter", "inviter", "invitér", "afvis", "afslå", "træk tilbage", "opsig", "(luk|deaktiver) (min |din )?konto", "opret pull request",
+    "anmod om gennemgang", "gå live", "bloker", "rapporter", "anmeld", "udeluk"],
+  nb: ["kommenter", "inviter", "avslå", "trekk tilbake", "si opp", "avslutt abonnement(et)?", "(avslutt|lukk|deaktiver) (min |din )?konto",
+    "opprett pull request", "be om gjennomgang", "gå live", "blokker", "rapporter", "anmeld", "utesteng"],
+  fi: ["kommentoi", "kutsu", "hylkää", "kieltäydy", "peruuta tilaus", "peru tilaus", "sulje tili", "poista tili käytöstä", "luo pull request",
+    "pyydä (arviointia|katselmointia)", "twiittaa", "aloita lähetys", "estä", "ilmianna", "raportoi", "anna porttikielto"],
+  cs: ["komentovat", "okomentovat", "pozvat", "odmítnout", "zamítnout", "zrušit (předplatné|odběr|účet)", "zavřít účet", "deaktivovat účet",
+    "vytvořit (pull|merge) request", "požádat o revizi", "pushnout", "vrátit změny", "tweetnout", "retweetnout", "zahájit vysílání", "vysílat živě",
+    "zablokovat", "blokovat", "nahlásit", "zabanovat", "vyhodit"],
+  tr: ["yorum yap", "yorumla", "davet et", "reddet", "geri çek", "(aboneliği|aboneliğimi|üyeliği|üyeliğimi) iptal et", "(hesabı|hesabımı) kapat",
+    "(hesabı|hesabımı) devre dışı bırak", "pull request oluştur", "birleştirme isteği oluştur", "inceleme iste", "tweetle", "retweetle",
+    "yeniden paylaş", "canlı yayına geç", "canlı yayın başlat", "engelle", "şikayet et", "bildir", "yasakla"],
+};
+/** Scripts without spaces between words: matched anywhere in the label. */
+export const RISKY_ACT_ANYWHERE: Record<string, string[]> = {
+  ja: ["コメント", "招待", "辞退", "拒否", "取り下げ", "解約", "退会", "アカウント停止", "アカウントを停止", "プルリクエスト", "マージリクエスト",
+    "レビューを依頼", "レビュー依頼", "プッシュ", "リバート", "コミット", "ツイート", "リツイート", "リポスト", "ライブ配信", "配信開始", "ブロック", "通報",
+    "追放", "キック"],
+  zh: ["评论", "評論", "留言", "邀请", "邀請", "拒绝", "拒絕", "谢绝", "謝絕", "撤回", "提现", "提現", "取消订阅", "取消訂閱", "退订", "退訂",
+    "关闭账户", "關閉帳戶", "关闭账号", "停用账户", "停用帳戶", "停用账号", "拉取请求", "拉取要求", "合并请求", "合併請求", "请求审查", "請求審查",
+    "请求评审", "推送", "回滚", "回滾", "转推", "轉推", "转帖", "轉帖", "开始直播", "開始直播", "拉黑", "屏蔽", "封锁", "封鎖", "举报", "舉報", "檢舉", "封禁", "踢出"],
+  ko: ["댓글", "초대", "거절", "거부", "철회", "출금", "구독 취소", "구독 해지", "해지", "탈퇴", "계정 비활성화", "풀 리퀘스트", "머지 리퀘스트",
+    "리뷰 요청", "검토 요청", "푸시", "커밋", "트윗", "리트윗", "재게시", "라이브 시작", "방송 시작", "차단", "신고", "추방", "강퇴"],
+};
+const RISKY_ACT_INTL_SOURCE = intlSource(RISKY_ACT_WORDS, RISKY_ACT_ANYWHERE);
+const RISKY_ACT_INTL = new RegExp(RISKY_ACT_INTL_SOURCE, "u");
+/** Does this label post, invite, change an account or a repository (RISKY_ACT), in any of the languages above? */
+const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
+/** Controls whose activation does what their name says (HTML buttons and links, GTK buttons, menu items). */
+const ACTING_CONTROL = /^(push button|push button menu|button|split button|toggle button|link|menu item)$/;
 
 /** Answers that agree to whatever a dialog asks: risky in a dialog, or when the window's own title is about something risky. */
 const AFFIRMATIVE = /^\s*(yes|ok|okay|continue|proceed|allow|confirm|do it|i understand|got it|agree)\b/;
@@ -236,7 +326,18 @@ export function isSecurityWindow(w: { app?: string; title?: string; name?: strin
   return SECURITY_APP.test((w.app ?? "").trim()) || SECURITY_TITLE.test(normalizeLabel(w.title ?? w.name ?? ""));
 }
 
-export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s));
+/** Words risky only as the whole label: Korean "바꾸기" is GTK's Replace button, but also part of "이름 바꾸기" (Rename). */
+const RISKY_WHOLE = new RegExp(`^\\s*(${foldLabel(["바꾸기"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
+export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s));
+/** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
+export const isRiskyControl = (role: string, name: string) => isRiskyLabel(name) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
+
+/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper). */
+const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone)$/;
+/** Is this one of Ember's own windows (by its process, or its app or title)? A task never acts in them: they answer Ember's questions and hold its settings. */
+export function isEmberWindow(w: { app?: string; name?: string; pid?: number | null }, ownPid: number = process.pid): boolean {
+  return (w.pid != null && w.pid === ownPid) || EMBER_WINDOW.test(normalizeLabel(w.app ?? "").trim()) || EMBER_WINDOW.test(normalizeLabel(w.name ?? "").trim());
+}
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
@@ -320,6 +421,12 @@ const DESTRUCTIVE_KEYS = canonicalSet(["delete", "shift+delete", "ctrl+delete", 
   "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
 /** Keys that paste whatever the clipboard holds. */
 const PASTE_KEYS = canonicalSet(["ctrl+v", "ctrl+shift+v", "shift+insert"]);
+/** The letter or digit a key types (lower case), " " for the space bar, or null for any other key or shortcut. */
+export function typedChar(keys: string): string | null {
+  const k = keyFamily(canonicalKeys(keys) ?? "");
+  const m = /^(shift\+)?([a-z0-9])$/.exec(k);
+  return m ? m[2] : /^(shift\+)?space$/.test(k) ? " " : null;
+}
 
 /** Whole words or phrases (written with their accents, folded like RISKY_WORDS) anywhere in a text. */
 const anyOf = (list: string[]) => new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(list.join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u");
@@ -359,12 +466,61 @@ function runsProgram(role: string, name: string, dialog?: { name: string; text: 
   const asks = plainText(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
   return RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks));
 }
-/** "Paste" menu items and buttons, in the languages above. */
-const PASTE_LABEL = /^(paste|einfugen|coller|pegar|incolla|colar|plakken|wklej)(?=$|[^\p{L}])/u;
+/** "Paste" menu items and buttons, in the languages of RISKY_WORDS (GTK's and the browsers' own words). */
+const PASTE_WORDS = ["paste", "einfügen", "coller", "pegar", "incolla", "colar", "plakken", "wklej", "вставить", "вставь", "klistra in", "indsæt",
+  "lim inn", "liitä", "vložit", "yapıştır"];
+const PASTE_ANYWHERE = ["貼り付け", "ペースト", "粘贴", "粘貼", "貼上", "붙여넣기", "붙여 넣기"];
+const PASTE_LABEL = new RegExp(`^\\s*(${foldLabel(PASTE_WORDS.join("|"))})(?=$|[^\\p{L}])|${foldLabel(PASTE_ANYWHERE.join("|"))}`, "u");
+/** By its words as written (Cyrillic stays Cyrillic), and with look-alikes mapped ("Pаste" with a Cyrillic а). */
+const isPasteLabel = (s: string) => PASTE_LABEL.test(foldLabel(s)) || PASTE_LABEL.test(plainText(s));
 /** Apps named in a question: "Thunderbird", "Thunderbird and Files", "A, B and C". */
 const appList = (apps: string[]) => (apps.length > 1 ? `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}` : apps[0] ?? "");
+
+/** Dialogs (Save As, Properties) go with their program's windows: not another place for text to go. */
+const DIALOG_WINDOW = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
+/** Apps whose window shows one page, message or chat after another, its title saying which: there another title is another place. */
+const TABBED_APP = /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|thunderbird|evolution|geary|claws|mail|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram/i;
+/** Did the task read `s` somewhere other than where `r` acts: another app, another window, or (in a browser or mail client) another tab or message? */
+function elsewhere(s: ReadSource, r: ActionRequest): boolean {
+  if (s.described || s.app.trim().toLowerCase() !== r.app.trim().toLowerCase()) return true;
+  const w = r.windowId ?? {};
+  if (s.pid != null && s.pid === w.pid && (DIALOG_WINDOW.test(s.role ?? "") || DIALOG_WINDOW.test(w.role ?? ""))) return false;
+  const known = s.pid != null && w.pid != null && !!s.path && !!w.path;
+  if (known && (s.pid !== w.pid || s.path !== w.path)) return true;
+  if (s.window.trim() === r.window.trim()) return false;
+  // The same window under another title (or one Ember can't tell apart but by its title).
+  return !known || TABBED_APP.test(r.app);
+}
+/** Letters and digits in a row that make a run of text recognisably from somewhere (shorter ones are everyday coincidences). */
+const RUN = 12;
+/** Each line's letters and digits, folded ("Re: Layoff list" → "relayofflist"). */
+const compactLines = (s: string) => foldLabel(s).split("\n").map(l => l.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean);
+/** Numbers of five digits or more, separators dropped ("84,000" → "84000", "448 812" → "448812"). */
+const numbersIn = (s: string) => foldLabel(s).replace(/(\d)[\s,.'’](?=\d)/g, "$1").match(/\d{5,}/g) ?? [];
+/**
+ * The runs of `value` that `text` holds too: any RUN letters and digits in a row (within one line of `text`), and any
+ * number of five digits or more.
+ */
+function runsIn(value: string, text: string): Set<string> {
+  const found = new Set<string>();
+  const grams = new Set<string>();
+  for (const line of compactLines(value)) for (let i = 0; i + RUN <= line.length; i++) grams.add(line.slice(i, i + RUN));
+  if (grams.size) {
+    for (const line of compactLines(text)) {
+      for (let i = 0; i + RUN <= line.length; i++) { const g = line.slice(i, i + RUN); if (grams.has(g)) found.add(g); }
+    }
+  }
+  const numbers = numbersIn(text);
+  for (const n of numbersIn(value)) if (numbers.some(m => m.includes(n))) found.add(n);
+  return found;
+}
+
 const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
 const words = (s: string) => foldLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
+/** Scripts written without spaces between words. */
+const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+/** A Korean verb's stem without the "-기" that makes it a button's noun ("보내기" → "보내", as in "보내 줘"). */
+const hangulStem = (t: string) => (/\p{Script=Hangul}{2,}기$/u.test(t) ? t.slice(0, -1) : t);
 /** Rough stem, so "deleting", "deleted" and "delete" match. */
 const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "");
 /** The same word, roughly: one stem, or one starts the other ("invia" and "inviare", "lösche" and "löschen"). */
@@ -374,8 +530,13 @@ const sameWord = (a: string, b: string) => {
 };
 /** The risky words and phrases in a label, in any of the languages above ("log out", "ta bort", "删除"). */
 function riskyTerms(s: string): string[] {
-  const out = [...normalizeLabel(s).matchAll(new RegExp(RISKY.source, "g"))].map(m => m[0]);
-  for (const m of foldLabel(s).matchAll(new RegExp(RISKY_INTL_SOURCE, "gu"))) out.push(m.groups?.word ?? m.groups?.cjk ?? m[0]);
+  const out: string[] = [];
+  for (const [en, intl] of [[RISKY, RISKY_INTL_SOURCE], [RISKY_ACT, RISKY_ACT_INTL_SOURCE]] as const) {
+    out.push(...[...normalizeLabel(s).matchAll(new RegExp(en.source, "g"))].map(m => m[0]));
+    for (const m of foldLabel(s).matchAll(new RegExp(intl, "gu"))) out.push(m.groups?.word ?? m.groups?.cjk ?? m[0]);
+  }
+  const lead = RISKY_ACT_LEAD.exec(normalizeLabel(s));
+  if (lead) out.push(lead[1]);
   return out;
 }
 
@@ -389,21 +550,23 @@ function riskyTerms(s: string): string[] {
 export function alignedWithGoal(goal: string | undefined, element: string): boolean {
   if (!goal) return true;
   const asked = words(goal);
-  const wanted = (w: string) => asked.some(a => sameWord(a, w));
+  const said = `${normalizeLabel(goal)} ${foldLabel(goal)}`;
+  const saidTerm = (t: string) => said.includes(t) || said.includes(hangulStem(t));
+  // Scripts without spaces: the word (or the risky term in it) inside the request ("インストールして", "보내 줘").
+  const wanted = (w: string) => asked.some(a => sameWord(a, w)) || (SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm)));
   const all = words(element);
-  const risky = all.filter(w => isRiskyLabel(w));
+  let risky = all.filter(w => isRiskyLabel(w));
+  // "Comment", "Block user": the verb, unless another risky word is ("Delete comment" acts on a comment).
+  if (!risky.length) risky = all.filter(w => isRiskyActLabel(w));
   if (risky.length) {
     if (!risky.some(wanted)) return false;
     // The verb is what the user asked for; what it acts on must be too ("Send money to…" isn't "send the report").
-    const rest = all.filter(w => !isRiskyLabel(w));
+    const rest = all.filter(w => !risky.includes(w));
     return rest.length === 0 || rest.some(wanted);
   }
   // A risky phrase, or a word in a script without spaces: the request must say it too.
   const terms = riskyTerms(element);
-  if (terms.length) {
-    const said = `${normalizeLabel(goal)} ${foldLabel(goal)}`;
-    return terms.some(t => said.includes(t));
-  }
+  if (terms.length) return terms.some(saidTerm);
   return all.some(wanted);
 }
 
@@ -427,7 +590,7 @@ export function keyLabel(keys: string): string | null {
 
 function describe(r: ActionRequest, withApp = true): string {
   const el = r.element ? `${r.element.name ? quote(r.element.name) : "the"} ${r.element.role}` : "";
-  const where = r.app && withApp ? ` in ${r.app}` : "";
+  const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const replacing = r.mode === "replace" && (r.currentText ?? "").length > 0;
   switch (r.kind) {
     case "click": return `Click ${el}${where}?`;
@@ -441,7 +604,7 @@ function describe(r: ActionRequest, withApp = true): string {
     case "cursor_text": return `Borrow your mouse and keyboard to ${replacing ? "replace the text in" : "type"} ${replacing ? `${el} with ${quote(visible(r.value ?? ""))}` : `${quote(visible(r.value ?? ""))} into ${el}`}${where}?`;
     case "keys": return `Borrow your keyboard to press ${keyLabel(r.value ?? "") ?? quote(r.value ?? "", 30)}${r.element ? ` on ${el}` : ""}${where}?`;
     case "scroll": return `Borrow your mouse to scroll ${el} ${r.value ?? ""}${where}?`;
-    default: return `Read ${r.window || r.app}?`;
+    default: return `Read ${r.window || friendlyApp(r.app)}?`;
   }
 }
 
@@ -488,15 +651,15 @@ export class PolicyEngine {
     const name = r.element?.name ?? "";
     const role = r.element?.role ?? "";
     // "OK" / "Yes" agrees to whatever its dialog asks (in-page dialogs keep the browser's title), and in a
-    // "Delete 500 files?" window to that window's question.
-    const agrees = isAffirmative(name) && (!!r.dialog || isRiskyLabel(r.window));
+    // "Delete 500 files?" (or "Deactivate account") window to that window's question.
+    const agrees = isAffirmative(name) && (!!r.dialog || isRiskyLabel(r.window) || isRiskyActLabel(r.window));
     const asks = r.dialog ? `${name} ${r.dialog.name} ${r.dialog.text}` : `${name} ${r.window}`;
     // What the dialog says, in the question: on the desk (or behind Ember) the user may not see it.
     const says = (r.dialog ? r.dialog.text.trim() || r.dialog.name : r.window).replace(/\s+/g, " ").trim();
     const note = says ? `It says: ${quote(says, 90)}.` : undefined;
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
-        if (isRiskyLabel(name)) return { reason: "this action may be hard to undo or visible to others", about: name };
+        if (isRiskyControl(role, name)) return { reason: "this action may be hard to undo or visible to others", about: name };
         if (agrees) return { reason: r.dialog && !isRiskyLabel(asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo", about: asks, note };
         return null;
       case "select":
@@ -510,10 +673,16 @@ export class PolicyEngine {
       case "keys": {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
         const k = keyFamily(canonicalKeys(r.value ?? "") ?? "");
+        // After Ctrl+A, a typed character, Backspace, Delete, Enter or Ctrl+X replaces everything selected (as type_text's "replace").
+        if (r.afterSelectAll && (typedChar(k) !== null || ["backspace", "delete", "return", "ctrl+x"].includes(k))) {
+          const current = r.currentText;
+          if (current === undefined) return { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
+          if (current.length > 80 || current.includes("\n")) return { reason: `everything is selected (Ctrl+A), so this replaces all ${current.length >= 200 ? "the" : current.length} characters already there` };
+        }
         if (DESTRUCTIVE_KEYS.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button.
-          if (ACTIVATING_ROLES.test(role) && isRiskyLabel(name)) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
+          if (ACTIVATING_ROLES.test(role) && isRiskyControl(role, name)) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
           if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog, and Ember can't be sure what it agrees to", about: asks, note };
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           return null;
@@ -531,19 +700,36 @@ export class PolicyEngine {
   }
 
   /**
-   * Moving data between apps (PLAN.md §5): once the task has read another app, what it types, chooses or pastes
-   * here may carry that app's text (a page told it to copy an email into a form), so it is asked about every time.
+   * Moving data between windows (PLAN.md §5): text a task read in another window (another app's, another window
+   * of this app, another tab or message in a browser or mail client, the titles it listed, or the screen Ember's
+   * conversation read) and now types here, when the user didn't say it and this window doesn't hold it already
+   * (a page told it to copy an email into a form), is asked about every time, naming where it comes from. A paste
+   * can carry anything, so once another window was read every paste is asked about. Choices from a list aren't.
    */
   private withCarried(r: ActionRequest, risk: Risk | null): Risk | null {
-    const here = r.app.trim().toLowerCase();
-    const others = [...new Set((r.readFrom ?? []).map(a => a.trim()).filter(a => a && a.toLowerCase() !== here))];
+    const sources = r.readFrom ?? [];
+    const others = sources.filter(s => elsewhere(s, r));
     if (!others.length) return risk;
     const pastes = r.kind === "keys" ? PASTE_KEYS.has(keyFamily(canonicalKeys(r.value ?? "") ?? ""))
-      : (r.kind === "click" || r.kind === "cursor_click") && PASTE_LABEL.test(plainText(r.element?.name ?? ""));
-    if (!pastes && !["text", "cursor_text", "select", "value"].includes(r.kind)) return risk;
-    const from = appList(others.slice(0, 3));
-    const note = `I read ${from} in this task, so this may carry text from there.`;
-    return { reason: risk?.reason ?? `this may carry text from ${from} into ${r.app || "this app"}`, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note };
+      : (r.kind === "click" || r.kind === "cursor_click") && isPasteLabel(r.element?.name ?? "");
+    const value = r.kind === "text" || r.kind === "cursor_text" ? r.value : r.kind === "keys" ? r.typed : undefined;
+    if (!pastes && !value) return risk;
+    // Runs the user said, or the window typed into holds already, aren't carried from anywhere.
+    const own = pastes ? new Set<string>() : runsIn(value!, [r.goal ?? "", ...sources.filter(s => !elsewhere(s, r)).map(s => s.text ?? s.window)].join("\n"));
+    const from = pastes ? others : others.filter(s => [...runsIn(value!, s.text ?? s.window)].some(g => !own.has(g)));
+    if (!from.length) return risk;
+    const read = [...new Map(from.filter(s => !s.listed && !s.described).map(s => [`${s.app}\n${s.window}`, s])).values()];
+    const named = read.slice(0, 2).map(s => { const app = friendlyApp(s.app); return `the window ${quote(s.window, 50)}${s.window.toLowerCase().includes(app.toLowerCase()) ? "" : ` (${app})`}`; });
+    if (read.length > 2) named.push(`${read.length - 2} more`);
+    if (from.some(s => s.listed)) named.push("the list of open windows");
+    if (from.some(s => s.described)) named.push("your screen when you asked");
+    const note = `I read ${appList(named)} in this task, so this may carry text from there.`;
+    // The reason goes to the journal too: app names only, never window titles.
+    const apps = [...new Set(from.filter(s => !s.described && s.app.trim().toLowerCase() !== r.app.trim().toLowerCase()).map(s => friendlyApp(s.app)))];
+    const here = r.app ? friendlyApp(r.app) : "this app";
+    const reason = apps.length ? `this may carry text from ${appList(apps.slice(0, 3))} into ${here}`
+      : from.every(s => s.described) ? `this may carry text from the user's screen into ${here}` : `this may carry text from another window or tab of ${here}`;
+    return { reason: risk?.reason ?? reason, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note };
   }
 
   private decideBase(r: ActionRequest, count = true): Decision {
@@ -554,6 +740,8 @@ export class PolicyEngine {
     if ((r.app || r.window) && isNeverLook(win, this.o.neverLook())) return never("this app is on the user's never-look list");
     if (r.kind === "open_app" && r.value && isNeverLook({ app: r.value, name: r.value }, this.o.neverLook())) return never("this app is on the user's never-look list");
     if (isSecurityWindow({ app: r.app, title: r.window })) return never("authentication and security windows are for the user only");
+    // Ember's own windows: a task could answer its own (or another task's) question, or change consent or the never-look list.
+    if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     if (r.element?.role === "password text") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
@@ -595,10 +783,12 @@ export class PolicyEngine {
 
     const grant = this.o.grants()[r.app.toLowerCase()];
     if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, needsGrant: grant !== "act", risky: true };
-    if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${r.app}`, prompt };
+    // Grants are kept by the program's own name; questions and reasons use the name people know ("Settings", not "gnome-control-center").
+    const app = r.app ? friendlyApp(r.app) : "this app";
+    if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${app}`, prompt };
     return {
-      tier: "reversible", verdict: "confirm", reason: `first action in ${r.app || "this app"}`,
-      prompt: `Let me work in ${r.app || "this app"}? First step: ${lowerFirst(describe(r, false)).replace(/\?$/, ".")}`,
+      tier: "reversible", verdict: "confirm", reason: `first action in ${app}`,
+      prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false)).replace(/\?$/, ".")}`,
       needsGrant: true,
     };
   }

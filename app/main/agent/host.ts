@@ -157,6 +157,11 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
 const NAMES: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
 /** How long main's own bubble holds off everything else at most, if main doesn't give it back sooner. */
 const MAIN_HOLD_MS = 30_000;
+/**
+ * A reply this short only says "on it" (start_task asks the conversation for a few words): stale once the task
+ * has spoken. A longer one answered something else as well.
+ */
+const ANNOUNCEMENT_CHARS = 80;
 /** How a finished task looks: proud, calm (stopped, or the user said no), or sorry. */
 const OUTCOME = {
   done: { emotion: "proud", gesture: "thumbsUp", mood: "done", empty: "Done." },
@@ -192,6 +197,8 @@ export class AgentHost {
   private stops = 0;
   /** This run's conversation: a reconnect resumes it; quitting (stop()) and signing out delete it. */
   private conversation: string | null = null;
+  /** The account the conversation belongs to: signed in as another, it isn't resumed. */
+  private conversationLogin: string | undefined;
   private models: ModelLike[] = [];
   /** The bubble is shared by the conversation and every task (see BubbleOwner). */
   private readonly owner: BubbleOwner;
@@ -231,12 +238,16 @@ export class AgentHost {
   /**
    * The conversation's reply announcing a task ("On it…") is stale once a question was answered (`task`
    * absent: a task has spoken to the user since) or, if it never got on screen, once that task finished.
-   * It isn't shown again after them.
+   * One already read (covered by the question) isn't shown again. One never seen still shows once if it says
+   * more than "on it" (it answered something else too); only a bare announcement is dropped.
    */
   private dropAnnouncement(task?: string): void {
     const p = this.presenter;
-    if (p.busy) return;
-    if (task ? this.announced.has(task) && p.waiting : this.announced.size > 0 && p.visible) p.drop();
+    if (p.busy || !p.visible || (task ? !this.announced.has(task) : this.announced.size === 0)) return;
+    const b = p.bubble;
+    const bare = b.mood === "idle" && b.thought.length <= ANNOUNCEMENT_CHARS;
+    // (At a task's end a reply already seen may still be on screen: it keeps its own time.)
+    if (p.waiting ? bare : !task) p.drop();
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -247,7 +258,8 @@ export class AgentHost {
   /**
    * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
    * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
-   * asks something, or 30 seconds pass. A task's work shows on its card meanwhile.
+   * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
+   * covers doesn't run out of time underneath (main may put it back: a wake that was another word).
    */
   claimBubble(): void {
     this.owner.claim(this.mainBubble);
@@ -258,19 +270,25 @@ export class AgentHost {
   }
 
   /**
-   * Main is done with its own bubble; `showing` is what is on screen now. The conversation's answer comes
-   * back if main put it back on screen, it hadn't been seen yet, or its turn is still going, and it goes after
-   * its reading time. Otherwise it's over, and a task still at work shows its progress again.
+   * Main is done with its own bubble; `showing` is what is on screen now. The conversation's answer, or the
+   * task result main covered, comes back if main put it back on screen, it hadn't been seen yet, or its turn
+   * (or task) is still going, and it goes after its reading time. Otherwise it's over, and a task still at
+   * work shows its progress again. Returns false if what is on screen now is nobody's but main's (no presenter
+   * will hide it: one of main's own, or something put back that is over): main hides it itself.
    */
-  releaseBubble(showing: BubbleState | null = null): void {
+  releaseBubble(showing: BubbleState | null = null): boolean {
     if (this.mainHold) { clearTimeout(this.mainHold); this.mainHold = null; }
-    if (this.owner.holder !== this.mainBubble) return;
+    if (this.owner.holder !== this.mainBubble) return true;
     this.owner.holder = null;
     const p = this.presenter;
+    const back = (x: Presenter) => x.atWork || x.waiting || (showing !== null && x.isShowing(showing));
+    const covered = this.owner.uncover(x => x === p || back(x));
     // (A question up meanwhile: it shows once that's answered.)
-    if ((p.busy || p.waiting || (showing !== null && p.isShowing(showing))) && (p.reshow() || p.visible)) return;
+    if (back(p) && (p.reshow() || p.visible)) return true;
     p.drop();
-    this.owner.free();
+    // What main put back stays on screen (it isn't replaced at once by something else waiting).
+    if (!(covered && covered !== p && showing !== null && covered.isShowing(showing) && covered.reshow())) this.owner.free();
+    return this.owner.current !== this.mainBubble;
   }
 
   getStatus(): AgentStatus {
@@ -403,6 +421,16 @@ export class AgentHost {
         await sleep(2000 * attempt);
         if (gen !== this.gen) return;
       }
+      // Another account than the conversation's (signed in again from the error state, or the GitHub CLI's
+      // account changed): it isn't resumed under this one. It's deleted, as at sign-out, and what it said and
+      // how its tasks ended go with it.
+      if (this.conversation && login !== this.conversationLogin) {
+        this.o.log.info("agent.account_changed");
+        await this.forgetCurrent(RUNTIME_WAIT_MS);
+        this.carried = [];
+        this.transcript.length = 0;
+        this.o.onTranscript?.([]);
+      }
 
       let models: ModelLike[] = [];
       const allowed = this.o.admin?.().models.allowed;
@@ -483,14 +511,17 @@ export class AgentHost {
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-        model: choice.conductor, provider: this.o.provider, describeScreen: this.o.describeScreen,
+        model: choice.conductor, provider: this.o.provider,
+        // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
+        describeScreen: this.o.describeScreen ? async () => { const seen = await this.o.describeScreen!(); this.askScreen.push(seen); return seen; } : undefined,
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
         startTask: tasks ? goal => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
-          const t = tasks.start(goal, { target: this.askTarget ?? undefined });
+          // Risky steps are checked against what the user said, not the goal (the conductor may have read it off the screen).
+          const t = tasks.start(goal, { target: this.askTarget ?? undefined, userWords: this.askWords ?? undefined, screen: this.askScreen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
@@ -503,11 +534,12 @@ export class AgentHost {
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
-          steer: (id, text) => tasks.steer(id, text),
+          steer: (id, text) => tasks.steer(id, text, this.askWords ?? undefined, this.askScreen.join("\n") || undefined),
         } : undefined,
       });
       await this.conductor.start();
       this.conversation = this.conductor.sessionId;
+      this.conversationLogin = login;
       if (gen !== this.gen) return;
 
       this.setStatus({
@@ -667,6 +699,10 @@ export class AgentHost {
 
   /** Where the user was when they last called Ember: tasks from this request start there. */
   private askTarget: (WindowTarget & { app?: string }) | null = null;
+  /** What the user said or typed in their latest request: tasks started or changed in its turn check risky steps against it. */
+  private askWords: string | null = null;
+  /** Screen text the conversation read in that request's turn (the context sent with it, describe_screen's answers). */
+  private askScreen: string[] = [];
 
   /**
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
@@ -675,6 +711,8 @@ export class AgentHost {
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
     if (epoch !== this.stopEpoch) return;
     this.askTarget = context?.target ?? null;
+    this.askWords = text;
+    this.askScreen = context?.text ? [context.text] : [];
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".

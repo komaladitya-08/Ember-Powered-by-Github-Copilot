@@ -86,12 +86,16 @@ export class TaskManager {
 
   constructor(private d: TaskManagerDeps) {}
 
-  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide" } = {}): Task {
+  /**
+   * `userWords`: what the user said in the turn that started it (risky steps are checked against those); `screen`:
+   * what the conversation read on the screen in that turn (text from it typed into a window is asked about).
+   */
+  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide"; userWords?: string; screen?: string } = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null };
     this.tasks.set(id, task);
     const target = opts.target ?? this.d.currentWindow() ?? {};
-    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do" } });
+    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}), ...(opts.screen ? { screen: opts.screen } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title });
@@ -126,13 +130,15 @@ export class TaskManager {
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
 
-  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. */
-  async steer(id: string, text: string): Promise<boolean> {
+  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`: as for start(). */
+  async steer(id: string, text: string, userWords?: string, screen?: string): Promise<boolean> {
     const r = this.running.get(id);
-    if (r) return r.worker.steer(text);
+    if (r) return r.worker.steer(text, userWords, screen);
     const q = this.queue.find(x => x.task.id === id);
     if (!q) return false;
-    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})` };
+    const words = q.spec.userWords !== undefined ? { userWords: userWords ? `${q.spec.userWords}\n${userWords}` : q.spec.userWords } : {};
+    const seen = screen ? { screen: q.spec.screen ? `${q.spec.screen}\n${screen}` : screen } : {};
+    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})`, ...words, ...seen };
     return true;
   }
 

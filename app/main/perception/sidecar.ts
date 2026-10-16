@@ -79,6 +79,12 @@ export interface SecretFieldsResult {
 /** Something GNOME Shell draws over the windows (a system dialog, a notification), in physical pixels. */
 export interface ShellOverlay { role: string; name: string; text: string; bounds: Bounds | null }
 
+/** One of the elements that show at a point of a window (see atPoint), with its bounds as the app reports them. A secret field comes nameless, and last. */
+export interface PointElement { role: string; name: string; bounds: Bounds | null; secret?: boolean }
+
+/** What shows at a point, outermost first; `busy`: the app didn't answer in time; `found`: false when the window is gone. */
+export interface AtPointResult { chain: PointElement[]; busy?: boolean; blocked?: boolean; found?: boolean; ms: number }
+
 /** An element as it is right after an action (for verification). */
 export interface ElementInfo {
   role: string;
@@ -251,12 +257,14 @@ export class AtspiSidecar {
   }
 
   status(): Promise<SidecarStatus> { return this.request("status"); }
-  listWindows(): Promise<{ windows: AxWindow[] }> { return this.request("list_windows"); }
+  /** Visible windows; `ownPid`'s (Ember's own) are left out. */
+  listWindows(params: { ownPid?: number } = {}): Promise<{ windows: AxWindow[] }> { return this.request("list_windows", params); }
   /**
    * `pid` and `path` together name one window (no other is read if it is gone). A window whose app
-   * or title matches `neverLook`, or whose process is in `skipPids`, is found but not read.
+   * or title matches `neverLook`, or whose process is in `skipPids`, is found but not read. `ownPid`'s
+   * windows (Ember's own) are never found, not even as the active window.
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[] } = {}): Promise<ReadWindowResult> {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown }>("read_window", params).then(({ secretKeys, ...r }) => {
       this.remember(secretKeys);
       return r;
@@ -285,6 +293,15 @@ export class AtspiSidecar {
    * shell couldn't be looked through in time: a password prompt may be up unseen.
    */
   shellOverlays(): Promise<{ overlays: ShellOverlay[]; complete?: boolean }> { return this.request("shell_overlays"); }
+
+  /**
+   * What shows at screen point (`x`, `y`) in the window `pid` and `path` name, outermost first (positions as the
+   * app reports them): a few calls, where a read of the window takes hundreds. A window matching `neverLook`, or
+   * whose process is in `skipPids`, is found but not looked at (`blocked`); `ownPid`'s (Ember's own) are never found.
+   */
+  atPoint(params: { pid: number; path: string; x: number; y: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number }): Promise<AtPointResult> {
+    return this.request("at_point", params);
+  }
 
   // Tier 1 actions on element ids from a previous readWindow.
   readElement(id: number): Promise<ElementInfo> { return this.request<ElementInfo>("read_element", { id }).then(e => this.physical(id, e)); }

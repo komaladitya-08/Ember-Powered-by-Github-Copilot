@@ -9,8 +9,8 @@
 import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
-import { focusedElement, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
-import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type ReadWindowResult } from "./sidecar";
+import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord } from "./elements";
+import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { StackedWindow, X11, X11Window } from "../x11";
 import type { Logger } from "../logger";
@@ -58,6 +58,8 @@ export interface Seen {
   ms: number;
   /** Physical pixels per pixel the app's window frame reports (2 for GDK_SCALE=2); the bounds here are already physical. */
   axScale: number;
+  /** The user is in one of Ember's own windows (the ask box, settings): Ember never reads those, so nothing was read. */
+  ember?: boolean;
 }
 
 export interface Perceived extends Seen {
@@ -83,7 +85,15 @@ export class Perception {
   /** The focused window's accessibility tree (empty when blocked or unreadable). */
   async focused(stack?: StackedWindow[] | null): Promise<Seen> {
     const x11Window = this.o.x11?.activeWindow() ?? null;
+    if (x11Window && x11Window.pid === this.ownPid) {
+      return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, ember: true };
+    }
     return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack);
+  }
+
+  /** Ember's own process: its windows (the ask box, settings, the overlay) are never read or listed. */
+  private get ownPid(): number {
+    return this.o.ownPid ?? process.pid;
   }
 
   /** On the never-look list, or a password or authentication prompt (polkit, keyring…): Ember looks away (M8.3). */
@@ -106,7 +116,7 @@ export class Perception {
     // "electron"): those processes aren't read at all.
     if (list.length && stack === undefined) stack = this.stackNow();
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ...(list.length ? { neverLook: list, skipPids } : {}) })
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}) })
       : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
     let res = await ask();
     if (res.busy) {
@@ -146,19 +156,37 @@ export class Perception {
   }
 
   /**
+   * What shows at point `p` in the window `target` names (its pid and path), outermost first: for the wheel, whether
+   * a control it would change is there. Positions are as the app reports them, the same as read()'s for a window
+   * whose axScale is 1. null when that can't be told: no pid and path, a private or closed window, an app that
+   * didn't answer in time.
+   */
+  async atPoint(target: WindowTarget, p: { x: number; y: number }): Promise<PointElement[] | null> {
+    if (target.pid == null || !target.path) return null;
+    const list = this.o.neverLook().filter(i => i.trim());
+    const stack = list.length ? this.stackNow() : null;
+    const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
+    const res = await this.o.sidecar.atPoint({ pid: target.pid, path: target.path, x: Math.round(p.x), y: Math.round(p.y), ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}) });
+    return res.blocked || res.busy || res.found === false ? null : res.chain;
+  }
+
+  /**
    * Fields the sidecar didn't know were secret (a revealed password beside its "Show password"
    * toggle, an unnamed field under a "Card number" label): their contents are dropped here, and
    * the sidecar is told, so nothing is typed into them either.
    */
   private async withSecrets(nodes: AxNode[]): Promise<AxNode[]> {
     const secret = secretIds(nodes);
+    // What a secret field holds goes too (Chromium lists a text box's text as static text inside it).
+    const inside = insideSecrets(nodes, secret);
     const fresh = nodes.filter(n => secret.has(n.id) && !n.secret).map(n => n.id);
-    if (!fresh.length) return nodes;
-    await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
-    return nodes.map(n => {
-      if (!secret.has(n.id) || n.secret) return n;
+    if (!fresh.length && !inside.size) return nodes;
+    if (fresh.length) await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
+    return nodes.flatMap(n => {
+      if (inside.has(n.id)) return [];
+      if (!secret.has(n.id) || n.secret) return [n];
       const { text: _text, selection: _selection, value: _value, ...rest } = n;
-      return { ...rest, secret: true };
+      return [{ ...rest, secret: true }];
     });
   }
 
@@ -253,6 +281,7 @@ export class Perception {
     }
     // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
     if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
+    if (seen.ember) return EMBERS_OWN;
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!seen.window) {
       if (seen.busy) return BUSY_APP;
@@ -278,6 +307,7 @@ export class Perception {
       ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
       : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
       : seen.busy ? BUSY_APP
+      : seen.ember ? EMBERS_OWN
       : "The focused window exposes no accessibility information; use the screenshot.";
     if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
@@ -294,7 +324,7 @@ export class Perception {
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
     // A window: blacked out wherever other windows lie on top of it (the stacking order says which).
-    const own = this.o.ownPid ?? process.pid;
+    const own = this.ownPid;
     const covering = (s: StackedWindow[] | null): Bounds[] | null => {
       const at = s && this.locate(seen, s);
       return at ? coveringRects(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : null;
@@ -335,6 +365,15 @@ export class Perception {
         const priv = await this.privateWindows(now);
         if (priv === null) return null;
         const fields = [...await this.whereNow(secrets), ...await this.whereNow(unread, k)];
+        if (seen.window) {
+          // A secret field that appeared or scrolled in after the first look may be in the picture: the window is
+          // looked through again now the pixels are taken, and without all of it there is no picture (as before it).
+          const late = await this.unreadSecrets(seen);
+          if (typeof late === "string") return null;
+          const lateRects = late.flatMap(f => physical(f.bounds, k).map(pad));
+          fields.push(...lateRects);
+          blacked.push(...lateRects);
+        }
         blacked.push(...priv);
         if (!windowScope) return [...priv, ...fields];
         const after = covering(now);
@@ -430,7 +469,7 @@ export class Perception {
 
   /** Visible windows (app, title, physical bounds), never-look ones (by app, title or X11 class) left out. */
   async windows(): Promise<AxWindow[]> {
-    const { windows } = await this.o.sidecar.listWindows();
+    const { windows } = await this.o.sidecar.listWindows({ ownPid: this.ownPid });
     const list = this.o.neverLook().filter(i => i.trim());
     const stack = list.length || windows.some(w => w.bounds) ? this.stackNow() : null;
     const privatePids = new Set(list.length && stack ? stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid) : []);
@@ -463,7 +502,7 @@ export class Perception {
     }
     let atspi: Bounds[] | null = null;
     try {
-      const { windows } = await this.o.sidecar.listWindows();
+      const { windows } = await this.o.sidecar.listWindows({ ownPid: this.ownPid });
       atspi = windows.filter(w => w.bounds && isNeverLook(w, list)).map(w => {
         // Its X11 window when it can be found (the whole frame, in physical pixels), else its own report, scaled.
         const m = s && matchFrame(w, s);
@@ -479,6 +518,7 @@ export class Perception {
 }
 
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
+const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
 
 const rectKey = (b: Bounds) => `${b.x},${b.y},${b.width},${b.height}`;
 

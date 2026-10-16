@@ -98,34 +98,35 @@ LABEL_ROLES = frozenset(["label", "static", "caption"])
 # Labels of fields whose contents never leave this process (passwords, payment and bank details,
 # one-time codes, keys), in the languages Ember's users are likely to meet. The same lists as
 # SECRET_WORDS and SECRET_ANYWHERE in app/main/perception/elements.ts (a unit test checks): each entry
-# is a regular expression both engines read alike, matched on lowercase, NFKC-normalised text.
+# is a regular expression both engines read alike, matched on lowercase, NFKC-normalised text, as whole words
+# (English ones in the plural too: "Recovery codes").
 SECRET_WORDS = [
     # Passwords and PINs. Words that mean something else too stand alone or in a phrase that says password
     # ("Palabras clave" are keywords, a "Parola chiave" a keyword).
-    "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
+    "pass(word|phrase|code|wd)s?", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
     "contrasenya", "senha", "palavra-passe", r"^[\s:*]*parol(a|ă)[\s:*]*$", "parolă", "parola d['’]ordine",
     "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
     "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", r"^[\s:*]*clave[\s:*]*$",
     "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
     "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
-    "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
+    "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
     # Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
-    "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification",
+    "card ?(number|no)s?", "credit ?cards?", "cvv2?", "cvc2?", "csc", "security codes?", "card verification",
     "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
     "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum der karte", "num(é|e)ro de (la )?carte", "cryptogramme",
     "date d['’]expiration de (la )?carte", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
     "kaartnummer", "kortnummer", "numer karty", "номер карты",
     "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
-    "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "iban",
-    "routing number", "account number", "sort code", "kontonummer",
+    "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "ibans?",
+    "routing numbers?", "account numbers?", "sort codes?", "kontonummer",
     # One-time codes.
-    "one[- ]time (code|password|pin)", "otp", "2fa", "two[- ]factor", "totp", "verification code", "auth(entication)? code",
-    "recovery (code|key)", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
+    "one[- ]time (code|password|pin)s?", "otps?", "2fa", "two[- ]factor", "totp", "verification codes?", "auth(entication)? codes?",
+    "recovery (code|key)s?", "backup codes?", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
     "код (подтверждения|безопасности)",
     # Keys, network passwords and secret answers.
-    "secret", "private key", "(api|access|auth|bearer) ?(key|token)", "wi-?fi (key|password|passphrase)", "network (security )?key",
-    "wpa2? ?(key|passphrase)", "pre-?shared key", "psk", "encryption key", "security (answer|question)", "secret (answer|question)",
-    "ssn", "social security",
+    "secrets?", "private keys?", "(api|access|auth|bearer) ?(key|token)s?", "wi-?fi (key|password|passphrase)s?", "network (security )?keys?",
+    "wpa2? ?(key|passphrase)s?", "pre-?shared keys?", "psk", "encryption keys?", "security (answer|question)s?", "secret (answer|question)s?",
+    "ssns?", "social security",
 ]
 # The same, for scripts written without spaces between words (matched anywhere in the label).
 SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
@@ -499,6 +500,12 @@ def overlaps(b, clip):
         and b["y"] < clip["y"] + clip["height"] and clip["y"] < b["y"] + b["height"]
 
 
+def in_view(b, clip):
+    """Can rectangle b show anything inside `clip`? Not without a size: LibreOffice Calc puts the cells scrolled
+    away at its table's corner, sized 0x0 (and a field without a size shows no pixels). Yes without a position."""
+    return (b is None or (b["width"] > 0 and b["height"] > 0)) and overlaps(b, clip)
+
+
 def on_screen(acc, i, clip):
     """Is child i showing, and inside `clip` (when both have a position)?"""
     child = child_at(acc, i)
@@ -540,12 +547,29 @@ def showing_rule():
                                Atspi.CollectionMatchType.ALL, [], Atspi.CollectionMatchType.ALL, False)
 
 
+# Toolkits whose apps answer AT-SPI's Collection (the app searching its own tree) from objects that last: the web
+# engines (Chromium, so Electron apps too, and Firefox's Gecko). Elsewhere the accessibility bridge answers it from
+# objects the app makes on demand and drops again: one such search over LibreOffice Calc's cells makes Calc abort
+# (unsaved work lost). There, only the end of a long list is looked at (see showing_after).
+WEB_TOOLKITS = frozenset(["chromium", "gecko"])
+
+
+def web_engine(acc):
+    """Is acc in a web engine's tree (see WEB_TOOLKITS)? libatspi asks each app for its toolkit once."""
+    if not native(acc):
+        return False
+    try:
+        return (Atspi.Accessible.get_toolkit_name(acc) or "").lower() in WEB_TOOLKITS
+    except Exception:
+        return False
+
+
 def showing_after(acc, child, index, count, budget, limit=STRAGGLERS):
     """The children of a long list after child `index` (`child`) that show although the ones just before them
-    don't: laid out out of order, like a web page's fixed "Pay now" panel last in its document. The app finds
-    them in one call (AT-SPI's Collection); without it, the last few children are looked at. Returns (those
-    children, whether they are all of them)."""
-    if native(acc):
+    don't: laid out out of order, like a web page's fixed "Pay now" panel last in its document. A web engine
+    finds them in one call (AT-SPI's Collection); elsewhere (see WEB_TOOLKITS), or when that fails, the last few
+    children are looked at. Returns (those children, whether they are all of them)."""
+    if web_engine(acc):
         try:
             found = list(Atspi.Collection.get_matches_from(
                 acc, child, showing_rule(), Atspi.CollectionSortOrder.CANONICAL,
@@ -553,8 +577,9 @@ def showing_after(acc, child, index, count, budget, limit=STRAGGLERS):
             budget.last = time.monotonic()  # one call for all of them, not a timeout
             return found[:limit], len(found) <= limit
         except Exception:
-            if budget.check():
-                return [], False
+            pass
+    if budget.check():
+        return [], False
     tail = [c for c in (child_at(acc, i) for i in range(max(index + 1, count - 3), count)) if c is not None]
     shows = [c for c in tail if "showing" in state_names(c)]
     # One showing out of order, and the children between may too.
@@ -603,7 +628,25 @@ class Budget(object):
         return self.over
 
 
-def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None):
+def shows(acc, states, in_pane=False):
+    """Is acc on screen, by its states (`in_pane`: a child of a scroll pane)? GTK 3 judges a GtkViewport's SHOWING
+    against the viewport's own scroll position (gtk_widget_accessible_on_screen takes the viewport itself as the
+    one to test against), so a page scrolled more than a screen down says its viewport doesn't show while the
+    rows in it do, at their right places. Such a viewport (VISIBLE, in a scroll pane) is looked into: what it
+    holds says for itself whether it shows (a hidden page's rows don't), at the cost of a look at its child."""
+    if "visible" not in states:
+        return False
+    if "showing" in states:
+        return True
+    if not in_pane:
+        return False
+    try:
+        return acc.getRoleName() == "viewport"
+    except Exception:
+        return False
+
+
+def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=None, in_pane=False):
     """Reports acc and what it contains, depth first. Returns whether acc is on screen."""
     budget = budget or Budget()
     if len(out) >= max_nodes:
@@ -612,9 +655,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     if budget.tick():
         return False
     states = state_names(acc)
-    if "showing" not in states or "visible" not in states:
+    if not shows(acc, states, in_pane):
         # Invisible elements are a known prompt-injection channel; never report them.
         return False
+    # A viewport GTK misjudged (see shows): not listed itself, and on screen only if something in it is.
+    judged = "showing" in states
     if depth > max_depth:
         # It shows, but is nested deeper than a read goes: the read says it is incomplete.
         budget.cut_short("depth")
@@ -625,8 +670,9 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     except Exception:
         return False
     my_id = parent_id
-    listed = role not in SKIP_ROLES or bool(name)
+    listed = judged and (role not in SKIP_ROLES or bool(name))
     bounds = extents(acc) if listed or depth == 0 or role in CLIP_ROLES else None
+    secret = False
     if listed and (bounds is None or (bounds["width"] > 0 and bounds["height"] > 0)):
         node = node_of(acc, role, name, states, bounds)
         node["id"] = SNAPSHOTS.add(acc)
@@ -634,6 +680,12 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         node["depth"] = depth
         out.append(node)
         my_id = node["id"]
+        secret = node.get("secret", False)
+    elif judged and role in TEXT_ROLES:
+        secret = is_secret(acc, role, name)
+    if secret:
+        # What a secret field holds is its contents too: Chromium lists a text box's text as static text in it.
+        return True
     if depth == 0 or role in CLIP_ROLES:
         clip = clip_to(clip, bounds)
     if budget.check():
@@ -655,9 +707,10 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         if child is None:
             continue
         last = (i, child)
-        on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+        on_screen_now = walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, role == "scroll pane")
         if budget.busy or budget.over:
             return True
+        judged = judged or on_screen_now
         if long_list:
             # Past the rows on screen: the rest of a long list is scrolled away too.
             shown, misses = (True, 0) if on_screen_now else (shown, misses + 1 if shown else 0)
@@ -680,7 +733,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
             walk(child, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
             if budget.busy or budget.over:
                 return True
-    return True
+    return judged
 
 
 # Controls a label on their row names (a label beside a link or a button is usually a heading). Keep in step with
@@ -737,6 +790,17 @@ def redact_by_layout(nodes, accessible_of):
         SECRETS.add(object_key(accessible_of(n["id"])))
 
 
+def inside_secrets(nodes):
+    """Ids of the nodes inside a secret field (its contents: Chromium lists a text box's text as static text in
+    it). walk doesn't go into the fields it knows are secret; these are in fields found secret after it."""
+    secret = set(n["id"] for n in nodes if n.get("secret"))
+    inside = set()
+    for n in nodes:  # parents come before their children
+        if n["parent"] in secret or n["parent"] in inside:
+            inside.add(n["id"])
+    return inside
+
+
 # ---------------------------------------------------------------- windows
 
 HUNG = {}  # pid -> time.monotonic() until which the app is skipped
@@ -744,6 +808,7 @@ PROBED = {}  # hung pid -> time.monotonic() it was last asked (or marked hung)
 STRIKES = {}  # pid -> (timeouts in a row, time.monotonic() of the last one counted)
 SLOW_NOW = set()  # apps that timed out during the current request: not asked again before the next one
 SKIPPED_NOW = set()  # hung apps the current request left out
+OWN_NOW = set()  # Ember's own process (a request's "ownPid"): its windows are never found, listed or read
 # The windows each app showed when it last answered (pid -> OrderedDict of path -> window): a busy or hung
 # app's windows are still listed (as busy), not dropped as if they had closed.
 KNOWN = OrderedDict()
@@ -751,9 +816,13 @@ KNOWN_APPS = 200
 KNOWN_WINDOWS = 20
 
 
-def new_request():
+def new_request(params=None):
     SLOW_NOW.clear()
     SKIPPED_NOW.clear()
+    OWN_NOW.clear()
+    own = (params or {}).get("ownPid")
+    if isinstance(own, int):
+        OWN_NOW.add(own)
 
 
 def is_hung(pid):
@@ -851,7 +920,7 @@ def frames(only_pid=None, skip_pid=None, until=None):
     """(app, pid, window) for every top-level window. The process id is checked before an app is
     asked for its windows; hung apps (see timed_out) are skipped for a while unless asked for, or due to be
     asked again (see reprobe). Past `until` (time.monotonic()), busy apps took the time already: the rest wait
-    for the next request."""
+    for the next request. Ember's own windows (see OWN_NOW) are never among them."""
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
@@ -871,7 +940,7 @@ def frames(only_pid=None, skip_pid=None, until=None):
             continue
         if skip_pid is not None and pid == skip_pid:
             continue
-        if pid in SLOW_NOW:
+        if pid in SLOW_NOW or pid in OWN_NOW:
             continue
         if only_pid is None and is_hung(pid) and not reprobe(pid):
             SKIPPED_NOW.add(pid)
@@ -944,7 +1013,7 @@ def describe_window(app, pid, win, budget=None):
 
 
 def list_windows(params):
-    new_request()
+    new_request(params)
     out, asked = [], set()
     for app, pid, win in frames(until=time.monotonic() + FIND_BUDGET_S):
         asked.add(pid)
@@ -1042,7 +1111,7 @@ def other_windows(pid, win, budget):
 
 def read_window(params):
     t0 = time.time()
-    new_request()
+    new_request(params)
     until = time.monotonic() + FIND_BUDGET_S
     found = find_window(params, until)
     if found is None:
@@ -1070,6 +1139,11 @@ def read_window(params):
         budget.check()  # the last element asked may have been the one that timed out
     latest = SNAPSHOTS.latest()
     redact_by_layout(nodes, lambda nid: latest.get(nid))
+    inside = inside_secrets(nodes)
+    if inside:
+        nodes = [n for n in nodes if n["id"] not in inside]
+        for nid in inside:
+            latest.pop(nid, None)  # nor are they read by id
     others = [] if budget.busy or pid is None else other_windows(pid, win, Budget(0.3))
     if budget.busy and pid not in SLOW_NOW:
         timed_out(pid)
@@ -1129,10 +1203,11 @@ def not_ready(doc):
     return b is not None and (b["width"] <= 0 or b["height"] <= 0)
 
 
-def scan_fields(acc, depth, found, clip, budget, seen):
+def scan_fields(acc, depth, found, clip, budget, seen, in_pane=False):
     """Collects (role, accessible) for the input fields and labels on screen under acc into found["fields"] and
     found["labels"]; web documents searched by the app go to found["docs"] (their labels are asked for later,
-    if needed). Stops short (budget.busy, .over or .cut) rather than miss part of the window unsaid."""
+    if needed). Stops short (budget.busy, .over or .cut) rather than miss part of the window unsaid.
+    `in_pane`: acc is a child of a scroll pane (see shows)."""
     if budget.tick():
         return
     seen[0] += 1
@@ -1140,7 +1215,7 @@ def scan_fields(acc, depth, found, clip, budget, seen):
         budget.cut_short("nodes")
         return
     states = state_names(acc)
-    if "showing" not in states or "visible" not in states:
+    if not shows(acc, states, in_pane):
         return
     if depth > MAX_DEPTH:
         # It shows, and what it holds can't be looked through.
@@ -1162,7 +1237,8 @@ def scan_fields(acc, depth, found, clip, budget, seen):
             budget.cut_short("loading")
             return
         t0 = time.monotonic()
-        matches = collection_matches(acc, FIELD_ROLES)
+        # Only a web page is searched by the app (see WEB_TOOLKITS): LibreOffice's drawings are document frames too.
+        matches = collection_matches(acc, FIELD_ROLES) if role == "document web" or web_engine(acc) else None
         if matches is not None:
             budget.last = time.monotonic()  # one call for the whole document, not a timeout
             if len(matches) >= SCAN_NODES:
@@ -1192,14 +1268,14 @@ def scan_fields(acc, depth, found, clip, budget, seen):
         if child is None:
             continue
         last = (i, child)
-        if long_list and not overlaps(extents(child), clip):
+        if long_list and not in_view(extents(child), clip):
             # Rows scrolled away show nothing in the picture; a few of them in a row, and the rest are too.
             misses += 1
             if misses >= 3:
                 break
             continue
         misses = 0
-        scan_fields(child, depth + 1, found, clip, budget, seen)
+        scan_fields(child, depth + 1, found, clip, budget, seen, role == "scroll pane")
     if not (long_list and ordered and last is not None and last[0] < count - 1) or budget.busy or budget.over or budget.cut:
         return
     # Except what shows all the same (a fixed panel last in a web page): those are looked through too.
@@ -1313,18 +1389,36 @@ SHELL_OVERVIEW = "overviewGroup"
 # wasn't looked at may be a password prompt: the answer says it is incomplete.
 SHELL_BUDGET_S = 1.0
 SHELL_ACTORS = 1000
+# Finding the shell among the apps takes this long at most (the shell's own look not counted). Apps are told
+# apart by their process's name, which asks none of them; past it, the ones not looked at may be the shell.
+SHELL_FIND_S = 1.0
 
 
-def is_shell(app):
-    """Is this application GNOME Shell? By its name, or by its process when it doesn't answer."""
+def process_name(pid):
+    """The name the kernel has for a process (/proc/<pid>/comm), or None when it can't be read."""
+    try:
+        with open("/proc/%d/comm" % pid) as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def is_shell(app, pid):
+    """Is this application GNOME Shell? By its process's name (the bus daemon gives the pid: the app isn't asked,
+    and a hung app would take a timeout's wait to answer); by its own name only when /proc can't say, and then
+    not for an app that is hung or didn't answer in time just now."""
+    if pid is not None:
+        comm = process_name(pid)
+        if comm is not None:
+            return comm == "gnome-shell"
+        if pid in SLOW_NOW or is_hung(pid):
+            return False
+    t0 = time.monotonic()
     try:
         return (app.name or "") == "gnome-shell"
     except Exception:
-        pass
-    try:
-        with open("/proc/%d/comm" % process_id(app)) as f:
-            return f.read().strip() == "gnome-shell"
-    except Exception:
+        if pid is not None:
+            note_answer(pid, t0, False)
         return False
 
 
@@ -1332,16 +1426,23 @@ def shell_overlays(params):
     """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
     text (for the password-prompt check), and "overview" while the overview or the window switcher may be
     up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time."""
+    new_request()
     out, complete = [], True
     desktop = pyatspi.Registry.getDesktop(0)
     try:
         napps = desktop.childCount
     except Exception:
         return {"overlays": out, "complete": complete}
+    until = time.monotonic() + SHELL_FIND_S
     for a in range(napps):
+        if time.monotonic() > until:
+            # The apps left may include the shell: its dialogs can't be ruled out.
+            complete = False
+            break
         app = child_at(desktop, a)
-        if app is None or not is_shell(app):
+        if app is None or not is_shell(app, process_id(app)):
             continue
+        started = time.monotonic()
         budget = Budget(SHELL_BUDGET_S)
         stack = [(app, 0)]
         seen, modal = 0, False
@@ -1376,6 +1477,7 @@ def shell_overlays(params):
                         stack.append((child, depth + 1))
         if stack or budget.check():
             complete = False
+        until += time.monotonic() - started
     return {"overlays": out, "complete": complete}
 
 
@@ -1641,6 +1743,112 @@ def read_element(params):
     return node_info(SNAPSHOTS.get(nid), nid)
 
 
+# ---------------------------------------------------------------- what is at one point (under the wheel)
+
+AT_POINT_LEVELS = 40
+AT_POINT_CHILDREN = 64
+AT_POINT_BUDGET_S = 1.0
+
+
+def contains(b, x, y):
+    return b is not None and b["x"] <= x < b["x"] + b["width"] and b["y"] <= y < b["y"] + b["height"]
+
+
+def child_at_point(acc, role, x, y, budget):
+    """The child of acc (role `role`) that shows at screen point (x, y), as a list: [child], or [holder, child]
+    for a child in a notebook's page tab (its page lies outside the tab's own bounds) or in a viewport GTK
+    misjudged (see shows: it has no bounds then); [] for none. The app is asked first (one call); where it
+    finds none, acc's first AT_POINT_CHILDREN children are looked through."""
+    if native(acc):
+        try:
+            hit = Atspi.Component.get_accessible_at_point(acc, x, y, Atspi.CoordType.SCREEN)
+        except Exception:
+            hit = None
+        if budget.check():
+            return []
+        if hit is not None and hit is not acc and getattr(hit, "path", None) != getattr(acc, "path", None) \
+                and shows(hit, state_names(hit), role == "scroll pane"):
+            return [hit]
+    try:
+        count = min(acc.childCount, AT_POINT_CHILDREN)
+    except Exception:
+        return []
+    through = []
+    for i in range(count):
+        if budget.tick():
+            return []
+        child = child_at(acc, i)
+        states = state_names(child) if child is not None else []
+        if not shows(child, states, role == "scroll pane"):
+            continue
+        if contains(extents(child), x, y):
+            return [child]
+        try:
+            if "showing" not in states or child.getRoleName() == "page tab":
+                through.append(child)
+        except Exception:
+            pass
+    for holder in through:
+        try:
+            inner = min(holder.childCount, 16)
+        except Exception:
+            continue
+        for i in range(inner):
+            if budget.tick():
+                return []
+            child = child_at(holder, i)
+            if child is not None and shows(child, state_names(child)) and contains(extents(child), x, y):
+                return [holder, child]
+    return []
+
+
+def at_point(params):
+    """What shows at screen point (`x`, `y`) in one window (`pid` and `path`), outermost first: each element's
+    role, name and bounds, as deep as the app tells. For the wheel: is a control it would change there? A read
+    of the whole window would take a hundred times as long. `busy`: the app didn't answer in time."""
+    t0 = time.time()
+    new_request(params)
+    found = find_window(params, time.monotonic() + FIND_BUDGET_S)
+    if found is None:
+        return {"chain": [], "found": False, "ms": int((time.time() - t0) * 1000)}
+    app, pid, acc = found
+    budget = Budget(AT_POINT_BUDGET_S)
+    if never_looked(describe_window(app, pid, acc, budget), params):
+        return {"chain": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
+    x, y = int(params["x"]), int(params["y"])
+    chain = []
+    try:
+        role = acc.getRoleName()
+    except Exception:
+        role = ""
+    secret = False
+    for _ in range(AT_POINT_LEVELS):
+        step = child_at_point(acc, role, x, y, budget)
+        if not step or budget.busy or budget.over:
+            break
+        for el in step:
+            try:
+                role, name = el.getRoleName(), (el.name or "").strip()
+            except Exception:
+                role, name = "", ""
+            # A secret field: neither its name nor what is in it (Chromium's text children hold its contents) leaves,
+            # and nothing in it is looked at.
+            secret = role in TEXT_ROLES and is_secret(el, role, name)
+            node = {"role": role, "name": "" if secret else name[:200], "bounds": extents(el)}
+            if secret:
+                node["secret"] = True
+            chain.append(node)
+            if secret:
+                break
+        if secret:
+            break
+        acc = step[-1]
+    out = {"chain": chain, "ms": int((time.time() - t0) * 1000)}
+    if budget.busy or budget.over:
+        out["busy"] = True
+    return out
+
+
 METHODS = {
     "ping": lambda p: {"version": VERSION},
     "status": status,
@@ -1651,6 +1859,7 @@ METHODS = {
     "shell_overlays": shell_overlays,
     "secret_fields": secret_fields,
     "read_element": read_element,
+    "at_point": at_point,
     "do_action": do_action,
     "set_text": set_text,
     "set_value": set_value,

@@ -127,7 +127,9 @@ describe("covering windows", () => {
 function desktop(o: {
   window: AxWindow | null; nodes?: AxNode[]; stack: StackedWindow[] | (() => StackedWindow[]);
   answers?: Partial<ReadWindowResult>[]; neverLook?: string[]; active?: { pid: number | null; title: string; wmClass: string } | null;
-  shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>; scan?: SecretFieldsResult | Error;
+  shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>;
+  /** What the secret scan answers (a function: each time it is asked). */
+  scan?: SecretFieldsResult | Error | (() => SecretFieldsResult | Error);
 }) {
   const calls: Record<string, unknown>[] = [];
   const scans: unknown[] = [];
@@ -150,8 +152,9 @@ function desktop(o: {
     },
     secretFields: async (w: unknown) => {
       scans.push(w);
-      if (o.scan instanceof Error) throw o.scan;
-      return o.scan ?? { fields: [], complete: true, ms: 1 };
+      const scan = typeof o.scan === "function" ? o.scan() : o.scan;
+      if (scan instanceof Error) throw scan;
+      return scan ?? { fields: [], complete: true, ms: 1 };
     },
   } as unknown as AtspiSidecar;
   const active = o.active ? { id: 77, x: 0, y: 0, width: 10, height: 10, ...o.active } : null;
@@ -220,7 +223,7 @@ describe("reading a named window", () => {
   it("asks for exactly that window, by pid and path", async () => {
     const { perception, calls } = desktop({ window: null, stack: [] });
     const seen = await perception.read({ pid: 42, path: "/org/a11y/atspi/accessible/7", title: "notes.txt" });
-    expect(calls).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/7" }]);
+    expect(calls).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/7", ownPid: 999 }]);
     expect(seen.window).toBeNull();
   });
 
@@ -229,13 +232,46 @@ describe("reading a named window", () => {
     await perception.read({ title: "Report.odt" });
     await perception.read({ pid: 42, title: "Report.odt" });
     await perception.read({ path: "/org/a11y/atspi/accessible/7" });
-    expect(calls).toEqual([{ title: "Report.odt" }, { pid: 42, title: "Report.odt" }]);
+    expect(calls).toEqual([{ title: "Report.odt", ownPid: 999 }, { pid: 42, title: "Report.odt", ownPid: 999 }]);
   });
 
   it("reads the active window only when nothing is named", async () => {
     const { perception, calls } = desktop({ window: win, stack: [] });
     expect((await perception.read({})).window?.path).toBe("/org/a11y/atspi/accessible/7");
-    expect(calls).toEqual([{}]);
+    // Never one of Ember's own (the sidecar leaves its process out, the active window too).
+    expect(calls).toEqual([{ ownPid: 999 }]);
+  });
+
+  it("leaves out what a field found secret here holds (Chromium lists a text box's text inside it)", async () => {
+    const at = (x: number, y: number, width: number) => ({ x, y, width, height: 24 });
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "notes.txt", states: [], bounds: at(0, 0, 100) },
+      { id: 2, parent: 1, depth: 1, role: "static", name: "Recovery codes", states: [], bounds: at(0, 30, 120) },
+      { id: 3, parent: 1, depth: 1, role: "entry", name: "", states: [], bounds: at(130, 30, 300) },
+      { id: 4, parent: 3, depth: 2, role: "static", name: "7f3a-91c2 0b5e-d4a8", states: [], bounds: at(132, 32, 200) },
+    ];
+    const { perception, marked } = desktop({ window: win, nodes, stack: [] });
+    const seen = await perception.read({ pid: 42 });
+    expect(seen.nodes.map(n => [n.id, !!n.secret])).toEqual([[1, false], [2, false], [3, true]]);
+    expect(marked).toEqual([[3]]);
+  });
+
+  it("never reads Ember's own windows, even when the user is in one", async () => {
+    const { perception, calls } = desktop({ window: win, stack: [], active: { pid: 999, title: "Ember settings", wmClass: "ember" } });
+    const seen = await perception.focused();
+    expect([seen.window, seen.x11Window, seen.nodes, seen.ember]).toEqual([null, null, [], true]);
+    expect(await perception.quickContext()).toBeNull();
+    expect(await perception.describe()).toContain("one of Ember's own windows");
+    expect((await perception.perceive({ image: false, scope: "window" })).text).toContain("one of Ember's own windows");
+    expect(calls).toEqual([]);
+    // Nor are they listed.
+    const listed: unknown[] = [];
+    const lister = new Perception({
+      sidecar: { listWindows: async (p: unknown) => { listed.push(p); return { windows: [] }; } } as unknown as AtspiSidecar,
+      x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 10, height: 10 }), log: quiet, ownPid: 999,
+    });
+    await lister.windows();
+    expect(listed).toEqual([{ ownPid: 999 }]);
   });
 });
 
@@ -360,7 +396,8 @@ describe("secret fields a cut-short read didn't reach", () => {
   it("are looked for on their own and blacked out", async () => {
     const { p, scans } = shot({ fields: [card], complete: true, ms: 5 }, { truncated: true });
     const r = await p;
-    expect(scans).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/1" }]);
+    // Before the picture, and again once it is taken.
+    expect(scans).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/1" }, { pid: 42, path: "/org/a11y/atspi/accessible/1" }]);
     expect(r.capture).not.toBeNull();
     expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
     expect(await pixel(r.capture!.data, 120, 100)).toBeGreaterThan(170);
@@ -391,7 +428,7 @@ describe("secret fields a cut-short read didn't reach", () => {
     // A read can miss them without knowing (a field it never saw): the window is looked through all the same.
     const { p, scans } = shot({ fields: [card], complete: true, ms: 5 }, {});
     const r = await p;
-    expect(scans).toEqual([{ pid: 42, path: "/org/a11y/atspi/accessible/1" }]);
+    expect(scans).toHaveLength(2);
     expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
     expect((await shot({ fields: [], complete: false, ms: 2000 }, {}).p).capture).toBeNull();
     expect((await shot(new Error("accessibility helper stopped"), {}).p).capture).toBeNull();
@@ -408,6 +445,22 @@ describe("secret fields a cut-short read didn't reach", () => {
     expect(d.rechecked.sort((a, b) => a - b)).toEqual([7, 51]);
     expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
     expect(await pixel(r.capture!.data, 40, 30)).toBeLessThan(30);
+  });
+
+  it("that appear between the first look and the picture are blacked out too", async () => {
+    // The field shows up (or scrolls in) after the window was looked through: found by the look after the picture.
+    const answers: (SecretFieldsResult | Error)[] = [{ fields: [], complete: true, ms: 5 }, { fields: [card], complete: true, ms: 5 }];
+    const late = (more: SecretFieldsResult | Error) => {
+      const seq = [answers[0], more];
+      return desktop({ window: win, nodes, stack: [top(1, 42, target, "Checkout")], scan: () => seq.shift() ?? more }).perception
+        .perceive({ image: true, scope: "window", target: { pid: 42 } });
+    };
+    const r = await late(answers[1]);
+    expect(await pixel(r.capture!.data, 120, 162)).toBeLessThan(30);
+    expect(await pixel(r.capture!.data, 120, 100)).toBeGreaterThan(170);
+    // That look can't be finished: no picture, as before it.
+    expect((await late({ fields: [], complete: false, ms: 2000 })).capture).toBeNull();
+    expect((await late(new Error("accessibility helper stopped"))).capture).toBeNull();
   });
 });
 

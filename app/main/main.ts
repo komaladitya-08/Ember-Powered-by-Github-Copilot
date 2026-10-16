@@ -35,6 +35,7 @@ import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
+import { handClipboardToManager } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
@@ -614,8 +615,12 @@ function start(): void {
           agent?.claimBubble();
           setState(beforeWake ?? { emotion: "neutral", bubble: IDLE_BUBBLE });
         }
-        // Main lets go of the bubble: an answer it put back (or left) hides after its reading time.
-        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) agent?.releaseBubble(lastState.bubble);
+        // Main lets go of the bubble: an answer or result it put back (or left) hides after its reading time.
+        // Something put back that is nobody's any more (one of main's own, whose hide ran out under "Listening…") goes shortly.
+        if (!e.on && (e.reason === "timeout" || e.reason === "rejected")) {
+          const shown = lastState.bubble;
+          if (!(agent?.releaseBubble(shown) ?? false) && shown.visible) hideIfStill(shown, 4000);
+        }
         break;
       case "speech":
         if (e.on) agent?.claimBubble();
@@ -842,15 +847,27 @@ function start(): void {
     wasOnboarded = s.onboarded;
   });
 
-  // Quitting waits (up to 3 s) for the brain to stop: that is when this run's conversation is deleted.
-  let brainStopped = false;
+  // An X id of one of Ember's windows, taken while they exist (at will-quit they are gone): the clipboard's
+  // owner is told apart by it.
+  let emberXid = 0;
+  app.on("browser-window-created", (_e, w) => {
+    if (!emberXid && process.env.DISPLAY) try { emberXid = Number(w.getNativeWindowHandle().readUInt32LE(0)); } catch { /* not X11 */ }
+  });
+  // Quitting waits (up to 3 s) for the brain to stop: that is when this run's conversation is deleted. Meanwhile a
+  // clipboard Ember holds (after a paste it put the user's back) goes to the clipboard manager (≤ 2 s), or
+  // quitting would empty it.
+  let quitting = false;
   app.on("will-quit", e => {
     globalShortcut.unregisterAll();
     overlay?.stop();
-    if (brainStopped || !agent) return;
-    brainStopped = true;
+    if (quitting) return;
+    quitting = true;
     e.preventDefault();
-    void Promise.race([agent.stop(), new Promise(r => setTimeout(r, 3000))]).catch(() => undefined).finally(() => app.exit(0));
+    const brain = agent ? Promise.race([agent.stop(), new Promise(r => setTimeout(r, 3000))]).catch(() => undefined) : Promise.resolve();
+    const clip = emberXid
+      ? handClipboardToManager({ ourWindow: emberXid }).then(result => log.info("clipboard.handoff", { result }), err => log.warn("clipboard.handoff_failed", { err }))
+      : Promise.resolve();
+    void Promise.all([brain, clip]).finally(() => app.exit(0));
   });
 
   void app.whenReady().then(() => {

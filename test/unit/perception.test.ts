@@ -115,6 +115,22 @@ describe("secret fields", () => {
     expect(out).toContain('[7] text "Name" (showing, visible) text="Ada"');
     expect(out).toContain('[8] push button "Show password" (showing, visible)');
   });
+  it("never lists what a secret field holds as elements inside it (Chromium's text boxes)", () => {
+    const row = (y: number, w = 300) => ({ x: 100, y, width: w, height: 24 });
+    const out = serializeElements(win, [
+      node(1, "section", "", { x: 0, y: 0, width: 400, height: 300 }, { parent: null }),
+      node(2, "entry", "API key", row(0), { parent: 1, secret: true }),
+      node(3, "static", "sk-live-SECRETKEY123", row(4, 200), { parent: 2 }),
+      node(4, "entry", "Card number", row(40), { parent: 1 }),
+      node(5, "section", "", row(44, 200), { parent: 4 }),
+      node(6, "static", "4111 1111 1111 1111", row(44, 200), { parent: 5 }),
+      // Nor does it name a field next to it.
+      node(7, "entry", "", { x: 410, y: 4, width: 100, height: 24 }, { parent: 1, text: "plain" }),
+    ]);
+    expect(out).not.toMatch(/SECRETKEY|4111/);
+    expect(out).toContain('[2] entry "API key" (showing, visible, secret)');
+    expect(out).toContain('[7] entry (showing, visible) text="plain"');
+  });
   it("recognises secret labels in many languages, not look-alikes", () => {
     for (const s of labels.secret) expect(isSecretLabel(s), s).toBe(true);
     for (const s of labels.plain) expect(isSecretLabel(s), s).toBe(false);

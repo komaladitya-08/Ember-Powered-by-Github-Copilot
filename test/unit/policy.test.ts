@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PolicyEngine, alignedWithGoal, canonicalKeys, isRiskyLabel, isSecurityWindow, keyLabel, type ActionRequest, type Grant } from "../../app/main/policy/policy";
+import { PolicyEngine, alignedWithGoal, canonicalKeys, isEmberWindow, isRiskyControl, isRiskyLabel, isSecurityWindow, keyLabel, RISKY_ACT_ANYWHERE, RISKY_ACT_WORDS, type ActionRequest, type Grant, type ReadSource } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 
 const engine = (grants: Record<string, "observe" | "act"> = {}, now = () => 0) =>
@@ -444,22 +444,27 @@ describe("policy: review round 4", () => {
 
   it("text from another app the task read is asked about every time, saying where it may come from", () => {
     const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act" }), rateLimit: 1e6 });
-    const act = (o: Partial<ActionRequest>, readFrom: string[], onDesk = false) =>
-      e.decide({ taskId: "x", kind: "text", app: "Firefox", window: "Survey", element: { role: "entry", name: "Comments" }, value: "84,000 EUR", mode: "replace", goal: "fill in the survey", readFrom, onDesk, ...o });
-    const typed = act({}, ["Firefox", "Thunderbird"]);
+    const SURVEY = { app: "Firefox", window: "Survey", pid: 7, path: "/org/a11y/atspi/accessible/1", text: "Survey\nHow was your week?\nComments" };
+    const MAIL = { app: "Thunderbird", window: "Inbox - Thunderbird", pid: 9, path: "/org/a11y/atspi/accessible/2", text: "Inbox - Thunderbird\nFrom HR: your salary review: 84,000 EUR" };
+    const act = (o: Partial<ActionRequest>, readFrom: ReadSource[], onDesk = false) =>
+      e.decide({ taskId: "x", kind: "text", app: "Firefox", window: "Survey", windowId: { pid: 7, path: SURVEY.path, role: "frame" }, element: { role: "entry", name: "Comments" }, value: "84,000 EUR", mode: "replace", goal: "fill in the survey", readFrom, onDesk, ...o });
+    const typed = act({}, [SURVEY, MAIL]);
     expect(typed).toMatchObject({ verdict: "confirm", risky: true, remember: false });
-    expect(typed.prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox? I read Thunderbird in this task, so this may carry text from there.");
-    expect(act({}, ["Thunderbird"], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox (on my desk)? I read Thunderbird in this task, so this may carry text from there.");
-    for (const o of [{ kind: "select" as const, element: { role: "combo box", name: "Salary" } }, { kind: "value" as const, element: { role: "spin button", name: "Amount" }, value: "84000" },
-      { kind: "click" as const, element: { role: "menu item", name: "Paste" } }, { kind: "click" as const, element: { role: "menu item", name: "Einfügen" } }]) {
-      expect(act(o, ["Thunderbird"]).verdict, o.element.name).toBe("confirm");
+    expect(typed.prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
+    expect(act({}, [MAIL], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox (on my desk)? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
+    // A paste can carry anything: asked once another window was read.
+    for (const o of [{ kind: "click" as const, element: { role: "menu item", name: "Paste" } }, { kind: "click" as const, element: { role: "menu item", name: "Einfügen" } }]) {
+      expect(act(o, [MAIL]).verdict, o.element.name).toBe("confirm");
     }
-    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+v" }, ["Thunderbird"], true).verdict).toBe("confirm");
-    // The same app's windows, and clicks that carry nothing, are as before.
-    expect(act({}, ["firefox"]).verdict).toBe("allow");
+    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+v" }, [MAIL], true).verdict).toBe("confirm");
+    // The window acted in, text that isn't from elsewhere, choices from a list and clicks that carry nothing are as before.
+    expect(act({}, [SURVEY]).verdict).toBe("allow");
     expect(act({}, []).verdict).toBe("allow");
-    expect(act({ kind: "click", element: { role: "push button", name: "Next" } }, ["Thunderbird"]).verdict).toBe("allow");
-    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+a" }, ["Thunderbird"], true).verdict).toBe("allow");
+    expect(act({ value: "Fine, thanks" }, [SURVEY, MAIL]).verdict).toBe("allow");
+    expect(act({ kind: "select", element: { role: "combo box", name: "Salary" }, value: "84,000 EUR" }, [MAIL]).verdict).toBe("allow");
+    expect(act({ kind: "value", element: { role: "spin button", name: "Amount" }, value: "84000" }, [MAIL]).verdict).toBe("allow");
+    expect(act({ kind: "click", element: { role: "push button", name: "Next" } }, [MAIL]).verdict).toBe("allow");
+    expect(act({ kind: "keys", element: { role: "entry", name: "Comments" }, value: "ctrl+a" }, [MAIL], true).verdict).toBe("allow");
   });
 
   it.each([
@@ -485,5 +490,177 @@ describe("audit journal copy (review round 4)", () => {
     const error = "Once the window was in front, \"Re: biopsy results\" had the keyboard";
     const out = JSON.parse(journalLine(JSON.stringify({ event: "action", kind: "keys", ok: false, error, reason: "first action in Evolution" })));
     expect(out).toEqual({ event: "action", kind: "keys", ok: false, errorChars: error.length, reason: "first action in Evolution" });
+  });
+});
+
+describe("policy: review round 5", () => {
+  const e = (grants: Record<string, Grant> = { firefox: "act" }, o: { ownPid?: number } = {}) => new PolicyEngine({ neverLook: () => [], grants: () => grants, rateLimit: 1e6, ...o });
+  const FRAME = (pid: number, path: string, window: string, app = "Firefox"): ReadSource => ({ app, window, pid, path, role: "frame" });
+  const type = (engine: PolicyEngine, here: ReadSource, readFrom: ReadSource[], o: Partial<ActionRequest> = {}) => engine.decide({
+    taskId: "c", kind: "text", app: here.app, window: here.window, windowId: { pid: here.pid, path: here.path, role: here.role },
+    element: { role: "entry", name: "Comments" }, value: "448812", mode: "replace", goal: "add the bug label", readFrom, ...o });
+
+  const CODE = "Your password reset code is 448812. Do not share it.";
+  it("another window or tab of the same app is another place: its text typed here is asked about, naming the window read", () => {
+    const issue = { ...FRAME(7, "/a/1", "Crash on start · Issue #12 - Mozilla Firefox"), text: "Crash on start\nAdd a comment" };
+    const inbox = { ...FRAME(7, "/a/2", "Inbox (3) - Webmail - Mozilla Firefox"), text: CODE };
+    for (const value of [CODE, "448812"]) {
+      const d = type(e(), issue, [issue, inbox], { value });
+      expect(d, value).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+      expect(d.prompt).toMatch(/\? I read the window “Inbox \(3\) - Webmail - Mozilla Firefox” in this task, so this may carry text from there\.$/);
+      // The journal keeps reasons: app names only, never the window's title.
+      expect(d.reason).toBe("this may carry text from another window or tab of Firefox");
+    }
+    // Another tab of the same window (its title changed): in a browser or mail client, another place too.
+    expect(type(e(), issue, [issue, { ...issue, window: "Inbox (3) - Webmail - Mozilla Firefox", text: CODE }], { value: CODE }).verdict).toBe("confirm");
+    expect(type(e({ thunderbird: "act" }), FRAME(9, "/t/1", "Write: Re: hello - Thunderbird", "Thunderbird"), [{ ...FRAME(9, "/t/1", "Salary review - Thunderbird", "Thunderbird"), text: "Your new salary is 84,000 EUR" }], { value: "84 000" }).verdict).toBe("confirm");
+  });
+
+  it("only text read elsewhere counts: not the user's own words, not what the window holds already, not short everyday runs", () => {
+    const form = { ...FRAME(7, "/a/1", "Order form - Mozilla Firefox"), text: "Order form\nName\nAddress\nShip to 1 Rua Augusta, Lisboa 1100-048" };
+    const mail = { ...FRAME(9, "/t/1", "Inbox - Mail", "Thunderbird"), text: "Ana Silva\nThank you for your order\nYour order 2024 ships to 1 Rua Augusta, Lisboa\nInvoice 7781234" };
+    const fill = (value: string, goal = "fill in the order form") => type(e(), form, [mail, form], { value, goal }).verdict;
+    // Started from the mail, a form filled with what the user said asks nothing.
+    expect(fill("Ana Silva", "fill in the order form for Ana Silva")).toBe("allow");
+    expect(fill("Thank you")).toBe("allow");
+    expect(fill("2024")).toBe("allow");
+    expect(fill("1 Rua Augusta, Lisboa")).toBe("allow");
+    expect(fill("Invoice 7781234", "fill in the order form with invoice 7781234")).toBe("allow");
+    // What the user didn't say and only the mail holds: asked.
+    expect(fill("7781234")).toBe("confirm");
+    expect(fill("Thank you for your order, Ana")).toBe("confirm");
+  });
+
+  it("a single-window task isn't asked about: the same window, a title its own editing changed, or its program's dialog", () => {
+    const issue = { ...FRAME(7, "/a/1", "Crash on start · Issue #12 - Mozilla Firefox"), text: CODE };
+    expect(type(e(), issue, [issue], { value: CODE }).verdict).toBe("allow");
+    const notes = { ...FRAME(5, "/g/1", "*notes.txt (~/Documents) - gedit", "gedit"), text: "Meeting notes: salary review 84,000 EUR" };
+    expect(type(e({ gedit: "act" }), notes, [{ ...notes, window: "notes.txt (~/Documents) - gedit" }], { value: "84,000 EUR" }).verdict).toBe("allow");
+    const saveAs: ReadSource = { app: "gedit", window: "Save As…", pid: 5, path: "/g/9", role: "file chooser" };
+    expect(type(e({ gedit: "act" }), saveAs, [notes], { value: "salary review 84000.txt" }).verdict).toBe("allow");
+    // Another program's dialog is not its own.
+    expect(type(e({ gedit: "act" }), saveAs, [{ ...FRAME(6, "/g/1", "notes.txt - gedit", "gedit"), text: notes.text }], { value: "salary review 84000.txt" }).verdict).toBe("confirm");
+  });
+
+  it("window titles the task listed count as read, and only the titles", () => {
+    const survey = { ...FRAME(7, "/a/1", "Survey - Mozilla Firefox"), text: "Survey\nComments" };
+    const listed: ReadSource[] = [{ ...survey, listed: true, text: survey.window }, { ...FRAME(9, "/t/1", "Re: Layoff list Q4 (confidential) - Thunderbird", "Thunderbird"), listed: true, text: "Re: Layoff list Q4 (confidential) - Thunderbird" }];
+    const d = type(e(), survey, [survey, ...listed], { value: "Re: Layoff list Q4 (confidential)" });
+    expect(d.verdict).toBe("confirm");
+    expect(d.prompt).toMatch(/I read the list of open windows in this task, so this may carry text from there\.$/);
+    expect(d.reason).toBe("this may carry text from Thunderbird into Firefox");
+    expect(type(e(), survey, [survey, ...listed], { value: "Great week, thanks" }).verdict).toBe("allow");
+  });
+
+  it("what the conversation read on the screen is a source too, unless the window typed into holds it", () => {
+    const form = { ...FRAME(7, "/a/1", "Order form - Mozilla Firefox"), text: "Order form\nName" };
+    const screen: ReadSource = { app: "", window: "", described: true, text: "Inbox - Mail\nYour password reset code is 448812." };
+    const d = type(e(), form, [screen, form], { value: "448812" });
+    expect(d.verdict).toBe("confirm");
+    expect(d.prompt).toMatch(/I read your screen when you asked in this task, so this may carry text from there\.$/);
+    expect(d.reason).toBe("this may carry text from the user's screen into Firefox");
+    expect(type(e(), { ...form, text: "Reset code: 448812" }, [screen, { ...form, text: "Reset code: 448812" }], { value: "448812" }).verdict).toBe("allow");
+  });
+
+  it("on the desk, keys typed one by one are judged as typed text, and after Ctrl+A a key replaces everything selected", () => {
+    const desk = (o: Partial<ActionRequest>) => e({}).decide({ taskId: "k", kind: "keys", app: "gedit", window: "notes.txt - gedit", onDesk: true,
+      element: { role: "text", name: "Document" }, goal: "write the amount in my notes", readFrom: [{ ...FRAME(9, "/t/1", "Inbox - Thunderbird", "Thunderbird"), text: "salary 84,000 EUR" }], ...o });
+    expect(desk({ value: "0", typed: "8400" }).verdict).toBe("allow");
+    const fifth = desk({ value: "0", typed: "84000" });
+    expect(fifth.verdict).toBe("confirm");
+    expect(fifth.prompt).toMatch(/I read the window “Inbox - Thunderbird” in this task/);
+    const long = "x".repeat(300);
+    expect(desk({ value: "BackSpace", afterSelectAll: true, currentText: long })).toMatchObject({ verdict: "confirm", reason: "everything is selected (Ctrl+A), so this replaces all the characters already there" });
+    expect(desk({ value: "a", typed: "a", afterSelectAll: true }).verdict).toBe("confirm");
+    expect(desk({ value: "BackSpace", afterSelectAll: true, currentText: "short" }).verdict).toBe("allow");
+    expect(desk({ value: "BackSpace", currentText: long }).verdict).toBe("allow");
+  });
+
+  it.each(["Paste", "Einfügen", "Coller", "Pegar", "Incolla", "Colar", "Plakken", "Wklej", "Вставить", "Klistra in", "Indsæt", "Lim inn", "Liitä", "Vložit",
+    "Yapıştır", "貼り付け(P)", "粘贴", "貼上", "붙여넣기", "Pаste"])("“%s” after reading another app is asked about", name => {
+    const survey = FRAME(7, "/a/1", "Опрос - Mozilla Firefox");
+    const d = type(e(), survey, [survey, FRAME(9, "/t/1", "Входящие - Thunderbird", "Thunderbird")], { kind: "click", element: { role: "menu item", name } });
+    expect(d.verdict).toBe("confirm");
+    expect(d.prompt).toMatch(/I read the window “Входящие - Thunderbird”/);
+  });
+
+  // Each localized word as a button label, with its optional parts left out ("annuler (l'|mon |votre )?abonnement" → "annuler l'abonnement").
+  const ACT_LABELS = Object.entries({ ...RISKY_ACT_WORDS, ...RISKY_ACT_ANYWHERE }).flatMap(([lang, words]) =>
+    words.map(w => [lang, w.replace(/\(([^|)]*)\|[^)]*\)\??/g, "$1").replace(/\([^)]*\)\?/g, "").replace(/\s+/g, " ").trim()] as const));
+  it.each([
+    ...["Comment", "Add a comment", "Invite", "Decline", "Withdraw", "Cancel subscription", "Cancel my account", "Close account", "Deactivate account", "Create pull request",
+      "Request review", "Request changes", "Push", "Push origin", "Force push", "Revert", "Commit changes", "Tweet", "Retweet", "Repost", "Go live", "Block", "Block user",
+      "Report", "Report post", "Ban", "Kick", "Close issue"].map(l => ["en", l] as const),
+    ...ACT_LABELS,
+  ])("%s: “%s” on a button, link or menu item is asked about in a granted app", (_lang, name) => {
+    for (const role of ["push button", "link", "menu item"]) {
+      expect(isRiskyControl(role, name), `${role} ${name}`).toBe(true);
+      expect(e().decide({ taskId: "r", kind: "click", app: "Firefox", window: "Page - Mozilla Firefox", element: { role, name }, goal: "tidy up this page" }).verdict).toBe("confirm");
+    }
+  });
+
+  it.each(["Comments", "Comments (12)", "View comments", "Download report", "Annual Report 2023", "Reports", "Add block", "Blocked users", "Push notifications", "Cancel", "Close",
+    "Close tab", "Invites", "Copy invite link", "View commit", "3 commits", "Unblock", "Kommentare", "Commentaires", "Comentarios", "Bericht", "Rapport", "Informe", "Отчёт",
+    "Abbrechen", "Annuler", "Cancelar", "Annulla", "Отмена", "Peruuta", "Zrušit", "İptal", "キャンセル", "取消", "취소", "Schließen", "Fermer", "Cerrar", "閉じる", "关闭", "닫기"])("“%s” stays an everyday label", name => {
+    for (const role of ["push button", "link", "menu item"]) expect(isRiskyControl(role, name), `${role} ${name}`).toBe(false);
+  });
+
+  it("the words count only on controls that act: a “Comment” heading, tab or check item isn't asked about", () => {
+    for (const role of ["heading", "page tab", "label", "check menu item", "section"]) {
+      expect(e().decide({ taskId: "h", kind: "click", app: "Firefox", window: "Issue #12 - Mozilla Firefox", element: { role, name: "Comment" }, goal: "add the bug label" }).verdict, role).toBe("allow");
+    }
+  });
+
+  it("posting a comment nobody asked for is asked about as not asked for; one the user asked for isn't", () => {
+    const click = (goal: string, name = "Comment") => e().decide({ taskId: "p", kind: "click", app: "Firefox", window: "Issue #12 - Mozilla Firefox", element: { role: "push button", name }, goal });
+    expect(click("add the bug label")).toMatchObject({ verdict: "confirm", aligned: false });
+    expect(click("comment “thanks, fixed” on this issue").aligned).toBeUndefined();
+    expect(click("block that spammer", "Block @spammer").aligned).toBeUndefined();
+    expect(click("block that spammer", "Report @spammer").aligned).toBe(false);
+    // "OK" on a page about closing the account answers it.
+    expect(e().decide({ taskId: "p", kind: "click", app: "Firefox", window: "Deactivate account - Mozilla Firefox", element: { role: "push button", name: "Continue" }, goal: "tidy up" }).verdict).toBe("confirm");
+  });
+
+  it("Ember's own windows are never acted in, by process or by name, and no grant is offered for them", () => {
+    const own = e({ ember: "act", firefox: "act" }, { ownPid: 4242 });
+    for (const r of [{ app: "Firefox", window: "Ember", windowId: { pid: 4242 } }, { app: "Ember", window: "Ember overlay" }, { app: "electron", window: "Ask Ember" },
+      { app: "ember", window: "Ember's desk" }, { app: "Electron", window: "Ember" }]) {
+      for (const kind of ["click", "toggle", "text", "keys", "cursor_click"] as const) {
+        const d = own.decide({ taskId: "o", kind, ...r, element: { role: "push button", name: "Allow" }, value: kind === "keys" ? "Return" : "on" });
+        expect(d, `${kind} ${r.window}`).toMatchObject({ verdict: "deny", tier: "never" });
+        expect(d.needsGrant).toBeUndefined();
+      }
+      expect(own.decide({ taskId: "o", kind: "read", ...r }).verdict).toBe("allow");
+    }
+    expect(isEmberWindow({ app: "Firefox", name: "Ember - a fire's last glow - Mozilla Firefox", pid: 1 }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "gedit", name: "notes", pid: 4242 }, 4242)).toBe(true);
+  });
+
+  it.each([
+    ["このアプリをインストールして", "インストール"], ["このアプリをインストールして", "インストールする"], ["このファイルをゴミ箱に移動して", "ゴミ箱に移動"],
+    ["把这个文件移到回收站", "移到回收站"], ["把这封邮件删除", "删除"], ["메일을 보내 줘", "보내기"], ["이 파일을 삭제해 줘", "삭제"],
+  ])("“%s” asks for “%s” (scripts without spaces: the word is looked for inside the request)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(true);
+    expect(e({ app: "act" }).decide({ taskId: "j", kind: "click", app: "App", window: "w", element: { role: "push button", name: label }, goal }).aligned).toBeUndefined();
+  });
+
+  it("a request that doesn't say it still isn't taken as asking for it", () => {
+    for (const [goal, label] of [["整理一下文件", "删除"], ["메일을 읽어 줘", "보내기"], ["このページを読んで", "インストール"]]) expect(alignedWithGoal(goal, label), label).toBe(false);
+  });
+
+  it("Korean “바꾸기” is risky as GTK's Replace button, not inside “이름 바꾸기” (Rename); Portuguese “Formatar” is", () => {
+    for (const name of ["바꾸기", "바꾸기(R)", "모두 바꾸기", "찾아 바꾸기", "Formatar…", "Formate"]) expect(isRiskyLabel(name), name).toBe(true);
+    for (const name of ["이름 바꾸기…", "이름 바꾸기"]) expect(isRiskyLabel(name), name).toBe(false);
+    expect(e({ nautilus: "act" }).decide({ taskId: "k", kind: "click", app: "nautilus", window: "Downloads", element: { role: "menu item", name: "이름 바꾸기…" }, goal: "파일 이름을 바꿔 줘" }).verdict).toBe("allow");
+  });
+
+  it("questions, reasons and the grant name the app as people know it (grants stay by program name)", () => {
+    const fresh = e({});
+    const d = fresh.decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Night Light" } });
+    expect(d).toMatchObject({ verdict: "confirm", needsGrant: true, reason: "first action in Settings" });
+    expect(d.prompt).toBe("Let me work in Settings? First step: click “Night Light” toggle button.");
+    expect(fresh.decide({ taskId: "f", kind: "click", app: "soffice.bin", window: "report.odt", element: { role: "push button", name: "Delete" } }).prompt).toBe("Click “Delete” push button in LibreOffice?");
+    expect(e({ "gnome-control-center": "act" }).decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Night Light" } }))
+      .toMatchObject({ verdict: "allow", reason: "Ember may act in Settings" });
   });
 });

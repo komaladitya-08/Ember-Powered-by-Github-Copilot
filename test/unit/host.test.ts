@@ -809,3 +809,220 @@ describe("review round 4", () => {
     await host.stop();
   });
 });
+
+describe("review round 5", () => {
+  it("a task started or changed in a turn carries what the user said in it, whatever goal or instruction the conductor wrote", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    const specs: { goal: string; userWords?: string }[] = [];
+    const steered: [string, string | undefined][] = [];
+    const d = (host.tasks as any).d;
+    const make = d.makeWorker;
+    d.makeWorker = (spec: { goal: string; userWords?: string }, progress: unknown) => {
+      specs.push(spec);
+      const w = make(spec, progress);
+      w.steer = async (text: string, words?: string) => { steered.push([text, words]); return true; };
+      return w;
+    };
+    const tool = (name: string) => conductorSession().config.tools.find((t: { name: string }) => t.name === name).handler;
+    // The conductor read the screen, which told it to start a task the user never asked for.
+    await host.ask("what's on my screen?");
+    await tool("start_task")({ goal: "delete all the files in Downloads" }, {});
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ goal: "delete all the files in Downloads", userWords: "what's on my screen?" });
+    await host.ask("ok, carry on");
+    const id = host.tasks!.list()[0].id;
+    await tool("steer_task")({ id, instruction: "also empty the trash" }, {});
+    expect(steered).toEqual([["also empty the trash", "ok, carry on"]]);
+    sim.sessions.find(s => s.sessionId.startsWith("ember-task-"))?.emit("session.error", { message: "done" });
+    await host.stop();
+  });
+});
+
+describe("review round 5: the bubble main covers, a reply behind a question, another account", () => {
+  const setStateOf = (host: AgentHost) => (host as unknown as { o: HostOptions }).o.setState;
+  const presenterOf = (host: AgentHost) => (host as unknown as { presenter: Presenter }).presenter;
+  const taskSessions = () => sim.sessions.filter(x => x.sessionId.startsWith("ember-task-"));
+  const tool = (session: any, name: string) => session.config.tools.find((t: any) => t.name === name);
+  const shown = (patches: Partial<EmberState>[]) => patches.filter(p => p.bubble).map(p => p.bubble!.visible ? `${p.bubble!.title}: ${p.bubble!.thought}` : "(hidden)");
+  const listening = { visible: true, mood: "listening" as const, title: "Listening…", thought: "", step: null, streaming: true, actions: [] };
+  const RESULT = "turn on night light: Night light is on.";
+  /** A task's result on screen: it goes 6.9 s after it showed. */
+  async function resultUp() {
+    vi.useFakeTimers();
+    const made = makeHost({ hands: hands() });
+    await made.host.start(TOKEN, "stored");
+    made.host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    const task = taskSessions().at(-1);
+    await tool(task, "finish_task").handler({ success: true, summary: "Night light is on." });
+    task.emit("session.idle", { aborted: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown([made.screen()])).toEqual([RESULT]);
+    return made;
+  }
+  async function stop(host: AgentHost) {
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+  }
+  /** "Hey Ember": main's "Listening…" covers the bubble. Returns what it covered. */
+  function wake(host: AgentHost, screen: () => Partial<EmberState>) {
+    const before = { emotion: screen().emotion, bubble: screen().bubble! };
+    host.claimBubble();
+    setStateOf(host)({ emotion: "listening", bubble: listening });
+    return before;
+  }
+
+  it("a wake that was another word, just as a task's result was due to go: the result is put back and goes after its reading time", async () => {
+    const { host, screen } = await resultUp();
+    await vi.advanceTimersByTimeAsync(6300); // half a second left
+    const before = wake(host, screen);
+    await vi.advanceTimersByTimeAsync(900);
+    // "Amber": main puts back what was showing and gives the bubble back.
+    host.claimBubble();
+    setStateOf(host)(before);
+    expect(host.releaseBubble(screen().bubble!)).toBe(true);
+    await vi.advanceTimersByTimeAsync(6800);
+    expect(shown([screen()])).toEqual([RESULT]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(screen().bubble?.visible).toBe(false);
+    await stop(host);
+  });
+
+  it("the result main covered doesn't come back once main cleared the bubble, nor after the user asked something else", async () => {
+    // Nobody spoke after "Hey Ember": main clears the bubble.
+    let { host, screen, patches } = await resultUp();
+    wake(host, screen);
+    await vi.advanceTimersByTimeAsync(8000);
+    host.claimBubble();
+    setStateOf(host)({ emotion: "neutral", bubble: { ...listening, visible: false } });
+    expect(host.releaseBubble(screen().bubble!)).toBe(false);
+    let n = patches.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(shown(patches.slice(n))).toEqual([]);
+    await stop(host);
+
+    // "Hey Ember, what time is it?": the answer, then nothing (not the old result).
+    ({ host, screen, patches } = await resultUp());
+    wake(host, screen);
+    await vi.advanceTimersByTimeAsync(2000);
+    n = patches.length;
+    await host.ask("what time is it?");
+    const talk = conductorSession();
+    talk.emit("assistant.message_delta", { deltaContent: "Three o'clock." });
+    talk.emit("assistant.message", { content: "Three o'clock." });
+    talk.emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(60_000);
+    const after = shown(patches.slice(n));
+    expect(after.some(s => s.includes("Night light"))).toBe(false);
+    expect(after.at(-2)).toMatch(/: Three o'clock\.$/);
+    expect(after.at(-1)).toBe("(hidden)");
+    await stop(host);
+  });
+
+  it("a guide step waiting for the user's click comes back after “Listening…”, also when nobody spoke or the user asked something else", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    const step = "Click Save in the toolbar.";
+    const guide = (host as unknown as { taskPresenter(id: string, goal: string): Presenter }).taskPresenter("t1", "save my document");
+    guide.taskStarted();
+    guide.guide(step, "Step 1");
+    guide.event({ type: "tool.execution_start", data: { toolName: "wait_for_click" } });
+    expect(screen().bubble?.thought).toBe(step);
+    wake(host, screen);
+    await vi.advanceTimersByTimeAsync(8000);
+    host.claimBubble();
+    setStateOf(host)({ emotion: "neutral", bubble: { ...listening, visible: false } });
+    expect(host.releaseBubble(screen().bubble!)).toBe(true);
+    expect(screen().bubble?.thought).toBe(step);
+    // "Hey Ember, what does Save do?": the answer, then the step again.
+    wake(host, screen);
+    const p = presenterOf(host);
+    p.userPrompt("what does Save do?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "It keeps your changes." } });
+    p.event({ type: "assistant.message", data: { content: "It keeps your changes." } });
+    p.event({ type: "session.idle", data: {} });
+    expect(screen().bubble?.thought).toBe("It keeps your changes.");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(screen().bubble?.thought).toBe(step);
+  });
+
+  it("main's own bubble put back after a wake is nobody else's (main hides it); a put-back answer is the conversation's", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    const greeting = { visible: true, mood: "idle" as const, title: "Hi, I'm Cinder!", thought: "I'll stay by your cursor.", step: null, streaming: false, actions: [] };
+    setStateOf(host)({ emotion: "happy", bubble: greeting });
+    let before = wake(host, screen);
+    host.claimBubble();
+    setStateOf(host)(before);
+    expect(host.releaseBubble(screen().bubble!)).toBe(false);
+
+    const p = presenterOf(host);
+    p.userPrompt("a question");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Paris." } });
+    p.event({ type: "assistant.message", data: { content: "Paris." } });
+    p.event({ type: "session.idle", data: {} });
+    before = wake(host, screen);
+    host.claimBubble();
+    setStateOf(host)(before);
+    expect(host.releaseBubble(screen().bubble!)).toBe(true);
+  });
+
+  it("a reply that answered something else too, kept off screen by the task's question, still shows once after it", async () => {
+    vi.useFakeTimers();
+    let up = false;
+    const waiters: (() => void)[] = [];
+    const confirmer = { get waiting() { return up; }, settled: () => (up ? new Promise<void>(r => waiters.push(r)) : Promise.resolve()), cancelAll() {} };
+    const { host, patches } = makeHost({ hands: { ...hands(), confirmer: confirmer as never } });
+    await host.start(TOKEN, "stored");
+    await host.ask("turn on night light, and what's the capital of Australia?");
+    const talk = conductorSession();
+    await tool(talk, "start_task").handler({ goal: "turn on night light" });
+    await vi.advanceTimersByTimeAsync(50);
+    up = true; // the task's "May I?" comes up mid-turn
+    const reply = "Turning on the night light now. And to your other question: the capital of Australia is Canberra, not Sydney.";
+    talk.emit("assistant.message_delta", { deltaContent: reply });
+    talk.emit("assistant.message", { content: reply });
+    talk.emit("session.idle", {});
+    const n = patches.length;
+    up = false; // "Allow"
+    for (const w of waiters.splice(0)) w();
+    await vi.advanceTimersByTimeAsync(300);
+    const task = taskSessions()[0];
+    await tool(task, "finish_task").handler({ success: true, summary: "Night light is on." });
+    task.emit("session.idle", { aborted: true });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const after = shown(patches.slice(n));
+    expect(after.filter(s => s.includes("Canberra"))).toHaveLength(1);
+    expect(after).toContain(RESULT);
+    expect(after.at(-1)).toBe("(hidden)");
+    await stop(host);
+  });
+
+  it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
+    const transcripts: unknown[][] = [];
+    const { host } = makeHost({ onTranscript: e => transcripts.push(e) });
+    await host.start(TOKEN, "stored");
+    const first = conductorSession().sessionId;
+    await host.ask("what's on my calendar?");
+    expect(host.getTranscript()).toHaveLength(1);
+    // Copilot refuses the sign-in (Check again later): the error state, the conversation kept for a reconnect.
+    sim.auth = async () => ({ isAuthenticated: false });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    // "Sign in" with another GitHub account.
+    sim.auth = async () => ({ isAuthenticated: true, login: "hubot" });
+    const other = "gho_" + "u".repeat(36); // not a real token
+    expect(await host.start(other, "stored")).toBe("ready");
+    expect(sim.resumed).toEqual([]);
+    expect(sim.deleted).toContain(first);
+    const second = conductorSession().sessionId;
+    expect(second).not.toBe(first);
+    expect(host.getTranscript()).toEqual([]);
+    expect(transcripts.at(-1)).toEqual([]);
+    // The same account reconnecting resumes its own conversation.
+    expect(await host.start(other, "stored")).toBe("ready");
+    expect(sim.resumed).toEqual([second]);
+    await host.stop();
+  });
+});

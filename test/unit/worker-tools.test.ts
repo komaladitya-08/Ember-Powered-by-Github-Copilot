@@ -12,17 +12,17 @@ import type { Logger } from "../../app/main/logger";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-function makeWorker(o: { blocked?: boolean; busy?: boolean } = {}) {
+function makeWorker(o: { blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide" } = {}) {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
-  const node = { id: 1, parent: null, depth: 1, role: "push button", name: "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
+  const node = { id: 1, parent: null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
   const seen = { window, x11Window: null, nodes: [node], blocked: !!o.blocked, ms: 0 };
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
     sidecar: {
-      readElement: async () => ({ role: "push button", name: "Bold", states: ["enabled", "sensitive"], bounds: node.bounds }),
+      readElement: async () => { const states = o.states ? o.states() : ["enabled", "sensitive"]; return states && { role: node.role, name: node.name, states, bounds: node.bounds }; },
       doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }) }),
@@ -32,7 +32,8 @@ function makeWorker(o: { blocked?: boolean; busy?: boolean } = {}) {
     presenter: new Presenter(() => undefined),
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
     cursor: { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined },
-  } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" } });
+    pointer: o.pointer,
+  } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   return { w, audit, events, call };
@@ -67,6 +68,44 @@ describe("worker tools", () => {
     const r = await call("press_keys", { keys: "Return" });
     expect(r.resultType).toBe("denied");
     expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "keys", verdict: "deny", tier: "never", value: "Return" }));
+  });
+});
+
+describe("guides (review round 5)", () => {
+  it("hovering the menu item pointed at isn't a click: the step waits for the press", async () => {
+    // GTK selects (and focuses) a menu item under the pointer; the user presses it 800 ms later.
+    let t0 = 0;
+    const later = () => t0 > 0 && Date.now() - t0 > 800;
+    const { call } = makeWorker({ role: "menu item", name: "Save", states: () => (t0 > 0 ? ["enabled", "sensitive", "selected", "focused"] : ["enabled", "sensitive"]),
+      pointer: () => ({ x: 20, y: 15, mask: later() ? 256 : 0 }), mode: "guide" });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "Click Save" });
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { t0 = Date.now(); }, 100);
+    const r = await waiting;
+    expect(r.textResultForLlm).toMatch(/^The user clicked it/);
+    expect(Date.now() - t0).toBeGreaterThan(700);
+  });
+
+  it("a menu item that goes (its menu closed) or gets checked has changed; a button that gets focus has too", async () => {
+    let gone = false;
+    const menu = makeWorker({ role: "menu item", name: "Save", states: () => (gone ? null : ["enabled", "sensitive"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await menu.call("perceive_window", {});
+    const waiting = menu.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { gone = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/The window changed/);
+    let checked = false;
+    const check = makeWorker({ role: "check menu item", name: "Word Wrap", states: () => (checked ? ["enabled", "checked"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await check.call("perceive_window", {});
+    const toggled = check.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { checked = true; }, 100);
+    expect((await toggled).textResultForLlm).toMatch(/^It changed/);
+    let focused = false;
+    const button = makeWorker({ states: () => (focused ? ["enabled", "focused"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await button.call("perceive_window", {});
+    const pressed = button.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { focused = true; }, 100);
+    expect((await pressed).textResultForLlm).toMatch(/^It changed/);
   });
 });
 

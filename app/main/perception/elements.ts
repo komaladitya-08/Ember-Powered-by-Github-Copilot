@@ -70,35 +70,36 @@ export function inferLabels(nodes: AxNode[], { anyAbove = false } = {}): Map<num
  * to meet. The sidecar withholds these already (SECRET_WORDS and SECRET_ANYWHERE
  * in ember_atspi.py: the same lists, a unit test checks); this is the second line.
  * Each entry is a regular expression both Python's and JavaScript's engines read
- * alike, matched on lowercase, NFKC-normalised text.
+ * alike, matched on lowercase, NFKC-normalised text, as whole words (English
+ * ones in the plural too: "Recovery codes").
  */
 export const SECRET_WORDS = [
   // Passwords and PINs. Words that mean something else too stand alone or in a phrase that says password
   // ("Palabras clave" are keywords, a "Parola chiave" a keyword).
-  "pass(word|phrase|code|wd)", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
+  "pass(word|phrase|code|wd)s?", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
   "contrasenya", "senha", "palavra-passe", "^[\\s:*]*parol(a|ă)[\\s:*]*$", "parolă", "parola d['’]ordine",
   "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
   "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", "^[\\s:*]*clave[\\s:*]*$",
   "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
   "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
-  "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?",
+  "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
   // Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
-  "card ?(number|no)", "credit ?card", "cvv2?", "cvc2?", "csc", "security code", "card verification",
+  "card ?(number|no)s?", "credit ?cards?", "cvv2?", "cvc2?", "csc", "security codes?", "card verification",
   "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
   "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum der karte", "num(é|e)ro de (la )?carte", "cryptogramme",
   "date d['’]expiration de (la )?carte", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
   "kaartnummer", "kortnummer", "numer karty", "номер карты",
   "c(ó|o)digo de (seguridad|segurança|verificaci(ó|o)n|verificação|acceso|confirmaci(ó|o)n)",
-  "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "iban",
-  "routing number", "account number", "sort code", "kontonummer",
+  "codice di (sicurezza|verifica)", "(fecha de )?(caducidad|vencimiento|expiraci(ó|o)n) de (la )?tarjeta", "ibans?",
+  "routing numbers?", "account numbers?", "sort codes?", "kontonummer",
   // One-time codes.
-  "one[- ]time (code|password|pin)", "otp", "2fa", "two[- ]factor", "totp", "verification code", "auth(entication)? code",
-  "recovery (code|key)", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
+  "one[- ]time (code|password|pin)s?", "otps?", "2fa", "two[- ]factor", "totp", "verification codes?", "auth(entication)? codes?",
+  "recovery (code|key)s?", "backup codes?", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
   "код (подтверждения|безопасности)",
   // Keys, network passwords and secret answers.
-  "secret", "private key", "(api|access|auth|bearer) ?(key|token)", "wi-?fi (key|password|passphrase)", "network (security )?key",
-  "wpa2? ?(key|passphrase)", "pre-?shared key", "psk", "encryption key", "security (answer|question)", "secret (answer|question)",
-  "ssn", "social security",
+  "secrets?", "private keys?", "(api|access|auth|bearer) ?(key|token)s?", "wi-?fi (key|password|passphrase)s?", "network (security )?keys?",
+  "wpa2? ?(key|passphrase)s?", "pre-?shared keys?", "psk", "encryption keys?", "security (answer|question)s?", "secret (answer|question)s?",
+  "ssns?", "social security",
 ];
 /** The same, for scripts written without spaces between words (matched anywhere in the label). */
 export const SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
@@ -160,6 +161,16 @@ export function secretIds(nodes: AxNode[], labels = inferLabels(nodes, { anyAbov
   return out;
 }
 
+/**
+ * Elements inside the secret fields `secret` (ids): what they hold, which Chromium lists as static text
+ * inside a text box. A read lists parents before their children.
+ */
+export function insideSecrets(nodes: AxNode[], secret: Set<number>): Set<number> {
+  const out = new Set<number>();
+  for (const n of nodes) if (n.parent !== null && (secret.has(n.parent) || out.has(n.parent))) out.add(n.id);
+  return out;
+}
+
 /** JSON-quoted and truncated; "<" is escaped so screen text can't close the <screen> wrapper. */
 const quote = (s: string, max: number) => JSON.stringify(s.length > max ? s.slice(0, max) + "…" : s).replace(/</g, "\\u003c");
 /** The same quoting for screen text that reaches the model anywhere else (titles, names, values). */
@@ -192,9 +203,13 @@ function weight(n: AxNode, labels: Map<number, string>): number {
   return n.name || n.text || labels.has(n.id) || n.value !== undefined ? 1 : 0;
 }
 
-export function serializeElements(window: AxWindow, nodes: AxNode[], opts: SerializeOptions = {}): string {
+export function serializeElements(window: AxWindow, read: AxNode[], opts: SerializeOptions = {}): string {
   const maxLines = opts.maxLines ?? 150;
-  const labels = inferLabels(nodes);
+  // What secret fields hold is never listed, whatever the sidecar sent (nor does it label anything).
+  const readLabels = inferLabels(read);
+  const inside = insideSecrets(read, new Set(read.filter(n => isSecretNode(n, n.name || readLabels.get(n.id) || "")).map(n => n.id)));
+  const nodes = inside.size ? read.filter(n => !inside.has(n.id)) : read;
+  const labels = inside.size ? inferLabels(nodes) : readLabels;
   // Indented by the elements listed above it: a web page's unnamed layers of <div>s add nothing.
   const level = new Map<number, number>();
   for (const n of nodes) level.set(n.id, n.parent !== null && level.has(n.parent) ? level.get(n.parent)! + 1 : 0);

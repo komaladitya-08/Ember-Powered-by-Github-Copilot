@@ -465,17 +465,25 @@ class Reading(unittest.TestCase):
             asked.append((acc, tree, traverse))
             after = acc.kids[acc.kids.index(child) + 1:]
             return [k for k in after if "showing" in k.states][:count]
+        toolkit = ["Chromium"]
         fake = types.SimpleNamespace(
             MatchRule=types.SimpleNamespace(new=lambda *a: "rule"), StateSet=types.SimpleNamespace(new=lambda s: s),
             StateType=types.SimpleNamespace(SHOWING=1, VISIBLE=2), CollectionMatchType=types.SimpleNamespace(ALL=0),
             CollectionSortOrder=types.SimpleNamespace(CANONICAL=0), CollectionTreeTraversalType=types.SimpleNamespace(RESTRICT_SIBLING=1),
-            Collection=types.SimpleNamespace(get_matches_from=get_matches_from))
+            Collection=types.SimpleNamespace(get_matches_from=get_matches_from),
+            Accessible=types.SimpleNamespace(get_toolkit_name=lambda acc: toolkit[0]))
         saved = e.Atspi, e.native
         e.Atspi, e.native = fake, lambda acc: acc is doc
         try:
             rest, complete = e.showing_after(doc, doc.kids[30], 30, len(doc.kids), e.Budget())
             self.assertEqual((rest, complete), ([panel], True))
             self.assertEqual(asked, [(doc, 1, False)])
+            # Any other toolkit's app is never asked to search: LibreOffice Calc aborts after one search over its
+            # cells (it makes them on demand). The end of the list is looked at instead.
+            toolkit[0] = "gtk"
+            rest, complete = e.showing_after(doc, doc.kids[30], 30, len(doc.kids), e.Budget())
+            self.assertEqual((rest, complete, len(asked)), ([panel], False, 1))
+            toolkit[0] = "Gecko"
             # More of them than a read takes: not all of them.
             for k in doc.kids[100:130]:
                 k.states.append("showing")
@@ -483,6 +491,17 @@ class Reading(unittest.TestCase):
             self.assertEqual((len(rest), complete), (e.STRAGGLERS, False))
         finally:
             e.Atspi, e.native = saved
+
+    def test_cells_scrolled_away_with_no_size_end_the_secret_scan(self):
+        # LibreOffice Calc: a row of a million cells, those scrolled away at the table's corner with no size.
+        cells = [Acc("table cell", "C%d" % i, bounds=(37 + 82 * i, 158, 82, 17)) if i < 15
+                 else Acc("table cell", "C%d" % i, bounds=(36, 157, 0, 0), states=("visible",)) for i in range(5000)]
+        table = Acc("table", "Sheet1", bounds=(37, 158, 1170, 556), kids=cells)
+        root = Acc("frame", "Calc", bounds=(0, 0, 1280, 800), kids=[Acc("document spreadsheet", "", bounds=(37, 158, 1170, 556), kids=[table])])
+        found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(root, 0, found, None, budget, [0])
+        self.assertFalse(budget.busy or budget.over or budget.cut)
+        self.assertLess(table.child_reads, 100)
 
     def test_secret_scan_reads_only_the_rows_on_screen(self):
         root, lst = self.scrolled_list()
@@ -493,6 +512,58 @@ class Reading(unittest.TestCase):
         self.assertEqual([r for r, _ in found["fields"]], ["password text"])
         self.assertFalse(budget.busy or budget.over or budget.cut)
         self.assertLess(lst.child_reads, 120)
+
+    def scrolled_page(self, page_states=("showing", "visible")):
+        """GTK 3's settings page scrolled more than a screen down: its viewport says it doesn't show (GTK judges
+        it against its own scroll position), the rows in it say they do, where they are."""
+        on, off = ("showing", "visible", "enabled", "sensitive"), ("visible", "enabled", "sensitive")
+        rows = [Acc("label", "Row %d" % i, bounds=(10, 60 + 40 * (i - 20), 150, 30), states=on if 20 <= i < 28 else off)
+                for i in range(40)]
+        rows[23] = Acc("slider", "", bounds=(10, 180, 400, 40), states=on)
+        rows[25] = Acc("password text", "", bounds=(170, 260, 200, 30), states=on)
+        box = Acc("filler", "", bounds=(10, -740, 400, 1600), states=page_states, kids=rows)
+        view = Acc("viewport", "", bounds=(e.INT_MIN, e.INT_MIN, 400, 360), states=("visible", "enabled"), kids=[box])
+        bar = Acc("scroll bar", "", bounds=(395, 60, 15, 360))
+        pane = Acc("scroll pane", "", bounds=(10, 60, 400, 360), kids=[view, bar])
+        return Acc("frame", "Settings", bounds=(0, 0, 420, 430), kids=[pane]), view, box
+
+    def test_a_page_scrolled_past_its_first_screen_is_read(self):
+        root, view, _ = self.scrolled_page()
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([n["role"] for n in nodes].count("label"), 6)
+        self.assertIn("slider", [n["role"] for n in nodes])
+        self.assertIn("scroll bar", [n["role"] for n in nodes])
+        self.assertNotIn("viewport", [n["role"] for n in nodes])
+        # The secret scan before a screenshot looks there too.
+        found, budget = {"fields": [], "labels": [], "docs": []}, e.Budget(e.SCAN_BUDGET_S)
+        e.scan_fields(root, 0, found, None, budget, [0])
+        self.assertEqual([r for r, _ in found["fields"]], ["password text"])
+        self.assertEqual(len(found["labels"]), 6)
+        # A viewport that isn't visible at all stays hidden, its rows unasked.
+        view.states, view.child_reads = ["enabled"], 0
+        nodes = []
+        e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([n["role"] for n in nodes], ["frame", "scroll bar"])
+        self.assertEqual(view.child_reads, 0)
+
+    def test_a_hidden_page_stays_hidden(self):
+        # A page of a stack not shown: its viewport and what it holds say they don't show; one look, and no more.
+        root, view, box = self.scrolled_page(page_states=("visible",))
+        nodes = []
+        self.assertTrue(e.walk(root, 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None))
+        self.assertEqual([n["role"] for n in nodes], ["frame", "scroll bar"])
+        self.assertEqual((view.child_reads, box.child_reads), (1, 0))
+        found = {"fields": [], "labels": [], "docs": []}
+        e.scan_fields(root, 0, found, None, e.Budget(e.SCAN_BUDGET_S), [0])
+        self.assertEqual((found["fields"], found["labels"]), ([], []))
+        # A viewport that doesn't show outside a scroll pane, or something else not showing in one, isn't looked into.
+        lone = Acc("viewport", "", states=("visible",), kids=[Acc("label", "Hidden")])
+        other = Acc("panel", "", states=("visible",), kids=[Acc("label", "Hidden too")])
+        nodes = []
+        e.walk(Acc("frame", "W", kids=[lone, Acc("scroll pane", "", kids=[other])]), 0, nodes, e.MAX_DEPTH, e.MAX_NODES, None)
+        self.assertEqual([n["name"] for n in nodes], ["W"])
+        self.assertEqual((lone.child_reads, other.child_reads), (0, 0))
 
     def test_cut_short_only_when_something_is_left(self):
         kids = [Acc("push button", "B%d" % i) for i in range(4)]
@@ -698,6 +769,12 @@ class Windows(unittest.TestCase):
         self.notes = self.AppNode(20, [Acc("frame", "notes.txt - Text Editor", states=("showing",))])
         self.desktop = Acc("desktop frame", "main", kids=[self.mail, self.notes])
         FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: self.desktop)
+        # Process names as /proc would give them (none: as if it couldn't be read).
+        self.comm = {}
+        self.saved_process_name, e.process_name = e.process_name, lambda pid: self.comm.get(pid)
+
+    def tearDown(self):
+        e.process_name = self.saved_process_name
 
     def name_of(self, params):
         found = e.find_window(params)
@@ -907,6 +984,80 @@ class Windows(unittest.TestCase):
         stage.kids.append(Acc("panel", "", states=("showing", "visible", "focused"), kids=[Acc("push button", "Files")]))
         self.assertEqual([o["role"] for o in e.shell_overlays({})["overlays"]], ["overview"])
 
+    def test_the_shell_is_found_without_asking_hung_apps(self):
+        class Frozen(self.AppNode):
+            """Every question to it times out (the stand-in takes a little longer than SLOW_APP_S, set short here)."""
+            @property
+            def name(self):
+                self.asked += 1
+                time.sleep(0.05)
+                raise RuntimeError("timeout from dbind")
+
+            @name.setter
+            def name(self, value):
+                pass
+        stage = Acc("window", "", kids=[Acc("dialog", "", bounds=(400, 300, 480, 260), kids=[Acc("label", "Authentication Required")])])
+        shell = self.AppNode(99, [stage])
+        shell.getRoleName = lambda: "application"
+        shell.getState = lambda: States([])
+        frozen = [Frozen(30 + i, []) for i in range(8)]
+        self.desktop.kids = frozen + [self.mail, shell]
+        old = e.SLOW_APP_S
+        e.SLOW_APP_S = 0.03
+        try:
+            # Every process is named in /proc: no app is asked, and the shell is known by its process.
+            self.comm.update({10: "mail", 99: "gnome-shell"})
+            self.comm.update((f.pid, "frozen") for f in frozen)
+            out = e.shell_overlays({})
+            self.assertEqual(([o["role"] for o in out["overlays"]], out["complete"]), (["dialog"], True))
+            self.assertEqual(sum(f.asked for f in frozen), 0)
+            # Without /proc, apps are asked their names, for a while: what the look didn't reach may be the shell.
+            self.comm.clear()
+            shell.name = "gnome-shell"
+            saved = e.SHELL_FIND_S
+            e.SHELL_FIND_S = 0.12
+            try:
+                self.assertFalse(e.shell_overlays({})["complete"])
+            finally:
+                e.SHELL_FIND_S = saved
+            asked = sum(f.asked for f in frozen)
+            self.assertLess(asked, 5)
+            # Apps known to be hung are not asked at all.
+            for f in frozen:
+                e.mark_hung(f.pid)
+            out = e.shell_overlays({})
+            self.assertEqual(([o["role"] for o in out["overlays"]], out["complete"]), (["dialog"], True))
+            self.assertEqual(sum(f.asked for f in frozen), asked)
+        finally:
+            e.SLOW_APP_S = old
+
+    def test_embers_own_windows_are_never_read_or_listed(self):
+        own = {"ownPid": 10}
+        self.assertEqual([w["name"] for w in e.list_windows(own)["windows"]], ["notes.txt - Text Editor"])
+        self.assertIsNone(e.read_window(dict(own, pid=10))["window"])
+        self.assertIsNone(e.read_window(dict(own, title="Compose - Mail"))["window"])
+        # Not as the active window either: Ember's ask box has the keyboard, and no app window is active.
+        self.assertIsNone(e.read_window(own)["window"])
+        self.assertEqual(e.read_window({})["window"]["name"], "Compose - Mail")
+        self.assertEqual(len(e.list_windows({})["windows"]), 3)
+
+    def test_what_a_secret_field_holds_is_not_read(self):
+        # Chromium lists the text of a contenteditable "textbox" as static text inside it.
+        e.SNAPSHOTS = e.Snapshots(start=1)
+        e.SECRETS = e.SecretFields()
+        key = Acc("entry", "API key", bounds=(10, 40, 300, 24), kids=[Acc("static", "sk-live-SECRETKEY123", bounds=(12, 44, 200, 16))])
+        card = Acc("entry", "", bounds=(10, 100, 300, 24), kids=[Acc("static", "4111 1111 1111 1111", bounds=(12, 104, 200, 16))])
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds = (0, 0, 400, 200)
+        win.kids = [key, Acc("static", "Card number", bounds=(10, 80, 100, 16)), card]
+        out = e.read_window({"pid": 20})
+        self.assertEqual([(n["name"], n.get("secret", False)) for n in out["nodes"]],
+                         [("notes.txt - Text Editor", False), ("API key", True), ("Card number", False), ("", True)])
+        self.assertEqual(key.child_reads, 0)  # a field known to be secret isn't looked into
+        # The card field, found secret by its label after the read, held text the read reached: forgotten by id too.
+        self.assertEqual(len(e.SNAPSHOTS.latest()), len(out["nodes"]))
+
     def test_a_window_the_app_was_too_busy_to_hand_over_is_busy(self):
         class Busy(self.AppNode):
             def getChildAtIndex(self, i):
@@ -995,12 +1146,17 @@ class Windows(unittest.TestCase):
         saved, e.collection_matches = e.collection_matches, matches
         try:
             out = e.secret_fields({"pid": 20, "path": win.path})
+            self.assertTrue(out["complete"])
+            self.assertEqual(sorted(f["bounds"]["y"] for f in out["fields"]), [220, 250])
+            self.assertEqual(asked, [("document web", True), ("document web", False)])
+            self.assertEqual(doc.child_reads, 0)
+            # LibreOffice's drawings are document frames too: looked through here, the app is never asked to search.
+            doc.role, asked[:] = "document frame", []
+            out = e.secret_fields({"pid": 20, "path": win.path})
+            self.assertEqual((out["complete"], len(out["fields"]), asked), (True, 2, []))
+            self.assertGreater(doc.child_reads, 0)
         finally:
             e.collection_matches = saved
-        self.assertTrue(out["complete"])
-        self.assertEqual(sorted(f["bounds"]["y"] for f in out["fields"]), [220, 250])
-        self.assertEqual(asked, [("document web", True), ("document web", False)])
-        self.assertEqual(doc.child_reads, 0)
 
     def test_no_secret_fields_answer_for_a_page_not_handed_over_yet(self):
         win = self.notes.wins[0]
@@ -1023,6 +1179,36 @@ class Windows(unittest.TestCase):
             e.SCAN_NODES = old
         self.assertFalse(out["complete"])
         self.assertFalse(e.secret_fields({"pid": 20, "path": "/gone"})["complete"])
+
+    def test_what_is_under_the_wheel(self):
+        # A notebook's page (outside its tab's bounds) holding a settings page scrolled past its first screen (GTK 3's
+        # viewport then has no bounds and says it doesn't show): what is at a point is found through both.
+        slider = Acc("slider", "Volume", bounds=(20, 200, 400, 40))
+        box = Acc("filler", "", bounds=(10, -700, 420, 1600), kids=[Acc("label", "Row 9", bounds=(20, 150, 150, 30)), slider])
+        view = Acc("viewport", "", bounds=(e.INT_MIN, e.INT_MIN, 420, 400), states=("visible", "enabled"), kids=[box])
+        pane = Acc("scroll pane", "", bounds=(10, 80, 420, 400), kids=[view, Acc("scroll bar", "", bounds=(415, 80, 15, 400))])
+        tab = Acc("page tab", "Display", bounds=(20, 50, 80, 26), kids=[pane])
+        tabs = Acc("page tab list", "", bounds=(0, 40, 440, 450), kids=[tab, Acc("page tab", "Sound", bounds=(110, 50, 80, 26))])
+        win = self.notes.wins[0]
+        win.states.append("visible")
+        win.bounds, win.kids = (0, 0, 440, 500), [tabs]
+        roles = lambda x, y: [(c["role"], c["name"]) for c in e.at_point({"pid": 20, "path": win.path, "x": x, "y": y})["chain"]]
+        self.assertEqual(roles(100, 210), [("page tab list", ""), ("page tab", "Display"), ("scroll pane", ""), ("viewport", ""),
+                                           ("filler", ""), ("slider", "Volume")])
+        self.assertEqual(roles(100, 160)[-1], ("label", "Row 9"))
+        self.assertEqual(roles(150, 60)[-1], ("page tab", "Sound"))
+        # A row that doesn't show (scrolled away, or a hidden page) isn't there.
+        slider.states = ["visible"]
+        self.assertEqual(roles(100, 210)[-1], ("filler", ""))
+        # A secret field (Chromium's: its contents in text children) comes nameless and last, nothing in it asked.
+        key = Acc("entry", "API key", bounds=(20, 300, 300, 30), kids=[Acc("static", "sk-live-123", bounds=(22, 302, 200, 26))])
+        box.kids.append(key)
+        self.assertEqual(e.at_point({"pid": 20, "path": win.path, "x": 50, "y": 310})["chain"][-1],
+                         {"role": "entry", "name": "", "bounds": {"x": 20, "y": 300, "width": 300, "height": 30}, "secret": True})
+        self.assertEqual(key.child_reads, 0)
+        # A never-look window isn't looked at; one that is gone isn't found.
+        self.assertTrue(e.at_point({"pid": 20, "path": win.path, "x": 1, "y": 1, "neverLook": ["notes"]})["blocked"])
+        self.assertFalse(e.at_point({"pid": 20, "path": "/gone", "x": 1, "y": 1})["found"])
 
     def test_one_broken_app_does_not_break_the_list(self):
         class Broken(self.AppNode):
