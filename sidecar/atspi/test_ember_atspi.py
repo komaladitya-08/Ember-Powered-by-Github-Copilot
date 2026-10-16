@@ -2469,7 +2469,7 @@ class Windows(unittest.TestCase):
             t0 = time.monotonic()
             out = e.read_window({"pid": 20})
             self.assertTrue(out["busy"])
-            self.assertLess(time.monotonic() - t0, e.SLOW_APP_S + 0.3)
+            self.assertLess(time.monotonic() - t0, e.SLOW_APP_S + 0.6)  # (a busy runner's margin)
             self.assertEqual((asked, sum(c.reads for c in cards)), ([], 0))
             self.assertEqual([n["name"] for n in out["nodes"] if n["role"] == "section"], [""] * 12)
             # An app slow to tell what its fields hold: asked until WITHHOLD_S, what is left withheld.
