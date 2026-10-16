@@ -162,9 +162,9 @@ packages ship it there, and `node eval/run.mjs` builds its own copy in `dist/eva
 ### Learning with Ember
 
 Ask “show me how to …” (or “where is …”) and Ember guides instead of doing it. It flies to each
-control, highlights it, says what to do, and waits for you to click before moving on. When you call
-Ember, it notes where you are (the window, the focused field and any text you selected), so you can
-say “make this bold” or “what does this mean?”.
+control, highlights it, says what to do, and waits for you to click it (or press Enter or Space on it)
+before moving on. When you call Ember, it notes where you are (the window, the focused field and any
+text you selected), so you can say “make this bold” or “what does this mean?”.
 
 ### Talking to Ember
 
@@ -307,7 +307,8 @@ for the root check-up).
 
 `ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
 Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
-Ember's desk and the sandbox, and says what to do about each problem. It exits 1 if Ember can't work.
+Ember's desk, the sandbox and free file watchers (inotify), and says what to do about each problem. It exits 1 if
+Ember can't work.
 **Start Ember when I log in** in the settings window adds `~/.config/autostart/ember.desktop`.
 
 ## 8. Evaluation
@@ -388,6 +389,7 @@ nightly workflow passes its secrets to the eval step only and installs dependenc
 | `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
 | Electron download fails | `npx install-electron` |
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
+| "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
 | Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
 
 ## Repository layout

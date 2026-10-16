@@ -73,7 +73,7 @@ describe("settings window words", () => {
     expect(describeEntry({ t, event: "decision", kind: "keys", verdict: "confirm", value: "Return", app: "soffice" })?.what).toBe("Press Enter in LibreOffice");
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, app: "mousepad" })?.what).toBe("Press keys in Mousepad");
     expect(describeEntry({ t, event: "action", kind: "user_clicked", ok: true, element: { role: "push button", name: "Save draft" }, app: "electron" })?.what)
-      .toBe("You clicked “Save draft” in Electron");
+      .toBe("You used “Save draft” in Electron");
     expect(describeEntry({ t, event: "action", kind: "select", ok: true, value: "Vegetarian", element: { role: "combo box", name: "Meal" }, app: "firefox" })?.what)
       .toBe("Choose “Vegetarian” for “Meal” in Firefox");
     expect(describeEntry({ t, event: "confirm", kind: "select", answer: "once", value: "Deutsch", element: { role: "list", name: "" } })?.what)

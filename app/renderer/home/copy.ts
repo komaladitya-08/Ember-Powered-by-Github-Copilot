@@ -121,8 +121,8 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
     // The option chosen, and what it was chosen for: "Choose “Vegetarian” for “Meal” in Firefox".
     : e.kind === "select" && chosen && e.element
       ? [`Choose “${chosen}”`, e.element.name ? `for “${e.element.name}”` : "", where].filter(Boolean).join(" ")
-      // A guide step the user did themselves.
-      : e.kind === "user_clicked" ? `You clicked ${target || "it"}`
+      // A guide step the user did themselves (a click, or Enter or Space on it).
+      : e.kind === "user_clicked" ? `You used ${target || "it"}`
         : `${KIND[e.kind ?? ""] ?? e.kind ?? ""} ${target}`.trim();
   switch (e.event) {
     case "task":
