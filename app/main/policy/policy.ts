@@ -9,7 +9,7 @@
  * hide a "Delete" from the risky-word check.
  */
 
-import { isNeverLook, isSecretLabel } from "../perception/elements";
+import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 
@@ -44,8 +44,20 @@ export interface ActionRequest {
    * followed by what this one types (checked as one text: a field filled in pieces is judged as a whole).
    */
   typed?: string;
-  /** For keys: the last keys pressed here were Ctrl+A, so this one may replace everything selected. */
+  /**
+   * For text and keys: what this task typed into this window's fields before, in order (another field's on a line of
+   * its own), followed by what this one types: a number or an address typed into several fields is judged as one text too.
+   */
+  typedHere?: string;
+  /** For keys: Ctrl+A was pressed here (and nothing has moved the caret since), so this one may replace everything selected. */
   afterSelectAll?: boolean;
+  /** For keys: text was selected here with Shift and a movement key (Ctrl+Shift+End…): how much, `selection` says when it is known. */
+  afterSelecting?: boolean;
+  /**
+   * For keys: the text selected in the focused field now, as the screen reader tells it ("" when nothing is; undefined
+   * when it can't tell): a key that types replaces it. In a paragraph it is only the part in that paragraph.
+   */
+  selection?: string;
   /** The dialog the element sits in (its title and text): "OK" there agrees to what the dialog says. */
   dialog?: { name: string; text: string };
   /** On Ember's own desk (its private display): no app grant needed, full input allowed. */
@@ -112,10 +124,16 @@ const CONFUSABLES: Record<string, string> = {
   "α": "a", "β": "b", "ε": "e", "η": "n", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x",
 };
 
+/**
+ * Characters that show nothing: format characters, the soft hyphen, and the blank "letters" (Hangul fillers, the
+ * braille blank, Khmer's invisible vowels, the combining grapheme joiner) that would split a word or a number unseen.
+ */
+const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f/gu;
+
 /** What a label says, ready for matching: compatibility forms folded, invisible characters gone, look-alikes mapped. */
 export function normalizeLabel(s: string): string {
   return s.normalize("NFKC")
-    .replace(/[\p{Cf}\u00ad]/gu, "")
+    .replace(INVISIBLE, "")
     .replace(/[\u2019\u02bc\u2018`\u00b4]/g, "'")
     .replace(/[\u2010-\u2015]/g, "-")
     .toLowerCase()
@@ -130,7 +148,7 @@ const RISKY = /\b(send|post|submit|publish|share|delete|remove|erase|discard|ove
  * accents gone ("Löschen" and "Loschen" alike), Cyrillic left as it is (no look-alike folding here).
  */
 export function foldLabel(s: string): string {
-  return s.normalize("NFKC").replace(/[\p{Cf}­]/gu, "").replace(/[’ʼ‘`]/g, "'").toLowerCase()
+  return s.normalize("NFKC").replace(INVISIBLE, "").replace(/[’ʼ‘`]/g, "'").toLowerCase()
     .normalize("NFD").replace(/\p{Mn}/gu, "").normalize("NFC").replace(/\s+/g, " ");
 }
 
@@ -230,8 +248,9 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
 
 /**
  * Words on controls that post or answer for the user, invite or act on other people, change their account, or
- * change a shared repository. Risky on a button, link or menu item only: a "Comments" heading or tab, or a
- * "Block selection" check item, isn't one. English verbs that are nouns too count where they lead the label
+ * change a shared repository. Risky on a button, link or menu item, and on anything clicked but a check box, radio
+ * button or switch (a click on text goes to the link or row around it): a "Block selection" check item, or a "Comments"
+ * heading a key lands on, isn't one. English verbs that are nouns too count where they lead the label
  * ("Report", "Block user"; not "Download report", "Add block").
  */
 const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget)\b/u;
@@ -477,13 +496,13 @@ export function typesCharacter(keys: string): boolean {
   return !/(^|\+)(ctrl|alt|super)\+/.test(f) && !TYPES_NOTHING.test(f) && !/^(shift\+)?(return|tab|backspace|delete)$/.test(f);
 }
 /**
- * Does this key, with everything selected (Ctrl+A), replace all of it? Any key that types (letters, digits, symbols,
- * Space, Enter, Tab), Backspace, Delete, Ctrl+X and the paste keys do.
+ * Does this key replace (or delete) what is selected? Any key that types (letters, digits, symbols, Space, Enter, Tab),
+ * Backspace, Delete, Ctrl+X, the paste keys, and Ctrl+Backspace and Ctrl+Delete (which delete the selection in GTK).
  */
 export function replacesSelection(keys: string): boolean {
   const k = keyFamily(canonicalKeys(keys) ?? "");
   if (!k) return false;
-  if (PASTE_KEYS.has(k) || k === "ctrl+x" || k === "shift+delete") return true;
+  if (PASTE_KEYS.has(k) || /^(ctrl\+x|shift\+delete|ctrl\+(shift\+)?(backspace|delete))$/.test(k)) return true;
   return !/(^|\+)(ctrl|alt|super)\+/.test(k) && !TYPES_NOTHING.test(k);
 }
 
@@ -552,18 +571,36 @@ function elsewhere(s: ReadSource, r: ActionRequest): boolean {
 }
 /** Letters and digits in a row that make a run of text recognisably from somewhere (shorter ones are everyday coincidences). */
 const RUN = 12;
-/** Each line folded (foldLabel would make line breaks spaces), the lines kept apart by "\n": runs and numbers stay within a line. */
-const fold = (s: string) => s.split(/[\n\r]+/).map(foldLabel).join("\n");
-/** Each line's letters and digits, folded ("Re: Layoff list" → "relayofflist"), the lines kept apart by "\n". */
-const compact = (s: string) => fold(s).split("\n").map(l => l.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean).join("\n");
-/** Separators within a number (dashes of any kind, the minus sign, slash, dot, comma, apostrophe, plus). */
-const NUMBER_SEPARATORS = "-\\u2010-\\u2015\\u2212/.,'+";
+/** Decimal digits of other scripts ("١٢٣", "४५६") as ASCII digits (NFKC leaves them as they are): each is its place in its run of ten. */
+const asciiDigits = (s: string) => s.replace(/\p{Nd}/gu, d => {
+  const cp = d.codePointAt(0)!;
+  if (cp < 0x80) return d;
+  let zero = cp;
+  while (zero > cp - 9 && /\p{Nd}/u.test(String.fromCodePoint(zero - 1))) zero--;
+  return String(cp - zero);
+});
 /**
- * What may stand between the digits of one number: spaces and brackets, with at most one separator among them
- * ("84,000", "448 812", "84'000", "123-45-6789", "+1 (555) 123-4567", "12/03/1985").
+ * Text as the carry check reads it, on one line: compatibility forms, accents and case folded, invisible characters
+ * gone, look-alike letters mapped ("аna" with a Cyrillic а is "ana"), other scripts' digits as ASCII, and every
+ * line break a space.
  */
-const NUMBER_GAP = new RegExp(`(\\d)(?:[ ()]{1,2}(?:[${NUMBER_SEPARATORS}][ ()]{0,2})?|[${NUMBER_SEPARATORS}][ ()]{0,2})(?=\\d)`, "g");
-/** Numbers of five digits or more in folded text (fold), however they are written ("84,000" → "84000", "123-45-6789" → "123456789"). */
+const flat = (s: string) => asciiDigits(foldLabel(normalizeLabel(s)));
+/**
+ * Text that was read, line by line (its lines are separate elements and labels: no run goes on from one into the
+ * next), each line flat, the lines kept apart by "\n". Typed text is flat as a whole: a line break typed into a
+ * one-line field is dropped there (Firefox's <input>), so what goes on across it is one run.
+ */
+const fold = (s: string) => s.split(/[\n\r]+/).map(flat).join("\n");
+/** The letters and digits of folded text, the lines kept apart by "\n" ("Re: Layoff list" → "relayofflist"). */
+const lettersOf = (folded: string) => folded.split("\n").map(l => l.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean).join("\n");
+/** Separators within a number (dashes of any kind, the minus sign, slash, dot, comma, apostrophe, plus, underscore, colon). */
+const NUMBER_SEPARATORS = "-\\u2010-\\u2015\\u2212/.,'+_:";
+/**
+ * What may stand between the digits of one number: spaces and brackets, with one or two separators among them
+ * ("84,000", "448 812", "84'000", "123-45-6789", "123--45--6789", "123_45_6789", "+1 (555) 123-4567", "12/03/1985").
+ */
+const NUMBER_GAP = new RegExp(`(\\d)(?:[ ()]{1,2}(?:[${NUMBER_SEPARATORS}]{1,2}[ ()]{0,2})?|[${NUMBER_SEPARATORS}]{1,2}[ ()]{0,2})(?=\\d)`, "g");
+/** Numbers of five digits or more in folded text, however they are written ("84,000" → "84000", "123-45-6789" → "123456789"). */
 const numbersOf = (folded: string) => folded.replace(NUMBER_GAP, "$1").match(/\d{5,}/g) ?? [];
 /** A digit at most a NUMBER_GAP away from the end (or the start) of a text: a number there can go on past it. */
 const DIGIT_BEFORE = new RegExp(`\\d[${NUMBER_SEPARATORS} ()]{0,5}$`);
@@ -571,16 +608,18 @@ const DIGIT_AFTER = new RegExp(`^[${NUMBER_SEPARATORS} ()]{0,5}\\d`);
 
 /** What makes text recognisable: RUN letters and digits in a row, and numbers of five digits or more. */
 interface Runs { grams: Set<string>; numbers: Set<string> }
-/** A run within one line (compact keeps lines apart: text on two lines is no run, it is two). */
+/** A run within one line (text that was read keeps its lines apart: text on two lines is no run, it is two). */
 const addGram = (out: Set<string>, g: string) => { if (!g.includes("\n")) out.add(g); };
 const gramsOf = (c: string, out = new Set<string>()) => { for (let i = 0; i + RUN <= c.length; i++) addGram(out, c.slice(i, i + RUN)); return out; };
-const runsOf = (s: string): Runs => ({ grams: gramsOf(compact(s)), numbers: new Set(numbersOf(fold(s))) });
-/** The runs `text` holds too. */
+/** The runs of typed text (flat: line breaks in it join what is on either side). */
+const runsOf = (s: string): Runs => { const f = flat(s); return { grams: gramsOf(lettersOf(f)), numbers: new Set(numbersOf(f)) }; };
+/** The runs of `runs` that `text`, as read (line by line), holds too. */
 function runsIn(runs: Runs, text: string): Set<string> {
   const found = new Set<string>();
-  if (runs.grams.size) for (const g of gramsOf(compact(text))) if (runs.grams.has(g)) found.add(g);
+  const folded = runs.grams.size || runs.numbers.size ? fold(text) : "";
+  if (runs.grams.size) for (const g of gramsOf(lettersOf(folded))) if (runs.grams.has(g)) found.add(g);
   if (runs.numbers.size) {
-    const numbers = numbersOf(fold(text));
+    const numbers = numbersOf(folded);
     for (const n of runs.numbers) if (numbers.some(m => m.includes(n))) found.add(n);
   }
   return found;
@@ -591,9 +630,10 @@ const NUMBER_CONTEXT = 40;
 /**
  * The runs the text in a field has once `value` goes into `before` (at its end, or `anywhere` when the caret is
  * unknown) and didn't have before: the value's own, and the ones it makes with the text on either side of it.
+ * Both are typed-side text (flat): a field may drop line breaks.
  */
 function addedRuns(before: string, value: string, anywhere: boolean): Runs {
-  const cb = compact(before), cv = compact(value), fb = fold(before), fv = fold(value);
+  const fb = flat(before), fv = flat(value), cb = lettersOf(fb), cv = lettersOf(fv);
   const grams = gramsOf(cv);
   if (cv) {
     for (let q = anywhere ? 0 : cb.length; q <= cb.length; q++) {
@@ -623,29 +663,42 @@ function addedRuns(before: string, value: string, anywhere: boolean): Runs {
   };
 }
 
+/** The runs `text` makes after what was typed before it (`all`: that, then `text`; nothing when `all` doesn't end with it). */
+const afterTyped = (runs: Runs, all: string | undefined, text: string) => {
+  const prior = all && all.endsWith(text) ? all.slice(0, all.length - text.length) : all ?? "";
+  if (!prior) return;
+  const more = addedRuns(prior, text, false);
+  for (const g of more.grams) runs.grams.add(g);
+  for (const n of more.numbers) runs.numbers.add(n);
+};
+
 /**
  * What text going into a field is judged by: all of it when it replaces everything (type_text's "replace", a key
  * after Ctrl+A); otherwise its runs that are new there, with what the field holds now on either side of it (after it
  * for "append"; anywhere for "insert" and keys, the caret being unknown), and after what this task typed there before
- * (`typed`), so text typed in pieces is judged as a whole. Null when nothing is typed.
+ * (`typed`), so text typed in pieces is judged as a whole. Whatever the mode, also after what the task typed into the
+ * window's other fields before (`typedHere`): a number or an address split over several fields is one text too.
+ * Null when nothing is typed.
  */
 function enteringRuns(r: ActionRequest): Runs | null {
   const text = r.kind === "text" || r.kind === "cursor_text";
   const now = text ? r.value ?? "" : r.kind === "keys" ? typedChar(r.value ?? "") ?? "" : "";
   if (!now) return null;
-  if (text ? (r.mode ?? "replace") === "replace" : r.afterSelectAll) return runsOf(now);
-  const runs = r.currentText !== undefined ? addedRuns(r.currentText, now, !text || r.mode === "insert") : runsOf(now);
-  const typed = r.typed ?? "";
-  const prior = typed.endsWith(now) ? typed.slice(0, typed.length - now.length) : typed;
-  if (prior) {
-    const more = addedRuns(prior, now, false);
-    for (const g of more.grams) runs.grams.add(g);
-    for (const n of more.numbers) runs.numbers.add(n);
+  let runs: Runs;
+  if (text ? (r.mode ?? "replace") === "replace" : r.afterSelectAll) runs = runsOf(now);
+  else {
+    runs = r.currentText !== undefined ? addedRuns(r.currentText, now, !text || r.mode === "insert") : runsOf(now);
+    afterTyped(runs, r.typed, now);
   }
+  // A piece the user said themselves (of four letters or digits or more: for keys, all this task typed into the field)
+  // joins nothing carried to what went into the other fields: their name, then their city, aren't an address read elsewhere.
+  const piece = lettersOf(flat(text ? now : r.typed ?? now));
+  if (piece.length < 4 || !lettersOf(fold(r.goal ?? "")).split("\n").some(l => l.includes(piece))) afterTyped(runs, r.typedHere, now);
   return runs;
 }
 
-const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item"]);
+/** Words that say nothing about what is asked for ("quite" isn't "quit"). */
+const STOP = new Set(["the", "and", "for", "with", "this", "that", "all", "now", "you", "your", "button", "item", "quite"]);
 const words = (s: string) => foldLabel(s).match(/[\p{L}\p{N}]{3,}/gu)?.filter(w => !STOP.has(w)) ?? [];
 /** Scripts written without spaces between words. */
 const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
@@ -653,10 +706,17 @@ const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Scrip
 const hangulStem = (t: string) => (/\p{Script=Hangul}{2,}기$/u.test(t) ? t.slice(0, -1) : t);
 /** Rough stem, so "deleting", "deleted" and "delete" match. */
 const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "");
-/** The same word, roughly: one stem, or one starts the other ("invia" and "inviare", "lösche" and "löschen"). */
+/** Endings that make another word of a verb, not another form of it ("clearly", "emptiness", "careless"). */
+const ANOTHER_WORD = /(ly|ness|ful|less)$/;
+/**
+ * The same word, roughly: one stem, or one stem of five letters or more starts the other ("invia" and "inviare",
+ * "lösche" and "löschen"), but not as another word ("clear" and "clearly").
+ */
 const sameWord = (a: string, b: string) => {
   const x = stem(a), y = stem(b);
-  return x === y || (Math.min(x.length, y.length) >= 5 && (x.startsWith(y) || y.startsWith(x)));
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 5 && long.startsWith(short) && !ANOTHER_WORD.test(long.slice(short.length));
 };
 /** Phrases that say one risky thing in several words, as one word: in the request and on the control alike. */
 const PHRASES: [RegExp, string][] = [
@@ -664,12 +724,28 @@ const PHRASES: [RegExp, string][] = [
   [/\b(throw (it |them |this |these |that |those )?away|get rid of)\b/g, " trash "],
   [/\b(log ?(me |us |you |him |her |them )?(out|off)|sign ?(me |us |you |him |her |them )?out)\b/g, " logout "],
   [/\b(shut ?down|power ?off)\b/g, " shutdown "],
+  // "Don't Save", "Close without Saving", "close it without saving", "discard my changes".
+  [/\b((close|quit|exit)( \S+){0,2} )?(without saving|don't save|do not save|discard (the |my |all |any |your )?(unsaved )?changes)\b/g, " nosave "],
 ];
 const asOneWord = (s: string) => PHRASES.reduce((t, [re, w]) => t.replace(re, w), foldLabel(s));
+/** The words PHRASES makes that are a risky verb, though no risky word alone. */
+const PHRASE_VERBS = new Set(["nosave"]);
 /** Words that ask for the same thing: "delete report.txt" asks for "Move to Trash", "remove row 5" for "Delete Rows", "sign me out" for "Log Out". */
 const SAME_ASK = [["delete", "remove", "erase", "trash", "discard", "wipe", "purge", "clear", "empty"], ["uninstall", "remove", "delete"], ["replace", "overwrite"],
-  ["send", "submit"], ["quit", "exit", "close"], ["restart", "reboot"]];
-const sameAsk = (a: string, b: string) => sameWord(a, b) || SAME_ASK.some(g => g.some(x => sameWord(x, a)) && g.some(x => sameWord(x, b)));
+  ["send", "submit"], ["quit", "exit", "close"], ["restart", "reboot"], ["nosave", "discard"]];
+/**
+ * Requests that ask for a control's word too, one way only: replying, answering, mailing, telling or forwarding asks
+ * for "Send" ("Reply" for an answer); ordering or buying asks for "Buy now", "Place order", "Checkout" and "Pay"
+ * ("Forward" isn't asked for by "reply to Ana", nor "Buy" by "pay my bill").
+ */
+const ASKS_FOR: [string[], string[]][] = [
+  [["reply", "answer", "respond", "email", "mail", "message", "tell", "forward"], ["send"]],
+  [["answer", "respond"], ["reply"]],
+  [["order", "buy", "purchase", "checkout"], ["order", "buy", "purchase", "checkout", "pay"]],
+];
+/** Does the asked word `a` ask for the control's word `b`? */
+const sameAsk = (a: string, b: string) => sameWord(a, b) || SAME_ASK.some(g => g.some(x => sameWord(x, a)) && g.some(x => sameWord(x, b)))
+  || ASKS_FOR.some(([asks, controls]) => asks.some(x => sameWord(x, a)) && controls.some(x => sameWord(x, b)));
 /** The risky words and phrases in a label, in any of the languages above ("log out", "ta bort", "删除"). */
 function riskyTerms(s: string): string[] {
   const out: string[] = [];
@@ -683,13 +759,17 @@ function riskyTerms(s: string): string[] {
 }
 
 /**
- * Task alignment: does a risky control's name share a word with what the user
- * asked for? "Send" in "send the report to Ana" does; "Delete all" while filling in
- * a form doesn't, and the question then says so (words on screen can't make it look asked-for).
- * When the control's name has a risky verb, that verb itself must be in the request:
- * "Delete all my form data" doesn't become asked-for by sharing "form" with "fill in the form".
+ * Task alignment: did the user ask for the risky thing a control does? Its risky verb (or a word that asks for the
+ * same, SAME_ASK and ASKS_FOR) must be in the request: "Send" in "send the report to Ana" or "reply to Ana" is;
+ * "Delete all" while filling in a form isn't, and the question then says so (words on screen can't make it look
+ * asked-for: "Delete all my form data" doesn't become asked-for by sharing "form" with "fill in the form"). What the
+ * verb acts on may be named otherwise ("merge A1 to C1" asks for "Merge Cells", "forget the CoffeeShop wifi" for
+ * "Forget Connection"): a question about it is still asked, it only isn't marked as not asked for. Nothing to
+ * check where nothing risky is named (an "OK" whose dialog says nothing risky). `setting`: a check box or switch, whose
+ * name says what it sets: any word of it in the request will do ("no offers" asks to untick "Send me offers").
+ * `disk`: formatting a disk, whose "Format" is the risky verb.
  */
-export function alignedWithGoal(goal: string | undefined, element: string): boolean {
+export function alignedWithGoal(goal: string | undefined, element: string, o: { setting?: boolean; disk?: boolean } = {}): boolean {
   if (!goal) return true;
   const asked = words(asOneWord(goal));
   const said = `${normalizeLabel(goal)} ${foldLabel(goal)} ${asOneWord(goal)}`;
@@ -697,20 +777,16 @@ export function alignedWithGoal(goal: string | undefined, element: string): bool
   // Scripts without spaces: the word (or the risky term in it) inside the request ("インストールして", "보내 줘").
   const wanted = (w: string) => asked.some(a => sameAsk(a, w)) || (SPACELESS.test(w) && (said.includes(w) || riskyTerms(w).some(saidTerm)));
   const all = words(asOneWord(element));
-  let risky = all.filter(w => isRiskyLabel(w));
+  if (o.setting && all.some(wanted)) return true;
+  let risky = all.filter(w => isRiskyLabel(w) || PHRASE_VERBS.has(w) || (o.disk && FORMAT_LABEL.test(w)));
   // "Comment", "Block user": the verb, unless another risky word is ("Delete comment" acts on a comment).
   if (!risky.length) risky = all.filter(w => isRiskyActLabel(w));
-  if (risky.length) {
-    if (!risky.some(wanted)) return false;
-    // The verb is what the user asked for; what it acts on must be too ("Send money to…" isn't "send the report").
-    const rest = all.filter(w => !risky.includes(w));
-    return rest.length === 0 || rest.some(wanted);
-  }
+  if (risky.length) return risky.some(wanted);
   // A risky phrase, or a word in a script without spaces: the request must say it too (a phrase of three words or more
-  // may have other words between: "close my notes without saving" asks for "Close without Saving").
+  // may have other words between).
   const terms = riskyTerms(element);
   if (terms.length) return terms.some(t => saidTerm(t) || (t.split(" ").length >= 3 && words(t).every(wanted)));
-  return all.some(wanted);
+  return true;
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -731,22 +807,36 @@ export function keyLabel(keys: string): string | null {
   return k.split("+").map(p => (/^kp_./.test(p) ? `keypad ${keyWord(p.slice(3))}` : keyWord(p))).join("+");
 }
 
+/**
+ * The question, built from the request. On Ember's desk nothing of the user's is borrowed: the question says "on my
+ * desk" instead. A spreadsheet's cell is named by its address ("cell B5"), and Ember fills one with the keyboard only.
+ */
 function describe(r: ActionRequest, withApp = true): string {
-  const el = r.element ? `${r.element.name ? quote(r.element.name) : "the"} ${r.element.role}` : "";
+  const cell = !!r.element && isSheetCell(r.element);
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : `${r.element.name ? quote(r.element.name) : "the"} ${r.element.role}`;
+  const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
-  const replacing = r.mode === "replace" && (r.currentText ?? "").length > 0;
+  const current = r.currentText ?? "";
+  const replacing = r.mode === "replace" && current.length > 0;
+  const value = quote(visible(r.value ?? ""));
+  // What typing does: "type “42” into cell B5", "replace “1200” in cell B2 with “84000”", "replace the text in … with …".
+  const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace the text in ${el}${where} with ${value}`;
+  const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
   switch (r.kind) {
-    case "click": return `Click ${el}${where}?`;
-    case "toggle": return `Switch ${el}${where}?`;
-    case "text": return replacing ? `Replace the text in ${el}${where} with ${quote(visible(r.value ?? ""))}?` : `Type ${quote(visible(r.value ?? ""))} into ${el}${where}?`;
-    case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}?`;
-    case "value": return `Set ${el} to ${r.value}${where}?`;
+    case "click": return `Click ${el}${where}${desk}?`;
+    case "toggle": return `Switch ${el}${where}${desk}?`;
+    case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
+    case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
+    case "value": return `Set ${el} to ${r.value}${where}${desk}?`;
     case "setting": return `Change the setting ${quote(r.value ?? "")}?`;
     case "open_app": return `Open ${quote(r.value ?? "")}?`;
-    case "cursor_click": return `Borrow your mouse to click ${el}${where}?`;
-    case "cursor_text": return `Borrow your mouse and keyboard to ${replacing ? "replace the text in" : "type"} ${replacing ? `${el} with ${quote(visible(r.value ?? ""))}` : `${quote(visible(r.value ?? ""))} into ${el}`}${where}?`;
-    case "keys": return `Borrow your keyboard to press ${keyLabel(r.value ?? "") ?? quote(r.value ?? "", 30)}${r.element ? ` on ${el}` : ""}${where}?`;
-    case "scroll": return `Borrow your mouse to scroll ${el} ${r.value ?? ""}${where}?`;
+    case "cursor_click": return r.onDesk ? `Click ${el}${where}${desk}?` : `Borrow your mouse to click ${el}${where}?`;
+    case "cursor_text": return r.onDesk ? `${typed.charAt(0).toUpperCase()}${typed.slice(1)}` : `Borrow your ${cell ? "keyboard" : "mouse and keyboard"} to ${typed}`;
+    case "keys": {
+      const key = keyLabel(r.value ?? "") ?? quote(r.value ?? "", 30);
+      return `${r.onDesk ? "Press" : "Borrow your keyboard to press"} ${key}${r.element ? ` on ${el}` : ""}${where}${desk}?`;
+    }
+    case "scroll": return `${r.onDesk ? "Scroll" : "Borrow your mouse to scroll"} ${el} ${r.value ?? ""}${where}${desk}?`;
     default: return `Read ${r.window || friendlyApp(r.app)}?`;
   }
 }
@@ -757,6 +847,54 @@ type Risk = { reason: string; about?: string; note?: string };
 const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
 const SELECTS_MORE: Risk = { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
 const KEYS_SELECT_MORE: Risk = { reason: "replacing with the keyboard selects everything (Ctrl+A), which here may be the whole document", note: "To replace it I select everything with Ctrl+A, which here may be the whole document." };
+const SELECTED_MORE: Risk = { reason: "text is selected there, and in a document it may run on past what Ember can see, so this may replace a lot", note: "Text there is selected, and it may run on past what I can see, so this may replace a lot." };
+/** "all 120 characters", or "all the characters" for text read only in part (the screen reader tells the first 200). */
+const howMany = (n: number) => (n >= 200 ? "all the characters" : `all ${n} characters`);
+
+/**
+ * What a key that replaces a selection (replacesSelection) replaces, when that is a lot: more than 80 characters or a
+ * line break. After Ctrl+A everything in the field; after Shift and a movement key the selection the screen reader
+ * tells, or else as much as there is; otherwise the selection the screen reader tells (made from a menu, by the mouse,
+ * or by a search), exact in a field that holds all its text. What the keys selected counts whatever the reader tells (an
+ * app may not tell its selection). In a paragraph or a page any selection may run on past what it holds (Ctrl+A selects
+ * the whole document), so it is asked about whatever it shows.
+ */
+function replacedBySelection(r: ActionRequest, role: string): Risk | null {
+  const sel = r.selection ?? "";
+  if (!sel && !r.afterSelectAll && !r.afterSelecting) return null;
+  if (!HOLDS_ALL_TEXT.test(role)) return r.afterSelectAll ? SELECTS_MORE : SELECTED_MORE;
+  const current = r.currentText;
+  // The field's text as read is its first 200 characters; the selection read is its first 500.
+  const replaced = r.afterSelectAll ? (current === undefined || sel.length > current.length ? sel || current : current) : sel || current;
+  if (replaced === undefined) return SELECTS_MORE;
+  if (replaced.length <= 80 && !replaced.includes("\n")) return null;
+  if (r.afterSelectAll || sel === current) {
+    return {
+      reason: `everything is selected${r.afterSelectAll ? " (Ctrl+A)" : ""}, so this replaces ${howMany(replaced.length)} already there`,
+      note: `Everything there is selected, so this replaces ${howMany(replaced.length)}.`,
+    };
+  }
+  if (!sel) return { reason: `text is selected with the keys, maybe all of it, so this may replace ${howMany(replaced.length)} already there`, note: `Text there is selected, so this may replace ${howMany(replaced.length)}.` };
+  const n = sel.length >= 500 ? "500 or more" : String(sel.length);
+  return { reason: `${n} characters are selected there, so this replaces them`, note: `${n} characters there are selected, so this replaces them.` };
+}
+
+/** A menu item whose name ends in "…" opens a dialog: it does nothing yet ("Find and Replace…", "Delete Sheet…"). */
+const OPENS_DIALOG = /(\.\.\.|…)\s*$/;
+/**
+ * Ending the session or turning the computer off, in the languages of RISKY_WORDS: GNOME's dialog for these goes ahead
+ * on its own after a minute, so "Log Out…" and "Restart…" are risky though they only open it.
+ */
+const ENDS_SESSION = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["log ?out", "log ?off", "sign ?out", "shut ?down", "power ?off", "restart", "reboot",
+  "abmelden", "neu starten", "herunterfahren", "ausschalten", "deconnexion", "se deconnecter", "redemarrer", "eteindre", "cerrar sesion", "reiniciar",
+  "apagar", "esci", "riavvia", "spegni", "encerrar sessao", "terminar sessao", "desligar", "afmelden", "uitloggen", "opnieuw opstarten",
+  "wyloguj", "uruchom ponownie", "wyłącz", "выйти", "перезагрузить", "выключить", "logga ut", "starta om", "stang av", "log ud", "genstart",
+  "logg ut", "start på nytt", "kirjaudu ulos", "kaynnista uudelleen", "sammuta", "odhlasit", "restartovat", "vypnout", "oturumu kapat",
+  "çıkış yap", "yeniden başlat"].join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(["ログアウト", "再起動", "シャットダウン", "注销", "註銷", "登出",
+  "重新启动", "重新啟動", "关机", "關機", "로그아웃", "다시 시작", "시스템 종료"].join("|"))}`, "u");
+/** Does this menu item only open a dialog, where what it would do is asked about? */
+const opensDialog = (role: string, name: string) => /^(menu item|check menu item|radio menu item)$/.test(role) && OPENS_DIALOG.test(name)
+  && !ENDS_SESSION.test(foldLabel(name)) && !ENDS_SESSION.test(plainText(name));
 
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
@@ -777,8 +915,11 @@ export class PolicyEngine {
     if (d.verdict === "deny") return d;
     // "Always in this app" is for ordinary steps; a risky or off-task question is answered for this once only.
     const remember = (this.o.allowGrants?.() ?? true) && !!d.needsGrant && !d.risky;
-    // Risky and off-task: say so in the question, so a page that talked Ember into it is easy to spot.
-    if (d.about && !alignedWithGoal(r.goal, d.about)) {
+    // Risky and off-task: say so in the question, so a page that talked Ember into it is easy to spot. A check box or
+    // switch names a setting (any of its words will do); "Format" is the risky verb where it formats a disk.
+    const role = r.element?.role ?? "";
+    const disk = ACTIVATING_ROLES.test(role) && formatsDisk(r.element?.name ?? "", `${r.app} ${DIALOG_WINDOW.test(r.windowId?.role ?? "") ? r.window : ""} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`);
+    if (d.about && !alignedWithGoal(r.goal, d.about, { setting: TOGGLE_ROLES.test(role), disk })) {
       return { ...d, remember: false, aligned: false, everyTime: true, reason: `${d.reason}; not something the user asked for`, prompt: `${d.prompt} You didn't ask for this, so say no if it looks wrong.` };
     }
     // The administrator wants a click before every action.
@@ -806,10 +947,17 @@ export class PolicyEngine {
     const note = says ? `It says: ${quote(says, 90)}.` : undefined;
     // Risky by its name; "Format…" also in a disks app or a dialog about a disk (not in a document whose title says "USB").
     const dialogTitle = DIALOG_WINDOW.test(r.windowId?.role ?? "") ? r.window : "";
-    const riskyNamed = isRiskyControl(role, name) || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+    // A click goes to whatever handles it (a link or a clickable row around text, a heading or a picture): the words
+    // that post or act on others (RISKY_ACT) count on anything clicked but a check box, radio button or switch. A file's
+    // icon or a mail list's cell is named by its content ("report.pdf", "Report for March"): there only the phrases count.
+    const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role)
+      && (/^(icon|table cell|tree item)$/.test(role) ? RISKY_ACT.test(normalizeLabel(name)) || RISKY_ACT_INTL.test(foldLabel(name)) : isRiskyActLabel(name));
+    const riskyNamed = isRiskyControl(role, name) || clicked || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+    // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
+    const named = riskyNamed && !opensDialog(role, name);
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
-        if (riskyNamed) return { reason: "this action may be hard to undo or visible to others", about: name };
+        if (named) return { reason: "this action may be hard to undo or visible to others", about: name };
         if (agrees) return { reason: r.dialog && !isRiskyLabel(asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo", about: asks, note };
         return null;
       case "select":
@@ -818,25 +966,25 @@ export class PolicyEngine {
         // Typed with the keyboard, a line break is Enter and a tab is Tab (by accessibility or a paste neither is a key press).
         if (r.kind === "cursor_text" && /[\n\r\t]/.test(r.value ?? "")) return { reason: "the text contains a line break or tab, which can submit a form or move to another field" };
         const current = r.currentText ?? "";
-        if (r.mode === "replace" && (current.length > 80 || current.includes("\n"))) return { reason: `this replaces all ${current.length >= 200 ? "the" : current.length} characters already there` };
+        if (r.mode === "replace" && (current.length > 80 || current.includes("\n"))) {
+          return { reason: `this replaces ${howMany(current.length)} already there`, note: `This replaces ${howMany(current.length)} there.` };
+        }
         // With the keyboard, "replace" is Ctrl+A and Delete: in a paragraph that selects the whole document or page.
-        if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role)) return KEYS_SELECT_MORE;
+        // A spreadsheet's cell is typed over once selected: no Ctrl+A there.
+        if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role) && !(r.element && isSheetCell(r.element))) return KEYS_SELECT_MORE;
         return null;
       }
       case "keys": {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
         const k = keyFamily(canonicalKeys(r.value ?? "") ?? "");
-        // After Ctrl+A, a key that types, Backspace, Delete, Ctrl+X or a paste replaces everything selected (as type_text's "replace").
-        if (r.afterSelectAll && replacesSelection(k)) {
-          const current = r.currentText;
-          // In a paragraph Ctrl+A selects the whole document or page, not only what the paragraph holds.
-          if (current === undefined || !HOLDS_ALL_TEXT.test(role)) return SELECTS_MORE;
-          if (current.length > 80 || current.includes("\n")) return { reason: `everything is selected (Ctrl+A), so this replaces all ${current.length >= 200 ? "the" : current.length} characters already there` };
-        }
+        // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
+        // type_text's "replace"): judged by the real selection where the screen reader tells it.
+        const replaces = replacesSelection(k) ? replacedBySelection(r, role) : null;
+        if (replaces) return replaces;
         if (DESTRUCTIVE_KEYS.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button.
-          if (ACTIVATING_ROLES.test(role) && riskyNamed) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
+          if (ACTIVATING_ROLES.test(role) && named) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
           if (ACTIVATING_ROLES.test(role) && agrees) return { reason: "this answers a dialog, and Ember can't be sure what it agrees to", about: asks, note };
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           return null;
@@ -923,7 +1071,7 @@ export class PolicyEngine {
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
       // Hard-to-undo actions are still confirmed (desk apps share the user's files).
-      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt: `${plain.replace(/\?$/, "")} (on my desk)?${risk.note ? ` ${risk.note}` : ""}`, risky: true, everyTime: true };
+      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, risky: true, everyTime: true };
       return { tier: "reversible", verdict: "allow", reason: "on Ember's desk", prompt };
     }
 

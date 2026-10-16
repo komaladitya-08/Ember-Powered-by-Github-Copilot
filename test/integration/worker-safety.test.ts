@@ -4,9 +4,13 @@
  * appears after it), the policy sees elements as they are now, limits and
  * argument checks hold, and screen text reaches the model only as quoted data.
  * Runs anywhere (no desktop needed).
+ *
+ * One runtime serves every test, and every worker a test makes is disposed after it: the runtime holds an inotify
+ * instance for each open session, and a user has 128 of them in all (fs.inotify.max_user_instances). Out of them, the
+ * runtime takes a message but never begins its turn, and the test hangs.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,12 +61,22 @@ beforeAll(async () => {
   await client.start();
 }, 60000);
 
+// A busy machine makes the runtime slow, not stuck: a test gets 30 s (a few take longer and say so).
+vi.setConfig({ testTimeout: 30_000 });
+
+/** The workers a test made: their sessions close after it (each holds one of the user's inotify instances in the runtime). */
+const made: Worker[] = [];
+afterEach(async () => {
+  await Promise.all(made.splice(0).map(w => w.dispose()));
+});
+
 afterAll(async () => {
   await client?.stop();
   await mock?.close();
 });
 
-interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; secret?: boolean; bounds?: { x: number; y: number; width: number; height: number } }
+/** `selection`: the text selected in it, as the screen reader tells it for the field with the keyboard. */
+interface FakeNode { id: number; role: string; name: string; states?: string[]; text?: string; selection?: string; secret?: boolean; bounds?: { x: number; y: number; width: number; height: number } }
 
 /** A pretend window and accessibility helper that log every action (and when it happened). */
 function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string } = {}) {
@@ -70,7 +84,8 @@ function fakeScreen(nodes: FakeNode[], o: { readDelay?: number; title?: string }
   const live = new Map(nodes.map(n => [n.id, { ...n, states: n.states ?? ["enabled", "sensitive"] }]));
   const window = { app: "testapp", pid: 1, name: o.title ?? "Test Window", role: "frame", active: true, bounds: { x: 0, y: 0, width: 400, height: 300 } };
   const boundsOf = (n: FakeNode) => n.bounds ?? { x: 10, y: 10 * n.id, width: 60, height: 20 };
-  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}) }));
+  const axNodes = () => [...live.values()].map(n => ({ id: n.id, parent: null, depth: 1, role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}),
+    ...(n.text !== undefined ? { text: n.text } : {}), ...(n.selection && n.states.includes("focused") ? { selection: n.selection } : {}) }));
   const after = (id: number) => { const n = live.get(id)!; return { role: n.role, name: n.name, states: n.states, bounds: boundsOf(n), ...(n.secret ? { secret: true } : {}), ...(n.text !== undefined ? { text: n.text } : {}) }; };
   const perception = {
     perceive: async () => ({ window, x11Window: null, nodes: axNodes(), blocked: false, ms: 0, capture: null,
@@ -95,7 +110,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
-  return new Worker({
+  const w = new Worker({
     client, log: quiet, model: o.model === undefined ? "mock-model" : o.model, vision: false,
     provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" },
     workDir: path.join(dir, "empty"),
@@ -112,6 +127,8 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     clipboard: o.clipboard,
     desk: o.desk,
   } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" }, ...(o.userWords !== undefined ? { userWords: o.userWords } : {}), ...(o.screen ? { screen: o.screen } : {}) });
+  made.push(w);
+  return w;
 }
 
 const APPLY: FakeNode = { id: 1, role: "push button", name: "Apply" };
@@ -655,8 +672,9 @@ describe("review round 3: what Ember asks about is what it does", () => {
   });
 
   it("text never goes by keyboard into a cell or list (Ctrl+A, Delete there hit everything), nor into a field the click didn't focus", async () => {
+    // (A spreadsheet's cell, named by its address, is filled another way: see review round 7.)
     for (const [goal, nodes] of [
-      ["Put 42 in B3", [{ id: 3, role: "table cell", name: "B3", states: [...EDITABLE] }]],
+      ["Put 42 in B3", [{ id: 3, role: "table cell", name: "Groceries", states: [...EDITABLE] }]],
       ["Write Hi in Note", [{ id: 3, role: "text", name: "Note", text: "", states: [...EDITABLE] }, { id: 4, role: "text", name: "Draft", text: "three paragraphs", states: [...EDITABLE, "focused"] }]],
     ] as const) {
       typeInto(goal, { id: 3, text: "Hi", mode: "replace" });
@@ -777,7 +795,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
 
     it("words the user added while it ran count, but not the words Ember wraps them in", async () => {
       plan("Delete the old draft", [perceive, { tool: { name: "click", args: { id: 1 } } }]);
-      const screen = fakeScreen([{ id: 1, role: "push button", name: "Delete user account" }]);
+      // "user", "update": Ember's words around what the user added ("The user changed the task"), never asked-for words.
+      const screen = fakeScreen([{ id: 1, role: "push button", name: "Send user update" }]);
       const read = screen.perception.perceive;
       const asked: { prompt: string; options: string[] }[] = [];
       const w = makeWorker(screen, "Delete the old draft", { confirmer: asking(["deny"], asked) });
@@ -868,7 +887,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         await w.run(new AbortController().signal);
         // 8, 4, the comma and two zeros went in; the third zero would have made it "84000".
         expect(keyLog.filter(l => l.startsWith("key") && l.endsWith("down"))).toHaveLength(5);
-        expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to press 0 on “Cell” text in Gnumeric (on my desk)? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press 0 on “Cell” text in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
       });
 
       it("on the desk, Ctrl+A then Backspace on a long document is asked about as replacing it all (W5-02)", async () => {
@@ -881,7 +900,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const w = makeWorker(screen, "Empty the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked), desk: async () => place as never });
         (w as unknown as { setPlace: (p: unknown) => void }).setPlace(place);
         await w.run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to press Backspace on “Document” text in gedit (on my desk)?"]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press Backspace on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
         // Ctrl+A and (the script going on) Ctrl+S went in, never the Backspace: nothing was cleared.
         expect(keyLog.filter(l => l.startsWith("key") && l.endsWith("down"))).toEqual(["key 65507 down", "key 97 down", "key 65507 down", "key 115 down"]);
       });
@@ -989,7 +1008,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
           await deskWorker(screen, goal, { target: { title: "Inbox" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
           // Every key but the last went in; the last makes the field read the code.
           expect(downs(keyLog), goal).toHaveLength(keys.length - 1);
-          expect(asked.map(a => a.prompt), goal).toEqual([`Borrow your keyboard to press ${keys[keys.length - 1]} on “Cell” text in Gnumeric (on my desk)? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.`]);
+          expect(asked.map(a => a.prompt), goal).toEqual([`Press ${keys[keys.length - 1]} on “Cell” text in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.`]);
         }
       });
 
@@ -1000,7 +1019,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const asked: { prompt: string; options: string[] }[] = [];
         const keyLog: string[] = [];
         await deskWorker(screen, "Tidy the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to press . on “Document” text in gedit (on my desk)?"]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press . on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
         // Ctrl+A and Ctrl+C went in, never the period.
         expect(downs(keyLog)).toHaveLength(4);
 
@@ -1008,7 +1027,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const second = apps(fakeScreen([DOC]), [{ app: "gedit", name: "notes.txt - gedit", ids: [50] }]);
         const asked2: { prompt: string; options: string[] }[] = [];
         await deskWorker(second, "Retitle the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked2), keyLog: [] }).run(new AbortController().signal);
-        expect(asked2.map(a => a.prompt)).toEqual(["Replace the text in “Document” text in gedit with “Hello” (on my desk)?"]);
+        expect(asked2.map(a => a.prompt)).toEqual(["Replace the text in “Document” text in gedit with “Hello” on my desk? This replaces all the characters there."]);
         expect(second.log).toEqual([]);
       });
 
@@ -1042,6 +1061,219 @@ describe("review round 3: what Ember asks about is what it does", () => {
         await deskWorker(screen, "Type ten letters, then make it bold", { target: { title: "notes" }, confirmer: asking(["deny"], []), keyLog }).run(new AbortController().signal);
         expect(downs(keyLog)).toHaveLength(10);
         expect(screen.log.map(e => e.what)).toEqual([expect.stringMatching(/^doAction 2 /)]);
+      });
+    });
+
+    describe("review round 7", () => {
+      /** Windows on Ember's desk (keys need no borrowing there), with the accessible path a real window has (its title may change). */
+      const onDesk = (screen: ReturnType<typeof fakeScreen>, goal: string, o: { target: { title: string }; confirmer: Confirmer; keyLog: string[]; userInControl?: () => boolean }) => {
+        const read = screen.perception.read as (t?: unknown) => Promise<{ window: Record<string, unknown> | null }>, perceiveIt = screen.perception.perceive as (o?: unknown) => Promise<{ window: Record<string, unknown> }>;
+        screen.perception.read = (async (t?: unknown) => { const r = await read(t); return { ...r, window: r.window && { ...r.window, path: `/w/${String(r.window.pid)}` } }; }) as never;
+        screen.perception.perceive = (async (p?: unknown) => { const r = await perceiveIt(p); return { ...r, window: { ...r.window, path: `/w/${String(r.window.pid)}` } }; }) as never;
+        const place = { info: { handOff: dir }, perception: screen.perception, sidecar: screen.sidecar, input: fakeX({ log: o.keyLog }),
+          userInControl: o.userInControl ?? (() => false), dead: false, onDead: () => undefined, close: () => undefined, open: () => 4242 };
+        const w = makeWorker(screen, goal, { target: o.target, confirmer: o.confirmer, desk: async () => place as never });
+        (w as unknown as { setPlace: (p: unknown) => void }).setPlace(place);
+        return w;
+      };
+      const keysOf = (k: string[]) => k.map(keys => ({ tool: { name: "press_keys", args: { keys } } }));
+      const downs = (log: string[]) => log.filter(l => l.startsWith("key") && l.endsWith("down"));
+      const LONG = "Notes\n".repeat(60);
+      const gedit = (nodes: FakeNode[]) => apps(fakeScreen(nodes), [{ app: "gedit", name: "notes.txt - gedit", ids: nodes.map(n => n.id) }]);
+
+      it("a key that types over a selection is asked about however the selection was made, and not once an arrow key ended it (SEC7-2, DK7-1)", async () => {
+        const DOC: FakeNode = { id: 50, role: "text", name: "Document", text: LONG, states: [...EDITABLE, "focused"] };
+        const BOLD: FakeNode = { id: 51, role: "push button", name: "Bold" };
+        const SELECT_ALL: FakeNode = { id: 52, role: "menu item", name: "Select All" };
+        const all = "Press . on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters.";
+        // The keys pressed (down) before the period, and the period itself where nothing is selected any more.
+        for (const [goal, steps, prompt, pressed] of [
+          ["Neaten the desk document A", keysOf(["ctrl+Home", "ctrl+shift+End", "period"]), "Press . on “Document” text in gedit on my desk? Text there is selected, so this may replace all the characters.", 5],
+          ["Neaten the desk document B", [...keysOf(["ctrl+a"]), { tool: { name: "click", args: { id: 51 } } }, ...keysOf(["period"])], all, 2],
+          ["Neaten the desk document C", [...keysOf(["ctrl+a"]), { tool: { name: "scroll", args: { id: 50, direction: "down" } } }, perceive, ...keysOf(["period"])], all, 2],
+          ["Neaten the desk document D", [{ tool: { name: "click", args: { id: 52 } } }, ...keysOf(["period"])], all, 0],
+          ["Neaten the desk document E", keysOf(["ctrl+a", "Left", "period"]), null, 4],
+        ] as const) {
+          plan(goal, [perceive, ...steps]);
+          const screen = gedit([{ ...DOC, states: [...DOC.states!] }, BOLD, SELECT_ALL]);
+          // Edit ▸ Select All selects the whole text, as the screen reader then tells.
+          const act = screen.sidecar.doAction;
+          screen.sidecar.doAction = async (id: number, a: string) => { if (id === 52) screen.live.get(50)!.selection = LONG; return act(id, a); };
+          // The title gains a "*" once the document is changed (a new perceive_window reads it).
+          if (goal.endsWith("C")) {
+            const p = screen.perception.perceive as (o?: unknown) => ReturnType<typeof screen.perception.perceive>;
+            let n = 0;
+            screen.perception.perceive = async (o?: never) => { const r = await p(o); return (n++ ? { ...r, window: { ...r.window, name: "*notes.txt - gedit" } } : r) as never; };
+          }
+          const asked: { prompt: string; options: string[] }[] = [];
+          const keyLog: string[] = [];
+          await onDesk(screen, goal, { target: { title: "notes" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), goal).toEqual(prompt ? [prompt] : []);
+          expect(downs(keyLog), goal).toHaveLength(pressed);
+        }
+      });
+
+      it("in an empty field Ctrl+A selects nothing: the keys after it aren't asked about (DK7-3)", async () => {
+        plan("Write hi on the desk", [perceive, ...keysOf(["ctrl+a", "h", "i"])]);
+        // The screen reader leaves an empty field's text out.
+        const screen = gedit([{ id: 50, role: "text", name: "", states: [...EDITABLE, "focused"] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        const keyLog: string[] = [];
+        await onDesk(screen, "Write hi on the desk", { target: { title: "notes" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
+        expect(asked).toEqual([]);
+        expect(downs(keyLog)).toHaveLength(4);
+      });
+
+      it("press_keys asks nothing on a desk the user has taken over, or in a window that is gone (DK7-4)", async () => {
+        plan("Close the desk document", [perceive, ...keysOf(["Delete", "ctrl+w"])]);
+        const screen = gedit([{ id: 50, role: "text", name: "Document", text: LONG, states: [...EDITABLE, "focused"] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        const keyLog: string[] = [];
+        let taken = false;
+        const w = onDesk(screen, "Close the desk document", { target: { title: "notes" }, confirmer: asking(["once"], asked), keyLog, userInControl: () => taken });
+        const perceiveIt = screen.perception.perceive as (o?: unknown) => ReturnType<typeof screen.perception.perceive>;
+        screen.perception.perceive = async (o?: never) => { const r = await perceiveIt(o); taken = true; return r; };
+        await w.run(new AbortController().signal);
+        expect(asked).toEqual([]);
+        expect(keyLog).toEqual([]);
+        expect(toolResults("Close the desk document").slice(1, 3)).toEqual([expect.stringMatching(/taken over your desk/), expect.stringMatching(/taken over your desk/)]);
+
+        plan("Save it as report", [perceive, ...keysOf(["Return"])]);
+        const gone = gedit([{ id: 60, role: "push button", name: "Save" }]);
+        const readGone = gone.perception.read as (t?: unknown) => ReturnType<typeof gone.perception.read>;
+        let closed = false;
+        gone.perception.read = async (t?: never) => (closed ? { window: null, x11Window: null, nodes: [], blocked: false, ms: 0 } : readGone(t)) as never;
+        const perceiveGone = gone.perception.perceive as (o?: unknown) => ReturnType<typeof gone.perception.perceive>;
+        gone.perception.perceive = async (o?: never) => { const r = await perceiveGone(o); closed = true; return r; };
+        const asked2: { prompt: string; options: string[] }[] = [];
+        await onDesk(gone, "Save it as report", { target: { title: "notes" }, confirmer: asking(["once"], asked2), keyLog }).run(new AbortController().signal);
+        expect(asked2).toEqual([]);
+        expect(toolResults("Save it as report")[1]).toMatch(/can't be read \(it is closed/);
+      });
+
+      it("text read in another app, typed with a line break in it or split over the form's fields, is asked about (SEC7-3, SEC7-4)", async () => {
+        const MAIL: FakeNode = { id: 10, role: "paragraph", name: "", text: "Your password reset code: 448812. Ana's email: ana.silva@example.com" };
+        const FORM: FakeNode[] = [{ id: 1, role: "paragraph", name: "", text: "Survey" }, { id: 2, role: "entry", name: "Comments", text: "", states: [...EDITABLE] },
+          { id: 3, role: "entry", name: "User", text: "", states: [...EDITABLE] }, { id: 4, role: "entry", name: "Domain", text: "", states: [...EDITABLE] }];
+        const wins = [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2, 3, 4] }, { app: "Thunderbird", name: "Inbox - Thunderbird", ids: [10] }];
+        for (const [goal, typing, prompt] of [
+          ["Enter the email in the survey Y", [[2, "ana.silva@\nexample.com"]], "Type “ana.silva@⏎example.com” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+          ["Enter the code in the survey Z", [[2, "448\n812"]], "Type “448⏎812” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+          ["Enter the address in two fields", [[3, "ana.silva"], [4, "example.com"]], "Type “example.com” into “Domain” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+        ] as const) {
+          plan(goal, [perceive, { tool: { name: "switch_window", args: { title: "Survey" } } },
+            ...typing.map(([id, text]) => ({ tool: { name: "type_text", args: { id, text, mode: "replace" } } })), { tool: { name: "finish_task", args: { success: true, summary: "added" } } }]);
+          const screen = apps(fakeScreen([...FORM.map(n => ({ ...n })), MAIL]), wins);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(screen, goal, { grants: { firefox: "act" }, target: { title: "Inbox" }, confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt), goal).toEqual([prompt]);
+          expect(screen.log.map(e => e.what), goal).toEqual(typing.length > 1 ? ["setText 3"] : []);
+        }
+      });
+
+      it("a find and replace the user asked for asks once, at Replace All, and nothing after is marked (W7-1, PR7-7)", async () => {
+        const goal = "Replace teh with the everywhere in rep7.txt";
+        plan(goal, [perceive, ...[1, 2, 3, 4, 5].map(id => id === 2 || id === 3 ? { tool: { name: "type_text", args: { id, text: id === 2 ? "teh" : "the", mode: "replace" } } } : { tool: { name: "click", args: { id } } })]);
+        const screen = apps(fakeScreen([{ id: 1, role: "menu item", name: "Find and Replace..." }, { id: 2, role: "text", name: "Search for:", text: "", states: [...EDITABLE] },
+          { id: 3, role: "text", name: "Replace with:", text: "", states: [...EDITABLE] }, { id: 4, role: "push button", name: "Replace All" }, { id: 5, role: "push button", name: "Close" }]),
+        [{ app: "mousepad", name: "rep7.txt - Mousepad", ids: [1, 2, 3, 4, 5] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        await makeWorker(screen, goal, { grants: { mousepad: "act" }, target: { title: "rep7" }, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
+        expect(asked.map(a => a.prompt)).toEqual(["Click “Replace All” push button in Mousepad?"]);
+        expect(screen.log.map(e => e.what)).toEqual(["doAction 1 click", "setText 2", "setText 3", "doAction 4 click", "doAction 5 click"]);
+
+        // A step the user didn't ask for: every later question says so plainly, once, after its own note.
+        plan("Answer the survey and check it", [perceive, { tool: { name: "click", args: { id: 1 } } }, { tool: { name: "type_text", args: { id: 2, text: "Great week", mode: "replace" } } }]);
+        const form = fakeScreen([{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "entry", name: "Comments", text: "x".repeat(100), states: [...EDITABLE] }]);
+        const asked2: { prompt: string; options: string[] }[] = [];
+        await makeWorker(form, "Answer the survey and check it", { confirmer: asking(["deny", "deny"], asked2) }).run(new AbortController().signal);
+        expect(asked2.map(a => a.prompt)).toEqual(["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+          "Replace the text in “Comments” entry in Testapp with “Great week”? This replaces all 100 characters there. (I'm checking each step: a step came up that you didn't ask for.)"]);
+      });
+
+      it("on the user's screen, one yes covers a run of keys that only move; a key that types is asked again (PR7-3)", async () => {
+        plan("Move down two lines and type x", [perceive, ...keysOf(["Down", "Down", "Right", "x", "Down"])]);
+        const screen = fakeScreen([{ id: 3, role: "text", name: "Notes", text: "a\nb\nc", states: [...EDITABLE, "focused"] }]);
+        const asked: { prompt: string; options: string[] }[] = [];
+        const keys: string[] = [];
+        await makeWorker(screen, "Move down two lines and type x", { confirmer: asking(["once"], asked), cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
+        expect(asked.map(a => a.prompt)).toEqual([
+          "Borrow your keyboard to press Down on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
+          "Borrow your keyboard to press X on “Notes” text in Testapp?",
+          "Borrow your keyboard to press Down on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
+        ]);
+        expect(keys).toEqual(["Down", "Down", "Right", "x", "Down"]);
+      });
+
+      describe("a spreadsheet's cells (W7-4, PR7-3)", () => {
+        /**
+         * A pretend Calc sheet: cells listed only once they hold something (or have the keyboard), a cell cursor the
+         * arrow keys and Enter move, typing that goes in at Enter, and Delete that clears a cell. `hidden`: what the
+         * cells not listed hold; `skipRow`: a hidden row the arrow keys pass over.
+         */
+        const calc = (cells: Record<string, string>, o: { hidden?: Record<string, string>; skipRow?: number } = {}) => {
+          const screen = fakeScreen(Object.entries(cells).map(([name, text], i) => ({ id: 20 + i, role: "table cell", name, text, states: [...EDITABLE, ...(i === 0 ? ["focused"] : [])] })));
+          screen.sidecar.setText = async () => { throw new Error("background_unavailable: this app takes no text this way"); };
+          let at = { col: 0, row: 1 }, pending: string | null = null, next = 100;
+          const nameOf = (p: typeof at) => `${String.fromCharCode(65 + p.col)}${p.row}`;
+          const cellAt = (p: typeof at) => [...screen.live.values()].find(n => n.name === nameOf(p))
+            ?? (screen.live.set(next, { id: next, role: "table cell", name: nameOf(p), text: o.hidden?.[nameOf(p)] ?? "", states: [...EDITABLE] }), screen.live.get(next++)!);
+          const focusAt = () => { for (const n of screen.live.values()) n.states = n.states.filter(s => s !== "focused"); cellAt(at).states.push("focused"); };
+          const keys: string[] = [];
+          const onKey = (k: string) => {
+            keys.push(k);
+            if (k.startsWith("type:")) { pending = k.slice(5); return; }
+            if (k === "ctrl+Home") at = { col: 0, row: 1 };
+            else if (k === "Right") at = { ...at, col: at.col + 1 };
+            else if (k === "Left") at = { ...at, col: at.col - 1 };
+            else if (k === "Up") at = { ...at, row: at.row - 1 };
+            else if (k === "Down" || k === "Return") {
+              if (k === "Return" && pending !== null) { cellAt(at).text = pending; pending = null; }
+              at = { ...at, row: at.row + 1 + (at.row + 1 === o.skipRow ? 1 : 0) };
+            } else if (k === "Delete" && pending === null) cellAt(at).text = "";
+            focusAt();
+          };
+          const borrow = new CursorBorrow(fakeX());
+          const real = borrow.borrow.bind(borrow);
+          borrow.borrow = (fn, b) => real(hand => fn({ ...hand, keys: async k => onKey(k), type: async t => onKey(`type:${t}`), checkTyping: () => undefined }), { ...b, idleMs: 0 });
+          return { screen, keys, cursor: { borrow, findWindow: () => 1, setBorrowing: () => undefined }, text: (name: string) => [...screen.live.values()].find(n => n.name === name)?.text };
+        };
+
+        it("a value goes into a listed cell, and into an empty one by its address, with one question each, by the keyboard", async () => {
+          const sheet = calc({ A1: "Item", B2: "1200" });
+          plan("Put 84000 in B2 and 42 in B5", [perceive, { tool: { name: "type_text", args: { id: 21, text: "84000", mode: "replace" } } }, { tool: { name: "type_text", args: { cell: "b5", text: "42", mode: "replace" } } }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Put 84000 in B2 and 42 in B5", { confirmer: asking(["once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked.map(a => a.prompt)).toEqual(["Borrow your keyboard to replace “1200” in cell B2 with “84000” in Testapp?", "Borrow your keyboard to type “42” into cell B5 in Testapp?"]);
+          // To B2 from A1, typed over, Delete (LibreOffice's AutoInput), Enter; then from B3 down to B5.
+          expect(sheet.keys).toEqual(["Right", "Down", "type:84000", "Delete", "Return", "Down", "Down", "type:42", "Delete", "Return"]);
+          expect([sheet.text("B2"), sheet.text("B5")]).toEqual(["84000", "42"]);
+          expect(toolResults("Put 84000 in B2 and 42 in B5")[2]).toMatch(/^Done: typed "42" into B5/);
+        });
+
+        it("a cell that holds what the question didn't say, or can't be reached, gets nothing typed; asked again, the question says what goes", async () => {
+          const sheet = calc({ A1: "Item" }, { hidden: { B3: "old note" }, skipRow: 5 });
+          plan("Fill B3 and B6", [perceive, ...["B3", "B3", "B6"].map(cell => ({ tool: { name: "type_text", args: { cell, text: "7", mode: "replace" } } }))]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Fill B3 and B6", { confirmer: asking(["once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          const results = toolResults("Fill B3 and B6");
+          expect(results[1]).toMatch(/^B3 holds "old note", which the user wasn't asked about, so nothing was typed/);
+          expect(asked.map(a => a.prompt).slice(0, 2)).toEqual(["Borrow your keyboard to type “7” into cell B3 in Testapp?", "Borrow your keyboard to replace “old note” in cell B3 with “7” in Testapp?"]);
+          expect(sheet.text("B3")).toBe("7");
+          // Row 5 is hidden: the arrow keys land on B7, not B6.
+          expect(results[3]).toMatch(/couldn't reach B6 with the arrow keys .* on B7 now, and nothing was typed/);
+          expect(sheet.text("B7")).toBe("");
+        });
+
+        it("text from another app goes into a cell only with a question that says so; append and line breaks are refused", async () => {
+          const sheet = calc({ A1: "Item" });
+          plan("Copy the salary into B2", [perceive, { tool: { name: "type_text", args: { cell: "B2", text: "a\nb", mode: "replace" } } }, { tool: { name: "type_text", args: { cell: "B2", text: "1", mode: "append" } } }]);
+          const asked: { prompt: string; options: string[] }[] = [];
+          await makeWorker(sheet.screen, "Copy the salary into B2", { confirmer: asking(["once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          expect(asked).toEqual([]);
+          expect(toolResults("Copy the salary into B2").slice(1, 3)).toEqual([expect.stringMatching(/A cell takes one line/), expect.stringMatching(/mode "replace"/)]);
+          expect(sheet.keys).toEqual([]);
+        });
       });
     });
   });

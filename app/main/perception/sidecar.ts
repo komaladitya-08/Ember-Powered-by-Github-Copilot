@@ -2,10 +2,10 @@
  * Client for the Python AT-SPI sidecar (sidecar/atspi/ember_atspi.py):
  * newline-delimited JSON-RPC over stdio, started on demand. The sidecar
  * answers one request at a time, so a request that doesn't come back in time
- * holds up every other one: that process is killed, and the next request
- * starts a fresh one (as after any exit or crash). Element ids are only valid
- * in the process that issued them; what it knows about secret fields is kept
- * here too and handed to every new process.
+ * holds up every other one: that process is killed, and a fresh one starts at
+ * once (as after any exit or crash), so one stays connected (see revive).
+ * Element ids are only valid in the process that issued them; what it knows
+ * about secret fields is kept here too and handed to every new process.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -27,12 +27,19 @@ export interface AxNode {
   text?: string;
   /** Selected text, for the focused text element only (never for passwords). */
   selection?: string;
+  /** A drop-down (combo box): the option it shows as chosen (never for a secret one). */
+  selected?: string;
   value?: number;
   editable?: boolean;
   /** A password, payment or one-time-code field: its contents are never read. */
   secret?: boolean;
   /** The part of `bounds` that shows, where some of it is scrolled out of its list or lies outside its window. */
   shown?: Bounds;
+  /**
+   * A spreadsheet's cell (LibreOffice Calc), read from its sheet by row and column: named by its address ("B7"), its
+   * text what it holds. A cell with the keyboard that is scrolled away has no `bounds`.
+   */
+  grid?: boolean;
 }
 
 export interface AxWindow {
@@ -113,7 +120,13 @@ export interface ElementInfo {
  * `why`: why it can't (the app's own action names may be in it). `focused` and `windowActive` (asked with `caret`):
  * the element has the keyboard, and its window is the active one.
  */
-export interface CanDo { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean }
+export interface CanDo {
+  tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean;
+  /** A click: the action that would do it ("clickancestor": Chromium hands it to an ancestor). */
+  action?: string;
+  /** A click: the control around the element that the click goes to (a link around its text, a row around its label). */
+  handler?: { role: string; name: string };
+}
 
 /** `after` is null when the element went away (its dialog closed: the action worked) or the app stopped answering. */
 export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean }
@@ -143,8 +156,8 @@ export const ID_BLOCK = 10_000_000;
 let idBlocks = 0;
 
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
-/** One sidecar process and the requests waiting on it. */
-interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean }
+/** One sidecar process and the requests waiting on it; `answered`: it has answered something (it works). */
+interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean }
 
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
@@ -154,12 +167,17 @@ export class AtspiSidecar {
   private nextId = 1;
   /** Elements of HiDPI windows: physical pixels per pixel the app reports (see scaleElements). */
   private scales = new Map<number, number>();
+  /** The ids each kept read scaled (the last few), and the latest quick look's (keep: false), as the sidecar keeps them. */
   private scaled: number[][] = [];
+  private scratch: number[] = [];
   /**
    * Fields known to hold secrets. GTK's "Show password" turns a password field into a plain entry;
    * the sidecar remembers that it was one, and so does this list, for whichever process comes next.
    */
   private secrets = new Map<string, SecretKey>();
+  /** stop() was called: no helper is started again on its own (see revive). */
+  private stopped = false;
+  private reviving = false;
 
   /** `env`: the environment of the desktop to read (Ember's desk has its own display and bus). */
   constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env) {}
@@ -172,7 +190,7 @@ export class AtspiSidecar {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: String(++idBlocks * ID_BLOCK) },
     });
-    const h: Helper = { child, pending: new Map(), done: false };
+    const h: Helper = { child, pending: new Map(), done: false, answered: false };
     this.helper = h;
     readline.createInterface({ input: child.stdout }).on("line", line => this.answer(h, line));
     readline.createInterface({ input: child.stderr }).on("line", line => {
@@ -219,6 +237,7 @@ export class AtspiSidecar {
       return;
     }
     const id = typeof msg.id === "number" ? msg.id : null;
+    if (id !== null) h.answered = true;
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
     clearTimeout(p.timer);
@@ -226,13 +245,36 @@ export class AtspiSidecar {
     if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
   }
 
-  /** This process is finished with: its waiting requests fail now, and the next request starts a new one. */
+  /**
+   * This process is finished with: its waiting requests fail now. The next one starts at once when this one worked
+   * (see revive), else the next request starts it.
+   */
   private retire(h: Helper, why: string, kill?: NodeJS.Signals): void {
-    if (this.helper === h) this.helper = null;
+    const current = this.helper === h;
+    if (current) this.helper = null;
     h.done = true;
     if (kill && h.child.exitCode === null && h.child.signalCode === null) h.child.kill(kill);
     for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(new Error(why)); }
     h.pending.clear();
+    if (current && h.answered) this.revive();
+  }
+
+  /**
+   * A helper that worked is gone (killed for a request that took too long, or it crashed): a new one is started right
+   * away and asked for its status, so one stays connected to the accessibility bus. LibreOffice (24.2) aborts, losing
+   * unsaved work, when a client that read it has left, a document is opened while no client is connected, and then a
+   * new client lists the desktop; one staying connected while the document opens prevents it. Never after stop(); and
+   * a helper that never answered isn't started over and over (the next request starts one).
+   */
+  private revive(): void {
+    if (this.stopped || this.reviving) return;
+    this.reviving = true;
+    setTimeout(() => {
+      this.reviving = false;
+      if (this.stopped || this.helper) return;
+      this.log.info("sidecar.revive", {});
+      this.request("status").catch(() => undefined);
+    }, 0);
   }
 
   request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = 5000): Promise<T> {
@@ -254,14 +296,28 @@ export class AtspiSidecar {
   /**
    * Perception found that these elements' window reports logical pixels (HiDPI): `k` physical
    * pixels each. From now on their bounds in readElement and action results are physical too, like
-   * the nodes Perception hands out. (Window reads here stay as the app reports them.)
+   * the nodes Perception hands out. (Window reads here stay as the app reports them.) `keep: false`: they come from a
+   * quick look (readWindow's keep), which the next quick look replaces, as in the sidecar: quick looks never push the
+   * ids of the reads acted on out of the last few.
    */
-  scaleElements(ids: number[], k: number): void {
+  scaleElements(ids: number[], k: number, keep = true): void {
     if (k === 1 || !ids.length) return;
     for (const id of ids) this.scales.set(id, k);
+    if (!keep) { this.scratch.push(...ids); return; }
     this.scaled.push(ids);
     // Ids are only used from the last few reads (the sidecar forgets older ones too).
     while (this.scaled.length > 16) for (const id of this.scaled.shift()!) this.scales.delete(id);
+  }
+
+  /** A new quick look begins: the ids of the one before it are gone (the sidecar replaces its scratch read). */
+  private newQuickLook(): void {
+    for (const id of this.scratch) this.scales.delete(id);
+    this.scratch = [];
+  }
+
+  /** Physical pixels per pixel element `id` reports (1 when its window isn't HiDPI, or the id isn't known). */
+  scaleOf(id: number): number {
+    return this.scales.get(id) ?? 1;
   }
 
   private physical<T extends ElementInfo | undefined>(id: number, e: T): T {
@@ -286,6 +342,7 @@ export class AtspiSidecar {
   readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown }>("read_window", params).then(({ secretKeys, ...r }) => {
       this.remember(secretKeys);
+      if (params.keep === false) this.newQuickLook();
       return r;
     });
   }
@@ -317,8 +374,9 @@ export class AtspiSidecar {
    * What shows at screen point (`x`, `y`) in the window `pid` and `path` name, outermost first (positions as the
    * app reports them): a few calls, where a read of the window takes hundreds. A window matching `neverLook`, or
    * whose process is in `skipPids`, is found but not looked at (`blocked`); `ownPid`'s (Ember's own) are never found.
+   * `menus: false`: none of the app's popup windows covers the point, so its open menus aren't looked through.
    */
-  atPoint(params: { pid: number; path: string; x: number; y: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number }): Promise<AtPointResult> {
+  atPoint(params: { pid: number; path: string; x: number; y: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; menus?: boolean }): Promise<AtPointResult> {
     return this.request("at_point", params);
   }
 
@@ -345,7 +403,9 @@ export class AtspiSidecar {
   }
   listOptions(id: number): Promise<{ options: string[] }> { return this.request("list_options", { id }); }
 
+  /** Ember quits (or its desk closes): the helper stops, and isn't started again on its own (see revive). */
   stop(): void {
+    this.stopped = true;
     if (this.helper) this.retire(this.helper, "accessibility helper stopped", "SIGTERM");
   }
 }

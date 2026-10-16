@@ -20,6 +20,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   if (stuck) return;
   switch (req.method) {
     case "whoami": return ok({ pid: process.pid, base: process.env.EMBER_ATSPI_ID_BASE, enc: process.env.PYTHONIOENCODING });
+    case "status":
+      if (process.env.EMBER_FAKE_STATUS_LOG) require("node:fs").appendFileSync(process.env.EMBER_FAKE_STATUS_LOG, process.pid + "\\n");
+      return ok({ version: 3, python: "fake", toolkitAccessibility: null, apps: 0 });
     case "hang": stuck = true; return;
     case "slow": return setTimeout(() => ok("slow"), req.params.ms);
     case "die": return process.kill(process.pid, "SIGTERM");
@@ -55,9 +58,9 @@ function logger() {
 }
 
 const running: AtspiSidecar[] = [];
-function sidecar(script = fake, python = process.execPath) {
+function sidecar(script = fake, python = process.execPath, env: NodeJS.ProcessEnv = process.env) {
   const { log, lines } = logger();
-  const s = new AtspiSidecar(script, log, python);
+  const s = new AtspiSidecar(script, log, python, env);
   running.push(s);
   return { s, lines };
 }
@@ -103,6 +106,33 @@ describe("AtspiSidecar", () => {
     expect(await failure(s.request("whoami", {}, 5000))).toMatch(/could not run|stopped/);
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(lines.some(l => l.msg === "sidecar.error")).toBe(true);
+    // Nor is it started again on its own, over and over: one try per request.
+    await new Promise(r => setTimeout(r, 300));
+    expect(lines.filter(l => l.msg === "sidecar.error")).toHaveLength(2);
+    expect(lines.some(l => l.msg === "sidecar.revive")).toBe(false);
+  });
+
+  it("keeps a helper connected: one that worked is started again at once, not at the next request (review round 7)", async () => {
+    // LibreOffice aborts when a client that read it leaves, a document opens with no client connected, and a new one
+    // lists the desktop: a helper killed for taking too long, or crashed, is replaced and connects right away.
+    const log = path.join(dir, `status-${Date.now()}.log`);
+    const { s } = sidecar(fake, process.execPath, { ...process.env, EMBER_FAKE_STATUS_LOG: log });
+    const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(Number) : []);
+    const waitAsked = async (n: number) => { for (let i = 0; i < 50 && asked().length < n; i++) await new Promise(r => setTimeout(r, 40)); return asked(); };
+    const first = await s.request<Who>("whoami");
+    expect(await failure(s.request("hang", {}, 100))).toMatch(/did not answer/);
+    const [revived] = await waitAsked(1);
+    expect(revived).toBeGreaterThan(0);
+    expect(revived).not.toBe(first.pid);
+    // The next request goes to it.
+    expect((await s.request<Who>("whoami")).pid).toBe(revived);
+    // After a crash too.
+    expect(await failure(s.request("die"))).toMatch(/stopped/);
+    expect((await waitAsked(2))[1]).not.toBe(revived);
+    // Not after stop().
+    s.stop();
+    await new Promise(r => setTimeout(r, 200));
+    expect(asked()).toHaveLength(2);
   });
 
   it("survives writing to a helper that died at once (EPIPE)", async () => {
@@ -133,6 +163,22 @@ describe("AtspiSidecar", () => {
     expect((await s.readElement(6)).bounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
     const r = await s.doAction(5);
     expect([r.before?.bounds, r.after?.bounds]).toEqual([{ x: 20, y: 40, width: 60, height: 80 }, { x: 20, y: 40, width: 60, height: 80 }]);
+  });
+
+  it("keeps a read's HiDPI scale however many quick looks come after it, as the helper keeps its ids (HND7-1)", async () => {
+    const { s } = sidecar();
+    s.scaleElements([5], 2);
+    // Quick looks (keep: false, a key's or a wheel notch's): each replaces the one before, in the helper and here.
+    for (let i = 0; i < 40; i++) {
+      await s.readWindow({ n: 1, keep: false } as never);
+      s.scaleElements([100 + i], 2, false);
+    }
+    expect((await s.readElement(5)).bounds).toEqual({ x: 20, y: 40, width: 60, height: 80 });
+    expect(s.scaleOf(5)).toBe(2);
+    expect([s.scaleOf(139), s.scaleOf(138)]).toEqual([2, 1]);
+    // Kept reads still push out the oldest kept ones.
+    for (let i = 0; i < 16; i++) s.scaleElements([200 + i], 2);
+    expect(s.scaleOf(5)).toBe(1);
   });
 
   it("hands the secret fields earlier helpers knew to every new one, before anything else", async () => {

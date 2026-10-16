@@ -41,6 +41,27 @@ describe("inferLabels", () => {
     expect(labels.has(1)).toBe(false);
     expect(labels.has(8)).toBe(false);
   });
+  it("a row takes the label inside it, never the row above's (HND7-4)", () => {
+    // GTK's list box rows (GNOME Settings is built so): unnamed, each holding its own label.
+    const row = (id: number, y: number, label: string): AxNode[] => [
+      { ...node(id, "list item", "", { x: 0, y, width: 360, height: 37 }), parent: 50 },
+      { ...node(id + 1, "label", label, { x: 2, y: y + 10, width: 200, height: 17 }), parent: id },
+    ];
+    const nodes = [node(50, "list box", "", { x: 0, y: 0, width: 360, height: 400 }), ...row(60, 0, "Privacy"), ...row(62, 37, "Remove account"),
+      // A row whose label is out of the read: no name, not the one above's.
+      { ...node(64, "list item", "", { x: 0, y: 74, width: 360, height: 37 }), parent: 50 },
+      // Chromium's list item: its bullet isn't its label.
+      { ...node(70, "list item", "", { x: 20, y: 200, width: 300, height: 17 }), parent: 50 },
+      { ...node(71, "static", "•", { x: 4, y: 200, width: 6, height: 17 }), parent: 70 },
+      { ...node(72, "static", "Withdraw application", { x: 20, y: 200, width: 130, height: 17 }), parent: 70 },
+      // A web page's text box holds its contents as text: that isn't its label.
+      { ...node(80, "entry", "", { x: 100, y: 300, width: 200, height: 20 }), parent: 50 },
+      { ...node(81, "static", "hello", { x: 102, y: 302, width: 40, height: 16 }), parent: 80 },
+      node(82, "label", "Name", { x: 10, y: 300, width: 60, height: 20 }),
+    ];
+    const labels = inferLabels(nodes);
+    expect([labels.get(60), labels.get(62), labels.get(64), labels.get(70), labels.get(80)]).toEqual(["Privacy", "Remove account", undefined, "Withdraw application", "Name"]);
+  });
 });
 
 describe("serializeElements", () => {
@@ -120,6 +141,31 @@ describe("serializeElements", () => {
     expect(tight).toContain("… 522 more elements not shown (2 text, 520 rows or cells; every control is listed)");
     // Cells named otherwise (a file dialog's) are listed one to a line, as before.
     expect(serializeElements(win, [node(1, "table cell", "notes.txt", null), node(2, "table cell", "12 kB", null)])).toContain('[2] table cell "12 kB"');
+  });
+  it("lists a Writer table's cells (named \"A1\" too, not read from a sheet's grid) one to a line, with their places (review round 7)", () => {
+    const writer = [
+      node(1, "table", "Sales-1", { x: 10, y: 100, width: 300, height: 40 }, { depth: 0, parent: null }),
+      node(2, "table cell", "A1", { x: 10, y: 100, width: 100, height: 20 }, { parent: 1, grid: false }),
+      node(3, "paragraph", "", { x: 12, y: 102, width: 90, height: 16 }, { parent: 2, depth: 2, text: "Region" }),
+      node(4, "table cell", "B1", { x: 110, y: 100, width: 100, height: 20 }, { parent: 1, grid: false }),
+    ];
+    const out = serializeElements(win, writer, { withBounds: true });
+    expect(out).toContain('[2] table cell "A1" (showing, visible) @10,100 100x20');
+    expect(out).toContain('[4] table cell "B1" (showing, visible) @110,100 100x20');
+    expect(out).not.toContain("row 1:");
+    // A sheet's cells (grid) are still one line a row.
+    const sheet = [node(1, "table", "Sheet1", null, { depth: 0, parent: null }),
+      node(2, "table cell", "A1", null, { parent: 1, grid: true, text: "1" }), node(3, "table cell", "B1", null, { parent: 1, grid: true, text: "2" })];
+    expect(serializeElements(win, sheet)).toContain('row 1: [2] A1="1" (showing, visible)  [3] B1="2" (showing, visible)');
+  });
+  it("says which option a drop-down shows as chosen, never a secret one's (review round 7)", () => {
+    const form = [node(1, "combo box", "Seat", { x: 10, y: 10, width: 100, height: 24 }, { selected: "Aisle" }),
+      node(2, "combo box", "Card expiry month", { x: 10, y: 40, width: 100, height: 24 }, { selected: "07" }),
+      node(3, "text", "Notes", { x: 10, y: 70, width: 100, height: 24 }, { text: "abc", selection: "b", states: ["enabled", "sensitive", "focused"] })];
+    const out = serializeElements(win, form);
+    expect(out).toContain('[1] combo box "Seat" (showing, visible) selected="Aisle"');
+    expect(out).not.toContain('"07"');
+    expect(out).toContain('text="abc" selected="b"');
   });
 });
 
@@ -287,6 +333,8 @@ describe("marksSvg", () => {
       node(10, "table cell", "notes.txt", { x: 10, y: 40, width: 80, height: 20 })], { x: 0, y: 0, width: 400, height: 300 }, 1, 400, 300);
     expect(svg).not.toContain(">9</text>");
     expect(svg).toContain(">10</text>");
+    // A Writer table's cell (named by address, not from a sheet's grid) is marked like any other.
+    expect(marksSvg([node(11, "table cell", "A1", { x: 10, y: 70, width: 80, height: 20 }, { grid: false })], { x: 0, y: 0, width: 400, height: 300 }, 1, 400, 300)).toContain(">11</text>");
   });
 });
 

@@ -25,6 +25,14 @@ const probes = (over: Partial<DoctorProbes> = {}): DoctorProbes => ({
 const byId = (checks: ReturnType<typeof doctorChecks>, id: string) => checks.find(c => c.id === id)!;
 
 describe("ember doctor", () => {
+  it("warns when the file watchers Copilot needs are nearly used up", () => {
+    expect(byId(doctorChecks({ ...probes(), fileWatchers: { used: 40, max: 128 } }), "file-watchers")).toMatchObject({ status: "ok", detail: "40 of 128 in use." });
+    const low = byId(doctorChecks({ ...probes(), fileWatchers: { used: 124, max: 128 } }), "file-watchers");
+    expect(low.status).toBe("warn");
+    expect(low.fix).toMatch(/max_user_instances=512/);
+    expect(doctorChecks({ ...probes(), fileWatchers: null }).some(c => c.id === "file-watchers")).toBe(false);
+  });
+
   it("is all green on a well set-up RHEL 8.4 GNOME on Xorg desktop", () => {
     const checks = doctorChecks(probes());
     expect(checks.filter(c => c.status !== "ok")).toEqual([]);

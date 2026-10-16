@@ -88,6 +88,11 @@ LAZY_ACTION_ROLES = frozenset(["list item", "table cell", "tree item", "table co
                                "table row header", "row header"])
 TEXT_ROLES = frozenset(["text", "entry", "password text", "terminal", "paragraph", "document text", "spin button",
                         "combo box"])
+# Text blocks that say what they hold only as text when they have no name: LibreOffice Writer's headings and quotations
+# (a web page's headings are named after what they say, and not asked again).
+UNNAMED_TEXT_ROLES = frozenset(["heading", "block quote"])
+# What stands in a text for an element inside it (Chromium's drop-down says U+FFFC for its option): no text of its own.
+OBJECT_CHAR = "\ufffc"
 VALUE_ROLES = frozenset(["slider", "spin button", "scroll bar", "progress bar", "level bar", "dial"])
 # Input fields, whose name or label can make their contents secret (documents and terminals are not judged
 # by name). Keep in step with FIELD_ROLES in elements.ts.
@@ -101,6 +106,9 @@ CELL_ADDRESS = re.compile(r"^\$?[A-Z]{1,3}\$?[1-9][0-9]{0,6}$")
 # MAX_NODES), for at most GRID_BUDGET_S (or half the time the read has left). Past either, the read is cut short.
 GRID_CELLS = 400
 GRID_BUDGET_S = 0.6
+# The cell with the keyboard, when that look didn't come to it, is looked for on its own after the rest of the window
+# (see cursor_cell): for this long at most, where it was last found first.
+CURSOR_SCAN_S = 1.0
 
 # Labels of fields whose contents never leave this process (passwords, payment and bank details,
 # one-time codes, keys), in the languages Ember's users are likely to meet. The same lists as
@@ -382,24 +390,54 @@ class Snapshots(object):
         """After a quick look: ids added later (secret fields for a screenshot) go to the newest kept read."""
         self.current = self.reads[-1] if self.reads else None
 
-    def add(self, acc):
+    def add(self, acc, place=None):
+        """A new id for acc. `place`: (sheet, row, column) of a spreadsheet's cell, which is found there again
+        (see SheetCell)."""
         nid = self.next_id
         self.next_id += 1
         if self.current is None:
             self.begin()
-        self.current[nid] = acc
+        self.current[nid] = acc if place is None else SheetCell(acc, *place)
         return nid
 
     def get(self, nid):
         for read in reversed(self.reads):
             if nid in read:
-                return read[nid]
+                return live(read[nid])
         if nid in self.scratch:
-            return self.scratch[nid]
+            return live(self.scratch[nid])
         raise KeyError("element %s is no longer known; read the window again" % nid)
 
     def latest(self):
+        """The ids of the read going on now, and what each was given for (see stored)."""
         return self.current if self.current is not None else {}
+
+
+class SheetCell(object):
+    """A spreadsheet's cell as a read found it: the accessible, and its sheet and place. LibreOffice Calc makes a cell's
+    accessible when it is asked for and the accessibility bridge drops it 15 s later (its sheet lasts): the cell is
+    asked of its sheet again whenever its id is used (see live)."""
+
+    __slots__ = ("acc", "table", "row", "col")
+
+    def __init__(self, acc, table, row, col):
+        self.acc, self.table, self.row, self.col = acc, table, row, col
+
+
+def stored(entry):
+    """The accessible an id was given for, as it was given (not asked for again)."""
+    return entry.acc if isinstance(entry, SheetCell) else entry
+
+
+def live(entry):
+    """The accessible behind an id: a spreadsheet's cell is asked of its sheet again (one call; see SheetCell), the one
+    from the read where that fails (a sheet that closed: it is gone too)."""
+    if not isinstance(entry, SheetCell):
+        return entry
+    cell = table_cell_at(entry.table, entry.row, entry.col)
+    if cell is not None:
+        entry.acc = cell
+    return entry.acc
 
 
 SNAPSHOTS = Snapshots()
@@ -428,14 +466,30 @@ def node_of(acc, role, name, states, bounds):
             node["secret"] = True
         else:
             txt = text_of(acc)
-            if txt:
+            if txt and txt.strip(OBJECT_CHAR):
                 node["text"] = txt
             if "focused" in states:
                 sel = selection_of(acc)
                 if sel:
                     node["selection"] = sel
+            if role == "combo box":
+                chosen = chosen_option(acc)
+                if chosen:
+                    node["selected"] = chosen
+    elif role in UNNAMED_TEXT_ROLES and not name and not web_engine(acc):
+        # A heading or quotation in LibreOffice Writer: what it says is its text only (a web page's quotation holds
+        # its text in elements of its own, read as they are).
+        secret = is_secret(acc, role, name)
+        txt = None if secret else text_of(acc)
+        if txt and txt.strip(OBJECT_CHAR):
+            node["text"] = txt
+        sel = selection_of(acc) if txt and "focused" in states else None
+        if sel:
+            node["selection"] = sel
     elif role == "table cell" and CELL_ADDRESS.match(name):
-        # A spreadsheet's cell: its name says where it is ("B7"), its text what it holds.
+        # Named by its address ("B7"), its text what it holds; not a spreadsheet's (those are read by walk_grid): a
+        # LibreOffice Writer table's cell, say, whose text is in its paragraphs.
+        node["grid"] = False
         secret = is_secret(acc, role, name)
         if secret:
             node["secret"] = True
@@ -672,9 +726,9 @@ def grid_of(acc, count, states, clip):
 
 
 def grid_cells(acc, grid, budget, cap, until=None):
-    """The cells of a spreadsheet's rows and columns on screen (see grid_of), row by row: `cap` at most, until
-    `until` (time.monotonic()) at most, when budget.cut notes the rest was left out; and none once the read should
-    stop (see Budget.tick)."""
+    """The cells of a spreadsheet's rows and columns on screen (see grid_of), row by row, as (row, column, cell):
+    `cap` at most, until `until` (time.monotonic()) at most, when budget.cut notes the rest was left out; and none once
+    the read should stop (see Budget.tick)."""
     row0, row1, col0, col1, _ = grid
     asked = 0
     for row in range(row0, row1 + 1):
@@ -687,14 +741,47 @@ def grid_cells(acc, grid, budget, cap, until=None):
             asked += 1
             cell = table_cell_at(acc, row, col)
             if cell is not None:
-                yield cell
+                yield row, col, cell
 
 
-def walk_grid(acc, grid, depth, out, max_depth, max_nodes, parent_id, clip, budget):
+def next_place(grid, row, col):
+    """The cell after (row, col) on screen, row by row (see grid_of); past the last, the first of the row below."""
+    return (row, col + 1) if col < grid[3] else (row + 1, grid[2])
+
+
+def cell_node(table, row, col, cell, name, text, states, editable, depth, parent_id, clip, anywhere=False):
+    """What the model is told about a spreadsheet's cell (role "table cell", `name` its address) at (row, col) of
+    `table`, `grid` marking it as one, with an id that finds it there again (see SheetCell); None when it shows
+    nothing inside `clip`, unless `anywhere` (it has the keyboard: listed without a place). `editable`: whether the
+    sheet's cells take text."""
+    bounds = extents(cell)
+    if not in_view(bounds, clip):
+        if not anywhere:
+            return None
+        bounds = None
+    node = {"role": "table cell", "name": name[:200], "states": [s for s in states if s in INTERESTING_STATES],
+            "bounds": bounds, "grid": True}
+    if is_secret(cell, "table cell", name):
+        node["secret"] = True
+    elif text and (text != name or CELL_ADDRESS.match(name)):
+        node["text"] = text
+    if editable and "editable" in states:
+        node["editable"] = True
+    node["id"] = SNAPSHOTS.add(cell, (table, row, col))
+    node["parent"] = parent_id
+    node["depth"] = depth
+    shown = clip_to(clip, bounds) if clip is not None and bounds is not None else None
+    if shown is not None and shown != bounds:
+        node["shown"] = shown
+    return node
+
+
+def walk_grid(acc, grid, depth, out, max_depth, max_nodes, parent_id, clip, budget, focused=False):
     """Reads a spreadsheet's cells on screen (see grid_of) into `out`, as children of acc (`depth`, `parent_id`):
     those that hold something, and those focused or selected (hundreds of empty cells say nothing), GRID_CELLS at
     most in a read, for GRID_BUDGET_S at most (or half the time the read has left). A cell is asked what it holds
-    first: one call, where its name, states and place take three more."""
+    first: one call, where its name, states and place take three more. `focused`: the sheet has the keyboard; when
+    its cell with the keyboard isn't among those read, budget.sheets notes where to look for it (see cursor_cell)."""
     for i in range(grid[4]):
         # Column headers before the cells (GTK's tree view).
         child = child_at(acc, i)
@@ -705,48 +792,113 @@ def walk_grid(acc, grid, depth, out, max_depth, max_nodes, parent_id, clip, budg
     now = time.monotonic()
     until = min(now + GRID_BUDGET_S, now + max(0.0, budget.until - now) / 2.0)
     editable = None
-    for cell in grid_cells(acc, grid, budget, 1 << 30, until):
+    start = (grid[0], grid[2])  # the first cell not looked at yet
+    for row, col, cell in grid_cells(acc, grid, budget, 1 << 30, until):
         text = cell_text(cell)
         states = state_names(cell)
-        if text == "" and "focused" not in states and "selected" not in states:
+        if (text != "" or "focused" in states or "selected" in states) and "showing" in states and "visible" in states:
+            if budget.grid >= GRID_CELLS:
+                budget.cut_short("nodes")
+                break
+            try:
+                role, name = cell.getRoleName(), (cell.name or "").strip()
+            except Exception:
+                role = None
+            if role == "table cell":
+                if editable is None and "editable" in states:
+                    editable = is_editable(cell, states)  # the same for every cell
+                node = cell_node(acc, row, col, cell, name, text, states, editable, depth, parent_id, clip)
+                if node is not None:
+                    out.append(node)
+                    budget.grid += 1
+                    if "focused" in states:
+                        note_cursor(acc, row, col)
+                        focused = False  # found
+            elif role is not None:
+                # Something else in the grid: read as any element is (what it holds, whether it is secret).
+                walk(cell, depth, out, max_depth, max_nodes, parent_id, clip, budget)
+                if budget.busy or budget.over:
+                    return
+        start = next_place(grid, row, col)
+    if focused and not budget.busy:
+        budget.sheets.append({"table": acc, "grid": grid, "start": start, "at": len(out), "depth": depth,
+                              "parent": parent_id, "clip": clip})
+
+
+# Where each spreadsheet's cell with the keyboard was last found (the sheet's object_key -> (row, column)).
+CURSORS = OrderedDict()
+CURSORS_KEEP = 64
+
+
+def note_cursor(table, row, col):
+    key = object_key(table)
+    if key is None:
+        return
+    CURSORS.pop(key, None)
+    CURSORS[key] = (row, col)
+    while len(CURSORS) > CURSORS_KEEP:
+        CURSORS.popitem(last=False)
+
+
+def cursor_cell(table, grid, start, until):
+    """The cell of spreadsheet `table` (see grid_of) that has the keyboard, as (row, column, cell, states), or None.
+    No cell says so to anything but its states (the sheet's Selection is empty without a range selected, and Calc's
+    Name Box is out of reach of accessibility), so cells are asked: where it was last found and around it first (a key
+    moves it a cell), then those on screen from `start` (row, column) on, row by row (the ones before were looked at),
+    until `until` (time.monotonic()), two calls a cell. None too once the app takes a timeout's time to answer."""
+    near = []
+    last = CURSORS.get(object_key(table))
+    if last is not None:
+        r, c = last
+        near = [(r, c), (r + 1, c), (r, c + 1), (r - 1, c), (r, c - 1), (r + 1, grid[2])]
+    tried = set()
+
+    def ask(r, c):
+        """(row, column, cell, states) when that cell has the keyboard; False to stop looking; None to go on."""
+        if time.monotonic() > until:
+            return False
+        t0 = time.monotonic()
+        cell = table_cell_at(table, r, c)
+        states = state_names(cell) if cell is not None else []
+        if time.monotonic() - t0 > SLOW_APP_S:
+            return False
+        if "focused" not in states:
+            return None
+        note_cursor(table, r, c)
+        return r, c, cell, states
+
+    for r, c in near:
+        if r >= 0 and c >= 0 and (r, c) not in tried:
+            tried.add((r, c))
+            found = ask(r, c)
+            if found is not None:
+                return found or None
+    r, c = start
+    while r <= grid[1]:
+        if (r, c) not in tried:
+            found = ask(r, c)
+            if found is not None:
+                return found or None
+        r, c = next_place(grid, r, c)
+    return None
+
+
+def add_cursors(nodes, sheets, until):
+    """The cell with the keyboard of each spreadsheet in `sheets` (noted by walk_grid: a read that didn't come to it),
+    put in `nodes` after the sheet's other cells: wherever it is (scrolled away too: keys go there), as long as it is
+    found before `until` (see cursor_cell)."""
+    for s in reversed(sheets):  # from the last, so the places noted for the others stay right
+        found = cursor_cell(s["table"], s["grid"], s["start"], until)
+        if found is None:
             continue
-        if "showing" not in states or "visible" not in states:
-            continue
-        if budget.grid >= GRID_CELLS:
-            budget.cut_short("nodes")
-            return
+        row, col, cell, states = found
         try:
-            role, name = cell.getRoleName(), (cell.name or "").strip()
+            name = (cell.name or "").strip()
         except Exception:
             continue
-        if role != "table cell":
-            # Something else in the grid: read as any element is (what it holds, whether it is secret).
-            walk(cell, depth, out, max_depth, max_nodes, parent_id, clip, budget)
-            if budget.busy or budget.over:
-                return
-            continue
-        bounds = extents(cell)
-        if not in_view(bounds, clip):
-            continue
-        node = {"role": role, "name": name[:200], "states": [s for s in states if s in INTERESTING_STATES],
-                "bounds": bounds}
-        if is_secret(cell, role, name):
-            node["secret"] = True
-        elif text and (text != name or CELL_ADDRESS.match(name)):
-            node["text"] = text
-        if editable is None and "editable" in states:
-            editable = is_editable(cell, states)  # the same for every cell
-        if editable and "editable" in states:
-            node["editable"] = True
-        node["id"] = SNAPSHOTS.add(cell)
-        node["parent"] = parent_id
-        node["depth"] = depth
-        shown = clip_to(clip, bounds) if clip is not None and bounds is not None else None
-        if shown is not None and shown != bounds:
-            node["shown"] = shown
-        out.append(node)
-        budget.grid += 1
-
+        node = cell_node(s["table"], row, col, cell, name, cell_text(cell), states, is_editable(cell, states),
+                         s["depth"], s["parent"], s["clip"], anywhere=True)
+        nodes.insert(s["at"], node)
 
 
 def showing_rule():
@@ -804,7 +956,8 @@ class Budget(object):
     would only time out again. Either way the read stops where it is. `cut` notes elements on screen left
     out for want of room rather than time, and `why` says which room: "nodes" (the node limit, a long list's
     row limit) or "depth" (nested deeper than a read goes). `grid`: the spreadsheet cells read (see walk_grid),
-    which have their own limit and leave the node limit to the rest of the window."""
+    which have their own limit and leave the node limit to the rest of the window; `sheets`: the spreadsheets whose
+    cell with the keyboard is still to be looked for (see add_cursors)."""
 
     def __init__(self, seconds=READ_BUDGET_S):
         self.last = time.monotonic()
@@ -814,6 +967,7 @@ class Budget(object):
         self.cut = False
         self.why = []
         self.grid = 0
+        self.sheets = []
 
     def cut_short(self, why):
         self.cut = True
@@ -912,7 +1066,7 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
     grid = grid_of(acc, count, states, clip) if long_list else None
     if grid is not None:
         # A spreadsheet: its cells on screen, by row and column.
-        walk_grid(acc, grid, depth + 1, out, max_depth, max_nodes, my_id, clip, budget)
+        walk_grid(acc, grid, depth + 1, out, max_depth, max_nodes, my_id, clip, budget, "focused" in states)
         return judged
     indices, left_out, ordered = child_indices(acc, count, clip)
     shown, misses, last = False, 0, None
@@ -1003,7 +1157,7 @@ def redact_by_layout(nodes, accessible_of):
     controls = [n for n in nodes if n["role"] in LABELLED_ROLES and n["bounds"]]
     fields = [n for n in nodes if n["role"] in FIELD_ROLES and n["bounds"] and not n.get("secret")]
     for n in secret_by_layout(fields, labels, controls):
-        for k in ("text", "selection", "value"):
+        for k in ("text", "selection", "value", "selected"):
             n.pop(k, None)
         n["secret"] = True
         SECRETS.add(object_key(accessible_of(n["id"])))
@@ -1357,8 +1511,11 @@ def read_window(params):
     if not budget.busy:
         walk(win, 0, nodes, int(params.get("maxDepth", MAX_DEPTH)), max_nodes, None, None, budget)
         budget.check()  # the last element asked may have been the one that timed out
+    if budget.sheets and not budget.busy:
+        # A spreadsheet's cell with the keyboard that the look at its cells didn't come to (keys go there).
+        add_cursors(nodes, budget.sheets, time.monotonic() + min(CURSOR_SCAN_S, max(0.3, READ_TOTAL_S - (time.time() - t0))))
     latest = SNAPSHOTS.latest()
-    redact_by_layout(nodes, lambda nid: latest.get(nid))
+    redact_by_layout(nodes, lambda nid: stored(latest.get(nid)))
     inside = inside_secrets(nodes)
     if inside:
         nodes = [n for n in nodes if n["id"] not in inside]
@@ -1367,7 +1524,7 @@ def read_window(params):
     others = [] if budget.busy or pid is None else other_windows(pid, win, Budget(0.3))
     if budget.busy and pid not in SLOW_NOW:
         timed_out(pid)
-    keys = set(object_key(latest.get(n["id"])) for n in nodes if n.get("secret"))
+    keys = set(object_key(stored(latest.get(n["id"]))) for n in nodes if n.get("secret"))
     out = {
         "window": window,
         "nodes": nodes,
@@ -1480,25 +1637,13 @@ def scan_fields(acc, depth, found, clip, budget, seen, in_pane=False):
         count = 0
     grid = grid_of(acc, count, states, clip) if count > MAX_CHILDREN else None
     if grid is not None:
-        # A spreadsheet: its cells on screen (see grid_of). A plain cell holds a value, not a field; anything else
-        # in the grid is looked through.
+        # A spreadsheet (see grid_of): what comes before its cells is looked through, its cells are not. They hold
+        # values, never fields (LibreOffice Calc keeps form controls in its drawing layer, beside the sheet), and
+        # thousands of them show in a big window.
         for i in range(grid[4]):
             child = child_at(acc, i)
             if child is not None:
                 scan_fields(child, depth + 1, found, clip, budget, seen)
-        for cell in grid_cells(acc, grid, budget, SCAN_CHILDREN):
-            if budget.busy or budget.over or budget.cut:
-                return
-            seen[0] += 1
-            if seen[0] > SCAN_NODES:
-                budget.cut_short("nodes")
-                return
-            try:
-                plain = cell.getRoleName() == "table cell" and cell.childCount == 0
-            except Exception:
-                continue
-            if not plain:
-                scan_fields(cell, depth + 1, found, clip, budget, seen)
         return
     indices, left_out, ordered = child_indices(acc, count, clip, SCAN_CHILDREN)
     if left_out:
@@ -1932,18 +2077,73 @@ def window_active(acc):
     return None
 
 
+# Actions that hand a click on to the element's ancestor: Chromium's "clickAncestor" (text, a picture or a heading
+# inside a link, a button or an element with a click handler) and "doDefault" (on what isn't a control itself).
+PASSES_CLICK = frozenset(["clickancestor", "dodefault"])
+# A control's own actions (not one handed on, nor its context menu).
+OWN_ACTIONS = frozenset(["click", "press", "activate", "jump", "open", "select", "toggle", "check", "uncheck",
+                         "expand or contract"])
+# What a click acts on itself: a mouse click on what is inside one of these (its label, its text) goes to it.
+CLICK_CONTROLS = frozenset(INTERACTIVE_ROLES - TEXT_ROLES - frozenset(["terminal"]))
+# Where looking for the control around an element stops: its page or window.
+HANDLER_STOP = frozenset(["document web", "document frame", "frame", "window", "dialog", "alert", "file chooser",
+                          "application", "desktop frame"])
+HANDLER_LEVELS = 12
+
+
+def click_handler(acc, picked):
+    """The control around acc that a click on acc goes to, as {"role", "name"}; None when acc acts itself
+    or nothing around it does. `picked`: the action a click by accessibility would do (None: it can't, and the mouse
+    clicks it). Chromium's "clickAncestor" clicks the nearest ancestor with an action of its own (a link around its
+    text, an element with a click handler: listed or not); the mouse on a label, text or a picture lands on the control
+    it is in (a list's row around its label)."""
+    try:
+        role = acc.getRoleName()
+    except Exception:
+        return None
+    if picked is not None and (picked not in PASSES_CLICK or (picked == "dodefault" and role in CLICK_CONTROLS)):
+        return None  # an action of its own
+    if picked is None and role in CLICK_CONTROLS:
+        return None  # the mouse clicks the control itself
+    by_action = picked is not None
+    cur = acc
+    for _ in range(HANDLER_LEVELS):
+        try:
+            cur = cur.parent
+            if cur is None:
+                return None
+            r = cur.getRoleName()
+        except Exception:
+            return None
+        if r in HANDLER_STOP:
+            return None
+        # Chromium hands the click to the nearest ancestor that acts (a row of a list doesn't, a link does).
+        acts = OWN_ACTIONS.intersection(n.lower() for n in actions(cur))
+        if acts or (not by_action and r in CLICK_CONTROLS):
+            try:
+                name = (cur.name or "").strip()
+            except Exception:
+                name = ""
+            return {"role": r, "name": name[:200]}
+    return None
+
+
 def can_do(params):
     """Could `kind` ("click", "toggle", "text" or "value") be done on element `id` by accessibility? Checked as
     do_action, set_text and set_value check it, and nothing is done: Ember asks the user only the question that
     applies (to borrow the mouse, where that is the only way). With `caret`: whether the element has the keyboard
-    (`focused`) and its window is the active one (`windowActive`), for text typed where the caret is."""
+    (`focused`) and its window is the active one (`windowActive`), for text typed where the caret is. For a click:
+    `action`, the action that would do it, and `handler`, the control around the element the click goes to (see
+    click_handler), which is what the user is asked about."""
     nid = int(params["id"])
     acc = SNAPSHOTS.get(nid)
     kind = params.get("kind")
     out = {"tier1": True}
+    picked = None
     try:
         if kind in ("click", "toggle"):
-            pick_action(acc, kind)
+            _, names, index = pick_action(acc, kind)
+            picked = out["action"] = names[index]
         elif kind == "text":
             editable_text(acc)
         elif kind == "value":
@@ -1953,6 +2153,11 @@ def can_do(params):
             raise
         out["tier1"] = False
         out["why"] = str(err)[len("background_unavailable: "):]
+    if kind in ("click", "toggle"):
+        # Whichever way it is clicked: by accessibility, or with the mouse where it can't be (picked is None).
+        handler = click_handler(acc, picked)
+        if handler is not None:
+            out["handler"] = handler
     if params.get("caret"):
         out["focused"] = "focused" in state_names(acc)
         active = window_active(acc)
@@ -2026,6 +2231,29 @@ def option_selection(acc, holder):
     return None
 
 
+def chosen_option(acc):
+    """The name of the option a combo box shows as chosen, or None: asked of the Selection of its list of options (a
+    web page's drop-down), else its own (GTK's), a few calls; the options aren't looked through one by one."""
+    try:
+        holder = option_holder(acc)
+    except Exception:
+        return None
+    for owner in ((holder, acc) if holder is not acc else (acc,)):
+        try:
+            sel = owner.querySelection()
+            if sel.nSelectedChildren < 1:
+                continue
+            item = sel.getSelectedChild(0)
+            if item is None or getattr(item, "path", None) == getattr(holder, "path", None):
+                continue
+            name = (item.name or "").strip()
+        except Exception:
+            continue
+        if name:
+            return name
+    return None
+
+
 def option_chosen(sel, holder, index):
     """Is option `index` the chosen one now?"""
     try:
@@ -2069,6 +2297,12 @@ def select_option(params):
         raise ValueError("no option has exactly that name (it has %d options); list them and use one in full" % len(names))
     holder = option_holder(acc)
     sel = option_selection(acc, holder)
+    if option_chosen(sel, holder, index):
+        # Chosen already: nothing is touched (Chromium's "select" on the chosen option of a closed <select> takes the
+        # choice away, and the field is left empty).
+        res = after_action(acc, nid)
+        res.update({"ok": True, "option": names[index], "already": True})
+        return res
     ok = bool(sel.selectChild(index))
     settle()
     if not ok:
@@ -2083,12 +2317,40 @@ def select_option(params):
             if not str(err).startswith("background_unavailable"):
                 raise
         else:
+            was = first_chosen(sel, holder)
             act.doAction(i)
             settle()
             ok = option_chosen(sel, holder, index)
+            if not ok and was is not None and first_chosen(sel, holder) is None:
+                # The field was left emptier than it was: the option chosen before is chosen again.
+                choose_again(holder, was)
     res = after_action(acc, nid)
     res.update({"ok": ok, "option": names[index]})
     return res
+
+
+def first_chosen(sel, holder):
+    """The index of the option chosen now (the first, of up to 500), or None."""
+    try:
+        count = min(holder.childCount, 500)
+    except Exception:
+        return None
+    for i in range(count):
+        if option_chosen(sel, holder, i):
+            return i
+    return None
+
+
+def choose_again(holder, index):
+    """Chooses option `index` again by its own "select" action (see select_option); quietly does nothing if it can't."""
+    try:
+        item = holder.getChildAtIndex(index)
+        if item is not None:
+            act, _, i = pick_action(item, "select")
+            act.doAction(i)
+            settle()
+    except Exception:
+        pass
 
 
 def list_options(params):
@@ -2184,23 +2446,98 @@ def sibling_at(acc, x, y, budget):
     return None
 
 
+def same_object(a, b):
+    """Are these the same accessible (one app's object path)?"""
+    return a is b or (a is not None and b is not None and getattr(a, "path", None) == getattr(b, "path", None))
+
+
+# Chromium answers a point it wasn't just asked about from a guess by the elements' boxes (the later one in the page
+# wins, whatever is drawn on top) and asks the page in the background; asked again a moment later, it answers from the
+# page's own hit test: a fixed header's button over a row, not the row. Other toolkits answer from their hit test.
+GUESSING_TOOLKITS = frozenset(["chromium"])
+HIT_AGAIN_S = 0.05
+
+
+def guesses_first(acc):
+    """Does acc's app answer a new point with a guess first (see GUESSING_TOOLKITS)?"""
+    if not native(acc):
+        return False
+    try:
+        return (Atspi.Accessible.get_toolkit_name(acc) or "").lower() in GUESSING_TOOLKITS
+    except Exception:
+        return False
+
+
+def hit_at(acc, x, y):
+    """What the app says is at screen point (x, y) in acc (None: nothing, or it couldn't say). Chromium is asked
+    again (see GUESSING_TOOLKITS), and once more when its answers differ."""
+    def ask():
+        try:
+            return Atspi.Component.get_accessible_at_point(acc, x, y, Atspi.CoordType.SCREEN)
+        except Exception:
+            return None
+    hit = ask()
+    if hit is None or same_object(hit, acc) or not guesses_first(acc):
+        return hit
+    for _ in range(2):
+        time.sleep(HIT_AGAIN_S)
+        again = ask()
+        if again is None or same_object(again, hit):
+            return hit
+        hit = again
+    return hit
+
+
+# A container with at most this many children may draw one over another (GtkOverlay's floating notification, a window's
+# popover): the last that shows at a point is drawn on top. Longer lists (rows) don't overlap.
+ON_TOP_CHILDREN = 16
+
+
+def on_top(acc, child, x, y, in_pane, budget):
+    """Of acc's children that show at (x, y), the one drawn on top: `child` (the first the app or a look found there),
+    or one after it (GTK, Qt: later children draw over earlier ones, and their hit test answers the first child there).
+    Only for a container with a few children (see ON_TOP_CHILDREN); a web page draws in its own order (see
+    GUESSING_TOOLKITS: Chromium and Firefox answer from their own hit test)."""
+    if web_engine(acc):
+        return child
+    try:
+        count = acc.childCount
+    except Exception:
+        return child
+    if count < 2 or count > ON_TOP_CHILDREN:
+        return child
+    for i in range(count - 1, -1, -1):
+        if budget.tick():
+            return child
+        c = child_at(acc, i)
+        if c is None:
+            continue
+        if same_object(c, child):
+            return child
+        if shows(c, state_names(c), in_pane) and contains(extents(c), x, y) and not dead_end(c):
+            return c
+    return child  # not one of acc's children: as the app answered
+
+
 def child_at_point(acc, role, x, y, budget):
     """The child of acc (role `role`) that shows at screen point (x, y), as a list: [child], or [holder, child]
     for a child in a notebook's page tab (its page lies outside the tab's own bounds) or in a viewport GTK
     misjudged (see shows: it has no bounds then); [] for none. The app is asked first (one call; Chromium answers
-    with the deepest element there); where it finds none, or only an empty container, acc's first
-    AT_POINT_CHILDREN children are looked through (one with something in it first)."""
+    with the deepest element there, asked again: see hit_at); where it finds none, or only an empty container, acc's
+    first AT_POINT_CHILDREN children are looked through (one with something in it first). A child drawn over the one
+    found is taken instead (see on_top)."""
+    in_pane = role == "scroll pane"
     if native(acc):
-        try:
-            hit = Atspi.Component.get_accessible_at_point(acc, x, y, Atspi.CoordType.SCREEN)
-        except Exception:
-            hit = None
+        hit = hit_at(acc, x, y)
         if budget.check():
             return []
-        if hit is not None and hit is not acc and getattr(hit, "path", None) != getattr(acc, "path", None) \
-                and shows(hit, state_names(hit), role == "scroll pane"):
+        if hit is not None and not same_object(hit, acc) and shows(hit, state_names(hit), in_pane):
             if not dead_end(hit):
-                return [hit]
+                try:
+                    direct = same_object(hit.parent, acc)
+                except Exception:
+                    direct = False
+                return [on_top(acc, hit, x, y, in_pane, budget) if direct else hit]
             # Chromium: an empty panel over the web view; the page is in one beside it.
             beside_hit = sibling_at(hit, x, y, budget)
             if beside_hit is not None:
@@ -2216,11 +2553,11 @@ def child_at_point(acc, role, x, y, budget):
             return []
         child = child_at(acc, i)
         states = state_names(child) if child is not None else []
-        if not shows(child, states, role == "scroll pane"):
+        if not shows(child, states, in_pane):
             continue
         if contains(extents(child), x, y):
             if not dead_end(child):
-                return [child]
+                return [on_top(acc, child, x, y, in_pane, budget)]
             # An empty container lying over a sibling that holds what shows there: that one first.
             empty = empty or child
             continue
@@ -2243,6 +2580,83 @@ def child_at_point(acc, role, x, y, budget):
     return [empty] if empty is not None else []
 
 
+# An app's popups (GTK's open menus and drop-down lists) are top-level windows of their own, with this role, drawn
+# over its other windows (the window manager doesn't stack them). A few are looked at.
+POPUP_ROLES = frozenset(["window"])
+POPUP_WINDOWS = 16
+
+
+def popup_at(app, win, x, y, budget):
+    """The app's popup (see POPUP_ROLES) that shows at (x, y), other than `win` itself, or None."""
+    try:
+        count = min(app.childCount, POPUP_WINDOWS)
+    except Exception:
+        return None
+    for i in range(count):
+        if budget.tick():
+            return None
+        w = child_at(app, i)
+        if w is None or same_object(w, win):
+            continue
+        try:
+            if w.getRoleName() not in POPUP_ROLES:
+                continue
+        except Exception:
+            continue
+        if shows(w, state_names(w)) and contains(extents(w), x, y) and not dead_end(w):
+            return w
+    return None
+
+
+# An open menu lies over the rest of its window (GTK draws it in a popup window of its own, its items outside the
+# bounds of the menu bar they are reached through): what it shows at a point is on top. Looked for in the window's
+# top few levels of containers and menu bars (never inside its documents, lists or tables).
+MENU_HOLDERS = frozenset(["filler", "panel", "root pane", "layered pane", "glass pane", "menu bar", "split pane",
+                          "unknown"])
+MENU_DEPTH = 5
+MENU_CHILDREN = 40
+
+
+def open_menu_at(win, x, y, budget):
+    """[menu, item] for the item of an open menu (or open submenu) in window `win` that shows at (x, y); [] for none."""
+    stack = [(win, 0)]
+    while stack:
+        if budget.tick():
+            return []
+        acc, depth = stack.pop()
+        try:
+            role = acc.getRoleName()
+            if role == "menu" and depth > 0:
+                # An open menu is the one selected in its menu bar (or menu): the others aren't asked more.
+                states = state_names(acc)
+                if ("selected" not in states and "expanded" not in states) or not menu_open(acc):
+                    continue
+            elif depth > 0 and (role not in MENU_HOLDERS or depth >= MENU_DEPTH):
+                continue
+            count = min(acc.childCount, MENU_CHILDREN)
+        except Exception:
+            continue
+        if role == "menu" and depth > 0:
+            for i in range(count):
+                item = child_at(acc, i)
+                if item is None:
+                    continue
+                if shows(item, state_names(item)) and contains(extents(item), x, y):
+                    return [acc, item]
+                try:
+                    if item.getRoleName() == "menu":
+                        stack.append((item, depth + 1))  # a submenu: open, it shows somewhere else
+                except Exception:
+                    pass
+            continue
+        if depth < MENU_DEPTH:
+            for i in range(count - 1, -1, -1):
+                child = child_at(acc, i)
+                if child is not None:
+                    stack.append((child, depth + 1))
+    return []
+
+
 def at_point(params):
     """What shows at screen point (`x`, `y`) in one window (`pid` and `path`), outermost first: each element's
     role, name and bounds, as deep as the app tells. For the wheel: is a control it would change there? A read
@@ -2260,6 +2674,17 @@ def at_point(params):
         return {"chain": [], "blocked": True, "ms": int((time.time() - t0) * 1000)}
     x, y = int(params["x"]), int(params["y"])
     chain = []
+    # The app's own popup (a drop-down's list), or an open menu, lies over its windows: what shows there is in it.
+    # (`menus`: false when Ember knows none of the app's popup windows is there: a big app's menus cost dozens of calls.)
+    popup = popup_at(app, acc, x, y, budget)
+    over = [popup] if popup is not None else open_menu_at(acc, x, y, budget) if params.get("menus", True) is not False else []
+    for el in over:
+        try:
+            role, name = el.getRoleName(), (el.name or "").strip()[:200]
+        except Exception:
+            role, name = "", ""
+        chain.append({"role": role, "name": name, "bounds": extents(el)})
+        acc = el
     try:
         role = acc.getRoleName()
     except Exception:

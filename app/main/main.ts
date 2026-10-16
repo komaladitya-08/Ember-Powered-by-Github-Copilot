@@ -41,7 +41,7 @@ import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, type Hands } from "./agent/host";
+import { AgentHost, explainStartError, gitHubReachable, inotifyUse, type Hands } from "./agent/host";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -195,6 +195,7 @@ async function runDoctor(): Promise<void> {
     speechDispatcher: which("speech-dispatcher") || ["/usr/lib64/libspeechd.so.2", "/usr/lib/x86_64-linux-gnu/libspeechd.so.2"].some(f => fs.existsSync(f)), microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
     runtime: runtime.exists, auth, admin, desk: DeskManager.available(), sandbox: { userNamespaces, suidHelper },
+    fileWatchers: inotifyUse(),
   });
   process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
   xin?.close();
@@ -1125,6 +1126,11 @@ function start(): void {
         return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
+      // A guide sees a keyboard user press the control it points at (Enter or Space while it has focus).
+      activationKey: xinput ? (() => {
+        const codes = ["Return", "KP_Enter", "space"].map(n => xinput.keycodeOf(xinput.keysymOf(n))).filter(c => c > 0);
+        return () => { const down = xinput.keysDown(); return codes.some(c => down.includes(c)); };
+      })() : undefined,
       // Every format the user had on the clipboard comes back after a paste, not just text.
       clipboard: electronClipboard(clipboard, ClipboardItem),
       desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {

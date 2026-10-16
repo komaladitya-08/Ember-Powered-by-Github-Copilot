@@ -145,7 +145,8 @@ export class Perception {
     if (each) {
       const groups = new Map<number, number[]>();
       for (const [id, s] of each) if (s !== 1) groups.set(s, [...groups.get(s) ?? [], id]);
-      for (const [s, ids] of groups) this.o.sidecar.scaleElements(ids, s);
+      // A quick look's ids go in a slot the next quick look replaces (as in the sidecar): the kept reads' stay scaled.
+      for (const [s, ids] of groups) this.o.sidecar.scaleElements(ids, s, o.keep !== false);
     }
     const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
@@ -159,16 +160,22 @@ export class Perception {
   /**
    * What shows at point `p` in the window `target` names (its pid and path), outermost first: for the wheel, whether
    * a control it would change is there. Positions are as the app reports them, the same as read()'s for a window
-   * whose axScale is 1. null when that can't be told: no pid and path, a private or closed window, an app that
-   * didn't answer in time.
+   * whose axScale is 1; `k`: the app reports `k` physical pixels per pixel (HiDPI), and `p` and the positions
+   * handed back are physical. null when that can't be told: no pid and path, a private or closed window, an app
+   * that didn't answer in time.
    */
-  async atPoint(target: WindowTarget, p: { x: number; y: number }): Promise<PointElement[] | null> {
+  async atPoint(target: WindowTarget, p: { x: number; y: number }, k = 1): Promise<PointElement[] | null> {
     if (target.pid == null || !target.path) return null;
     const list = this.o.neverLook().filter(i => i.trim());
     const stack = list.length ? this.stackNow() : null;
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const res = await this.o.sidecar.atPoint({ pid: target.pid, path: target.path, x: Math.round(p.x), y: Math.round(p.y), ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}) });
-    return res.blocked || res.busy || res.found === false ? null : res.chain;
+    // An open menu is drawn in a popup window of its own: the app's menus are looked through only where one of its
+    // popups covers the point (or Ember can't tell), as they take dozens of calls in a big app.
+    const all = stack ?? this.stackNow();
+    const menus = !all || all.some(s => s.overrideRedirect && s.pid === target.pid && p.x >= s.x && p.y >= s.y && p.x < s.x + s.width && p.y < s.y + s.height);
+    const res = await this.o.sidecar.atPoint({ pid: target.pid, path: target.path, x: Math.floor(Math.round(p.x) / k), y: Math.floor(Math.round(p.y) / k), ownPid: this.ownPid, ...(menus ? {} : { menus: false }), ...(list.length ? { neverLook: list, skipPids } : {}) });
+    if (res.blocked || res.busy || res.found === false) return null;
+    return k === 1 ? res.chain : res.chain.map(n => (n.bounds ? { ...n, bounds: scaleBounds(n.bounds, k) } : n));
   }
 
   /**
@@ -186,7 +193,7 @@ export class Perception {
     return nodes.flatMap(n => {
       if (inside.has(n.id)) return [];
       if (!secret.has(n.id) || n.secret) return [n];
-      const { text: _text, selection: _selection, value: _value, ...rest } = n;
+      const { text: _text, selection: _selection, selected: _selected, value: _value, ...rest } = n;
       return [{ ...rest, secret: true }];
     });
   }

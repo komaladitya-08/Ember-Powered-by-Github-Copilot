@@ -50,15 +50,39 @@ function labelFor(b: Bounds, labels: AxNode[], claimed: Set<number>, anyAbove = 
   return left?.name ?? above?.name ?? null;
 }
 
-/** `anyAbove`: any text just above an unnamed control names it, sentences too (for secret detection only). */
+/** Rows and cells: what labels one is inside it (GTK's list rows hold their label), never the row above it. */
+const ROW_ROLES = new Set(["list item", "table cell", "tree item"]);
+/** How deep inside a control its own label is looked for. */
+const INNER_LABEL_DEPTH = 4;
+
+/**
+ * Unnamed controls' labels: a control with a label inside it (GTK's list row and its label) takes that one (a field
+ * doesn't: what is inside a web page's text box is its contents); else the label beside it (see labelFor), but never
+ * for a row or a cell (the label above a row is the row above's). `anyAbove`: any text just above an unnamed control
+ * names it, sentences too (for secret detection only).
+ */
 export function inferLabels(nodes: AxNode[], { anyAbove = false } = {}): Map<number, string> {
   const labels = nodes.filter(n => LABEL_ROLES.has(n.role) && n.name && n.bounds);
   const controls = nodes.filter(n => NAMED_BY_ROW.has(n.role) && n.bounds);
   const claimed = new Set(labels.filter(l => controls.some(c => beside(l.bounds!, c.bounds!) !== null)).map(l => l.id));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  // The control each label is inside (a few levels up at most), for the first label inside each (a read lists a
+  // parent before what is in it, and a row's own words before the ones after them).
+  const inner = new Map<number, string>();
+  for (const l of nodes) {
+    if (!LABEL_ROLES.has(l.role) || !/[\p{L}\p{N}]/u.test(l.name)) continue; // not a list's bullet
+    let p = l.parent;
+    for (let i = 0; p !== null && i < INNER_LABEL_DEPTH; i++) {
+      const c = byId.get(p);
+      if (!c) break;
+      if (INTERACTIVE.has(c.role) && !c.name && !FIELD_ROLES.has(c.role) && !inner.has(c.id)) inner.set(c.id, l.name);
+      p = c.parent;
+    }
+  }
   const out = new Map<number, string>();
   for (const n of nodes) {
     if (n.name || !n.bounds || !INTERACTIVE.has(n.role)) continue;
-    const name = labelFor(n.bounds, labels, claimed, anyAbove);
+    const name = inner.get(n.id) ?? (ROW_ROLES.has(n.role) ? null : labelFor(n.bounds, labels, claimed, anyAbove));
     if (name) out.set(n.id, name);
   }
   return out;
@@ -195,8 +219,13 @@ const ITEM_ROLES = new Set(["list item", "table cell", "tree item", "icon"]);
 
 /** A spreadsheet's cell is named by its address ("B7": LibreOffice Calc). Keep in step with CELL_ADDRESS in ember_atspi.py. */
 const CELL_ADDRESS = /^\$?[A-Z]{1,3}\$?[1-9][0-9]{0,6}$/;
-/** A spreadsheet's cell: its name says where it is, its text what it holds. */
-export const isSheetCell = (n: Pick<AxNode, "role" | "name">) => n.role === "table cell" && CELL_ADDRESS.test(n.name);
+/**
+ * A spreadsheet's cell: its name says where it is, its text what it holds. The sidecar says which cells it read from a
+ * sheet's grid (`grid`): a Writer table's cells are named "A1" too, and are not (`grid: false`). An element without
+ * the flag (as the policy is handed it) goes by its role and name.
+ */
+export const isSheetCell = (n: Pick<AxNode, "role" | "name"> & { grid?: boolean }) =>
+  n.role === "table cell" && n.grid !== false && CELL_ADDRESS.test(n.name);
 /** The row of a spreadsheet's cell ("7" for "B7"). */
 const sheetRow = (n: AxNode) => n.name.replace(/^\$?[A-Z]+\$?/, "");
 /** States every spreadsheet cell has: not worth a word on each. */
@@ -269,7 +298,9 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
     if (n.value !== undefined && !secret) bits.push(`value=${n.value}`);
     if (n.actions?.length) bits.push(`actions=${n.actions.map(screenWord).join("/")}`);
     if (n.text && !secret) bits.push(`text=${quote(n.text, opts.maxTextChars ?? 160)}`);
-    if (n.selection && !secret) bits.push(`selected=${quote(n.selection, 300)}`);
+    // What is selected in it: a drop-down's chosen option (as after choose_option), else the text selected in a field.
+    const selected = n.selected ?? n.selection;
+    if (selected && !secret) bits.push(`selected=${quote(selected, n.selected !== undefined ? 80 : 300)}`);
     if (opts.withBounds && n.bounds) bits.push(`@${n.bounds.x},${n.bounds.y} ${n.bounds.width}x${n.bounds.height}`);
     lines.push("  ".repeat(level.get(n.id)!) + bits.join(" "));
   }

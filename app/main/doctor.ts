@@ -34,6 +34,8 @@ export interface DoctorProbes {
   admin: LoadedAdminPolicy;
   desk: { ok: boolean; missing: string[] };
   sandbox: { userNamespaces: boolean; suidHelper: boolean };
+  /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
+  fileWatchers?: { used: number; max: number } | null;
 }
 
 export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
@@ -104,6 +106,12 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   out.push(p.sandbox.userNamespaces || p.sandbox.suidHelper
     ? { id: "sandbox", status: "ok", label: "Sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
     : { id: "sandbox", status: "fail", label: "Sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
+  // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
+  // and never answers them.
+  const w = p.fileWatchers;
+  if (w) out.push(w.max - w.used >= 8
+    ? { id: "file-watchers", status: "ok", label: "File watchers", detail: `${w.used} of ${w.max} in use.` }
+    : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it" });
   return out;
 }
 

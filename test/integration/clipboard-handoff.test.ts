@@ -43,7 +43,9 @@ describe.skipIf(!xvfb)("the clipboard goes to the clipboard manager when Ember q
   let server: ChildProcess;
   let display = "";
   beforeAll(async () => {
-    server = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "640x480x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
+    // -noreset: the server would reset when the last client of a test closes, and the next test's connection could
+    // come during the reset.
+    server = spawn("Xvfb", ["-displayfd", "3", "-noreset", "-screen", "0", "640x480x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
     display = ":" + await new Promise<string>((resolve, reject) => {
       server.stdio[3]!.on("data", (d: Buffer) => resolve(d.toString().trim()));
       server.on("exit", () => reject(new Error("Xvfb didn't start")));
@@ -59,6 +61,7 @@ describe.skipIf(!xvfb)("the clipboard goes to the clipboard manager when Ember q
   /** A client on its own connection that answers selection requests with `serve` (property 0: refused). */
   const client = (serve: (req: { requestor: number; selection: number; target: number; property: number; time: bigint }, c: { dpy: unknown; win: number }) => number | null, onNotify?: (property: number, target: number) => void) => {
     const dpy = x.XOpenDisplay(display);
+    if (!dpy) throw new Error(`Can't open X display ${display}`);
     open.push(dpy);
     const win = Number(x.XCreateSimpleWindow(dpy, x.XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0));
     const ev = Buffer.alloc(192);

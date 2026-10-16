@@ -154,7 +154,9 @@ describe("desk", () => {
     expect(e.decide({ taskId: "t", kind: "click", app: "gedit", window: "w", element: { role: "push button", name: "Bold" }, onDesk: true }).verdict).toBe("allow");
     const send = e.decide({ taskId: "t", kind: "click", app: "Mail", window: "w", element: { role: "push button", name: "Send" }, onDesk: true });
     expect(send).toMatchObject({ verdict: "confirm", risky: true });
-    expect(send.prompt).toContain("(on my desk)");
+    // Nothing of the user's is borrowed there: the question says where instead (DK7-2).
+    expect(send.prompt).toBe("Click “Send” push button in Mail on my desk?");
+    expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "w", value: "ctrl+w", onDesk: true }).prompt).toBe("Press Ctrl+W in gedit on my desk?");
     expect(e.decide({ taskId: "t", kind: "text", app: "x", window: "w", element: { role: "password text", name: "" }, value: "x", onDesk: true }).verdict).toBe("deny");
   });
 });

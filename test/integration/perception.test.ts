@@ -67,6 +67,11 @@ describe.skipIf(!available && !required)("AT-SPI sidecar on a real GTK window", 
     expect(pw!.text).toBeUndefined();
   });
 
+  it("says which option the combo box shows (review round 7)", async () => {
+    const r = await sidecar.readWindow({ title: "Ember Test Bench" });
+    expect(r.nodes.find(n => n.role === "combo box" && n.name === "Theme")?.selected).toBe("Light");
+  });
+
   it("finds the same window through X11 by pid", async () => {
     const x11 = openX11();
     if (!x11) return;

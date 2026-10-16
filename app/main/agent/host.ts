@@ -36,6 +36,8 @@ export interface Hands {
   flyTo: (bounds: Bounds | null) => void;
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   pointer?: WorkerDeps["pointer"];
+  /** Is Enter or Space held down on the user's keyboard (a guide sees a keyboard user press the control pointed at)? */
+  activationKey?: WorkerDeps["activationKey"];
   desk?: WorkerDeps["desk"];
   onDesk?: WorkerDeps["onDesk"];
   /** Tier 3 (borrowing the user's mouse), when XTest is available. */
@@ -144,14 +146,14 @@ const NO_WATCHERS = "Copilot can't work right now: this computer has run out of 
 const NO_WATCHERS_DETAIL = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…";
 
 /**
- * Whether this user's inotify instances are all in use (fs.inotify.max_user_instances: 128 on RHEL 8, and every
- * app takes some). The Copilot runtime then takes requests but never begins them. Counted in `proc`: the
- * instances held by processes of `uid`.
+ * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
+ * takes some; Ember's Copilot runtime takes one per conversation or task), or null when they can't be counted.
+ * Counted in `proc`: the instances held by processes of `uid`.
  */
-export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+export function inotifyUse(proc = "/proc", uid = process.getuid?.()): { used: number; max: number } | null {
   try {
     const max = Number(fs.readFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "utf8"));
-    if (!(max > 0)) return false;
+    if (!(max > 0)) return null;
     let n = 0;
     for (const pid of fs.readdirSync(proc)) {
       if (!/^\d+$/.test(pid)) continue;
@@ -163,10 +165,16 @@ export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean
         }
       } catch { /* gone, or another user's */ }
     }
-    return n >= max;
+    return { used: n, max };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Whether they are all in use: the Copilot runtime then takes requests but never begins them. */
+export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+  const u = inotifyUse(proc, uid);
+  return !!u && u.used >= u.max;
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -568,6 +576,7 @@ export class AgentHost {
           cursor: hands.cursor,
           clipboard: hands.clipboard,
           pointer: hands.pointer,
+          activationKey: hands.activationKey,
           desk: hands.desk,
           onDesk: hands.onDesk,
           onProgress: progress,

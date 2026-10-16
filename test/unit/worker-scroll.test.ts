@@ -24,7 +24,7 @@ interface Item { role: string; name: string; bounds: Bounds; states?: string[]; 
  * frame (y 40 to 600). `blindAfter`: past this far, reads see only the frame and its scroll bar (GTK 3's viewport).
  */
 function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: boolean; read?: (n: number, nodes: AxNode[]) => object; extra?: AxNode[]; clip?: Bounds; emptyChain?: boolean } = {}) {
-  const st = { offset: 0, reads: 0, points: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 }, clicks: [] as { x: number; y: number }[] };
+  const st = { offset: 0, reads: 0, points: 0, asked: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 }, clicks: [] as { x: number; y: number }[] };
   const notch = o.notch ?? 40;
   const shown = () => items.map((it, i) => ({ id: i + 2, parent: 1, depth: 2, role: it.role, name: it.name, states: it.states ?? ["enabled", "sensitive"], ...(it.text !== undefined ? { text: it.text } : {}), bounds: { ...it.bounds, y: it.bounds.y - st.offset } }))
     .filter(n => n.bounds.y + n.bounds.height > 40 && n.bounds.y < 600);
@@ -71,7 +71,7 @@ function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: 
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: perception as never, sidecar: sidecar as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => ({ settings: "act" }) }),
-    confirmer: { ask: async () => "once" } as never,
+    confirmer: { ask: async () => { st.asked++; return "once"; } } as never,
     audit: { write: () => undefined } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter: new Presenter(() => undefined),
@@ -110,8 +110,9 @@ describe("the wheel and what it can't see (review round 5)", () => {
     const r = await call("scroll", { id: 2, direction: "down", steps: 25 });
     expect(r.textResultForLlm).toMatch(/^Scrolled 20 of 25 steps, then stopped: "slider" \("slider"\) came under the wheel/);
     expect(st.notches).toHaveLength(20);
-    expect(st.reads).toBe(1);
-    expect(st.points).toBe(21);
+    // Once before the user is asked (what would stop it stops it first, W7-3), and once the window is in front.
+    expect(st.reads).toBe(2);
+    expect(st.points).toBe(22);
   });
 
   it("nothing is scrolled where a read sees nothing, the app is busy, or (looking notch by notch) left part of the window out", async () => {
@@ -224,9 +225,9 @@ describe("where the wheel and the mouse go (review round 6)", () => {
     const r = await call("scroll", { id: 2, direction: "down", steps: 25 });
     expect(r.textResultForLlm).toMatch(/^Scrolled 20 of 25 steps, then stopped: "slider" \("slider"\) came under the wheel/);
     expect(st.notches).toHaveLength(20);
-    expect(st.reads).toBe(21);
+    expect(st.reads).toBe(22);
     // A read that leaves part of the window out can't stand in for it.
-    const cut = app(rows(20), { atPoint: true, emptyChain: true, read: n => (n > 1 ? { truncated: "nodes" } : {}) });
+    const cut = app(rows(20), { atPoint: true, emptyChain: true, read: n => (n > 2 ? { truncated: "nodes" } : {}) });
     await cut.call("perceive_window", {});
     expect((await cut.call("scroll", { id: 2, direction: "down", steps: 5 })).textResultForLlm)
       .toMatch(/^Scrolled 1 of 5 steps, then stopped: Ember couldn't see what would come under the wheel next \(the window has more in it than Ember reads at once\)/);
@@ -263,6 +264,47 @@ describe("where the wheel and the mouse go (review round 6)", () => {
     expect(aimedAt([pane], "check box", row)).toBe("unknown");
     expect(aimedAt([{ ...pane, empty: true }], "check box", row)).toBe("unknown");
     expect(aimedAt([pane, { role: "push button", name: "Delete", bounds: { x: 0, y: 120, width: 300, height: 40 } }], "check box", row)).toBe("other");
+  });
+
+  it("a control lying over the element, or another control inside it, is something else; what holds it isn't (HND7-2, SEC7-6)", () => {
+    const text = { x: 10, y: 96, width: 54, height: 17 };
+    const page = { role: "panel", name: "", bounds: { x: 0, y: 0, width: 520, height: 600 } };
+    // A fixed header's button drawn over a row's text (Chromium answers with the deepest element there).
+    expect(aimedAt([page, { role: "push button", name: "Delete everything", bounds: { x: 10, y: 72, width: 300, height: 36 } }], "static", text)).toBe("other");
+    // A header box of the page over it, too; but the link round it in the read (it is the link's text), or a pane, isn't.
+    expect(aimedAt([page, { role: "section", name: "", bounds: { x: 0, y: 60, width: 520, height: 60 } }], "static", text)).toBe("other");
+    const link = { role: "link", name: "Delete my account", bounds: { x: 10, y: 96, width: 140, height: 17 } };
+    expect(aimedAt([page, link], "static", text, [{ ...link, bounds: { ...link.bounds } }])).toBe("unknown");
+    expect(aimedAt([page, { role: "scroll pane", name: "", bounds: { x: 0, y: 60, width: 520, height: 500 } }], "static", text)).toBe("unknown");
+    // A row's own "Remove" button where Ember would click the row: something else; its label: the row.
+    const row = { x: 0, y: 100, width: 360, height: 38 };
+    expect(aimedAt([page, { role: "list item", name: "", bounds: row }, { role: "push button", name: "Remove", bounds: { x: 100, y: 102, width: 85, height: 34 } }], "list item", row)).toBe("other");
+    expect(aimedAt([page, { role: "list item", name: "", bounds: row }, { role: "label", name: "Bob", bounds: { x: 2, y: 102, width: 100, height: 34 } }], "list item", row)).toBe("yes");
+  });
+
+  it("a row is clicked beside its own button, and what refuses a click refuses it before the user is asked (SEC7-6, W7-3)", async () => {
+    const remove: Item = { role: "push button", name: "Remove", bounds: { x: 100, y: 62, width: 60, height: 26 } };
+    const rowItem: Item = { role: "list item", name: "Ann", bounds: { x: 1, y: 60, width: 300, height: 30 } };
+    const { st, call } = app([remove, rowItem], { atPoint: true });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 3 })).textResultForLlm).toMatch(/^Done.*The click landed on list item "Ann"\.$/);
+    expect(st.clicks).toEqual([{ x: 13, y: 75 }]);
+    // Only a sliver of it shows: refused, and nobody was asked.
+    const clip = { x: 0, y: 40, width: 800, height: 260 };
+    const sliver = app([{ role: "check box", name: "Keep", bounds: { x: 1, y: 294, width: 300, height: 30 } }], { atPoint: true, clip });
+    await sliver.call("perceive_window", {});
+    expect((await sliver.call("click", { id: 2 })).textResultForLlm).toMatch(/^Element 2 is scrolled almost all the way out of view/);
+    expect([sliver.st.asked, sliver.st.clicks]).toEqual([0, []]);
+    expect((await sliver.call("scroll", { id: 2, direction: "down", steps: 3 })).textResultForLlm).toMatch(/^Element 2 is scrolled almost all the way out of view/);
+    expect([sliver.st.asked, sliver.st.notches]).toEqual([0, []]);
+  });
+
+  it("a scroll bar is a place for the wheel: it stays put while what it scrolls moves (W7-3)", async () => {
+    const { st, call } = app(rows(39), { atPoint: true, extra: [] });
+    await call("perceive_window", {});
+    expect((await call("scroll", { id: 99, direction: "down", steps: 4 })).textResultForLlm).toMatch(/^Done/);
+    expect(st.notches).toHaveLength(4);
+    expect(st.asked).toBe(1);
   });
 
   it("a screenshot mark goes round the part of an element that shows, and none on a sliver", () => {

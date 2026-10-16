@@ -234,6 +234,9 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     const call = (name: string, args: Record<string, unknown>) =>
       worker.tools().find(t => t.name === name)!.handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
     const screen = (await call("perceive_window", {})).textResultForLlm;
+    // The read says which option the drop-down shows (review round 7), and not Chromium's U+FFFC for its text.
+    expect(screen).toMatch(/\] combo box "Category"[^\n]* selected="Travel"/);
+    expect(screen).not.toContain("\ufffc");
     const id = (re: RegExp) => Number(/\[(\d+)\]/.exec(screen.split("\n").find(l => re.test(l)) ?? "")?.[1]);
     const chose = await call("choose_option", { id: id(/\] combo box "Category"/), option: "Meals" });
     expect(chose.textResultForLlm).toMatch(/^Done\. Now: combo box "Category".*selected="Meals"/);
@@ -251,5 +254,12 @@ describe.skipIf(!available && !required)("Electron windows through the real side
       if (!said.includes("cat=Meals")) await new Promise(r => setTimeout(r, 200));
     }
     expect(said).toContain("cat=Meals urgent=false pay=card notify=true");
+
+    // Chosen again (PR7-1): nothing is touched, and the drop-down keeps its choice (Chromium's "select" on the option
+    // chosen already takes the choice away, leaving the field empty).
+    const cat = (await sidecar.readWindow({ pid: pids.Form })).nodes.find(n => n.role === "combo box" && n.name === "Category")!;
+    const again = await sidecar.selectOption(cat.id, "Meals");
+    expect([again.ok, again.after?.selected]).toEqual([true, "Meals"]);
+    expect((await sidecar.readElement(cat.id)).selected).toBe("Meals");
   }, 40_000);
 });

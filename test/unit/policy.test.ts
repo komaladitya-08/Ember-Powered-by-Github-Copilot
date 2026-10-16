@@ -152,10 +152,13 @@ describe("policy: review round 2", () => {
     expect(d.aligned).toBe(false);
     expect(e.decide({ taskId: "g", kind: "click", app: "Firefox", window: "Page", element: { role: "push button", name: "Continue" }, dialog: { name: "", text: "" } }).verdict).toBe("confirm");
   });
-  it("the object has to match too, not just the verb", () => {
-    const off = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "send the report to Ana" });
-    expect(off.aligned).toBe(false);
+  it("the risky verb is what counts: a mismatch in other words is still asked about, but not marked as not asked for (W7-1)", () => {
+    const other = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "send the report to Ana" });
+    expect(other).toMatchObject({ verdict: "confirm", risky: true, prompt: "Click “Send money to Bob” push button in Firefox?" });
+    expect(other.aligned).toBeUndefined();
     expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Mail", element: { role: "push button", name: "Send report" }, goal: "send the report to Ana" }).aligned).toBeUndefined();
+    // A verb the user didn't ask for still is.
+    expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "check my balance" }).aligned).toBe(false);
   });
   it("destructive words in other languages count", () => {
     for (const name of ["Supprimer", "Alle löschen", "Eliminar", "Удалить", "削除", "删除", "Verwijderen", "Enviar"]) {
@@ -287,7 +290,7 @@ describe("policy: review round 3", () => {
 
   it("the question about answering a dialog says what it asks, also on the desk", () => {
     const d = e.decide({ taskId: "q", kind: "click", app: "Files", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "Confirm", text: "Delete all 2,341\nmessages?" }, onDesk: true, goal: "delete my old messages" });
-    expect(d.prompt).toBe("Click “OK” push button in Files (on my desk)? It says: “Delete all 2,341 messages?”.");
+    expect(d.prompt).toBe("Click “OK” push button in Files on my desk? It says: “Delete all 2,341 messages?”.");
   });
 
   it("whether a risky word was asked for is judged in every language", () => {
@@ -314,7 +317,7 @@ describe("policy: review round 3", () => {
   });
 
   it("Enter with nothing Ember can see focused says it can't tell what it will activate", () => {
-    expect(deskKeys("Return").prompt).toBe("Borrow your keyboard to press Enter in gedit (on my desk)? I can't tell what it will activate.");
+    expect(deskKeys("Return").prompt).toBe("Press Enter in gedit on my desk? I can't tell what it will activate.");
     expect(e.decide({ taskId: "u", kind: "keys", app: "gedit", window: "notes", value: "space" }).prompt).toBe("Borrow your keyboard to press Space in gedit? I can't tell what it will activate.");
   });
 
@@ -453,7 +456,7 @@ describe("policy: review round 4", () => {
     const typed = act({}, [SURVEY, MAIL]);
     expect(typed).toMatchObject({ verdict: "confirm", risky: true, remember: false });
     expect(typed.prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
-    expect(act({}, [MAIL], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox (on my desk)? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
+    expect(act({}, [MAIL], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
     // A paste can carry anything: asked once another window was read.
     for (const o of [{ kind: "click" as const, element: { role: "menu item", name: "Paste" } }, { kind: "click" as const, element: { role: "menu item", name: "Einfügen" } }]) {
       expect(act(o, [MAIL]).verdict, o.element.name).toBe("confirm");
@@ -607,9 +610,21 @@ describe("policy: review round 5", () => {
     for (const role of ["push button", "link", "menu item"]) expect(isRiskyControl(role, name), `${role} ${name}`).toBe(false);
   });
 
-  it("the words count only on controls that act: a “Comment” heading, tab or check item isn't asked about", () => {
-    for (const role of ["heading", "page tab", "label", "check menu item", "section"]) {
-      expect(e().decide({ taskId: "h", kind: "click", app: "Firefox", window: "Issue #12 - Mozilla Firefox", element: { role, name: "Comment" }, goal: "add the bug label" }).verdict, role).toBe("allow");
+  it("a click on text, a heading or a picture goes to what handles it: the words count there, but not on a check item (SEC7-1)", () => {
+    const judged = (role: string, name: string, kind: ActionRequest["kind"] = "click") =>
+      e().decide({ taskId: "h", kind, app: "Firefox", window: "Issue #12 - Mozilla Firefox", element: { role, name }, goal: "add the bug label" });
+    const decide = (role: string, name: string) => judged(role, name).verdict;
+    for (const role of ["heading", "page tab", "label", "section", "static", "image", "list item"]) {
+      expect(decide(role, "Comment"), role).toBe("confirm");
+      // With the mouse too: and the question says nobody asked for it.
+      expect(judged(role, "Block user", "cursor_click").aligned, role).toBe(false);
+    }
+    for (const role of ["check menu item", "check box", "switch"]) expect(decide(role, "Block selection"), role).toBe("allow");
+    // A file's icon or a mail list's cell is named by what it holds: only the phrases count there.
+    for (const role of ["icon", "table cell", "tree item"]) {
+      expect(decide(role, "report.pdf"), role).toBe("allow");
+      expect(decide(role, "Report for March"), role).toBe("allow");
+      expect(decide(role, "Close account"), role).toBe("confirm");
     }
   });
 
@@ -781,7 +796,9 @@ describe("policy: review round 6, labels and words", () => {
     expect(click("soffice.bin", "USB disk inventory.ods - LibreOffice Calc", "menu", "Format", "make the title bold").verdict).toBe("allow");
     for (const name of ["Format Disk…", "Format Partition…", "Datenträger formatieren…", "Formater le disque", "Formatear unidad", "Форматировать диск", "ディスクをフォーマット", "格式化磁盘"]) {
       expect(isRiskyLabel(name), name).toBe(true);
-      expect(click("gnome-disks", "Disks", "menu item", name, "check my USB stick").verdict, name).toBe("confirm");
+      expect(click("gnome-disks", "Disks", "push button", name, "check my USB stick").verdict, name).toBe("confirm");
+      // A menu item ending in "…" only opens the dialog whose own Format button is asked about (W7-1).
+      expect(click("gnome-disks", "Disks", "menu item", name, "check my USB stick").verdict, name).toBe(/…$/.test(name) ? "allow" : "confirm");
     }
     // GNOME Disks' own "Format…" button, and the one in its "Format Volume" dialog.
     expect(click("gnome-disks", "Disks", "push button", "Format…", "check my USB stick")).toMatchObject({ verdict: "confirm", aligned: false });
@@ -806,10 +823,10 @@ describe("policy: review round 6, labels and words", () => {
     expect(alignedWithGoal("empty cell B2", "Clear")).toBe(true);
     expect(alignedWithGoal("save my notes and close", "Close without Saving")).toBe(false);
     expect(click("nautilus", "Documents", "menu item", "Move to Trash", "get rid of report.txt").aligned).toBeUndefined();
-    // Other words, or what the verb acts on, still have to match.
+    // A verb the user didn't ask for still has to match; what it acts on needn't (the question is still asked: W7-1).
     expect(alignedWithGoal("fill in the survey", "Move to Trash")).toBe(false);
-    expect(alignedWithGoal("delete report.txt", "Delete account")).toBe(false);
-    expect(alignedWithGoal("remove the bold", "Clear history")).toBe(false);
+    expect(alignedWithGoal("delete report.txt", "Delete account")).toBe(true);
+    expect(click("firefox", "Account - Mozilla Firefox", "push button", "Delete account", "delete report.txt")).toMatchObject({ verdict: "confirm", risky: true });
     expect(alignedWithGoal("open my mail", "Log Out")).toBe(false);
     expect(alignedWithGoal("sign the contract", "Log Out")).toBe(false);
   });
@@ -832,5 +849,149 @@ describe("policy: review round 6, labels and words", () => {
 
   it("“Forgot password?” and other everyday labels with those words aren't (W6-7)", () => {
     for (const name of ["Forgot password?", "Passwort vergessen?", "Wachtwoord vergeten?", "Mot de passe oublié ?", "Refresh", "Refresh page"]) expect(isRiskyControl("link", name), name).toBe(false);
+  });
+});
+
+describe("policy: review round 7", () => {
+  const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", gedit: "act", mousepad: "act", "soffice.bin": "act", thunderbird: "act", "gnome-control-center": "act" }), rateLimit: 1e6 });
+  const FORM: ReadSource = { app: "Firefox", window: "Survey - Mozilla Firefox", pid: 7, path: "/a/1", role: "frame", text: "Survey\nComments\nRef A\nRef B\nRef C" };
+  const MAIL: ReadSource = { app: "Thunderbird", window: "Inbox - Thunderbird", pid: 9, path: "/t/1", role: "frame",
+    text: "From HR: your salary review: 84,000 EUR\nSSN 123-45-6789\nReset code: 448812\nAna's email: ana.silva@example.com\nThe layoff list: Tom Baker, Sue Lin" };
+  const type = (value: string, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "c", kind: "text", app: "Firefox", window: FORM.window,
+    windowId: { pid: 7, path: "/a/1", role: "frame" }, element: { role: "entry", name: "Comments" }, value, mode: "replace", goal: "fill in the survey", readFrom: [FORM, MAIL], ...o }).verdict;
+  const LONG = "Minutes of the planning meeting held on Monday.\nAttendees: Ana, Sam, Lee. Next steps: draft the budget.";
+  const key = (value: string, o: Partial<ActionRequest> = {}) => e.decide({ taskId: "s", kind: "keys", app: "mousepad", window: "notes.txt - Mousepad", onDesk: true,
+    element: { role: "text", name: "" }, value, currentText: LONG, goal: "tidy my notes", ...o });
+
+  it("a key that types over a selection is judged by the selection the screen reader tells, however it was made (SEC7-2, DK7-1)", () => {
+    // Everything selected (Ctrl+Home then Ctrl+Shift+End, Edit ▸ Select All, or Ctrl+A before a click on Bold): asked, saying how much.
+    for (const k of ["period", "x", "BackSpace", "Delete", "ctrl+BackSpace", "ctrl+x", "ctrl+v", "Return", "Tab"]) {
+      expect(key(k, { selection: LONG }).verdict, k).toBe("confirm");
+    }
+    expect(key("x", { selection: LONG })).toMatchObject({ reason: `everything is selected, so this replaces all ${LONG.length} characters already there`,
+      prompt: `Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.` });
+    // Part of it: more than 80 characters, or a line break, is asked; a word isn't.
+    expect(key("x", { selection: LONG.slice(0, 90) + "\n" })).toMatchObject({ verdict: "confirm", prompt: "Press X on the text in Mousepad on my desk? 91 characters there are selected, so this replaces them." });
+    expect(key("x", { selection: "planning" }).verdict).toBe("allow");
+    // Keys that only move or copy replace nothing.
+    for (const k of ["Left", "End", "ctrl+c", "shift+Right", "Escape"]) expect(key(k, { selection: LONG }).verdict, k).toBe("allow");
+    // Nothing selected: nothing replaced. But what the keys selected counts whatever the reader tells (an app may not tell it).
+    expect(key("x", { selection: "" }).verdict).toBe("allow");
+    expect(key("x", { afterSelectAll: true, selection: "" }).verdict).toBe("confirm");
+    // Selected with Shift where the reader can't tell how much: as much as there is.
+    expect(key("x", { afterSelecting: true })).toMatchObject({ verdict: "confirm", prompt: `Press X on the text in Mousepad on my desk? Text there is selected, so this may replace all ${LONG.length} characters.` });
+    // In a paragraph (Writer) a selection may run on past it: asked whatever it shows.
+    expect(key("x", { selection: "ab", currentText: "abc", element: { role: "paragraph", name: "" } })).toMatchObject({ verdict: "confirm",
+      prompt: "Press X on the paragraph in Mousepad on my desk? Text there is selected, and it may run on past what I can see, so this may replace a lot." });
+    // An empty field holds "" (the reader leaves its text out): after Ctrl+A a letter there replaces nothing (DK7-3).
+    expect(key("h", { afterSelectAll: true, currentText: "" }).verdict).toBe("allow");
+  });
+
+  it("a long field replaced says how much it replaces; on the desk no question says “Borrow” (DK7-2)", () => {
+    expect(key("x", { afterSelectAll: true }).prompt).toBe(`Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.`);
+    expect(e.decide({ taskId: "d", kind: "cursor_text", app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: LONG, goal: "tidy my notes" }).prompt)
+      .toBe(`Replace the text in the text in Mousepad with “Hi” on my desk? This replaces all ${LONG.length} characters there.`);
+    for (const [kind, value] of [["cursor_click", undefined], ["scroll", "down"], ["keys", "Delete"]] as const) {
+      const d = e.decide({ taskId: "d", kind, app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "push button", name: "Delete" }, value, goal: "write" });
+      expect(d.prompt, kind).not.toMatch(/Borrow/);
+      expect(d.prompt, kind).toMatch(/ in Mousepad on my desk\?/);
+    }
+  });
+
+  it.each([["email split by a line break", "ana.silva@\nexample.com"], ["code split by a line break", "448\n812"], ["SSN on three lines", "123\n45\n6789"],
+    ["Cyrillic look-alikes", "аna.silvа@example.cоm"], ["a Hangul filler", "ana.silva@ㅤexample.com"], ["underscores", "123_45_6789"], ["colons", "123:45:6789"],
+    ["double dashes", "123--45--6789"], ["Arabic-Indic digits", "١٢٣-٤٥-٦٧٨٩"]])("text read elsewhere typed with %s is asked about (SEC7-3)", (_n, v) => {
+    expect(type(v)).toBe("confirm");
+    expect(type(v, { mode: "append", currentText: "" })).toBe("confirm");
+  });
+
+  it("what was read stays line by line, and everyday text still isn't asked about (SEC7-3)", () => {
+    for (const v of ["Great week, thanks", "Room 4:12", "Meet at 10:30", "Sue", "1-2-3"]) expect(type(v), v).toBe("allow");
+    // Two lines read are two texts: their end and start together aren't a run of either.
+    expect(type("448812 EUR SSN")).toBe("confirm"); // the code itself is
+    expect(type("EUR SSN 123")).toBe("allow");
+  });
+
+  it("pieces typed into several fields of one window are judged together (SEC7-4)", () => {
+    const into = (name: string, value: string, typedHere: string) => type(value, { element: { role: "entry", name }, mode: "append", currentText: "", typedHere });
+    expect(into("Ref A", "123", "123")).toBe("allow");
+    // "123" and "45": five digits of the SSN read in the mail.
+    expect(into("Ref B", "45", "123\n45")).toBe("confirm");
+    expect(into("Ref C", "6789", "123\n45\n6789")).toBe("confirm");
+    expect(into("Ref A", "448", "448")).toBe("allow");
+    expect(into("Ref B", "812", "448\n812")).toBe("confirm");
+    expect(into("User", "ana.silva", "ana.silva")).toBe("allow");
+    expect(into("Domain", "example.com", "ana.silva\nexample.com")).toBe("confirm");
+    // Replacing a field's text too.
+    expect(type("6789", { typedHere: "123\n45\n6789" })).toBe("confirm");
+    // Pieces that make nothing read elsewhere aren't, nor pieces the user said themselves (their name, then their city).
+    expect(into("Ref C", "77", "12\n34\n77")).toBe("allow");
+    const order: ReadSource = { ...MAIL, text: "Order 7781234 for Ana Silva, Lisboa: please fill in the form" };
+    expect(type("Lisboa", { element: { role: "entry", name: "City" }, typedHere: "Ana Silva\nLisboa", goal: "fill in the order form for Ana Silva in Lisboa", readFrom: [FORM, order] })).toBe("allow");
+    expect(type("Lisboa", { element: { role: "entry", name: "City" }, typedHere: "Ana Silva\nLisboa", goal: "fill in the order form", readFrom: [FORM, order] })).toBe("confirm");
+  });
+
+  it("a word is the same word as its forms, not as another word built on it (SEC7-5)", () => {
+    for (const label of ["Delete", "Discard", "Remove"]) expect(alignedWithGoal("write clearly that I'm away", label), label).toBe(false);
+    expect(alignedWithGoal("make the font size bigger, quite large", "Quit")).toBe(false);
+    expect(alignedWithGoal("clear the search box", "Delete")).toBe(true);
+    expect(alignedWithGoal("quit the editor", "Quit")).toBe(true);
+    expect(alignedWithGoal("Lösche die Datei notes.txt", "Löschen")).toBe(true);
+    // A page that steers Ember into a risky verb the user didn't say still makes the task checked step by step.
+    const d = e.decide({ taskId: "w", kind: "click", app: "Firefox", window: "Survey - Mozilla Firefox", element: { role: "push button", name: "Delete all" }, goal: "write clearly that I'm away" });
+    expect(d).toMatchObject({ verdict: "confirm", aligned: false });
+    expect(d.prompt).toMatch(/You didn't ask for this/);
+  });
+
+  it.each([
+    ["reply to Ana saying yes", "Send"], ["email the report to Ana", "Send"], ["forward this to Bob", "Send"], ["tell Ana I'm late", "Send message"],
+    ["answer Ana's email", "Reply"], ["merge A1 to C1", "Merge Cells"], ["forget the CoffeeShop wifi", "Forget Connection"],
+    ["clear my browsing history", "Clear data"], ["order the blue mug", "Place order"], ["order the blue mug", "Buy now"], ["order the blue mug", "Pay now"],
+    ["close it without saving", "Don't Save"], ["close it without saving", "Close without Saving"], ["discard my changes", "Discard"],
+  ])("“%s” asks for “%s” (W7-1)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(true);
+  });
+
+  it.each([["reply to Ana", "Forward"], ["pay my electricity bill", "Buy now"], ["fill in the form", "Delete"], ["save my notes and close", "Don't Save"],
+    ["close the preferences", "Send"]])("“%s” doesn't ask for “%s” (W7-1)", (goal, label) => {
+    expect(alignedWithGoal(goal, label)).toBe(false);
+  });
+
+  it("a menu item that opens a dialog isn't risky in itself, but one that ends the session is (W7-1)", () => {
+    const menu = (name: string, app = "mousepad") => e.decide({ taskId: "m", kind: "click", app, window: "rep7.txt - Mousepad", element: { role: "menu item", name }, goal: "replace teh with the everywhere in rep7.txt" });
+    for (const name of ["Find and Replace...", "Find and Replace…", "Delete Sheet...", "Clear Recent History…"]) expect(menu(name).verdict, name).toBe("allow");
+    for (const name of ["Log Out…", "Restart…", "Power Off…", "Abmelden…", "Replace All", "Delete"]) expect(menu(name).verdict, name).toBe("confirm");
+    // Its button is asked about, as the user's verb: no "You didn't ask for this".
+    const replaceAll = e.decide({ taskId: "m", kind: "click", app: "mousepad", window: "Find and Replace", element: { role: "push button", name: "Replace All" }, goal: "Replace teh with the everywhere in rep7.txt" });
+    expect(replaceAll).toMatchObject({ verdict: "confirm", risky: true });
+    expect(replaceAll.aligned).toBeUndefined();
+  });
+
+  it("“OK” in a dialog that says nothing risky is asked about without being marked as not asked for (W7-1)", () => {
+    const ok = e.decide({ taskId: "o", kind: "click", app: "soffice.bin", window: "Format Cells", element: { role: "push button", name: "OK" },
+      dialog: { name: "Format Cells", text: "Category Format Language Options Decimal places: Leading zeroes: Negative numbers red Thousands separator" }, goal: "show the amounts as currency" });
+    expect(ok.verdict).toBe("confirm");
+    expect(ok.aligned).toBeUndefined();
+    expect(ok.prompt).not.toMatch(/didn't ask/);
+    // One whose dialog says something risky the user didn't ask for still is.
+    expect(e.decide({ taskId: "o", kind: "click", app: "nautilus", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "", text: "Delete all 2,341 files?" }, goal: "show the amounts as currency" }).aligned).toBe(false);
+  });
+
+  it("a check box names a setting: unticking “Send me offers” for “no offers” isn't marked as not asked for (PR7-7)", () => {
+    const tick = (goal: string, value = "off") => e.decide({ taskId: "t", kind: "toggle", app: "Firefox", window: "Trip - Mozilla Firefox", element: { role: "check box", name: "Send me offers" }, value, goal });
+    expect(tick("Book the trip: traveller Grace Hopper, no offers, then Book trip")).toMatchObject({ verdict: "confirm" });
+    expect(tick("Book the trip: traveller Grace Hopper, no offers, then Book trip").aligned).toBeUndefined();
+    expect(tick("Book the trip", "on").aligned).toBe(false);
+  });
+
+  it("a spreadsheet's cell is typed over without Ctrl+A, and still judged by what it holds and where the text comes from (W7-4)", () => {
+    const cell = (o: Partial<ActionRequest> = {}) => e.decide({ taskId: "x", kind: "cursor_text", app: "soffice.bin", window: "budget.ods - LibreOffice Calc",
+      windowId: { pid: 3, path: "/c/1", role: "frame" }, element: { role: "table cell", name: "B2" }, value: "84000", mode: "replace", currentText: "1200", goal: "put 84000 in B2", ...o });
+    expect(cell()).toMatchObject({ verdict: "confirm", reason: "Ember needs your mouse or keyboard for this", prompt: "Borrow your keyboard to replace “1200” in cell B2 with “84000” in LibreOffice?" });
+    expect(cell({ currentText: "", element: { role: "table cell", name: "B5" } }).prompt).toBe("Borrow your keyboard to type “84000” into cell B5 in LibreOffice?");
+    expect(cell({ currentText: "x".repeat(120) }).reason).toBe("this replaces all 120 characters already there");
+    // A salary read in the mail, typed into the sheet.
+    const carried = cell({ goal: "update my budget", readFrom: [MAIL] });
+    expect(carried.prompt).toMatch(/I read the window “Inbox - Thunderbird” in this task/);
   });
 });

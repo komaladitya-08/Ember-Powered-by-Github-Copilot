@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, clearLane, pickOption, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, afterKeys, cellOf, clearLane, pickOption, sameFocus, type WorkerDeps } from "../../app/main/agent/worker";
+import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
@@ -16,9 +17,11 @@ function makeWorker(o: {
   blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide";
   /** More of what readElement says (a menu's `open`). */
   extra?: () => Record<string, unknown>;
-  canDo?: (id: number, kind: string, caret: boolean) => { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean };
+  canDo?: (id: number, kind: string, caret: boolean) => { tier1: boolean; why?: string; focused?: boolean; windowActive?: boolean; action?: string; handler?: { role: string; name: string } };
   /** The user's answer to every question (default "once"), and the app's grant. */
   answer?: string; grants?: Record<string, "act">; noCursor?: boolean;
+  /** The window with the keyboard on the user's screen, and whether Enter or Space is held down there (guides). */
+  activeWindow?: () => { app: string; title: string } | null; activationKey?: () => boolean;
 } = {}) {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
@@ -41,8 +44,8 @@ function makeWorker(o: {
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter: new Presenter(() => undefined),
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
-    cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined },
-    pointer: o.pointer,
+    cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}) },
+    pointer: o.pointer, activationKey: o.activationKey,
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
@@ -66,6 +69,28 @@ describe("worker tools", () => {
     // Two names that differ only in case or spacing: the exact one, or none.
     expect(pickOption(options, "Delete permanently")).toBe("Delete permanently");
     expect(pickOption(options, "DELETE PERMANENTLY")).toBeNull();
+  });
+
+  it("keys said yes to for a spreadsheet go to a cell of it, but a cell said yes to is that cell (review round 7)", () => {
+    // A look at LibreOffice Calc may come to the cell with the keyboard or only to its sheet (also focused).
+    const nodes: AxNode[] = [
+      { id: 5, parent: null, depth: 7, role: "table", name: "Sheet big", states: ["focused"], bounds: null },
+      { id: 6, parent: 5, depth: 8, role: "table cell", name: "C12", states: ["focused"], bounds: null, grid: true },
+      { id: 7, parent: null, depth: 7, role: "table", name: "Table1", states: [], bounds: null },
+      { id: 8, parent: 7, depth: 8, role: "table cell", name: "A1", states: ["focused"], bounds: null, grid: false },
+    ];
+    const byId = (id: number) => nodes.find(n => n.id === id);
+    const sheet = { role: "table", name: "Sheet big" };
+    const cell = { role: "table cell", name: "C12", ...cellOf(nodes[1], byId) };
+    expect(cell).toEqual({ role: "table cell", name: "C12", grid: true, sheet: expect.any(Number) });
+    expect(sameFocus(cell, sheet)).toBe(true);
+    expect(sameFocus(cell, { role: "table", name: "Sheet other" })).toBe(false);
+    expect(sameFocus(sheet, cell)).toBe(false);
+    expect(sameFocus({ role: "table cell", name: "D5", ...cellOf(nodes[1], byId) }, cell)).toBe(false);
+    // A Writer table's cell isn't a sheet's.
+    expect(sameFocus({ role: "table cell", name: "A1", ...cellOf(nodes[3], byId) }, { role: "table", name: "Table1" })).toBe(false);
+    expect(sameFocus(undefined, undefined)).toBe(true);
+    expect(sameFocus(cell, undefined)).toBe(false);
   });
 
   it("a busy app's window is listed as busy, not gone", async () => {
@@ -97,7 +122,7 @@ describe("guides (review round 5)", () => {
     expect(Date.now() - t0).toBeGreaterThan(700);
   });
 
-  it("a menu item that goes (its menu closed) or gets checked has changed; a button that gets focus has too", async () => {
+  it("a menu item that goes (its menu closed) or gets checked has changed; a button that only gets focus hasn't (PR7-2)", async () => {
     let gone = false;
     const menu = makeWorker({ role: "menu item", name: "Save", states: () => (gone ? null : ["enabled", "sensitive"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
     await menu.call("perceive_window", {});
@@ -113,10 +138,42 @@ describe("guides (review round 5)", () => {
     let focused = false;
     const button = makeWorker({ states: () => (focused ? ["enabled", "focused"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
     await button.call("perceive_window", {});
-    const pressed = button.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    const tabbed = button.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
     setTimeout(() => { focused = true; }, 100);
-    expect((await pressed).textResultForLlm).toMatch(/^It changed/);
-  });
+    expect((await tabbed).textResultForLlm).toMatch(/hasn't clicked it yet/);
+  }, 8000);
+
+  it("a keyboard user's step counts: Enter on the button pointed at, or a menu item chosen that opens its dialog (PR7-2)", async () => {
+    // Tab onto "Add", then Enter.
+    let focused = false, enter = false;
+    const button = makeWorker({ name: "Add", states: () => (focused ? ["enabled", "focused"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activationKey: () => enter, mode: "guide" });
+    await button.call("perceive_window", {});
+    const t0 = Date.now();
+    const waiting = button.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { enter = true; }, 100); // Enter elsewhere first: not on it
+    setTimeout(() => { enter = false; focused = true; }, 300);
+    setTimeout(() => { enter = true; }, 1200);
+    expect((await waiting).textResultForLlm).toMatch(/^The user pressed Enter or Space on it/);
+    expect(Date.now() - t0).toBeGreaterThan(1100);
+    // F10, arrows to "Save As…" (selected), Enter: the menu closes and the Save As dialog takes the keyboard.
+    let selected = false, dialog = false;
+    const menu = makeWorker({ role: "menu item", name: "Save As…", states: () => (selected ? ["enabled", "selected"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activeWindow: () => (dialog ? { app: "gedit", title: "Save As" } : { app: "gedit", title: "notes.txt" }), mode: "guide" });
+    await menu.call("perceive_window", {});
+    const saved = menu.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { selected = true; }, 100);
+    setTimeout(() => { selected = false; dialog = true; }, 900);
+    expect((await saved).textResultForLlm).toMatch(/^Another window has the keyboard now \("Save As"\)/);
+    // Another window without the element ever reached (the user went elsewhere): the step waits.
+    let switched = false;
+    const away = makeWorker({ role: "menu item", name: "Save As…", states: () => ["enabled"], pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activeWindow: () => (switched ? { app: "firefox", title: "News" } : { app: "gedit", title: "notes.txt" }), mode: "guide" });
+    await away.call("perceive_window", {});
+    const left = away.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { switched = true; }, 100);
+    expect((await left).textResultForLlm).toMatch(/hasn't clicked it yet/);
+  }, 12_000);
 });
 
 describe("guides through menus with the keyboard (review round 6)", () => {
@@ -141,6 +198,31 @@ describe("guides through menus with the keyboard (review round 6)", () => {
     const r = await call("wait_for_click", { id: 1, timeoutSeconds: 5 });
     expect(r.textResultForLlm).toMatch(/hasn't clicked it yet/);
   }, 8000);
+});
+
+describe("a click goes to the control that handles it (SEC7-1)", () => {
+  it("text inside a link is asked about as the link it works; a risky text inside a harmless row as itself", async () => {
+    const link = makeWorker({ role: "static", name: "Settings", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "link", name: "Delete my account" } }) });
+    await link.call("perceive_window", {});
+    expect((await link.call("click", { id: 1 })).resultType).toBe("denied");
+    expect(link.asked).toEqual([expect.stringMatching(/^Click “Delete my account” link .*You didn't ask for this/)]);
+    expect(link.audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "click", element: { role: "link", name: "Delete my account" } }));
+    // An unnamed clickable box round "Block user": named by the text, and asked about.
+    const box = makeWorker({ role: "static", name: "Block user", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "section", name: "" } }) });
+    await box.call("perceive_window", {});
+    await box.call("click", { id: 1 });
+    expect(box.asked).toEqual([expect.stringMatching(/^Click “Block user” section/)]);
+    // A row named harmlessly round a risky word: the word is what is asked about.
+    const row = makeWorker({ role: "static", name: "Remove", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "list item", name: "Ana Silva" } }) });
+    await row.call("perceive_window", {});
+    await row.call("click", { id: 1 });
+    expect(row.asked).toEqual([expect.stringMatching(/^Click “Remove” static/)]);
+    // Nothing risky either way: the app's grant covers it, and the journal names the link.
+    const plain = makeWorker({ role: "static", name: "Docs", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "link", name: "Help" } }) });
+    await plain.call("perceive_window", {});
+    expect((await plain.call("click", { id: 1 })).textResultForLlm).toMatch(/^Done/);
+    expect([plain.asked, plain.audit.filter(e => e.event === "action").map(e => e.element)]).toEqual([[], [{ role: "link", name: "Help" }]]);
+  });
 });
 
 describe("one question per step (review round 6)", () => {
@@ -199,5 +281,29 @@ describe("where the wheel goes (review round 4)", () => {
   });
   it("none when controls cover every column", () => {
     expect(clearLane(list, [{ x: 0, y: 40, width: 220, height: 30 }, { x: 200, y: 400, width: 200, height: 30 }], true, list)).toBeNull();
+  });
+});
+
+describe("what the keys select (review round 7)", () => {
+  /** Keys pressed in turn into one field: what is selected after each, and what was typed there. */
+  const press = (keys: string[], typed = "") => keys.reduce<{ typed: string; selected: "all" | "some" | null; after: (string | null)[] }>((s, k) => {
+    const next = afterKeys(k, s.typed, s.selected);
+    return { typed: next.typed, selected: next.selected, after: [...s.after, next.selected] };
+  }, { typed, selected: null, after: [] });
+
+  it("Ctrl+A selects everything, Shift with a key that moves selects some, until a key moves the caret or replaces it (SEC7-2)", () => {
+    expect(press(["ctrl+a", "ctrl+c", "Escape", "ctrl+b", "Left"]).after).toEqual(["all", "all", "all", "all", null]);
+    expect(press(["ctrl+Home", "ctrl+shift+End", "shift+Left", "period"]).after).toEqual([null, "some", "some", null]);
+    // Ctrl+A then Shift keeps it all selected (Shift+Left gives back one character).
+    expect(press(["ctrl+a", "shift+Left"]).after).toEqual(["all", "all"]);
+    // Keys that delete the selection: Backspace, Delete, Ctrl+Backspace, Ctrl+X, a paste.
+    for (const k of ["BackSpace", "Delete", "ctrl+BackSpace", "ctrl+x", "ctrl+v", "Tab", "Return"]) expect(press(["ctrl+a", k]).after[1], k).toBeNull();
+  });
+
+  it("what was typed there goes with everything selected and replaced, but stays when only part of it was", () => {
+    expect(press(["ctrl+a", "x"], "448").typed).toBe("x");
+    expect(press(["ctrl+a", "BackSpace"], "448").typed).toBe("");
+    expect(press(["shift+Left", "x"], "448").typed).toBe("448x");
+    expect(press(["Left", "8", "1"], "44").typed).toBe("4481");
   });
 });

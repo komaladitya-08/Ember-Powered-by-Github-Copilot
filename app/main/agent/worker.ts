@@ -24,12 +24,12 @@ import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, ReadSource, TextMode, WindowId } from "../policy/policy";
 import type { AuditEntry, AuditLog } from "../policy/audit";
-import { inferLabels, quoteUntrusted as q } from "../perception/elements";
+import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { canonicalKeys, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, replacesSelection, typedChar } from "../policy/policy";
 import { SETTINGS, changeSetting, execArgv, findApp, isTerminalApp, launchApp, listApps, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
 import type { DeskPlace } from "../desk/place";
-import { focusedElement } from "../perception/elements";
+import { focusedElement, isSheetCell } from "../perception/elements";
 import { SLIVER_PX } from "../perception/marks";
 import { friendlyApp } from "../../shared/apps";
 import type { Logger } from "../logger";
@@ -61,6 +61,11 @@ export interface WorkerDeps {
   onDesk?: (place: DeskPlace | null, previous: DeskPlace | null) => void;
   /** Pointer position and button mask in screen pixels (guide mode watches for the user's click). */
   pointer?: () => { x: number; y: number; mask: number } | null;
+  /**
+   * Is Enter (the keypad's too) or Space held down on the user's keyboard right now? Guide mode polls it to see a
+   * keyboard user press the control pointed at (XInput's keysDown(), on the user's screen only).
+   */
+  activationKey?: () => boolean;
   /** Tier 3, when available: borrowing the user's mouse and keyboard. */
   cursor?: {
     borrow: CursorBorrow;
@@ -138,6 +143,14 @@ const WHEEL_VALUE_ROLES = new Set(["combo box", "slider", "spin button", "page t
 const NOTCH_SETTLE_MS = 150;
 /** Wheel notches less than about this far apart go on scrolling what the first one did (Chromium's wheel latching). */
 const NOTCH_LATCH_MS = 400;
+/** Controls whose use does more than give them the keyboard or select them (Tab and a hover reach them first). */
+const ACTS_ITSELF = /^(push button|push button menu|button|split button|toggle button|link|menu item|check menu item|radio menu item)$/;
+/** Fields: the step is to be in one, so reaching it (Tab, a click) is using it. */
+const FOCUS_IS_THE_STEP = /^(text|entry|password text|spin button|document text|paragraph|terminal)$/;
+/** How long an app gets to notice the pointer over its window before Ember looks where to click again. */
+const POINTER_SETTLE_MS = 100;
+/** The control around an element that a click on the element goes to (a link around its text, a row around its label). */
+type Handler = { role: string; name: string };
 /** Items the pointer selects (and focuses) by only passing over them: menus, and the lists of a drop-down. */
 const HOVER_SELECTS = /^(menu|menu item|check menu item|radio menu item|list item|tree item|table cell)$/;
 const isUnder = (p: { x: number; y: number }, b: Bounds) => p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
@@ -234,18 +247,33 @@ export function tabPage(nodes: AxNode[], list: Bounds, shown: Bounds): Bounds | 
   return page.width >= MIN_PAGE_PX && page.height >= MIN_PAGE_PX ? page : null;
 }
 
+/** Controls a click does something of its own on: one of these at the spot, other than the element aimed at, takes the click. */
+const CLICK_TAKERS = /^(push button|push button menu|button|split button|toggle button|link|menu item|check menu item|radio menu item|menu|check box|radio button|switch|combo box|page tab|text|entry|password text|spin button|slider|list item|table cell|tree item|icon)$/;
+/**
+ * What only holds others (a pane, a list, a page): one of these round the element aimed at tells nothing more (a
+ * toolkit's answer can stop there). Not a web page's own boxes (a section, a header): Chromium answers with the deepest
+ * element there, so a box of the page round it at its spot lies over it (a fixed header).
+ */
+const HOLDERS = /^(panel|filler|unknown|redundant object|glass pane|layered pane|root pane|scroll pane|viewport|split pane|internal frame|option pane|frame|window|dialog|document web|document frame|embedded|list|list box|table|tree|tree table|page tab list|tool bar|status bar|menu bar)$/;
+
 /**
  * Of the elements at a spot (outermost first, from atPoint), does the one Ember aims at (role `role`, at `b`) show
- * there? "yes": it, or something inside it (Chromium answers with the deepest element); "other": something else
- * is there (a row scrolled almost out of its list, with a button below it); "unknown": the app's answer stopped at
- * what holds it, or told nothing.
+ * there, the deepest one the app names (Chromium answers with the deepest element)? "yes": it, or something inside it
+ * that isn't another control (its text, its picture, its label); "other": something else is there (a row scrolled almost
+ * out of its list, with a button below it; a fixed header's button over it; a button inside the row aimed at); "unknown":
+ * the app's answer stopped at what holds it (one of `ancestors`, the elements round it in the read, or a plain holder
+ * of others: a pane, a list), or told nothing.
  */
-export function aimedAt(chain: PointElement[], role: string, b: Bounds): "yes" | "other" | "unknown" {
-  if (chain.some(p => p.role === role && !!p.bounds && sameRect(p.bounds, b))) return "yes";
+export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestors: { role: string; bounds: Bounds | null }[] = []): "yes" | "other" | "unknown" {
   const last = chain[chain.length - 1];
   if (!last?.bounds || last.empty) return "unknown";
-  if (insideOf(last.bounds, b)) return "yes";
-  return insideOf(b, last.bounds) ? "unknown" : "other";
+  if (last.role === role && sameRect(last.bounds, b)) return "yes";
+  // Inside it: its own text, picture or label; or another control in it, which a click there would work instead.
+  if (insideOf(last.bounds, b)) return CLICK_TAKERS.test(last.role) && !sameRect(last.bounds, b) ? "other" : "yes";
+  if (!insideOf(b, last.bounds)) return "other";
+  // Round it: what holds it (the app stopped there), or something else lying over it (a header's button).
+  const holds = ancestors.some(a => a.role === last.role && !!a.bounds && sameRect(a.bounds, last.bounds!));
+  return holds || HOLDERS.test(last.role) ? "unknown" : "other";
 }
 /** Interpreters and launchers: an app started through one isn't known by their name. */
 const LAUNCHERS = /^(python[\d.]*|sh|bash|env|flatpak|java|perl|ruby|node|gjs|mono|gtk-launch)$/;
@@ -257,29 +285,80 @@ const BUSY = "The app is busy (it didn't answer in time). Wait a moment, then ca
 /** How a waiting task's goal carries what the user added (tasks.ts). */
 const STEERED = /\n\(The user then added: (.*)\)$/gm;
 
-/** What has the keyboard in a window: its role and name (or the label beside it), and whether it holds a secret. */
-type Focus = { role: string; name: string; secret?: boolean };
-const sameFocus = (a: Focus | undefined, b: Focus | undefined) => (!a || !b ? a === b : a.role === b.role && a.name === b.name);
+/**
+ * What has the keyboard in a window: its role and name (or the label beside it), and whether it holds a secret. A
+ * spreadsheet's cell says so (`grid`, see isSheetCell) and which sheet it is in (`sheet`: the sheet's name, as a
+ * number: it goes to the audit log, which keeps no screen text).
+ */
+type Focus = { role: string; name: string; secret?: boolean; grid?: boolean; sheet?: number };
+/** A sheet's name as Focus keeps it (FNV-1a). */
+const sheetKey = (name: string) => { let h = 0x811c9dc5; for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193) >>> 0; return h; };
+/**
+ * Has what the user said yes to (`approved`) the keyboard `now`? The same role and name; or, for a spreadsheet said
+ * yes to, a cell of it (keys pressed in a sheet go to its cell with the keyboard, which a look need not come to).
+ * Not the other way round: a cell said yes to is not every cell of its sheet.
+ */
+export const sameFocus = (now: Focus | undefined, approved: Focus | undefined) => {
+  if (!now || !approved) return now === approved;
+  if (now.role === approved.role && now.name === approved.name) return true;
+  return now.sheet !== undefined && approved.role === "table" && sheetKey(approved.name) === now.sheet;
+};
+/** A spreadsheet's cell (the sidecar read it from the sheet's grid): that it is one, and its sheet; {} for anything else. */
+export const cellOf = (n: Pick<AxNode, "grid" | "parent">, parentOf: (id: number) => AxNode | undefined): Pick<Focus, "grid" | "sheet"> => {
+  if (n.grid === undefined) return {};
+  const sheet = n.grid && n.parent !== null ? parentOf(n.parent) : undefined;
+  return { grid: n.grid, ...(sheet ? { sheet: sheetKey(sheet.name) } : {}) };
+};
 
-/** How much of what a task typed into a field is kept (its end), and for how many fields. */
+/** How much of what a task typed into a field (or a window's fields) is kept (its end), and for how many fields. */
 const TYPED_MAX = 500;
 const TYPED_FIELDS = 32;
+/** What Ember selected with the keys in a window: everything (Ctrl+A), some of it (Shift with a key that moves), or nothing it knows of. */
+type Selected = "all" | "some" | null;
+/** Shift with a key that moves the caret selects as it goes (Shift+Right, Ctrl+Shift+End). */
+const SELECTS = /^(ctrl\+)?shift\+(up|down|left|right|home|end|prior|next)$/;
 /**
- * After `keys` went into a field where this task had typed `typed`: what it has typed there now, and whether
- * everything there is still selected by Ctrl+A (until a key replaces it or moves the caret; Ctrl+C keeps it).
- * Moving the caret (arrows, Home, End), symbols and shortcuts keep what was typed: pieces typed around a move are
- * still judged together, and the field's own text with them (only another field starts again).
+ * After `keys` went into a field where this task had typed `typed`: what it has typed there now, and what is still
+ * selected by the keys (until a key replaces it or moves the caret; Ctrl+C keeps it, and so do steps that move no
+ * caret: a click on a toolbar button, a scroll). Moving the caret (arrows, Home, End), symbols and shortcuts keep what
+ * was typed: pieces typed around a move are still judged together, and the field's own text with them (only another
+ * field starts again).
  */
-function afterKeys(keys: string, typed: string, selectAll: boolean): { typed: string; selectAll: boolean } {
+export function afterKeys(keys: string, typed: string, selected: Selected): { typed: string; selected: Selected } {
   const k = keyFamily(canonicalKeys(keys) ?? "");
   const char = typedChar(keys);
-  if (k === "ctrl+a") return { typed, selectAll: true };
-  const replaced = selectAll && replacesSelection(keys);
-  const kept = replaced ? "" : typed;
-  const still = selectAll && !replaced && !MOVES_CARET.test(k);
-  if (char !== null) return { typed: (kept + char).slice(-TYPED_MAX), selectAll: false };
-  if (k === "backspace") return { typed: kept.slice(0, -1), selectAll: false };
-  return { typed: kept, selectAll: still };
+  if (k === "ctrl+a") return { typed, selected: "all" };
+  if (SELECTS.test(k)) return { typed, selected: selected === "all" ? "all" : "some" };
+  const replaced = !!selected && replacesSelection(keys);
+  // Everything selected and replaced: what was typed there is gone. Part of it: which part is unknown, so it stays.
+  const kept = replaced && selected === "all" ? "" : typed;
+  const still = !replaced && !MOVES_CARET.test(k) ? selected : null;
+  if (char !== null) return { typed: (kept + char).slice(-TYPED_MAX), selected: null };
+  if (k === "backspace") return { typed: replaced ? kept : kept.slice(0, -1), selected: null };
+  return { typed: kept, selected: still };
+}
+/** Keys that only move the caret or the cell cursor (arrows, Home, End, Page Up and Down, with Ctrl too). */
+const MOVE_KEY = /^(ctrl\+)?(up|down|left|right|home|end|prior|next)$/;
+/** Text fields where those keys only move the caret, and where Tab only moves on (one-line fields; a cell, as below). */
+const MOVES_IN = new Set(["text", "entry", "paragraph", "document text"]);
+/** Does `keys` only move, in what has the keyboard (`focus`)? Never in lists, menus, sliders, spin buttons or combo boxes (an arrow there picks). */
+function onlyMoves(keys: string, focus: Focus | undefined): boolean {
+  if (!focus || focus.secret) return false;
+  const k = keyFamily(canonicalKeys(keys) ?? "");
+  const cell = isSheetCell(focus);
+  if (/^(shift\+)?tab$/.test(k)) return cell || focus.role === "entry";
+  return MOVE_KEY.test(k) && (cell || MOVES_IN.has(focus.role));
+}
+/** Roles whose text the screen reader reads (an empty one it leaves out: it holds ""), and the selection in it when it has the keyboard. */
+const READ_TEXT_ROLES = new Set(["text", "entry", "paragraph", "document text", "spin button"]);
+/** A spreadsheet cell's address as a model may give it ("B5", "$B$5", "b5"). */
+const CELL_ARG = /^\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6}$/;
+/** The most arrow keys Ember presses to reach a cell (from the cell with the keyboard, or from A1). */
+const CELL_STEPS_MAX = 300;
+/** A cell's column (from 0) and row (from 1), by its address ("B5" → 1, 5). */
+function cellPlace(address: string): { col: number; row: number } | null {
+  const m = /^\$?([A-Z]{1,3})\$?([1-9][0-9]{0,6})$/.exec(address.toUpperCase());
+  return m ? { col: [...m[1]].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1, row: Number(m[2]) } : null;
 }
 /** How much text is kept for each window a task reads: enough to recognise it when it is typed somewhere else. */
 const READ_TEXT_MAX = 20_000;
@@ -365,15 +444,22 @@ export class Worker {
   private clipboard: PasteClipboard | null;
   /** Windows this task has read or listed (by process, path and title), with what it read there: text it types elsewhere is checked against them. */
   private read = new Map<string, ReadSource>();
-  /** The window keys went into last (by process, path and title), and whether Ctrl+A came last there. */
-  private keyed = { window: "", selectAll: false };
+  /** The window keys went into last (windowKey: by process, and path or else title), and what the keys selected there. */
+  private keyed: { window: string; selected: Selected } = { window: "", selected: null };
   /**
    * What this task typed into each field (fieldOf), by type_text or key by key, in order: text typed in pieces is
    * judged as a whole, also where the field's own text can't be read in full.
    */
   private typedIn = new Map<string, string>();
-  /** What the focused field held at the latest look for keys (undefined: unknown or secret). */
+  /** What this task typed into each window's fields (windowKey), in order, another field's on a line of its own; and the field typed into last. */
+  private typedWindows = new Map<string, { field: string; text: string }>();
+  /** What the focused field held, and what is selected in it, at the latest look for keys (undefined: unknown or secret). */
   private focusText: string | undefined;
+  private focusSelection: string | undefined;
+  /** The user said yes to a key that only moves (onlyMoves) in this window (windowKey): more of those there go without a question. */
+  private moving: string | null = null;
+  /** What spreadsheet cells the latest read didn't list were found to hold, by window (windowKey) and address: the next question says it. */
+  private cellsSeen = new Map<string, string>();
 
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
     this.target = { ...spec.target };
@@ -501,9 +587,19 @@ export class Worker {
           return this.act("toggle", a.id, a.on ? "on" : "off", () => this.sidecar.doAction(a.id, "toggle"));
         }),
       this.tool("type_text",
-        "Put text into a text field or document. mode: \"replace\" replaces everything in it, \"insert\" types at the caret, \"append\" adds at the end.",
-        z.object({ id, text: z.string().max(5000), mode: z.enum(["replace", "insert", "append"]).describe("replace, insert or append") }),
-        async a => this.act("text", a.id, a.text, () => this.sidecar.setText(a.id, a.text, a.mode), a.mode)),
+        "Put text into a text field or document. mode: \"replace\" replaces everything in it, \"insert\" types at the caret, \"append\" adds at the end. " +
+        "In a spreadsheet, give cell (its address, like \"B5\") instead of id to fill that cell, also an empty one that perceive_window doesn't list (mode \"replace\": the cell's whole new content).",
+        z.object({
+          id: id.optional(),
+          cell: z.string().regex(CELL_ARG, "a cell address like B5").optional().describe("A spreadsheet cell's address (instead of id)"),
+          text: z.string().max(5000), mode: z.enum(["replace", "insert", "append"]).describe("replace, insert or append"),
+        }),
+        async a => {
+          if (a.cell !== undefined) return this.typeInCell(a.cell, a.text, a.mode);
+          if (a.id === undefined) return fail("type_text needs the id of the field (or, in a spreadsheet, the cell's address as cell).");
+          const target = a.id;
+          return this.act("text", target, a.text, () => this.sidecar.setText(target, a.text, a.mode), a.mode);
+        }),
       this.tool("choose_option", "Choose an option in a combo box, drop-down or list by its full visible name.",
         z.object({ id, option: z.string().min(1).max(200) }),
         async a => this.chooseOption(a.id, a.option)),
@@ -584,8 +680,11 @@ export class Worker {
         async a => {
           const node = this.known.get(a.id);
           if (!node?.bounds) return fail(`Element ${a.id} is not in your latest perceive_window (or has no position). Call perceive_window.`);
+          // Where it is now (LibreOffice reports places 25 px off until the pointer has been over its window).
+          const live = await this.sidecar.readElement(a.id).catch(() => null);
+          if (this.isOver) return STOPPED();
           this.guideStep++;
-          this.fly(node.bounds);
+          this.fly(live?.bounds && live.role === node.role ? live.bounds : node.bounds);
           this.d.presenter.guide(a.say, `Step ${this.guideStep}`);
           this.audit({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: node.name || this.labels.get(a.id) || "" }, ok: true });
           return done(`Pointing at [${a.id}]. Now call wait_for_click with id ${a.id}.`);
@@ -731,31 +830,56 @@ export class Worker {
   private async waitForClick(id: number, timeoutMs: number): Promise<ToolResultObject> {
     const node = this.known.get(id);
     if (!node?.bounds) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window.`);
-    const b = node.bounds, pad = 4;
+    // Where it is, as each look finds it (LibreOffice reports places 25 px off until the pointer has been over its window).
+    let b = node.bounds;
+    const pad = 4;
     const inside = (p: { x: number; y: number }) => p.x >= b.x - pad && p.y >= b.y - pad && p.x < b.x + b.width + pad && p.y < b.y + b.height + pad;
     const before = await this.sidecar.readElement(id).catch(() => null);
-    // Hovering a menu item selects it: there only what a hover can't do counts (a press inside it, or checked, pressed,
-    // expanded, a value, gone; a menu opened, also with Alt+F or F10, so keyboard users get through a guide too).
-    const marks = HOVER_SELECTS.test(node.role) ? ["checked", "pressed", "expanded"] : ["checked", "pressed", "selected", "expanded", "focused"];
+    if (before?.bounds && before.role === node.role) b = before.bounds;
+    // What counts is the user using it, never only reaching it (a hover selects a menu item, Tab focuses a button): a
+    // press inside it; checked, pressed, expanded, a value, an option chosen, a menu opened (also with Alt+F or F10), a
+    // tab or row selected, a field focused, the element gone. And once the user reached it (it had the keyboard, or was
+    // the selected item): Enter or Space on it, or another window taking the keyboard (a menu item chosen with the
+    // keyboard opened its dialog).
+    const marks = ["checked", "pressed", "expanded",
+      ...(HOVER_SELECTS.test(node.role) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
     const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
+    const reached = (e: ElementInfo | null) => !!e && (e.states.includes("focused") || e.states.includes("selected"));
+    let wasReached = reached(before);
+    const activeWindow = () => { try { return this.d.cursor?.activeWindow?.() ?? null; } catch { return null; } };
+    const windowBefore = activeWindow();
+    const keyDown = () => { try { return this.d.activationKey?.() === true; } catch { return false; } };
+    const usedIt = async (how: string) => {
+      await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
+      this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: node.name }, ok: true });
+      return done(`${how} Call perceive_window to see what changed.`);
+    };
     const t0 = Date.now();
     let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
+    let keyWasDown = keyDown();
     let lastCheck = 0;
     while (Date.now() - t0 < timeoutMs) {
       if (this.isOver) return STOPPED();
       const p = this.d.pointer?.();
       const down = (p?.mask ?? 0) & 256;
-      if (p && down && !wasDown && inside(p)) {
-        await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
-        this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: node.name }, ok: true });
-        return done("The user clicked it. Call perceive_window to see what changed.");
-      }
+      if (p && down && !wasDown && inside(p)) return usedIt("The user clicked it.");
       wasDown = down;
+      // Enter or Space, while it has the keyboard (or is the menu item selected).
+      const pressing = keyDown();
+      if (pressing && !keyWasDown && reached(await this.sidecar.readElement(id).catch(() => null))) return usedIt("The user pressed Enter or Space on it.");
+      keyWasDown = pressing;
       if (Date.now() - lastCheck > 500) {
         lastCheck = Date.now();
         const now = await this.sidecar.readElement(id).catch(() => null);
         if (key(now) !== key(before)) {
           return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
+        }
+        if (now?.bounds && now.role === node.role) b = now.bounds;
+        wasReached ||= reached(now);
+        // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title).
+        const w = wasReached && windowBefore ? activeWindow() : null;
+        if (w && w.title.trim() && (w.title !== windowBefore!.title || w.app !== windowBefore!.app)) {
+          return done(`Another window has the keyboard now (${q(w.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
         }
       }
       await new Promise(r => setTimeout(r, 30));
@@ -812,14 +936,17 @@ export class Worker {
     return { pid: this.target.pid, path: this.target.path, role: this.window.role };
   }
 
-  /** The working window by process, path and title (keys pressed there are tracked by it). */
+  /**
+   * The working window by process, and path or else title (keys pressed and text typed there are tracked by it): never
+   * by a title that has a path besides, which changes as the window does ("*notes.txt" once it is edited).
+   */
   private get windowKey(): string {
-    return `${this.target.pid}\n${this.target.path ?? ""}\n${this.window.name}`;
+    return `${this.target.pid ?? ""}\n${this.target.path || this.window.name}`;
   }
 
   /** Did the last keys in the working window select everything (Ctrl+A)? Text typed at the caret then replaces it all. */
   private get allSelected(): boolean {
-    return this.keyed.selectAll && this.keyed.window === this.windowKey;
+    return this.keyed.selected === "all" && this.keyed.window === this.windowKey;
   }
 
   /**
@@ -862,20 +989,38 @@ export class Worker {
   }
 
   /** Element `id` as the policy and the audit log see it: its name (or the label beside it), and whether the reader found it secret. */
-  private elementOf(id: number, n: Pick<AxNode, "role" | "name" | "secret">): Focus {
-    return { role: n.role, name: n.name || this.labels.get(id) || "", ...(n.secret ? { secret: true } : {}) };
+  private elementOf(id: number, n: Pick<AxNode, "role" | "name" | "secret" | "grid" | "parent">): Focus {
+    return { role: n.role, name: n.name || this.labels.get(id) || "", ...(n.secret ? { secret: true } : {}), ...cellOf(n, p => this.known.get(p)) };
   }
 
-  /** A field, for typedIn: its window (process, and path or else title) and its role and name (or the label beside it). */
+  /** A field, for typedIn: its window (windowKey: process, and path or else title) and its role and name (or the label beside it). */
   private fieldOf(element: Focus | undefined): string {
-    return [this.target.pid ?? "", this.target.path || this.window.name, element?.role ?? "", element?.name ?? ""].join("\n");
+    return [this.windowKey, element?.role ?? "", element?.name ?? ""].join("\n");
   }
 
-  /** What this task has typed into `field` now (its end), kept for the last TYPED_FIELDS fields. */
+  /**
+   * What this task has typed into `field` now (its end), kept for the last TYPED_FIELDS fields; what it added there
+   * goes on the window's record too (typedWindows), after what went into its other fields.
+   */
   private noteTyped(field: string, typed: string): void {
+    const had = this.typedIn.get(field) ?? "";
     this.typedIn.delete(field);
     if (typed) this.typedIn.set(field, typed.slice(-TYPED_MAX));
     if (this.typedIn.size > TYPED_FIELDS) this.typedIn.delete(this.typedIn.keys().next().value as string);
+    // What is new: the end added to what was there, or all of it where it replaced that (a Backspace adds nothing).
+    const added = typed.startsWith(had) ? typed.slice(had.length) : had.startsWith(typed) ? "" : typed;
+    if (!added) return;
+    const win = this.windowKey;
+    const w = this.typedWindows.get(win);
+    this.typedWindows.delete(win);
+    this.typedWindows.set(win, { field, text: (w ? `${w.text}${w.field === field ? "" : "\n"}${added}` : added).slice(-TYPED_MAX) });
+    if (this.typedWindows.size > TYPED_FIELDS) this.typedWindows.delete(this.typedWindows.keys().next().value as string);
+  }
+
+  /** What this task typed into the working window's fields, then `text` going into `field` (undefined when nothing went in before). */
+  private typedHere(field: string, text: string): string | undefined {
+    const w = this.typedWindows.get(this.windowKey);
+    return w ? `${w.text}${w.field === field ? "" : "\n"}${text}` : undefined;
   }
 
   /** After a question was up, the element must still be the one the user said yes to. */
@@ -913,6 +1058,8 @@ export class Worker {
     const f = await this.fresh(id);
     if (!("node" in f)) return f;
     const { node, element } = f;
+    // A spreadsheet's cell takes no text by accessibility: it is filled with the keyboard (typeInCell).
+    if (kind === "text" && isSheetCell(node)) return this.typeInCell(node.name, value ?? "", mode ?? "replace");
     const dialog = this.dialogOf(id);
     // Text typed at the caret right after Ctrl+A replaces everything selected: judged as "replace".
     const overSelection = kind === "text" && mode === "insert" && this.allSelected;
@@ -920,20 +1067,23 @@ export class Worker {
     // about acting in the app, whose answer would achieve nothing), or none when neither way can.
     const route = await this.route(kind, id, node, element, mode);
     if (this.isOver) return STOPPED();
-    if (route === "borrow") {
+    if (!("via" in route)) return route;
+    const { handler } = route;
+    if (route.via === "borrow") {
       this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: this.place ? "tier2-desk" : "tier3", kind, role: node.role, probed: true });
-      return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle");
+      return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler);
     }
-    if (route !== "tier1") return route;
     const judged: TextMode = overSelection ? "replace" : mode ?? "replace";
     // Text added to a field is judged after what this task typed there before.
     const field = this.fieldOf(element);
     const prior = kind === "text" && judged !== "replace" ? this.typedIn.get(field) ?? "" : "";
-    const req: ActionRequest = {
+    const base: ActionRequest = {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}) } : {}),
       ...(dialog ? { dialog } : {}),
     };
+    // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
+    const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
     const verdict = await this.authorize(req);
     if (verdict) return verdict;
     const changed = await this.stillSame(id, element);
@@ -975,7 +1125,7 @@ export class Worker {
         const next = this.withoutTier1(kind, node, msg.replace("background_unavailable: ", ""));
         if (next !== "borrow") return next;
         this.d.log.info("router.escalate", { task: this.spec.id, from: "tier1", to: this.place ? "tier2-desk" : "tier3", kind, role: node.role });
-        return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle");
+        return this.cursorAct(kind === "text" ? "cursor_text" : "cursor_click", id, node, value, mode, overSelection, kind === "toggle", handler);
       }
       // A slow app may still carry out a request after Ember stopped waiting for it.
       if (/did not answer/.test(msg)) return fail("The app didn't answer in time, so it's unknown whether this happened. Call perceive_window to check before trying again.");
@@ -988,15 +1138,17 @@ export class Worker {
   }
 
   /**
-   * How `kind` can be done on element `id`, found out before anything is asked: "tier1" (by accessibility; also when
-   * the helper can't tell, and then the mouse is borrowed if it can't after all), "borrow" (the mouse is the only
-   * way), or the tool result when neither can.
+   * How `kind` can be done on element `id`, found out before anything is asked: via "tier1" (by accessibility; also
+   * when the helper can't tell, and then the mouse is borrowed if it can't after all), via "borrow" (the mouse is the
+   * only way), or the tool result when neither can. For a click, `handler`: the control around the element that the
+   * click goes to, when the helper found one.
    */
-  private async route(kind: ActionKind, id: number, node: AxNode, element: Focus, mode?: TextMode): Promise<"tier1" | "borrow" | ToolResultObject> {
-    if ((kind !== "click" && kind !== "toggle" && kind !== "text" && kind !== "value") || typeof this.sidecar.canDo !== "function") return "tier1";
+  private async route(kind: ActionKind, id: number, node: AxNode, element: Focus, mode?: TextMode): Promise<{ via: "tier1" | "borrow"; handler?: Handler } | ToolResultObject> {
+    if ((kind !== "click" && kind !== "toggle" && kind !== "text" && kind !== "value") || typeof this.sidecar.canDo !== "function") return { via: "tier1" };
     const insert = kind === "text" && mode === "insert";
     const can = await this.sidecar.canDo(id, kind, insert).catch(() => null);
-    if (!can || can.tier1) return "tier1";
+    const handler = (kind === "click" || kind === "toggle") && can?.handler ? { role: String(can.handler.role), name: String(can.handler.name ?? "") } : undefined;
+    if (!can || can.tier1) return { via: "tier1", ...(handler ? { handler } : {}) };
     const next = this.withoutTier1(kind, node, can.why ?? "");
     if (next !== "borrow") {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, error: `background_unavailable: ${can.why ?? ""}` });
@@ -1007,7 +1159,24 @@ export class Worker {
     if (insert && can.windowActive === true && can.focused === false) {
       return fail(`Ember can't put the caret in the right place in element ${id} with the mouse. Use mode "append" or "replace", or ask the user to click where the text should go.`);
     }
-    return "borrow";
+    return { via: "borrow", ...(handler ? { handler } : {}) };
+  }
+
+  /**
+   * What a click on `element` is judged as (`req`, the request about it): the control around it that the click goes to
+   * (`handler`: Chromium hands a click on a link's text to the link, the mouse on a row's label clicks the row), by its
+   * name or else by what was clicked; or what was clicked, where only that is risky (or never done). The user is asked
+   * about whichever is, so it is risky if either is.
+   */
+  private clickJudged(req: ActionRequest, element: Focus, handler?: Handler): Focus {
+    if (!handler) return element;
+    const around: Focus = { role: handler.role, name: handler.name || element.name };
+    // Judged as a click by accessibility on Ember's desk: risky or never, whatever the grant (not counted again).
+    const weight = (el: Focus) => {
+      const d = this.d.policy.recheck({ ...req, kind: "click", element: el, onDesk: true, goal: this.userWords, readFrom: [...this.read.values()], windowId: this.windowId });
+      return d.verdict === "deny" ? 2 : d.risky ? 1 : 0;
+    };
+    return weight(element) > weight(around) ? element : around;
   }
 
   /**
@@ -1021,15 +1190,17 @@ export class Worker {
     if (borrowable && kind === "text") {
       return fail(`This element (${q(node.role, 40)}) doesn't take text by accessibility, and it isn't a text field Ember may type into with the keyboard (there Ctrl+A and Delete could hit far more than it). Tell the user in finish_task.`);
     }
+    // A spreadsheet's cell that takes no number this way takes it typed: type_text fills a cell by its address.
+    if (kind === "value" && isSheetCell(node)) return fail(`Cell ${q(node.name, 20)} takes no number by accessibility: use type_text with cell ${q(node.name, 20)} and the number as text.`);
     return fail(`The app can't do this by accessibility (${q(why, 200)}). This can't be done without the mouse; tell the user in finish_task.`);
   }
 
   /**
    * Tier 3: borrow the mouse (and keyboard) for one action, with the user's OK. `overSelection`: Ctrl+A selected
    * everything before this text goes in at the caret (it is judged as replacing it all). `toggle`: the click turns a
-   * switch `value` ("on" or "off").
+   * switch `value` ("on" or "off"). `handler`: the control around the element that the click goes to (see clickJudged).
    */
-  private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace", overSelection = false, toggle = false): Promise<ToolResultObject> {
+  private async cursorAct(kind: "cursor_click" | "cursor_text", id: number, node: AxNode, value?: string, mode: TextMode = "replace", overSelection = false, toggle = false, handler?: Handler): Promise<ToolResultObject> {
     const text = value ?? "";
     // On the user's screen, text goes in by paste: typed keys depend on their keyboard layout (and Caps Lock). On the desk it is typed.
     // No text (clearing a field: Ctrl+A and Delete do it) needs no clipboard, so the user's is never touched for it.
@@ -1043,9 +1214,26 @@ export class Worker {
     const prior = kind === "cursor_text" && judged !== "replace" ? this.typedIn.get(field) ?? "" : "";
     // "OK" in a dialog is judged by what the dialog says, as it is without the mouse (this may be the only question).
     const dialog = this.dialogOf(id);
-    const verdict = await this.authorize({ taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
+    const clicks = !(kind === "cursor_text" && mode === "insert");
+    // What refuses the click (a sliver of it shows, it is outside its window, something else is at the spot) refuses it
+    // before the user is asked, not after (and again once its window is in front).
+    if (clicks) {
+      const pre = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+      if (this.isOver) return STOPPED();
+      try {
+        const spot = this.landingSpot(id, node, element, pre);
+        await this.mustAimAt(id, pre!, spot, spot.shown);
+      } catch (err) {
+        if (err instanceof BorrowStopped) return STOPPED();
+        const msg = err instanceof Error ? err.message : String(err);
+        this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: false, tier: this.place ? 2 : 3, error: msg });
+        return fail(msg);
+      }
+    }
+    const base: ActionRequest = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}) } : {}),
-      ...(dialog ? { dialog } : {}) });
+      ...(dialog ? { dialog } : {}) };
+    const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
     if (verdict) return verdict;
     // Where it is now: the window may have moved or scrolled while the user decided.
     const live = await this.sidecar.readElement(id).catch(() => null);
@@ -1070,6 +1258,8 @@ export class Worker {
     // A password manager's copy: its clear timer may fire while Ember's text is on the clipboard, so it isn't put back.
     let passwordDropped = false;
     let result: ToolResultObject;
+    /** What the app said shows where the mouse clicked, as it clicked. */
+    let landedOn: PointElement | undefined;
     try {
       result = await this.withCursor(kind, element, async hand => {
         // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
@@ -1084,12 +1274,19 @@ export class Worker {
         // And where it is once its window is in front (Ember may have waited seconds for its turn and for the user to be still).
         const now = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
         const spot = this.landingSpot(id, node, element, now);
-        if (kind === "cursor_text" && mode === "insert") {
+        if (!clicks) {
           // A click would move the caret: "insert" goes where the caret already is, in the field that has the keyboard.
           if (!spot.focused) throw new Error(`Ember can't put the caret in the right place in element ${id} with the mouse. Use mode "append" or "replace", or ask the user to click where the text should go.`);
         } else {
-          await this.mustAimAt(id, now!, spot);
+          // The pointer goes there first, then where the element is is read again: LibreOffice (gtk3) reports places
+          // 25 px off until the pointer first moves over its window (and its hit test agrees with them).
           await hand.glideTo(spot.x, spot.y);
+          await sleep(POINTER_SETTLE_MS);
+          const there = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+          const again = this.landingSpot(id, node, element, there);
+          const aim = await this.mustAimAt(id, there!, again, again.shown);
+          if (Math.abs(aim.x - spot.x) >= 1 || Math.abs(aim.y - spot.y) >= 1) await hand.glideTo(aim.x, aim.y);
+          landedOn = aim.there;
           await hand.click();
         }
         if (kind !== "cursor_text") return;
@@ -1124,6 +1321,10 @@ export class Worker {
       }
     }
     if (kind === "cursor_text" && result.resultType === "success") this.noteTyped(field, prior + text);
+    // What the click hit, as the app said where the pointer was: not only the element meant.
+    if (landedOn && kind === "cursor_click" && result.resultType === "success") {
+      result = { ...result, textResultForLlm: `${result.textResultForLlm} The click landed on ${screenWord(landedOn.role)}${landedOn.name ? ` ${q(landedOn.name, 80)}` : ""}.` };
+    }
     if (!passwordDropped) return result;
     return { ...result, textResultForLlm: `${result.textResultForLlm} The user's clipboard held a password from their password manager, so Ember didn't put it back (its timer couldn't clear it again): tell the user it is no longer on the clipboard.` };
   }
@@ -1181,17 +1382,55 @@ export class Worker {
   }
 
   /**
-   * Before the user's mouse clicks or turns the wheel over element `id`: the app is asked what shows at `spot`, and
-   * when that is something else (a row scrolled almost out of its list, with a button below it), nothing is done.
-   * Where it can't tell (no answer, positions that don't compare as read), the mouse goes ahead.
+   * Before the user's mouse clicks or turns the wheel over element `id` (as it is `now`, aimed at `spot` in `shown`, the
+   * part of it that shows): the app is asked what shows at the spot. When that is something else (a row scrolled almost
+   * out of its list, with a button below it; a fixed header's button or a popover over it; another control inside it,
+   * such as a row's own "Remove" button), its left part (where a row's label is) and its middle are tried too, and
+   * when none shows it, nothing is done. Where the app can't tell (no answer; a web page in a HiDPI window, whose
+   * positions don't compare), the mouse goes ahead at `spot`. Returns the spot to use, and what shows there when the
+   * app said.
    */
-  private async mustAimAt(id: number, now: ElementInfo, spot: { x: number; y: number }): Promise<void> {
-    if (typeof this.perception.atPoint !== "function" || this.axScale !== 1 || this.target.pid == null || !this.target.path || !now.bounds) return;
-    const chain = await this.perception.atPoint(this.target, spot).catch(() => null);
-    if (this.isOver) throw new BorrowStopped();
-    if (!chain?.length || aimedAt(chain, now.role, now.bounds) !== "other") return;
-    const there = chain[chain.length - 1];
-    throw new Error(`Something else shows where element ${id} should be (${q(there.name || there.role, 60)} (${q(there.role, 40)})): it may be scrolled almost out of view, or covered. Nothing was done. Scroll it into view, then call perceive_window and try again.`);
+  private async mustAimAt(id: number, now: ElementInfo, spot: { x: number; y: number }, shown?: Bounds): Promise<{ x: number; y: number; there?: PointElement }> {
+    // The app reports k physical pixels per pixel (HiDPI); a Chromium page in a HiDPI window reports physical ones
+    // inside a frame that doesn't, and isn't asked.
+    const k = typeof this.sidecar.scaleOf === "function" ? this.sidecar.scaleOf(id) : 1;
+    if (typeof this.perception.atPoint !== "function" || k !== this.axScale || this.target.pid == null || !this.target.path || !now.bounds) return spot;
+    const ancestors = this.ancestorsOf(id);
+    const v = shown ?? now.bounds;
+    const spots = [spot, { x: v.x + Math.min(12, v.width / 4), y: spot.y }, { x: v.x + v.width / 2, y: spot.y }]
+      .filter((s, i, all) => all.findIndex(o => Math.abs(o.x - s.x) < 3) === i);
+    let other: PointElement | undefined;
+    for (const s of spots) {
+      const chain = await this.perception.atPoint(this.target, s, k).catch(() => null);
+      if (this.isOver) throw new BorrowStopped();
+      if (!chain?.length) return spot;
+      const seen = aimedAt(chain, now.role, now.bounds, ancestors);
+      if (seen !== "other") return { ...s, ...(seen === "yes" ? { there: chain[chain.length - 1] } : {}) };
+      other ??= chain[chain.length - 1];
+      // An open menu over it (the app's answer starts in it): a click beside the menu would only close it.
+      if (/^(menu|window)$/.test(chain[0].role)) {
+        const what = `${q(other.name || other.role, 60)} (${q(other.role, 40)})`;
+        throw new Error(`An open menu or popup lies over element ${id} (${what} is where the mouse would click): a click there would choose from it, and beside it would only close it. Nothing was done. Choose from the menu if that is the step, or close it with press_keys "Escape", then call perceive_window.`);
+      }
+    }
+    const what = `${q(other!.name || other!.role, 60)} (${q(other!.role, 40)})`;
+    if (other!.bounds && insideOf(other!.bounds, now.bounds)) {
+      throw new Error(`Another control inside element ${id} is where the mouse would click (${what}), and the click would work it instead, so nothing was done. If that control is what you mean, use its own id; otherwise tell the user in finish_task.`);
+    }
+    throw new Error(`Something else shows where element ${id} should be (${what}): it may be scrolled almost out of view, or covered. Nothing was done. Scroll it into view, then call perceive_window and try again.`);
+  }
+
+  /** The elements round element `id` in the latest read (its parent first). */
+  private ancestorsOf(id: number): AxNode[] {
+    const out: AxNode[] = [];
+    let p = this.known.get(id)?.parent ?? null;
+    for (let i = 0; p !== null && i < 40; i++) {
+      const n = this.known.get(p);
+      if (!n) break;
+      out.push(n);
+      p = n.parent;
+    }
+    return out;
   }
 
   /**
@@ -1223,16 +1462,101 @@ export class Worker {
     }
   }
 
-  /** The element with the keyboard in the working window (undefined: none it reports), or "blocked" for a private window. `wait`: give a window just brought to the front a moment to say. */
-  private async focusIn(wait = false): Promise<Focus | undefined | "blocked"> {
+  /**
+   * Fills a spreadsheet's cell (`address`, "B5") with the keyboard, empty or not, with one question. In one borrow the
+   * cell cursor goes there with the arrow keys (from the cell with the keyboard, or from A1 by Ctrl+Home, whichever
+   * is nearer), Ember checks that the cell with the keyboard is that one and holds what the question said, then types
+   * over it (typing over a selected cell replaces it: no Ctrl+A), presses Delete (drops what LibreOffice's AutoInput
+   * offers to complete it with) and Enter. Nothing is typed when the cell can't be reached, or holds something the
+   * question didn't say would go (its text is noted: asked again, the question says it). Empty text clears the cell.
+   */
+  private async typeInCell(address: string, text: string, mode: TextMode): Promise<ToolResultObject> {
+    const cell = address.replace(/\$/g, "").toUpperCase();
+    const place = CELL_ARG.test(address) ? cellPlace(cell) : null;
+    if (!place) return fail(`${q(address, 20)} isn't a cell's address (like B5).`);
+    if (this.place?.userInControl()) return this.deskTaken("cursor_text");
+    if (mode !== "replace") return fail(`In a spreadsheet's cell Ember replaces what the cell holds: call type_text with mode "replace" and the cell's whole new content.`);
+    if (/[\n\r\t]/.test(text)) return fail("A cell takes one line: a line break or tab would move to another cell. Put each value in its own cell.");
+    if (!typeableText(text)) return fail("Ember fills a cell with the keyboard, and can only type plain ASCII letters, digits and punctuation there. Tell the user in finish_task.");
+    if (!this.place && !this.d.cursor) return fail("Filling a cell needs the keyboard, which isn't available here. Try open_on_desk.");
+    if (![...this.known.values()].some(n => isSheetCell(n))) return fail("Your latest perceive_window shows no spreadsheet cells. Call perceive_window in the spreadsheet's window first.");
+    if (place.col + place.row - 1 > CELL_STEPS_MAX) return fail(`Cell ${cell} is too far from A1 for Ember to reach with the arrow keys (it presses ${CELL_STEPS_MAX} at most). Tell the user in finish_task.`);
+    // What it holds: as the latest read listed it, or as Ember found it before; unknown for a cell not listed (empty, or scrolled away).
+    const listed = [...this.known.values()].find(n => isSheetCell(n) && n.name.replace(/\$/g, "") === cell);
+    const seenKey = `${this.windowKey}\n${cell}`;
+    const expected = listed && !listed.secret ? listed.text ?? "" : this.cellsSeen.get(seenKey);
+    if (listed?.secret) return fail(`Cell ${cell} holds something secret: Ember doesn't type there.`);
+    const element: Focus = { role: "table cell", name: cell };
+    const verdict = await this.authorize({ taskId: this.spec.id, kind: "cursor_text", app: this.window.app, window: this.window.name, element, value: text, mode: "replace",
+      ...(expected !== undefined ? { currentText: expected } : {}) });
+    if (verdict) return verdict;
+    const steps = (a: { col: number; row: number }, b: { col: number; row: number }) => Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+    const result = await this.withCursor("cursor_text", element, async hand => {
+      // Text the keyboard layout can't type is refused before any key goes in.
+      if (typeof hand.checkTyping === "function") hand.checkTyping(text);
+      const start = await this.cellWithKeyboard();
+      if (!start) throw new Error("No cell of the spreadsheet has the keyboard in that window (a cell may be being edited, or a dialog is open), so nothing was typed. Call perceive_window.");
+      let at = cellPlace(start.name) ?? { col: 0, row: 1 };
+      if (steps(at, place) > place.col + place.row - 1) { await hand.keys("ctrl+Home"); at = { col: 0, row: 1 }; }
+      for (let i = 0; i < Math.abs(place.col - at.col); i++) await hand.keys(place.col > at.col ? "Right" : "Left");
+      for (let i = 0; i < Math.abs(place.row - at.row); i++) await hand.keys(place.row > at.row ? "Down" : "Up");
+      const there = await this.cellWithKeyboard(cell);
+      if (there?.name !== cell) {
+        throw new Error(`Ember couldn't reach ${cell} with the arrow keys (hidden rows or columns, or merged cells, may be in the way): the cell cursor is on ${there ? there.name : "no cell Ember can see"} now, and nothing was typed. Tell the user in finish_task.`);
+      }
+      if (there.text !== (expected ?? "")) {
+        this.cellsSeen.set(seenKey, there.text);
+        throw new Error(`${cell} holds ${q(there.text, 80)}${expected === undefined ? "" : ` now, not ${q(expected, 40)}`}, which the user wasn't asked about, so nothing was typed. If it should be replaced, call type_text again: the question will say what goes.`);
+      }
+      if (!text) { await hand.keys("Delete"); return; }
+      await hand.type(text);
+      await hand.keys("Delete");
+      await hand.keys("Return");
+    });
+    if (result.resultType === "success") {
+      this.cellsSeen.delete(seenKey);
+      this.noteTyped(this.fieldOf(element), text);
+      return done(`Done: ${text ? `typed ${q(text, 80)} into ${cell} and pressed Enter (the cell cursor moved on)` : `cleared ${cell}`}. Call perceive_window to see what the cell shows now.`);
+    }
+    return result;
+  }
+
+  /**
+   * The spreadsheet cell with the keyboard in the working window (its address and what it holds), or null. `want`: the
+   * cell it should be by now: the app is given a moment to get there (a look may come before the last arrow key is seen).
+   */
+  private async cellWithKeyboard(want?: string): Promise<{ name: string; text: string } | null> {
+    for (let i = 0; ; i++) {
+      const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+      if (this.isOver) throw new BorrowStopped();
+      const f = seen?.window && !seen.blocked ? focusedElement(seen.nodes) : null;
+      const cell = f && isSheetCell(f) && !f.secret ? { name: f.name.replace(/\$/g, ""), text: f.text ?? "" } : null;
+      if (!want || cell?.name === want || i >= 5) return cell;
+      await sleep(100);
+    }
+  }
+
+  /**
+   * The element with the keyboard in the working window (undefined: none it reports), "blocked" for a private window,
+   * "gone" for one that can't be read (closed), "busy" for an app that didn't answer. `wait`: give a window just brought
+   * to the front a moment to say. Notes what the focused field holds and what is selected in it (focusText,
+   * focusSelection): an empty field's text is "" (the reader leaves it out), and its selection is "" when nothing is
+   * selected, for a field whose text the reader reads.
+   */
+  private async focusIn(wait = false): Promise<Focus | undefined | "blocked" | "gone" | "busy"> {
     for (let i = 0; ; i++) {
       // A quick look (its ids aren't acted on): the ids of the latest perceive_window stay known however many keys go in.
       const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
       if (seen?.blocked) return "blocked";
-      const f = seen ? focusedElement(seen.nodes) : null;
-      this.focusText = f && !f.secret ? f.text : undefined;
-      if (seen && f) return { role: f.role, name: f.name || inferLabels(seen.nodes).get(f.id) || "", ...(f.secret ? { secret: true } : {}) };
-      if (!wait || i >= 2 || this.isOver) return undefined;
+      const f = seen?.window ? focusedElement(seen.nodes) : null;
+      const read = !!f && !f.secret && READ_TEXT_ROLES.has(f.role);
+      this.focusText = f && !f.secret ? f.text ?? (read ? "" : undefined) : undefined;
+      this.focusSelection = read ? f!.selection ?? "" : undefined;
+      if (seen?.window && f) {
+        const byId = (id: number) => seen.nodes.find(n => n.id === id);
+        return { role: f.role, name: f.name || inferLabels(seen.nodes).get(f.id) || "", ...(f.secret ? { secret: true } : {}), ...cellOf(f, byId) };
+      }
+      if (!wait || i >= 2 || this.isOver) return !seen ? "busy" : !seen.window ? (seen.busy ? "busy" : "gone") : undefined;
       await sleep(150);
     }
   }
@@ -1241,37 +1565,49 @@ export class Worker {
    * Keys go to whatever has the keyboard in the window, so the policy decides on that element (never a secret field),
    * and again once the window is in front, on what has the keyboard then: when that is something else, nothing is
    * pressed and the user is asked about it. Enter or Space with nothing Ember can see focused isn't pressed at all.
+   * Nothing is asked where nothing could be pressed: on a desk the user has taken over, or in a window that is gone.
    */
   private async pressKeys(keys: string): Promise<ToolResultObject> {
+    if (this.place?.userInControl()) return this.deskTaken("keys");
     const seen = await this.focusIn();
     if (this.isOver) return STOPPED();
     if (seen === "blocked") {
       return this.refuse("keys", "private window (never-look list or a password prompt)", "This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.", { value: keys });
     }
+    if (seen === "busy") return fail(BUSY);
+    if (seen === "gone") return fail("That window can't be read (it is closed, or exposes no accessibility information), so nothing was pressed. Use list_windows.");
     const activating = isActivatingKey(keys);
     // Letters and digits typed key by key are judged as typed text (text read elsewhere is asked about): with what the
-    // field holds (the caret may be anywhere in it) and after what this task typed there before. After Ctrl+A a key
-    // replaces everything selected.
+    // field holds (the caret may be anywhere in it) and after what this task typed there before. A key that types
+    // replaces what is selected: the policy judges the selection the screen reader tells, and what the keys selected.
     const here = this.windowKey;
-    if (this.keyed.window !== here) this.keyed = { window: here, selectAll: false };
+    if (this.keyed.window !== here) this.keyed = { window: here, selected: null };
     const char = typedChar(keys);
-    let element = seen;
+    let element: Focus | undefined = seen;
     for (let round = 0; round < 3; round++) {
       const before = this.typedIn.get(this.fieldOf(element)) ?? "";
+      const selected = this.keyed.selected;
       const req: ActionRequest = {
         taskId: this.spec.id, kind: "keys", app: this.window.app, window: this.window.name, element, value: keys,
-        ...(char !== null ? { typed: (this.keyed.selectAll ? "" : before) + char } : {}),
+        ...(char !== null ? { typed: (selected === "all" ? "" : before) + char } : {}),
         ...(this.focusText !== undefined ? { currentText: this.focusText } : {}),
-        ...(this.keyed.selectAll ? { afterSelectAll: true } : {}),
+        ...(this.focusSelection !== undefined ? { selection: this.focusSelection } : {}),
+        ...(selected === "all" ? { afterSelectAll: true } : selected === "some" ? { afterSelecting: true } : {}),
       };
-      const verdict = await this.authorize(req);
+      // On the user's screen, once they said yes to a key that only moves here, more of those go without a question.
+      const moves = !this.place && onlyMoves(keys, element);
+      const covered = moves && this.moving === here;
+      const verdict = await this.authorize(req, { covered, ...(moves && !covered ? { note: "Keys that only move there after this one won't be asked about." } : {}) });
       if (verdict) return verdict;
+      const said = this.asked;
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
       const result = await this.withCursor("keys", approved, async hand => {
-        const now = await this.focusIn(approved !== undefined || activating);
-        if (now === "blocked") throw new Error("That window is private now (a password prompt, or on the never-look list), so nothing was pressed.");
+        const look = await this.focusIn(approved !== undefined || activating);
+        if (look === "blocked") throw new Error("That window is private now (a password prompt, or on the never-look list), so nothing was pressed.");
+        if (look === "gone" || look === "busy") throw new Error(`That window ${look === "gone" ? "can't be read any more (it may have closed)" : "isn't answering"}, so nothing was pressed. Call perceive_window.`);
+        const now = look;
         // Nothing known before and something harmless now is what the user said yes to ("I can't tell what it will activate").
         if (!sameFocus(now, approved) && !(approved === undefined && now && this.harmlessKeys({ ...req, element: now }))) {
           turn.moved = { to: now };
@@ -1284,10 +1620,12 @@ export class Worker {
       if (!turn.moved) {
         if (result.resultType === "success") {
           const into = this.fieldOf(turn.into ?? approved);
-          const next = afterKeys(keys, this.typedIn.get(into) ?? "", this.keyed.selectAll);
-          this.keyed = { window: here, selectAll: next.selectAll };
+          const next = afterKeys(keys, this.typedIn.get(into) ?? "", this.keyed.selected);
+          this.keyed = { window: here, selected: next.selected };
           this.noteTyped(into, next.typed);
         }
+        // The user's yes to a key that only moves covers the next ones here; any other key (or one not pressed) ends that.
+        this.moving = result.resultType === "success" && moves && (covered || said) ? here : null;
         return result;
       }
       element = turn.moved.to;
@@ -1305,33 +1643,29 @@ export class Worker {
     if (!("node" in f)) return f;
     const { node, element } = f;
     if (!node.bounds) return fail(`Element ${id} has no position on screen. Call perceive_window.`);
-    const verdict = await this.authorize({ taskId: this.spec.id, kind: "scroll", app: this.window.app, window: this.window.name, element, value: direction });
-    if (verdict) return verdict;
-    return this.withCursor("scroll", element, async hand => {
-      // Where it is now, once its window is in front (bounds read earlier may scroll something else): in the part of
-      // it that shows (a list taller than its window shows only in it).
+    const blind = (i: number, why: string) => new Error(i === 0
+      ? `Ember couldn't see what the wheel would land on there (${why}), so nothing was scrolled. Call perceive_window and try again; if it happens again, tell the user in finish_task.`
+      : `Scrolled ${i} of ${steps} steps, then stopped: Ember couldn't see what would come under the wheel next (${why}). Call perceive_window.`);
+    const look = async (i: number) => {
+      // Its ids aren't acted on: those of the latest perceive_window stay known, however many notches are read.
+      const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
+      if (!seen || seen.blocked || seen.busy) throw blind(i, "the app didn't answer in time");
+      return seen;
+    };
+    type Seen = Awaited<ReturnType<typeof look>>;
+    /**
+     * Where the wheel goes, read now (bounds read earlier may scroll something else): in the part of the element that
+     * shows (a list taller than its window shows only in it), and what Ember can see there (it doesn't scroll over
+     * what it can't). `direct`: the wheel stays over the element itself (a control it changes, a scroll bar).
+     */
+    const plan = async () => {
       const now = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
       const landed = this.landingSpot(id, node, element, now);
       let spot: { x: number; y: number } = { x: landed.x, y: landed.y };
-      // Where the wheel goes: what Ember can't see there, it doesn't scroll over.
       let region = landed.shown;
-      const blind = (i: number, why: string) => new Error(i === 0
-        ? `Ember couldn't see what the wheel would land on there (${why}), so nothing was scrolled. Call perceive_window and try again; if it happens again, tell the user in finish_task.`
-        : `Scrolled ${i} of ${steps} steps, then stopped: Ember couldn't see what would come under the wheel next (${why}). Call perceive_window.`);
-      const look = async (i: number) => {
-        // Its ids aren't acted on: those of the latest perceive_window stay known, however many notches are read.
-        const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
-        if (!seen || seen.blocked || seen.busy) throw blind(i, "the app didn't answer in time");
-        return seen;
-      };
-      const readAll = async (i: number, got?: Awaited<ReturnType<typeof look>>) => {
-        const seen = got ?? await look(i);
-        if (!seesInside(seen.nodes, region)) throw blind(i, "the app reports nothing there");
-        return seen;
-      };
       // GTK 3's tab list holds its pages: the wheel there scrolls the page showing, which is checked notch by notch
       // like any page (nothing over it is listed on its own, so this is the element a model picks to scroll it).
-      let tabs: Awaited<ReturnType<typeof look>> | undefined;
+      let tabs: Seen | undefined;
       if (node.role === "page tab list") {
         const seen = await look(0);
         const page = tabPage(seen.nodes, now!.bounds!, region);
@@ -1342,20 +1676,16 @@ export class Worker {
         }
       }
       // The wheel changes a combo box, slider or spin button (or a tab bar's tabs) under the pointer: only the one
-      // asked for, once the app says it shows there.
-      if (WHEEL_VALUE_ROLES.has(node.role) && !tabs) {
-        await this.mustAimAt(id, now!, spot);
-        await hand.glideTo(spot.x, spot.y);
-        await hand.scroll(direction, steps);
-        return;
+      // asked for, once the app says it shows there. A scroll bar stays put while what it scrolls moves.
+      if ((WHEEL_VALUE_ROLES.has(node.role) && !tabs) || node.role === "scroll bar") {
+        const aim = await this.mustAimAt(id, now!, spot, landed.shown);
+        return { direct: true as const, spot: { x: aim.x, y: aim.y } };
       }
-      const first = await readAll(0, tabs);
+      const first = await readAll(0, region, tabs);
       // After that, each notch is checked at the wheel's spot alone (a few calls, where a read of the window takes
       // hundreds while the user's mouse is held), in a window whose positions compare as read (scale 1).
       const byPoint = typeof this.perception.atPoint === "function" && (first.axScale ?? 1) === 1 && this.target.pid != null && !!this.target.path;
-      // Otherwise every notch reads the window, and a read that left part of it out can't be trusted.
-      const whole = (seen: { truncated: unknown }, i: number) => { if (!byPoint && seen.truncated) throw blind(i, "the window has more in it than Ember reads at once"); };
-      whole(first, 0);
+      if (!byPoint && first.truncated) throw blind(0, "the window has more in it than Ember reads at once");
       const found = wheelControls(first.nodes);
       const vertical = direction === "up" || direction === "down";
       // Content moves along the scroll, so the wheel goes in a lane across it that none of those on screen touches
@@ -1364,42 +1694,74 @@ export class Worker {
       const moving = tabs ? found.filter(n => n.role !== "page tab list" || overlap(n.bounds!, region)) : found;
       const lane = clearLane(region, moving.map(n => n.bounds!), vertical, this.frame);
       if (lane !== null) spot = vertical ? { x: lane, y: spot.y } : { x: spot.x, y: lane };
-      /** What the wheel would change at its spot after `i` notches, if anything. */
-      const underWheel = async (i: number): Promise<PointElement | undefined> => {
-        const before = i === 0 ? found.find(n => isUnder(spot, n.bounds!)) : undefined;
-        if (!byPoint) {
-          if (i === 0) return before;
-          const seen = await readAll(i);
-          whole(seen, i);
-          return wheelControls(seen.nodes).find(n => isUnder(spot, n.bounds!));
-        }
-        const ask = () => this.perception.atPoint(this.target, spot).catch(() => null);
-        const t0 = Date.now();
-        let chain = await ask();
-        // A slow answer (the helper was busy with another read) may tell of the page as it was early in that wait,
-        // while it still moved after the last notch; and a notch that long after the last isn't held to what that
-        // one scrolled (Chromium): it goes to whatever is under the wheel then. So the app is asked again.
-        if (chain && i > 0 && Date.now() - t0 > NOTCH_LATCH_MS) chain = await ask();
-        if (!chain) throw blind(i, "the app didn't answer in time");
-        if (!chain.length) throw blind(i, "the app reports nothing there");
-        const under = before ?? wheelTarget(chain, spot);
-        if (under || !chain[chain.length - 1].empty) return under;
-        // The app's answer ended on an empty container (Chromium's can stop on an empty panel lying over its page):
-        // this notch is checked by a read of the window instead, which must hold all of it.
-        const seen = i === 0 ? first : await readAll(i);
+      return { direct: false as const, spot, region, first, byPoint, found };
+    };
+    const readAll = async (i: number, region: Bounds, got?: Seen) => {
+      const seen = got ?? await look(i);
+      if (!seesInside(seen.nodes, region)) throw blind(i, "the app reports nothing there");
+      return seen;
+    };
+    type Plan = Exclude<Awaited<ReturnType<typeof plan>>, { direct: true }>;
+    /** What the wheel would change at its spot after `i` notches, if anything. */
+    const underWheel = async (p: Plan, i: number): Promise<PointElement | undefined> => {
+      const spot = p.spot;
+      const before = i === 0 ? p.found.find(n => isUnder(spot, n.bounds!)) : undefined;
+      if (!p.byPoint) {
+        if (i === 0) return before;
+        const seen = await readAll(i, p.region);
+        // A read that left part of the window out can't be trusted.
         if (seen.truncated) throw blind(i, "the window has more in it than Ember reads at once");
         return wheelControls(seen.nodes).find(n => isUnder(spot, n.bounds!));
-      };
+      }
+      const ask = () => this.perception.atPoint(this.target, spot).catch(() => null);
+      const t0 = Date.now();
+      let chain = await ask();
+      // A slow answer (the helper was busy with another read) may tell of the page as it was early in that wait,
+      // while it still moved after the last notch; and a notch that long after the last isn't held to what that
+      // one scrolled (Chromium): it goes to whatever is under the wheel then. So the app is asked again.
+      if (chain && i > 0 && Date.now() - t0 > NOTCH_LATCH_MS) chain = await ask();
+      if (!chain) throw blind(i, "the app didn't answer in time");
+      if (!chain.length) throw blind(i, "the app reports nothing there");
+      const under = before ?? wheelTarget(chain, spot);
+      if (under || !chain[chain.length - 1].empty) return under;
+      // The app's answer ended on an empty container (Chromium's can stop on an empty panel lying over its page):
+      // this notch is checked by a read of the window instead, which must hold all of it.
+      const seen = i === 0 ? p.first : await readAll(i, p.region);
+      if (seen.truncated) throw blind(i, "the window has more in it than Ember reads at once");
+      return wheelControls(seen.nodes).find(n => isUnder(spot, n.bounds!));
+    };
+    const landsOn = (under: PointElement, i: number) => {
+      const what = `${q(under.name || under.role, 60)} (${q(under.role, 40)})`;
+      return new Error(i === 0
+        ? `The wheel would land on ${what}, which scrolling would change, so nothing was scrolled. Scroll another element, or use set_value or choose_option for that control.`
+        : `Scrolled ${i} of ${steps} steps, then stopped: ${what} came under the wheel, and scrolling would change it. Call perceive_window.`);
+    };
+    // What would stop it (only a sliver shows, it is outside its window, Ember can't see under the wheel, a control the
+    // wheel would change is there) stops it before the user is asked; and again once its window is in front.
+    try {
+      const p = await plan();
+      const under = p.direct ? undefined : await underWheel(p, 0);
+      if (under) throw landsOn(under, 0);
+    } catch (err) {
+      if (err instanceof BorrowStopped || this.isOver) return STOPPED();
+      const msg = err instanceof Error ? err.message : String(err);
+      this.audit({ event: "action", task: this.spec.id, kind: "scroll", app: this.window.app, window: this.window.name, element, ok: false, tier: this.place ? 2 : 3, value: direction, error: msg });
+      return fail(msg);
+    }
+    const verdict = await this.authorize({ taskId: this.spec.id, kind: "scroll", app: this.window.app, window: this.window.name, element, value: direction });
+    if (verdict) return verdict;
+    return this.withCursor("scroll", element, async hand => {
+      const p = await plan();
+      if (p.direct) {
+        await hand.glideTo(p.spot.x, p.spot.y);
+        await hand.scroll(direction, steps);
+        return;
+      }
       for (let i = 0; i < steps; i++) {
         if (i > 0) await sleep(NOTCH_SETTLE_MS);
-        const under = await underWheel(i);
-        if (under) {
-          const what = `${q(under.name || under.role, 60)} (${q(under.role, 40)})`;
-          throw new Error(i === 0
-            ? `The wheel would land on ${what}, which scrolling would change, so nothing was scrolled. Scroll another element, or use set_value or choose_option for that control.`
-            : `Scrolled ${i} of ${steps} steps, then stopped: ${what} came under the wheel, and scrolling would change it. Call perceive_window.`);
-        }
-        if (i === 0) await hand.glideTo(spot.x, spot.y);
+        const under = await underWheel(p, i);
+        if (under) throw landsOn(under, i);
+        if (i === 0) await hand.glideTo(p.spot.x, p.spot.y);
         await hand.scroll(direction, 1);
       }
     });
@@ -1568,23 +1930,40 @@ export class Worker {
     this.d.audit.write(e);
   }
 
-  /** null when the action may go ahead; otherwise the tool result to return. */
-  private async authorize(request: ActionRequest): Promise<ToolResultObject | null> {
+  /**
+   * null when the action may go ahead; otherwise the tool result to return. `note`: added to the question, if one is
+   * asked. `covered`: a key that only moves, after the user said yes to one in this window: it goes without a question
+   * unless something else makes it need one (it would be asked on Ember's desk too, or every step is checked).
+   */
+  private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
-    // Anything but a key ends a Ctrl+A selection (a click moves the caret); what was typed into a field stays with it.
-    if (request.kind !== "keys") this.keyed = { window: "", selectAll: false };
-    const req = { ...request, onDesk: !!this.place, goal: this.userWords, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
+    // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
+    // caret). A click by accessibility (a toolbar button), a scroll or a look move no caret: the selection stays.
+    if (request.kind === "text" || request.kind === "cursor_text" || (request.kind === "cursor_click" && TYPING_ROLES.has(request.element?.role ?? ""))) {
+      this.keyed = { window: "", selected: null };
+    }
+    if (request.kind !== "keys") this.moving = null;
+    // Text going into a field is judged after what this task typed into the window's other fields too.
+    const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "") ?? "" : "";
+    const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
+    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
-    // After something on screen tried to steer Ember, nothing more happens without the user's click, and every
-    // question says why (one that would have been asked anyway too; the step that was flagged says so itself).
+    // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
+    // nothing more happens without the user's click, and every question says why (one that would have been asked
+    // anyway too; the step that was flagged says so itself).
     if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
-      const prompt = `${decision.prompt.replace(/\?$/, "")}? (I'm checking each step: something on screen asked me to do something you didn't.)`;
+      const prompt = `${decision.prompt} (I'm checking each step: a step came up that you didn't ask for.)`;
       decision = decision.verdict === "allow"
-        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; something on screen asked for an action you didn't`, prompt }
+        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; a step came up that the user didn't ask for`, prompt }
         : { ...decision, everyTime: true, remember: false, prompt };
+    }
+    if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
+      decision = { ...decision, verdict: "allow", tier: "reversible", reason: "a key that only moves, after the user said yes to moving there" };
+    } else if (o.note && decision.verdict === "confirm") {
+      decision = { ...decision, prompt: `${decision.prompt} ${o.note}` };
     }
     // "Allow" earlier in this task covers ordinary steps in that app, but not once something on screen tried to steer Ember.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted && this.allowedApps.has(req.app.toLowerCase());
