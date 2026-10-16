@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
+  NEVER_LOOK_DEFAULTS, dayLabel, describeEntry, forUser, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -194,5 +194,21 @@ describe("page styles that keep things readable and reachable", () => {
     expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
     expect(home).toMatch(/\.fold > summary::before \{ content: "▸" \/ "";/);
     for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);
+  });
+});
+
+describe("What Ember did, review round 11", () => {
+  it("says why a step didn't work without what Ember's model was told to do next (UI11-4, PR11-4)", () => {
+    const t = "2026-10-16T12:00:00.000Z";
+    const failed = (error: string) => describeEntry({ t, event: "action", kind: "cursor_text", ok: false, element: { role: "table cell", name: "A6" }, app: "soffice", error })?.why;
+    expect(failed("Ember couldn't type into A6: A6 is protected (the sheet doesn't take changes there), so nothing was typed. Tell the user in finish_task. The cells after it (B6, A7) weren't typed."))
+      .toBe("Ember couldn't type into A6: A6 is protected (the sheet doesn't take changes there), so nothing was typed. The cells after it (B6, A7) weren't typed.");
+    expect(failed("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed. Call perceive_window and try again."))
+      .toBe("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed.");
+    expect(failed("Ember typed into B2. A cell may still be being edited: press Escape, call perceive_window, and try again.")).toBe("Ember typed into B2. A cell may still be being edited.");
+    expect(failed("background_unavailable: this app takes no text this way")).toBe("this app takes no text this way");
+    // A file name with underscores is the user's, and stays.
+    expect(forUser("Couldn't open my_report.txt.")).toBe("Couldn't open my_report.txt.");
+    expect(forUser("Call perceive_window and try again.")).toBeUndefined();
   });
 });

@@ -109,6 +109,24 @@ export function keyLabel(key: string): string {
   }).join("+");
 }
 
+/** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
+const TOOL_NAME = /\b(perceive_window|finish_task|press_keys|type_text|fill_cells|list_windows|switch_window|open_app|open_on_desk|wait_for_click|choose_option|read_element)\b/;
+/**
+ * Why a step didn't work, as the user reads it: without what the model was told to do next ("Tell the user in
+ * finish_task.", "call perceive_window and try again") or the helper's code before it ("background_unavailable: ").
+ */
+export function forUser(why: string | undefined): string | undefined {
+  if (!why) return undefined;
+  const out = why.replace(/^[a-z]+(?:_[a-z]+)+:\s*/, "").split(/(?<=[.!?])\s+/).map(s => {
+    const at = s.search(TOOL_NAME);
+    if (at < 0) return s;
+    // "… too busy to be read in time: call perceive_window and try again." keeps what went before the advice.
+    const colon = s.lastIndexOf(":", at);
+    return colon > 0 ? `${s.slice(0, colon).trimEnd()}.` : "";
+  }).filter(Boolean).join(" ");
+  return out || undefined;
+}
+
 /** One line of "What Ember did", or null for entries that the next line already says. */
 export function describeEntry(e: ActivityEntry): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
@@ -144,7 +162,7 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
     case "confirm":
       return { tag: e.answer === "once" || e.answer === "always" ? "You allowed" : e.answer === "deny" ? "You said no" : e.answer === "stopped" ? "Stopped" : "No answer", cls: e.answer === "once" || e.answer === "always" ? "ok" : "no", what };
     case "action":
-      return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: e.error };
+      return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: forUser(e.error) };
     case "stop":
       return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? "Ctrl+Alt+X" : e.source === "voice" ? "“Ember, stop”" : "menu"})` };
     default:
