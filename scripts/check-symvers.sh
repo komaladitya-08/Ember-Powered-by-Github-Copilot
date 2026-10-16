@@ -10,8 +10,8 @@ MAX_GLIBCXX=3.4.25
 MAX_CXXABI=1.3.11
 
 [ $# -gt 0 ] || { echo "usage: $0 <dir> [<dir> ...]" >&2; exit 2; }
-for tool in file objdump; do
-  command -v "$tool" > /dev/null || { echo "check-symvers: '$tool' is missing (dnf install file binutils)" >&2; exit 2; }
+for tool in file objdump find; do
+  command -v "$tool" > /dev/null || { echo "check-symvers: '$tool' is missing (dnf install file binutils findutils)" >&2; exit 2; }
 done
 for dir in "$@"; do
   [ -d "$dir" ] || { echo "check-symvers: no such directory: $dir" >&2; exit 2; }

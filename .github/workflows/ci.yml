@@ -59,7 +59,7 @@ jobs:
     steps:
       - name: System packages (build tools, Electron runtime libraries, Xvfb)
         run: |
-          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 \
+          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
@@ -99,7 +99,7 @@ jobs:
     steps:
       - name: Build tools only (the RPM must bring in its own runtime dependencies)
         run: |
-          dnf -y -q install git tar xz file binutils which sudo gcc-c++ make python3 rpm-build \
+          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -179,7 +179,7 @@ jobs:
     steps:
       - name: System packages (as el8, plus gedit and dconf for the task suite)
         run: |
-          dnf -y -q install git tar xz bzip2 file binutils which sudo gcc-c++ make python3 \
+          dnf -y -q install git tar xz bzip2 file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
