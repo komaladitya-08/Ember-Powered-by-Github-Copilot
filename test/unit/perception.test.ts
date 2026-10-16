@@ -228,7 +228,8 @@ describe("secret fields", () => {
     expect(out).toContain('[4] table row (showing, visible)');
     expect(out).toContain('[5] table cell "IBAN"');
     expect(out).toContain('[9] combo box "Card expiry" (label) (showing, visible, secret)');
-    expect(out).toContain('[11] combo box "France" (showing, visible) selected="France"');
+    // Named after the option it shows: called by its label, the option shown after it (UI9-1).
+    expect(out).toContain('[11] combo box "Country" (label) (showing, visible) selected="France"');
     expect(out).toContain('[12] section "Order 7374"');
     expect(out).toContain('[14] combo box "PIN" (label) (showing, visible, secret)');
     expect(inferLabels([node(1, "label", "Country", at(0, 0, 90)), node(2, "combo box", "France", at(100, 0), { selected: "France" })]).get(2)).toBe("Country");

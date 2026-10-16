@@ -592,6 +592,18 @@ describe("review round 3: what Ember asks about is what it does", () => {
     expect(screen.log).toEqual([]);
   });
 
+  it("a GTK combo box named after the option it shows is called by its label, and once allowed its choice goes through (UI9-1)", async () => {
+    plan("Set the billing country to Germany", [perceive, { tool: { name: "choose_option", args: { id: 2, option: "Germany" } } }]);
+    const screen = fakeScreen([{ id: 1, role: "label", name: "Billing country", bounds: { x: 10, y: 50, width: 100, height: 24 } },
+      { id: 2, role: "combo box", name: "France", text: "France", bounds: { x: 120, y: 50, width: 100, height: 24 } }]);
+    screen.sidecar.listOptions = async () => ({ options: ["France", "Germany"] });
+    const asked: { prompt: string; options: string[] }[] = [];
+    await makeWorker(screen, "Set the billing country to Germany", { grants: {}, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
+    expect(asked.map(a => a.prompt)).toEqual(["Let me work in Testapp? First step: choose “Germany” in “Billing country” combo box."]);
+    // Still "France" when the user said yes: the same combo box, not one that changed while they decided.
+    expect(screen.log.map(e => e.what)).toEqual(["selectOption 2 Germany"]);
+  });
+
   it("what the user adds while a task runs is part of what they asked for", async () => {
     plan("Write a short reply to Ana", [perceive, { tool: { name: "click", args: { id: 1 } } }, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "finish_task", args: { success: true, summary: "sent" } } }]);
     const screen = fakeScreen([{ id: 1, role: "push button", name: "Send" }, { id: 2, role: "push button", name: "Bold" }]);

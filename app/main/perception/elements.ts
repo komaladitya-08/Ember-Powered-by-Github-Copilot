@@ -343,7 +343,8 @@ export function serializeElements(window: AxWindow, read: AxNode[], opts: Serial
     }
     const n = unit[0];
     if (isSheetCell(n)) { lines.push("  ".repeat(level.get(n.id)!) + cellRow(unit)); continue; }
-    const own = withheld.has(n.id) ? "" : n.name;
+    // A combo box named after the option it shows is called by its label (what it shows follows as selected=).
+    const own = withheld.has(n.id) || (namedByValue(n) && labels.has(n.id)) ? "" : n.name;
     const name = own || labels.get(n.id) || "";
     const bits = [`[${n.id}] ${screenWord(n.role)}`];
     if (name) bits.push(quote(name, 80) + (own ? "" : " (label)"));

@@ -275,12 +275,28 @@ export function aimedAt(chain: PointElement[], role: string, b: Bounds, ancestor
   const last = here[here.length - 1];
   if (!last?.bounds || last.empty) return "unknown";
   if (last.role === role && sameRect(last.bounds, b)) return "yes";
-  // Inside it: its own text, picture or label; or another control in it, which a click there would work instead.
-  if (insideOf(last.bounds, b)) return CLICK_TAKERS.test(last.role) && !sameRect(last.bounds, b) ? "other" : "yes";
+  // Inside it: its own text, picture or label; or another control in it, which a click there would work instead (also
+  // round the text there: Chromium answers with the deepest element, the words of a row's own "Remove" button).
+  if (insideOf(last.bounds, b)) return takerInside(here, role, b) ? "other" : "yes";
   if (!insideOf(b, last.bounds)) return "other";
   // Round it: what holds it (the app stopped there), or something else lying over it (a header's button).
   const holds = ancestors.some(a => a.role === last.role && !!a.bounds && sameRect(a.bounds, last.bounds!));
   return holds || HOLDERS.test(last.role) ? "unknown" : "other";
+}
+/**
+ * The control inside the element aimed at (role `role`, at `b`) that a click on the deepest of `here` (from atPoint,
+ * outermost first) works instead: that element itself, or one round it on the way up to the element aimed at (a
+ * button round its own text); undefined when there is none (its own text, label or picture).
+ */
+export function takerInside(here: PointElement[], role: string, b: Bounds): PointElement | undefined {
+  for (let i = here.length - 1; i >= 0; i--) {
+    const n = here[i];
+    if (!n.bounds) continue;
+    // Up to the element itself, or out of it (what holds it).
+    if ((n.role === role && sameRect(n.bounds, b)) || !insideOf(n.bounds, b)) return undefined;
+    if (CLICK_TAKERS.test(n.role) && !sameRect(n.bounds, b)) return n;
+  }
+  return undefined;
 }
 /**
  * The elements of `chain` (from atPoint, outermost first) down to the deepest that lies at `spot`: GTK's answer goes on
@@ -750,7 +766,7 @@ export class Worker {
           this.guideStep++;
           this.fly(live?.bounds && live.role === node.role ? live.bounds : node.bounds);
           this.d.presenter.guide(a.say, `Step ${this.guideStep}`);
-          this.audit({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: node.name || this.labels.get(a.id) || "" }, ok: true });
+          this.audit({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: this.nameOf(a.id, node) }, ok: true });
           return done(`Pointing at [${a.id}]. Now call wait_for_click with id ${a.id}.`);
         }),
       this.tool("wait_for_click", "Wait until the user clicks the element you pointed at (or it changes, e.g. a switch turns on, or the window changes).",
@@ -839,7 +855,8 @@ export class Worker {
             : "Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
         }, {
           slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
-          onSlow: slow => { if (!this.halted) d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); },
+          // The task's card and its bubble say so (without a compositor the card's task row is one short line).
+          onSlow: slow => { if (!this.halted) { d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); d.presenter.stalled(slow); } },
         });
         const unwatch = session.on(e => watch.event(e));
         const send = async (prompt: string) => {
@@ -1076,7 +1093,16 @@ export class Worker {
 
   /** Element `id` as the policy and the audit log see it: its name (or the label beside it), and whether the reader found it secret. */
   private elementOf(id: number, n: Pick<AxNode, "role" | "name" | "secret" | "grid" | "parent">): Focus {
-    return { role: n.role, name: n.name || this.labels.get(id) || "", ...(n.secret ? { secret: true } : {}), ...cellOf(n, p => this.known.get(p)) };
+    return { role: n.role, name: this.nameOf(id, n), ...(n.secret ? { secret: true } : {}), ...cellOf(n, p => this.known.get(p)) };
+  }
+
+  /**
+   * What an element is called: its name, else the label beside it. GTK names a combo box after the option it shows:
+   * the label beside it (it is labelled only then) says which one it is, whatever it shows now.
+   */
+  private nameOf(id: number, n: { role: string; name: string }): string {
+    const label = this.labels.get(id);
+    return (n.role === "combo box" && label) || n.name || label || "";
   }
 
   /** A field, for typedIn: its window (windowKey: process, and path or else title) and its role and name (or the label beside it). */
@@ -1128,7 +1154,7 @@ export class Worker {
     if (!this.asked) return null;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    const name = live ? live.name || this.labels.get(id) || "" : null;
+    const name = live ? this.nameOf(id, live) : null;
     if (!live || live.role !== element.role || name !== element.name) {
       return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
     }
@@ -1346,7 +1372,7 @@ export class Worker {
     // Where it is now: the window may have moved or scrolled while the user decided.
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (!live?.bounds || live.role !== node.role || (live.name || this.labels.get(id) || "") !== element.name) {
+    if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name) {
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
@@ -1459,7 +1485,7 @@ export class Worker {
     for (let i = 0; ; i++) {
       const now = await this.sidecar.readElement(id).catch(() => null);
       if (this.isOver) throw new BorrowStopped();
-      const same = !!now && now.role === node.role && (now.name || this.labels.get(id) || "") === element.name;
+      const same = !!now && now.role === node.role && this.nameOf(id, now) === element.name;
       if (now && same && now.states.includes("focused") && typable(now.role, now.states)) return;
       if (!same || i >= 6) {
         throw new Error(`Element ${id} didn't get the keyboard${same ? "" : " (it changed)"}, so Ember typed nothing (the keys would have gone somewhere else). Call perceive_window; if it's the right field, ask the user to click into it.`);
@@ -1473,7 +1499,7 @@ export class Worker {
    * that part; or an error if it changed, has no position, or shows only a sliver or nothing (scrolled away).
    */
   private landingSpot(id: number, node: AxNode, element: Focus, now: ElementInfo | null): { x: number; y: number; focused: boolean; shown: Bounds } {
-    if (!now?.bounds || now.role !== node.role || (now.name || this.labels.get(id) || "") !== element.name) {
+    if (!now?.bounds || now.role !== node.role || this.nameOf(id, now) !== element.name) {
       throw new Error(`Element ${id} moved or changed before Ember could reach it, so nothing was done. Call perceive_window and try again.`);
     }
     const b = now.bounds;
@@ -1525,7 +1551,8 @@ export class Worker {
         if (other) continue;
         return s;
       }
-      other ??= here[here.length - 1];
+      // The control a click there works (a row's own button, rather than the words on it), else what is there.
+      other ??= takerInside(here, now.role, now.bounds) ?? here[here.length - 1];
       // An open menu over it (the app's answer starts in it): a click beside the menu would only close it.
       if (/^(menu|window)$/.test(chain[0].role)) {
         const what = `${q(other.name || other.role, 60)} (${q(other.role, 40)})`;

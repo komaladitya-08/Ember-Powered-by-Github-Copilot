@@ -506,6 +506,8 @@ describe("review round 3", () => {
     work("more ");
     await vi.advanceTimersByTimeAsync(29_000);
     expect(screen().bubble?.title).toBe("Listening…");
+    // (The task still hears from Copilot: 30 s of silence would title its bubble "Still waiting for Copilot…".)
+    work("and more ");
     await vi.advanceTimersByTimeAsync(1100);
     expect(screen().bubble?.title).toBe("tidy my desktop");
     const stopped = host.stop();
@@ -1461,14 +1463,17 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
 
   it("a task's turn that began and then hears nothing: its card says so at 30 s, and it fails plainly at the long limit; the rest goes on", async () => {
     vi.useFakeTimers();
-    const { host } = makeHost({ hands: hands() });
+    const { host, screen } = makeHost({ hands: hands() });
     await host.start(TOKEN, "stored");
     const t = host.tasks!.start("tidy my desktop");
     await vi.advanceTimersByTimeAsync(31_000);
     expect(host.tasks!.get(t.id)).toMatchObject({ status: "running", detail: STILL });
+    // The task's bubble (the corner card's bold line without a compositor) says it too (UI9-2).
+    expect(screen().bubble).toMatchObject({ title: STILL });
     const session = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
     session.emit("assistant.reasoning_delta", { deltaContent: "First, " });
     expect(host.tasks!.get(t.id)?.detail).toBe("Working…");
+    expect(screen().bubble?.title).not.toBe(STILL);
     await vi.advanceTimersByTimeAsync(179_000);
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     // The long limit, then the aborted turn's grace.
