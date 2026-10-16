@@ -153,7 +153,7 @@ function focusAgree(): void {
 let failing = 0;
 function renderTagline(): void {
   const text = tagline({
-    failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null,
+    failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
   });
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
@@ -401,8 +401,12 @@ function renderAgent(a: AgentStatus | null): void {
   ($("agent-dot") as HTMLElement).dataset.phase = a.phase;
   $("agent-text").textContent = a.detail;
   const notConnected = a.phase === "signed-out" || a.phase === "error";
-  $("sign-in").hidden = !notConnected || signingIn;
+  // Copilot stopped answering with tasks at work: Ember reconnects once they're done. Signing in again isn't the
+  // fix, and reconnecting now stops the tasks: the button says so.
+  const waiting = a.waitingForTasks === true;
+  $("sign-in").hidden = !notConnected || signingIn || waiting;
   $("retry").hidden = !notConnected || signingIn;
+  $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
   $("models").hidden = a.phase !== "ready" || a.models.length === 0;

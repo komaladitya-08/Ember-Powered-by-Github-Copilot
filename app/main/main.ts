@@ -1113,7 +1113,7 @@ function start(): void {
       handle?.setClickThrough(driving);
       deskViewRef?.setDriving(driving);
       setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
-        : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop typing…") : null);
+        : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop using the keyboard and mouse…") : null);
     };
     const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
     borrowRef = borrow;
@@ -1197,7 +1197,7 @@ function start(): void {
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready".
-        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : "Not connected" });
+        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : status.waitingForTasks ? "Reconnecting after the tasks" : "Not connected" });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).

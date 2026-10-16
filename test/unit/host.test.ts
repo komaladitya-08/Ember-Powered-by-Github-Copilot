@@ -1607,7 +1607,8 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     for (let i = 0; i < 60; i++) { await vi.advanceTimersByTimeAsync(5000); work.emit("assistant.reasoning_delta", { deltaContent: `step ${i} ` }); }
     expect(sim.clients).toHaveLength(1);
     expect(host.tasks!.get(t.id)).toMatchObject({ status: "running" });
-    expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    // (Settings offers no sign-in then, and says reconnecting now stops the tasks: UI10-2.)
+    expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks running are done…", waitingForTasks: true });
     // Asked meanwhile, Ember says so (the conversation can't answer now).
     await host.ask("are you there?");
     expect(screen().bubble).toMatchObject({ title: "I can't reach Copilot", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
@@ -1617,7 +1618,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await vi.advanceTimersByTimeAsync(5000);
     expect(finished).toEqual([expect.objectContaining({ status: "cancelled" })]);
     expect(sim.clients).toHaveLength(2);
-    expect(host.getStatus().phase).toBe("ready");
+    expect(host.getStatus()).toMatchObject({ phase: "ready", waitingForTasks: false });
     await host.ask("how's the tidying going?");
     expect(conductorSession().sent.at(-1)).toMatch(/how's the tidying going\?$/);
     expect(conductorSession().sent.at(-1)).not.toContain(CUT_OFF);

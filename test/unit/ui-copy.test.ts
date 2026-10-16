@@ -33,6 +33,8 @@ describe("settings window words", () => {
     expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
     expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
     expect(tagline({ ...base, failing: 2 })).toMatch(/fixed/);
+    // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
+    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks running are done.");
   });
 
   it("names days Today and Yesterday", () => {

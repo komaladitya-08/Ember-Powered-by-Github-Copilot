@@ -58,6 +58,8 @@ export interface AgentStatus {
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
+  /** Copilot stopped answering and Ember reconnects once the tasks running are done (reconnecting now would stop them). */
+  waitingForTasks?: boolean;
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
@@ -416,7 +418,7 @@ export class AgentHost {
   }
 
   private setStatus(patch: Partial<AgentStatus>): void {
-    this.status = { ...this.status, ...patch };
+    this.status = { ...this.status, ...patch, waitingForTasks: this.reconnectAfterTasks !== null };
     this.o.onStatus(this.status);
   }
 
@@ -646,8 +648,9 @@ export class AgentHost {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
             if (why === "not-started") this.presenter.fail(full ? NO_WATCHERS : NOT_ANSWERING_AFTER_TASKS);
-            this.setStatus({ phase: "error", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `Copilot isn't answering. ${AFTER_TASKS}` });
+            // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
             this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? NO_ANSWER_DETAIL : full ? NO_WATCHERS_DETAIL : "Copilot isn't answering. Reconnecting…", asked, CUT_OFF_STALLED); };
+            this.setStatus({ phase: "error", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `Copilot isn't answering. ${AFTER_TASKS}` });
             return;
           }
           if (why === "silent") this.lost(gen, reason, NO_ANSWER, NO_ANSWER_DETAIL, asked, CUT_OFF_STALLED);

@@ -55,11 +55,12 @@ export function retryMessage(r: { found: boolean; source: string | null }, conne
 
 /** The line under "Ember" at the top of the window. */
 export function tagline(t: {
-  failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean;
+  failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
 }): string {
   if (t.failing) return "Ember needs a couple of things fixed before it can work on this machine.";
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
+  if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   return `${where} Press Ctrl+Alt+Space to ask it anything.`;
