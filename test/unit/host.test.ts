@@ -980,7 +980,7 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
   it("main's own bubble put back after a wake is nobody else's (main hides it); a put-back answer is the conversation's", async () => {
     vi.useFakeTimers();
     const { host, screen } = makeHost();
-    const greeting = { visible: true, mood: "idle" as const, title: "Hi, I'm Cinder!", thought: "I'll stay by your cursor.", step: null, streaming: false, actions: [] };
+    const greeting = { visible: true, mood: "idle" as const, title: "Hi, I'm Ember!", thought: "I'll stay by your cursor.", step: null, streaming: false, actions: [] };
     setStateOf(host)({ emotion: "happy", bubble: greeting });
     let before = wake(host, screen);
     host.claimBubble();
@@ -1755,7 +1755,8 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks running are done…", waitingForTasks: true });
     // Asked meanwhile, Ember says so (the conversation can't answer now).
     await host.ask("are you there?");
-    expect(screen().bubble).toMatchObject({ title: "I can't reach Copilot", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    // (Copilot is reachable: the title names what is wrong, not "I can't reach Copilot".)
+    expect(screen().bubble).toMatchObject({ title: "Copilot isn't answering", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
     expect(conductorSession().sent.at(-1)).toMatch(/Tokyo$/);
     // The task ends (here the user stops it): Copilot is reconnected now, and the next ask goes out.
     host.tasks!.cancel(t.id);
@@ -1764,7 +1765,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(sim.clients).toHaveLength(2);
     expect(host.getStatus()).toMatchObject({ phase: "ready", waitingForTasks: false });
     // Its notice saying it can't reach Copilot goes with it, not the rest of its 12 s (MN11-2).
-    expect(screen().bubble?.title).not.toBe("I can't reach Copilot");
+    expect(screen().bubble?.title).not.toBe("Copilot isn't answering");
     await host.ask("how's the tidying going?");
     expect(conductorSession().sent.at(-1)).toMatch(/how's the tidying going\?$/);
     expect(conductorSession().sent.at(-1)).not.toContain(CUT_OFF);

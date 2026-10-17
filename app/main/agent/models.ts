@@ -37,3 +37,12 @@ export function chooseModels(models: ModelLike[], prefer: { conductor?: string; 
   if (!worker) worker = preferredWorker?.id ?? conductor;
   return { conductor, worker };
 }
+
+/**
+ * May sessions be left to the runtime's own default model? Only when Copilot listed no models at all (Copilot Free
+ * lists none, yet answers on its default) and nothing decides which models may be used: no administrator's allowed
+ * list or pinned model (the default may be one they didn't allow), and no custom endpoint (it serves only its own).
+ */
+export function mayUseRuntimeDefault(listed: number, rules: { provider?: boolean; allowed?: readonly string[]; conductor?: string; worker?: string }): boolean {
+  return listed === 0 && !rules.provider && !rules.allowed && !rules.conductor && !rules.worker;
+}
