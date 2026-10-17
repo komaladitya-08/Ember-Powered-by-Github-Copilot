@@ -1308,16 +1308,19 @@ export const plainQuestion = (r: ActionRequest): string => describe(r);
  * The question, built from the request. On Ember's desk nothing of the user's is borrowed: the question says "on my
  * desk" instead. A spreadsheet's cell is named by its address ("cell B5"), and Ember fills one with the keyboard only.
  */
+/** What an element without a name is called in a question: "the text area", not "the text" ("replace the text in the text"). */
+const UNNAMED: Record<string, string> = { text: "text area", "document text": "document", paragraph: "paragraph", entry: "text field", "password text": "password field" };
+
 function describe(r: ActionRequest, withApp = true): string {
   const cell = !!r.element && isSheetCell(r.element);
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : `${r.element.name ? quote(r.element.name) : "the"} ${r.element.role}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
   const replacing = r.mode === "replace" && current.length > 0;
   const value = quote(visible(r.value ?? ""));
   // What typing does: "type “42” into cell B5", "replace “1200” in cell B2 with “84000”", "replace the text in … with …".
-  const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace the text in ${el}${where} with ${value}`;
+  const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace ${r.element?.name ? "the text in" : "everything in"} ${el}${where} with ${value}`;
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
   switch (r.kind) {
     case "click": return `Click ${el}${where}${desk}?`;

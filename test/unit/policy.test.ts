@@ -873,9 +873,9 @@ describe("policy: review round 7", () => {
       expect(key(k, { selection: LONG }).verdict, k).toBe("confirm");
     }
     expect(key("x", { selection: LONG })).toMatchObject({ reason: `everything is selected, so this replaces all ${LONG.length} characters already there`,
-      prompt: `Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.` });
+      prompt: `Press X on the text area in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.` });
     // Part of it: more than 80 characters, or a line break, is asked; a word isn't.
-    expect(key("x", { selection: LONG.slice(0, 90) + "\n" })).toMatchObject({ verdict: "confirm", prompt: "Press X on the text in Mousepad on my desk? 91 characters there are selected, so this replaces them." });
+    expect(key("x", { selection: LONG.slice(0, 90) + "\n" })).toMatchObject({ verdict: "confirm", prompt: "Press X on the text area in Mousepad on my desk? 91 characters there are selected, so this replaces them." });
     expect(key("x", { selection: "planning" }).verdict).toBe("allow");
     // Keys that only move or copy replace nothing.
     for (const k of ["Left", "End", "ctrl+c", "shift+Right", "Escape"]) expect(key(k, { selection: LONG }).verdict, k).toBe("allow");
@@ -883,7 +883,7 @@ describe("policy: review round 7", () => {
     expect(key("x", { selection: "" }).verdict).toBe("allow");
     expect(key("x", { afterSelectAll: true, selection: "" }).verdict).toBe("confirm");
     // Selected with Shift where the reader can't tell how much: as much as there is.
-    expect(key("x", { afterSelecting: true })).toMatchObject({ verdict: "confirm", prompt: `Press X on the text in Mousepad on my desk? Text there is selected, so this may replace all ${LONG.length} characters.` });
+    expect(key("x", { afterSelecting: true })).toMatchObject({ verdict: "confirm", prompt: `Press X on the text area in Mousepad on my desk? Text there is selected, so this may replace all ${LONG.length} characters.` });
     // In a paragraph (Writer) a selection may run on past it: asked whatever it shows.
     expect(key("x", { selection: "ab", currentText: "abc", element: { role: "paragraph", name: "" } })).toMatchObject({ verdict: "confirm",
       prompt: "Press X on the paragraph in Mousepad on my desk? Text there is selected, and it may run on past what I can see, so this may replace a lot." });
@@ -892,9 +892,9 @@ describe("policy: review round 7", () => {
   });
 
   it("a long field replaced says how much it replaces; on the desk no question says “Borrow” (DK7-2)", () => {
-    expect(key("x", { afterSelectAll: true }).prompt).toBe(`Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.`);
+    expect(key("x", { afterSelectAll: true }).prompt).toBe(`Press X on the text area in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.`);
     expect(e.decide({ taskId: "d", kind: "cursor_text", app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: LONG, goal: "tidy my notes" }).prompt)
-      .toBe(`Replace the text in the text in Mousepad with “Hi” on my desk? This replaces all ${LONG.length} characters there.`);
+      .toBe(`Replace everything in the text area in Mousepad with “Hi” on my desk? This replaces all ${LONG.length} characters there.`);
     for (const [kind, value] of [["cursor_click", undefined], ["scroll", "down"], ["keys", "Delete"]] as const) {
       const d = e.decide({ taskId: "d", kind, app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "push button", name: "Delete" }, value, goal: "write" });
       expect(d.prompt, kind).not.toMatch(/Borrow/);
