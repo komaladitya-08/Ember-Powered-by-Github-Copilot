@@ -1746,6 +1746,15 @@ class Acting(unittest.TestCase):
         self.assertEqual(self.act_on(menu, "read_element")["open"], True)
         self.assertNotIn("open", self.act_on(Acc("push button", "Save"), "read_element"))
 
+    def test_a_menu_item_whose_menu_closed_is_offscreen(self):
+        # GTK keeps a closed menu's items (at their old places), only no longer showing: a guide's step on one is over.
+        item = Acc("menu item", "Select Font…")
+        self.assertNotIn("offscreen", self.act_on(item, "read_element"))
+        item.states.remove("showing")
+        self.assertTrue(self.act_on(item, "read_element")["offscreen"])
+        # Other elements say nothing of it.
+        self.assertNotIn("offscreen", self.act_on(Acc("push button", "Save", states=("visible", "enabled")), "read_element"))
+
 
 class Windows(unittest.TestCase):
     class AppNode(object):

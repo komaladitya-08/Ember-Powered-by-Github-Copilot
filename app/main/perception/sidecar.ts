@@ -122,6 +122,8 @@ export interface ElementInfo {
   shown?: Bounds;
   /** A menu: whether it is open (its items show). */
   open?: boolean;
+  /** A menu's item whose menu closed: GTK keeps it at its old place, no longer showing. */
+  offscreen?: boolean;
   /**
    * readElement with `formula`: a spreadsheet cell's formula as LibreOffice Calc tells it, without the "=" ("" for none).
    * A formula that works out to an error (#DIV/0!, #N/A) shows no text: this says it went in.

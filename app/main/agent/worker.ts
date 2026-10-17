@@ -18,7 +18,7 @@ import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
-import { stepOf, type Presenter } from "./presenter";
+import { handStep, stepOf, type HandStep, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -39,6 +39,11 @@ export interface WorkerDeps {
   client: CopilotClient;
   log: Logger;
   model: string | null;
+  /**
+   * With no model (`model` null), the runtime's default is used: only where the host found Copilot lists none and
+   * nothing limits the models (mayUseRuntimeDefault).
+   */
+  runtimeDefault?: boolean;
   vision: boolean;
   provider?: ProviderConfig;
   workDir: string;
@@ -788,10 +793,14 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** The turn ended without finish_task and only its summary is asked for now. */
+  private wrappingUp = false;
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
+    // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
+    if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     if (++this.steps > maxSteps) {
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
@@ -975,8 +984,8 @@ export class Worker {
     const d = this.d;
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
     if (signal.aborted) return { success: false, summary: "Stopped.", stopped: true };
-    // Never the runtime's default model: it may be one the administrator didn't allow.
-    if (!d.model) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
+    // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
+    if (!d.model && !d.runtimeDefault) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
@@ -988,7 +997,7 @@ export class Worker {
       const tools = this.tools();
       const config = hardenedSessionConfig({
         sessionId: `ember-task-${this.spec.id}`,
-        model: d.model,
+        model: d.model ?? undefined,
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage() : workerSystemMessage(),
@@ -1017,7 +1026,7 @@ export class Worker {
         if (e.type === "tool.execution_start") {
           const name = String((e.data as { toolName?: string }).toolName ?? "");
           const step = stepOf(name, !!this.place);
-          if (name !== "report_progress" && name !== "finish_task" && step) d.onProgress(`${step}…`);
+          if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
         }
       });
       if (!this.halted) {
@@ -1055,8 +1064,9 @@ export class Worker {
           await send(`Task: ${this.spec.goal}${where}`);
           await wait;
           if (!this.result && !this.halted) {
+            this.wrappingUp = true;
             wait = idle();
-            await send("Call finish_task now with a short summary of what you did.");
+            await send("Call finish_task now with a short summary of what you did. Do nothing else.");
             await wait;
           }
         } finally {
@@ -1121,7 +1131,8 @@ export class Worker {
     // keyboard opened its dialog).
     const marks = ["checked", "pressed", "expanded",
       ...(HOVER_SELECTS.test(node.role) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
-    const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
+    // A menu's item whose menu closed is gone from the screen (GTK keeps it, no longer showing).
+    const key = (e: ElementInfo | null) => (e && !e.offscreen ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
     const reached = (e: ElementInfo | null) => !!e && (e.states.includes("focused") || e.states.includes("selected"));
     // Reached during this step, by a look after it began: a dialog's default button had the keyboard before, untouched.
     let wasReached = false;
@@ -1132,6 +1143,7 @@ export class Worker {
     let windowBefore = activeWindow();
     if (own(windowBefore)) windowBefore = null;
     const keyDown = () => { try { return this.d.activationKey?.() === true; } catch { return false; } };
+    const opens = ACTS_ITSELF.test(node.role) || /menu item$/.test(node.role);
     const usedIt = async (how: string) => {
       await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
       this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: node.name }, ok: true });
@@ -1141,40 +1153,67 @@ export class Worker {
     let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
     let keyWasDown = keyDown();
     let lastCheck = 0;
-    while (Date.now() - t0 < timeoutMs) {
-      if (this.isOver) return STOPPED();
+    // The pointer is watched on its own timer: a quick click comes and goes while a look at the app is under way (an
+    // app opening a dialog answers slowly), and it still counts.
+    let pressed = false;
+    const watchPointer = () => {
       const p = this.d.pointer?.();
       const down = (p?.mask ?? 0) & 256;
-      if (p && down && !wasDown && inside(p)) return usedIt("The user clicked it.");
+      if (p && down && !wasDown && inside(p)) pressed = true;
       wasDown = down;
-      // Enter or Space, while it has the keyboard (or is the menu item selected).
-      const pressing = keyDown();
-      if (pressing && !keyWasDown && reached(await this.sidecar.readElement(id).catch(() => null))) return usedIt("The user pressed Enter or Space on it.");
-      keyWasDown = pressing;
-      if (Date.now() - lastCheck > 500) {
-        lastCheck = Date.now();
-        const now = await this.sidecar.readElement(id).catch(() => null);
-        if (key(now) !== key(before)) {
-          return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
+    };
+    const watcher = setInterval(watchPointer, 15);
+    try {
+      while (Date.now() - t0 < timeoutMs) {
+        if (this.isOver) return STOPPED();
+        watchPointer();
+        if (pressed) return await usedIt("The user clicked it.");
+        // Enter or Space, while it has the keyboard (or is the menu item selected).
+        const pressing = keyDown();
+        if (pressing && !keyWasDown && reached(await this.sidecar.readElement(id).catch(() => null))) return usedIt("The user pressed Enter or Space on it.");
+        keyWasDown = pressing;
+        if (Date.now() - lastCheck > 500) {
+          lastCheck = Date.now();
+          const now = await this.sidecar.readElement(id).catch(() => null);
+          if (pressed) return await usedIt("The user clicked it.");
+          if (key(now) !== key(before)) {
+            return done(now && !now.offscreen ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.`
+              : now ? "Its menu closed (the user chose it, or went elsewhere). Call perceive_window to see where they are." : "The window changed (the element is gone). Call perceive_window.");
+          }
+          // It moved (a list scrolled, the window was dragged): the highlight goes with it.
+          if (now?.bounds && now.role === node.role) {
+            const moved = now.bounds.x !== b.x || now.bounds.y !== b.y || now.bounds.width !== b.width || now.bounds.height !== b.height;
+            b = now.bounds;
+            if (moved) this.fly(b);
+          }
+          if (now) {
+            const r = reached(now);
+            if (r && reachedNow === false) wasReached = true;
+            reachedNow = r;
+          }
+          // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title). The
+          // step began in Ember's own window: the user's is the first other one seen, while they hadn't reached it yet.
+          const active = activeWindow();
+          const w = active && !own(active) ? active : null;
+          if (w && !windowBefore && !wasReached) windowBefore = w;
+          const another = !!w && !!windowBefore && !!w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app);
+          if (another && wasReached) {
+            return done(`Another window has the keyboard now (${q(w!.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
+          }
+          // A new window of the same app took the keyboard after Ember pointed at a menu item or a button that opens
+          // things (Select Font… opened its dialog): that step is done, however it was chosen.
+          if (another && opens && w!.pid != null && w!.pid === windowBefore!.pid) {
+            return done(`A new window of the app has the keyboard now (${q(w!.title, 80)}): the user chose the element pointed at, and it opened. Call perceive_window to see the new window.`);
+          }
         }
-        if (now?.bounds && now.role === node.role) b = now.bounds;
-        if (now) {
-          const r = reached(now);
-          if (r && reachedNow === false) wasReached = true;
-          reachedNow = r;
-        }
-        // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title). The
-        // step began in Ember's own window: the user's is the first other one seen, while they hadn't reached it yet.
-        const active = activeWindow();
-        const w = active && !own(active) ? active : null;
-        if (w && !windowBefore && !wasReached) windowBefore = w;
-        if (w && wasReached && windowBefore && w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app)) {
-          return done(`Another window has the keyboard now (${q(w.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
-        }
+        await new Promise(r => setTimeout(r, 30));
       }
-      await new Promise(r => setTimeout(r, 30));
+      return done("The user hasn't clicked it yet. Finish kindly, saying where they got to, unless the goal is already done.");
+    } finally {
+      clearInterval(watcher);
+      // The step is over: no highlight is left on a place that may hold something else now (the dialog it opened).
+      this.fly(null);
     }
-    return done("The user hasn't clicked it yet. Finish kindly, saying where they got to, unless the goal is already done.");
   }
 
   /** `expectTitle`: switch_window's request; nothing changes unless a window with that title is found. */
@@ -1462,6 +1501,8 @@ export class Worker {
       const selected = res.action === "select row" ? "Selected its row" : res.action === "select item" ? "Selected it" : "";
       const outcome = !res.ok ? "The app reported it did not work"
         : selected ? `${selected}, as a single click does; it wasn't opened: press Enter (press_keys) to open it if that's what the task needs` : "Done";
+      // Its dialog or window closed: the highlight doesn't stay on what is now an empty place (or another window).
+      if (!after || after.offscreen) this.fly(null);
       if (!after) return done(`${outcome}. ${busyAfter ? "The app is busy, so the result can't be read yet: call perceive_window in a moment." : "The element is gone now (its dialog or window most likely closed). Call perceive_window."}`);
       return done(`${outcome}. Now: ${describeAfter(after)}`);
     } catch (err) {
@@ -2583,19 +2624,33 @@ export class Worker {
   }
 
   /** A hand that checks `check` before every move, click, key and few typed characters. */
-  private guardedHand(hand: Hand, check: () => void): Hand {
+  private guardedHand(hand: Hand, check: () => void, kind: ActionKind): Hand {
+    // The keys that put text in a field (Ctrl+A, Delete, Ctrl+V) are its typing.
+    const keysAre = kind === "cursor_text" ? "type" : "keys";
     return {
       ...hand,
       glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
-      click: async b => { check(); await hand.click(b); },
-      keys: async k => { check(); await hand.keys(k); },
+      click: async b => { check(); this.showDoing("click"); await hand.click(b); },
+      keys: async k => { check(); this.showDoing(keysAre); await hand.keys(k); },
       type: async t => {
         // All or nothing: text the keyboard layout can't type is refused before the first key (then typed a few letters at a time).
         if ("checkTyping" in hand && typeof hand.checkTyping === "function") hand.checkTyping(t);
+        this.showDoing("type");
         for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); }
       },
-      scroll: async (dir, n) => { check(); await hand.scroll(dir, n); },
+      scroll: async (dir, n) => { check(); this.showDoing("scroll"); await hand.scroll(dir, n); },
     };
+  }
+
+  /** What the task's card says now: the step its tool started with, or what the borrowed hand is doing. */
+  private doing: string | null = null;
+
+  /** The card follows the hand: "Pressing keys…" while keys go in, though the tool's step said "Clicking…". */
+  private showDoing(what: HandStep): void {
+    const step = `${handStep(what, !!this.place)}…`;
+    if (step === this.doing) return;
+    this.doing = step;
+    this.d.onProgress(step);
   }
 
   /** `afterBorrow`: runs once the mouse is given back, before the result is told (a paste waits for its text there). */
@@ -2636,7 +2691,7 @@ export class Worker {
     // Stopped while waiting for another task's window: the approved borrow never starts.
     if (this.isOver) { release(); return STOPPED(); }
     // Asked for first, so the status sees it waiting ("Waiting until you let go of the mouse…").
-    const borrowed = c.borrow.borrow(hand => fn(this.guardedHand(hand, check)), {
+    const borrowed = c.borrow.borrow(hand => fn(this.guardedHand(hand, check, kind)), {
       window: win,
       signal: this.overSignal,
       onStart: () => c.setBorrowing("active"),
@@ -2693,7 +2748,7 @@ export class Worker {
       return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window.");
     }
     try {
-      await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check)); }, { idleMs: 0, window: win, signal: this.overSignal });
+      await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check, kind)); }, { idleMs: 0, window: win, signal: this.overSignal });
       await afterBorrow?.();
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2, ...this.inputValue });
