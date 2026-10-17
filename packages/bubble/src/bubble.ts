@@ -228,6 +228,13 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: none; mask-image: none;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
 }
+/* "Read all": the whole answer, scrolling inside the bubble when it is longer still. */
+.ember-bubble[data-expanded="true"] .eb-thought {
+  max-height: calc(1.4em * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  -webkit-mask-image: none; mask-image: none;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
+}
+.ember-bubble[data-expanded="true"] { width: min(380px, calc(100% - 24px)); }
 /* The caret exists only while text arrives (an invisible one could wrap onto a blank line of its own). */
 .eb-thought span::after { content: ""; display: none; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); }
 .ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
@@ -258,6 +265,25 @@ html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !importan
 html.calm .ember-bubble { transition: none; }
 `;
 
+/**
+ * Runs `fn` when `button` is pressed with the mouse (at the press, not the release) or activated from the keyboard.
+ * Ember's windows let clicks through except over their buttons and learn where the pointer is by polling, so a
+ * release can land after the window let go of the pointer (or the button moved under it): the press is the click.
+ */
+export function onPress(button: HTMLElement, fn: () => void): void {
+  let pressedAt = -Infinity;
+  button.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    pressedAt = performance.now();
+    fn();
+  });
+  // A keyboard's Enter or Space (detail 0), or a mouse click whose press never came.
+  button.addEventListener("click", e => {
+    if (e.detail > 0 && performance.now() - pressedAt < 1500) return;
+    fn();
+  });
+}
+
 export interface BubbleAction {
   /** Identifies the button across updates (defaults to the label). */
   key?: string;
@@ -284,6 +310,7 @@ export class ReasoningBubble {
   private handlers: (() => void)[] = [];
   private mood: BubbleMood = "idle";
   private streaming = false;
+  private expanded = false;
   private visible = true;
   private speaker = "Ember";
   private announced = "";
@@ -378,6 +405,14 @@ export class ReasoningBubble {
     this.changed();
   }
 
+  /** The whole thought shows ("Read all"), scrolling inside the bubble if it must. */
+  setExpanded(on: boolean): void {
+    if (on === this.expanded) return;
+    this.expanded = on;
+    this.root.dataset.expanded = String(on);
+    this.changed();
+  }
+
   /** The step being performed and why; null hides the row. */
   setStep(text: string | null): void {
     if (this.step.hidden === !text && this.stepText.textContent === (text ?? "")) return;
@@ -404,7 +439,7 @@ export class ReasoningBubble {
       b.type = "button";
       b.textContent = a.label;
       if (a.primary) b.className = "eb-primary";
-      b.addEventListener("click", () => this.handlers[i]?.());
+      onPress(b, () => this.handlers[i]?.());
       this.actions.appendChild(b);
     });
     this.changed();
@@ -512,7 +547,7 @@ export class ReasoningBubble {
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
-    if (over && this.mood === "attention" && !this.streaming) hot.push(rel(t));
+    if (over && (this.mood === "attention" || this.expanded) && !this.streaming) hot.push(rel(t));
     return { box, hot, over };
   }
 

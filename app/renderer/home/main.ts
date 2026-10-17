@@ -523,7 +523,7 @@ window.ember.onSettingsChanged(applySettings);
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
-const WHO: Record<string, string> = { you: "You", ember: "Ember", task: "Task" };
+const WHO: Record<string, string> = { you: "You", ember: "Ember", task: "Task", problem: "Problem" };
 let shownConversation: Entry[] = [];
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");

@@ -41,14 +41,14 @@ import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, inotifyUse, type Hands } from "./agent/host";
+import { AgentHost, explainStartError, gitHubReachable, idleWord, inotifyUse, type Hands } from "./agent/host";
+import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 
-const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -224,13 +224,23 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  /**
+   * One of Ember's own windows comes to the front with the keyboard. A window manager that prevents focus stealing
+   * (xfwm4, Mutter) keeps a window Ember opens from its overlay or a hotkey behind the user's app otherwise: Ember asks
+   * as a pager does (a direct user action), which they honour.
+   */
+  const bringToFront = (win: BrowserWindow) => {
+    if (win.isDestroyed()) return;
+    win.show();
+    win.focus();
+    try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) xinputRef?.activate(xid); } catch { /* not X11 */ }
+  };
   const showHome = () => {
     // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now.
     if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     if (home && !home.isDestroyed()) {
       if (home.isMinimized()) home.restore();
-      home.show();
-      home.focus();
+      bringToFront(home);
       return;
     }
     home = createHomeWindow();
@@ -241,6 +251,7 @@ function start(): void {
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
     const win = home;
+    win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
     win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
@@ -344,7 +355,6 @@ function start(): void {
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   const greet = () => {
-    const name = CHARACTER_NAMES[settings.get().character];
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
@@ -357,7 +367,7 @@ function start(): void {
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey("Control+Alt+E") ? " (Ctrl+Alt+E)" : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: `Hi, I'm ${name}!`, thought,
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
       actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
@@ -496,6 +506,20 @@ function start(): void {
     showHome();
     sendToHome(IPC.focusSection, "conversation");
   };
+  /** "Read all": the whole answer in the bubble, where the user was reading it (settings keeps it too). */
+  const expandAnswer = () => {
+    const full = agent?.lastAnswer();
+    if (!full) { readLastAnswer(); return; }
+    agent?.claimBubble();
+    const bubble = expandedBubble(lastState.bubble, full);
+    setState({ talking: false, bubble });
+    hideIfStill(bubble, Math.min(120_000, 20_000 + full.length * 60));
+  };
+  const closeExpanded = () => {
+    if (!lastState.bubble.expanded) return;
+    setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+    agent?.releaseBubble(lastState.bubble);
+  };
   /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
     showHome();
@@ -562,7 +586,11 @@ function start(): void {
   const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
 
   // ───── Copilot brain ─────
-  const askWindow = new AskWindow({ keepOff: () => handle?.bounds ?? null });
+  const askWindow = new AskWindow({
+    keepOff: () => handle?.bounds ?? null,
+    // As the handle's menu takes the keyboard: the window manager is asked, and X is told too.
+    takeFocus: xid => { xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
+  });
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
@@ -863,7 +891,9 @@ function start(): void {
     // while Ember really drives the pointer was Ember's own click, not the user's: ignored.
     if (borrowRef?.driving && !(task && task[2] === "stop")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { openSettings(); return; }
-    if (id === "ui:more") { readLastAnswer(); return; }
+    if (id === "ui:more") { expandAnswer(); return; }
+    if (id === "ui:conversation") { readLastAnswer(); return; }
+    if (id === "ui:close") { closeExpanded(); return; }
     if (task) {
       if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
@@ -969,12 +999,14 @@ function start(): void {
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
     askWindow.setOpaque(!compositing);
+    // Made now (hidden), so Ctrl+Alt+Space opens it at once: a box still loading took the first letters typed.
+    if (consented()) askWindow.prepare();
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
       const p = x11?.pointer();
       if (!p) return screen.getCursorScreenPoint();
       const scale = screen.getPrimaryDisplay().scaleFactor || 1;
-      return { x: p.x / scale, y: p.y / scale };
+      return { x: p.x / scale, y: p.y / scale, buttons: p.mask & 0x1f00 };
     };
     app.on("will-quit", () => x11?.close());
     log.info("app.ready", {
@@ -1197,7 +1229,7 @@ function start(): void {
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
-        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : status.waitingForTasks ? "Waiting for tasks" : "Not connected" });
+        showState({ idle: idleWord(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -1270,7 +1302,8 @@ function start(): void {
     settings.onChange(() => { if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); } });
     app.on("will-quit", () => voice?.stop());
 
-    if (!settings.get().onboarded || process.argv.includes("--show-settings")) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
+    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !process.argv.includes("--autostart")) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
 

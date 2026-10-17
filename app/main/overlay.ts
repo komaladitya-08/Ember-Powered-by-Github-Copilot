@@ -10,7 +10,7 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains, besideRect, besideControl } from "./follow";
+import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
@@ -41,8 +41,8 @@ export class OverlayManager {
   constructor(
     private settings: () => Settings,
     private log: Logger,
-    /** Cursor in global DIP; defaults to Electron's (which can be stale on X11). */
-    private cursor: () => { x: number; y: number } = () => screen.getCursorScreenPoint(),
+    /** Cursor in global DIP, and the mouse buttons held (X's mask) when known; defaults to Electron's (which can be stale on X11). */
+    private cursor: () => { x: number; y: number; buttons?: number } = () => screen.getCursorScreenPoint(),
   ) {
     const c = this.cursor();
     this.follower = new Follower({ x: c.x + 60, y: c.y + 60 });
@@ -299,7 +299,7 @@ export class OverlayManager {
       if (!still) o.win.webContents.send(OVERLAY.frame, frame);
       // Hover-to-interact: only while the cursor is over something clickable.
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
-      const over = !this.borrowing && contains(o.display.bounds, cursor) && o.interactive.some(r => contains(r, local));
+      const over = !this.borrowing && takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0);
       if (over === o.clickThrough) {
         o.clickThrough = !over;
         o.win.setIgnoreMouseEvents(!over);

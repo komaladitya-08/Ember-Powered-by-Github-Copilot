@@ -49,6 +49,8 @@ export interface BubbleState {
   actions: { id: string; label: string; primary?: boolean }[];
   /** The task whose bubble this is (its work, its question): the corner card shows that task's row and Stop with it. */
   task?: string;
+  /** "Read all" was pressed: the whole answer shows, scrolling if it must. */
+  expanded?: boolean;
 }
 
 export interface TaskCard {

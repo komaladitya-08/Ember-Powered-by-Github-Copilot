@@ -9,7 +9,6 @@ import type { Settings } from "../../main/settings";
 declare global { interface Window { emberHandle: HandleApi } }
 
 const api = window.emberHandle;
-const NAMES: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 let character = characters.cinder;
 const rig = new Rig();
@@ -18,7 +17,8 @@ const canvas = document.getElementById("face") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const $ = (id: string) => document.getElementById(id)!;
 
-let name = "Ember";
+/** Ember is who speaks, whichever look it wears (Cinder, Wisp, Glassling, Glint are its looks). */
+const name = "Ember";
 // Calm mode follows the setting or the desktop's reduced-motion preference; the face dozes with Ember.
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
 let reduceSetting = false;
@@ -27,7 +27,6 @@ reduce.addEventListener("change", applyMotion);
 rig.sleepAfter = 180;
 function applySettings(s: Settings): void {
   character = characters[s.character] ?? characters.cinder;
-  name = NAMES[s.character] ?? "Ember";
   $("name").textContent = name;
   reduceSetting = s.reduceMotion;
   document.documentElement.classList.toggle("calm", s.reduceMotion);

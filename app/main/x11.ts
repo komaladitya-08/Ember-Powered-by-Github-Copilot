@@ -57,9 +57,9 @@ export interface X11 {
   /**
    * Pointer position in physical pixels, read straight from the X server.
    * Electron's screen.getCursorScreenPoint() can return a stale position on X11
-   * after the pointer jumps, so Ember uses this instead.
+   * after the pointer jumps, so Ember uses this instead. `mask`: the buttons down (X's mask: 256 is the left one).
    */
-  pointer(): { x: number; y: number } | null;
+  pointer(): { x: number; y: number; mask: number } | null;
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
   activeWindow(): (X11Window & { wmClass: string }) | null;
   /**
@@ -215,7 +215,7 @@ export function openX11(displayName?: string): X11 | null {
       pointer() {
         if (!open) return null;
         const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
-        return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0] } : null;
+        return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0], mask: m[0] } : null;
       },
 
       activeWindow() {

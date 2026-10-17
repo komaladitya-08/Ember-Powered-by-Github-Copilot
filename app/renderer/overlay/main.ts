@@ -9,7 +9,7 @@
  */
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
-import { ReasoningBubble, plainStream } from "@ember/bubble";
+import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
@@ -79,7 +79,7 @@ reducedMotionQuery.addEventListener("change", applyReducedMotion);
 function applySettings(s: Settings): void {
   settings = s;
   character = characters[s.character] ?? characters.cinder;
-  bubble.setSpeaker(character.name);
+  bubble.setSpeaker("Ember");
   applyReducedMotion();
   requestDraw();
 }
@@ -124,6 +124,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
+  bubble.setExpanded(b.expanded === true);
   bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
   const f = s.focus;
   focusEl.hidden = !f;
@@ -213,7 +214,7 @@ const more = (() => {
   const close = document.createElement("button");
   close.type = "button";
   close.textContent = "Close all";
-  close.addEventListener("click", () => { for (const id of foldedLine(folded).close) api.bubbleAction(id); });
+  onPress(close, () => { for (const id of foldedLine(folded).close) api.bubbleAction(id); });
   actions.append(close);
   li.append(text, actions);
   return { li, title, detail, actions, close };
@@ -283,7 +284,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
         b.type = "button";
         b.textContent = a.label;
         b.setAttribute("aria-label", `${a.label}: ${t.title}`);
-        b.addEventListener("click", () => api.bubbleAction(a.id));
+        onPress(b, () => api.bubbleAction(a.id));
         return b;
       }));
     }

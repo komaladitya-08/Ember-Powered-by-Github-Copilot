@@ -302,7 +302,7 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
       const again = states.length, before = mock.requests.length;
       await host.ask("what word did I ask you to remember?");
       await idle(states, again);
-      expect(states.slice(again).some(s => s.bubble?.title === "Cinder" && /You said/.test(s.bubble.thought))).toBe(true);
+      expect(states.slice(again).some(s => s.bubble?.title === "Ember" && /You said/.test(s.bubble.thought))).toBe(true);
       // The same conversation: the model sees the earlier exchange.
       expect(mock.requests.slice(before).flatMap(r => r.messages).map(m => JSON.stringify(m.content)).join("\n")).toContain("pineapple");
     } finally {
@@ -346,7 +346,7 @@ describe("the organisation's endpoint behind the system's proxy settings (host o
       expect(await host.start(null)).toBe("ready");
       await host.ask("hello?");
       await idle(states, 0);
-      expect(states.filter(s => s.bubble).at(-1)?.bubble).toMatchObject({ mood: "idle", title: "Cinder", streaming: false });
+      expect(states.filter(s => s.bubble).at(-1)?.bubble).toMatchObject({ mood: "idle", title: "Ember", streaming: false });
       expect(through).toEqual([]);
     } finally {
       await host.stop();
