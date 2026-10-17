@@ -717,7 +717,8 @@ export class Presenter {
         const aborted = d.aborted === true;
         // The conversation's turn ended with neither words nor a step while "Thinking…" was up: it says so instead of
         // leaving an empty or stale bubble that just fades.
-        if (!aborted && this.work === "reply" && !this.produced && !this.silent && this.state.bubble.visible && this.state.emotion === "thinking") {
+        // (Not the end of the turn before a request still owed its own: that one's "Thinking…" stays.)
+        if (!aborted && this.work === "reply" && !this.produced && this.asked === null && !this.silent && this.state.bubble.visible && this.state.emotion === "thinking") {
           this.answering = false;
           this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: [] } });
           this.onProblem?.(NO_REPLY);
