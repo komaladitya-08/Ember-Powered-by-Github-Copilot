@@ -883,8 +883,10 @@ function start(): void {
     if (!overlay?.owns(event.sender) || !Array.isArray(rects) || rects.length > 32 || !rects.every(isRect)) return;
     overlay.setInteractive(event.sender, rects);
   });
+  /** From the handle's page (a handle closed or crashed is no one: a check on it must not throw for the overlay's clicks). */
+  const isHandle = (sender: Electron.WebContents) => !!handle && !handle.win.isDestroyed() && sender === handle.win.webContents;
   ipcMain.on(OVERLAY.bubbleAction, (event, id: unknown) => {
-    const fromHandle = !!handle && event.sender === handle.win.webContents;
+    const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
     const task = /^task:(.+):(stop|dismiss)$/.exec(id);
     // Stopping a task is always honoured (also while Ember waits for the mouse). Anything else that arrives
@@ -902,10 +904,10 @@ function start(): void {
     log.info("bubble.action", { id, handled: confirmer?.answer(id) ?? false });
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
-    if (handle && event.sender === handle.win.webContents) showMenu();
+    if (isHandle(event.sender)) showMenu();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
-    if (handle && event.sender === handle.win.webContents && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
+    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
   });
 
   settings.onChange((s) => {
