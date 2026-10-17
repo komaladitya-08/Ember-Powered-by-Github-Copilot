@@ -22,7 +22,10 @@ function makeWorker(o: {
   answer?: string; grants?: Record<string, "act">; noCursor?: boolean;
   /** The window with the keyboard on the user's screen, and whether Enter or Space is held down there (guides). */
   activeWindow?: () => { app: string; title: string; pid?: number } | null; activationKey?: () => boolean;
+  /** How long a look at the element takes (an app busy opening a dialog answers slowly). */
+  readMs?: number;
 } = {}) {
+  const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const asked: string[] = [];
@@ -33,7 +36,11 @@ function makeWorker(o: {
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
     sidecar: {
-      readElement: async () => { const states = o.states ? o.states() : ["enabled", "sensitive"]; return states && { role: node.role, name: node.name, states, bounds: node.bounds, ...o.extra?.() }; },
+      readElement: async () => {
+        if (o.readMs) await sleep(o.readMs);
+        const states = o.states ? o.states() : ["enabled", "sensitive"];
+        return states && { role: node.role, name: node.name, states, bounds: node.bounds, ...o.extra?.() };
+      },
       doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
       setText: async () => { events.push("set_text"); throw new Error("background_unavailable: this element's text can't be edited directly"); },
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
@@ -43,13 +50,13 @@ function makeWorker(o: {
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter: new Presenter(() => undefined),
-    lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
+    lease: async () => () => undefined, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}) },
     pointer: o.pointer, activationKey: o.activationKey,
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, call };
+  return { w, audit, events, asked, call, flown };
 }
 
 describe("worker tools", () => {
@@ -198,6 +205,50 @@ describe("guides (review round 5)", () => {
     expect((await step).textResultForLlm).toMatch(/^Another window has the keyboard now \("Saved"\)/);
     expect(Date.now() - t0).toBeGreaterThan(2100);
   }, 15_000);
+});
+
+describe("guides in the live test: Mousepad's View ▸ Select Font… opened its dialog, and the step stayed", () => {
+  const still = { x: 0, y: 0, mask: 0 };
+
+  it("a menu item whose menu closed (GTK keeps it, no longer showing) ends the step, and its highlight goes", async () => {
+    let closed = false;
+    const { call, flown } = makeWorker({ role: "menu item", name: "Select Font…", states: () => ["enabled", "sensitive"], extra: () => (closed ? { offscreen: true } : {}),
+      pointer: () => still, mode: "guide" });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "Choose Select Font" });
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { closed = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/^Its menu closed/);
+    expect(flown.at(-1)).toBeNull();
+  });
+
+  it("a new window of the same app taking the keyboard ends a menu item's step, though the item was never seen selected", async () => {
+    let dialog = false;
+    const { call } = makeWorker({ role: "menu item", name: "Select Font…", states: () => ["enabled", "sensitive"], pointer: () => still,
+      activeWindow: () => (dialog ? { app: "mousepad", title: "Choose Mousepad Font", pid: 7 } : { app: "mousepad", title: "Untitled 1 - Mousepad", pid: 7 }), mode: "guide" });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { dialog = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/^A new window of the app has the keyboard now \("Choose Mousepad Font"\)/);
+    // Another app's window is no such sign: the step waits.
+    let other = false;
+    const away = makeWorker({ role: "menu item", name: "Select Font…", states: () => ["enabled", "sensitive"], pointer: () => still,
+      activeWindow: () => (other ? { app: "firefox", title: "News", pid: 9 } : { app: "mousepad", title: "Untitled 1 - Mousepad", pid: 7 }), mode: "guide" });
+    await away.call("perceive_window", {});
+    const left = away.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { other = true; }, 100);
+    expect((await left).textResultForLlm).toMatch(/hasn't clicked it yet/);
+  }, 12_000);
+
+  it("a quick click while a look at the app is under way still counts", async () => {
+    let t0 = 0;
+    // Down for 60 ms, while every look at the app takes 400 ms.
+    const pointer = () => ({ x: 20, y: 15, mask: t0 && Date.now() - t0 > 600 && Date.now() - t0 < 660 ? 256 : 0 });
+    const { call } = makeWorker({ role: "menu item", name: "Select Font…", states: () => ["enabled", "sensitive"], pointer, readMs: 400, mode: "guide" });
+    await call("perceive_window", {});
+    t0 = Date.now();
+    expect((await call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
+  }, 8000);
 });
 
 describe("guides through menus with the keyboard (review round 6)", () => {

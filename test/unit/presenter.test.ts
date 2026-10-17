@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, Presenter, STILL_WAITING, plainText, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, NO_REPLY, Presenter, STILL_WAITING, expandedBubble, handStep, plainText, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -592,5 +592,61 @@ describe("Presenter: a task's steps on Ember's desk (review round 11, AC11-4)", 
     p.event({ type: "tool.execution_start", data: { toolName: "press_keys" } });
     expect(last().bubble?.step).toBe("Pressing keys");
     vi.useRealTimers();
+  });
+});
+
+describe("Presenter: the first reply of the live test (an empty card that faded)", () => {
+  it("a blank first delta and a message that only calls a tool show no empty answer", () => {
+    const { p, last } = setup();
+    p.userPrompt("What can you do?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "  " } });
+    expect(last().bubble).toMatchObject({ mood: "thinking", title: "Thinking…" });
+    p.event({ type: "assistant.message", data: { content: "", toolRequests: [{ name: "describe_screen" }] } });
+    expect(last().bubble?.thought).not.toBe("");
+    p.event({ type: "tool.execution_start", data: { toolName: "describe_screen" } });
+    p.event({ type: "tool.execution_complete", data: { success: true } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "I can open apps and show you how." } });
+    p.event({ type: "assistant.message", data: { content: "I can open apps and show you how." } });
+    expect(last().bubble).toMatchObject({ mood: "idle", title: "Ember", thought: "I can open apps and show you how." });
+  });
+
+  it("a turn that ends with neither words nor a step says so (and the conversation keeps it)", () => {
+    const problems: string[] = [];
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const p = new Presenter(s => states.push(s), undefined, undefined, undefined, undefined, false, { onProblem: t => problems.push(t) });
+    p.userPrompt("What can you do?");
+    p.event({ type: "user.message", data: { content: "What can you do?" } });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Let me think." } });
+    p.event({ type: "assistant.message", data: { content: "" } });
+    p.event({ type: "session.idle", data: {} });
+    expect(states.at(-1)?.bubble).toMatchObject({ visible: true, mood: "error", title: "No answer", thought: NO_REPLY });
+    expect(problems).toEqual([NO_REPLY]);
+    // A turn that answered, or ran a step, doesn't.
+    p.userPrompt("again");
+    p.event({ type: "tool.execution_start", data: { toolName: "set_appearance" } });
+    p.event({ type: "session.idle", data: {} });
+    expect(states.at(-1)?.bubble?.title).not.toBe("No answer");
+    // Nor a task's turn (its card and outcome speak for it).
+    const task = new Presenter(s => states.push(s), undefined, () => "Tidy", undefined, undefined, false, { task: "t1" });
+    task.taskStarted();
+    task.event({ type: "session.idle", data: {} });
+    expect(states.at(-1)?.bubble?.title).not.toBe("No answer");
+  });
+
+  it("'Read all' shows the whole answer in the bubble, with a way to close it and one to settings", () => {
+    const full = "word ".repeat(200).trim();
+    const b = expandedBubble({ visible: true, mood: "idle", title: "Ember", thought: full.slice(0, 599) + "…", step: null, streaming: false, actions: [{ id: "ui:more", label: "Read all" }] }, full);
+    expect(b).toMatchObject({ visible: true, expanded: true, thought: full, title: "Ember", streaming: false });
+    expect(b.actions.map(a => a.id)).toEqual(["ui:close", "ui:conversation"]);
+  });
+});
+
+describe("a task's card says what the borrowed hand does (live test: 'Clicking…' while keys went in)", () => {
+  it("names the hand's own step, on Ember's desk without 'your'", () => {
+    expect(handStep("keys")).toBe("Pressing keys (your keyboard)");
+    expect(handStep("click")).toBe("Clicking (your mouse)");
+    expect(handStep("type", true)).toBe("Typing");
   });
 });

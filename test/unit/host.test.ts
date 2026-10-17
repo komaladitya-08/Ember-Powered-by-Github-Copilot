@@ -33,6 +33,8 @@ const sim = vi.hoisted(() => ({
   stall: (_session: any, _prompt: string) => false as boolean,
   /** An abort ends the turn under way as the real runtime's does (abort, then session.idle); off: it ends nothing. */
   abortEnds: false,
+  /** What client.listModels() answers (Copilot Free answers none). */
+  models: null as any[] | null,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -75,7 +77,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { return [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return []; }
     async deleteSession(id: string) { if (sim.deleteHangs) await hang(); sim.deleted.push(id); }
     ping() { return sim.ping(); }
@@ -85,7 +87,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, proxyFromChromium, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
@@ -128,6 +131,7 @@ beforeEach(() => {
   sim.holdTurns = false;
   sim.stall = () => false;
   sim.abortEnds = false;
+  sim.models = null;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -179,6 +183,102 @@ describe("connecting and signing in", () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(await done).toBe("ready");
     expect(host.getStatus().detail).toBe("Signed in as octo.");
+    await host.stop();
+  });
+});
+
+describe("live test (Copilot Free): an account that lists no models", () => {
+  const admin = (models: Record<string, unknown> = {}) => () => AdminPolicySchema.parse({ models });
+
+  it("works on Copilot's default model, says so, and its tasks' sessions name no model either", async () => {
+    sim.models = [];
+    const { host } = makeHost({ hands: hands() });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus()).toMatchObject({ phase: "ready", defaultModel: true, conductorModel: null, workerModel: null, models: [] });
+    expect(host.getStatus().detail).toBe("Signed in as octo. Using Copilot's default model: this account doesn't list models to choose from.");
+    expect(conductorSession().config.model).toBeUndefined();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`)).toBeDefined());
+    const work = sim.sessions.find(s => s.sessionId === `ember-task-${t.id}`);
+    expect(work.config.model).toBeUndefined();
+    expect(host.tasks!.get(t.id)?.status).toBe("running");
+    await host.stop();
+  });
+
+  it("an administrator's allowed list or pinned model keeps it closed: the default may be one they didn't allow", async () => {
+    sim.models = [];
+    const allowed = makeHost({ admin: admin({ allowed: ["gpt-5"] }) });
+    expect(await allowed.host.start(TOKEN, "stored")).toBe("error");
+    expect(allowed.host.getStatus()).toMatchObject({ reason: "models", detail: "None of the models your administrator allows are available to this account." });
+    expect(sim.sessions).toHaveLength(0);
+    const pinned = makeHost({ admin: admin({ worker: "gpt-5" }) });
+    expect(await pinned.host.start(TOKEN, "stored")).toBe("error");
+    expect(pinned.host.getStatus()).toMatchObject({ reason: "models", detail: expect.stringMatching(/^Copilot lists no models for this account, and your administrator chose/) });
+    // And asked meanwhile, the bubble names that, not the network.
+    await pinned.host.ask("what can you do?");
+    expect(pinned.screen().bubble).toMatchObject({ title: "No Copilot model I can use" });
+  });
+
+  it("a list with models still picks from it (the default is never used then)", async () => {
+    const { host } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus()).toMatchObject({ conductorModel: "gpt-5-mini", defaultModel: false });
+    expect(conductorSession().config.model).toBe("gpt-5-mini");
+    await host.stop();
+  });
+});
+
+describe("live test: what Ember says when it can't take a request", () => {
+  it("names the real cause (a refused sign-in isn't 'can't reach'), and the Conversation section keeps the request and why", async () => {
+    sim.auth = async () => ({ isAuthenticated: false });
+    const { host, screen } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(host.getStatus().reason).toBe("sign-in");
+    await host.ask("what can you do?");
+    expect(screen().bubble).toMatchObject({ title: "Copilot didn't accept the sign-in", thought: expect.stringMatching(/didn't accept the GitHub sign-in/) });
+    expect(host.getTranscript().map(e => [e.who, e.text.slice(0, 40)])).toEqual([
+      ["you", "what can you do?"],
+      ["problem", "Copilot didn't accept the sign-in: Copil"],
+    ]);
+    // Not taken as an answer to read out.
+    expect(host.lastAnswer()).toBeNull();
+  });
+
+  it("an error in a turn is kept in the conversation too", async () => {
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("hello");
+    conductorSession().emit("session.error", { message: "HTTP 429 rate limited", errorType: "rate_limit" });
+    expect(host.getTranscript().at(-1)).toMatchObject({ who: "problem", text: "Copilot's usage limit was reached for now. Try again a bit later." });
+    await host.stop();
+  });
+
+  it("start errors are sorted by cause, and the handle says it in a few words", () => {
+    expect(startErrorReason(new Error("net::ERR_INTERNET_DISCONNECTED"))).toBe("network");
+    expect(startErrorReason(new Error("whatever"), { online: false })).toBe("network");
+    expect(startErrorReason(new Error("not authenticated"))).toBe("sign-in");
+    expect(startErrorReason(new Error("HTTP 403 no copilot access"))).toBe("no-access");
+    expect(startErrorReason(new Error("Failed to load models: access denied by Copilot policy"))).toBe("no-access");
+    expect(startErrorReason(new Error("None of the models your administrator allows are available to this account."))).toBe("models");
+    expect(startErrorReason(new Error("spawn ENOENT"))).toBe("runtime");
+    expect(startErrorReason(new Error("something odd"))).toBe("other");
+    expect(idleWord({ phase: "ready" })).toBe("Ready");
+    expect(idleWord({ phase: "signed-out" })).toBe("Not connected");
+    expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
+    expect(idleWord({ phase: "error", reason: "models" })).toBe("No model");
+    expect(idleWord({ phase: "error", reason: "sign-in" })).toBe("Sign-in refused");
+    expect(idleWord({ phase: "error", reason: "other" })).toBe("Copilot problem");
+    expect(idleWord({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Waiting for tasks");
+  });
+
+  it("the reason goes once Ember is connected again", async () => {
+    sim.auth = async () => ({ isAuthenticated: false });
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    expect(host.getStatus().reason).toBe("sign-in");
+    sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus().reason).toBeUndefined();
     await host.stop();
   });
 });
