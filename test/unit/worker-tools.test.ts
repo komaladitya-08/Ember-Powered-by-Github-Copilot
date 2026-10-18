@@ -24,14 +24,16 @@ function makeWorker(o: {
   activeWindow?: () => { app: string; title: string; pid?: number } | null; activationKey?: () => boolean;
   /** How long a look at the element takes (an app busy opening a dialog answers slowly). */
   readMs?: number;
+  /** The role of what the element sits in (a dialog's table, a drop-down's popup). */
+  parentRole?: string;
 } = {}) {
   const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const asked: string[] = [];
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
-  const node = { id: 1, parent: null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
-  const seen = { window, x11Window: null, nodes: [node], blocked: !!o.blocked, ms: 0 };
+  const node = { id: 1, parent: o.parentRole ? 0 : null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
+  const seen = { window, x11Window: null, nodes: [...(o.parentRole ? [{ id: 0, parent: null, depth: 0, role: o.parentRole, name: "", states: [], bounds: null }] : []), node], blocked: !!o.blocked, ms: 0 };
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
@@ -251,6 +253,29 @@ describe("guides in the live test: Mousepad's View ▸ Select Font… opened its
   }, 8000);
 });
 
+describe("guides in a dialog's list (live retest: Monospace Bold in the font chooser)", () => {
+  it("a row that becomes selected ends the step, however it was chosen", async () => {
+    let chosen = false;
+    const { call, flown } = makeWorker({ role: "table cell", name: "Monospace Bold", parentRole: "table", states: () => (chosen ? ["enabled", "selected"] : ["enabled"]),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "Select a font style" });
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { chosen = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/^It changed: table cell "Monospace Bold"/);
+    expect(flown.at(-1)).toBeNull();
+  });
+
+  it("in a drop-down's popup, a row selected by the pointer passing over it isn't the step", async () => {
+    let hovered = false;
+    const { call } = makeWorker({ role: "list item", name: "Dark", parentRole: "menu", states: () => (hovered ? ["enabled", "selected"] : ["enabled"]), pointer: () => ({ x: 0, y: 0, mask: 0 }), mode: "guide" });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { hovered = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/hasn't clicked it yet/);
+  }, 8000);
+});
+
 describe("guides through menus with the keyboard (review round 6)", () => {
   it("a menu opened with Alt+F or F10 (its items show) counts; hovering it, which selects it, doesn't", async () => {
     let hovered = false, open = false;
@@ -408,5 +433,16 @@ describe("what Ember did on its desk (review round 8, PR8-3)", () => {
     (w as unknown as { place: unknown }).place = { perception: d.perception, sidecar: d.sidecar, userInControl: () => false, dead: false, onDead() {} };
     expect((await call("click", { id: 1 })).resultType).toBe("success");
     expect(actions().at(-1)).toMatchObject({ kind: "click", ok: true, tier: 2 });
+  });
+});
+
+describe("windows where the app's suggestion isn't the user's (live retest: a restored session saved as ~/shopping-list.txt)", () => {
+  it("an offer to restore a session, or a Save dialog for a file the user never named, comes with a note", async () => {
+    const { dialogNote } = await import("../../app/main/agent/worker");
+    expect(dialogNote({ name: "Question", role: "dialog" }, [{ name: "Do you want to restore your previous session?" }], "make this text all uppercase")).toMatch(/answer No/);
+    expect(dialogNote({ name: "Question", role: "dialog" }, [{ name: "Do you want to restore your previous session?" }], "restore my last session")).toBe("");
+    expect(dialogNote({ name: "Save As", role: "file chooser" }, [{ name: "Name", text: "shopping-list.txt" }], "make this text all uppercase")).toMatch(/named no file/);
+    expect(dialogNote({ name: "Save As", role: "file chooser" }, [], "save it as ~/Ember/list.txt")).toBe("");
+    expect(dialogNote({ name: "notes.txt - Mousepad", role: "frame" }, [{ name: "File" }], "")).toBe("");
   });
 });

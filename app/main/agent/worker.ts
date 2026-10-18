@@ -176,7 +176,28 @@ const isOn = (states: string[]) => states.includes("checked") || states.includes
 type Handler = { role: string; name: string };
 /** Items the pointer selects (and focuses) by only passing over them: menus, and the lists of a drop-down. */
 const HOVER_SELECTS = /^(menu|menu item|check menu item|radio menu item|list item|tree item|table cell)$/;
+/** Rows of a list or table: the pointer selects them only in a menu or a drop-down's list (elsewhere, a click does). */
+const ROW_ROLES = /^(list item|tree item|table cell)$/;
+/** What a drop-down's or a menu's list sits in. */
+const POPUP_ROLES = /^(menu|menu bar|combo box|popup menu|window|tool tip)$/;
 const isUnder = (p: { x: number; y: number }, b: Bounds) => p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
+
+/**
+ * A note for windows where taking the app's suggestion would act on something the user never named: an offer to
+ * restore an earlier session or recover documents (it brings back old, unsaved text), and a Save dialog when the
+ * user named no file (its suggested name and folder are the app's guess). `said`: what the user said for the task.
+ */
+export function dialogNote(w: { name: string; role?: string }, nodes: readonly { name: string; text?: string }[], said = ""): string {
+  const words = [w.name, ...nodes.slice(0, 60).flatMap(n => [n.name, n.text ?? ""])].join(" \n ");
+  const asked = (re: RegExp) => re.test(said);
+  if (/\b(restore|recover|reopen)\b/i.test(words) && /\b(session|unsaved|previous|last time|crash|documents?)\b/i.test(words) && !asked(/\b(restore|recover|reopen)\b/i)) {
+    return "\nNote: this asks whether to restore an earlier session or recover unsaved documents. The user didn't ask for that: answer No (or Don't restore), and work on the file the task is about.";
+  }
+  if ((w.role === "file chooser" || /^save( as)?\b|save file/i.test(w.name)) && !/[~/][\w.-]|\.\w{1,5}\b/.test(said)) {
+    return "\nNote: the user named no file. Don't accept this dialog's suggested name or folder: save to the file this task is about if you know it, or cancel and say in finish_task that you need to know where to save.";
+  }
+  return "";
+}
 
 /**
  * The middle of the widest lane across `b` (a column when scrolling up or down, a row when scrolling sideways), inside
@@ -967,7 +988,7 @@ export class Worker {
         z.object({ id, timeoutSeconds: z.number().int().min(5).max(300).optional() }),
         async a => this.waitForClick(a.id, (a.timeoutSeconds ?? 90) * 1000)),
       this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card).", z.object({ text: z.string().max(200) }),
-        async a => { this.d.onProgress(a.text); return done("Shown."); }),
+        async a => { this.d.onProgress(a.text); this.d.presenter.progress(a.text); return done("Shown."); }),
       this.tool("finish_task", "End the task with a one or two sentence summary for the user.",
         z.object({ success: z.boolean(), summary: z.string().max(400) }),
         async a => {
@@ -1114,6 +1135,21 @@ export class Worker {
     if (this.session) await within(this.session.disconnect().catch(() => undefined), 3000);
   }
 
+  /**
+   * A row that only a click (or the keyboard) selects: one of a list or table in a window or dialog (a font chooser's
+   * list), not of a menu or a drop-down's popup, where the pointer passing over selects it.
+   */
+  private clickSelects(node: AxNode): boolean {
+    if (!ROW_ROLES.test(node.role)) return false;
+    for (let p = node.parent, hops = 0; p !== null && hops < 16; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (POPUP_ROLES.test(up.role)) return false;
+      p = up.parent;
+    }
+    return true;
+  }
+
   /** Guide mode: done when the user presses inside the element, the element changes, or the window does. */
   private async waitForClick(id: number, timeoutMs: number): Promise<ToolResultObject> {
     const node = this.known.get(id);
@@ -1130,7 +1166,7 @@ export class Worker {
     // the selected item): Enter or Space on it, or another window taking the keyboard (a menu item chosen with the
     // keyboard opened its dialog).
     const marks = ["checked", "pressed", "expanded",
-      ...(HOVER_SELECTS.test(node.role) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
+      ...((HOVER_SELECTS.test(node.role) && !this.clickSelects(node)) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
     // A menu's item whose menu closed is gone from the screen (GTK keeps it, no longer showing).
     const key = (e: ElementInfo | null) => (e && !e.offscreen ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
     const reached = (e: ElementInfo | null) => !!e && (e.states.includes("focused") || e.states.includes("selected"));
@@ -1243,7 +1279,7 @@ export class Worker {
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
-    const result: ToolResultObject = { textResultForLlm: p.text, resultType: "success" };
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords)}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -1306,6 +1342,29 @@ export class Worker {
       ...(live.withheld || node.withheld ? { withheld: true } : {}) };
     this.known.set(id, current);
     return { node: current, element: this.elementOf(id, current) };
+  }
+
+  /**
+   * Where element `id` is when it has no name (an icon, an unnamed button), for the question asked about it: the named
+   * control around it (not the window itself), else its place in the window.
+   */
+  private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
+    if (element.name || element.withheld) return {};
+    const node = this.known.get(id);
+    if (!node) return {};
+    for (let p = node.parent, hops = 0; p !== null && hops < 6; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (/^(frame|window|dialog|alert|file chooser|application)$/.test(up.role)) break;
+      if (up.name.trim() && !up.withheld && !up.secret) return { place: { role: up.role, name: up.name.trim() } };
+      p = up.parent;
+    }
+    const b = node.bounds, f = this.frame;
+    if (!b || !f || f.width <= 0 || f.height <= 0) return {};
+    const cx = (b.x + b.width / 2 - f.x) / f.width, cy = (b.y + b.height / 2 - f.y) / f.height;
+    const v = cy < 1 / 3 ? "top" : cy > 2 / 3 ? "bottom" : "middle";
+    const h = cx < 1 / 3 ? "left" : cx > 2 / 3 ? "right" : "";
+    return { place: { at: h ? (v === "middle" ? `${h} side` : `${v} ${h}`) : v === "middle" ? "middle" : v } };
   }
 
   /**
@@ -1457,6 +1516,7 @@ export class Worker {
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged), ...this.ownText(field, node.text) } : {}),
       ...((kind === "click" || kind === "toggle") && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}),
+      ...this.placeOf(id, element),
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
@@ -1644,7 +1704,7 @@ export class Worker {
     const base: ActionRequest = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged), ...this.ownText(field, node.text) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
-      ...(dialog ? { dialog } : {}) };
+      ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
     if (verdict) return verdict;
     // Where it is now: the window may have moved or scrolled while the user decided.
