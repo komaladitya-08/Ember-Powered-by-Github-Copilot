@@ -33,6 +33,11 @@ export interface ActionRequest {
    * `withheld`: it withheld the element's name (it may say what a secret field holds), so what it says can't be shown.
    */
   element?: { role: string; name: string; secret?: boolean; withheld?: boolean };
+  /**
+   * Where an element without a name is, for the question only (never judged): the named control it sits in ("Save"
+   * push button), or its place in the window ("top right").
+   */
+  place?: { role: string; name: string } | { at: string };
   /** For text: what will be typed; for settings: the new value; for keys: the combination. */
   value?: string;
   /** For text: replace everything, insert at the caret, or append. */
@@ -1313,7 +1318,8 @@ const UNNAMED: Record<string, string> = { text: "text area", "document text": "d
 
 function describe(r: ActionRequest, withApp = true): string {
   const cell = !!r.element && isSheetCell(r.element);
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}`;
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on ${quote(r.place.name, 40)} ${r.place.role}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
