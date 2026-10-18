@@ -115,9 +115,20 @@ export class OverlayManager {
     // following the cursor resumes when the bubble goes.
     const waiting = (s: EmberState) => s.bubble.visible && (s.bubble.actions.length > 0
       || (!s.bubble.streaming && !!s.bubble.thought && (s.bubble.mood === "idle" || s.bubble.mood === "done" || s.bubble.mood === "error")));
+    const asks = (s: EmberState) => s.bubble.visible && s.bubble.actions.some(a => !a.id.startsWith("ui:"));
     const before = waiting(this.state);
+    const askedBefore = asks(this.state);
     this.state = { ...this.state, ...next };
     const now = waiting(this.state);
+    // A question appears: Ember stops right where it is, so its buttons are where they first showed when the user
+    // reaches for them (flying on to a spot by the cursor moved them under a pointer already aimed at Allow).
+    if (asks(this.state) && !askedBefore && !this.state.focus) {
+      const at = this.follower.position;
+      this.follower.jump(at);
+      this.follower.park(at);
+      for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
+      return;
+    }
     if ("focus" in next || now !== before) {
       const f = this.state.focus;
       const size = this.settings().size;
