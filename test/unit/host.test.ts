@@ -598,7 +598,11 @@ describe("review round 3", () => {
     await host.start(TOKEN, "stored");
     host.tasks!.start("tidy my desktop");
     await vi.advanceTimersByTimeAsync(50);
-    const work = (text: string) => { for (const s of taskSessions()) s.emit("assistant.reasoning_delta", { deltaContent: text }); };
+    // Its note on the card and bubble; its model streams on meanwhile (thinking it never shows: it keeps the turn alive).
+    const work = (text: string) => {
+      for (const p of (host as any).taskPresenters.values()) (p as Presenter).progress(text);
+      for (const s of taskSessions()) s.emit("assistant.reasoning_delta", { deltaContent: text });
+    };
     work("first look ");
     expect(screen().bubble?.title).toBe("tidy my desktop");
     host.claimBubble();
@@ -606,7 +610,7 @@ describe("review round 3", () => {
     work("still looking ");
     expect(screen().bubble?.title).toBe("Listening…");
     host.releaseBubble(screen().bubble!);
-    expect(screen().bubble).toMatchObject({ title: "tidy my desktop", thought: "first look still looking " });
+    expect(screen().bubble).toMatchObject({ title: "tidy my desktop", thought: "still looking " });
     // main forgets to give it back: after 30 s the work shows again anyway.
     host.claimBubble();
     setStateOf(host)({ emotion: "listening", bubble: listening });
@@ -787,7 +791,7 @@ describe("review round 4", () => {
     };
     if (seenFirst) say();
     q.ask(); // the worker's "May I?" (main shows it)
-    if (seenFirst) taskSessions()[0].emit("assistant.reasoning_delta", { deltaContent: "Asking first. " });
+    if (seenFirst) for (const p of (made.host as any).taskPresenters.values()) (p as Presenter).progress("Asking first. ");
     else say();
     return { ...made, q, task: taskSessions()[0] };
   }
@@ -813,7 +817,7 @@ describe("review round 4", () => {
     const n = patches.length;
     q.answer(); // "Not now"
     await vi.advanceTimersByTimeAsync(3000);
-    task.emit("assistant.reasoning_delta", { deltaContent: "The user said no. " });
+    for (const p of (host as any).taskPresenters.values()) (p as Presenter).progress("The user said no. ");
     await finish(task, "You said not now, so I left it.");
     await vi.advanceTimersByTimeAsync(1000);
     const after = shown(patches.slice(n));
@@ -1931,5 +1935,49 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(sim.clients).toHaveLength(1);
     expect(host.getStatus().phase).toBe("ready");
     await stopAll(host);
+  });
+});
+
+describe("live retest: a guide is promised only where Ember can point", () => {
+  const showMe = () => conductorSession().config.tools.find((t: any) => t.name === "show_me").handler({ goal: "change the font" }, {});
+  const ctx = { target: { title: "notes.txt - Mousepad", pid: 7 }, text: "<context>…</context>" };
+
+  it("a window Ember can't read: no guide starts, and the model is told to explain in words", async () => {
+    const { host } = makeHost({ hands: { ...hands(), perception: { read: async () => { throw new Error("no accessibility"); } } } as never });
+    await host.start(TOKEN, "stored");
+    await host.ask("show me how to change the font", ctx);
+    const said = await showMe();
+    expect(said).toMatch(/^Ember can't guide here: Ember can't read that window/);
+    expect(said).toMatch(/Don't tell the user to follow Ember's pointer/);
+    expect(host.tasks!.list()).toEqual([]);
+    await host.stop();
+  });
+
+  it("a window it can read: the guide starts", async () => {
+    const window = { app: "mousepad", pid: 7, name: "notes.txt - Mousepad", role: "frame", active: true, bounds: null };
+    const { host } = makeHost({ hands: { ...hands(), perception: { read: async () => ({ window, nodes: [], blocked: false, busy: false }) } } as never });
+    await host.start(TOKEN, "stored");
+    await host.ask("show me how to change the font", ctx);
+    expect(await showMe()).toMatch(/^Guide .* started/);
+    expect(host.tasks!.list()).toHaveLength(1);
+    await host.stop();
+  });
+});
+
+describe("live retest: 'Read all' stays open until it's closed", () => {
+  it("a pinned claim isn't given back after 30 s", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    host.claimBubble({ pin: true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect((host as any).owner.holder).toBe((host as any).mainBubble);
+    host.releaseBubble(null);
+    expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
+    // An ordinary claim still ends by itself.
+    host.claimBubble();
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
   });
 });

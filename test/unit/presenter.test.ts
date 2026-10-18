@@ -231,7 +231,7 @@ describe("Presenter: one bubble, held while it's read (review round 3)", () => {
     const shown = () => states.filter(x => x.s.bubble).map(x => `${x.who}:${x.s.bubble!.visible ? x.s.bubble!.thought : "(hidden)"}`).filter((x, i, a) => x !== a[i - 1]);
     const work = (n: number) => {
       for (let i = 0; i < n; i++) {
-        task.event({ type: "assistant.reasoning_delta", data: { deltaContent: `look ${i} ` } });
+        task.progress(`look ${i} `);
         task.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
         task.event({ type: "tool.execution_complete", data: { success: true } });
       }
@@ -407,7 +407,7 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
     const b = make("b", "Calculator", true);
     const shown = () => states.filter(x => x.s.bubble).map(x => `${x.who}:${x.s.bubble!.visible ? x.s.bubble!.thought : "(hidden)"}`).filter((x, i, arr) => x !== arr[i - 1]);
     const work = (p: Presenter, text: string) => {
-      p.event({ type: "assistant.reasoning_delta", data: { deltaContent: text } });
+      p.progress(text);
       p.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
       p.event({ type: "tool.execution_complete", data: { success: true } });
     };
@@ -648,5 +648,24 @@ describe("a task's card says what the borrowed hand does (live test: 'Clicking�
     expect(handStep("keys")).toBe("Pressing keys (your keyboard)");
     expect(handStep("click")).toBe("Clicking (your mouse)");
     expect(handStep("type", true)).toBe("Typing");
+  });
+});
+
+describe("a task's bubble shows its steps, never its model's thinking (live retest)", () => {
+  it("reasoning, chat and intent from a task's model don't reach its bubble; its own notes and steps do", () => {
+    const states: Partial<EmberState>[] = [];
+    vi.useFakeTimers();
+    const p = new Presenter(s => states.push(s), undefined, () => "Open Mousepad", undefined, undefined, false, { task: "t1" });
+    p.taskStarted();
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "…going to use the command to open the Mousepad app… shopping list easily!" } });
+    p.event({ type: "assistant.intent", data: { intent: "Examining everything carefully" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "good to take my time and examine everything carefully" } });
+    p.event({ type: "assistant.message", data: { content: "good to take my time and examine everything carefully" } });
+    const all = states.filter(s => s.bubble).map(s => `${s.bubble!.title}|${s.bubble!.thought}`).join("\n");
+    expect(all).not.toMatch(/command|examin/i);
+    p.event({ type: "tool.execution_start", data: { toolName: "perceive_window" } });
+    expect(states.at(-1)?.bubble).toMatchObject({ title: "Open Mousepad", step: "Reading the window" });
+    p.progress("Typing the list");
+    expect(states.at(-1)?.bubble).toMatchObject({ title: "Open Mousepad", thought: "Typing the list" });
   });
 });

@@ -451,10 +451,13 @@ export class AgentHost {
    * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
    * covers doesn't run out of time underneath (main may put it back: a wake that was another word).
    */
-  claimBubble(): void {
+  claimBubble(o: { pin?: boolean } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
     if (this.mainHold) clearTimeout(this.mainHold);
+    this.mainHold = null;
+    // Pinned ("Read all" opened the whole answer): main holds it until the user closes it or asks something.
+    if (o.pin) return;
     this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
     this.mainHold.unref?.();
   }
@@ -807,8 +810,12 @@ export class AgentHost {
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
-        showMe: tasks ? goal => {
-          const t = tasks.start(goal, { target: this.turn?.target ?? undefined, mode: "guide" });
+        showMe: tasks ? async goal => {
+          // Nothing is promised that can't be done: a window Ember can't read is one it can't point into.
+          const target = this.turn?.target ?? undefined;
+          const why = await this.cantGuide(target);
+          if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
+          const t = tasks.start(goal, { target, mode: "guide" });
           this.announced.add(t.id);
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
@@ -992,6 +999,22 @@ export class AgentHost {
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id });
     this.taskPresenters.set(id, p);
     return p;
+  }
+
+  /**
+   * Why Ember can't point at controls in the window the user was in (null: it can): the window can't be read through
+   * accessibility (it exposes nothing, or the helper is missing), it's private, or it doesn't answer. Without a known
+   * window (the desktop) the guide finds its own.
+   */
+  private async cantGuide(target: (WindowTarget & { app?: string }) | undefined): Promise<string | null> {
+    const perception = this.o.hands?.perception;
+    if (!target?.title || !perception || typeof perception.read !== "function") return null;
+    const seen = await within(perception.read(target).catch(() => null), 4000);
+    if (seen === "timeout") return "the window doesn't answer right now.";
+    if (!seen) return "Ember can't read that window (its desktop controls aren't available here).";
+    if (seen.blocked) return "that window is private (a password prompt, or on the never-look list).";
+    if (!seen.window) return seen.busy ? "the window doesn't answer right now." : "Ember can't read that window (it exposes no accessibility information).";
+    return null;
   }
 
   /** Tasks running or waiting to run. */

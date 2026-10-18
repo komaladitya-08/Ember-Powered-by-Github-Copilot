@@ -594,6 +594,13 @@ export class Presenter {
     });
   }
 
+  /** A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's thinking. */
+  progress(text: string): void {
+    const note = text.replace(/\s+/g, " ");
+    if (!note.trim()) return;
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true } });
+  }
+
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
   outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"] }): void {
     if (this.silent) return;
@@ -612,7 +619,7 @@ export class Presenter {
     const d = e.data ?? {};
     switch (e.type) {
       case "assistant.intent":
-        if (!this.answering && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
+        if (!this.answering && this.work !== "progress" && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
         break;
       case "user.message": {
         // A request's turn begins while one asked is still owed its turn. Asked while the turn before was still
@@ -641,7 +648,9 @@ export class Presenter {
         this.answer = "";
         break;
       case "assistant.reasoning_delta": {
-        if (this.answering) break;
+        // A task's model thinks aloud in its own words ("…going to use the command to open the app…"): its bubble and
+        // card show only its steps and its notes (report_progress), never that.
+        if (this.answering || this.work === "progress") break;
         // After a tool ran, the next reasoning is a new thought: it replaces the last one instead of running on.
         const prev = this.state.bubble.thought.startsWith("“") || this.thoughtBreak ? "" : this.state.bubble.thought;
         this.thoughtBreak = false;
@@ -653,6 +662,8 @@ export class Presenter {
         // question's "Thinking…" from mid-sentence, so its message, when it comes, shows it whole (with "Read all").
         // Nothing to read yet (an empty or blank first delta): the bubble stays as it is rather than show an empty answer.
         const delta = String(d.deltaContent ?? "");
+        // A task speaks through its summary (finish_task), not its model's chat.
+        if (this.work === "progress") break;
         if (!this.answering && !delta.trim()) break;
         if (this.asked !== null) this.askedOverAnswer = false;
         if (!this.answering) { this.answering = true; this.answer = ""; }
@@ -686,6 +697,7 @@ export class Presenter {
         // text is complete even when a second question reset the streamed buffer half-way.
         const content = typeof d.content === "string" ? d.content.trim() : "";
         const toolCall = Array.isArray(d.toolRequests) && d.toolRequests.length > 0;
+        if (this.work === "progress") break;
         if (this.answering || (content && !toolCall)) {
           const full = plainText(content || this.answer.trim());
           // No words after all (only a tool call came, or a blank answer): nothing is shown or kept as an answer.
