@@ -1349,7 +1349,8 @@ export class Worker {
    * control around it (not the window itself), else its place in the window.
    */
   private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
-    if (element.name || element.withheld) return {};
+    // (A text area or field is named well enough by what it is: "the text area".)
+    if (element.name || element.withheld || TYPING_ROLES.has(element.role)) return {};
     const node = this.known.get(id);
     if (!node) return {};
     for (let p = node.parent, hops = 0; p !== null && hops < 6; hops++) {
