@@ -145,6 +145,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
 // Tasks under way sit nearest the handle; when the stack would run off the top of the screen, the oldest ended
 // cards fold into one "+N more" line (with Close all), and if even the tasks under way don't fit, the stack scrolls.
 
+/** How long a card's new buttons ignore presses. */
+const CARD_ARM_MS = 900;
 /** Space between cards (the stack's CSS gap) and kept free above the stack. */
 const CARD_GAP = 8;
 const TOP_ROOM = 12;
@@ -191,7 +193,7 @@ function measureTasks(): void {
   reportInteractive();
 }
 
-interface CardEls { li: HTMLLIElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string }
+interface CardEls { li: HTMLLIElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
 /** The cards in stack order (top first), as last rendered. */
@@ -267,7 +269,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       actions.className = "task-actions";
       actions.hidden = true;
       li.append(title, detail, actions);
-      c = { li, title, detail, actions, actionsKey: "" };
+      c = { li, title, detail, actions, actionsKey: "", armedAt: 0 };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
@@ -278,13 +280,17 @@ function renderTasks(tasks: TaskCard[]): boolean {
     const actionsKey = JSON.stringify([list, t.title]);
     if (actionsKey !== c.actionsKey) {
       c.actionsKey = actionsKey;
+      // New buttons take no press for a moment: the pointer may be resting where a card just appeared (the ask box
+      // closed over it), and a Stop there must be a deliberate click.
+      c.armedAt = performance.now() + CARD_ARM_MS;
       c.actions.hidden = list.length === 0;
       c.actions.replaceChildren(...list.map(a => {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = a.label;
         b.setAttribute("aria-label", `${a.label}: ${t.title}`);
-        onPress(b, () => api.bubbleAction(a.id));
+        const card = c!;
+        onPress(b, () => { if (performance.now() >= card.armedAt) api.bubbleAction(a.id); });
         return b;
       }));
     }
@@ -418,7 +424,8 @@ function draw(now: number): void {
     showStage(true);
     // With no room beside the settings window, a bubble that asks nothing hides rather than cover it (the window's
     // Conversation section has its words); a question stays, wherever it must go.
-    const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:"));
+    // (An answer opened in full is pinned: it stays on screen too.)
+    const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:")) || state?.bubble.expanded === true;
     if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows)) interactiveDirty = true;
     // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
     // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on

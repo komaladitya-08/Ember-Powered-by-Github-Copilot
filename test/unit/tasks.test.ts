@@ -289,7 +289,7 @@ describe("review round 3: how tasks end", () => {
     const t = tm.start("Turn on Night Light");
     await vi.advanceTimersByTimeAsync(10);
     expect(t.status).toBe("cancelled");
-    expect(cards.at(-1)).toEqual([{ id: t.id, title: "Turn on Night Light", status: "stopped", detail: "You said not now, so I left it.", actions: [] }]);
+    expect(cards.at(-1)).toEqual([{ id: t.id, title: "Turn on Night Light", status: "stopped", detail: "You said not now, so I left it.", actions: [{ id: `task:${t.id}:dismiss`, label: "Close" }] }]);
     await vi.advanceTimersByTimeAsync(200);
     expect(cards.at(-1)).toEqual([]);
     vi.useRealTimers();

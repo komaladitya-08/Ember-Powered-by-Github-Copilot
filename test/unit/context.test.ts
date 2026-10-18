@@ -100,3 +100,22 @@ describe("describe", () => {
     expect(seen.window?.name).toBe("");
   });
 });
+
+describe("the user's selection (live retest: 'I can't see which text you mean' with all of it selected)", () => {
+  it("the X selection fills in a selection the app didn't tell; never in a private window or a secret field", async () => {
+    const c = await perception([node(1, "text", "Document", { states: ["focused"], text: "apples bread milk" })]).quickContext();
+    expect(c?.text).not.toMatch(/Selected text/);
+    const withSel = Perception.withSelection(c, "apples bread milk");
+    expect(withSel?.text).toMatch(/\nSelected text: "apples bread milk"\.\n<\/context>$/);
+    // The app's own word wins.
+    const told = await perception([node(1, "text", "Document", { states: ["focused"], text: "a b", selection: "b" })]).quickContext();
+    expect(Perception.withSelection(told, "something else")).toBe(told);
+    // Nothing selected, a private window or a secret field: unchanged.
+    expect(Perception.withSelection(c, "  ")).toBe(c);
+    const priv = await perception([], "keepassxc", "Passwords", ["keepassxc"]).quickContext();
+    expect(Perception.withSelection(priv, "hunter2")).toBe(priv);
+    const pw = await perception([node(1, "password text", "Password", { states: ["focused"] })]).quickContext();
+    expect(Perception.withSelection(pw, "hunter2")?.text).not.toMatch(/hunter2/);
+    expect(Perception.withSelection(null, "x")).toBeNull();
+  });
+});

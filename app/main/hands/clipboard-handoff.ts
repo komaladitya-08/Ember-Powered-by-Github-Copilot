@@ -102,6 +102,63 @@ export async function handClipboardToManager(o: { ourWindow: number; display?: s
   }
 }
 
+/**
+ * The text selected now (the X PRIMARY selection, as UTF-8), when the app that owns it is the X client of window
+ * `sameClientAs` (the window the user is in: a selection left in another app isn't theirs to ask about); "" otherwise,
+ * or by the deadline. At most `max` characters.
+ */
+export async function readSelection(o: { sameClientAs: number; display?: string; timeoutMs?: number; max?: number }): Promise<string> {
+  const deadline = Date.now() + (o.timeoutMs ?? 600);
+  let x: ReturnType<typeof bind>;
+  try {
+    x = bind();
+  } catch {
+    return "";
+  }
+  const dpy = x.XOpenDisplay(o.display ?? null);
+  if (!dpy) return "";
+  let win = 0;
+  try {
+    const atom = (name: string) => Number(x.XInternAtom(dpy, name, 0));
+    const PRIMARY = 1, UTF8 = atom("UTF8_STRING");
+    const owner = Number(x.XGetSelectionOwner(dpy, PRIMARY));
+    let mask = Number(x.koffi.decode(dpy, 48, "unsigned long"));
+    if (!(mask >= 0xffff && mask <= 0x1fffffff && (mask & (mask + 1)) === 0)) mask = 0x1fffff;
+    if (!owner || !o.sameClientAs || Math.floor(owner / (mask + 1)) !== Math.floor(o.sameClientAs / (mask + 1))) return "";
+    win = Number(x.XCreateSimpleWindow(dpy, x.XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0));
+    const prop = atom("EMBER_SELECTION");
+    x.XConvertSelection(dpy, PRIMARY, UTF8, prop, win, 0);
+    x.XFlush(dpy);
+    const ev = Buffer.alloc(192);
+    for (;;) {
+      let got: number | null = null;
+      while (x.XPending(dpy) > 0) {
+        x.XNextEvent(dpy, ev);
+        if (ev.readInt32LE(0) === 31 && Number(ev.readBigUInt64LE(32)) === win && Number(ev.readBigUInt64LE(40)) === PRIMARY) got = Number(ev.readBigUInt64LE(56));
+      }
+      if (got === 0) return "";
+      if (got !== null) break;
+      if (Date.now() >= deadline) return "";
+      await sleep(10);
+    }
+    const max = o.max ?? 2000;
+    const type = [0], format = [0], count = [0], after = [0], data: unknown[] = [null];
+    if (x.XGetWindowProperty(dpy, win, prop, 0, Math.ceil(max / 4) * 4, 1, 0, type, format, count, after, data) !== 0 || !data[0]) return "";
+    try {
+      if (format[0] !== 8) return "";
+      const bytes = Buffer.from(x.koffi.decode(data[0], "uint8_t", Number(count[0])) as Uint8Array);
+      return bytes.toString("utf8").slice(0, max);
+    } finally {
+      x.XFree(data[0]);
+    }
+  } catch {
+    return "";
+  } finally {
+    if (win) x.XDestroyWindow(dpy, win);
+    x.XCloseDisplay(dpy);
+  }
+}
+
 /** The libX11 calls used here, through koffi. */
 function bind() {
   const koffi = requireCjs("koffi") as typeof import("koffi");

@@ -35,7 +35,7 @@ import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
-import { handClipboardToManager } from "./hands/clipboard-handoff";
+import { handClipboardToManager, readSelection } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
@@ -510,10 +510,8 @@ function start(): void {
   const expandAnswer = () => {
     const full = agent?.lastAnswer();
     if (!full) { readLastAnswer(); return; }
-    agent?.claimBubble();
-    const bubble = expandedBubble(lastState.bubble, full);
-    setState({ talking: false, bubble });
-    hideIfStill(bubble, Math.min(120_000, 20_000 + full.length * 60));
+    agent?.claimBubble({ pin: true });
+    setState({ talking: false, bubble: expandedBubble(lastState.bubble, full) });
   };
   const closeExpanded = () => {
     if (!lastState.bubble.expanded) return;
@@ -598,15 +596,22 @@ function start(): void {
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
-  const captureContext = () => { callContext = perception && consented() ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
+  const captureContext = () => {
+    if (!perception || !consented()) { callContext = Promise.resolve(null); return; }
+    // What is selected in the user's window, asked for now (some apps don't tell it through accessibility).
+    const active = x11Ref?.activeWindow();
+    const selected = active && active.pid !== process.pid ? readSelection({ sameClientAs: active.id }).catch(() => "") : Promise.resolve("");
+    callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
+  };
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
-    // A slow screen read never holds a request for long: it goes without context after 1.5 s.
-    const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 1500))]);
+    // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
+    // Ember starts also starts the accessibility helper).
+    const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
     return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
   };
   /**

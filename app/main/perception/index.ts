@@ -291,6 +291,16 @@ export class Perception {
     return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>` };
   }
 
+  /**
+   * The quick context with the text the user selected, as the X selection (PRIMARY) holds it, where the app didn't
+   * tell it through accessibility (or the read didn't come to it). Never in a private window or a secret field.
+   */
+  static withSelection(ctx: QuickContext | null, selected: string): QuickContext | null {
+    const text = selected.replace(/\0/g, "").trim();
+    if (!ctx || !text || /Selected text:|private window|a secret field/.test(ctx.text)) return ctx;
+    return { ...ctx, text: ctx.text.replace(/\n<\/context>$/, `\nSelected text: ${quoteUntrusted(text, 300)}.\n</context>`) };
+  }
+
   /** Text for the conductor: where the user is and what the window contains. */
   async describe(): Promise<string> {
     let seen: Seen;

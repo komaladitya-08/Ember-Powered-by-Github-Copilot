@@ -4,8 +4,8 @@
  * run at once, the rest queue; two tasks never act in the same window at the
  * same moment (window leases); finished worker sessions are deleted after
  * ten minutes (or at once when Ember stops); results wait for the conductor
- * to pick them up. Cards that need the user's attention (a failure) stay until
- * dismissed.
+ * to pick them up. Every finished card can be closed; one that needs the user's
+ * attention (a failure) stays until it is.
  */
 
 import crypto from "node:crypto";
@@ -276,7 +276,7 @@ export class TaskManager {
       detail: t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-        : t.status === "failed" ? [{ id: `task:${t.id}:dismiss`, label: "Close" }] : [],
+        : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
     }));
     this.d.setCards(cards);
   }

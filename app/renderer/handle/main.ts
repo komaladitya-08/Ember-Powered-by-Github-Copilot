@@ -1,7 +1,7 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { announcement, plainStream } from "@ember/bubble";
+import { announcement, onPress, plainStream } from "@ember/bubble";
 import type { BubbleState, HandleApi } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import type { Settings } from "../../main/settings";
@@ -46,13 +46,15 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   const key = JSON.stringify(list.map(a => [a.id, a.label, a.primary === true]));
   if (host.dataset.key === key) return;
   host.dataset.key = key;
+  // New buttons take no press for a moment (the pointer may rest where they just appeared).
+  const armedAt = performance.now() + 900;
   host.replaceChildren(...list.map(a => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = a.label;
     b.setAttribute("aria-label", label(a));
     if (a.primary) b.className = "primary";
-    b.addEventListener("click", () => api.bubbleAction(a.id));
+    onPress(b, () => { if (performance.now() >= armedAt) api.bubbleAction(a.id); });
     return b;
   }));
 }
