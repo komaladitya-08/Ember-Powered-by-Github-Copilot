@@ -11,6 +11,7 @@
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
 import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
+import { setInputShape } from "./xshape";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
@@ -23,6 +24,8 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
+  /** ShapeInput is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
+  shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
 }
@@ -156,6 +159,7 @@ export class OverlayManager {
 
   setBorrowing(on: boolean): void {
     this.borrowing = on;
+    for (const o of this.overlays.values()) this.applyHits(o);
   }
 
   private lastHandleCheck = 0;
@@ -189,8 +193,38 @@ export class OverlayManager {
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
   setInteractive(sender: Electron.WebContents, rects: Rect[]): void {
-    for (const o of this.overlays.values()) if (o.win.webContents === sender) o.interactive = rects;
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) {
+      o.interactive = rects;
+      this.applyHits(o);
+    }
     this.log.debug("overlay.interactive", { rects });
+  }
+
+  /**
+   * Clicks hit only the reported rectangles. On X11 that is the window's ShapeInput (so a press on Allow or Stop
+   * is the overlay's even if hover polling has not run yet). Without a shape, hover-to-interact is the fallback.
+   */
+  private applyHits(o: Overlay): void {
+    if (o.win.isDestroyed()) return;
+    const rects = this.borrowing ? [] : o.interactive;
+    const hit = rects.length > 0;
+    const scale = o.display.scaleFactor || 1;
+    const xid = xidOf(o.win);
+    if (hit && xid && setInputShape(xid, rects, scale)) {
+      if (o.clickThrough) {
+        o.win.setIgnoreMouseEvents(false);
+        o.clickThrough = false;
+      }
+      // setIgnoreMouseEvents(false) restores a full input region: put the holes back.
+      setInputShape(xid, rects, scale);
+      o.shaped = true;
+      return;
+    }
+    o.shaped = false;
+    if (!hit && !o.clickThrough) {
+      o.clickThrough = true;
+      o.win.setIgnoreMouseEvents(true);
+    }
   }
 
   owns(sender: Electron.WebContents): boolean {
@@ -245,7 +279,7 @@ export class OverlayManager {
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setIgnoreMouseEvents(true);
-    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, cards: null };
+    const overlay: Overlay = { win, display, interactive: [], clickThrough: true, shaped: false, cards: null };
     this.overlays.set(display.id, overlay);
     // Every load (also after a crash and reload) gets the current picture.
     win.webContents.on("did-finish-load", () => {
@@ -262,6 +296,7 @@ export class OverlayManager {
       this.log.warn("overlay.renderer_gone", { display: display.id, reason });
       overlay.interactive = [];
       overlay.clickThrough = true;
+      overlay.shaped = false;
       if (!win.isDestroyed()) win.setIgnoreMouseEvents(true);
     });
     win.on("closed", () => this.overlays.delete(display.id));
@@ -308,7 +343,10 @@ export class OverlayManager {
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
       if (!still) o.win.webContents.send(OVERLAY.frame, frame);
-      // Hover-to-interact: only while the cursor is over something clickable.
+      // ShapeInput already delivers presses on the buttons. Hover-to-interact is only the fallback when a
+      // shape could not be set (no X, a test double): a press that starts while still click-through still
+      // goes through, which is why live clicks on Allow/Stop missed the overlay until the shape was used.
+      if (o.shaped) continue;
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
       const over = !this.borrowing && takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0);
       if (over === o.clickThrough) {
@@ -317,5 +355,13 @@ export class OverlayManager {
         this.log.debug("overlay.clickthrough", { display: o.display.id, clickThrough: !over });
       }
     }
+  }
+}
+
+function xidOf(win: BrowserWindow): number {
+  try {
+    return win.getNativeWindowHandle().readUInt32LE(0);
+  } catch {
+    return 0;
   }
 }

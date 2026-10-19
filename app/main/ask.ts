@@ -65,13 +65,16 @@ export class AskWindow {
   private wanted = false;
   /** When it was asked for: a box that took longer than LATE_MS to load doesn't pop up after all. */
   private wantedAt = 0;
+  /** Who asked for the box (hotkey, menu, test): logged when it is actually shown. */
+  private source = "unknown";
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives X window
    * `xid` the keyboard (a window manager that prevents focus stealing would leave it with the app the user is in,
-   * and their first letters would go there).
+   * and their first letters would go there). `onReveal`: every time the box is actually shown (the only path that
+   * maps it): live unprompted opens that bypassed `openAsk` show up here.
    */
-  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void } = {}) {}
+  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void; onReveal?: (source: string) => void } = {}) {}
 
   /** Makes the box ahead of time (hidden), so the first Ctrl+Alt+Space opens it at once. */
   prepare(): void {
@@ -94,6 +97,7 @@ export class AskWindow {
       },
     });
     win.setAlwaysOnTop(true, "screen-saver");
+    try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
     win.on("blur", () => { if (this.win === win) this.hide(); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
@@ -111,6 +115,8 @@ export class AskWindow {
   }
 
   private reveal(win: BrowserWindow): void {
+    try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
+    this.o.onReveal?.(this.source);
     win.show();
     win.focus();
     try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) this.o.takeFocus?.(xid); } catch { /* not X11 */ }
@@ -129,8 +135,9 @@ export class AskWindow {
    * Opens the box by Ember (`near`: its centre in global DIP, and its size in px when known); `context` says what
    * Ember will read and lists earlier questions (it can follow a moment later via setContext).
    */
-  show(near: { x: number; y: number; size?: number } | null, context?: AskContext): void {
+  show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
     this.context = { ...(context ?? this.context), opened: true };
+    this.source = source;
     this.wanted = true;
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
@@ -166,7 +173,11 @@ export class AskWindow {
 
   hide(): void {
     this.wanted = false;
-    if (this.win && !this.win.isDestroyed()) this.win.hide();
+    if (!this.win || this.win.isDestroyed()) return;
+    this.win.hide();
+    // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
+    // looks like the box opening by itself). While hidden it takes no pointer.
+    try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
   }
 
   /**
@@ -200,7 +211,7 @@ export class AskWindow {
   }
 
   focus(): void {
-    if (this.win && !this.win.isDestroyed()) this.win.focus();
+    if (this.wanted && this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.focus();
   }
 
   owns(sender: Electron.WebContents): boolean {

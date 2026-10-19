@@ -109,3 +109,19 @@ export function takesPointer(now: boolean, at: Point | null, rects: readonly Rec
   const m = now ? pad : 0;
   return rects.some(r => contains({ x: r.x - m, y: r.y - m, width: r.width + 2 * m, height: r.height + 2 * m }, at));
 }
+
+/**
+ * Overlay clickable parts as X ShapeInput rectangles (physical pixels). Empty when there is
+ * nothing to click: the window then lets every press through.
+ */
+export function shapeRects(rects: readonly Rect[], scale = 1): Rect[] {
+  const out: Rect[] = [];
+  for (const r of rects) {
+    const x = Math.round(r.x * scale);
+    const y = Math.round(r.y * scale);
+    const width = Math.round(r.width * scale);
+    const height = Math.round(r.height * scale);
+    if (width > 0 && height > 0) out.push({ x, y, width, height });
+  }
+  return out;
+}

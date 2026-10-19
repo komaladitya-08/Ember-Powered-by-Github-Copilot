@@ -423,10 +423,12 @@ function start(): void {
   const shownWindows = () => x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
   const giveFocusBack = (back: number) => {
     const shown = shownWindows();
+    // Never the ask box: activating its X window would map it without openAsk (a click into the app looked like Ask opening).
+    if (back && askWindow.isWindow(back)) back = askOver && !askWindow.isWindow(askOver) ? askOver : 0;
     if (back && shown.some(w => w.client === back)) { xinputRef?.activate(back); return; }
     const apps = shown.filter(w => w.pid !== process.pid);
     const to = apps.some(w => w.client === userWindow) ? userWindow : apps.at(-1)?.client ?? userWindow;
-    if (to) xinputRef?.activate(to);
+    if (to && !askWindow.isWindow(to)) xinputRef?.activate(to);
   };
   const showMenu = () => {
     if (!handle || menuOpen) return;
@@ -438,16 +440,22 @@ function start(): void {
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
+    // Linux: Esc (or releasing the click that opened the menu) can fire the first item. Ignore clicks after the menu
+    // has started closing; a real pick runs before menu-will-close.
+    let menuClosing = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
-      { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
+      { label: label("Ask Ember…", "Control+Alt+Space"), registerAccelerator: false, click: () => {
+        if (menuClosing) { log.info("ask.menu_ignored", { reason: "menu-closing" }); return; }
+        opens = true; openAsk({ look: false, over: back, source: "menu" });
+      } },
+      { label: label("Stop everything", "Control+Alt+X"), registerAccelerator: false, click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
+        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), registerAccelerator: false, click: toggleMute }]
         : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", "Control+Alt+E"), click: () => { opens = true; showHome(); } },
+      { label: label("Settings…", "Control+Alt+E"), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
@@ -468,8 +476,15 @@ function start(): void {
     const fromDesk = had.ember && !!deskViewRef?.isWindow(had.id);
     const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
+    const askWasVisible = askWindow.visible;
+    menu.on("menu-will-close", () => { menuClosing = true; });
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
+      // Esc dismissed the menu but the first item still opened Ask: put it away (it never went through a pick).
+      if (!opens && askWindow.visible && !askWasVisible) {
+        log.warn("ask.spurious_after_menu");
+        askWindow.hide();
+      }
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
@@ -593,6 +608,7 @@ function start(): void {
     keepOff: () => handle?.bounds ?? null,
     // As the handle's menu takes the keyboard: the window manager is asked, and X is told too.
     takeFocus: xid => { xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
+    onReveal: source => log.info("ask.reveal", { source }),
   });
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
@@ -635,7 +651,7 @@ function start(): void {
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
     // keyboard meanwhile and hands what was typed to the box.
     const held = look ? holdKeyboard() : null;
-    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
+    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {

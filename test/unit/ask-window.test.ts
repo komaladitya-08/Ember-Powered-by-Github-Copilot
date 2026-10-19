@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const made = vi.hoisted(() => [] as FakeWindow[]);
 interface FakeWindow {
-  shown: number; focused: number; visible: boolean; handlers: Map<string, (() => void)[]>;
+  shown: number; focused: number; visible: boolean; ignoreMouse: boolean; handlers: Map<string, (() => void)[]>;
   webContents: { on(): void; send(ch: string, t: unknown): void; isLoading(): boolean };
   emit(e: string): void;
 }
@@ -24,9 +24,11 @@ vi.mock("electron", () => {
     setAlwaysOnTop() {}
     loadFile() { return Promise.resolve(); }
     setBounds() {}
-    show() { this.shown++; this.visible = true; }
+    show() { this.shown++; this.visible = true; this.ignoreMouse = false; }
     hide() { this.visible = false; }
     focus() { this.focused++; }
+    ignoreMouse = true;
+    setIgnoreMouseEvents(on: boolean) { this.ignoreMouse = on; }
     isVisible() { return this.visible; }
     isFocused() { return this.visible; }
     isDestroyed() { return false; }
@@ -93,5 +95,22 @@ describe("the ask box", () => {
     expect(sent).toContainEqual(["agent:ask-typed", { text: "hello", submit: false, cancel: false }]);
     ask.typed({ text: "", submit: false, cancel: false });
     expect(sent.filter(x => Array.isArray(x) && x[0] === "agent:ask-typed")).toHaveLength(1);
+  });
+
+  it("hiding the box takes the pointer off it (a leftover mapped window would steal a click into the app)", () => {
+    const revealed: string[] = [];
+    const ask = new AskWindow({ onReveal: s => revealed.push(s) });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    ask.show({ x: 400, y: 300 }, undefined, "hotkey");
+    expect(revealed).toEqual(["hotkey"]);
+    expect(win.ignoreMouse).toBe(false);
+    ask.hide();
+    expect(win.visible).toBe(false);
+    expect(win.ignoreMouse).toBe(true);
+    // A focus on the hidden box must not map it again.
+    ask.focus();
+    expect(win.visible).toBe(false);
   });
 });

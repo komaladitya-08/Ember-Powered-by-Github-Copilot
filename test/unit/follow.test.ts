@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { followTarget, Follower, contains, besideRect, besideControl, takesPointer } from "../../app/main/follow";
+import { followTarget, Follower, contains, besideRect, besideControl, takesPointer, shapeRects } from "../../app/main/follow";
 
 const area = { x: 0, y: 0, width: 1280, height: 800 };
 
@@ -99,5 +99,14 @@ describe("the overlay takes the pointer over its buttons (live test: Allow ignor
     expect(takesPointer(true, { x: 300, y: 300 }, allow, 256)).toBe(true);
     // Pressed in the app below, dragged over the bubble: still the app's.
     expect(takesPointer(false, { x: 110, y: 110 }, allow, 256)).toBe(false);
+  });
+});
+
+describe("overlay input shape (live retest: Allow and Stop passed through to the window beneath)", () => {
+  it("keeps only rectangles large enough to click, in physical pixels", () => {
+    expect(shapeRects([{ x: 100, y: 200, width: 60, height: 24 }, { x: 0, y: 0, width: 0, height: 10 }], 2)).toEqual([
+      { x: 200, y: 400, width: 120, height: 48 },
+    ]);
+    expect(shapeRects([])).toEqual([]);
   });
 });

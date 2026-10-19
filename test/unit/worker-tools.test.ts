@@ -580,4 +580,35 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     expect(flown.at(-1)).toBeNull();
     expect(flown.some(b => b && typeof b === "object" && "width" in b)).toBe(true);
   });
+
+  it("Cancel in a dialog whose Size field AT-SPI still reports ends the step and clears the highlight", async () => {
+    let title = "Font";
+    const { call, flown } = makeWorker({
+      role: "spin button", name: "Size", parentRole: "dialog", mode: "guide",
+      live: () => ({ bounds: { x: 80, y: 120, width: 48, height: 22 } }),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+      activeWindow: () => ({ app: "mousepad", title, pid: 1 }),
+    });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { title = "notes.txt - Mousepad"; }, 80);
+    expect((await waiting).textResultForLlm).toMatch(/cancelled|closed this step/i);
+    expect(flown.at(-1)).toBeNull();
+    const closed = await call("finish_task", { success: true, summary: "You set the size." });
+    expect(closed.textResultForLlm).toMatch(/didn't finish/);
+  });
+
+  it("a field whose box collapses to nothing loses its highlight", async () => {
+    let box = { x: 80, y: 120, width: 48, height: 22 };
+    const { call, flown } = makeWorker({
+      role: "spin button", name: "Size", parentRole: "dialog", mode: "guide",
+      live: () => ({ bounds: box }),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+    });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { box = { x: 80, y: 120, width: 0, height: 0 }; }, 80);
+    expect((await waiting).textResultForLlm).toMatch(/disappeared|cancelled/i);
+    expect(flown.at(-1)).toBeNull();
+  });
 });

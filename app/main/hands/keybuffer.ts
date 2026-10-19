@@ -3,14 +3,20 @@
  * the box focus, and every letter typed meanwhile went to the app the user was in. While the box opens, Ember holds
  * the keyboard itself (an X keyboard grab on its own connection), keeps what is typed, and gives it to the box once it
  * has the keyboard. The grab never outlives HOLD_MAX_MS, whatever happens.
+ *
+ * The grab is taken on this connection before holdKeyboard() returns (a short spin: the hotkey's own grab holds the
+ * keyboard until Space is released). XTEST/xdotool keys are real device events: once the grab is up they come here,
+ * not to Mousepad. GrabModeAsync, so giving the keyboard back does not replay what was held into the focused app.
  */
 
 import { createRequire } from "node:module";
 
 /** Longest Ember holds the keyboard. */
 export const HOLD_MAX_MS = 1500;
-/** How long it tries to take the keyboard (the hotkey's own grab holds it until its key is released). */
-const GRAB_TRY_MS = 400;
+/** How long it tries to take the keyboard after the first spin (the hotkey's own grab holds it until its key is released). */
+export const GRAB_TRY_MS = 400;
+/** How long holdKeyboard() itself waits for the hotkey grab to drop, so the first letter is not already in the app. */
+export const GRAB_SPIN_MS = 50;
 
 const requireCjs = createRequire(__filename);
 
@@ -44,6 +50,8 @@ export function keysymText(keysym: number): string {
 export interface KeyBuffer {
   /** Gives the keyboard back and returns what was typed meanwhile. */
   stop(): Typed;
+  /** Whether Ember holds the keyboard now (false: letters still go to the focused app). */
+  holding(): boolean;
 }
 
 /** Starts holding the keyboard (null where there is no X display or libX11). */
@@ -64,19 +72,25 @@ export function holdKeyboard(o: { display?: string; maxMs?: number } = {}): KeyB
   const ev = Buffer.alloc(192);
   const keysym = [0];
   const chars = Buffer.alloc(16);
+  /** GrabModeAsync for pointer and keyboard; CurrentTime. 0: GrabSuccess. Never Sync: ungrab would replay into the app. */
+  const tryGrab = () => x.XGrabKeyboard(dpy, root, 0, 1, 1, 0) === 0;
+  while (!grabbed && Date.now() - t0 < GRAB_SPIN_MS) {
+    if (tryGrab()) grabbed = true;
+    else x.XFlush(dpy);
+  }
+  if (grabbed) drain();
   const poll = setInterval(() => {
     if (done) return;
     try {
       if (!grabbed) {
-        // GrabModeAsync for pointer and keyboard; CurrentTime. 0: GrabSuccess.
-        if (x.XGrabKeyboard(dpy, root, 0, 1, 1, 0) === 0) grabbed = true;
+        if (tryGrab()) grabbed = true;
         else if (Date.now() - t0 > GRAB_TRY_MS) { finish(); return; }
       }
-      drain();
+      if (grabbed) drain();
     } catch {
       finish();
     }
-  }, 5);
+  }, 1);
   /** The key presses that came, into what was typed. */
   function drain(): void {
     while (x.XPending(dpy) > 0) {
@@ -97,16 +111,22 @@ export function holdKeyboard(o: { display?: string; maxMs?: number } = {}): KeyB
     clearInterval(poll);
     clearTimeout(safety);
     try {
-      if (grabbed) x.XUngrabKeyboard(dpy, 0);
+      if (grabbed) {
+        drain();
+        x.XUngrabKeyboard(dpy, 0);
+        grabbed = false;
+      }
       x.XFlush(dpy);
     } finally {
       x.XCloseDisplay(dpy);
     }
   }
   return {
+    holding: () => grabbed && !done,
     stop() {
       if (!done) {
-        // What came just before the box took the keyboard.
+        // What came just before the box took the keyboard. Drain, then ungrab: never leave a grab that would
+        // delay the user's next Backspace in the app they go back to.
         try { if (grabbed) drain(); } catch { /* given back below */ }
         finish();
       }

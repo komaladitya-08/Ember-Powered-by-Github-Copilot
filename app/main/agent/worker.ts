@@ -1200,6 +1200,18 @@ export class Worker {
     return true;
   }
 
+  /** The pointed-at control sits in a dialog (a font chooser): closing that dialog is cancelling the step. */
+  private inDialog(node: AxNode): boolean {
+    if (/dialog|chooser/i.test(this.window.role ?? "")) return true;
+    for (let p = node.parent, hops = 0; p !== null && hops < 16; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (/^(dialog|alert|alert dialog|file chooser|color chooser|font chooser)$/i.test(up.role)) return true;
+      p = up.parent;
+    }
+    return false;
+  }
+
   /** Guide mode: done when the user presses inside the element, the element changes, or the window does. */
   private async waitForClick(id: number, timeoutMs: number): Promise<ToolResultObject> {
     const node = this.known.get(id);
@@ -1291,8 +1303,9 @@ export class Worker {
               this.guideLeft = false;
               return done(`It changed: ${describeAfter(now)}. Call perceive_window for the next step.`);
             }
+            this.fly(null);
             // A dialog's row or a field vanishing is the dialog closing, not the user choosing this row (Cancel).
-            if (this.clickSelects(node) || field || dismissName(named)) {
+            if (this.clickSelects(node) || field || dismissName(named) || this.inDialog(node)) {
               return left(now
                 ? "Its dialog closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled."
                 : "The window closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
@@ -1306,9 +1319,17 @@ export class Worker {
               const moved = next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height;
               b = next;
               if (moved) this.fly(b);
+            } else {
+              // The control's box is gone (dialog closed, 0×0 leftover): never leave an empty orange frame.
+              this.fly(null);
+              if (field || this.clickSelects(node) || this.inDialog(node)) {
+                return left("The control disappeared (the user most likely pressed Cancel or closed the dialog). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
+              }
             }
           } else if (now && now.role === node.role && !sameTarget(now)) {
             // This id is another row now (the list filtered): don't highlight the wrong one.
+            this.fly(null);
+          } else if (!now || now.offscreen || !usableBounds(now.bounds)) {
             this.fly(null);
           }
           if (now) {
@@ -1331,6 +1352,11 @@ export class Worker {
           if (another && opens && w!.pid != null && w!.pid === windowBefore!.pid) {
             this.guideLeft = false;
             return done(`A new window of the app has the keyboard now (${q(w!.title, 80)}): the user chose the element pointed at, and it opened. Call perceive_window to see the new window.`);
+          }
+          // Cancel in a font dialog: AT-SPI may still report the Size field, but the document has the keyboard again.
+          if (another && !wasReached && (field || this.clickSelects(node) || this.inDialog(node))) {
+            this.fly(null);
+            return left(`The window changed (${q(w!.title, 80)} now has the keyboard). They cancelled or closed this step. Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.`);
           }
         }
         await new Promise(r => setTimeout(r, 30));

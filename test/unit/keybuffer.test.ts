@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { HOLD_MAX_MS, keysymText, typedKey, type Typed } from "../../app/main/hands/keybuffer";
+import { GRAB_SPIN_MS, HOLD_MAX_MS, keysymText, typedKey, type Typed } from "../../app/main/hands/keybuffer";
 
 const empty = (): Typed => ({ text: "", submit: false, cancel: false });
 const press = (keysym: number, text = "", state = 0) => typedKey(empty(), { keysym, text, state });
@@ -41,5 +41,7 @@ describe("what was typed while Ember held the keyboard", () => {
     expect(keysymText(0x10020ac)).toBe("€");
     expect(keysymText(0xff0d)).toBe("");
     expect(HOLD_MAX_MS).toBe(1500);
+    expect(GRAB_SPIN_MS).toBeGreaterThan(0);
+    expect(GRAB_SPIN_MS).toBeLessThan(HOLD_MAX_MS);
   });
 });
