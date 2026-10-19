@@ -1253,6 +1253,13 @@ export class Worker {
     };
     const left = (how: string) => {
       this.guideLeft = true;
+      // The user cancelled the guide: end it here, calmly, rather than let the model take more steps (its next
+      // switch_window showed "Switching windows" for seconds) and report the closed dialog as a failure.
+      if (!this.result) {
+        this.result = { success: false, stopped: true, summary: "The guide was cancelled." };
+        this.ended.abort();
+        setTimeout(() => { void this.session?.abort().catch(() => undefined); }, 50);
+      }
       return done(how);
     };
     const t0 = Date.now();
