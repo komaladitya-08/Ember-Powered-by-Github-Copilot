@@ -1315,13 +1315,11 @@ export const plainQuestion = (r: ActionRequest): string => describe(r);
  */
 /** What an element without a name is called in a question: "the text area", not "the text" ("replace the text in the text"). */
 const UNNAMED: Record<string, string> = { text: "text area", "document text": "document", paragraph: "paragraph", entry: "text field", "password text": "password field", "table cell": "row", "list item": "row", "tree item": "row" };
-/** A list or table's row: the words on it name it; "table cell" is the accessibility role, not what the user sees. */
-const ROW_EL = /^(table cell|list item|tree item)$/;
 
 function describe(r: ActionRequest, withApp = true): string {
   const cell = !!r.element && isSheetCell(r.element);
   const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on ${quote(r.place.name, 40)} ${r.place.role}`;
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name && ROW_EL.test(r.element.role) ? quote(r.element.name) : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";

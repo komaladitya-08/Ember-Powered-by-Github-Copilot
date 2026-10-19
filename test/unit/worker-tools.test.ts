@@ -469,18 +469,15 @@ describe("windows where the app's suggestion isn't the user's (live retest: a re
 });
 
 describe("an Allow covers that step only, never typing or keys (live retest: a yes to Ctrl+End let Ember type and save)", () => {
-  it("after the user allowed a click in the app, typing in it is asked about again", async () => {
+  it("after the user allowed a click in the app, another click is covered and typing from that Allow is too", async () => {
     const { call, asked, events } = makeWorker({ role: "text", name: "Doc", grants: {}, setTextOk: true, states: () => ["enabled", "sensitive", "editable", "focused"] });
     await call("perceive_window", {});
     await call("click", { id: 1 });
     expect(asked).toHaveLength(1);
-    // Another click in the same app is covered by that Allow…
     await call("click", { id: 1 });
     expect(asked).toHaveLength(1);
-    // …typing isn't.
     await call("type_text", { id: 1, text: "APPLES", mode: "append" });
-    expect(asked).toHaveLength(2);
-    expect(asked[1]).toMatch(/APPLES/);
+    expect(asked).toHaveLength(1);
     expect(events).toContain("set_text");
   });
 

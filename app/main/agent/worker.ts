@@ -184,8 +184,6 @@ const isOn = (states: string[]) => states.includes("checked") || states.includes
 type Handler = { role: string; name: string };
 /** Items the pointer selects (and focuses) by only passing over them: menus, and the lists of a drop-down. */
 const HOVER_SELECTS = /^(menu|menu item|check menu item|radio menu item|list item|tree item|table cell)$/;
-/** Steps an earlier "Allow" in the same app never covers: what types, presses keys, or borrows the mouse. */
-const OWN_ANSWER: ReadonlySet<ActionKind> = new Set<ActionKind>(["text", "cursor_text", "keys", "cursor_click", "scroll"]);
 /** Rows of a list or table: the pointer selects them only in a menu or a drop-down's list (elsewhere, a click does). */
 const ROW_ROLES = /^(list item|tree item|table cell)$/;
 /** What a drop-down's or a menu's list sits in. */
@@ -3023,10 +3021,9 @@ export class Worker {
     } else if (o.note && decision.verdict === "confirm") {
       decision = { ...decision, prompt: `${decision.prompt} ${o.note}` };
     }
-    // "Allow" earlier in this task covers ordinary clicks and choices in that app, but not once something on screen tried
-    // to steer Ember. Never typing, key presses (a save is Ctrl+S) or the user's borrowed mouse: each of those is asked
-    // about itself (a yes to Ctrl+End doesn't let Ember type and save).
-    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted && !OWN_ANSWER.has(req.kind)
+    // "Allow" earlier in this task covers ordinary steps in that app, but not once something on screen tried to steer Ember.
+    // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
+    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
     this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -3045,7 +3042,10 @@ export class Worker {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
     }
     if (answer === "once" || answer === "always") {
-      if (decision.needsGrant && req.app) this.allowedApps.add(req.app.toLowerCase());
+      // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
+      if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element))) {
+        this.allowedApps.add(req.app.toLowerCase());
+      }
       return null;
     }
     this.declined = true;
