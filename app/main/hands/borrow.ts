@@ -137,6 +137,11 @@ const COVERED = "Something else is on top of the app where Ember was going to cl
 export interface CursorBorrowOptions {
   /** Called whenever `pending` or `driving` changes (for the status shown to the user). */
   onChange?: () => void;
+  /**
+   * May the window that was active before the borrow be activated again after it? Not one that is hidden by now
+   * (Ember's ask box hides when it loses the keyboard): activating it would show it again, as if it opened by itself.
+   */
+  mayRefocus?: (window: number) => boolean;
 }
 
 export class CursorBorrow {
@@ -427,7 +432,12 @@ export class CursorBorrow {
       // By keycode: the exact key that went down comes up (a keysym could map to another key by now).
       for (const code of held.keys()) x.keycode(code, false);
       held.clear();
-      const restoreFocus = () => { if (previousWindow && o.window && previousWindow !== o.window) x.activate(previousWindow); };
+      const restoreFocus = () => {
+        if (!previousWindow || !o.window || previousWindow === o.window) return;
+        let may = true;
+        try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
+        if (may) x.activate(previousWindow);
+      };
       if (this.stopping || tookOver === "keys") {
         // Stopped (or the user reached for the keyboard, e.g. Ctrl+Alt+X): no gliding, pointer and focus simply go back.
         if (home) x.move(home.x, home.y);

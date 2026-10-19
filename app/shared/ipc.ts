@@ -33,6 +33,8 @@ export const IPC = {
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",
+  /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
+  askTyped: "agent:ask-typed",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
   presence: "ember:presence",
   setPresence: "ember:set-presence",
@@ -156,4 +158,6 @@ export interface EmberAskApi {
   ask(text: string): void;
   close(): void;
   onContext(fn: (c: AskContext) => void): void;
+  /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
+  onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
 }

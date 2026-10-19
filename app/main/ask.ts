@@ -169,6 +169,31 @@ export class AskWindow {
     if (this.win && !this.win.isDestroyed()) this.win.hide();
   }
 
+  /**
+   * Resolves once the box has the keyboard (true), or after `ms` (false). The keys typed while it opened are given to
+   * it then (typed()).
+   */
+  hasKeyboard(ms = 1200): Promise<boolean> {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const t0 = Date.now();
+      const check = () => {
+        const ok = !win.isDestroyed() && win.isVisible() && win.isFocused() && this.loaded;
+        if (ok || win.isDestroyed() || Date.now() - t0 > ms) { clearInterval(timer); resolve(ok); }
+      };
+      const timer = setInterval(check, 10);
+      check();
+    });
+  }
+
+  /** What was typed while the box opened goes into it (only while it is open and was asked for). */
+  typed(t: { text: string; submit: boolean; cancel: boolean }): void {
+    if (!this.wanted || !this.win || this.win.isDestroyed() || !this.loaded) return;
+    if (!t.text && !t.submit && !t.cancel) return;
+    this.win.webContents.send(IPC.askTyped, t);
+  }
+
   /** Open now (it closes when it loses focus, so open means the user is typing in it). */
   get visible(): boolean {
     return !!this.win && !this.win.isDestroyed() && this.win.isVisible();

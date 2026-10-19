@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const made = vi.hoisted(() => [] as FakeWindow[]);
 interface FakeWindow {
   shown: number; focused: number; visible: boolean; handlers: Map<string, (() => void)[]>;
+  webContents: { on(): void; send(ch: string, t: unknown): void; isLoading(): boolean };
   emit(e: string): void;
 }
 
@@ -27,6 +28,7 @@ vi.mock("electron", () => {
     hide() { this.visible = false; }
     focus() { this.focused++; }
     isVisible() { return this.visible; }
+    isFocused() { return this.visible; }
     isDestroyed() { return false; }
     destroy() {}
     getNativeWindowHandle() { const b = Buffer.alloc(8); b.writeUInt32LE(0x3a00007, 0); return b; }
@@ -77,5 +79,19 @@ describe("the ask box", () => {
     // Asked for again, it opens now.
     ask.show({ x: 400, y: 300 });
     expect(win.shown).toBe(1);
+  });
+
+  it("hands letters typed while it opened to the box", () => {
+    const sent: unknown[] = [];
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.webContents.send = (ch: string, t: unknown) => { sent.push([ch, t]); };
+    win.emit("ready-to-show");
+    ask.show({ x: 400, y: 300 });
+    ask.typed({ text: "hello", submit: false, cancel: false });
+    expect(sent).toContainEqual(["agent:ask-typed", { text: "hello", submit: false, cancel: false }]);
+    ask.typed({ text: "", submit: false, cancel: false });
+    expect(sent.filter(x => Array.isArray(x) && x[0] === "agent:ask-typed")).toHaveLength(1);
   });
 });

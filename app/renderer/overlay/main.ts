@@ -126,7 +126,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   bubble.setStep(b.step);
   bubble.setExpanded(b.expanded === true);
   bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
-  const f = s.focus;
+  const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;
   if (f) {
     const pad = 4;
@@ -390,7 +390,7 @@ function draw(now: number): void {
     drawnAt = { ember: { ...fr.ember }, cursor: { ...fr.cursor } };
     rig.setPosition(lx / scale, ly / scale, dt);
     // Look at the control Ember is working on, else at the cursor; point at it while acting or guiding.
-    const f = state?.focus;
+    const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
     const target = f ? { x: f.x + f.width / 2, y: f.y + f.height / 2 } : fr.cursor;
     const dx = target.x - fr.ember.x, dy = target.y - fr.ember.y;
     const d = Math.max(80, Math.hypot(dx, dy));

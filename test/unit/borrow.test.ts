@@ -69,6 +69,14 @@ describe("CursorBorrow", () => {
     await b.borrow(async hand => { await hand.click(); }, fast);
   });
 
+  it("does not bring back a window that must stay hidden (the ask box hid when the borrow took the keyboard)", async () => {
+    const { s, x } = fakeX();
+    const b = new CursorBorrow(x, { mayRefocus: () => false });
+    await b.borrow(async hand => { await hand.click(); }, { ...fast, window: 22 });
+    expect(s.active).toBe(22);
+    expect(s.log).not.toContain("activate 11");
+  });
+
   it("acts in the target window, then puts the pointer and focus back", async () => {
     const { s, x } = fakeX();
     const b = new CursorBorrow(x);

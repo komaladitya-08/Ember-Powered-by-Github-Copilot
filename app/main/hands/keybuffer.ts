@@ -1,0 +1,132 @@
+/**
+ * Keys typed between Ctrl+Alt+Space and the ask box having the keyboard. The window manager may take a moment to give
+ * the box focus, and every letter typed meanwhile went to the app the user was in. While the box opens, Ember holds
+ * the keyboard itself (an X keyboard grab on its own connection), keeps what is typed, and gives it to the box once it
+ * has the keyboard. The grab never outlives HOLD_MAX_MS, whatever happens.
+ */
+
+import { createRequire } from "node:module";
+
+/** Longest Ember holds the keyboard. */
+export const HOLD_MAX_MS = 1500;
+/** How long it tries to take the keyboard (the hotkey's own grab holds it until its key is released). */
+const GRAB_TRY_MS = 400;
+
+const requireCjs = createRequire(__filename);
+
+/** What was typed while Ember held the keyboard: the text, and whether it ended with Enter (send) or Esc (close). */
+export interface Typed { text: string; submit: boolean; cancel: boolean }
+
+/** X key events as the buffer needs them: the keysym, the text it types (Latin-1 or Unicode keysyms), the modifiers. */
+export interface KeyPress { keysym: number; text: string; state: number }
+
+const CONTROL = 4, MOD1 = 8, MOD4 = 64;
+const BACKSPACE = 0xff08, RETURN = 0xff0d, KP_ENTER = 0xff8d, ESCAPE = 0xff1b;
+
+/** One key into what was typed. Shortcuts (Ctrl, Alt, Super held: the hotkey's own keys too) type nothing. */
+export function typedKey(t: Typed, k: KeyPress): Typed {
+  if (t.submit || t.cancel) return t;
+  if (k.keysym === ESCAPE) return { ...t, cancel: true };
+  if (k.keysym === RETURN || k.keysym === KP_ENTER) return { ...t, submit: t.text.trim().length > 0 };
+  if (k.state & (CONTROL | MOD1 | MOD4)) return t;
+  if (k.keysym === BACKSPACE) return { ...t, text: [...t.text].slice(0, -1).join("") };
+  return k.text && !/[\0-\x1f\x7f]/.test(k.text) ? { ...t, text: t.text + k.text } : t;
+}
+
+/** The text a keysym types: Latin-1 keysyms are their own code, Unicode ones are 0x1000000 + the code point. */
+export function keysymText(keysym: number): string {
+  if (keysym >= 0x20 && keysym <= 0x7e) return String.fromCharCode(keysym);
+  if (keysym >= 0xa0 && keysym <= 0xff) return String.fromCharCode(keysym);
+  if (keysym >= 0x1000100 && keysym <= 0x110ffff) return String.fromCodePoint(keysym - 0x1000000);
+  return "";
+}
+
+export interface KeyBuffer {
+  /** Gives the keyboard back and returns what was typed meanwhile. */
+  stop(): Typed;
+}
+
+/** Starts holding the keyboard (null where there is no X display or libX11). */
+export function holdKeyboard(o: { display?: string; maxMs?: number } = {}): KeyBuffer | null {
+  let x: ReturnType<typeof bind>;
+  try {
+    x = bind();
+  } catch {
+    return null;
+  }
+  const dpy = x.XOpenDisplay(o.display ?? null);
+  if (!dpy) return null;
+  const root = x.XDefaultRootWindow(dpy);
+  let typed: Typed = { text: "", submit: false, cancel: false };
+  let grabbed = false;
+  let done = false;
+  const t0 = Date.now();
+  const ev = Buffer.alloc(192);
+  const keysym = [0];
+  const chars = Buffer.alloc(16);
+  const poll = setInterval(() => {
+    if (done) return;
+    try {
+      if (!grabbed) {
+        // GrabModeAsync for pointer and keyboard; CurrentTime. 0: GrabSuccess.
+        if (x.XGrabKeyboard(dpy, root, 0, 1, 1, 0) === 0) grabbed = true;
+        else if (Date.now() - t0 > GRAB_TRY_MS) { finish(); return; }
+      }
+      drain();
+    } catch {
+      finish();
+    }
+  }, 5);
+  /** The key presses that came, into what was typed. */
+  function drain(): void {
+    while (x.XPending(dpy) > 0) {
+      x.XNextEvent(dpy, ev);
+      // KeyPress (2); XKeyEvent: state at 80.
+      if (ev.readInt32LE(0) !== 2) continue;
+      const n = x.XLookupString(ev, chars, chars.length, keysym, null);
+      const ks = Number(keysym[0]);
+      const text = keysymText(ks) || (n > 0 ? chars.subarray(0, n).toString("latin1") : "");
+      typed = typedKey(typed, { keysym: ks, text, state: ev.readUInt32LE(80) });
+    }
+  }
+  const safety = setTimeout(() => finish(), o.maxMs ?? HOLD_MAX_MS);
+  safety.unref?.();
+  function finish(): void {
+    if (done) return;
+    done = true;
+    clearInterval(poll);
+    clearTimeout(safety);
+    try {
+      if (grabbed) x.XUngrabKeyboard(dpy, 0);
+      x.XFlush(dpy);
+    } finally {
+      x.XCloseDisplay(dpy);
+    }
+  }
+  return {
+    stop() {
+      if (!done) {
+        // What came just before the box took the keyboard.
+        try { if (grabbed) drain(); } catch { /* given back below */ }
+        finish();
+      }
+      return typed;
+    },
+  };
+}
+
+function bind() {
+  const koffi = requireCjs("koffi") as typeof import("koffi");
+  const lib = koffi.load("libX11.so.6");
+  return {
+    XOpenDisplay: lib.func("void *XOpenDisplay(const char *name)"),
+    XCloseDisplay: lib.func("int XCloseDisplay(void *dpy)"),
+    XDefaultRootWindow: lib.func("unsigned long XDefaultRootWindow(void *dpy)"),
+    XGrabKeyboard: lib.func("int XGrabKeyboard(void *dpy, unsigned long w, int ownerEvents, int pointerMode, int keyboardMode, unsigned long time)"),
+    XUngrabKeyboard: lib.func("int XUngrabKeyboard(void *dpy, unsigned long time)"),
+    XPending: lib.func("int XPending(void *dpy)"),
+    XNextEvent: lib.func("int XNextEvent(void *dpy, _Out_ uint8_t *event)"),
+    XLookupString: lib.func("int XLookupString(uint8_t *event, _Out_ uint8_t *buffer, int bytes, _Out_ unsigned long *keysym, void *status)"),
+    XFlush: lib.func("int XFlush(void *dpy)"),
+  };
+}

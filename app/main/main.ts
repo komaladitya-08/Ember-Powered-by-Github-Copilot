@@ -37,6 +37,7 @@ import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
 import { handClipboardToManager, readSelection } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
+import { holdKeyboard } from "./hands/keybuffer";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
@@ -439,7 +440,7 @@ function start(): void {
     let opens = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false, over: back }); } },
+      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
       { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
@@ -491,9 +492,13 @@ function start(): void {
       opened = true; clearInterval(poll); clearTimeout(late); win.off("focus", onFocus);
       if (win.isDestroyed()) menuOpen = false; else open();
     };
-    const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
-    // No focus within a moment (no X input here): the menu opens anyway, as it did before.
-    const late = setTimeout(go, 250);
+    // Nor while the click on the handle is still held: the menu opens under the pointer, and the release would choose
+    // its first item ("Ask Ember…": the ask box opened by itself).
+    const released = () => ((x11Ref?.pointer()?.mask ?? 0) & 0x1f00) === 0;
+    const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard() && released()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
+    // No focus within a moment (no X input here): the menu opens anyway, once the button is up (at most a second).
+    const menuAsked = Date.now();
+    const late = setTimeout(function later() { if (released() || Date.now() - menuAsked > 1000) go(); else setTimeout(later, 20); }, 250);
     win.focus();
     if (xinputRef?.focusInput) xinputRef.focusInput(xid);
   };
@@ -618,14 +623,20 @@ function start(): void {
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0 }: { look?: boolean; over?: number } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "test" } = {}) => {
+    // Every opening says where it came from (an ask box that opened by itself would show up here).
+    log.info("ask.open", { source });
     if (!consented()) { showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
+    // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
+    // keyboard meanwhile and hands what was typed to the box.
+    const held = look ? holdKeyboard() : null;
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
+    if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
@@ -1154,7 +1165,11 @@ function start(): void {
       setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
         : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop using the keyboard and mouse…") : null);
     };
-    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
+    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, {
+      onChange: showBorrowing,
+      // Never the ask box (it hid when the borrow took the keyboard), nor a window that isn't on screen any more.
+      mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),
+    }) : null;
     borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
     // Desk apps get only the environment they need; the test bench's event log is passed on in development only.
@@ -1189,7 +1204,7 @@ function start(): void {
         allowGrants: () => policy.allowGrants,
         isTerminalApp: name => isTerminalApp({ id: name, name }),
       }),
-      flyTo: b => setState({ focus: b ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
+      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
       currentWindow: () => {
         const w = x11.activeWindow();
         // Ember's own windows (ask box, settings) are not a task's target.
@@ -1317,7 +1332,7 @@ function start(): void {
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk(),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
         showMenu, state: () => lastState,
       };
     }

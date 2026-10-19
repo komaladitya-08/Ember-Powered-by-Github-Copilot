@@ -1150,6 +1150,11 @@ describe("policy: review round 8", () => {
       }
     }
     expect(enter("entry").prompt).toBe("Press Enter on “Message” entry in Firefox on my desk? Enter there may send or submit it.");
+    // A font chooser's row is named by the words on it, not "the table cell".
+    expect(e.decide({ taskId: "f", kind: "keys", app: "mousepad", window: "Choose Mousepad Font", element: { role: "table cell", name: "Monospace Bold" },
+      value: "Return", goal: "change the font", onDesk: true }).prompt).toMatch(/^Press Enter on “Monospace Bold” in Mousepad/);
+    expect(e.decide({ taskId: "f", kind: "keys", app: "mousepad", window: "Choose Mousepad Font", element: { role: "table cell", name: "Monospace Bold" },
+      value: "Return", goal: "change the font", onDesk: true }).prompt).not.toMatch(/table cell/);
     // Space types a space; Enter in a spreadsheet's cell enters what was typed; a button's harmless Enter stays a click.
     expect(enter("entry", "space").verdict).toBe("allow");
     expect(enter("table cell", "Return", { element: { role: "table cell", name: "B4" } }).verdict).toBe("allow");

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { Worker, afterKeys, cellOf, clearLane, pickOption, sameFocus, type WorkerDeps } from "../../app/main/agent/worker";
+import { Worker, afterKeys, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -26,39 +26,60 @@ function makeWorker(o: {
   readMs?: number;
   /** The role of what the element sits in (a dialog's table, a drop-down's popup). */
   parentRole?: string;
+  /** Text goes in by accessibility (otherwise the helper says it can't). */
+  setTextOk?: boolean;
+  /** Extra nodes in the window (a dialog's Cancel or Search beside the row pointed at). */
+  more?: AxNode[];
+  /** What readElement adds for an id (null: that element is gone). */
+  live?: (id: number) => Record<string, unknown> | null;
 } = {}) {
   const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const asked: string[] = [];
+  const guided: string[] = [];
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
-  const node = { id: 1, parent: o.parentRole ? 0 : null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
-  const seen = { window, x11Window: null, nodes: [...(o.parentRole ? [{ id: 0, parent: null, depth: 0, role: o.parentRole, name: "", states: [], bounds: null }] : []), node], blocked: !!o.blocked, ms: 0 };
+  const startStates = o.states?.() ?? ["enabled", "sensitive"];
+  const node = { id: 1, parent: o.parentRole ? 0 : null, depth: 1, role: o.role ?? "push button", name: o.name ?? "Bold", states: startStates ?? ["enabled", "sensitive"], bounds: { x: 10, y: 10, width: 40, height: 20 } };
+  const extras = o.more ?? [];
+  const seen = { window, x11Window: null, nodes: [...(o.parentRole ? [{ id: 0, parent: null, depth: 0, role: o.parentRole, name: "", states: [], bounds: null }] : []), node, ...extras], blocked: !!o.blocked, ms: 0 };
+  const presenter = new Presenter(() => undefined);
+  const show = presenter.guide.bind(presenter);
+  presenter.guide = (say, step) => { guided.push(say); show(say, step); };
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
     sidecar: {
-      readElement: async () => {
+      readElement: async (id: number) => {
         if (o.readMs) await sleep(o.readMs);
-        const states = o.states ? o.states() : ["enabled", "sensitive"];
-        return states && { role: node.role, name: node.name, states, bounds: node.bounds, ...o.extra?.() };
+        const extra = o.live?.(id);
+        if (extra === null) return null;
+        const base = id === node.id ? node : extras.find(n => n.id === id);
+        if (!base) return extra ? extra as never : null;
+        const states = o.states && id === node.id ? o.states() : base.states;
+        if (states === null) return null;
+        return { role: base.role, name: base.name, states, bounds: base.bounds, ...(id === node.id ? o.extra?.() : {}), ...extra };
       },
       doAction: async () => { events.push("start"); await sleep(80); events.push("end"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
-      setText: async () => { events.push("set_text"); throw new Error("background_unavailable: this element's text can't be edited directly"); },
+      setText: async (_id: number, text: string) => {
+        events.push("set_text");
+        if (!o.setTextOk) throw new Error("background_unavailable: this element's text can't be edited directly");
+        return { ok: true, after: { role: node.role, name: node.name, states: ["enabled", "editable"], bounds: node.bounds, text } };
+      },
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
     confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
-    presenter: new Presenter(() => undefined),
+    presenter,
     lease: async () => () => undefined, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}) },
     pointer: o.pointer, activationKey: o.activationKey,
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, call, flown };
+  return { w, audit, events, asked, call, flown, guided };
 }
 
 describe("worker tools", () => {
@@ -444,5 +465,124 @@ describe("windows where the app's suggestion isn't the user's (live retest: a re
     expect(dialogNote({ name: "Save As", role: "file chooser" }, [{ name: "Name", text: "shopping-list.txt" }], "make this text all uppercase")).toMatch(/named no file/);
     expect(dialogNote({ name: "Save As", role: "file chooser" }, [], "save it as ~/Ember/list.txt")).toBe("");
     expect(dialogNote({ name: "notes.txt - Mousepad", role: "frame" }, [{ name: "File" }], "")).toBe("");
+  });
+});
+
+describe("an Allow covers that step only, never typing or keys (live retest: a yes to Ctrl+End let Ember type and save)", () => {
+  it("after the user allowed a click in the app, typing in it is asked about again", async () => {
+    const { call, asked, events } = makeWorker({ role: "text", name: "Doc", grants: {}, setTextOk: true, states: () => ["enabled", "sensitive", "editable", "focused"] });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect(asked).toHaveLength(1);
+    // Another click in the same app is covered by that Allow…
+    await call("click", { id: 1 });
+    expect(asked).toHaveLength(1);
+    // …typing isn't.
+    await call("type_text", { id: 1, text: "APPLES", mode: "append" });
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toMatch(/APPLES/);
+    expect(events).toContain("set_text");
+  });
+
+  it("after the user allowed Ctrl+End (movement), typing and a save are asked about again", async () => {
+    const { call, asked } = makeWorker({ role: "text", name: "Doc", grants: {}, setTextOk: true, states: () => ["enabled", "sensitive", "editable", "focused"] });
+    await call("perceive_window", {});
+    await call("press_keys", { keys: "ctrl+End" });
+    expect(asked[0]).toMatch(/Ctrl\+End|End/);
+    const afterMove = asked.length;
+    await call("type_text", { id: 1, text: "APPLES", mode: "append" });
+    expect(asked.length).toBeGreaterThan(afterMove);
+    expect(asked.at(-1)).toMatch(/APPLES/);
+    await call("press_keys", { keys: "ctrl+s" });
+    expect(asked.at(-1)).toMatch(/Ctrl\+S|save/i);
+    expect(asked.length).toBeGreaterThan(afterMove + 1);
+  });
+});
+
+describe("guide words and highlights (live retest: font chooser)", () => {
+  it("names the row, never “the table cell”", () => {
+    expect(guideSay("press Enter on the table cell", { role: "table cell", name: "Monospace Bold" })).toBe("press Enter on Monospace Bold");
+    expect(guideSay("Click Display", { role: "push button", name: "Display" })).toBe("Click Display");
+    expect(dismissName("_Cancel")).toBe(true);
+    expect(dismissName("Select Font…")).toBe(false);
+    expect(usableBounds({ x: 10, y: 10, width: 0, height: 12 })).toBeNull();
+    expect(usableBounds({ x: 10, y: 10, width: 40, height: 20 })).toEqual({ x: 10, y: 10, width: 40, height: 20 });
+  });
+
+  it("point_at rewrites a vague instruction and does not highlight a different row", async () => {
+    const { call, guided, flown } = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide",
+      live: () => ({ role: "table cell", name: "Liberation Mono", bounds: { x: 10, y: 80, width: 120, height: 18 } }),
+    });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "press Enter on the table cell" });
+    expect(guided.at(-1)).toBe("press Enter on Monospace Bold");
+    // Live read of this id is now another font: the box stays on the named row's last place, not that other row.
+    expect(flown.at(-1)).toEqual({ x: 10, y: 10, width: 40, height: 20 });
+    expect(flown.at(-1)).not.toEqual({ x: 10, y: 80, width: 120, height: 18 });
+  });
+
+  it("typing in an already-focused search box ends the step", async () => {
+    let typed = "";
+    const { call } = makeWorker({
+      role: "text", name: "Search", mode: "guide",
+      states: () => ["enabled", "focused", "editable"],
+      extra: () => ({ text: typed }),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+    });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { typed = "mono"; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/^It changed/);
+  });
+
+  it("a click on Cancel, or the dialog closing, is a cancelled step, never a successful finish", async () => {
+    const cancel = { id: 2, parent: 0, depth: 1, role: "push button", name: "Cancel", states: ["enabled"], bounds: { x: 200, y: 400, width: 80, height: 24 } };
+    let down = false;
+    const click = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide", more: [cancel],
+      pointer: () => ({ x: 220, y: 410, mask: down ? 256 : 0 }),
+    });
+    await click.call("perceive_window", {});
+    const waiting = click.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { down = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/pressed “Cancel”/);
+    const closed = await click.call("finish_task", { success: true, summary: "You picked a font." });
+    expect(closed.textResultForLlm).toMatch(/didn't finish/);
+    expect((click.w as unknown as { result: { success: boolean; summary: string } }).result).toEqual({
+      success: false, summary: "The user cancelled. You picked a font.",
+    });
+
+    let gone = false;
+    const away = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide",
+      live: () => (gone ? null : {}),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+    });
+    await away.call("perceive_window", {});
+    const left = away.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { gone = true; }, 100);
+    expect((await left).textResultForLlm).toMatch(/closed without this being used/);
+  });
+
+  it("a click on the search box, while Ember pointed at a row, says so", async () => {
+    const search = { id: 3, parent: 0, depth: 1, role: "text", name: "Search", states: ["enabled"], bounds: { x: 20, y: 20, width: 200, height: 24 } };
+    let down = false;
+    const { call } = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide", more: [search],
+      pointer: () => ({ x: 40, y: 30, mask: down ? 256 : 0 }),
+    });
+    await call("perceive_window", {});
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { down = true; }, 100);
+    expect((await waiting).textResultForLlm).toMatch(/search box/);
+  });
+
+  it("a finished click leaves no highlight (live retest: empty orange box after a save)", async () => {
+    const { call, flown } = makeWorker();
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    expect(flown.at(-1)).toBeNull();
+    expect(flown.some(b => b && typeof b === "object" && "width" in b)).toBe(true);
   });
 });
