@@ -12,6 +12,7 @@ import { holdKeyboard } from "../../app/main/hands/keybuffer";
 const requireCjs = createRequire(import.meta.url);
 const has = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
 const xvfb = has("Xvfb");
+const xdotool = has("xdotool");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 function xlib() {
@@ -33,6 +34,7 @@ function xlib() {
     XStringToKeysym: x.func("unsigned long XStringToKeysym(const char *name)"),
     XKeysymToKeycode: x.func("uint8_t XKeysymToKeycode(void *dpy, unsigned long sym)"),
     XGrabKeyboard: x.func("int XGrabKeyboard(void *dpy, unsigned long w, int ownerEvents, int pointerMode, int keyboardMode, unsigned long time)"),
+    XGrabKey: x.func("int XGrabKey(void *dpy, int keycode, unsigned int modifiers, unsigned long w, int ownerEvents, int pointerMode, int keyboardMode)"),
     XUngrabKeyboard: x.func("int XUngrabKeyboard(void *dpy, unsigned long time)"),
     XTestFakeKeyEvent: xtst.func("int XTestFakeKeyEvent(void *dpy, unsigned int keycode, int isPress, unsigned long delay)"),
   };
@@ -107,6 +109,28 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     a.type("x");
     await sleep(30);
     expect(a.received()).toBe("x");
+  });
+
+  it.skipIf(!xdotool)("buffers the first word when the hotkey grab drops under xdotool", async () => {
+    const grabber = L.XOpenDisplay(display);
+    try {
+      // What Electron's global shortcut does: a passive grab on Ctrl+Alt+Space, which is active while the keys are held.
+      const space = Number(L.XKeysymToKeycode(grabber, Number(L.XStringToKeysym("space"))));
+      L.XGrabKey(grabber, space, 4 | 8, L.XDefaultRootWindow(grabber), 0, 1, 1);
+      L.XSync(grabber, 0);
+      const child = spawn("xdotool", ["key", "ctrl+alt+space", "type", "hello"], { env: { ...process.env, DISPLAY: display }, stdio: "ignore" });
+      const ev = Buffer.alloc(192);
+      let type = 0;
+      while (type !== 2) { L.XNextEvent(grabber, ev); type = ev.readInt32LE(0); }
+      // The hotkey callback: holdKeyboard() runs while the hotkey's own grab is still active and "hello" is on its way.
+      const held = holdKeyboard({ display, maxMs: 800 });
+      expect(held).not.toBeNull();
+      await new Promise<void>(resolve => child.once("exit", () => resolve()));
+      await sleep(40);
+      expect(held!.stop()).toMatchObject({ text: "hello", submit: false, cancel: false });
+    } finally {
+      L.XCloseDisplay(grabber);
+    }
   });
 
   it("grabs as soon as another client's hotkey-style grab drops (no 5 ms wait)", async () => {
