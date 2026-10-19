@@ -1252,7 +1252,7 @@ export class Worker {
     // The pointer is watched on its own timer: a quick click comes and goes while a look at the app is under way (an
     // app opening a dialog answers slowly), and it still counts.
     let pressed = false;
-    let other: AxNode | null = null;
+    const other = { kind: "", name: "" };
     const watchPointer = () => {
       const p = this.d.pointer?.();
       const down = (p?.mask ?? 0) & 256;
@@ -1261,7 +1261,8 @@ export class Worker {
         else {
           for (const n of this.known.values()) {
             if (n.id === id || !n.bounds || !inside(p, n.bounds, 4)) continue;
-            if (dismissName(n.name) || fieldLike(n)) { other = n; break; }
+            if (dismissName(n.name)) { other.kind = "dismiss"; other.name = n.name; break; }
+            if (fieldLike(n)) { other.kind = "field"; other.name = n.name; break; }
           }
         }
       }
@@ -1273,10 +1274,10 @@ export class Worker {
         if (this.isOver) return STOPPED();
         watchPointer();
         if (pressed) return await usedIt("The user clicked it.");
-        if (other && dismissName(other.name)) {
+        if (other.kind === "dismiss") {
           return left(`The user pressed ${q(other.name || "Cancel", 40)}. They cancelled this step. Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.`);
         }
-        if (other && fieldLike(other)) {
+        if (other.kind === "field") {
           return done(`The user clicked the search box${other.name ? ` (${q(other.name, 40)})` : ""} instead of the element pointed at. Call perceive_window if searching was the step, and point_at that field.`);
         }
         // Enter or Space, while it has the keyboard (or is the menu item selected).

@@ -30,7 +30,7 @@ export function typedKey(t: Typed, k: KeyPress): Typed {
   if (k.keysym === RETURN || k.keysym === KP_ENTER) return { ...t, submit: t.text.trim().length > 0 };
   if (k.state & (CONTROL | MOD1 | MOD4)) return t;
   if (k.keysym === BACKSPACE) return { ...t, text: [...t.text].slice(0, -1).join("") };
-  return k.text && !/[\0-\x1f\x7f]/.test(k.text) ? { ...t, text: t.text + k.text } : t;
+  return k.text && [...k.text].every(c => { const n = c.codePointAt(0) ?? 0; return n >= 32 && n !== 127; }) ? { ...t, text: t.text + k.text } : t;
 }
 
 /** The text a keysym types: Latin-1 keysyms are their own code, Unicode ones are 0x1000000 + the code point. */

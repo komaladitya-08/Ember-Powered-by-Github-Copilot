@@ -434,7 +434,7 @@ export class CursorBorrow {
       held.clear();
       const restoreFocus = () => {
         if (!previousWindow || !o.window || previousWindow === o.window) return;
-        let may = true;
+        let may: boolean;
         try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
         if (may) x.activate(previousWindow);
       };
