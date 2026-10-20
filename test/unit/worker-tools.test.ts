@@ -83,6 +83,18 @@ function makeWorker(o: {
 }
 
 describe("worker tools", () => {
+  it("stopping a guide says it was cancelled, not a bare “Stopped.” (live test)", async () => {
+    const guide = makeWorker({ mode: "guide" });
+    const stopGuide = new AbortController();
+    stopGuide.abort();
+    await expect(guide.w.run(stopGuide.signal)).resolves.toEqual({ success: false, summary: "The guide was cancelled.", stopped: true });
+    // A task that acts is still just stopped.
+    const task = makeWorker();
+    const stopTask = new AbortController();
+    stopTask.abort();
+    await expect(task.w.run(stopTask.signal)).resolves.toEqual({ success: false, summary: "Stopped.", stopped: true });
+  });
+
   it("run one at a time when the runtime calls several at once", async () => {
     const { call, events } = makeWorker();
     await call("perceive_window", {});
