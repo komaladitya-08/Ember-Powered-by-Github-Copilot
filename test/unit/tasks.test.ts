@@ -357,4 +357,22 @@ describe("review round 4: how tasks end", () => {
     expect(removed).toEqual([[failed.id, true], [done.id, false]]);
     vi.useRealTimers();
   });
+
+  it("a failed card goes on its own after the longer failure time, so old cards don't pile up", async () => {
+    vi.useFakeTimers();
+    const removed: [string, boolean][] = [];
+    const { tm, cards } = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })), {
+      cardMs: 100, failureCardMs: 500, onRemoved: (t: { id: string }, byUser: boolean) => removed.push([t.id, byUser]),
+    });
+    const t = tm.start("a");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(cards.at(-1)?.[0]).toMatchObject({ id: t.id, status: "failed", detail: "It broke." });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(tm.get(t.id)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(tm.get(t.id)).toBeUndefined();
+    expect(cards.at(-1)).toEqual([]);
+    expect(removed).toEqual([[t.id, false]]);
+    vi.useRealTimers();
+  });
 });
