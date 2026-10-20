@@ -109,6 +109,29 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     expect(a.received()).toBe("x");
   });
 
+  it("keeps trying for the whole hold when another grab outlasts the first retry window", async () => {
+    const a = app();
+    const grabber = L.XOpenDisplay(display);
+    apps.push(grabber);
+    expect(L.XGrabKeyboard(grabber, L.XDefaultRootWindow(grabber), 0, 1, 1, 0)).toBe(0);
+    L.XSync(grabber, 0);
+    // The hotkey's own grab can stay up while its keys are held: it must not make Ember give up and let the
+    // first letters through to the app.
+    const held = holdKeyboard({ display, maxMs: 1200 });
+    expect(held).not.toBeNull();
+    await sleep(500);
+    expect(held!.holding()).toBe(false);
+    L.XUngrabKeyboard(grabber, 0);
+    L.XSync(grabber, 0);
+    const start = Date.now();
+    while (!held!.holding() && Date.now() - start < 300) await sleep(1);
+    expect(held!.holding()).toBe(true);
+    a.type("hi");
+    await sleep(40);
+    expect(a.received()).toBe("");
+    expect(held!.stop().text).toBe("hi");
+  });
+
   it("grabs as soon as another client's hotkey-style grab drops (no 5 ms wait)", async () => {
     const a = app();
     const grabber = L.XOpenDisplay(display);
