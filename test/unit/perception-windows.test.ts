@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { coveringRects, elementScales, matchFrame, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, SecretFieldsResult, ShellOverlay } from "../../app/main/perception/sidecar";
-import type { StackedWindow, X11 } from "../../app/main/x11";
+import type { StackedWindow, X11, X11Window } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -132,6 +132,8 @@ function desktop(o: {
   scan?: SecretFieldsResult | Error | (() => SecretFieldsResult | Error);
   /** Every window the sidecar lists (default: only the one read). */
   listed?: AxWindow[];
+  /** Every mapped top-level window X11 lists (default: none). */
+  clientWindows?: (X11Window & { wmClass: string })[];
 }) {
   const calls: Record<string, unknown>[] = [];
   const scans: unknown[] = [];
@@ -164,6 +166,7 @@ function desktop(o: {
     stack: typeof o.stack === "function" ? o.stack : () => o.stack,
     focusWindow: () => null,
     activeWindow: () => active,
+    clientWindows: () => o.clientWindows ?? [],
     capture: (x: number, y: number, width: number, height: number) => ({ x, y, width, height, bgra: Buffer.alloc(width * height * 4, 200) }),
   } as unknown as X11;
   const perception = new Perception({ sidecar, x11, neverLook: () => o.neverLook ?? [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999 });
@@ -328,6 +331,37 @@ describe("reading a named window", () => {
     expect(text).toContain('"Terminal": "Terminal" (focused by the user)');
     expect(text).toContain('"Thunar": "Home"');
     expect(text).toContain('<screen source="open-windows" untrusted="true">');
+  });
+
+  it("lists every mapped X11 window in the question context and while Ember itself has focus", async () => {
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const terminal = { ...axWin(42, "user@host: ~", bounds), app: "Terminal" };
+    const thunar = { ...axWin(7, "Home", bounds), app: "Thunar", active: false };
+    const clientWindows = [
+      { id: 1, pid: 42, title: "user@host: ~", wmClass: "xfce4-terminal Xfce4-terminal", ...bounds },
+      { id: 2, pid: 7, title: "Home", wmClass: "thunar Thunar", ...bounds },
+      { id: 3, pid: 8, title: "My Vault", wmClass: "secretvault Secretvault", ...bounds },
+      { id: 4, pid: 999, title: "Ask Ember", wmClass: "ember Ember", ...bounds },
+    ];
+    const { perception } = desktop({
+      window: terminal, stack: [], neverLook: ["secretvault"], listed: [terminal, thunar], clientWindows,
+    });
+    // The question's context (sent without a screen read) names the window behind the focused one too.
+    const ctx = await perception.quickContext();
+    expect(ctx?.text).toContain("Open windows:");
+    expect(ctx?.text).toContain('"Xfce4-terminal": "user@host: ~"');
+    expect(ctx?.text).toContain('"Thunar": "Home"');
+    expect(ctx?.text).not.toContain("My Vault");
+    expect(ctx?.text).not.toContain("Ask Ember");
+
+    // describe_screen also lists them while the ask box itself has the focus.
+    const own = desktop({
+      window: null, stack: [], listed: [thunar], active: { pid: 999, title: "Ask Ember", wmClass: "ember Ember" },
+    });
+    const text = await own.perception.describe();
+    expect(text).toContain("one of Ember's own windows");
+    expect(text).toContain('<screen source="open-windows" untrusted="true">');
+    expect(text).toContain('"Thunar": "Home"');
   });
 });
 
