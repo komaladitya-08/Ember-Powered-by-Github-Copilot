@@ -38,6 +38,7 @@ import { openXInput, xinputError } from "./hands/input";
 import { handClipboardToManager, readSelection } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
 import { holdKeyboard } from "./hands/keybuffer";
+import { freshAskPress } from "./hotkey";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
@@ -1102,8 +1103,21 @@ function start(): void {
     }
 
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
+    let lastAskPress = 0;
     const shortcuts: Record<string, () => void> = {
-      "Control+Alt+E": showHome, "Control+Alt+Space": () => openAsk(), "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
+      "Control+Alt+E": showHome,
+      // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
+      // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it.
+      "Control+Alt+Space": () => {
+        const now = Date.now(), chord = x11Ref?.keysDown() ?? null;
+        if (!freshAskPress(chord, now, lastAskPress)) {
+          log.info("ask.hotkey_ignored", { at: now - lastAskPress, chord });
+          return;
+        }
+        lastAskPress = now;
+        openAsk();
+      },
+      "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
     };
     const registerShortcuts = () => {
       const taken: string[] = [];
