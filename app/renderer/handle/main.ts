@@ -4,6 +4,7 @@ import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters"
 import { announcement, onPress, plainStream } from "@ember/bubble";
 import type { BubbleState, HandleApi } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
+import { armMsFor } from "./arm";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -46,8 +47,9 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   const key = JSON.stringify(list.map(a => [a.id, a.label, a.primary === true]));
   if (host.dataset.key === key) return;
   host.dataset.key = key;
-  // New buttons take no press for a moment (the pointer may rest where they just appeared).
-  const armedAt = performance.now() + 900;
+  // A new task card's buttons take no press for a moment (the pointer may rest where they just appeared).
+  // Question buttons are armed by the Confirmer already, so a deliberate Allow is not dropped here.
+  const armedAt = performance.now() + armMsFor(list);
   host.replaceChildren(...list.map(a => {
     const b = document.createElement("button");
     b.type = "button";
