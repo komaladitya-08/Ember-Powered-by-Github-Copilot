@@ -19,6 +19,8 @@ const sim = vi.hoisted(() => ({
   resumed: [] as string[],
   resumeFails: false,
   deleteHangs: false,
+  /** Listing old sessions waits for this (a runtime slow to answer mustn't hold up the first ask). */
+  listSessionsGate: null as Promise<void> | null,
   auth: async (): Promise<{ isAuthenticated: boolean; login?: string; statusMessage?: string }> => ({ isAuthenticated: true, login: "octo" }),
   ping: async (): Promise<unknown> => ({}),
   stopHangs: false,
@@ -78,7 +80,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
     async listModels() { return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
-    async listSessions() { return []; }
+    async listSessions() { if (sim.listSessionsGate) await sim.listSessionsGate; return []; }
     async deleteSession(id: string) { if (sim.deleteHangs) await hang(); sim.deleted.push(id); }
     ping() { return sim.ping(); }
     async createSession(cfg: any) { await sim.createGate; const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
@@ -121,7 +123,8 @@ const hands = () => ({
 });
 
 beforeEach(() => {
-  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = []; sim.deleteHangs = false; sim.resumeFails = false;
+  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = [];   sim.deleteHangs = false; sim.resumeFails = false;
+  sim.listSessionsGate = null;
   sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
   sim.ping = async () => ({});
   sim.stopHangs = false;
@@ -143,6 +146,14 @@ describe("connecting and signing in", () => {
     expect(await host.start(TOKEN, "stored")).toBe("error");
     expect(await host.start(null)).toBe("signed-out");
     expect(host.getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
+  });
+
+  it("becomes ready without waiting for the sweep of old task sessions", async () => {
+    sim.listSessionsGate = new Promise(() => undefined);
+    const { host } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
   });
 
   it("GitHub out of reach (VPN not up, proxy, captive portal): a network message and a retry, not the token's fault", async () => {

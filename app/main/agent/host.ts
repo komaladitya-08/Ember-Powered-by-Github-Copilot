@@ -700,7 +700,8 @@ export class AgentHost {
       if (runtimeDefault) this.o.log.info("agent.runtime_default_model");
       this.models = models;
       // Sessions of tasks from an earlier run (Ember quit or restarted before their 10 minutes were up).
-      await this.sweepTaskSessions(client);
+      // Swept in the background: the runtime's answer to a list of old sessions must not delay the first ask.
+      void this.sweepTaskSessions(client);
       if (gen !== this.gen) return;
 
       const hands = this.o.hands;
