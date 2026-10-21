@@ -162,6 +162,7 @@ jobs:
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        continue-on-error: true
         with:
           name: ember-packages
           path: |
@@ -210,6 +211,7 @@ jobs:
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs --out dist/eval
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
+        continue-on-error: true
         with:
           name: ember-eval
           path: dist/eval/
