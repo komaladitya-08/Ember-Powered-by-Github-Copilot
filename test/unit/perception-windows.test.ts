@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { coveringRects, elementScales, matchFrame, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, SecretFieldsResult, ShellOverlay } from "../../app/main/perception/sidecar";
-import type { StackedWindow, X11 } from "../../app/main/x11";
+import type { StackedWindow, X11, X11Window } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -130,6 +130,10 @@ function desktop(o: {
   shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>;
   /** What the secret scan answers (a function: each time it is asked). */
   scan?: SecretFieldsResult | Error | (() => SecretFieldsResult | Error);
+  /** Every window the sidecar lists (default: only the one read). */
+  listed?: AxWindow[];
+  /** Every mapped top-level window X11 lists (default: none). */
+  clientWindows?: (X11Window & { wmClass: string })[];
 }) {
   const calls: Record<string, unknown>[] = [];
   const scans: unknown[] = [];
@@ -142,7 +146,7 @@ function desktop(o: {
       const a = o.answers?.[Math.min(calls.length, o.answers.length) - 1];
       return { window: o.window, nodes: o.window ? o.nodes ?? [] : [], ms: 1, ...a };
     },
-    listWindows: async () => ({ windows: o.window ? [o.window] : [] }),
+    listWindows: async () => ({ windows: o.listed ?? (o.window ? [o.window] : []) }),
     scaleElements: (ids: number[], k: number) => { scaled.push([ids, k]); },
     markSecret: async (ids: number[]) => { marked.push(ids); },
     readElement: async (id: number) => { rechecked.push(id); return { role: "text", name: "", states: [], bounds: null, ...o.element?.(id) }; },
@@ -162,6 +166,7 @@ function desktop(o: {
     stack: typeof o.stack === "function" ? o.stack : () => o.stack,
     focusWindow: () => null,
     activeWindow: () => active,
+    clientWindows: () => o.clientWindows ?? [],
     capture: (x: number, y: number, width: number, height: number) => ({ x, y, width, height, bgra: Buffer.alloc(width * height * 4, 200) }),
   } as unknown as X11;
   const perception = new Perception({ sidecar, x11, neverLook: () => o.neverLook ?? [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999 });
@@ -314,6 +319,32 @@ describe("reading a named window", () => {
     });
     await lister.windows();
     expect(listed).toEqual([{ ownPid: 999 }]);
+  });
+
+  it("lists every open window for \"what apps are open\", not just the focused one", async () => {
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const terminal = { ...axWin(42, "user@host: ~", bounds), app: "Terminal" };
+    const thunar = { ...axWin(7, "Home", bounds), app: "Thunar", active: false };
+    const { perception } = desktop({
+      window: terminal, stack: [], neverLook: ["secretvault"], listed: [terminal, thunar],
+      clientWindows: [
+        { id: 1, pid: 42, title: "user@host: ~", wmClass: "xfce4-terminal Xfce4-terminal", ...bounds },
+        { id: 2, pid: 7, title: "Home", wmClass: "thunar Thunar", ...bounds },
+        { id: 3, pid: 8, title: "My Vault", wmClass: "secretvault Secretvault", ...bounds },
+        { id: 4, pid: 999, title: "Ask Ember", wmClass: "ember Ember", ...bounds },
+      ],
+    });
+    // The question's context (sent without a screen read) names the window behind the focused one too.
+    const ctx = await perception.quickContext();
+    expect(ctx?.text).toContain("Open windows:");
+    expect(ctx?.text).toContain('"Xfce4-terminal": "user@host: ~"');
+    expect(ctx?.text).toContain('"Thunar": "Home"');
+    expect(ctx?.text).not.toContain("My Vault");
+    expect(ctx?.text).not.toContain("Ask Ember");
+    // So does describe_screen, which runs while the ask box itself has the focus.
+    const text = await perception.describe();
+    expect(text).toContain('<screen source="open-windows" untrusted="true">');
+    expect(text).toContain('"Thunar": "Home"');
   });
 });
 

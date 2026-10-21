@@ -6,6 +6,7 @@
  * physical X pixels, also for HiDPI apps that report logical ones (see windows.ts).
  */
 
+import { friendlyApp } from "../../shared/apps";
 import { isSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
@@ -288,7 +289,46 @@ export class Perception {
       if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
       else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
     }
+    // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
+    // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
+    // read already took its turn.
+    const open = this.x11WindowLines();
+    if (open.length) lines.push("", "Open windows:", ...open);
     return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>` };
+  }
+
+  /** Every mapped top-level window as model-readable lines, Ember's own and private ones left out. */
+  private x11WindowLines(): string[] {
+    let wins: (X11Window & { wmClass: string })[];
+    try {
+      wins = this.o.x11?.clientWindows() ?? [];
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+      return [];
+    }
+    const list = this.o.neverLook().filter(i => i.trim());
+    const out = wins.filter(w => w.pid !== this.ownPid
+      && !isNeverLook({ app: w.wmClass, name: w.title }, list)
+      && !isSecurityWindow({ app: w.wmClass, title: w.title }))
+      .map(w => {
+        const cls = w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
+        return `- ${quoteUntrusted(friendlyApp(cls) || "unknown app", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}`;
+      });
+    return [...new Set(out)];
+  }
+
+  /** Every open window for describe_screen, through accessibility (the app's own name), as an untrusted block. */
+  private async openWindows(): Promise<string> {
+    let wins: AxWindow[];
+    try {
+      wins = await this.windows();
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+      return "";
+    }
+    if (!wins.length) return "";
+    const lines = wins.map(w => `- ${quoteUntrusted(w.app || "unknown app", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
+    return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${lines.join("\n")}\n</screen>`;
   }
 
   /**
@@ -312,17 +352,19 @@ export class Perception {
     }
     // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
     if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    if (seen.ember) return EMBERS_OWN;
+    // The ask box has the focus while the user waits for an answer: list the apps anyway (describe_screen runs then).
+    const open = await this.openWindows();
+    if (seen.ember) return `${EMBERS_OWN}${open}`;
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!seen.window) {
-      if (seen.busy) return BUSY_APP;
+      if (seen.busy) return `${BUSY_APP}${open}`;
       const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
-      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}`;
+      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${open}`;
     }
     const focus = focusedElement(seen.nodes);
     const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
     const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
-    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}`;
+    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${open}`;
   }
 
   /**

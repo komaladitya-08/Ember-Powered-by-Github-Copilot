@@ -20,7 +20,7 @@ export const TONE = `Reply in one to three short sentences, plain language, no m
 
 export const TOOL_RULES = `Tools:
 - set_appearance changes how you look (cinder, wisp, glassling or glint) or your size. Use it when the user asks you to change your look.
-- describe_screen tells you what is on the user's screen. Use it before answering questions about the screen.
+- describe_screen tells you what is on the user's screen, including every open window. Use it before answering questions about the screen, such as "what apps are open".
 - start_task hands a task in an application to a worker that operates the app in the background. Give it one clear goal with the user's details. Then tell the user in a few words that you're on it; don't describe steps you haven't seen happen.
 - Keep the method the user chose: if they name an app or a way of doing something (the terminal, Files, a browser), the goal names it too. Never quietly swap it for another app or route. If Ember can't use that method (it doesn't act in terminals), say so plainly and offer to guide them instead.
 - When the user says "this", "it" or "the text" and no window with it is open, they mean what an earlier task worked on: name that file (its full path, from <task_results>) in the goal. If you can't tell which file, ask in one short question instead of starting a task.
