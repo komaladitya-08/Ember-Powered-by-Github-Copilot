@@ -33,7 +33,9 @@ function makeWorker(o: {
   /** Extra nodes in the window (a dialog's Cancel or Search beside the row pointed at). */
   more?: AxNode[];
   /** What readElement adds for an id (null: that element is gone). */
-  live?: (id: number) => Record<string, unknown> | null;
+  live?: (id: number) => Record<string, unknown> | null | undefined;
+  /** Runs as the question appears (the user's click on Allow may change the screen). */
+  onAsk?: () => void;
 } = {}) {
   const flown: unknown[] = [];
   const audit: Record<string, unknown>[] = [];
@@ -71,12 +73,15 @@ function makeWorker(o: {
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
-    confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter,
     lease: async () => () => undefined, flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
-    cursor: o.noCursor ? undefined : { borrow: {} as never, findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}) },
+    cursor: o.noCursor ? undefined : {
+      borrow: { borrow: async (fn: (hand: unknown) => Promise<void>) => fn({ glideTo: async () => undefined, click: async () => undefined, keys: async () => undefined, type: async () => undefined, scroll: async () => undefined }) },
+      findWindow: () => 1, setBorrowing: () => undefined, ...(o.activeWindow ? { activeWindow: o.activeWindow } : {}),
+    },
     pointer: o.pointer, activationKey: o.activationKey,
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
@@ -401,6 +406,28 @@ describe("one question per step (review round 6)", () => {
     await behind.call("type_text", { id: 1, text: "Hello", mode: "insert" });
     expect(behind.asked).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Hello” into “Body” paragraph/)]);
     expect(behind.events).toEqual([]);
+  });
+});
+
+describe("a menu's approval survives the click that closed it (live: Thunar File > Create Document)", () => {
+  it("Allow keeps its yes for reopening the menu and clicking the same item, so it isn't asked again", async () => {
+    // The user's click on Allow lands outside the open menu: GTK closes it, so the approved click has to be made again.
+    let closed = false;
+    const { call, asked, audit } = makeWorker({
+      role: "menu item", name: "Create Document", parentRole: "menu",
+      canDo: () => ({ tier1: false, why: "the menu item needs the mouse" }),
+      onAsk: () => { closed = true; },
+      live: () => (closed ? null : undefined),
+    });
+    await call("perceive_window", {});
+    const first = await call("click", { id: 1 });
+    expect(first.textResultForLlm).toMatch(/closed when you answered .*reopen its menu and click it again, without asking/);
+    expect(asked).toHaveLength(1);
+    closed = false;
+    const retry = await call("click", { id: 1 });
+    expect(retry.resultType).toBe("success");
+    expect(asked).toHaveLength(1);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", verdict: "allow", reason: expect.stringMatching(/already allowed this menu item/) }));
   });
 });
 

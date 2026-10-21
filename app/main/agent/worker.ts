@@ -745,6 +745,11 @@ export class Worker {
   private declined = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /**
+   * A menu item the user allowed, whose menu closed when they clicked Allow (the click landed outside it). The yes
+   * stands for reopening that menu and clicking the same item again, without a second question.
+   */
+  private carriedMenuApproval: { app: string; role: string; name: string; until: number } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   /** Its scale (HiDPI): at 1, positions the app reports at a point compare with those read. */
@@ -1589,10 +1594,19 @@ export class Worker {
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
     const name = live ? this.nameOf(id, live) : null;
-    if (!live || live.role !== element.role || name !== element.name) {
-      return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
+    if (!live || live.role !== element.role || name !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
+      return this.changedWhileDeciding(id, element, live);
     }
     return null;
+  }
+
+  /** The element changed while a question was up. A menu item whose menu the Allow click closed keeps its yes (see carriedMenuApproval). */
+  private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
+    if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
+      this.carriedMenuApproval = { app: this.window.app.toLowerCase(), role: element.role, name: element.name, until: Date.now() + 60_000 };
+      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. The user's OK still stands: reopen its menu and click it again, without asking.`);
+    }
+    return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
   }
 
   /** choose_option: the option is found first (its full name, never a part of one), and the policy judges the one that will be chosen. */
@@ -1854,7 +1868,9 @@ export class Worker {
     // Where it is now: the window may have moved or scrolled while the user decided.
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name) {
+    if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
+      const closedMenu = this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === node.role && this.nameOf(id, live) === element.name));
+      if (closedMenu) return this.changedWhileDeciding(id, element, live);
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
@@ -3025,6 +3041,15 @@ export class Worker {
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
     if (this.isOver) return STOPPED();
+    // The user's click on Allow closed the menu this item is in: their yes covers reopening it and clicking the same item.
+    const carried = this.carriedMenuApproval;
+    if (carried && Date.now() > carried.until) this.carriedMenuApproval = null;
+    else if (carried && (request.kind === "click" || request.kind === "cursor_click") && request.app.toLowerCase() === carried.app
+      && request.element?.role === carried.role && request.element.name === carried.name) {
+      this.carriedMenuApproval = null;
+      this.audit({ event: "decision", task: this.spec.id, kind: request.kind, app: request.app, window: request.window, element: request.element, ...auditValue(request), tier: "reversible", verdict: "allow", reason: "the user already allowed this menu item; their answer closed its menu" });
+      return null;
+    }
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
     // caret). A click by accessibility (a toolbar button), a scroll or a look move no caret: the selection stays.
