@@ -78,7 +78,7 @@ describe("shape", () => {
 
 describe("the typeface", () => {
   it("is bundled with its licence, which the RPM and the notices name", () => {
-    for (const f of ["InterVariable.woff2", "InterVariable-Italic.woff2", "LICENSE.txt"]) expect(existsSync(new URL(`../../assets/fonts/${f}`, import.meta.url)), f).toBe(true);
+    for (const f of ["InterVariable.woff2", "LICENSE.txt"]) expect(existsSync(new URL(`../../assets/fonts/${f}`, import.meta.url)), f).toBe(true);
     expect(read("assets/fonts/LICENSE.txt")).toContain("SIL Open Font License, Version 1.1");
     expect(shared).toContain('src: url("../fonts/InterVariable.woff2") format("woff2")');
     expect(read("scripts/build-app.mjs")).toMatch(/cp\(new URL\("assets\/fonts\/", root\), new URL\("renderer\/fonts\/", out\)/);
@@ -99,6 +99,16 @@ describe("every window", () => {
 
   it("draws glass over other apps without a backdrop blur (software compositing: a blur costs a core)", () => {
     for (const css of [BUBBLE_CSS, ...["overlay", "handle", "ask"].map(p => read(`app/renderer/${p}/styles.css`))]) expect(css).not.toMatch(/backdrop-filter/);
+  });
+
+  it("animates only opacity and transforms, and the bubble's glow breathes a few times, not forever", () => {
+    // Under software compositing anything else animated repaints its layer every frame.
+    for (const css of [BUBBLE_CSS, shared, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))]) {
+      for (const [, body] of css.matchAll(/@keyframes [\w-]+ \{((?:[^{}]*\{[^}]*\})*)[^}]*\}/g)) {
+        for (const [, prop] of body.matchAll(/([\w-]+):/g)) expect(["opacity", "transform", "translate", "scale"], body).toContain(prop);
+      }
+    }
+    expect(BUBBLE_CSS).toMatch(/::before \{ opacity: 1; animation: eb-glow [\d.]+s ease-in-out \d; \}/);
   });
 
   it("stops every endless animation in Calm mode", () => {

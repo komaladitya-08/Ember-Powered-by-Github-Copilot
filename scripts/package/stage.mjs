@@ -26,7 +26,9 @@ const resources = path.join(app, "resources");
 const rel = p => path.relative(root, p);
 
 // main.cjs and the desk helper it starts beside itself (desk-agent.cjs, run as plain Node).
-for (const f of ["main.cjs", "desk-agent.cjs"]) if (!fs.existsSync(path.join(root, "dist/app", f))) throw new Error(`build the app first (npm run build): dist/app/${f} is missing`);
+for (const f of ["main.cjs", "desk-agent.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt"]) {
+  if (!fs.existsSync(path.join(root, "dist/app", f))) throw new Error(`build the app first (npm run build): dist/app/${f} is missing`);
+}
 
 // The production packages to bundle: Linux x64 glibc builds only.
 // tslib is only @emnapi's (sharp's wasm fallback).

@@ -169,7 +169,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 .consent p { margin: 0 0 12px; }
 progress { width: 100%; height: 4px; border: 0; border-radius: var(--r-capsule); overflow: hidden; background: rgba(120, 120, 128, 0.36); -webkit-appearance: none; appearance: none; }
 progress::-webkit-progress-bar { background: rgba(120, 120, 128, 0.36); }
-progress::-webkit-progress-value { background: var(--accent); border-radius: var(--r-capsule); transition: width 300ms ease; }
+progress::-webkit-progress-value { background: var(--accent); border-radius: var(--r-capsule); }
 progress[hidden] { display: none; }
 .managed {
   margin: 0; padding: 12px 14px 12px 16px; border-radius: var(--r-lg);
@@ -289,7 +289,7 @@ body.first-run .after-setup { display: none !important; }
 }
 .jump a {
   flex: none; position: relative; padding: 5px 11px; border-radius: var(--r-capsule); color: var(--muted); text-decoration: none;
-  font: 500 13px/18px var(--ember-font); transition: color 160ms ease, background-color 160ms ease;
+  font: 500 13px/18px var(--ember-font);
 }
 @media (hover: hover) { .jump a:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); } }
 /* The section you are in: a fill and semibold words (not colour alone). */
