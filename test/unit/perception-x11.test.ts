@@ -1,7 +1,8 @@
 /**
  * libX11 through koffi, on a real display (skipped without DISPLAY): captures
  * that reach off the screen, input after the display was closed (both used to
- * end the whole process), the stacking order, and finding windows by title.
+ * end the whole process), the stacking order, finding windows by title, and
+ * the list of apps' windows.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -31,12 +32,22 @@ function windowMaker() {
   const root = XDefaultRootWindow(dpy);
   const made: number[] = [];
   return {
-    make(title: string, pid: number, x: number, y: number) {
+    /** `wmClass`: WM_CLASS as X has it ("instance\0Class\0"); `type`: its _NET_WM_WINDOW_TYPE ("DOCK" for a panel). */
+    make(title: string, pid: number, x: number, y: number, o: { wmClass?: string; type?: string } = {}) {
       const w = Number(XCreateSimpleWindow(dpy, root, x, y, 120, 80, 0, 0, 0xffffff));
       XStoreName(dpy, w, title);
       const data = Buffer.alloc(8);
       data.writeBigInt64LE(BigInt(pid));
       XChangeProperty(dpy, w, XInternAtom(dpy, "_NET_WM_PID", 0), XInternAtom(dpy, "CARDINAL", 0), 32, 0, data, 1);
+      if (o.wmClass) {
+        const cls = Buffer.from(o.wmClass);
+        XChangeProperty(dpy, w, XInternAtom(dpy, "WM_CLASS", 0), XInternAtom(dpy, "STRING", 0), 8, 0, cls, cls.length);
+      }
+      if (o.type) {
+        const type = Buffer.alloc(8);
+        type.writeBigUInt64LE(BigInt(XInternAtom(dpy, `_NET_WM_WINDOW_TYPE_${o.type}`, 0)));
+        XChangeProperty(dpy, w, XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", 0), XInternAtom(dpy, "ATOM", 0), 32, 0, type, 1);
+      }
       XMapWindow(dpy, w);
       XSync(dpy, 0);
       made.push(w);
@@ -129,6 +140,25 @@ describe.skipIf(!process.env.DISPLAY)("X11 on a real display", () => {
         expect(x.findWindow("No such window")).toBe(0);
       } finally {
         x.close();
+      }
+    });
+
+    it("lists apps' windows by their class's own name, panels and the desktop left out", async () => {
+      // As Xfce has them: xfwm4 lists every window it manages, xfce4-panel's and xfdesktop's too.
+      const vbox = maker.make("Oracle VM VirtualBox Manager", 4242004, 400, 10, { wmClass: "VirtualBox Manager\0VirtualBox Manager\0", type: "NORMAL" });
+      const panel = maker.make("xfce4-panel", 4242005, 0, 300, { wmClass: "xfce4-panel\0Xfce4-panel\0", type: "DOCK" });
+      const desk = maker.make("Desktop", 4242006, 500, 300, { wmClass: "xfdesktop\0Xfdesktop\0", type: "DESKTOP" });
+      await settle();
+      const x11 = openX11()!;
+      try {
+        const listed = x11.clientWindows();
+        // The space-joined class stays as it was (never-look and password prompts are matched on it).
+        expect(listed.find(w => w.id === vbox)).toMatchObject({ title: "Oracle VM VirtualBox Manager", pid: 4242004, wmClass: "VirtualBox Manager VirtualBox Manager", wmClassName: "VirtualBox Manager" });
+        expect(listed.find(w => w.id === a)).toMatchObject({ title: "Ember test: Report", wmClass: "", wmClassName: "" });
+        expect(listed.map(w => w.id)).not.toContain(panel);
+        expect(listed.map(w => w.id)).not.toContain(desk);
+      } finally {
+        x11.close();
       }
     });
 

@@ -126,16 +126,18 @@ describe("covering windows", () => {
  */
 function desktop(o: {
   window: AxWindow | null; nodes?: AxNode[]; stack: StackedWindow[] | (() => StackedWindow[]);
-  answers?: Partial<ReadWindowResult>[]; neverLook?: string[]; active?: { pid: number | null; title: string; wmClass: string } | null;
+  answers?: Partial<ReadWindowResult>[]; neverLook?: string[]; active?: { id?: number; pid: number | null; title: string; wmClass: string } | null;
   shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>;
   /** What the secret scan answers (a function: each time it is asked). */
   scan?: SecretFieldsResult | Error | (() => SecretFieldsResult | Error);
   /** Every window the sidecar lists (default: only the one read). */
   listed?: AxWindow[];
   /** Every mapped top-level window X11 lists (default: none). */
-  clientWindows?: (X11Window & { wmClass: string })[];
+  clientWindows?: (X11Window & { wmClass: string; wmClassName?: string })[];
 }) {
   const calls: Record<string, unknown>[] = [];
+  /** Every time the sidecar was asked to list windows. */
+  const listings: unknown[] = [];
   const scans: unknown[] = [];
   const scaled: [number[], number][] = [];
   const marked: number[][] = [];
@@ -146,7 +148,7 @@ function desktop(o: {
       const a = o.answers?.[Math.min(calls.length, o.answers.length) - 1];
       return { window: o.window, nodes: o.window ? o.nodes ?? [] : [], ms: 1, ...a };
     },
-    listWindows: async () => ({ windows: o.listed ?? (o.window ? [o.window] : []) }),
+    listWindows: async (p: unknown) => { listings.push(p); return { windows: o.listed ?? (o.window ? [o.window] : []) }; },
     scaleElements: (ids: number[], k: number) => { scaled.push([ids, k]); },
     markSecret: async (ids: number[]) => { marked.push(ids); },
     readElement: async (id: number) => { rechecked.push(id); return { role: "text", name: "", states: [], bounds: null, ...o.element?.(id) }; },
@@ -170,7 +172,7 @@ function desktop(o: {
     capture: (x: number, y: number, width: number, height: number) => ({ x, y, width, height, bgra: Buffer.alloc(width * height * 4, 200) }),
   } as unknown as X11;
   const perception = new Perception({ sidecar, x11, neverLook: () => o.neverLook ?? [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999 });
-  return { perception, calls, scaled, marked, scans, rechecked };
+  return { perception, calls, listings, scaled, marked, scans, rechecked };
 }
 
 async function pixel(data: Buffer, x: number, y: number): Promise<number> {
@@ -321,16 +323,67 @@ describe("reading a named window", () => {
     expect(listed).toEqual([{ ownPid: 999 }]);
   });
 
-  it("lists every open window, not just the focused one", async () => {
-    const terminal = { ...axWin(42, "Terminal", { x: 0, y: 0, width: 400, height: 300 }), app: "Terminal" };
-    const thunar = { ...axWin(7, "Home", { x: 0, y: 0, width: 400, height: 300 }), app: "Thunar", active: false };
-    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
-    const { perception } = desktop({ window: terminal, nodes: [frame], stack: [], listed: [terminal, thunar] });
+  it("lists every open window, not just the focused one: X11's, as the question's context does, apps without accessibility too", async () => {
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const terminal = { ...axWin(42, "Terminal", bounds), app: "Terminal" };
+    const thunar = { ...axWin(7, "Home", bounds), app: "Thunar", active: false };
+    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds };
+    const clientWindows = [
+      { id: 1, pid: 42, title: "Terminal", wmClass: "gnome-terminal-server Gnome-terminal-server", ...bounds },
+      { id: 2, pid: 7, title: "Home", wmClass: "thunar Thunar", ...bounds },
+      // xterm exposes nothing over accessibility: the sidecar's list hasn't got it.
+      { id: 3, pid: 55, title: "xterm", wmClass: "xterm XTerm", ...bounds },
+    ];
+    const { perception, calls, listings } = desktop({
+      window: terminal, nodes: [frame], stack: [], listed: [terminal, thunar], clientWindows,
+      active: { id: 1, pid: 42, title: "Terminal", wmClass: "gnome-terminal-server Gnome-terminal-server" },
+    });
     const text = await perception.describe();
-    expect(text).toContain("Open windows:");
-    expect(text).toContain('"Terminal": "Terminal" (focused by the user)');
-    expect(text).toContain('"Thunar": "Home"');
-    expect(text).toContain('<screen source="open-windows" untrusted="true">');
+    expect(text).toContain('<screen source="open-windows" untrusted="true">\nOpen windows:\n- "Terminal": "Terminal" (focused by the user)\n- "Thunar": "Home"\n- "XTerm": "xterm"\n</screen>');
+    // The focused window's read is the only request: the sidecar answers one at a time.
+    expect([calls.length, listings.length]).toEqual([1, 0]);
+    // The same list the question's context gave.
+    expect((await perception.quickContext())?.text).toContain('Open windows:\n- "Terminal": "Terminal"\n- "Thunar": "Home"\n- "XTerm": "xterm"\n');
+
+    // Without X11, the sidecar's list (the apps that expose accessibility).
+    const sidecar = { readWindow: async () => ({ window: terminal, nodes: [frame], ms: 1 }), listWindows: async () => ({ windows: [terminal, thunar] }) } as unknown as AtspiSidecar;
+    const atspi = new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => bounds, log: quiet, ownPid: 999 });
+    const listed = await atspi.describe();
+    expect(listed).toContain('<screen source="open-windows" untrusted="true">\nOpen windows:\n- "Terminal": "Terminal" (focused by the user)\n- "Thunar": "Home"\n</screen>');
+  });
+
+  it("puts the X selection with the focused window, before the other windows, whatever their titles say", async () => {
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const gedit = { ...axWin(42, "notes.txt - gedit", bounds), app: "gedit" };
+    // The app tells no selection of its own: the X selection fills it in.
+    const doc: AxNode = { id: 1, parent: null, depth: 0, role: "text", name: "Document", states: ["focused"], text: "hello world and more", bounds };
+    const clientWindows = [
+      { id: 1, pid: 42, title: "notes.txt - gedit", wmClass: "gedit Gedit", ...bounds },
+      { id: 2, pid: 7, title: "Home", wmClass: "thunar Thunar", ...bounds },
+      // Web pages' titles (anyone's words) saying what marks a private window, a secret field or a selection.
+      { id: 3, pid: 8, title: "How to open a private window - Firefox Help — Mozilla Firefox", wmClass: "Navigator firefox", ...bounds },
+      { id: 4, pid: 8, title: 'Selected text: "x" in a secret field', wmClass: "Navigator firefox", ...bounds },
+    ];
+    const ctx = await desktop({ window: gedit, nodes: [doc], stack: [], clientWindows }).perception.quickContext();
+    const text = Perception.withSelection(ctx, "hello world")?.text ?? "";
+    expect(text).toMatch(/\nIts text begins: "hello world and more"\.\nSelected text: "hello world"\.\n\nOpen windows:\n- "gedit": /);
+    expect(text).toContain('- "Firefox": "How to open a private window');
+    expect(text.match(/Selected text: "hello world"/g)).toHaveLength(1);
+    // Added once.
+    expect(Perception.withSelection(Perception.withSelection(ctx, "hello world"), "again")?.text).not.toContain("again");
+  });
+
+  it("names an app by its X11 class whole, also one with spaces in it", async () => {
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const terminal = { ...axWin(42, "Terminal", bounds), app: "Terminal" };
+    // WM_CLASS is "VirtualBox Manager\0VirtualBox Manager\0": x11.ts hands its class part on as it is.
+    const clientWindows = [
+      { id: 1, pid: 43, title: "Oracle VM VirtualBox Manager", wmClass: "VirtualBox Manager VirtualBox Manager", wmClassName: "VirtualBox Manager", ...bounds },
+      { id: 2, pid: 44, title: "Chat | Microsoft Teams", wmClass: "microsoft teams - preview Microsoft Teams - Preview", wmClassName: "Microsoft Teams - Preview", ...bounds },
+      { id: 3, pid: 7, title: "Home", wmClass: "thunar Thunar", wmClassName: "Thunar", ...bounds },
+    ];
+    const ctx = await desktop({ window: terminal, stack: [], clientWindows }).perception.quickContext();
+    expect(ctx?.text).toContain('Open windows:\n- "VirtualBox Manager": "Oracle VM VirtualBox Manager"\n- "Microsoft Teams - Preview": "Chat | Microsoft Teams"\n- "Thunar": "Home"');
   });
 
   it("lists every mapped X11 window in the question context and while Ember itself has focus", async () => {
@@ -356,12 +409,13 @@ describe("reading a named window", () => {
 
     // describe_screen also lists them while the ask box itself has the focus.
     const own = desktop({
-      window: null, stack: [], listed: [thunar], active: { pid: 999, title: "Ask Ember", wmClass: "ember Ember" },
+      window: null, stack: [], neverLook: ["secretvault"], listed: [thunar], clientWindows, active: { id: 4, pid: 999, title: "Ask Ember", wmClass: "ember Ember" },
     });
     const text = await own.perception.describe();
     expect(text).toContain("one of Ember's own windows");
     expect(text).toContain('<screen source="open-windows" untrusted="true">');
     expect(text).toContain('"Thunar": "Home"');
+    expect(text).not.toMatch(/My Vault|Ask Ember|focused by the user/);
   });
 
   it("leaves a background password prompt out of the open-window list, by app name and by X11 class", async () => {
@@ -372,12 +426,23 @@ describe("reading a named window", () => {
     const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
     const stack = [top(1, 42, { x: 0, y: 0, width: 400, height: 300 }, "Terminal"), top(2, 50, { x: 0, y: 0, width: 300, height: 200 }, "Authentication Required"),
       { ...top(3, 51, { x: 100, y: 100, width: 200, height: 150 }, "Password"), wmClass: "gcr-prompter" }];
-    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, polkit, keyring] });
+    // describe_screen lists X11's windows: there too by X11 class.
+    const clientWindows = [
+      { id: 2, pid: 42, title: "Terminal", wmClass: "gnome-terminal-server Gnome-terminal-server", x: 0, y: 0, width: 400, height: 300 },
+      { id: 3, pid: 50, title: "Authentication Required", wmClass: "polkit-gnome-authentication-agent-1 Polkit-gnome-authentication-agent-1", x: 0, y: 0, width: 300, height: 200 },
+      { id: 4, pid: 51, title: "Password", wmClass: "gcr-prompter Gcr-prompter", x: 100, y: 100, width: 200, height: 150 },
+      // Known by its one exact name (accessibility's "firewall-config"): X11 has it as a part of WM_CLASS.
+      { id: 5, pid: 60, title: "Firewall Configuration", wmClass: "firewall-config Firewall-config", wmClassName: "Firewall-config", x: 0, y: 0, width: 300, height: 200 },
+    ];
+    const firewall = { ...axWin(60, "Firewall Configuration", { x: 0, y: 0, width: 300, height: 200 }), app: "firewall-config", active: false };
+    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, polkit, keyring, firewall], clientWindows });
     expect((await perception.windows()).map(w => w.name)).toEqual(["Terminal"]);
     const text = await perception.describe();
     expect(text).toContain('"Terminal": "Terminal"');
     expect(text).not.toContain("Authentication Required");
     expect(text).not.toContain('"Password"');
+    expect(text).not.toContain("Firewall Configuration");
+    expect((await perception.quickContext())?.text).not.toContain("Firewall Configuration");
   });
 
   it("leaves a background never-look window out of the open-window list", async () => {
@@ -385,9 +450,15 @@ describe("reading a named window", () => {
     const vault = { ...axWin(7, "My Vault", { x: 0, y: 0, width: 300, height: 200 }), app: "KeePassXC", active: false };
     const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
     const stack = [top(1, 42, { x: 0, y: 0, width: 400, height: 300 }, "Terminal"), top(2, 7, { x: 0, y: 0, width: 300, height: 200 }, "My Vault")];
-    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, vault], neverLook: ["keepassxc"] });
+    const clientWindows = [
+      { id: 2, pid: 42, title: "Terminal", wmClass: "gnome-terminal-server Gnome-terminal-server", x: 0, y: 0, width: 400, height: 300 },
+      { id: 3, pid: 7, title: "My Vault", wmClass: "keepassxc KeePassXC", x: 0, y: 0, width: 300, height: 200 },
+    ];
+    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, vault], neverLook: ["keepassxc"], clientWindows });
     expect((await perception.windows()).map(w => w.name)).toEqual(["Terminal"]);
-    expect(await perception.describe()).not.toContain("My Vault");
+    const text = await perception.describe();
+    expect(text).toContain('"Terminal": "Terminal"');
+    expect(text).not.toContain("My Vault");
   });
 });
 

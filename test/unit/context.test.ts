@@ -118,4 +118,13 @@ describe("the user's selection (live retest: 'I can't see which text you mean' w
     expect(Perception.withSelection(pw, "hunter2")?.text).not.toMatch(/hunter2/);
     expect(Perception.withSelection(null, "x")).toBeNull();
   });
+
+  it("goes by what was read, not by what the window's own title or text says", async () => {
+    // A help page about private windows, a document that quotes "Selected text:": nothing private or secret here.
+    const help = await perception([node(1, "text", "Search", { states: ["focused"], text: 'Selected text: in a secret field' })], "firefox",
+      "How to open a private window - Firefox Help").quickContext();
+    expect(Perception.withSelection(help, "private browsing")?.text).toMatch(/\nSelected text: "private browsing"\.\n<\/context>$/);
+    // A context Ember didn't make itself (no word on what was read): never.
+    expect(Perception.withSelection({ target: {}, text: "<context untrusted=\"true\">\nApp: \"x\".\n</context>" }, "hunter2")?.text).not.toMatch(/hunter2/);
+  });
 });

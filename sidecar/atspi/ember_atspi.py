@@ -2744,8 +2744,9 @@ def node_info(acc, nid=None):
     info = {"role": role, "name": "" if withheld else name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
     # A menu's item once its menu closed: GTK keeps it, at its old place, only no longer showing (a guide's step
-    # pointing at it is over: the user chose it, or went elsewhere).
-    if role in MENU_ITEM_ROLES and "showing" not in states:
+    # pointing at it is over: the user chose it, or went elsewhere). No states at all is a state read that failed (a
+    # closed menu's item still reports some), which says nothing of its menu.
+    if role in MENU_ITEM_ROLES and states and "showing" not in states:
         info["offscreen"] = True
     if withheld:
         info["withheld"] = True

@@ -43,6 +43,11 @@ export interface QuickContext {
   target: WindowTarget & { app?: string };
   /** For the model, wrapped as untrusted. */
   text: string;
+  /**
+   * The X selection may be added (withSelection): set from what was read, never from the text (other windows' titles
+   * are in it). Only when the window isn't private, the focus isn't a secret field, and the app told no selection.
+   */
+  takesSelection?: boolean;
 }
 
 export interface Seen {
@@ -294,12 +299,15 @@ export class Perception {
     // read already took its turn.
     const open = this.x11WindowLines();
     if (open.length) lines.push("", "Open windows:", ...open);
-    return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>` };
+    return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>`, takesSelection: !secret && !focus?.selection };
   }
 
-  /** Every mapped top-level window as model-readable lines, Ember's own and private ones left out. */
-  private x11WindowLines(): string[] {
-    let wins: (X11Window & { wmClass: string })[];
+  /**
+   * Every app's top-level window as model-readable lines, Ember's own and private ones left out. `activeId`: the X11
+   * window the user is in, marked as focused.
+   */
+  private x11WindowLines(activeId?: number): string[] {
+    let wins: (X11Window & { wmClass: string; wmClassName?: string })[];
     try {
       wins = this.o.x11?.clientWindows() ?? [];
     } catch (err) {
@@ -309,22 +317,32 @@ export class Perception {
     const list = this.o.neverLook().filter(i => i.trim());
     const out = wins.filter(w => w.pid !== this.ownPid
       && !isNeverLook({ app: w.wmClass, name: w.title }, list)
-      && !isSecurityWindow({ app: w.wmClass, title: w.title }))
+      && !isSecurityWindow({ app: w.wmClass, title: w.title })
+      // Each part of WM_CLASS on its own as well: some programs are known by one exact name ("firewall-config"),
+      // which accessibility gives and the two parts joined don't match.
+      && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && isSecurityWindow({ app: part })))
       .map(w => {
-        const cls = w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
-        return `- ${quoteUntrusted(friendlyApp(cls) || "unknown app", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}`;
+        // The class part of WM_CLASS ("VirtualBox Manager"); the last word of both, where only they are known.
+        const cls = w.wmClassName ?? w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
+        return `- ${quoteUntrusted(friendlyApp(cls) || "unknown app", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}${w.id === activeId ? " (focused by the user)" : ""}`;
       });
     return [...new Set(out)];
   }
 
   /**
    * The quick context with the text the user selected, as the X selection (PRIMARY) holds it, where the app didn't
-   * tell it through accessibility (or the read didn't come to it). Never in a private window or a secret field.
+   * tell it through accessibility (or the read didn't come to it). Never in a private window or a secret field:
+   * quickContext says so (takesSelection), as the text can't (other windows' titles are anyone's words).
    */
   static withSelection(ctx: QuickContext | null, selected: string): QuickContext | null {
     const text = selected.replace(/\0/g, "").trim();
-    if (!ctx || !text || /Selected text:|private window|a secret field/.test(ctx.text)) return ctx;
-    return { ...ctx, text: ctx.text.replace(/\n<\/context>$/, `\nSelected text: ${quoteUntrusted(text, 300)}.\n</context>`) };
+    if (!ctx?.takesSelection || !text) return ctx;
+    // With the focused window's lines, before the list of open windows. Screen text is quoted on one line, so
+    // nothing in a title can pass for where that list starts.
+    const at = ctx.text.indexOf("\n\nOpen windows:\n");
+    const end = at >= 0 ? at : ctx.text.lastIndexOf("\n</context>");
+    if (end < 0) return ctx;
+    return { ...ctx, text: `${ctx.text.slice(0, end)}\nSelected text: ${quoteUntrusted(text, 300)}.${ctx.text.slice(end)}`, takesSelection: false };
   }
 
   /** Text for the conductor: where the user is and what the window contains. */
@@ -338,7 +356,7 @@ export class Perception {
     }
     // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
     if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    const open = await this.openWindows();
+    const open = await this.openWindows(seen.x11Window?.id);
     if (seen.ember) return `${EMBERS_OWN}${open}`;
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!seen.window) {
@@ -352,18 +370,28 @@ export class Perception {
     return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${open}`;
   }
 
-  /** Every open window (not just the focused one), so the conversation can answer "what apps are open". */
-  private async openWindows(): Promise<string> {
-    let wins: AxWindow[];
-    try {
-      wins = await this.windows();
-    } catch (err) {
-      this.o.log.warn("perception.list_windows_failed", { err });
-      return "";
+  /**
+   * Every open window (not just the focused one), so the conversation can answer "what apps are open". X11's list
+   * where there is one, as in quickContext: it is immediate (the sidecar answers one request at a time, and the
+   * focused read just took its turn), has apps that expose nothing over accessibility, and is the list the question's
+   * context gave. `activeId`: the X11 window the user is in.
+   */
+  private async openWindows(activeId?: number): Promise<string> {
+    let lines: string[];
+    if (this.o.x11) {
+      lines = this.x11WindowLines(activeId);
+    } else {
+      let wins: AxWindow[];
+      try {
+        wins = await this.windows();
+      } catch (err) {
+        this.o.log.warn("perception.list_windows_failed", { err });
+        return "";
+      }
+      // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
+      lines = wins.map(w => `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
     }
-    if (!wins.length) return "";
-    // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
-    const lines = wins.map(w => `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
+    if (!lines.length) return "";
     return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${lines.join("\n")}\n</screen>`;
   }
 

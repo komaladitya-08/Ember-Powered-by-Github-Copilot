@@ -73,11 +73,14 @@ export interface X11 {
    */
   focusWindow(): (X11Window & { wmClass: string }) | null;
   /**
-   * Every top-level window (from _NET_CLIENT_LIST, or the window tree when no
-   * window manager publishes one), with its class. Used to black out private
-   * windows even when they expose nothing over accessibility.
+   * Every app's top-level window (from _NET_CLIENT_LIST, or the window tree when no
+   * window manager publishes one), with its class: "what apps are open", also those
+   * that expose nothing over accessibility. Panels, docks and the desktop's own
+   * window are left out. `wmClass`: WM_CLASS's two parts joined by a space (what
+   * never-look and password prompts are matched on); `wmClassName`: its class part
+   * alone ("VirtualBox Manager").
    */
-  clientWindows(): (X11Window & { wmClass: string })[];
+  clientWindows(): (X11Window & { wmClass: string; wmClassName?: string })[];
   /**
    * Every mapped top-level window (the root window's children), bottom to top: what covers
    * what on screen, including popups the window manager doesn't list.
@@ -287,12 +290,19 @@ export function openX11(displayName?: string): X11 | null {
             }
           }
         }
-        const out: (X11Window & { wmClass: string })[] = [];
+        const out: (X11Window & { wmClass: string; wmClassName: string })[] = [];
+        // Window managers list panels, docks and the desktop's own window too (xfwm4 every window it manages): not apps.
+        const notApps = new Set(["_NET_WM_WINDOW_TYPE_DOCK", "_NET_WM_WINDOW_TYPE_DESKTOP"].map(name => Number(atom(name))));
         for (const id of ids) {
+          const type = property(id, "_NET_WM_WINDOW_TYPE", "longs");
+          if (Array.isArray(type) && type.some(t => notApps.has(t))) continue;
           const w = describe(id);
           if (!w) continue;
+          // WM_CLASS is "instance\0Class\0", and either part may have spaces in it ("VirtualBox Manager"): the class
+          // part is kept on its own before the parts are joined.
           const cls = property(id, "WM_CLASS", "string");
-          out.push({ ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "" });
+          const parts = typeof cls === "string" ? cls.split("\0").filter(Boolean) : [];
+          out.push({ ...w, wmClass: typeof cls === "string" ? cls.replace(/\0/g, " ").trim() : "", wmClassName: (parts[1] ?? parts[0] ?? "").trim() });
         }
         return out;
       },
