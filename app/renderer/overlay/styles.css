@@ -1,63 +1,90 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
-body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
+body { font-size: 13px; line-height: 1.4; color: var(--label); }
 /* Ember: a small canvas that moves with it (sized and placed by main.ts). */
 /* Never takes a click: the task cards' buttons and the bubble's are what the user clicks, even with Ember beside them. */
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+
+/* The status line ("Using your mouse: move it to take over"): a black capsule at the top, as the Dynamic Island. */
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
-  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
-  background: rgba(26, 15, 11, 0.9); color: #fbeee3; border: 1px solid rgba(255, 154, 61, 0.45);
-  font-weight: 700; font-size: 12px; box-shadow: 0 0 18px rgba(255, 138, 42, 0.25);
+  display: inline-flex; align-items: center; gap: 9px; min-height: 34px; padding: 7px 16px 7px 13px; border-radius: var(--r-capsule);
+  background: rgba(0, 0, 0, 0.9); color: #fff;
+  font-weight: 600; font-size: 13px; line-height: 20px; letter-spacing: -0.006em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 10px 30px rgba(0, 0, 0, 0.35);
+  transition: opacity 200ms ease, display 200ms allow-discrete, translate 420ms var(--spring-snappy);
 }
-.status[hidden] { display: none; }
-.status i { width: 8px; height: 8px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 8px #ff9a3d; animation: pulse 1.2s ease-in-out infinite; }
+@starting-style { .status { opacity: 0; translate: 0 -6px; } }
+.status[hidden] { display: none; opacity: 0; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(255, 146, 48, 0.28); animation: pulse 1.2s ease-in-out infinite; }
+
 /* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
 .tasks {
-  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
+  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
-.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 154, 61, 0.6) transparent; }
-/* min-width 0 and wrapping anywhere: a long unbroken word wraps inside the 260 px card instead of stretching it off screen. */
+.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.35) transparent; }
+/* A card is a notification: dark glass, the task's state as a symbol on the left, its words, then its buttons.
+   min-width 0 and wrapping anywhere: a long unbroken word wraps inside the card instead of stretching it off screen. */
 .task {
-  display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
-  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 0;
+  --task-tint: var(--accent);
+  --task-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm0 3a8 8 0 1 0 8 8h-3a5 5 0 1 1-5-5z'/%3E%3C/svg%3E");
+  position: relative; display: grid; gap: 1px; padding: 11px 14px 12px 44px; border-radius: 16px; color: var(--label);
+  border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth); min-width: 0;
+  /* A new card fades in (opacity only: its buttons are measured where they stand). */
+  transition: opacity 240ms ease;
 }
+@starting-style { .task { opacity: 0; } }
 .task b, .task span { overflow-wrap: anywhere; }
-.task b { font-size: 13px; }
-.task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
+.task b { font-size: 13.5px; line-height: 18px; font-weight: 650; letter-spacing: -0.01em; }
+.task span { color: var(--label-2); font-size: 12.5px; line-height: 17px; }
 .task span[hidden] { display: none; }
+/* The state's symbol (with the words beside it, never colour alone): a ring while it works, a hand when it waits
+   for you, a tick when done, a mark when it failed, a square when stopped. */
+.task::before {
+  content: ""; position: absolute; left: 12px; top: 10px; width: 22px; height: 22px; background: var(--task-tint);
+  -webkit-mask: var(--task-icon) center / 22px no-repeat;
+}
+.task[data-status="waiting"] { --task-tint: var(--purple); --task-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm-2.5 6.5a1.25 1.25 0 0 0-1.25 1.25v6.5a1.25 1.25 0 0 0 2.5 0v-6.5A1.25 1.25 0 0 0 9.5 7.5zm5 0a1.25 1.25 0 0 0-1.25 1.25v6.5a1.25 1.25 0 0 0 2.5 0v-6.5a1.25 1.25 0 0 0-1.25-1.25z'/%3E%3C/svg%3E"); }
+.task[data-status="done"] { --task-tint: var(--green); --task-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm5.2 7.3a1.2 1.2 0 0 0-1.7 0l-4.8 4.8-2.2-2.2a1.2 1.2 0 1 0-1.7 1.7l3 3a1.2 1.2 0 0 0 1.7 0l5.7-5.6a1.2 1.2 0 0 0 0-1.7z'/%3E%3C/svg%3E"); }
+.task[data-status="failed"] { --task-tint: var(--red); --task-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm0 5a1.3 1.3 0 0 0-1.3 1.3v5.4a1.3 1.3 0 0 0 2.6 0V7.3A1.3 1.3 0 0 0 12 6zm0 9.6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E"); }
+.task[data-status="stopped"] { --task-tint: var(--gray); --task-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zM9.5 8A1.5 1.5 0 0 0 8 9.5v5A1.5 1.5 0 0 0 9.5 16h5a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 14.5 8z'/%3E%3C/svg%3E"); }
 /* The older ended cards folded into one line at the top of the stack, with Close all for the failures among them. */
-.task.more { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; }
+.task.more { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 14px; border-radius: 14px; }
+.task.more::before { content: none; }
 .more-text { flex: 1; min-width: 0; display: grid; }
 .task.more .task-actions { flex: none; margin-top: 0; }
 .tasks > [hidden] { display: none; }
 /* Stop / Close: the overlay is click-through except over these (reported to the main process). */
-.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .task-actions[hidden] { display: none; }
+/* Small capsules with an edge of 3:1 or more (WCAG 1.4.11). */
 .task-actions button {
-  font: 600 12px/1 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; padding: 6px 11px; border-radius: 7px; cursor: pointer;
-  background: transparent; color: #fbeee3; border: 1px solid rgba(255, 220, 190, 0.6);
+  font: 600 12.5px/16px var(--ember-font); letter-spacing: -0.006em; min-height: 26px; padding: 5px 13px; border-radius: var(--r-capsule); cursor: pointer;
+  border: 0; background: rgba(255, 255, 255, 0.08); color: var(--label); box-shadow: inset 0 0 0 1px var(--control-edge);
+  transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
-.task-actions button:hover { border-color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
+@media (hover: hover) { .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
+.task-actions button:active { transform: scale(0.97); }
 .task-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
-.task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
-.task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
-.task[data-status="stopped"] { border-color: rgba(251, 238, 227, 0.3); }
 @keyframes pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .status i { animation: none; } }
-html.calm .status i { animation: none; }
 
-/* The control Ember is working on. */
+/* The control Ember is working on: Apple's focus ring in Ember's colour. The ring stays still; its glow (a layer of
+   its own) breathes by opacity, so the pulse costs the compositor and never repaints. */
 .focus {
-  position: absolute; pointer-events: none; border-radius: 8px;
-  border: 2px solid rgba(255, 150, 70, 0.95);
-  box-shadow: 0 0 0 4px rgba(255, 122, 26, 0.25), 0 0 22px 6px rgba(255, 122, 26, 0.45);
-  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease, opacity 0.2s;
-  animation: focus-pulse 1.2s ease-in-out infinite;
+  position: absolute; pointer-events: none; border-radius: 10px;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 4px rgba(255, 146, 48, 0.3);
+  transition: left 0.3s var(--spring-smooth), top 0.3s var(--spring-smooth), width 0.3s var(--spring-smooth), height 0.3s var(--spring-smooth), opacity 0.2s;
 }
-.focus[hidden] { display: block; opacity: 0; animation: none; }
-@keyframes focus-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 26, 0.18), 0 0 30px 10px rgba(255, 122, 26, 0.5); } }
-@media (prefers-reduced-motion: reduce) { .focus { animation: none; transition: none; } }
-html.calm .focus { animation: none; transition: none; }
+.focus::after {
+  content: ""; position: absolute; inset: -6px; border-radius: 16px; pointer-events: none;
+  box-shadow: 0 0 22px 6px rgba(255, 140, 20, 0.5);
+  animation: focus-glow 1.4s ease-in-out infinite;
+}
+.focus[hidden] { display: block; opacity: 0; }
+.focus[hidden]::after { animation: none; }
+@keyframes focus-glow { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
+html.calm .focus { transition: none; }
+html.calm .focus::after, html.calm .status i { animation: none; }

@@ -152,6 +152,7 @@ fs.writeFileSync(path.join(app, "THIRD_PARTY_NOTICES"), [
   `Ember ${version}: ${license}. The licences of everything Ember bundles follow.`,
   `--- Ember's LICENSE ---\n${fs.readFileSync(path.join(root, "LICENSE"), "utf8").trim()}`,
   `Electron ${electronVersion}: MIT (LICENSE beside this file). Chromium and the libraries in it, among them FFmpeg\n(LGPL-2.1-or-later): LICENSES.chromium.html beside this file.`,
+  `Inter 4.1 (the typeface of Ember's windows, resources/app/dist/app/renderer/fonts): OFL-1.1\n\n--- LICENSE.txt ---\n${fs.readFileSync(path.join(root, "assets/fonts/LICENSE.txt"), "utf8").trim()}`,
   ...sections,
 ].join(`\n\n${"=".repeat(78)}\n\n`) + "\n");
 

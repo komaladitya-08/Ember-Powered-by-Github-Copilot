@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ember</title>
+  <link rel="stylesheet" href="../shared/ember.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -27,27 +28,29 @@
     <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
       <h2 id="welcome-h">Before Ember starts</h2>
       <ul class="terms">
-        <li><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.</li>
-        <li><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
-        <li><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> stops everything at once.</li>
-        <li><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code>~/.config/ember</code>. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.</li>
-        <li><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
+        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.</li>
+        <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
+        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> stops everything at once.</li>
+        <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code>~/.config/ember</code>. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.</li>
+        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
       </ul>
     </section>
 
     <section class="pick" aria-labelledby="pick-h">
       <h2 id="pick-h" tabindex="-1">Your Ember</h2>
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
-      <div class="pick-row">
-        <label for="size">Size <output id="size-out" for="size">60 px</output></label>
-        <input type="range" id="size" min="36" max="110" step="2" value="60" aria-valuetext="60 pixels">
+      <div class="group">
+        <div class="pick-row">
+          <label for="size">Size <output id="size-out" for="size">60 px</output></label>
+          <input type="range" id="size" min="36" max="110" step="2" value="60" aria-valuetext="60 pixels">
+        </div>
+        <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       </div>
       <div class="start-row" id="start-row" hidden>
         <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
         <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
         <p class="hint" id="start-hint">Agree first, then start.</p>
       </div>
-      <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       <p class="hint after-setup">Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
 

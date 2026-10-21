@@ -192,7 +192,7 @@ describe("page styles that keep things readable and reachable", () => {
     const bg = /--bg: (#[0-9a-f]{6})/.exec(home)![1];
     const placeholder = /\.add-row input::placeholder \{ color: (#[0-9a-f]{6})/.exec(home)![1];
     expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
-    expect(home).toMatch(/\.fold > summary::before \{ content: "▸" \/ "";/);
+    expect(home).toMatch(/\.fold > summary::before \{\s*content: "" \/ "";/);
     for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);
   });
 });

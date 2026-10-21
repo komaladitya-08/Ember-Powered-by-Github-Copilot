@@ -88,8 +88,13 @@ window.addEventListener("pointerup", () => { sliding = false; });
 size.addEventListener("blur", () => { if (settings) showSize(settings.size); });
 function showSize(v: number): void {
   size.value = String(v);
+  sizeLabel(v);
+}
+/** The words beside the slider and the filled part of its track. */
+function sizeLabel(v: number): void {
   size.setAttribute("aria-valuetext", `${v} pixels`);
   $("size-out").textContent = `${v} px`;
+  size.style.setProperty("--fill", `${((v - Number(size.min)) / (Number(size.max) - Number(size.min))) * 100}%`);
 }
 
 let settings: Settings | null = null;
@@ -133,8 +138,7 @@ $("reduce-motion").addEventListener("change", e => { void window.ember.updateSet
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
-  size.setAttribute("aria-valuetext", `${v} pixels`);
-  $("size-out").textContent = `${v} px`;
+  sizeLabel(v);
   void window.ember.updateSettings({ size: v });
 });
 $("start").addEventListener("click", () => {
