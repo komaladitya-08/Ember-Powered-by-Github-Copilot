@@ -211,6 +211,14 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
   });
+
+  it("shows the last line of a long answer opened with Read all (no overflow fade over its scroll box)", () => {
+    // The fade on finished text that overflows is (0,4,0): the expanded rule undoes it only as specific and later.
+    const fade = BUBBLE_CSS.indexOf('.ember-bubble:not([data-streaming="true"]) .eb-thought[data-overflow="true"] {');
+    const expanded = /\.ember-bubble\[data-expanded="true"\]:not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*mask-image: none;/.exec(BUBBLE_CSS);
+    expect(fade).toBeGreaterThan(0);
+    expect(expanded?.index).toBeGreaterThan(fade);
+  });
 });
 
 describe("onPress (live test: Allow ignored the first click)", () => {

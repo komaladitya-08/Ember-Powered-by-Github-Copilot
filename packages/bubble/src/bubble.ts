@@ -253,8 +253,9 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: none; mask-image: none;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
 }
-/* "Read all": the whole answer, scrolling inside the bubble when it is longer still. */
-.ember-bubble[data-expanded="true"] .eb-thought {
+/* "Read all": the whole answer, scrolling inside the bubble when it is longer still. As specific as the overflow
+   fade above (which it must undo: a fade over the scroll box would hide the last line however far it scrolled). */
+.ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
   max-height: calc(1.45em * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;

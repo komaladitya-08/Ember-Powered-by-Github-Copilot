@@ -13,6 +13,7 @@ import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
+import { TASK_ARM_MS } from "../handle/arm";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -145,8 +146,6 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
 // Tasks under way sit nearest the handle; when the stack would run off the top of the screen, the oldest ended
 // cards fold into one "+N more" line (with Close all), and if even the tasks under way don't fit, the stack scrolls.
 
-/** How long a card's new buttons ignore presses. */
-const CARD_ARM_MS = 900;
 /** Space between cards (the stack's CSS gap) and kept free above the stack. */
 const CARD_GAP = 8;
 const TOP_ROOM = 12;
@@ -282,7 +281,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       c.actionsKey = actionsKey;
       // New buttons take no press for a moment: the pointer may be resting where a card just appeared (the ask box
       // closed over it), and a Stop there must be a deliberate click.
-      c.armedAt = performance.now() + CARD_ARM_MS;
+      c.armedAt = performance.now() + TASK_ARM_MS;
       c.actions.hidden = list.length === 0;
       c.actions.replaceChildren(...list.map(a => {
         const b = document.createElement("button");
