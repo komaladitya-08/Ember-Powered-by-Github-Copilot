@@ -578,6 +578,10 @@ $("jump").addEventListener("click", e => {
   e.preventDefault();
   showSection(sectionOf(a));
 });
+// In the narrow row, Tab can stop on a link the row shows only part of: Chromium leaves it there, ring cut off.
+$("jump").addEventListener("focusin", e => {
+  (e.target as Element).closest("a")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+});
 function markCurrent(section: string): void {
   for (const a of jumpLinks) {
     if (sectionOf(a) === section) a.setAttribute("aria-current", "true");
@@ -593,10 +597,14 @@ window.addEventListener("scroll", () => {
   scrollQueued = true;
   requestAnimationFrame(() => {
     scrollQueued = false;
+    // At the end of the page the last sections can't scroll up to the line: the last one in view is marked.
+    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
     let current = sectionOf(jumpLinks[0]);
     for (const a of jumpLinks) {
       const h = document.getElementById(`${sectionOf(a)}-h`);
-      if (h && !isHidden(h) && h.getBoundingClientRect().top < 140) current = sectionOf(a);
+      if (!h || isHidden(h)) continue;
+      const top = h.getBoundingClientRect().top;
+      if (top < 140 || (atEnd && top < innerHeight - 40)) current = sectionOf(a);
     }
     markCurrent(current);
   });

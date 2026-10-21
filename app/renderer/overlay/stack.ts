@@ -34,7 +34,8 @@ export function foldedLine(folded: readonly TaskCard[]): { title: string; detail
   const n = folded.length;
   return {
     title: `+${n} more`,
-    detail: n === 1 ? "An earlier task that ended" : "Earlier tasks that ended",
+    // One line beside Close all (about 120 px).
+    detail: "Ended earlier",
     close: folded.flatMap(t => (t.actions ?? []).filter(a => /:dismiss$/.test(a.id)).map(a => a.id)),
   };
 }

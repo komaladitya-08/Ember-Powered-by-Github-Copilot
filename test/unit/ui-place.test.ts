@@ -151,7 +151,7 @@ describe("task card stack", () => {
 
   it("says how many folded and closes only the failures among them", () => {
     const line = foldedLine([card("f1", "failed"), card("d1", "done"), card("f2", "failed")]);
-    expect(line).toEqual({ title: "+3 more", detail: "Earlier tasks that ended", close: ["task:f1:dismiss", "task:f2:dismiss"] });
+    expect(line).toEqual({ title: "+3 more", detail: "Ended earlier", close: ["task:f1:dismiss", "task:f2:dismiss"] });
     expect(foldedLine([card("d1", "done")]).close).toEqual([]);
   });
 });

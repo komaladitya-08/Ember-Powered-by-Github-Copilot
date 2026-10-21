@@ -24,6 +24,9 @@ body { font: var(--type-callout); color: var(--label); }
 }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
 .tasks.scroll { overflow-y: auto; overscroll-behavior: contain; }
+/* Its scrollbar is drawn over whatever app is behind: the thumb sits in a dark track, so it reads on a white app too. */
+.tasks.scroll::-webkit-scrollbar-track { border: 2px solid transparent; border-radius: var(--r-capsule); background: rgba(20, 17, 18, 0.85) padding-box; }
+.tasks.scroll::-webkit-scrollbar-thumb { border-width: 4px; }
 /* A card is a notification: glass, the task's state as a symbol on the left, its words, then its buttons.
    min-width 0 and wrapping anywhere: a long unbroken word wraps inside the card instead of stretching it off screen. */
 .task {

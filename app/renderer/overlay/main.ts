@@ -140,10 +140,14 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   statusEl.hidden = !s.status;
   const statusText = statusEl.querySelector("span")!;
   // Its words stay while it fades out (not an empty capsule), and go once it has: the same status shown again is
-  // announced again. A newer status cancels an older fade's clearing (it would empty the newer words as they fade).
-  if (statusClear) { clearTimeout(statusClear); statusClear = null; }
-  if (s.status) { if (statusText.textContent !== s.status) statusText.textContent = s.status; }
-  else if (statusText.textContent) statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
+  // announced again. A newer status cancels an older fade's clearing (it would empty the newer words as they fade);
+  // other updates during the fade leave the clearing as it is (re-arming it on each would keep the words for good).
+  if (s.status) {
+    if (statusClear) { clearTimeout(statusClear); statusClear = null; }
+    if (statusText.textContent !== s.status) statusText.textContent = s.status;
+  } else if (statusText.textContent && !statusClear) {
+    statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
+  }
   // Cards sit at a fixed place, so their buttons are measured only when the cards change.
   if (renderTasks(s.tasks)) measureTasks();
   else if (keepOffKey(s) !== avoidKey) measureTasks();
