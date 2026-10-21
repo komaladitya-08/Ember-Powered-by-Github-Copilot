@@ -35,6 +35,8 @@ const sim = vi.hoisted(() => ({
   abortEnds: false,
   /** What client.listModels() answers (Copilot Free answers none). */
   models: null as any[] | null,
+  /** Task sessions left in the runtime's store by an earlier run. */
+  taskSessions: [] as string[],
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -78,8 +80,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
     async listModels() { return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
-    async listSessions() { return []; }
-    async deleteSession(id: string) { if (sim.deleteHangs) await hang(); sim.deleted.push(id); }
+    async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
+    async deleteSession(id: string) { sim.deleted.push(id); if (sim.deleteHangs) await hang(); }
     ping() { return sim.ping(); }
     async createSession(cfg: any) { await sim.createGate; const s = new FakeSession(cfg.sessionId ?? "s", cfg); sim.sessions.push(s); return s; }
     async resumeSession(id: string, cfg: any) { if (sim.resumeFails) throw new Error(`Session not found: ${id}`); sim.resumed.push(id); const s = new FakeSession(id, cfg); sim.sessions.push(s); return s; }
@@ -121,7 +123,7 @@ const hands = () => ({
 });
 
 beforeEach(() => {
-  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = []; sim.deleteHangs = false; sim.resumeFails = false;
+  sim.clients = []; sim.sessions = []; sim.deleted = []; sim.resumed = []; sim.deleteHangs = false; sim.resumeFails = false; sim.taskSessions = [];
   sim.auth = async () => ({ isAuthenticated: true, login: "octo" });
   sim.ping = async () => ({});
   sim.stopHangs = false;
@@ -143,6 +145,16 @@ describe("connecting and signing in", () => {
     expect(await host.start(TOKEN, "stored")).toBe("error");
     expect(await host.start(null)).toBe("signed-out");
     expect(host.getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
+  });
+
+  it("connecting doesn't wait for stale task sessions to be deleted", async () => {
+    sim.taskSessions = ["ember-task-old"];
+    sim.deleteHangs = true;
+    const { host } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    await vi.waitFor(() => expect(sim.deleted).toContain("ember-task-old"));
+    sim.deleteHangs = false;
+    await host.stop();
   });
 
   it("GitHub out of reach (VPN not up, proxy, captive portal): a network message and a retry, not the token's fault", async () => {
