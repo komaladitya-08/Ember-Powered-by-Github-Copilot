@@ -338,13 +338,46 @@ export function listApps(env: NodeJS.ProcessEnv = process.env): DesktopApp[] {
   return [...seen.values()];
 }
 
+/** A query and a desktop-file phrase as words, with camelCase split and simple plurals folded ("files" → "file"). */
+function appWords(text: string): string[] {
+  return text.replace(/\.desktop$/i, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase()
+    .split(/[^a-z0-9]+/).filter(Boolean)
+    .map(w => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+}
+
+/**
+ * The installed app that best answers `query`. Exact names and ids win, then the app's GenericName
+ * (its first keyword) and name words, then Categories and keywords. Ordinary keywords rank last: a
+ * helper such as Bulk Rename lists "files" too, but its generic name is "Bulk Rename", so "open the
+ * file manager" (or "Files") chooses Thunar instead of the first app in directory order.
+ */
 export function findApp(apps: DesktopApp[], query: string): DesktopApp | null {
-  const q = query.trim().toLowerCase();
+  const q = appWords(query).join(" ");
   if (!q) return null;
-  return apps.find(a => a.name.toLowerCase() === q || a.id.toLowerCase() === q)
-    ?? apps.find(a => a.name.toLowerCase().includes(q))
-    ?? apps.find(a => a.keywords.some(k => k === q || k.includes(q)))
-    ?? null;
+  const qw = q.split(" ");
+  const allIn = (phrase: string) => { const w = phrase.split(" "); return qw.every(x => w.includes(x)); };
+  const score = (a: DesktopApp): number => {
+    const name = appWords(a.name).join(" ");
+    const id = appWords(a.id).join(" ");
+    if (name === q || id === q) return 100;
+    if (id.split(" ").includes(q)) return 75;
+    const primary = a.keywords[0] ? appWords(a.keywords[0]).join(" ") : "";
+    if (primary === q) return 95;
+    if (primary && allIn(primary)) return 90;
+    if (name.startsWith(q + " ")) return 85;
+    if (name.includes(q)) return 80;
+    const phrases = [...(a.categories ?? []), ...a.keywords].map(k => appWords(k).join(" ")).filter(Boolean);
+    if (phrases.includes(q)) return 70;
+    if (phrases.some(allIn)) return 65;
+    if (phrases.some(p => p.includes(q))) return 50;
+    return 0;
+  };
+  let best: DesktopApp | null = null, bestScore = 0;
+  for (const a of apps) {
+    const s = score(a);
+    if (s > bestScore) { best = a; bestScore = s; }
+  }
+  return best;
 }
 
 /** What any app Ember starts may inherit: who the user is, language, input methods, proxies. */
