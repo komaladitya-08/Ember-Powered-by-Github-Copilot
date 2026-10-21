@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { BubbleState, EmberState } from "../../app/shared/overlay";
+import { IDLE_BUBBLE, type BubbleState, type EmberState } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
@@ -92,7 +92,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
 import { AgentHost, CUT_OFF, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { Presenter } from "../../app/main/agent/presenter";
+import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
@@ -231,6 +231,19 @@ describe("live test (Copilot Free): an account that lists no models", () => {
     expect(pinned.screen().bubble).toMatchObject({ title: "No Copilot model I can use" });
   });
 
+  it("every model listed turned off, and no administrator: says so, and blames no administrator (review: host-main)", async () => {
+    sim.models = [
+      { id: "gpt-5-mini", name: "mini", policy: { state: "disabled" } },
+      { id: "claude-sonnet-4.5", name: "Sonnet", policy: { state: "unconfigured" } },
+    ];
+    for (const made of [makeHost(), makeHost({ admin: admin() })]) {
+      expect(await made.host.start(TOKEN, "stored")).toBe("error");
+      expect(made.host.getStatus()).toMatchObject({ reason: "models", detail: "None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub." });
+      expect(made.host.getStatus().detail).not.toMatch(/administrator/);
+    }
+    expect(sim.sessions).toHaveLength(0);
+  });
+
   it("a list with models still picks from it (the default is never used then)", async () => {
     const { host } = makeHost();
     expect(await host.start(TOKEN, "stored")).toBe("ready");
@@ -263,6 +276,55 @@ describe("live test: what Ember says when it can't take a request", () => {
     conductorSession().emit("session.error", { message: "HTTP 429 rate limited", errorType: "rate_limit" });
     expect(host.getTranscript().at(-1)).toMatchObject({ who: "problem", text: "Copilot's usage limit was reached for now. Try again a bit later." });
     await host.stop();
+  });
+
+  describe("one failure is one line in the conversation, in the words the bubble ends on (review: host-main)", () => {
+    const NO_ANSWER = "Copilot didn't answer. Ask me again in a moment.";
+
+    it("a send that fails (the conductor says so, then the reconnect does): one line; the next request's failure gets its own", async () => {
+      vi.useFakeTimers();
+      const { host, screen } = makeHost();
+      await host.start(TOKEN, "stored");
+      sim.onSend = () => { throw new Error("Connection is disposed."); };
+      await host.ask("hello?");
+      expect(host.getTranscript().map(e => e.who)).toEqual(["you", "problem"]);
+      expect(host.getTranscript().at(-1)!.text).toBe(screen().bubble?.thought);
+      await vi.advanceTimersByTimeAsync(5000);
+      await host.ask("again?");
+      expect(host.getTranscript().map(e => e.who)).toEqual(["you", "problem", "you", "problem"]);
+      sim.onSend = () => undefined;
+      const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+    });
+
+    it("two requests sent together that both fail: a line each", async () => {
+      const { host } = makeHost();
+      await host.start(TOKEN, "stored");
+      sim.holdTurns = true;
+      const session = conductorSession();
+      await host.ask("first?");
+      session.nextTurn();
+      await host.ask("second?");
+      for (let i = 0; i < 2; i++) {
+        session.emit("session.error", { message: "Rate limit exceeded", errorType: "rate_limit" });
+        session.emit("session.idle", {});
+        session.nextTurn();
+      }
+      expect(host.getTranscript().map(e => e.who)).toEqual(["you", "you", "problem", "problem"]);
+      await host.stop();
+    });
+
+    it("a silent turn the abort doesn't end (said at the end, and again at the reconnect): one line", async () => {
+      vi.useFakeTimers();
+      const { host } = makeHost({ turnSilentMs: 5000 });
+      await host.start(TOKEN, "stored");
+      await host.ask("what time is it?");
+      await vi.advanceTimersByTimeAsync(5500);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(sim.clients).toHaveLength(2);
+      expect(host.getTranscript().map(e => [e.who, e.text])).toEqual([["you", "what time is it?"], ["problem", NO_ANSWER]]);
+      const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+    });
   });
 
   it("start errors are sorted by cause, and the handle says it in a few words", () => {
@@ -1255,6 +1317,90 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  describe("the terminal guard lets the user answer how else, and holds only to a terminal they asked for (review: host-main)", () => {
+    const REFUSED = /terminal.*another app/is;
+
+    it("the user's answer to Ember's “how else?” after a refusal goes ahead; a clarifying answer before one still holds to the terminal", async () => {
+      const { host, specs, session, tool } = await withTasks();
+      const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };
+      await host.ask("open the terminal and make a folder", mail);
+      say("What should it be called?");
+      // Only answering Ember's question: the terminal the user named still holds, also tried again in another app.
+      await host.ask("Projects", mail);
+      expect(await tool("start_task")({ goal: "Create a folder called Projects in the Files app" })).toMatch(REFUSED);
+      expect(await tool("start_task")({ goal: "Create a folder called Projects in Nautilus" })).toMatch(REFUSED);
+      say("I can't use the terminal. Do you want me to do it another way, like in Files?");
+      // The user's answer to that: not held to the terminal again (and the task still hears the whole request).
+      await host.ask("yes, use Files instead", mail);
+      expect(await tool("start_task")({ goal: "Create a folder called Projects in the Files app" })).toMatch(/started/);
+      await vi.waitFor(() => expect(specs).toHaveLength(1));
+      expect(specs[0].userWords).toBe("open the terminal and make a folder.\nProjects.\nyes, use Files instead");
+      // A plain "yes" to "Shall I do it in Files?" too.
+      await host.ask("open the terminal and create notes.txt", mail);
+      expect(await tool("start_task")({ goal: "Create notes.txt in the Files app" })).toMatch(REFUSED);
+      say("I can't use the terminal. Shall I create it in Files instead?");
+      await host.ask("yes", mail);
+      expect(await tool("start_task")({ goal: "Create notes.txt in the Files app" })).toMatch(/started/);
+      // The same terminal request asked again later is the user's own words: held again.
+      await host.ask("open the terminal and create notes.txt", mail);
+      expect(await tool("start_task")({ goal: "Create notes.txt in the Files app" })).toMatch(REFUSED);
+      await host.stop();
+    });
+
+    it("the same terminal request asked again, then a clarifying answer: held again (an earlier refusal doesn't release it)", async () => {
+      const { host, session, tool } = await withTasks();
+      const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };
+      await host.ask("use the terminal to make a folder called Projects", mail);
+      expect(await tool("start_task")({ goal: "Create a folder called Projects in Files" })).toMatch(REFUSED);
+      say("I can't use the terminal. Want me to guide you instead?");
+      await host.ask("no thanks", mail);
+      say("Okay.");
+      await host.ask("use the terminal to make a folder called Projects", mail);
+      say("Where should it go?");
+      await host.ask("Documents", mail);
+      expect(await tool("start_task")({ goal: "Create a folder called Projects in Documents with Files" })).toMatch(REFUSED);
+      await host.stop();
+    });
+
+    it("“not in the terminal” isn't a request to use it", async () => {
+      const { host, tool } = await withTasks();
+      await host.ask("rename notes.txt to old.txt in Files, not in the terminal", mail);
+      expect(await tool("start_task")({ goal: "Rename notes.txt to old.txt in Files" })).toMatch(/started/);
+      await host.ask("make the folder in Files without opening a terminal", mail);
+      expect(await tool("start_task")({ goal: "Make the folder in Files" })).toMatch(/started/);
+      await host.stop();
+    });
+
+    it("GNOME Shell's extensions, the terminal's font and an app named “console” aren't the terminal; the terminal still is, however it's said", async () => {
+      const { host, tool } = await withTasks();
+      for (const [words, goal] of [
+        ["open GNOME Shell Extensions and turn off Dash to Dock", "Disable Dash to Dock in Extensions"],
+        ["open Settings and change the terminal font", "Change the monospace font in Settings"],
+        ["start the Xbox console companion", "Open the Xbox Companion app"],
+        ["use the Extensions app to turn off a shell extension", "Turn off Dash to Dock in the Extensions app"],
+      ]) {
+        await host.ask(words, mail);
+        expect(await tool("start_task")({ goal }), words).toMatch(/started/);
+      }
+      for (const [words, goal] of [
+        ["open up a new terminal and list my files", "List my files in the Files app"],
+        ["open GNOME Terminal and check the free disk space", "Check the free disk space in Disk Usage Analyzer"],
+        ["run ls from the shell", "List the files in the Files app"],
+        ["type it into the terminal: mkdir Projects", "Create a folder called Projects in the Files app"],
+        ["do it on the command line", "Create a folder in the Files app"],
+        ["open the Linux terminal and list my files", "List my files in the Files app"],
+        ["run this in a new terminal: ls ~", "List my files in the Files app"],
+        ["open a bash shell and list files", "List my files in the Files app"],
+        ["Use the terminal, not the console, to list my files", "List my files in the Files app"],
+        ["run it in the terminal and don't use the shell history", "List my files in the Files app"],
+      ]) {
+        await host.ask(words, mail);
+        expect(await tool("start_task")({ goal }), words).toMatch(REFUSED);
+      }
+      await host.stop();
+    });
+  });
+
   it("Stop drops the requests waiting behind the turn; a message the user didn't send takes no request's context; a restart starts clean", async () => {
     const { host, specs, session, tool } = await withTasks();
     sim.holdTurns = true;
@@ -1999,6 +2145,30 @@ describe("live retest: a guide is promised only where Ember can point", () => {
     expect(host.tasks!.list()).toHaveLength(1);
     await host.stop();
   });
+
+  it("Stop, or a restart, while the window is being read: the guide doesn't start after it (review: host-main)", async () => {
+    const window = { app: "mousepad", pid: 7, name: "notes.txt - Mousepad", role: "frame", active: true, bounds: null };
+    let open = () => {};
+    const read = () => new Promise(r => { open = () => r({ window, nodes: [], blocked: false, busy: false }); });
+    const { host } = makeHost({ hands: { ...hands(), perception: { read } } as never });
+    await host.start(TOKEN, "stored");
+    await host.ask("show me how to change the font", ctx);
+    const stopped = showMe();
+    await host.abortAll();
+    open();
+    expect(await stopped).toMatch(/stopped everything/);
+    expect(host.tasks!.list()).toEqual([]);
+    // Reconnected (or signed out) meanwhile: the old connection's manager starts nothing either.
+    await host.ask("show me how to change the font", ctx);
+    const old = host.tasks!;
+    const restarted = showMe();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    open();
+    expect(await restarted).toMatch(/stopped everything/);
+    expect(old.list()).toEqual([]);
+    expect(host.tasks!.list()).toEqual([]);
+    await host.stop();
+  });
 });
 
 describe("live retest: 'Read all' stays open until it's closed", () => {
@@ -2016,5 +2186,59 @@ describe("live retest: 'Read all' stays open until it's closed", () => {
     await vi.advanceTimersByTimeAsync(31_000);
     expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
     const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+  });
+
+  describe("the expanded answer gone without its Close button ends the pin (review: host-main)", () => {
+    const long = "A long answer. ".repeat(60);
+    /** An answer read in full ("Read all", as main's expandAnswer does), with a guide at work behind it. */
+    function expanded(extra: Partial<HostOptions> = {}) {
+      vi.useFakeTimers();
+      const made = makeHost(extra);
+      const { host } = made;
+      const p = (host as unknown as { presenter: Presenter }).presenter;
+      p.userPrompt("explain");
+      p.event({ type: "assistant.message_delta", data: { deltaContent: long } });
+      p.event({ type: "assistant.message", data: { content: long } });
+      p.event({ type: "session.idle", data: {} });
+      const guide = (host as unknown as { taskPresenter(id: string, goal: string): Presenter }).taskPresenter("t1", "save my document");
+      guide.taskStarted();
+      host.claimBubble({ pin: true });
+      (host as unknown as { o: HostOptions }).o.setState({ talking: false, bubble: expandedBubble(made.screen().bubble!, long) });
+      return { ...made, guide };
+    }
+
+    it("“Open in settings” (main clears it and gives the pin back): the guide's step and outcome show", async () => {
+      const { host, screen, guide } = expanded();
+      (host as unknown as { o: HostOptions }).o.setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+      host.releasePin(screen().bubble!);
+      expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
+      await vi.advanceTimersByTimeAsync(60_000);
+      guide.guide("Click Save in the toolbar.", "Step 1");
+      expect(screen().bubble).toMatchObject({ visible: true, thought: "Click Save in the toolbar." });
+      // Only a pinned hold: “Listening…” keeps its own time.
+      host.claimBubble();
+      host.releasePin(screen().bubble!);
+      expect((host as any).owner.holder).toBe((host as any).mainBubble);
+    });
+
+    it("a task's question replaced it: the question stays, and what waited shows after its answer", async () => {
+      // The question writes the screen as main's does; main gives the pin back when it comes up (questionChanged).
+      let made: ReturnType<typeof expanded> | null = null;
+      const confirmer = new Confirmer(patch => (made!.host as unknown as { o: HostOptions }).o.setState(patch),
+        { armMs: 0, gapMs: 0, onChange: q => { if (q) made!.host.releasePin(made!.screen().bubble!); } });
+      made = expanded({ hands: { ...hands(), confirmer } as never });
+      const { host, screen, guide } = made;
+      const asked = confirmer.ask({ title: "save my document", prompt: "May I save it?", options: [{ id: "allow", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1" });
+      expect(screen().bubble?.thought).toMatch(/May I save it\?/);
+      // The guide finishes meanwhile: it waits behind the question.
+      guide.outcome({ title: "save my document", text: "Saved.", emotion: "proud", gesture: "thumbsUp", mood: "done" });
+      expect(screen().bubble?.thought).toMatch(/May I save it\?/);
+      confirmer.answerKey("primary");
+      expect(await asked).toBe("allow");
+      expect(screen().bubble?.thought).toBe("Thanks! Carrying on.");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(screen().bubble).toMatchObject({ visible: true, thought: "Saved." });
+      expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
+    });
   });
 });

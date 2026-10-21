@@ -238,8 +238,12 @@ function start(): void {
     try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) xinputRef?.activate(xid); } catch { /* not X11 */ }
   };
   const showHome = () => {
-    // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now.
-    if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+    // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now. An expanded answer's
+    // pinned hold goes with it, as Close ends it (no timer would, and the tasks' bubbles would wait behind it).
+    if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) {
+      setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+      agent?.releasePin(lastState.bubble);
+    }
     if (home && !home.isDestroyed()) {
       if (home.isMinimized()) home.restore();
       bringToFront(home);
@@ -522,8 +526,12 @@ function start(): void {
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
   const readLastAnswer = () => {
-    // The answer being read in full goes from the bubble (with or without a "Read all" button).
-    if (lastState.bubble.visible && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+    // The answer being read in full goes from the bubble (with or without a "Read all" button), and the hold its
+    // "Read all" pinned with it ("Open in settings" on the expanded answer: as Close).
+    if (lastState.bubble.visible && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) {
+      setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+      agent?.releasePin(lastState.bubble);
+    }
     showHome();
     sendToHome(IPC.focusSection, "conversation");
   };
@@ -576,6 +584,9 @@ function start(): void {
       return;
     }
     holdQuestionKeys();
+    // The question replaced an expanded answer and its Close button: the pinned hold has nothing left to keep. What it
+    // held off shows after the question (the question holds everything meanwhile).
+    agent?.releasePin(lastState.bubble);
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask (and stays shown,
     // also when the compositor comes back while the question is on the card).
     keptHidden = false;
