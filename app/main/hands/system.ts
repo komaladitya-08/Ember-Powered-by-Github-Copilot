@@ -411,17 +411,25 @@ export function execArgv(exec: string): string[] {
   return out.filter(a => !/^%[a-zA-Z]$/.test(a)).map(a => a.replace(/%%/g, "%"));
 }
 
+/**
+ * Where an app Ember starts belongs: the user's home, never Ember's own working
+ * folder. Apps that save into their working directory (a new document's Save
+ * dialog, a file manager's new window) would otherwise put files where the
+ * user can't find them, such as the folder Ember happened to be started from.
+ */
+const launchCwd = () => os.homedir();
+
 /** Launches an app the way the desktop does (gtk-launch), or from its Exec line, detached from Ember. */
 export function launchApp(app: DesktopApp): void {
   if (isTerminalApp(app)) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
   const fallback = () => {
     const argv = app.exec ? execArgv(app.exec) : [];
     if (!argv.length) return;
-    const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: appEnv() });
+    const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: appEnv(), cwd: launchCwd() });
     c.on("error", () => { /* the caller notices no window appeared */ });
     c.unref();
   };
-  const child = spawn("gtk-launch", [app.id], { detached: true, stdio: "ignore", env: appEnv() });
+  const child = spawn("gtk-launch", [app.id], { detached: true, stdio: "ignore", env: appEnv(), cwd: launchCwd() });
   child.on("error", fallback);
   child.unref();
 }
