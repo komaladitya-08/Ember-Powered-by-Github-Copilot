@@ -48,12 +48,31 @@ describe("the design system's colours", () => {
     }
   });
 
+  it("keeps the system colours' text tints readable on every surface and on their own tints", () => {
+    for (const [text, tint] of [["green-text", "green"], ["red-text", "red"], ["purple-text", "purple"]]) {
+      for (const bg of surfaces) {
+        expect(contrast(solid(token(text)), solid(bg)), `${text} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+        // A tag: the tint at 18 % behind its word.
+        const tag = over(`rgba(${solid(token(tint)).join(", ")}, 0.18)`, bg);
+        expect(contrast(solid(token(text)), tag), `${text} on its tint over ${bg}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it("puts dark text on its filled buttons (white on Apple's orange is 2.2:1)", () => {
     for (const c of ["accent", "green", "red", "purple", "yellow", "blue"]) expect(contrast(solid(token("on-accent")), solid(token(c))), c).toBeGreaterThanOrEqual(4.5);
   });
 
   it("outlines controls at 3:1 or more against what they sit on (WCAG 1.4.11)", () => {
     for (const bg of surfaces) expect(contrast(over(token("control-edge"), bg), solid(bg)), bg).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("shape", () => {
+  it("rounds corners only from the radius tokens (or a circle, a capsule's half, or what a parent passes on)", () => {
+    const sources = [shared, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|50%|0|inherit|1px)$/;
+    for (const css of sources) for (const [, v] of css.matchAll(/border-radius: ([^;]+);/g)) expect(v, v).toMatch(ok);
   });
 });
 
@@ -101,7 +120,8 @@ describe("every window", () => {
     const gap = Number(/\.ask \{[^}]*gap: (\d+)px/.exec(css)![1]);
     const field = Number(/\.field \{[^}]*flex: 0 0 (\d+)px/.exec(css)![1]);
     const meta = /\.meta \{[^}]*/.exec(css)![0];
-    const line = Number(/line-height: (\d+)px/.exec(meta)![1]) + 2 * Number(/padding: (\d+)px/.exec(meta)![1]);
+    const border = Number(/border: (\d+)px/.exec(meta)?.[1] ?? 0);
+    const line = Number(/line-height: (\d+)px/.exec(meta)![1]) + 2 * Number(/padding: (\d+)px/.exec(meta)![1]) + 2 * border;
     expect(/const SIZE = \{ width: 560, height: 92 \}/.test(read("app/main/ask.ts"))).toBe(true);
     expect(2 * inset + field + gap + line).toBeLessThanOrEqual(92);
   });

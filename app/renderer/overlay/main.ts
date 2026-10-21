@@ -135,10 +135,13 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   }
   statusEl.hidden = !s.status;
   const statusText = statusEl.querySelector("span")!;
-  if (statusText.textContent !== (s.status ?? "")) statusText.textContent = s.status ?? "";
+  // Its words stay while it fades out (not an empty capsule), and go once it has: the same status shown again is
+  // announced again.
+  if (s.status) { if (statusText.textContent !== s.status) statusText.textContent = s.status; }
+  else if (statusText.textContent) setTimeout(() => { if (statusEl.hidden) statusText.textContent = ""; }, 250);
   // Cards sit at a fixed place, so their buttons are measured only when the cards change.
   if (renderTasks(s.tasks)) measureTasks();
-  else if (JSON.stringify(s.avoid ?? null) !== avoidKey) measureTasks();
+  else if (keepOffKey(s) !== avoidKey) measureTasks();
   requestDraw();
 });
 
@@ -152,10 +155,14 @@ const TOP_ROOM = 12;
 /** The height the stack may take above the handle (px). */
 let tasksRoom = Infinity;
 
+/** The handle's pill is drawn this far inside its window (.handle's inset in handle/styles.css). */
+const PILL_INSET = 4;
+
 function placeTasks(): void {
   const h = handleRect;
-  const bottom = h ? Math.max(8, viewport.height - h.y + 10) : 80;
-  tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width)) : 12}px`;
+  // Lined up with the pill as it shows (its right edge, a card's gap above it), not with its window.
+  const bottom = h ? Math.max(8, viewport.height - (h.y + PILL_INSET) + CARD_GAP) : 80;
+  tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width - PILL_INSET)) : 12}px`;
   tasksEl.style.bottom = `${bottom}px`;
   tasksRoom = Math.max(80, viewport.height - bottom - TOP_ROOM);
   tasksEl.style.maxHeight = `${tasksRoom}px`;
@@ -175,9 +182,12 @@ function measureTasks(): void {
   });
   const list: Rect[] = handleRect ? [handleRect] : [];
   // Windows main asks the bubble to keep off (the settings window while it is open), in global DIP.
-  avoidKey = JSON.stringify(state?.avoid ?? null);
+  avoidKey = keepOffKey(state);
   windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
   list.push(...windows);
+  // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you).
+  const f = state?.focus;
+  if (f && f.width > 2 && f.height > 2) list.push({ x: f.x - bounds.x - 8, y: f.y - bounds.y - 8, width: f.width + 16, height: f.height + 16 });
   let cardsAt: Rect | null = null;
   if (tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
@@ -192,7 +202,11 @@ function measureTasks(): void {
   reportInteractive();
 }
 
-interface CardEls { li: HTMLLIElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
+interface CardEls { li: HTMLLIElement; state: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
+/** A card's state in words, for screen readers (its symbol says it to the eye). */
+const STATE_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+/** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
+const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
 /** The cards in stack order (top first), as last rendered. */
@@ -262,16 +276,21 @@ function renderTasks(tasks: TaskCard[]): boolean {
     if (!c) {
       const li = document.createElement("li");
       li.className = "task";
+      // New: it fades in once (a card only moved in the stack is re-inserted, and must not blink).
+      li.dataset.fresh = "";
+      setTimeout(() => { delete li.dataset.fresh; }, 400);
+      const state = Object.assign(document.createElement("span"), { className: "sr" });
       const title = document.createElement("b");
       const detail = document.createElement("span");
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;
-      li.append(title, detail, actions);
-      c = { li, title, detail, actions, actionsKey: "", armedAt: 0 };
+      li.append(state, title, detail, actions);
+      c = { li, state, title, detail, actions, actionsKey: "", armedAt: 0 };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
+    if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
     if (c.detail.textContent !== t.detail) c.detail.textContent = t.detail;
     c.detail.hidden = !t.detail;

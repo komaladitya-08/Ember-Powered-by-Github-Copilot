@@ -281,7 +281,7 @@ function renderAdmin(a: Status["admin"]): void {
 }
 
 // ───── What Ember did ─────
-const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 let shownActivity = "";
 async function refreshActivity(): Promise<void> {
   const entries = await window.ember.activity().catch(() => [] as ActivityEntry[]);
@@ -553,8 +553,7 @@ void window.ember.conversation().then(renderConversation);
 window.ember.onConversation(renderConversation);
 
 // ───── Section links ─────
-// The links stay at the top of a wide window, one row or two: scrolling keeps clear of their height (styles.css).
-new ResizeObserver(() => document.documentElement.style.setProperty("--jump-h", `${$("jump").offsetHeight}px`)).observe($("jump"));
+// A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.
 /** Shows a section (opening it if folded) and moves focus there. */
 function showSection(section: string): void {
   const h = document.getElementById(`${section}-h`);

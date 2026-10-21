@@ -177,8 +177,13 @@ describe("page styles that keep things readable and reachable", () => {
     return (x + 0.05) / (y + 0.05);
   };
 
-  it("keeps keyboard focus clear of the sticky section links", () => {
-    expect(home).toMatch(/@media \(min-width: 640px\) \{[^}]*\.jump \{ position: sticky[^}]*\}\s*html \{ scroll-padding-top: calc\(var\(--jump-h, 46px\) \+ 10px\); \}/);
+  it("keeps keyboard focus clear of the section links (WCAG 2.4.11)", () => {
+    // Wide: the links are a sidebar in a column of their own, beside the content, so nothing scrolls under them.
+    const wide = home.slice(home.indexOf("@media (min-width: 640px) {"));
+    expect(wide).toMatch(/body:not\(\.first-run\) \.home > \* \{ grid-column: 2;/);
+    expect(wide).toMatch(/\.jump \{\s*grid-column: 1; grid-row: 1 \/ span 40; position: sticky;/);
+    // Narrow: one row that scrolls away with the page (never sticky).
+    expect(home.slice(0, home.indexOf("@media (min-width: 640px) {"))).not.toMatch(/\.jump \{[^}]*position: sticky/);
   });
 
   it("wraps long names instead of widening the window or a task card", () => {

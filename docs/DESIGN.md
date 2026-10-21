@@ -57,22 +57,32 @@ They share one emotion rig, so switching never changes behaviour.
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
 Guidelines and its current design language (Liquid Glass, macOS 26/27), adapted to a Linux desktop.
+Pages use the tokens rather than literals, so Increase Contrast and Reduce Transparency reach every surface.
 
 - **Type:** Inter (bundled, SIL OFL 1.1) stands in for SF Pro, with optical sizes and Inter's own
-  tracking (tighter as text grows). Sentence case everywhere; no tracked capitals or monospace labels.
-- **Colour:** Apple's dark system palette. The accent is system orange (#FF9230), used for the one
-  main action and for status, never as decoration; text on filled buttons is dark (white on orange
-  fails contrast). Labels are a warm white at 100 / 66 / 52 %. `test/unit/design-system.test.ts`
-  checks the contrast of every pair.
-- **Layers:** windows (settings, desk) are the content layer: opaque grouped sections, rounded-rectangle
-  buttons, switches, pop-up menus. What floats over other apps (bubble, task cards, handle, Ask box,
-  status pill) is glass: a near-opaque body with a sheen, a rim lit from the top left and layered
-  shadows, and capsule buttons. There is no backdrop blur: with software compositing it would cost a
-  core and could not see other apps anyway.
+  tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid; hierarchy
+  comes from size, weight and label colour, never italics. Sentence case; no tracked capitals or
+  monospace labels.
+- **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
+  system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
+  is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %.
+  `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every
+  surface, dark text on filled buttons, control edges.
+- **Layers:** the settings window and the desk are the content layer: opaque grouped sections, a
+  sidebar with coloured symbol tiles (as System Settings), rounded-rectangle buttons, switches, pop-up
+  menus, headers above each group and footnotes below it. What floats over other apps (bubble, task
+  cards, handle, Ask box, status line) is glass: an opaque frost (no backdrop blur: with software
+  compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
+  left and layered shadows, and capsule buttons in two sizes (28 and 24 px).
+- **State:** one symbol family (working, waiting for you, done, failed, stopped) beside the words on
+  every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
-- **Motion:** springs as CSS `linear()` curves; only transform and opacity animate. Calm mode and the
-  desktop's reduced motion stop every endless animation; Increase Contrast and Reduce Transparency
-  have their own fallbacks.
+- **Motion:** springs as CSS `linear()` curves. Endless animations (pulses, the thinking glow, the
+  focus ring's glow) change only opacity, each on a layer of its own, so they never repaint. Calm mode
+  and the desktop's reduced motion stop all of them.
+- **Icon** (`assets/ember.svg`): Apple's icon grid (a 104 px continuous-corner tile on a 128 px
+  canvas, with its shadow) in the app's warm graphite, lit from above, Cinder silhouetted against its
+  own glow.
 
 ## Code
 

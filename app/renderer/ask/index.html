@@ -11,11 +11,11 @@
   <form id="form" class="ask" autocomplete="off">
     <label for="q" class="sr">Ask or tell Ember</label>
     <div class="field">
-      <!-- Ember's spark, as Spotlight's magnifier: the box is where you ask. -->
-      <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.5 4.6 2.4 6.9 7 7.5-4.6.6-6.5 2.9-7 7.5-.5-4.6-2.4-6.9-7-7.5 4.6-.6 6.5-2.9 7-7.5zM19 15.5c.2 1.9 1 2.8 2.9 3-1.9.2-2.7 1.1-2.9 3-.2-1.9-1-2.8-2.9-3 1.9-.2 2.7-1.1 2.9-3z"/></svg>
+      <!-- Ember's flame, where Spotlight has its magnifier: the box is where you ask Ember. -->
+      <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.7 3.3 3 4.6 4.5 6.8 1.4 2 2 4.1 1.5 6.3-.8 3.3-3.4 5.4-6 5.4s-5.3-2-6-5.2c-.5-2.2.3-4.3 1.6-5.9.3 1.5 1 2.5 2.2 3-.4-3.9 1.1-7.5 2.2-10.4z"/></svg>
       <input id="q" type="text" placeholder="Ask or tell Ember… e.g. “turn on Night Light”" maxlength="2000" autofocus aria-describedby="hint sees">
     </div>
-    <p class="meta"><span id="sees" class="sees" hidden></span><span id="hint" class="hint">Enter to send<span id="hint-history" hidden> · ↑ earlier questions</span> · Esc to close</span></p>
+    <p class="meta"><span id="sees" class="sees" hidden></span><span id="hint" class="hint"><span class="key"><kbd>Enter</kbd> to send</span><span class="key" id="hint-history" hidden><kbd>↑</kbd> earlier</span><span class="key"><kbd>Esc</kbd> to close</span></span></p>
   </form>
   <script src="main.js"></script>
 </body>

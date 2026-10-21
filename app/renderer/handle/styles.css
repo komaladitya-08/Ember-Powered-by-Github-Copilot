@@ -1,25 +1,25 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
-body { font-size: 13px; line-height: 1.35; letter-spacing: -0.006em; color: var(--label); }
-/* The handle: a glass capsule in the corner with Ember's face, its name and one line of what it is doing. */
+body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label); }
+/* The handle: a glass capsule in the corner with Ember's face, its name and one line of what it is doing. The face
+   sits concentric with the capsule's rounded end. */
 .handle {
   all: unset; box-sizing: border-box; cursor: pointer; position: absolute; inset: 4px;
-  display: flex; align-items: center; gap: 8px; padding: 0 16px 0 2px; border-radius: var(--r-capsule);
+  display: flex; align-items: center; gap: 8px; padding: 0 16px 0 0; border-radius: var(--r-capsule);
   border: 1px solid transparent; background: var(--glass);
   box-shadow: var(--glass-spec), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18);
-  transition: background-color 160ms ease;
 }
-@media (hover: hover) { .handle:hover { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 146, 48, 0.55), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18); } }
+@media (hover: hover) { .handle:hover { box-shadow: var(--glass-spec), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18); } }
 .menu { all: unset; flex: none; display: block; cursor: pointer; border-radius: 50%; }
-.menu:focus-visible { box-shadow: 0 0 0 2px #fff; }
+.menu:focus-visible { box-shadow: var(--focus-ring); }
 #face { display: block; width: 46px; height: 46px; }
 .text { display: grid; min-width: 0; }
-.text b { font-size: 13px; line-height: 17px; font-weight: 650; letter-spacing: -0.008em; }
-#line { color: var(--label-2); font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.text b { font: var(--type-headline); font-size: 13px; line-height: 17px; letter-spacing: -0.003em; }
+#line { color: var(--label-2); font: var(--type-footnote); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thought, .step, .task { display: none; }
-.actions[hidden], .task[hidden], .step[hidden] { display: none; }
+.actions[hidden] { display: none; }
 
 /* ── No compositor: the card is Ember's only surface (what it says, its questions, the running task) ── */
-body.fallback { background: var(--glass-solid); display: flex; flex-direction: column; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+body.fallback { background: var(--glass-solid); display: flex; flex-direction: column; box-shadow: var(--glass-rim); }
 /* Face and words on top, sized to what they hold; the buttons come straight after the words. Never shorter than
    the face (96 px and the padding): a squeezed top row would put the face over a question's buttons. */
 body.fallback .handle {
@@ -28,19 +28,18 @@ body.fallback .handle {
 }
 body.fallback #face { width: 96px; height: 96px; }
 body.fallback .text { align-self: stretch; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
-body.fallback .text b { flex: none; font-size: 12px; line-height: 16px; color: var(--label-2); font-weight: 600; }
+body.fallback .text b { flex: none; font: var(--type-footnote); font-weight: 600; color: var(--label-2); }
 /* The bold line is a short label or a title: never more than two lines. */
 body.fallback #line {
-  flex: none; white-space: normal; font-weight: 650; font-size: 15px; line-height: 20px; letter-spacing: -0.01em; color: var(--label);
+  flex: none; white-space: normal; font: var(--type-title-2); font-size: 15px; line-height: 20px; letter-spacing: -0.009em; color: var(--label);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-/* The words: upright and at full contrast, line breaks kept, scrolling when they don't fit. */
+/* The words: at full contrast, line breaks kept, scrolling when they don't fit. */
 body.fallback .thought {
   display: block; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 2px;
   /* Room for the scrollbar always: sized without it but laid out with it, the last line was cut. */
-  scrollbar-gutter: stable;
-  white-space: pre-line; overflow-wrap: anywhere; color: var(--label); font-size: 13.5px; line-height: 1.45;
-  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+  scrollbar-gutter: stable; scrollbar-width: thin;
+  white-space: pre-line; overflow-wrap: anywhere; color: var(--label); font: var(--type-body);
 }
 body.fallback .thought:empty { display: none; }
 /* While text arrives, its newest lines show (no scrollbar), the start fading away at the top. */
@@ -48,51 +47,48 @@ body.fallback.streaming .thought { overflow: hidden; }
 body.fallback.streaming .thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.2em); mask-image: linear-gradient(to bottom, transparent 0, #000 1.2em);
 }
-/* Running commentary (thinking, working, listening) is quieter, as in the bubble. */
-body.fallback:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .thought { font-style: italic; color: rgba(245, 240, 236, 0.74); }
-body.fallback.asking .thought { scrollbar-color: rgba(191, 90, 242, 0.7) transparent; }
+/* Running commentary (thinking, working, listening) is quieter, as in the bubble: the secondary label. */
+body.fallback:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .thought { color: var(--label-2); }
 /* The step, or a question's keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"). */
-body.fallback .step { display: block; flex: none; margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--label-2); }
+body.fallback .step { display: block; flex: none; margin-top: 4px; font: var(--type-footnote); color: var(--label-2); }
 body.fallback .step[hidden] { display: none; }
-.actions { display: flex; flex: none; gap: 8px; flex-wrap: wrap; margin: 0 14px 12px; }
-/* Capsules: the prominent one filled, the others with an edge of 3:1 or more (WCAG 1.4.11). */
+/* The question's buttons and the task row share the card's 12 px inset (main.ts reads their bottom margins). */
+.actions { display: flex; flex: none; gap: 8px; flex-wrap: wrap; margin: 0 12px 12px; }
+/* Capsules: the prominent one is the app's accent, the others carry an edge of 3:1 or more (WCAG 1.4.11). */
 .actions button, .task-actions button {
   all: unset; box-sizing: border-box; cursor: pointer; min-height: 28px; padding: 5px 14px; border-radius: var(--r-capsule);
-  font-weight: 600; font-size: 13px; line-height: 18px; letter-spacing: -0.006em;
+  font: 600 13px/18px var(--ember-font); letter-spacing: -0.003em;
   background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px var(--control-edge);
   max-width: 100%; overflow-wrap: anywhere; text-align: center;
   transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
 @media (hover: hover) { .actions button:hover, .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
 .actions button:active, .task-actions button:active { transform: scale(0.97); }
-.actions button.primary { background: var(--purple); color: #1d1204; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); }
-.actions button:focus-visible, .task-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-/* The task under way, with its Stop (or a failure with Close), at the bottom of the card. */
+.actions button.primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.actions button:focus-visible, .task-actions button:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.actions button.primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
+/* The task under way, with its Stop (or a failure with Close), at the bottom of the card: its state as the
+   overlay cards show it, a symbol beside the words. */
 body.fallback .task {
-  display: flex; align-items: center; gap: 8px; flex: none; margin: auto 12px 12px; padding: 6px 6px 6px 12px;
-  border-radius: 14px; background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: flex; align-items: center; gap: 8px; flex: none; margin: auto 12px 12px; padding: 6px 6px 6px 10px;
+  border-radius: var(--r-lg); background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px var(--separator);
 }
 body.fallback .task[hidden] { display: none; }
-/* Its state as a dot beside the words. */
-body.fallback .task::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-body.fallback .task[data-status="failed"]::before { background: var(--red); }
-body.fallback .task[data-status="waiting"]::before { background: var(--purple); }
-body.fallback .task[data-status="done"]::before { background: var(--green); }
-body.fallback .task[data-status="stopped"]::before { background: var(--gray); }
-.task-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
-.task-text b { margin-right: 6px; font-weight: 650; }
+body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 16px no-repeat; }
+.task-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: var(--type-callout); }
+.task-text b { margin-right: 2px; font-weight: 600; }
 #task-detail { color: var(--label-2); }
 .task-actions { flex: none; display: flex; gap: 6px; }
-.task-actions button { min-height: 26px; padding: 4px 12px; font-size: 12.5px; }
-/* Microphone: a small dot on Ember's face. Dim = waiting for "Hey Ember", bright = hearing you (its halo breathes
-   by opacity on a layer of its own: no repaint each frame). */
-.mic { position: absolute; left: 38px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); opacity: 0.5; box-shadow: 0 0 0 2px #1d1a1c; }
-.mic::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 146, 48, 0.75) 30%, transparent 70%); opacity: 0; }
-.mic[data-state="active"] { opacity: 1; }
+.task-actions button { min-height: 24px; padding: 3px 12px; font-size: 12px; line-height: 16px; }
+/* Microphone: a badge on the face's lower right, in the glass's colour ring. The accent while it is open (as the
+   system's own privacy dot), its halo breathing while it hears you (by opacity, on a layer of its own); grey when
+   muted, red on a problem. Its tooltip says which. */
+.mic { position: absolute; left: 38px; top: 36px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--glass-solid); }
+.mic::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--accent) 75%, transparent) 30%, transparent 70%); opacity: 0; }
 .mic[data-state="active"]::after { animation: mic-pulse 0.9s ease-in-out infinite; }
-.mic[data-state="muted"] { background: var(--gray); opacity: 0.9; }
-.mic[data-state="error"] { background: var(--red); opacity: 0.9; }
-body.fallback .mic { left: 92px; top: 14px; }
+.mic[data-state="muted"] { background: var(--gray); }
+.mic[data-state="error"] { background: var(--red); }
+body.fallback .mic { left: 86px; top: 94px; }
 @keyframes mic-pulse { 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .mic::after { animation: none !important; } }
 html.calm .mic::after { animation: none !important; }

@@ -2,7 +2,7 @@
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
 import { announcement, onPress, plainStream } from "@ember/bubble";
-import type { BubbleState, HandleApi } from "../../shared/overlay";
+import type { BubbleState, HandleApi, TaskCard } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import type { Settings } from "../../main/settings";
@@ -61,6 +61,9 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   }));
 }
 
+/** The task row's state in words, for screen readers (its symbol says it to the eye). */
+const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+
 const thoughtEl = $("thought");
 let wasStreaming = false;
 /**
@@ -95,7 +98,7 @@ api.onState(s => {
   const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
   mic.hidden = !micShown;
   mic.dataset.state = s.mic ?? "off";
-  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : "";
+  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : s.mic === "error" ? "Microphone problem" : "";
   if (!fallback) {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
@@ -134,6 +137,7 @@ api.onState(s => {
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;
+    $("task-state").textContent = TASK_WORD[task.status];
     $("task-title").textContent = task.title;
     $("task-detail").textContent = task.detail;
     $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
@@ -155,7 +159,8 @@ function fitCard(): void {
   let h = handleEl.offsetHeight + Math.max(0, extra);
   for (const id of ["actions", "task"]) {
     const el = $(id);
-    if (!el.hidden) h += el.offsetHeight + 10;
+    // Its own height and the gap the stylesheet leaves under it (read, so the two can never drift apart again).
+    if (!el.hidden) h += el.offsetHeight + parseFloat(getComputedStyle(el).marginBottom);
   }
   h = Math.ceil(h);
   if (Math.abs(h - askedHeight) < 4) return;
