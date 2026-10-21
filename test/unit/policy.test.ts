@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PolicyEngine, alignedWithGoal, canonicalKeys, isEmberWindow, isRiskyControl, isRiskyLabel, isSecurityWindow, keyLabel, reachesOut, RISKY_ACT_ANYWHERE, RISKY_ACT_WORDS, type ActionRequest, type Grant, type ReadSource } from "../../app/main/policy/policy";
+import { PolicyEngine, alignedWithGoal, plainQuestion, canonicalKeys, isEmberWindow, isRiskyControl, isRiskyLabel, isSecurityWindow, keyLabel, reachesOut, RISKY_ACT_ANYWHERE, RISKY_ACT_WORDS, type ActionRequest, type Grant, type ReadSource } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
 
 const engine = (grants: Record<string, "observe" | "act"> = {}, now = () => 0) =>
@@ -873,9 +873,9 @@ describe("policy: review round 7", () => {
       expect(key(k, { selection: LONG }).verdict, k).toBe("confirm");
     }
     expect(key("x", { selection: LONG })).toMatchObject({ reason: `everything is selected, so this replaces all ${LONG.length} characters already there`,
-      prompt: `Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.` });
+      prompt: `Press X on the text area in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.` });
     // Part of it: more than 80 characters, or a line break, is asked; a word isn't.
-    expect(key("x", { selection: LONG.slice(0, 90) + "\n" })).toMatchObject({ verdict: "confirm", prompt: "Press X on the text in Mousepad on my desk? 91 characters there are selected, so this replaces them." });
+    expect(key("x", { selection: LONG.slice(0, 90) + "\n" })).toMatchObject({ verdict: "confirm", prompt: "Press X on the text area in Mousepad on my desk? 91 characters there are selected, so this replaces them." });
     expect(key("x", { selection: "planning" }).verdict).toBe("allow");
     // Keys that only move or copy replace nothing.
     for (const k of ["Left", "End", "ctrl+c", "shift+Right", "Escape"]) expect(key(k, { selection: LONG }).verdict, k).toBe("allow");
@@ -883,7 +883,7 @@ describe("policy: review round 7", () => {
     expect(key("x", { selection: "" }).verdict).toBe("allow");
     expect(key("x", { afterSelectAll: true, selection: "" }).verdict).toBe("confirm");
     // Selected with Shift where the reader can't tell how much: as much as there is.
-    expect(key("x", { afterSelecting: true })).toMatchObject({ verdict: "confirm", prompt: `Press X on the text in Mousepad on my desk? Text there is selected, so this may replace all ${LONG.length} characters.` });
+    expect(key("x", { afterSelecting: true })).toMatchObject({ verdict: "confirm", prompt: `Press X on the text area in Mousepad on my desk? Text there is selected, so this may replace all ${LONG.length} characters.` });
     // In a paragraph (Writer) a selection may run on past it: asked whatever it shows.
     expect(key("x", { selection: "ab", currentText: "abc", element: { role: "paragraph", name: "" } })).toMatchObject({ verdict: "confirm",
       prompt: "Press X on the paragraph in Mousepad on my desk? Text there is selected, and it may run on past what I can see, so this may replace a lot." });
@@ -892,9 +892,9 @@ describe("policy: review round 7", () => {
   });
 
   it("a long field replaced says how much it replaces; on the desk no question says “Borrow” (DK7-2)", () => {
-    expect(key("x", { afterSelectAll: true }).prompt).toBe(`Press X on the text in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.`);
+    expect(key("x", { afterSelectAll: true }).prompt).toBe(`Press X on the text area in Mousepad on my desk? Everything there is selected, so this replaces all ${LONG.length} characters.`);
     expect(e.decide({ taskId: "d", kind: "cursor_text", app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: LONG, goal: "tidy my notes" }).prompt)
-      .toBe(`Replace the text in the text in Mousepad with “Hi” on my desk? This replaces all ${LONG.length} characters there.`);
+      .toBe(`Replace everything in the text area in Mousepad with “Hi” on my desk? This replaces all ${LONG.length} characters there.`);
     for (const [kind, value] of [["cursor_click", undefined], ["scroll", "down"], ["keys", "Delete"]] as const) {
       const d = e.decide({ taskId: "d", kind, app: "mousepad", window: "notes.txt - Mousepad", onDesk: true, element: { role: "push button", name: "Delete" }, value, goal: "write" });
       expect(d.prompt, kind).not.toMatch(/Borrow/);
@@ -1652,5 +1652,19 @@ describe("policy: review round 11", () => {
       dialog, element: { role: "push button", name: "OK" }, goal: "join the meeting", onDesk: false });
     expect(ok("zoom", { name: "Zoom", text: "This meeting is being recorded" }).verdict).toBe("confirm");
     expect(ok("soffice", { name: "Zoom & View Layout", text: "Zoom factor Optimal Fit width and height" }).verdict).toBe("allow");
+  });
+});
+
+describe("questions about an element without a name (live retest: 'Borrow your mouse to click the Icon in Mousepad?')", () => {
+  it("say where it is: the named control it sits on, or its place in the window", () => {
+    const icon = { role: "icon", name: "" };
+    expect(plainQuestion(req({ kind: "cursor_click", element: icon, place: { role: "push button", name: "Save" } }))).toBe("Borrow your mouse to click the icon on “Save” push button in Mousepad?");
+    expect(plainQuestion(req({ kind: "cursor_click", element: icon, place: { at: "top right" } }))).toBe("Borrow your mouse to click the icon at the top right of the window in Mousepad?");
+    // A named element, or one whose name was withheld, says nothing more.
+    expect(plainQuestion(req({ kind: "click", element: { role: "push button", name: "Open" }, place: { at: "top right" } }))).toBe("Click “Open” push button in Mousepad?");
+    expect(plainQuestion(req({ kind: "click", element: { role: "icon", name: "", withheld: true }, place: { role: "push button", name: "x" } }))).toBe("Click the icon in Mousepad?");
+  });
+  it("an unnamed text area isn't 'the text in the text'", () => {
+    expect(plainQuestion(req({ kind: "text", element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: "old" }))).toBe("Replace everything in the text area in Mousepad with “Hi”?");
   });
 });

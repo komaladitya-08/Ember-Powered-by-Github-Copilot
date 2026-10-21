@@ -77,6 +77,7 @@ INT_MIN = -2147483648
 # Roles that only group or decorate; their children are kept, they are not listed.
 SKIP_ROLES = {"filler", "panel", "section", "redundant object", "glass pane", "layered pane", "root pane",
               "scroll pane", "viewport", "split pane", "internal frame", "option pane", "unknown"}
+MENU_ITEM_ROLES = frozenset(["menu item", "check menu item", "radio menu item"])
 INTERESTING_STATES = ("focused", "checked", "selected", "expanded", "collapsed", "pressed", "editable",
                       "multi line", "sensitive", "enabled", "focusable", "active")
 # Controls worth listing actions for (the rest are only read). Keep in step with INTERACTIVE in elements.ts.
@@ -2742,6 +2743,10 @@ def node_info(acc, nid=None):
     withheld = (bool(name) and withheld_name(acc, name, role) == "") or (bool(WITHHELD.keys) and object_key(acc) in WITHHELD)
     info = {"role": role, "name": "" if withheld else name[:200], "states": [s for s in states if s in INTERESTING_STATES],
             "bounds": extents(acc)}
+    # A menu's item once its menu closed: GTK keeps it, at its old place, only no longer showing (a guide's step
+    # pointing at it is over: the user chose it, or went elsewhere).
+    if role in MENU_ITEM_ROLES and "showing" not in states:
+        info["offscreen"] = True
     if withheld:
         info["withheld"] = True
     if is_secret(acc, role, name):

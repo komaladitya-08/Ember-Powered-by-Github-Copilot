@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -210,5 +210,32 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*visibility: hidden/);
     expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
+  });
+});
+
+describe("onPress (live test: Allow ignored the first click)", () => {
+  class Press extends Event { constructor(type: string, readonly button = 0, readonly detail = 1) { super(type); } }
+
+  it("acts at the mouse's press, once: the click that follows (if it comes) does nothing more", () => {
+    const b = new EventTarget() as unknown as HTMLElement;
+    let n = 0;
+    onPress(b, () => n++);
+    b.dispatchEvent(new Press("pointerdown"));
+    expect(n).toBe(1);
+    b.dispatchEvent(new Press("click"));
+    expect(n).toBe(1);
+    // Another mouse button doesn't.
+    b.dispatchEvent(new Press("pointerdown", 2));
+    expect(n).toBe(1);
+  });
+
+  it("the keyboard (Enter or Space: a click with no press) still works, as does a click whose press never came", () => {
+    const b = new EventTarget() as unknown as HTMLElement;
+    let n = 0;
+    onPress(b, () => n++);
+    b.dispatchEvent(new Press("click", 0, 0));
+    expect(n).toBe(1);
+    b.dispatchEvent(new Press("click", 0, 1));
+    expect(n).toBe(2);
   });
 });

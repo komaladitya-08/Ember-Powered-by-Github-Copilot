@@ -95,3 +95,33 @@ export class Follower {
 export function contains(r: Rect, p: Point): boolean {
   return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height;
 }
+
+/**
+ * Whether an overlay takes the pointer (hover-to-interact): `now`, whether it does already; `at`, the pointer on its
+ * display (null: elsewhere); `buttons`, the mouse buttons held. While one is held nothing changes, so a press that
+ * began on a button is released on it (and one that began on the app below, there). Once it takes the pointer, a few
+ * pixels around its clickable parts still count: a button that shifts a little (a re-layout, Ember settling) doesn't
+ * let a click fall through to the app beneath.
+ */
+export function takesPointer(now: boolean, at: Point | null, rects: readonly Rect[], buttons = 0, pad = 6): boolean {
+  if (buttons) return now;
+  if (!at) return false;
+  const m = now ? pad : 0;
+  return rects.some(r => contains({ x: r.x - m, y: r.y - m, width: r.width + 2 * m, height: r.height + 2 * m }, at));
+}
+
+/**
+ * Overlay clickable parts as X ShapeInput rectangles (physical pixels). Empty when there is
+ * nothing to click: the window then lets every press through.
+ */
+export function shapeRects(rects: readonly Rect[], scale = 1): Rect[] {
+  const out: Rect[] = [];
+  for (const r of rects) {
+    const x = Math.round(r.x * scale);
+    const y = Math.round(r.y * scale);
+    const width = Math.round(r.width * scale);
+    const height = Math.round(r.height * scale);
+    if (width > 0 && height > 0) out.push({ x, y, width, height });
+  }
+  return out;
+}

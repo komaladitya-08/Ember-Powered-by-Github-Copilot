@@ -13,6 +13,8 @@ const SIZE = { width: 560, height: 92 };
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
 const GAP = 8;
+/** A box asked for that is still loading after this long isn't shown (the user has moved on: their keys went elsewhere). */
+const LATE_MS = 1500;
 
 type Box = { x: number; y: number; width: number; height: number };
 const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -54,9 +56,73 @@ export class AskWindow {
   private opaque = false;
   /** Whether the window there now was made opaque (it can't change after it is made). */
   private builtOpaque = false;
+  /** The page in the window there now has loaded (it can show at once). */
+  private loaded = false;
+  /**
+   * The user asked for the box and hasn't closed it since: a window still loading shows once it has loaded only
+   * then (never later on its own, over whatever the user went on to do).
+   */
+  private wanted = false;
+  /** When it was asked for: a box that took longer than LATE_MS to load doesn't pop up after all. */
+  private wantedAt = 0;
+  /** Who asked for the box (hotkey, menu, test): logged when it is actually shown. */
+  private source = "unknown";
 
-  /** `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. */
-  constructor(private o: { keepOff?: () => Box | null } = {}) {}
+  /**
+   * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives X window
+   * `xid` the keyboard (a window manager that prevents focus stealing would leave it with the app the user is in,
+   * and their first letters would go there). `hasFocus`: whether X itself says the box has the keyboard now (Electron
+   * can report focus before the window manager has moved it). `onReveal`: every time the box is actually shown (the
+   * only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
+   */
+  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void } = {}) {}
+
+  /** Makes the box ahead of time (hidden), so the first Ctrl+Alt+Space opens it at once. */
+  prepare(): void {
+    if (this.win && !this.win.isDestroyed()) return;
+    const display = screen.getPrimaryDisplay();
+    this.build(askBounds(null, display.workArea, this.keepOff()));
+  }
+
+  private build(bounds: Box): BrowserWindow {
+    const opaque = this.builtOpaque = this.opaque;
+    this.loaded = false;
+    const win = this.win = new BrowserWindow({
+      ...bounds,
+      transparent: !opaque, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
+      fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Ask Ember",
+      backgroundColor: opaque ? "#1a120e" : "#00000000",
+      webPreferences: {
+        preload: path.join(appDir, "preload", "ask.cjs"),
+        contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
+      },
+    });
+    win.setAlwaysOnTop(true, "screen-saver");
+    try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+    win.on("blur", () => { if (this.win === win) this.hide(); });
+    // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
+    win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
+    // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
+    // update and the first box opened from the menu never showed "Ember will see: …").
+    win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
+    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
+    win.once("ready-to-show", () => {
+      if (this.win !== win) return;
+      this.loaded = true;
+      if (this.wanted && Date.now() - this.wantedAt <= LATE_MS) this.reveal(win);
+      else this.wanted = false;
+    });
+    return win;
+  }
+
+  private reveal(win: BrowserWindow): void {
+    try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
+    this.o.onReveal?.(this.source);
+    win.show();
+    win.focus();
+    try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) this.o.takeFocus?.(xid); } catch { /* not X11 */ }
+    this.sendContext();
+  }
 
   /**
    * With a compositor (false) the box floats, transparent around its rounded field; without one (true) it is
@@ -70,39 +136,18 @@ export class AskWindow {
    * Opens the box by Ember (`near`: its centre in global DIP, and its size in px when known); `context` says what
    * Ember will read and lists earlier questions (it can follow a moment later via setContext).
    */
-  show(near: { x: number; y: number; size?: number } | null, context?: AskContext): void {
+  show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
     this.context = { ...(context ?? this.context), opened: true };
+    this.source = source;
+    this.wanted = true;
+    this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     const bounds = askBounds(near, display.workArea, this.keepOff());
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
-    if (!this.win || this.win.isDestroyed()) {
-      const opaque = this.builtOpaque = this.opaque;
-      const win = this.win = new BrowserWindow({
-        ...bounds,
-        transparent: !opaque, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
-        fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Ask Ember",
-        backgroundColor: opaque ? "#1a120e" : "#00000000",
-        webPreferences: {
-          preload: path.join(appDir, "preload", "ask.cjs"),
-          contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
-        },
-      });
-      win.setAlwaysOnTop(true, "screen-saver");
-      win.on("blur", () => { if (this.win === win) this.hide(); });
-      // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
-      win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
-      // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
-      // update and the first box opened from the menu never showed "Ember will see: …").
-      win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
-      void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
-      win.once("ready-to-show", () => { if (this.win === win) { win.show(); win.focus(); } });
-    } else {
-      this.win.setBounds(bounds);
-      this.win.show();
-      this.win.focus();
-      this.sendContext();
-    }
+    if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
+    this.win.setBounds(bounds);
+    if (this.loaded) this.reveal(this.win);
   }
 
   /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */
@@ -128,7 +173,37 @@ export class AskWindow {
   }
 
   hide(): void {
-    if (this.win && !this.win.isDestroyed()) this.win.hide();
+    this.wanted = false;
+    if (!this.win || this.win.isDestroyed()) return;
+    this.win.hide();
+    // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
+    // looks like the box opening by itself). While hidden it takes no pointer.
+    try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+  }
+
+  /**
+   * Resolves once the box has the keyboard (true), or after `ms` (false). The keys typed while it opened are given to
+   * it then (typed()).
+   */
+  hasKeyboard(ms = 1200): Promise<boolean> {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const t0 = Date.now();
+      const check = () => {
+        const ok = !win.isDestroyed() && win.isVisible() && win.isFocused() && this.loaded && (this.o.hasFocus?.() ?? true);
+        if (ok || win.isDestroyed() || Date.now() - t0 > ms) { clearInterval(timer); resolve(ok); }
+      };
+      const timer = setInterval(check, 10);
+      check();
+    });
+  }
+
+  /** What was typed while the box opened goes into it (only while it is open and was asked for). */
+  typed(t: { text: string; submit: boolean; cancel: boolean }): void {
+    if (!this.wanted || !this.win || this.win.isDestroyed() || !this.loaded) return;
+    if (!t.text && !t.submit && !t.cancel) return;
+    this.win.webContents.send(IPC.askTyped, t);
   }
 
   /** Open now (it closes when it loses focus, so open means the user is typing in it). */
@@ -137,7 +212,7 @@ export class AskWindow {
   }
 
   focus(): void {
-    if (this.win && !this.win.isDestroyed()) this.win.focus();
+    if (this.wanted && this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.focus();
   }
 
   owns(sender: Electron.WebContents): boolean {

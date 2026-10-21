@@ -2,11 +2,22 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { chooseModels } from "../../app/main/agent/models";
+import { chooseModels, mayUseRuntimeDefault } from "../../app/main/agent/models";
 import { isUsableToken, resolveToken, TokenStore, startDeviceFlow, pollDeviceFlow, type SecretBox } from "../../app/main/agent/auth";
 import { hardenedSessionConfig, BUILTIN_AGENTS } from "../../app/main/agent/session-config";
 import { explainStartError } from "../../app/main/agent/host";
 import { locateRuntime } from "../../app/main/agent/runtime";
+
+describe("the runtime's default model (Copilot Free lists none)", () => {
+  it("only with no model listed and nothing limiting the models", () => {
+    expect(mayUseRuntimeDefault(0, {})).toBe(true);
+    expect(mayUseRuntimeDefault(2, {})).toBe(false);
+    expect(mayUseRuntimeDefault(0, { allowed: ["gpt-5"] })).toBe(false);
+    expect(mayUseRuntimeDefault(0, { conductor: "gpt-5" })).toBe(false);
+    expect(mayUseRuntimeDefault(0, { worker: "gpt-5" })).toBe(false);
+    expect(mayUseRuntimeDefault(0, { provider: true })).toBe(false);
+  });
+});
 
 describe("chooseModels", () => {
   const models = [

@@ -44,4 +44,14 @@ window.emberAsk.onContext(c => {
   // running on from it ("draftwhat can you do"); End or a click keeps it.
   if (c.opened) input.select();
 });
+// Typed while the box was opening: it goes where the caret is, as if typed here.
+window.emberAsk.onTyped(t => {
+  if (t.cancel) { window.emberAsk.close(); return; }
+  if (t.text) {
+    const at = input.selectionStart ?? input.value.length, end = input.selectionEnd ?? at;
+    input.setRangeText(t.text, at, end, "end");
+  }
+  input.focus();
+  if (t.submit) (document.getElementById("form") as HTMLFormElement).requestSubmit();
+});
 input.focus();

@@ -136,6 +136,7 @@ h3.sub { margin: 4px 0 0; font-size: 13px; color: var(--fg); }
 .conversation .who { font-weight: 700; font-size: 12px; }
 .conversation .ember .who { color: var(--accent); }
 .conversation .task .who { color: var(--ok); }
+.conversation .problem .who { color: var(--warn); }
 .conversation time { color: var(--muted); font-size: 12px; justify-self: end; }
 .conversation p { grid-column: 1 / -1; margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .activity li.day { display: block; padding: 8px 14px 4px; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--bg); }

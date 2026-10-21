@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { followTarget, Follower, contains, besideRect, besideControl } from "../../app/main/follow";
+import { followTarget, Follower, contains, besideRect, besideControl, takesPointer, shapeRects } from "../../app/main/follow";
 
 const area = { x: 0, y: 0, width: 1280, height: 800 };
 
@@ -80,5 +80,33 @@ describe("Ember steps beside things, never off screen", () => {
     f.park({ x: 0, y: 0 });
     for (let i = 0; i < 200; i++) f.step({ x: 300, y: 300 }, 0.016, true);
     expect(f.position.x).toBeCloseTo(300, 0);
+  });
+});
+
+describe("the overlay takes the pointer over its buttons (live test: Allow ignored the first click)", () => {
+  const allow = [{ x: 100, y: 100, width: 60, height: 24 }];
+  it("over a button it takes it; elsewhere, or on another display, it lets clicks through", () => {
+    expect(takesPointer(false, { x: 110, y: 110 }, allow)).toBe(true);
+    expect(takesPointer(false, { x: 98, y: 110 }, allow)).toBe(false);
+    expect(takesPointer(true, null, allow)).toBe(false);
+  });
+  it("once it takes it, a button that shifts a few pixels keeps it; far away it lets go", () => {
+    expect(takesPointer(true, { x: 96, y: 98 }, allow)).toBe(true);
+    expect(takesPointer(true, { x: 80, y: 110 }, allow)).toBe(false);
+  });
+  it("nothing changes while a mouse button is held: a press on Allow is released on Allow", () => {
+    // Pressed on the button, the button moved away under the pointer: still Ember's until the release.
+    expect(takesPointer(true, { x: 300, y: 300 }, allow, 256)).toBe(true);
+    // Pressed in the app below, dragged over the bubble: still the app's.
+    expect(takesPointer(false, { x: 110, y: 110 }, allow, 256)).toBe(false);
+  });
+});
+
+describe("overlay input shape (live retest: Allow and Stop passed through to the window beneath)", () => {
+  it("keeps only rectangles large enough to click, in physical pixels", () => {
+    expect(shapeRects([{ x: 100, y: 200, width: 60, height: 24 }, { x: 0, y: 0, width: 0, height: 10 }], 2)).toEqual([
+      { x: 200, y: 400, width: 120, height: 48 },
+    ]);
+    expect(shapeRects([])).toEqual([]);
   });
 });

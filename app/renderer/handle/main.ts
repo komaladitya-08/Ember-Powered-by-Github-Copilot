@@ -1,7 +1,7 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { announcement, plainStream } from "@ember/bubble";
+import { announcement, onPress, plainStream } from "@ember/bubble";
 import type { BubbleState, HandleApi } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import type { Settings } from "../../main/settings";
@@ -9,7 +9,6 @@ import type { Settings } from "../../main/settings";
 declare global { interface Window { emberHandle: HandleApi } }
 
 const api = window.emberHandle;
-const NAMES: Record<string, string> = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" };
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 let character = characters.cinder;
 const rig = new Rig();
@@ -18,7 +17,8 @@ const canvas = document.getElementById("face") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const $ = (id: string) => document.getElementById(id)!;
 
-let name = "Ember";
+/** Ember is who speaks, whichever look it wears (Cinder, Wisp, Glassling, Glint are its looks). */
+const name = "Ember";
 // Calm mode follows the setting or the desktop's reduced-motion preference; the face dozes with Ember.
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
 let reduceSetting = false;
@@ -27,7 +27,6 @@ reduce.addEventListener("change", applyMotion);
 rig.sleepAfter = 180;
 function applySettings(s: Settings): void {
   character = characters[s.character] ?? characters.cinder;
-  name = NAMES[s.character] ?? "Ember";
   $("name").textContent = name;
   reduceSetting = s.reduceMotion;
   document.documentElement.classList.toggle("calm", s.reduceMotion);
@@ -47,13 +46,15 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   const key = JSON.stringify(list.map(a => [a.id, a.label, a.primary === true]));
   if (host.dataset.key === key) return;
   host.dataset.key = key;
+  // New buttons take no press for a moment (the pointer may rest where they just appeared).
+  const armedAt = performance.now() + 900;
   host.replaceChildren(...list.map(a => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = a.label;
     b.setAttribute("aria-label", label(a));
     if (a.primary) b.className = "primary";
-    b.addEventListener("click", () => api.bubbleAction(a.id));
+    onPress(b, () => { if (performance.now() >= armedAt) api.bubbleAction(a.id); });
     return b;
   }));
 }

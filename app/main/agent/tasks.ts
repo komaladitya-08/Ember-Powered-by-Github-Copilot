@@ -4,8 +4,8 @@
  * run at once, the rest queue; two tasks never act in the same window at the
  * same moment (window leases); finished worker sessions are deleted after
  * ten minutes (or at once when Ember stops); results wait for the conductor
- * to pick them up. Cards that need the user's attention (a failure) stay until
- * dismissed.
+ * to pick them up. Every finished card can be closed; a failure stays longer so
+ * the user can read it, then it goes on its own too.
  */
 
 import crypto from "node:crypto";
@@ -50,8 +50,10 @@ export interface TaskManagerDeps {
   maxRunning?: number;
   /** How long a finished worker session is kept for follow-up questions. */
   keepMs?: number;
-  /** How long finished cards stay on screen (failed ones stay until dismissed). */
+  /** How long finished cards stay on screen. */
   cardMs?: number;
+  /** How long a failed card stays before it goes on its own (longer, so it can be read and closed). */
+  failureCardMs?: number;
 }
 
 /** A task's title on its card (and its bubbles' title): the goal on one line, at most 40 characters. */
@@ -259,11 +261,10 @@ export class TaskManager {
     this.d.audit?.write({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.publish();
     this.d.onFinished?.(task);
-    // Finished cards stay on screen briefly, then go; a failure stays until the user closes it.
-    if (status === "failed") return;
+    // Finished cards stay on screen briefly, then go; a failure stays longer so it can be read (and closed sooner).
     const timer = setTimeout(() => {
       if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
-    }, this.d.cardMs ?? 15_000);
+    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
   }
 
@@ -276,7 +277,7 @@ export class TaskManager {
       detail: t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-        : t.status === "failed" ? [{ id: `task:${t.id}:dismiss`, label: "Close" }] : [],
+        : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
     }));
     this.d.setCards(cards);
   }

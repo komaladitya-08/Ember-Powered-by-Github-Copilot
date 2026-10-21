@@ -36,7 +36,7 @@ export interface ConductorDeps {
   /** Starts a background task; returns what to tell the model. */
   startTask?: (goal: string) => string;
   /** Starts a guide (Ember points, the user clicks); returns what to tell the model. */
-  showMe?: (goal: string) => string;
+  showMe?: (goal: string) => string | Promise<string>;
   /** Finished-task results the conductor hasn't heard about yet. */
   takeReports?: () => string[];
   /** Running and recent tasks, for "how's it going?", "stop the email one" and "use Firefox instead". */
@@ -89,7 +89,7 @@ function checkedTool<S extends z.ZodType>(name: string, description: string, par
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>, startTask?: (goal: string) => string, showMe?: (goal: string) => string, tasks?: ConductorTasks): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>, startTask?: (goal: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   return [
     checkedTool("set_appearance", "Change how Ember looks: one of cinder, wisp, glassling, glint; optionally its size in pixels (36-110).",
@@ -367,7 +367,7 @@ export class Conductor {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
   }
 
-  private guarded(start?: (goal: string) => string): ((goal: string) => string) | undefined {
+  private guarded<R extends string | Promise<string>>(start?: (goal: string) => R): ((goal: string) => string | R) | undefined {
     return start && (goal => this.stopping ? "The user just stopped everything. Don't start anything now; say you've stopped." : start(goal));
   }
 

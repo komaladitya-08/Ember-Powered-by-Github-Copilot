@@ -26,16 +26,23 @@ const APP_NAMES: Record<string, string> = {
   mousepad: "Mousepad",
 };
 
+/** A program name (all lower case, no spaces) capitalised; anything else as it is. */
+function capitalised(n: string): string {
+  return /^[a-z][a-z0-9-]*$/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
+}
+
 export function friendlyApp(name: string): string {
-  const n = name.trim();
+  // A desktop file name (firefox.desktop): the program is what's inside.
+  const n = name.trim().replace(/\.desktop$/i, "");
+  if (!n) return "";
   const known = APP_NAMES[n.toLowerCase()];
   if (known) return known;
   if (/^libreoffice/i.test(n)) return "LibreOffice";
-  // A desktop id (org.example.App): its last part.
-  const dotted = /^[a-z]{2,}\.[\w-]+\.([\w-]+)$/i.exec(n);
-  if (dotted) return dotted[1];
-  // A program name (all lower case, no spaces): capitalised.
-  if (/^[a-z][a-z0-9-]*$/.test(n)) return n[0].toUpperCase() + n.slice(1);
-  return n;
+  // A desktop id (org.example.App, also with more parts): its last part, known or capitalised.
+  if (/^[a-z]{2,}(\.[\w-]+){2,}$/i.test(n)) {
+    const last = n.slice(n.lastIndexOf(".") + 1);
+    return APP_NAMES[last.toLowerCase()] ?? capitalised(last);
+  }
+  return capitalised(n);
 }
 

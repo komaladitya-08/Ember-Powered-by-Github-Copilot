@@ -35,20 +35,22 @@ import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { openXInput, xinputError } from "./hands/input";
-import { handClipboardToManager } from "./hands/clipboard-handoff";
+import { handClipboardToManager, readSelection } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
+import { holdKeyboard } from "./hands/keybuffer";
+import { freshAskPress } from "./hotkey";
 import { DeskManager } from "./desk/desk";
 import { openDeskPlace, type DeskPlace } from "./desk/place";
 import { isTerminalApp } from "./hands/system";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, inotifyUse, type Hands } from "./agent/host";
+import { AgentHost, explainStartError, gitHubReachable, idleWord, inotifyUse, type Hands } from "./agent/host";
+import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 
-const CHARACTER_NAMES = { cinder: "Cinder", wisp: "Wisp", glassling: "Glassling", glint: "Glint" } as const;
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -224,13 +226,23 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  /**
+   * One of Ember's own windows comes to the front with the keyboard. A window manager that prevents focus stealing
+   * (xfwm4, Mutter) keeps a window Ember opens from its overlay or a hotkey behind the user's app otherwise: Ember asks
+   * as a pager does (a direct user action), which they honour.
+   */
+  const bringToFront = (win: BrowserWindow) => {
+    if (win.isDestroyed()) return;
+    win.show();
+    win.focus();
+    try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) xinputRef?.activate(xid); } catch { /* not X11 */ }
+  };
   const showHome = () => {
     // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now.
     if (lastState.bubble.visible && lastState.bubble.actions.length && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     if (home && !home.isDestroyed()) {
       if (home.isMinimized()) home.restore();
-      home.show();
-      home.focus();
+      bringToFront(home);
       return;
     }
     home = createHomeWindow();
@@ -241,6 +253,7 @@ function start(): void {
     for (const e of ["focus", "blur", "move", "resize", "minimize", "restore", "hide", "show"] as const) home.on(e as "focus", stepAside);
     // Minimised or hidden, the page stops drawing its characters (X11 still reports it visible).
     const win = home;
+    win.once("show", () => bringToFront(win));
     const shown = (on: boolean) => () => { if (!win.isDestroyed()) win.webContents.send(IPC.homeVisibility, on); };
     win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
@@ -344,7 +357,6 @@ function start(): void {
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   const greet = () => {
-    const name = CHARACTER_NAMES[settings.get().character];
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
@@ -357,7 +369,7 @@ function start(): void {
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey("Control+Alt+E") ? " (Ctrl+Alt+E)" : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: `Hi, I'm ${name}!`, thought,
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
       actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
@@ -412,10 +424,12 @@ function start(): void {
   const shownWindows = () => x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
   const giveFocusBack = (back: number) => {
     const shown = shownWindows();
+    // Never the ask box: activating its X window would map it without openAsk (a click into the app looked like Ask opening).
+    if (back && askWindow.isWindow(back)) back = askOver && !askWindow.isWindow(askOver) ? askOver : 0;
     if (back && shown.some(w => w.client === back)) { xinputRef?.activate(back); return; }
     const apps = shown.filter(w => w.pid !== process.pid);
     const to = apps.some(w => w.client === userWindow) ? userWindow : apps.at(-1)?.client ?? userWindow;
-    if (to) xinputRef?.activate(to);
+    if (to && !askWindow.isWindow(to)) xinputRef?.activate(to);
   };
   const showMenu = () => {
     if (!handle || menuOpen) return;
@@ -427,16 +441,22 @@ function start(): void {
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
+    // Linux: Esc (or releasing the click that opened the menu) can fire the first item. Ignore clicks after the menu
+    // has started closing; a real pick runs before menu-will-close.
+    let menuClosing = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), click: () => { opens = true; openAsk({ look: false, over: back }); } },
-      { label: label("Stop everything", "Control+Alt+X"), click: () => stopEverything("menu") },
+      { label: label("Ask Ember…", "Control+Alt+Space"), registerAccelerator: false, click: () => {
+        if (menuClosing) { log.info("ask.menu_ignored", { reason: "menu-closing" }); return; }
+        opens = true; openAsk({ look: false, over: back, source: "menu" });
+      } },
+      { label: label("Stop everything", "Control+Alt+X"), registerAccelerator: false, click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), click: toggleMute }]
+        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), registerAccelerator: false, click: toggleMute }]
         : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", "Control+Alt+E"), click: () => { opens = true; showHome(); } },
+      { label: label("Settings…", "Control+Alt+E"), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
@@ -457,8 +477,15 @@ function start(): void {
     const fromDesk = had.ember && !!deskViewRef?.isWindow(had.id);
     const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
+    const askWasVisible = askWindow.visible;
+    menu.on("menu-will-close", () => { menuClosing = true; });
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
+      // Esc dismissed the menu but the first item still opened Ask: put it away (it never went through a pick).
+      if (!opens && askWindow.visible && !askWasVisible) {
+        log.warn("ask.spurious_after_menu");
+        askWindow.hide();
+      }
       if (win.isDestroyed()) return;
       const kept = BrowserWindow.getFocusedWindow() === win;
       win.setFocusable(false);
@@ -481,9 +508,13 @@ function start(): void {
       opened = true; clearInterval(poll); clearTimeout(late); win.off("focus", onFocus);
       if (win.isDestroyed()) menuOpen = false; else open();
     };
-    const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
-    // No focus within a moment (no X input here): the menu opens anyway, as it did before.
-    const late = setTimeout(go, 250);
+    // Nor while the click on the handle is still held: the menu opens under the pointer, and the release would choose
+    // its first item ("Ask Ember…": the ask box opened by itself).
+    const released = () => ((x11Ref?.pointer()?.mask ?? 0) & 0x1f00) === 0;
+    const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard() && released()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
+    // No focus within a moment (no X input here): the menu opens anyway, once the button is up (at most a second).
+    const menuAsked = Date.now();
+    const late = setTimeout(function later() { if (released() || Date.now() - menuAsked > 1000) go(); else setTimeout(later, 20); }, 250);
     win.focus();
     if (xinputRef?.focusInput) xinputRef.focusInput(xid);
   };
@@ -495,6 +526,18 @@ function start(): void {
     if (lastState.bubble.visible && lastState.bubble.actions.every(a => a.id.startsWith("ui:"))) setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
     showHome();
     sendToHome(IPC.focusSection, "conversation");
+  };
+  /** "Read all": the whole answer in the bubble, where the user was reading it (settings keeps it too). */
+  const expandAnswer = () => {
+    const full = agent?.lastAnswer();
+    if (!full) { readLastAnswer(); return; }
+    agent?.claimBubble({ pin: true });
+    setState({ talking: false, bubble: expandedBubble(lastState.bubble, full) });
+  };
+  const closeExpanded = () => {
+    if (!lastState.bubble.expanded) return;
+    setState({ emotion: "neutral", talking: false, bubble: IDLE_BUBBLE });
+    agent?.releaseBubble(lastState.bubble);
   };
   /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
@@ -562,7 +605,16 @@ function start(): void {
   const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
 
   // ───── Copilot brain ─────
-  const askWindow = new AskWindow({ keepOff: () => handle?.bounds ?? null });
+  /** The X window of the ask box as last given the keyboard (0: not yet). */
+  let askXid = 0;
+  const askWindow = new AskWindow({
+    keepOff: () => handle?.bounds ?? null,
+    // As the handle's menu takes the keyboard: the window manager is asked, and X is told too.
+    takeFocus: xid => { askXid = xid; xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
+    // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees.
+    hasFocus: (): boolean => !x11Ref || (askXid !== 0 && x11Ref.focusWindow()?.id === askXid),
+    onReveal: source => log.info("ask.reveal", { source }),
+  });
   let agent: AgentHost | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
@@ -570,29 +622,43 @@ function start(): void {
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
-  const captureContext = () => { callContext = perception && consented() ? perception.quickContext().catch(() => null) : Promise.resolve(null); };
+  const captureContext = () => {
+    if (!perception || !consented()) { callContext = Promise.resolve(null); return; }
+    // What is selected in the user's window, asked for now (some apps don't tell it through accessibility).
+    const active = x11Ref?.activeWindow();
+    const selected = active && active.pid !== process.pid ? readSelection({ sameClientAs: active.id }).catch(() => "") : Promise.resolve("");
+    callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
+  };
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
-    // A slow screen read never holds a request for long: it goes without context after 1.5 s.
-    const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 1500))]);
+    // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
+    // Ember starts also starts the accessibility helper).
+    const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
     return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0 }: { look?: boolean; over?: number } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "test" } = {}) => {
+    // Every opening says where it came from (an ask box that opened by itself would show up here).
+    log.info("ask.open", { source });
     if (!consented()) { showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
+    // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
+    // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
+    // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
+    const held = look ? holdKeyboard() : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
-    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory });
+    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory }, source);
+    if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
@@ -855,15 +921,19 @@ function start(): void {
     if (!overlay?.owns(event.sender) || !Array.isArray(rects) || rects.length > 32 || !rects.every(isRect)) return;
     overlay.setInteractive(event.sender, rects);
   });
+  /** From the handle's page (a handle closed or crashed is no one: a check on it must not throw for the overlay's clicks). */
+  const isHandle = (sender: Electron.WebContents) => !!handle && !handle.win.isDestroyed() && sender === handle.win.webContents;
   ipcMain.on(OVERLAY.bubbleAction, (event, id: unknown) => {
-    const fromHandle = !!handle && event.sender === handle.win.webContents;
+    const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
     const task = /^task:(.+):(stop|dismiss)$/.exec(id);
     // Stopping a task is always honoured (also while Ember waits for the mouse). Anything else that arrives
     // while Ember really drives the pointer was Ember's own click, not the user's: ignored.
     if (borrowRef?.driving && !(task && task[2] === "stop")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { openSettings(); return; }
-    if (id === "ui:more") { readLastAnswer(); return; }
+    if (id === "ui:more") { expandAnswer(); return; }
+    if (id === "ui:conversation") { readLastAnswer(); return; }
+    if (id === "ui:close") { closeExpanded(); return; }
     if (task) {
       if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
@@ -872,10 +942,10 @@ function start(): void {
     log.info("bubble.action", { id, handled: confirmer?.answer(id) ?? false });
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
-    if (handle && event.sender === handle.win.webContents) showMenu();
+    if (isHandle(event.sender)) showMenu();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
-    if (handle && event.sender === handle.win.webContents && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
+    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
   });
 
   settings.onChange((s) => {
@@ -969,12 +1039,14 @@ function start(): void {
     const env = readEnvironment();
     let compositing = x11 ? x11.hasCompositor() : false;
     askWindow.setOpaque(!compositing);
+    // Made now (hidden), so Ctrl+Alt+Space opens it at once: a box still loading took the first letters typed.
+    if (consented()) askWindow.prepare();
     // X11 has one global scale factor; XQueryPointer reports physical pixels.
     const cursor = () => {
       const p = x11?.pointer();
       if (!p) return screen.getCursorScreenPoint();
       const scale = screen.getPrimaryDisplay().scaleFactor || 1;
-      return { x: p.x / scale, y: p.y / scale };
+      return { x: p.x / scale, y: p.y / scale, buttons: p.mask & 0x1f00 };
     };
     app.on("will-quit", () => x11?.close());
     log.info("app.ready", {
@@ -1035,8 +1107,21 @@ function start(): void {
     }
 
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
+    let lastAskPress = 0;
     const shortcuts: Record<string, () => void> = {
-      "Control+Alt+E": showHome, "Control+Alt+Space": () => openAsk(), "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
+      "Control+Alt+E": showHome,
+      // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
+      // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it.
+      "Control+Alt+Space": () => {
+        const now = Date.now(), chord = x11Ref?.keysDown() ?? null;
+        if (!freshAskPress(chord, now, lastAskPress)) {
+          log.info("ask.hotkey_ignored", { at: now - lastAskPress, chord });
+          return;
+        }
+        lastAskPress = now;
+        openAsk();
+      },
+      "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
     };
     const registerShortcuts = () => {
       const taken: string[] = [];
@@ -1115,7 +1200,11 @@ function start(): void {
       setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
         : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop using the keyboard and mouse…") : null);
     };
-    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, { onChange: showBorrowing }) : null;
+    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, {
+      onChange: showBorrowing,
+      // Never the ask box (it hid when the borrow took the keyboard), nor a window that isn't on screen any more.
+      mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),
+    }) : null;
     borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
     // Desk apps get only the environment they need; the test bench's event log is passed on in development only.
@@ -1150,7 +1239,7 @@ function start(): void {
         allowGrants: () => policy.allowGrants,
         isTerminalApp: name => isTerminalApp({ id: name, name }),
       }),
-      flyTo: b => setState({ focus: b ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
+      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
       currentWindow: () => {
         const w = x11.activeWindow();
         // Ember's own windows (ask box, settings) are not a task's target.
@@ -1197,7 +1286,7 @@ function start(): void {
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
-        showState({ idle: status.phase === "ready" ? "Ready" : status.phase === "starting" ? "Connecting…" : status.waitingForTasks ? "Waiting for tasks" : "Not connected" });
+        showState({ idle: idleWord(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -1270,14 +1359,15 @@ function start(): void {
     settings.onChange(() => { if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); } });
     app.on("will-quit", () => voice?.stop());
 
-    if (!settings.get().onboarded || process.argv.includes("--show-settings")) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
+    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !process.argv.includes("--autostart")) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
-        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk(),
+        agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
         showMenu, state: () => lastState,
       };
     }

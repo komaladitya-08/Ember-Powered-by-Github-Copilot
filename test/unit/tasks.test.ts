@@ -96,6 +96,19 @@ describe("Confirmer", () => {
     await expect(q2).resolves.toBeNull();
   });
 
+  it("keeps the task beside a step's question, so a question about Enter alone still says what it is for", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(p => shown.push(p), { armMs: 0 });
+    const q = c.ask({
+      title: "May I?", context: "Start a new line in my note, type Butter, and save the file.",
+      prompt: "Borrow your keyboard to press Enter in Mousepad?",
+      options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+    });
+    expect(shown.at(-1)!.bubble?.thought).toBe("Borrow your keyboard to press Enter in Mousepad?\nYour task: Start a new line in my note, type Butter, and save the file.");
+    c.cancelAll();
+    await expect(q).resolves.toBeNull();
+  });
+
   it("ignores clicks in a question's first moments, and the next question waits a beat (no double-click approvals)", async () => {
     let t = 0;
     const shown: Partial<EmberState>[] = [];
@@ -289,7 +302,7 @@ describe("review round 3: how tasks end", () => {
     const t = tm.start("Turn on Night Light");
     await vi.advanceTimersByTimeAsync(10);
     expect(t.status).toBe("cancelled");
-    expect(cards.at(-1)).toEqual([{ id: t.id, title: "Turn on Night Light", status: "stopped", detail: "You said not now, so I left it.", actions: [] }]);
+    expect(cards.at(-1)).toEqual([{ id: t.id, title: "Turn on Night Light", status: "stopped", detail: "You said not now, so I left it.", actions: [{ id: `task:${t.id}:dismiss`, label: "Close" }] }]);
     await vi.advanceTimersByTimeAsync(200);
     expect(cards.at(-1)).toEqual([]);
     vi.useRealTimers();
@@ -355,6 +368,24 @@ describe("review round 4: how tasks end", () => {
     const done = ok.tm.start("b");
     await vi.advanceTimersByTimeAsync(200);
     expect(removed).toEqual([[failed.id, true], [done.id, false]]);
+    vi.useRealTimers();
+  });
+
+  it("a failed card goes on its own after the longer failure time, so old cards don't pile up", async () => {
+    vi.useFakeTimers();
+    const removed: [string, boolean][] = [];
+    const { tm, cards } = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })), {
+      cardMs: 100, failureCardMs: 500, onRemoved: (t: { id: string }, byUser: boolean) => removed.push([t.id, byUser]),
+    });
+    const t = tm.start("a");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(cards.at(-1)?.[0]).toMatchObject({ id: t.id, status: "failed", detail: "It broke." });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(tm.get(t.id)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(tm.get(t.id)).toBeUndefined();
+    expect(cards.at(-1)).toEqual([]);
+    expect(removed).toEqual([[t.id, false]]);
     vi.useRealTimers();
   });
 });

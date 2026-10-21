@@ -228,6 +228,8 @@ export interface PresenterOptions {
   task?: boolean | string;
   /** Every event of the session it shows, before it's shown (the host follows which request's turn is running). */
   onEvent?: (e: PresenterEvent) => void;
+  /** Something went wrong and the bubble says so (the conversation section keeps it). */
+  onProblem?: (text: string) => void;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -258,11 +260,40 @@ export const TOOL_STEPS: Record<string, string> = {
   finish_task: "Wrapping up",
 };
 
+/** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */
+export const HAND_STEPS = {
+  click: "Clicking (your mouse)",
+  keys: "Pressing keys (your keyboard)",
+  type: "Typing (your keyboard)",
+  scroll: "Scrolling (your mouse)",
+} as const;
+export type HandStep = keyof typeof HAND_STEPS;
+
+/** A hand's step; on Ember's desk the keyboard and the mouse are the desk's own. */
+export function handStep(what: HandStep, onDesk = false): string {
+  const step = HAND_STEPS[what];
+  return onDesk ? step.replace(/ \(your (keyboard|mouse)\)$/, "") : step;
+}
+
 /** A tool's step as the bubble and the card say it: on Ember's desk the keyboard and the mouse are the desk's own, not the user's. */
 export function stepOf(tool: string, onDesk = false): string | undefined {
   const step = TOOL_STEPS[tool];
   return step && onDesk ? step.replace(/ \(your (keyboard|mouse)\)$/, "") : step;
 }
+
+/**
+ * The bubble once "Read all" is pressed on an answer cut short: all of `full` (it scrolls inside the bubble if it must),
+ * with a way to the conversation in settings and one to close it.
+ */
+export function expandedBubble(b: BubbleState, full: string): BubbleState {
+  return {
+    ...b, visible: true, mood: "idle", title: b.title || "Ember", thought: full, step: null, streaming: false, expanded: true,
+    actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open in settings" }],
+  };
+}
+
+/** What the conversation says when a turn of it ended without an answer or a step. */
+export const NO_REPLY = "Copilot ended that turn without an answer. Please ask me again.";
 
 /** The bubble's title while a turn under way hears nothing from Copilot (see TurnWatch). */
 export const STILL_WAITING = "Still waiting for Copilot…";
@@ -304,6 +335,7 @@ export class Presenter {
   /** Shared by every presenter writing the same bubble. */
   private readonly owner: BubbleOwner;
   private readonly onEvent?: (e: PresenterEvent) => void;
+  private readonly onProblem?: (text: string) => void;
   /** The task whose bubbles these are (BubbleState.task). */
   private readonly taskId?: string;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
@@ -312,6 +344,8 @@ export class Presenter {
   private asked: string | null = null;
   /** That request was asked while the answer before it was still coming (see userPrompt). */
   private askedOverAnswer = false;
+  /** The turn under way has shown words or run a step (one that has neither by its end says so). */
+  private produced = false;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -328,6 +362,7 @@ export class Presenter {
     this.work = opts.task ? "progress" : "reply";
     this.owner = BubbleOwner.of(owner);
     this.onEvent = opts.onEvent;
+    this.onProblem = opts.onProblem;
     if (typeof opts.task === "string") this.taskId = opts.task;
   }
 
@@ -468,6 +503,7 @@ export class Presenter {
       emotion: "sad", talking: false, gesture: "facepalm",
       bubble: { visible: true, mood: "error", title: "Something went wrong", thought: message, step: null, streaming: false, actions: [{ id: "ui:settings", label: "Open settings" }] },
     }, "take");
+    this.onProblem?.(message);
     this.hideLater(12000);
   }
 
@@ -521,6 +557,7 @@ export class Presenter {
     // Asked while the turn before was answering: that answer's own message may still come, after this "Thinking…".
     this.askedOverAnswer = this.answering || this.answer.length > 0;
     this.answering = false;
+    this.produced = false;
     this.answer = "";
     this.silent = false;
     this.asked = text;
@@ -557,6 +594,13 @@ export class Presenter {
     });
   }
 
+  /** A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's thinking. */
+  progress(text: string): void {
+    const note = text.replace(/\s+/g, " ");
+    if (!note.trim()) return;
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true } });
+  }
+
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
   outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"] }): void {
     if (this.silent) return;
@@ -575,7 +619,7 @@ export class Presenter {
     const d = e.data ?? {};
     switch (e.type) {
       case "assistant.intent":
-        if (!this.answering && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
+        if (!this.answering && this.work !== "progress" && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
         break;
       case "user.message": {
         // A request's turn begins while one asked is still owed its turn. Asked while the turn before was still
@@ -595,6 +639,7 @@ export class Presenter {
         }
         this.answering = false;
         this.answer = "";
+        this.produced = false;
         break;
       }
       case "assistant.turn_start":
@@ -603,7 +648,9 @@ export class Presenter {
         this.answer = "";
         break;
       case "assistant.reasoning_delta": {
-        if (this.answering) break;
+        // A task's model thinks aloud in its own words ("…going to use the command to open the app…"): its bubble and
+        // card show only its steps and its notes (report_progress), never that.
+        if (this.answering || this.work === "progress") break;
         // After a tool ran, the next reasoning is a new thought: it replaces the last one instead of running on.
         const prev = this.state.bubble.thought.startsWith("“") || this.thoughtBreak ? "" : this.state.bubble.thought;
         this.thoughtBreak = false;
@@ -613,9 +660,15 @@ export class Presenter {
       case "assistant.message_delta": {
         // The answer before goes on after a newer question was asked (its turn hasn't begun): its words replace that
         // question's "Thinking…" from mid-sentence, so its message, when it comes, shows it whole (with "Read all").
+        // Nothing to read yet (an empty or blank first delta): the bubble stays as it is rather than show an empty answer.
+        const delta = String(d.deltaContent ?? "");
+        // A task speaks through its summary (finish_task), not its model's chat.
+        if (this.work === "progress") break;
+        if (!this.answering && !delta.trim()) break;
         if (this.asked !== null) this.askedOverAnswer = false;
         if (!this.answering) { this.answering = true; this.answer = ""; }
-        this.answer += String(d.deltaContent ?? "");
+        this.produced = true;
+        this.answer += delta;
         this.apply({
           emotion: "happy", talking: true,
           bubble: { ...this.state.bubble, visible: true, mood: "idle", title: this.name(), thought: this.answer.slice(-KEEP_CHARS), step: null, streaming: true },
@@ -625,6 +678,7 @@ export class Presenter {
       case "tool.execution_start": {
         const name = String(d.toolName ?? "");
         this.answering = false;
+        this.produced = true;
         this.thoughtBreak = true;
         // While guiding, the instruction stays up (Ember is waiting for the user, not working).
         const guiding = name === "wait_for_click" || name === "point_at";
@@ -643,8 +697,12 @@ export class Presenter {
         // text is complete even when a second question reset the streamed buffer half-way.
         const content = typeof d.content === "string" ? d.content.trim() : "";
         const toolCall = Array.isArray(d.toolRequests) && d.toolRequests.length > 0;
+        if (this.work === "progress") break;
         if (this.answering || (content && !toolCall)) {
           const full = plainText(content || this.answer.trim());
+          // No words after all (only a tool call came, or a blank answer): nothing is shown or kept as an answer.
+          if (!full.trim()) { this.answering = false; this.answer = ""; break; }
+          this.produced = true;
           this.onFinalAnswer?.(full);
           // A newer question is owed its turn (asked after this answer's words came, before this message): its
           // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
@@ -654,17 +712,31 @@ export class Presenter {
         }
         break;
       }
-      case "session.error":
+      case "session.error": {
         this.answering = false;
+        this.produced = true;
+        const said = friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
+          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider });
         this.apply({
           emotion: "sad", talking: false,
-          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
-            { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider }), step: null, streaming: false, actions: [] },
+          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: [] },
         });
+        this.onProblem?.(said);
         this.hideLater(12000);
         break;
+      }
       case "session.idle": {
         const aborted = d.aborted === true;
+        // The conversation's turn ended with neither words nor a step while "Thinking…" was up: it says so instead of
+        // leaving an empty or stale bubble that just fades.
+        // (Not the end of the turn before a request still owed its own: that one's "Thinking…" stays.)
+        if (!aborted && this.work === "reply" && !this.produced && this.asked === null && !this.silent && this.state.bubble.visible && this.state.emotion === "thinking") {
+          this.answering = false;
+          this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: [] } });
+          this.onProblem?.(NO_REPLY);
+          this.hideLater(8000);
+          break;
+        }
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
         this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const } : {}) } });

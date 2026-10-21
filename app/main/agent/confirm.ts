@@ -138,8 +138,12 @@ export class Confirmer {
     const p = this.current;
     p.shownAt = this.now();
     p.timer = setTimeout(() => this.finish(p, null), this.timeoutMs);
+    // The whole task, so a step like "press Enter" is read as part of what the user asked for (typing and saving too).
+    const task = p.q.context?.trim();
     const bubble: BubbleState = {
-      visible: true, mood: "attention", title: p.q.title, thought: p.q.prompt, step: this.keyHint?.() || null, streaming: false,
+      visible: true, mood: "attention", title: p.q.title,
+      thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
+      step: this.keyHint?.() || null, streaming: false,
       actions: p.q.options.map(o => ({ id: `q${p.n}:${o.id}`, label: o.label, primary: o.primary })),
       ...(p.q.task ? { task: p.q.task } : {}),
     };

@@ -57,9 +57,14 @@ export interface X11 {
   /**
    * Pointer position in physical pixels, read straight from the X server.
    * Electron's screen.getCursorScreenPoint() can return a stale position on X11
-   * after the pointer jumps, so Ember uses this instead.
+   * after the pointer jumps, so Ember uses this instead. `mask`: the buttons down (X's mask: 256 is the left one).
    */
-  pointer(): { x: number; y: number } | null;
+  pointer(): { x: number; y: number; mask: number } | null;
+  /**
+   * The keys held down right now (XQueryKeymap), for checking that a shortcut callback is a real chord press.
+   * null when the display is closed.
+   */
+  keysDown(): { control: boolean; alt: boolean; space: boolean } | null;
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
   activeWindow(): (X11Window & { wmClass: string }) | null;
   /**
@@ -109,6 +114,8 @@ export function openX11(displayName?: string): X11 | null {
     const XGetSelectionOwner = lib.func("unsigned long XGetSelectionOwner(void *dpy, unsigned long atom)");
     const XDefaultRootWindow = lib.func("unsigned long XDefaultRootWindow(void *dpy)");
     const XQueryPointer = lib.func("int XQueryPointer(void *dpy, unsigned long w, _Out_ unsigned long *root, _Out_ unsigned long *child, _Out_ int *rootX, _Out_ int *rootY, _Out_ int *winX, _Out_ int *winY, _Out_ unsigned int *mask)");
+    const XQueryKeymap = lib.func("int XQueryKeymap(void *dpy, _Out_ uint8_t *keys)");
+    const XKeysymToKeycode = lib.func("uint8_t XKeysymToKeycode(void *dpy, unsigned long keysym)");
     const XGetWindowProperty = lib.func("int XGetWindowProperty(void *dpy, unsigned long w, unsigned long prop, long offset, long length, int del, unsigned long reqType, _Out_ unsigned long *actualType, _Out_ int *actualFormat, _Out_ unsigned long *nitems, _Out_ unsigned long *bytesAfter, _Out_ void **data)");
     const XGetGeometry = lib.func("int XGetGeometry(void *dpy, unsigned long d, _Out_ unsigned long *root, _Out_ int *x, _Out_ int *y, _Out_ unsigned int *w, _Out_ unsigned int *h, _Out_ unsigned int *border, _Out_ unsigned int *depth)");
     const XTranslateCoordinates = lib.func("int XTranslateCoordinates(void *dpy, unsigned long src, unsigned long dest, int sx, int sy, _Out_ int *dx, _Out_ int *dy, _Out_ unsigned long *child)");
@@ -215,7 +222,19 @@ export function openX11(displayName?: string): X11 | null {
       pointer() {
         if (!open) return null;
         const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
-        return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0] } : null;
+        return XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m) ? { x: rx[0], y: ry[0], mask: m[0] } : null;
+      },
+
+      keysDown() {
+        if (!open) return null;
+        const keys = Buffer.alloc(32);
+        if (!XQueryKeymap(dpy, keys)) return null;
+        const down = (keysym: number) => {
+          const code = Number(XKeysymToKeycode(dpy, keysym));
+          return code > 0 && (keys[code >> 3] & (1 << (code & 7))) !== 0;
+        };
+        // Either side of each modifier counts (Control_L/Control_R, Alt_L/Alt_R); keycodes do not shift with layout.
+        return { control: down(0xffe3) || down(0xffe4), alt: down(0xffe9) || down(0xffea), space: down(0x20) };
       },
 
       activeWindow() {

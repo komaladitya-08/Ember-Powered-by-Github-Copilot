@@ -18,7 +18,7 @@ import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
-import { stepOf, type Presenter } from "./presenter";
+import { handStep, stepOf, type HandStep, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -39,6 +39,11 @@ export interface WorkerDeps {
   client: CopilotClient;
   log: Logger;
   model: string | null;
+  /**
+   * With no model (`model` null), the runtime's default is used: only where the host found Copilot lists none and
+   * nothing limits the models (mayUseRuntimeDefault).
+   */
+  runtimeDefault?: boolean;
   vision: boolean;
   provider?: ProviderConfig;
   workDir: string;
@@ -156,8 +161,16 @@ const NOTCH_SETTLE_MS = 150;
 const NOTCH_LATCH_MS = 400;
 /** Controls whose use does more than give them the keyboard or select them (Tab and a hover reach them first). */
 const ACTS_ITSELF = /^(push button|push button menu|button|split button|toggle button|link|menu item|check menu item|radio menu item)$/;
-/** Fields: the step is to be in one, so reaching it (Tab, a click) is using it. */
-const FOCUS_IS_THE_STEP = /^(text|entry|password text|spin button|document text|paragraph|terminal)$/;
+/** Fields: the step is to be in one, so reaching it (Tab, a click) is using it. A font dialog's search box is one of these. */
+const FOCUS_IS_THE_STEP = /^(text|entry|password text|spin button|document text|paragraph|terminal|search|search box)$/;
+/** Accessibility roles the user never needs to hear (a guide names the words on the control instead). */
+const ROLE_IN_SAY = /\b(the\s+)?(table cell|list item|tree item|push button|toggle button|combo box|spin button|document text|password text|menu item|check box|radio button|page tab|text field|text area|entry|cell|row|item|control|element)\b/gi;
+const PLAIN_ROLE: Record<string, string> = {
+  "table cell": "row", "list item": "row", "tree item": "row", "push button": "button", text: "text area",
+  entry: "text field", search: "search box", "search box": "search box",
+};
+/** A dialog's way out: Cancel, Close, and the same with a GTK mnemonic underscore. */
+const DISMISS = /^(cancel|close|abort|discard|don't save|dont save|no)$/i;
 /** How long an app gets to notice the pointer over its window before Ember looks where to click again. */
 const POINTER_SETTLE_MS = 100;
 /**
@@ -171,7 +184,61 @@ const isOn = (states: string[]) => states.includes("checked") || states.includes
 type Handler = { role: string; name: string };
 /** Items the pointer selects (and focuses) by only passing over them: menus, and the lists of a drop-down. */
 const HOVER_SELECTS = /^(menu|menu item|check menu item|radio menu item|list item|tree item|table cell)$/;
+/** Rows of a list or table: the pointer selects them only in a menu or a drop-down's list (elsewhere, a click does). */
+const ROW_ROLES = /^(list item|tree item|table cell)$/;
+/** What a drop-down's or a menu's list sits in. */
+const POPUP_ROLES = /^(menu|menu bar|combo box|popup menu|window|tool tip)$/;
 const isUnder = (p: { x: number; y: number }, b: Bounds) => p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
+
+/**
+ * A note for windows where taking the app's suggestion would act on something the user never named: an offer to
+ * restore an earlier session or recover documents (it brings back old, unsaved text), and a Save dialog when the
+ * user named no file (its suggested name and folder are the app's guess). `said`: what the user said for the task.
+ */
+export function dialogNote(w: { name: string; role?: string }, nodes: readonly { name: string; text?: string }[], said = ""): string {
+  const words = [w.name, ...nodes.slice(0, 60).flatMap(n => [n.name, n.text ?? ""])].join(" \n ");
+  const asked = (re: RegExp) => re.test(said);
+  if (/\b(restore|recover|reopen)\b/i.test(words) && /\b(session|unsaved|previous|last time|crash|documents?)\b/i.test(words) && !asked(/\b(restore|recover|reopen)\b/i)) {
+    return "\nNote: this asks whether to restore an earlier session or recover unsaved documents. The user didn't ask for that: answer No (or Don't restore), and work on the file the task is about.";
+  }
+  if ((w.role === "file chooser" || /^save( as)?\b|save file/i.test(w.name)) && !/[~/][\w.-]|\.\w{1,5}\b/.test(said)) {
+    return "\nNote: the user named no file. Don't accept this dialog's suggested name or folder: save to the file this task is about if you know it, or cancel and say in finish_task that you need to know where to save.";
+  }
+  return "";
+}
+
+/** A place Ember can point at: on screen, and large enough that a box around it would not be an empty orange frame. */
+export function usableBounds(b: Bounds | null | undefined): Bounds | null {
+  if (!b) return null;
+  if (!(b.width > 2) || !(b.height > 2) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return null;
+  return b;
+}
+
+/** Cancel, Close, and the same with a GTK mnemonic underscore ("_Cancel"). */
+export function dismissName(name: string): boolean {
+  return DISMISS.test(name.replace(/[_….]+/g, "").replace(/\s+/g, " ").trim());
+}
+
+/** A search box or other field the user may click instead of the row Ember pointed at. */
+function fieldLike(n: { role: string; name: string }): boolean {
+  return FOCUS_IS_THE_STEP.test(n.role) || /search|find/i.test(n.name) || /search/i.test(n.role);
+}
+
+/**
+ * The instruction shown while Ember points: the words on the control, never its accessibility role
+ * ("press Enter on the table cell" → "Press Enter on Monospace Bold").
+ */
+export function guideSay(say: string, element: { role: string; name: string }): string {
+  const name = element.name.replace(/\s+/g, " ").trim();
+  const role = PLAIN_ROLE[element.role] ?? element.role;
+  const what = name || `the ${role}`;
+  const out = say.replace(/\s+/g, " ").trim();
+  if (name && out.toLowerCase().includes(name.toLowerCase())) return out;
+  ROLE_IN_SAY.lastIndex = 0;
+  if (!ROLE_IN_SAY.test(out)) return out;
+  ROLE_IN_SAY.lastIndex = 0;
+  return out.replace(ROLE_IN_SAY, what).replace(/\bthe\s+the\b/i, "the").replace(/\s+/g, " ").trim();
+}
 
 /**
  * The middle of the widest lane across `b` (a column when scrolling up or down, a row when scrolling sideways), inside
@@ -660,6 +727,8 @@ export class Worker {
   private place: DeskPlace | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
   private guideStep = 0;
+  /** The user left a guide step (Cancel, or the dialog closed without using what was pointed at). */
+  private guideLeft = false;
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
   private halt = new AbortController();
@@ -676,6 +745,11 @@ export class Worker {
   private declined = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /**
+   * A menu item the user allowed, whose menu closed when they clicked Allow (the click landed outside it). The yes
+   * stands for reopening that menu and clicking the same item again, without a second question.
+   */
+  private carriedMenuApproval: { app: string; role: string; name: string; until: number } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   /** Its scale (HiDPI): at 1, positions the app reports at a point compare with those read. */
@@ -730,8 +804,8 @@ export class Worker {
   /** Aborts when the task stops or ends: questions, window waits and borrows give up on it. */
   private overSignal = AbortSignal.any([this.halt.signal, this.ended.signal]);
   private get isOver() { return this.halted || this.ended.signal.aborted; }
-  /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. */
-  private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(b); }
+  /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. No box when there is nothing to point at. */
+  private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(usableBounds(b)); }
 
   get sessionId(): string | null {
     return this.session?.sessionId ?? null;
@@ -788,10 +862,14 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** The turn ended without finish_task and only its summary is asked for now. */
+  private wrappingUp = false;
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
+    // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
+    if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     if (++this.steps > maxSteps) {
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
@@ -940,8 +1018,8 @@ export class Worker {
           z.object({ id, direction: z.enum(["up", "down", "left", "right"]), steps: z.number().int().min(1).max(30).optional() }),
           async a => this.scroll(a.id, a.direction, a.steps ?? 5)),
       ] : []),
-      this.tool("point_at", "Point at an element so the user can do this step themselves: Ember flies next to it, highlights it and shows your short instruction.",
-        z.object({ id, say: z.string().min(1).max(160).describe("A short instruction, e.g. \"Click Display\"") }),
+      this.tool("point_at", "Point at an element so the user can do this step themselves: Ember flies next to it, highlights it and shows your short instruction. Name the words on the control, never its role (not \"the table cell\").",
+        z.object({ id, say: z.string().min(1).max(160).describe("A short instruction naming the control, e.g. \"Click Display\" or \"Press Enter on Monospace Bold\"") }),
         async a => {
           const node = this.known.get(a.id);
           if (!node?.bounds) return fail(`Element ${a.id} is not in your latest perceive_window (or has no position). Call perceive_window.`);
@@ -949,34 +1027,46 @@ export class Worker {
           const live = await this.sidecar.readElement(a.id).catch(() => null);
           if (this.isOver) return STOPPED();
           this.guideStep++;
-          this.fly(live?.bounds && live.role === node.role ? live.bounds : node.bounds);
-          this.d.presenter.guide(a.say, `Step ${this.guideStep}`);
-          this.audit({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name: this.nameOf(a.id, node) }, ok: true });
+          // The live read of this id can be another row after the list scrolled: only highlight the named control.
+          this.fly(this.targetBox(a.id, node, live));
+          const name = this.nameOf(a.id, node);
+          this.d.presenter.guide(guideSay(a.say, { role: node.role, name }), `Step ${this.guideStep}`);
+          this.audit({ event: "action", task: this.spec.id, kind: "point", app: this.window.app, element: { role: node.role, name }, ok: true });
           return done(`Pointing at [${a.id}]. Now call wait_for_click with id ${a.id}.`);
         }),
       this.tool("wait_for_click", "Wait until the user clicks the element you pointed at (or it changes, e.g. a switch turns on, or the window changes).",
         z.object({ id, timeoutSeconds: z.number().int().min(5).max(300).optional() }),
         async a => this.waitForClick(a.id, (a.timeoutSeconds ?? 90) * 1000)),
       this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card).", z.object({ text: z.string().max(200) }),
-        async a => { this.d.onProgress(a.text); return done("Shown."); }),
-      this.tool("finish_task", "End the task with a one or two sentence summary for the user.",
+        async a => { this.d.onProgress(a.text); this.d.presenter.progress(a.text); return done("Shown."); }),
+      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false.",
         z.object({ success: z.boolean(), summary: z.string().max(400) }),
         async a => {
-          this.result = { success: a.success, summary: a.summary };
+          // A cancelled guide step is never a successful finish (the model saw the dialog close and said they picked a font).
+          const success = a.success && !this.guideLeft;
+          const summary = this.guideLeft && a.success && !/\bcancel/i.test(a.summary)
+            ? `The user cancelled. ${a.summary}` : a.summary;
+          this.result = { success, summary };
           this.ended.abort();
+          this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
           setTimeout(() => { void this.session?.abort().catch(() => undefined); }, 50);
-          return done("Task closed. Stop now.");
+          return done(success ? "Task closed. Stop now." : "Task closed (they didn't finish). Stop now.");
         }),
     ];
+  }
+
+  /** What the user stopping says: a guide has no actions of its own, so stopping it cancelled the guide. */
+  private stoppedSummary(): string {
+    return this.spec.mode === "guide" ? "The guide was cancelled." : "Stopped.";
   }
 
   async run(signal: AbortSignal): Promise<WorkerResult> {
     const d = this.d;
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
-    if (signal.aborted) return { success: false, summary: "Stopped.", stopped: true };
-    // Never the runtime's default model: it may be one the administrator didn't allow.
-    if (!d.model) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
+    if (signal.aborted) return { success: false, summary: this.stoppedSummary(), stopped: true };
+    // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
+    if (!d.model && !d.runtimeDefault) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
@@ -988,7 +1078,7 @@ export class Worker {
       const tools = this.tools();
       const config = hardenedSessionConfig({
         sessionId: `ember-task-${this.spec.id}`,
-        model: d.model,
+        model: d.model ?? undefined,
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage() : workerSystemMessage(),
@@ -1017,7 +1107,7 @@ export class Worker {
         if (e.type === "tool.execution_start") {
           const name = String((e.data as { toolName?: string }).toolName ?? "");
           const step = stepOf(name, !!this.place);
-          if (name !== "report_progress" && name !== "finish_task" && step) d.onProgress(`${step}…`);
+          if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
         }
       });
       if (!this.halted) {
@@ -1055,8 +1145,9 @@ export class Worker {
           await send(`Task: ${this.spec.goal}${where}`);
           await wait;
           if (!this.result && !this.halted) {
+            this.wrappingUp = true;
             wait = idle();
-            await send("Call finish_task now with a short summary of what you did.");
+            await send("Call finish_task now with a short summary of what you did. Do nothing else.");
             await wait;
           }
         } finally {
@@ -1071,7 +1162,7 @@ export class Worker {
       d.flyTo(null);
       if (this.place) d.onDesk?.(null, this.place);
     }
-    if (this.halted && this.haltReason === null) return { success: false, summary: "Stopped.", stopped: true };
+    if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
@@ -1104,24 +1195,55 @@ export class Worker {
     if (this.session) await within(this.session.disconnect().catch(() => undefined), 3000);
   }
 
+  /**
+   * A row that only a click (or the keyboard) selects: one of a list or table in a window or dialog (a font chooser's
+   * list), not of a menu or a drop-down's popup, where the pointer passing over selects it.
+   */
+  private clickSelects(node: AxNode): boolean {
+    if (!ROW_ROLES.test(node.role)) return false;
+    for (let p = node.parent, hops = 0; p !== null && hops < 16; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (POPUP_ROLES.test(up.role)) return false;
+      p = up.parent;
+    }
+    return true;
+  }
+
+  /** The pointed-at control sits in a dialog (a font chooser): closing that dialog is cancelling the step. */
+  private inDialog(node: AxNode): boolean {
+    if (/dialog|chooser/i.test(this.window.role ?? "")) return true;
+    for (let p = node.parent, hops = 0; p !== null && hops < 16; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (/^(dialog|alert|alert dialog|file chooser|color chooser|font chooser)$/i.test(up.role)) return true;
+      p = up.parent;
+    }
+    return false;
+  }
+
   /** Guide mode: done when the user presses inside the element, the element changes, or the window does. */
   private async waitForClick(id: number, timeoutMs: number): Promise<ToolResultObject> {
     const node = this.known.get(id);
     if (!node?.bounds) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window.`);
+    const named = this.nameOf(id, node);
+    const sameTarget = (e: { role: string; name: string } | null) => !!e && e.role === node.role && this.nameOf(id, e) === named;
     // Where it is, as each look finds it (LibreOffice reports places 25 px off until the pointer has been over its window).
-    let b = node.bounds;
-    const pad = 4;
-    const inside = (p: { x: number; y: number }) => p.x >= b.x - pad && p.y >= b.y - pad && p.x < b.x + b.width + pad && p.y < b.y + b.height + pad;
+    let b = this.targetBox(id, node, null) ?? node.bounds;
+    const pad = FOCUS_IS_THE_STEP.test(node.role) ? 12 : 4;
+    const inside = (p: { x: number; y: number }, box = b, extra = pad) => p.x >= box.x - extra && p.y >= box.y - extra && p.x < box.x + box.width + extra && p.y < box.y + box.height + extra;
     const before = await this.sidecar.readElement(id).catch(() => null);
-    if (before?.bounds && before.role === node.role) b = before.bounds;
+    if (sameTarget(before) && before?.bounds) b = usableBounds(before.bounds) ?? b;
     // What counts is the user using it, never only reaching it (a hover selects a menu item, Tab focuses a button): a
     // press inside it; checked, pressed, expanded, a value, an option chosen, a menu opened (also with Alt+F or F10), a
     // tab or row selected, a field focused, the element gone. And once the user reached it (it had the keyboard, or was
     // the selected item): Enter or Space on it, or another window taking the keyboard (a menu item chosen with the
     // keyboard opened its dialog).
+    const field = FOCUS_IS_THE_STEP.test(node.role);
     const marks = ["checked", "pressed", "expanded",
-      ...(HOVER_SELECTS.test(node.role) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(FOCUS_IS_THE_STEP.test(node.role) ? ["focused"] : [])];
-    const key = (e: ElementInfo | null) => (e ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}` : "gone");
+      ...((HOVER_SELECTS.test(node.role) && !this.clickSelects(node)) || ACTS_ITSELF.test(node.role) ? [] : ["selected"]), ...(field ? ["focused"] : [])];
+    // A menu's item whose menu closed is gone from the screen (GTK keeps it, no longer showing).
+    const key = (e: ElementInfo | null) => (e && !e.offscreen ? `${e.states.filter(s => marks.includes(s)).sort().join(",")}|${e.selected ?? ""}|${e.value ?? ""}|${e.open ?? ""}${field ? `|${e.text ?? ""}` : ""}` : "gone");
     const reached = (e: ElementInfo | null) => !!e && (e.states.includes("focused") || e.states.includes("selected"));
     // Reached during this step, by a look after it began: a dialog's default button had the keyboard before, untouched.
     let wasReached = false;
@@ -1132,49 +1254,155 @@ export class Worker {
     let windowBefore = activeWindow();
     if (own(windowBefore)) windowBefore = null;
     const keyDown = () => { try { return this.d.activationKey?.() === true; } catch { return false; } };
+    const opens = ACTS_ITSELF.test(node.role) || /menu item$/.test(node.role);
     const usedIt = async (how: string) => {
+      this.guideLeft = false;
       await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
-      this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: node.name }, ok: true });
+      this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: named }, ok: true });
       return done(`${how} Call perceive_window to see what changed.`);
+    };
+    const left = (how: string) => {
+      this.guideLeft = true;
+      // The user cancelled the guide: end it here, calmly, rather than let the model take more steps (its next
+      // switch_window showed "Switching windows" for seconds) and report the closed dialog as a failure.
+      if (!this.result) {
+        this.result = { success: false, stopped: true, summary: "The guide was cancelled." };
+        this.ended.abort();
+        setTimeout(() => { void this.session?.abort().catch(() => undefined); }, 50);
+      }
+      return done(how);
     };
     const t0 = Date.now();
     let wasDown = (this.d.pointer?.()?.mask ?? 0) & 256;
     let keyWasDown = keyDown();
     let lastCheck = 0;
-    while (Date.now() - t0 < timeoutMs) {
-      if (this.isOver) return STOPPED();
+    // The pointer is watched on its own timer: a quick click comes and goes while a look at the app is under way (an
+    // app opening a dialog answers slowly), and it still counts.
+    let pressed = false;
+    const other = { kind: "", name: "" };
+    const watchPointer = () => {
       const p = this.d.pointer?.();
       const down = (p?.mask ?? 0) & 256;
-      if (p && down && !wasDown && inside(p)) return usedIt("The user clicked it.");
-      wasDown = down;
-      // Enter or Space, while it has the keyboard (or is the menu item selected).
-      const pressing = keyDown();
-      if (pressing && !keyWasDown && reached(await this.sidecar.readElement(id).catch(() => null))) return usedIt("The user pressed Enter or Space on it.");
-      keyWasDown = pressing;
-      if (Date.now() - lastCheck > 500) {
-        lastCheck = Date.now();
-        const now = await this.sidecar.readElement(id).catch(() => null);
-        if (key(now) !== key(before)) {
-          return done(now ? `It changed: ${describeAfter(now)}. Call perceive_window for the next step.` : "The window changed (the element is gone). Call perceive_window.");
-        }
-        if (now?.bounds && now.role === node.role) b = now.bounds;
-        if (now) {
-          const r = reached(now);
-          if (r && reachedNow === false) wasReached = true;
-          reachedNow = r;
-        }
-        // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title). The
-        // step began in Ember's own window: the user's is the first other one seen, while they hadn't reached it yet.
-        const active = activeWindow();
-        const w = active && !own(active) ? active : null;
-        if (w && !windowBefore && !wasReached) windowBefore = w;
-        if (w && wasReached && windowBefore && w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app)) {
-          return done(`Another window has the keyboard now (${q(w.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
+      if (p && down && !wasDown) {
+        if (inside(p)) pressed = true;
+        else {
+          for (const n of this.known.values()) {
+            if (n.id === id || !n.bounds || !inside(p, n.bounds, 4)) continue;
+            if (dismissName(n.name)) { other.kind = "dismiss"; other.name = n.name; break; }
+            if (fieldLike(n)) { other.kind = "field"; other.name = n.name; break; }
+          }
         }
       }
-      await new Promise(r => setTimeout(r, 30));
+      wasDown = down;
+    };
+    const watcher = setInterval(watchPointer, 15);
+    try {
+      while (Date.now() - t0 < timeoutMs) {
+        if (this.isOver) return STOPPED();
+        watchPointer();
+        if (pressed) return await usedIt("The user clicked it.");
+        if (other.kind === "dismiss") {
+          return left(`The user pressed ${q(other.name || "Cancel", 40)}. They cancelled this step. Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.`);
+        }
+        if (other.kind === "field") {
+          return done(`The user clicked the search box${other.name ? ` (${q(other.name, 40)})` : ""} instead of the element pointed at. Call perceive_window if searching was the step, and point_at that field.`);
+        }
+        // Enter or Space, while it has the keyboard (or is the menu item selected).
+        const pressing = keyDown();
+        if (pressing && !keyWasDown && reached(await this.sidecar.readElement(id).catch(() => null))) return usedIt("The user pressed Enter or Space on it.");
+        keyWasDown = pressing;
+        if (Date.now() - lastCheck > 500) {
+          lastCheck = Date.now();
+          const now = await this.sidecar.readElement(id).catch(() => null);
+          if (pressed) return await usedIt("The user clicked it.");
+          if (key(now) !== key(before)) {
+            if (now && !now.offscreen) {
+              this.guideLeft = false;
+              return done(`It changed: ${describeAfter(now)}. Call perceive_window for the next step.`);
+            }
+            this.fly(null);
+            // A dialog's row or a field vanishing is the dialog closing, not the user choosing this row (Cancel).
+            if (this.clickSelects(node) || field || dismissName(named) || this.inDialog(node)) {
+              return left(now
+                ? "Its dialog closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled."
+                : "The window closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
+            }
+            return done(now ? "Its menu closed (the user chose it, or went elsewhere). Call perceive_window to see where they are." : "The window changed (the element is gone). Call perceive_window.");
+          }
+          // It moved (a list scrolled, the window was dragged): the highlight goes with the same named row, never another.
+          if (sameTarget(now) && now?.bounds) {
+            const next = usableBounds(now.bounds);
+            if (next) {
+              const moved = next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height;
+              b = next;
+              if (moved) this.fly(b);
+            } else {
+              // The control's box is gone (dialog closed, 0×0 leftover): never leave an empty orange frame.
+              this.fly(null);
+              if (field || this.clickSelects(node) || this.inDialog(node)) {
+                return left("The control disappeared (the user most likely pressed Cancel or closed the dialog). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
+              }
+            }
+          } else if (now && now.role === node.role && !sameTarget(now)) {
+            // This id is another row now (the list filtered): don't highlight the wrong one.
+            this.fly(null);
+          } else if (!now || now.offscreen || !usableBounds(now.bounds)) {
+            this.fly(null);
+          }
+          if (now) {
+            const r = reached(now);
+            if (r && reachedNow === false) wasReached = true;
+            reachedNow = r;
+          }
+          // A titled window other than the one the user was in has the keyboard (an open menu's popup has no title). The
+          // step began in Ember's own window: the user's is the first other one seen, while they hadn't reached it yet.
+          const active = activeWindow();
+          const w = active && !own(active) ? active : null;
+          if (w && !windowBefore && !wasReached) windowBefore = w;
+          const another = !!w && !!windowBefore && !!w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app);
+          if (another && wasReached) {
+            this.guideLeft = false;
+            return done(`Another window has the keyboard now (${q(w!.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
+          }
+          // A new window of the same app took the keyboard after Ember pointed at a menu item or a button that opens
+          // things (Select Font… opened its dialog): that step is done, however it was chosen.
+          if (another && opens && w!.pid != null && w!.pid === windowBefore!.pid) {
+            this.guideLeft = false;
+            return done(`A new window of the app has the keyboard now (${q(w!.title, 80)}): the user chose the element pointed at, and it opened. Call perceive_window to see the new window.`);
+          }
+          // Cancel in a font dialog: AT-SPI may still report the Size field, but the document has the keyboard again.
+          if (another && !wasReached && (field || this.clickSelects(node) || this.inDialog(node))) {
+            this.fly(null);
+            return left(`The window changed (${q(w!.title, 80)} now has the keyboard). They cancelled or closed this step. Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.`);
+          }
+        }
+        await new Promise(r => setTimeout(r, 30));
+      }
+      return done("The user hasn't clicked it yet. Finish kindly, saying where they got to, unless the goal is already done.");
+    } finally {
+      clearInterval(watcher);
+      // The step is over: no highlight is left on a place that may hold something else now (the dialog it opened).
+      this.fly(null);
     }
-    return done("The user hasn't clicked it yet. Finish kindly, saying where they got to, unless the goal is already done.");
+  }
+
+  /**
+   * Where to highlight element `id`: the live box when it is still the same named control, else another known
+   * control with that name, else the last read box. Never a different row that reused the id after a list scrolled.
+   */
+  private targetBox(id: number, node: AxNode, live: ElementInfo | null): Bounds | null {
+    const name = this.nameOf(id, node);
+    const same = (role: string, nm: string) => role === node.role && nm === name;
+    if (live && !live.offscreen && same(live.role, this.nameOf(id, { role: live.role, name: live.name }))) {
+      return usableBounds(live.bounds) ?? usableBounds(node.bounds);
+    }
+    for (const n of this.known.values()) {
+      if (!same(n.role, this.nameOf(n.id, n))) continue;
+      const box = usableBounds(n.bounds);
+      if (box) return box;
+    }
+    if (live && live.role === node.role && !same(live.role, this.nameOf(id, { role: live.role, name: live.name }))) return null;
+    return usableBounds(node.bounds);
   }
 
   /** `expectTitle`: switch_window's request; nothing changes unless a window with that title is found. */
@@ -1204,7 +1432,7 @@ export class Worker {
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
-    const result: ToolResultObject = { textResultForLlm: p.text, resultType: "success" };
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords)}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -1267,6 +1495,30 @@ export class Worker {
       ...(live.withheld || node.withheld ? { withheld: true } : {}) };
     this.known.set(id, current);
     return { node: current, element: this.elementOf(id, current) };
+  }
+
+  /**
+   * Where element `id` is when it has no name (an icon, an unnamed button), for the question asked about it: the named
+   * control around it (not the window itself), else its place in the window.
+   */
+  private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
+    // (A text area or field is named well enough by what it is: "the text area".)
+    if (element.name || element.withheld || TYPING_ROLES.has(element.role)) return {};
+    const node = this.known.get(id);
+    if (!node) return {};
+    for (let p = node.parent, hops = 0; p !== null && hops < 6; hops++) {
+      const up = this.known.get(p);
+      if (!up) break;
+      if (/^(frame|window|dialog|alert|file chooser|application)$/.test(up.role)) break;
+      if (up.name.trim() && !up.withheld && !up.secret) return { place: { role: up.role, name: up.name.trim() } };
+      p = up.parent;
+    }
+    const b = node.bounds, f = this.frame;
+    if (!b || !f || f.width <= 0 || f.height <= 0) return {};
+    const cx = (b.x + b.width / 2 - f.x) / f.width, cy = (b.y + b.height / 2 - f.y) / f.height;
+    const v = cy < 1 / 3 ? "top" : cy > 2 / 3 ? "bottom" : "middle";
+    const h = cx < 1 / 3 ? "left" : cx > 2 / 3 ? "right" : "";
+    return { place: { at: h ? (v === "middle" ? `${h} side` : `${v} ${h}`) : v === "middle" ? "middle" : v } };
   }
 
   /**
@@ -1347,10 +1599,19 @@ export class Worker {
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
     const name = live ? this.nameOf(id, live) : null;
-    if (!live || live.role !== element.role || name !== element.name) {
-      return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
+    if (!live || live.role !== element.role || name !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
+      return this.changedWhileDeciding(id, element, live);
     }
     return null;
+  }
+
+  /** The element changed while a question was up. A menu item whose menu the Allow click closed keeps its yes (see carriedMenuApproval). */
+  private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
+    if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
+      this.carriedMenuApproval = { app: this.window.app.toLowerCase(), role: element.role, name: element.name, until: Date.now() + 60_000 };
+      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. The user's OK still stands: reopen its menu and click it again, without asking.`);
+    }
+    return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
   }
 
   /** choose_option: the option is found first (its full name, never a part of one), and the policy judges the one that will be chosen. */
@@ -1418,6 +1679,7 @@ export class Worker {
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged), ...this.ownText(field, node.text) } : {}),
       ...((kind === "click" || kind === "toggle") && selects ? { clickSelects: true } : {}),
       ...(dialog ? { dialog } : {}),
+      ...this.placeOf(id, element),
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
@@ -1483,6 +1745,8 @@ export class Worker {
       // The helper's words can carry the app's own text: quoted, like everything from the screen.
       return fail(`It didn't work: ${q(msg, 300)}. Call perceive_window to see the window as it is now.`);
     } finally {
+      // The step is over: no highlight is left on a closed dialog (an empty orange box) or the control just used.
+      this.fly(null);
       release();
     }
   }
@@ -1603,13 +1867,15 @@ export class Worker {
     const base: ActionRequest = { taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "cursor_text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + text } : {}), ...this.formulaOf(node, text, judged), ...this.ownText(field, node.text) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
-      ...(dialog ? { dialog } : {}) };
+      ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
     if (verdict) return verdict;
     // Where it is now: the window may have moved or scrolled while the user decided.
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name) {
+    if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
+      const closedMenu = this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === node.role && this.nameOf(id, live) === element.name));
+      if (closedMenu) return this.changedWhileDeciding(id, element, live);
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
@@ -2042,7 +2308,7 @@ export class Worker {
     const added = [...notes].map(([note, at]) => (at.length === jobs.length ? note : `${at.join(", ")}: ${note}`)).join(" ");
     const app = this.window.app ? ` in ${friendlyApp(this.window.app)}` : "";
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
-    const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
+    const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     this.asked = true;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id }, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
@@ -2583,19 +2849,33 @@ export class Worker {
   }
 
   /** A hand that checks `check` before every move, click, key and few typed characters. */
-  private guardedHand(hand: Hand, check: () => void): Hand {
+  private guardedHand(hand: Hand, check: () => void, kind: ActionKind): Hand {
+    // The keys that put text in a field (Ctrl+A, Delete, Ctrl+V) are its typing.
+    const keysAre = kind === "cursor_text" ? "type" : "keys";
     return {
       ...hand,
       glideTo: async (x, y) => { check(); await hand.glideTo(x, y); },
-      click: async b => { check(); await hand.click(b); },
-      keys: async k => { check(); await hand.keys(k); },
+      click: async b => { check(); this.showDoing("click"); await hand.click(b); },
+      keys: async k => { check(); this.showDoing(keysAre); await hand.keys(k); },
       type: async t => {
         // All or nothing: text the keyboard layout can't type is refused before the first key (then typed a few letters at a time).
         if ("checkTyping" in hand && typeof hand.checkTyping === "function") hand.checkTyping(t);
+        this.showDoing("type");
         for (const part of t.match(/[\s\S]{1,8}/g) ?? []) { check(); await hand.type(part); }
       },
-      scroll: async (dir, n) => { check(); await hand.scroll(dir, n); },
+      scroll: async (dir, n) => { check(); this.showDoing("scroll"); await hand.scroll(dir, n); },
     };
+  }
+
+  /** What the task's card says now: the step its tool started with, or what the borrowed hand is doing. */
+  private doing: string | null = null;
+
+  /** The card follows the hand: "Pressing keys…" while keys go in, though the tool's step said "Clicking…". */
+  private showDoing(what: HandStep): void {
+    const step = `${handStep(what, !!this.place)}…`;
+    if (step === this.doing) return;
+    this.doing = step;
+    this.d.onProgress(step);
   }
 
   /** `afterBorrow`: runs once the mouse is given back, before the result is told (a paste waits for its text there). */
@@ -2636,7 +2916,7 @@ export class Worker {
     // Stopped while waiting for another task's window: the approved borrow never starts.
     if (this.isOver) { release(); return STOPPED(); }
     // Asked for first, so the status sees it waiting ("Waiting until you let go of the mouse…").
-    const borrowed = c.borrow.borrow(hand => fn(this.guardedHand(hand, check)), {
+    const borrowed = c.borrow.borrow(hand => fn(this.guardedHand(hand, check, kind)), {
       window: win,
       signal: this.overSignal,
       onStart: () => c.setBorrowing("active"),
@@ -2693,7 +2973,7 @@ export class Worker {
       return fail("Ember can't tell which window on its desk that is (none or several have that title). Call perceive_window.");
     }
     try {
-      await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check)); }, { idleMs: 0, window: win, signal: this.overSignal });
+      await deskBorrow.borrow(hand => { check(); return fn(this.guardedHand(hand, check, kind)); }, { idleMs: 0, window: win, signal: this.overSignal });
       await afterBorrow?.();
       const after = verifyId !== undefined ? await place.sidecar.readElement(verifyId).catch(() => null) : null;
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, ok: true, tier: 2, ...this.inputValue });
@@ -2766,6 +3046,15 @@ export class Worker {
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
     if (this.isOver) return STOPPED();
+    // The user's click on Allow closed the menu this item is in: their yes covers reopening it and clicking the same item.
+    const carried = this.carriedMenuApproval;
+    if (carried && Date.now() > carried.until) this.carriedMenuApproval = null;
+    else if (carried && (request.kind === "click" || request.kind === "cursor_click") && request.app.toLowerCase() === carried.app
+      && request.element?.role === carried.role && request.element.name === carried.name) {
+      this.carriedMenuApproval = null;
+      this.audit({ event: "decision", task: this.spec.id, kind: request.kind, app: request.app, window: request.window, element: request.element, ...auditValue(request), tier: "reversible", verdict: "allow", reason: "the user already allowed this menu item; their answer closed its menu" });
+      return null;
+    }
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
     // caret). A click by accessibility (a toolbar button), a scroll or a look move no caret: the selection stays.
@@ -2796,7 +3085,9 @@ export class Worker {
       decision = { ...decision, prompt: `${decision.prompt} ${o.note}` };
     }
     // "Allow" earlier in this task covers ordinary steps in that app, but not once something on screen tried to steer Ember.
-    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted && this.allowedApps.has(req.app.toLowerCase());
+    // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
+    const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
+      && this.allowedApps.has(req.app.toLowerCase());
     this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
     if (decision.verdict === "allow" || sessionAllowed) return null;
@@ -2805,7 +3096,7 @@ export class Worker {
     const options = remember
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${friendlyApp(req.app)}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
-    const context = this.spec.goal.length > 40 ? this.spec.goal.slice(0, 39) + "…" : this.spec.goal;
+    const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     this.asked = true;
     const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id }, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
@@ -2814,7 +3105,10 @@ export class Worker {
       this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
     }
     if (answer === "once" || answer === "always") {
-      if (decision.needsGrant && req.app) this.allowedApps.add(req.app.toLowerCase());
+      // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
+      if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element))) {
+        this.allowedApps.add(req.app.toLowerCase());
+      }
       return null;
     }
     this.declined = true;

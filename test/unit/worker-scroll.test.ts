@@ -24,7 +24,7 @@ interface Item { role: string; name: string; bounds: Bounds; states?: string[]; 
  * frame (y 40 to 600). `blindAfter`: past this far, reads see only the frame and its scroll bar (GTK 3's viewport).
  */
 function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: boolean; read?: (n: number, nodes: AxNode[]) => object; extra?: AxNode[]; clip?: Bounds; emptyChain?: boolean } = {}) {
-  const st = { offset: 0, reads: 0, points: 0, asked: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 }, clicks: [] as { x: number; y: number }[] };
+  const st = { offset: 0, reads: 0, points: 0, asked: 0, notches: [] as { x: number; y: number }[], keys: [] as string[], typed: [] as string[], pointer: { x: 0, y: 0 }, clicks: [] as { x: number; y: number }[], progress: [] as string[] };
   const notch = o.notch ?? 40;
   const shown = () => items.map((it, i) => ({ id: i + 2, parent: 1, depth: 2, role: it.role, name: it.name, states: it.states ?? ["enabled", "sensitive"], ...(it.text !== undefined ? { text: it.text } : {}), bounds: { ...it.bounds, y: it.bounds.y - st.offset } }))
     .filter(n => n.bounds.y + n.bounds.height > 40 && n.bounds.y < 600);
@@ -75,7 +75,7 @@ function app(items: Item[], o: { notch?: number; blindAfter?: number; atPoint?: 
     audit: { write: () => undefined } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter: new Presenter(() => undefined),
-    lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
+    lease: async () => () => undefined, flyTo: () => undefined, onProgress: (t: string) => { st.progress.push(t); },
     cursor: { borrow: { borrow: async (fn: (h: Hand) => Promise<void>, b: { onStart?: () => void }) => { b.onStart?.(); await fn(hand); } } as never, findWindow: () => 1, setBorrowing: () => undefined },
     clipboard: {
       save: async () => { clip.saved++; return { items: [{ "text/plain": "the user's" }], look: "x" }; },
@@ -402,6 +402,8 @@ describe("clearing a field with the user's mouse (review round 5)", () => {
     expect(st.keys).toEqual(["ctrl+a", "Delete"]);
     expect(field.text).toBe("");
     expect(clip).toEqual({ saved: 0, written: [], restored: 0 });
+    // The card follows the hand: the click into the field, then its keys, which are its typing (live test).
+    expect(st.progress).toEqual(["Clicking (your mouse)…", "Typing (your keyboard)…"]);
   });
 });
 

@@ -40,6 +40,6 @@ echo "Added Ember (dev) to the application menu."
 
 if [ "${1:-}" = "--autostart" ]; then
   mkdir -p "$autostart"
-  sed -e 's/ --show-settings//' -e '$a X-GNOME-Autostart-enabled=true' "$apps/ember-dev.desktop" > "$autostart/ember-dev.desktop"
+  sed -e 's/ --show-settings/ --autostart/' -e '$a X-GNOME-Autostart-enabled=true' "$apps/ember-dev.desktop" > "$autostart/ember-dev.desktop"
   echo "Ember (dev) will start when you log in."
 fi
