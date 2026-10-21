@@ -653,7 +653,7 @@ function start(): void {
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
     // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
     // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
-    const held = look ? holdKeyboard() : null;
+    const held = look ? holdKeyboard({ log: (event, fields) => log.info(event, fields) }) : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();

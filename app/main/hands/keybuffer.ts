@@ -136,6 +136,8 @@ export function holdKeyboard(o: { display?: string; maxMs?: number; log?: (event
     done = true;
     clearInterval(poll);
     clearTimeout(safety);
+    // Never got the keyboard: say so, with how many tries and the last status (a silent failure leaves keys in the app).
+    if (!grabbed && attempts > 0) o.log?.("keys.grab_failed", { status: grabStatusName(lastStatus), attempts, ms: Date.now() - t0 });
     try {
       if (grabbed) {
         drain();
