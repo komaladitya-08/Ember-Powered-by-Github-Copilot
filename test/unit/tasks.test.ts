@@ -178,6 +178,15 @@ describe("apps", () => {
     expect(findApp(apps, "explorer")?.id).toBe("org.gnome.Nautilus");
     expect(findApp(apps, "spreadsheet")).toBeNull();
   });
+  it("picks the file manager, not a file helper listed before it (live: Thunar vs Bulk Rename)", () => {
+    const apps: DesktopApp[] = [
+      { id: "thunar-bulk-rename", name: "Bulk Rename", file: "", keywords: ["bulk rename", "bulk", "renamer", "files", "folders"], categories: ["Utility", "Core", "GTK", "Filesystem"] },
+      { id: "thunar", name: "Thunar", file: "", keywords: ["file manager", "file", "manager", "files", "folder"], categories: ["System", "FileTools", "FileManager", "Utility"] },
+    ];
+    expect(findApp(apps, "file manager")?.id).toBe("thunar");
+    expect(findApp(apps, "files")?.id).toBe("thunar");
+    expect(findApp(apps, "bulk rename")?.id).toBe("thunar-bulk-rename");
+  });
 });
 
 describe("execArgv", () => {
