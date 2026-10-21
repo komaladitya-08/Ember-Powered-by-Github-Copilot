@@ -262,7 +262,6 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
   max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
-  scrollbar-width: thin; scrollbar-color: var(--scroll-thumb, rgba(255, 255, 255, 0.5)) transparent;
 }
 /* A question gets room for its answers on one row ("Allow", "Always in …", "Not now"). */
 .ember-bubble[data-mood="attention"] { width: min(336px, calc(100vw - 24px)); }
@@ -272,8 +271,11 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
   max-height: calc(20px * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
-  scrollbar-width: thin; scrollbar-color: var(--scroll-thumb, rgba(255, 255, 255, 0.5)) transparent;
 }
+/* Its scrollers' bars as on a Mac (a slim thumb, no track or arrows), with or without the page's tokens. */
+.ember-bubble ::-webkit-scrollbar { width: 12px; background: transparent; }
+.ember-bubble ::-webkit-scrollbar-thumb { min-height: 28px; border: 3px solid transparent; border-radius: var(--r-capsule, 999px); background: var(--scroll-thumb, rgba(255, 255, 255, 0.5)) padding-box; }
+.ember-bubble ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 /* The caret exists only while text arrives (an invisible one could wrap onto a blank line of its own). */
 .eb-thought span::after { content: ""; display: none; width: 2px; height: 1.05em; margin-left: 2px; border-radius: 1px; vertical-align: -0.15em; background: var(--eb-mood); }
 .ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.9; animation: eb-blink 1s steps(2) infinite; }
@@ -526,16 +528,20 @@ export class ReasoningBubble {
    * over Ember itself, nor (if it can help it) over the `avoid` rects, narrowing
    * itself to fit beside them if that is what it takes. `hideFrom` (also in
    * `avoid`) are places it would rather hide than cover, such as the settings
-   * window the user works in: with no room beside them it hides until there is.
+   * window the user works in: with no room beside them it hides until there is. `prefer` are places it keeps off
+   * only when it can also keep off `avoid` (the control Ember works on): where it can't, they don't count.
    * Returns true when the bubble moved, changed size, or hid or showed for room.
    */
-  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = []): boolean {
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = [], prefer: readonly Rect[] = []): boolean {
     if (this.dirty) { this.dirty = false; this.sizes.clear(); }
     const own = this.sized(0);
     const heightAt = (w: number) => this.sized(w).box.height;
-    // Clear of everything; else (with places to hide from) at least clear of those; else the usual place.
-    const spot = avoid.length ? bubbleFit(anchor, own.box, bounds, size, avoid, heightAt)
-      ?? (hideFrom.length ? bubbleFit(anchor, own.box, bounds, size, hideFrom, heightAt) : undefined) : undefined;
+    const fit = (keepOff: readonly Rect[]) => bubbleFit(anchor, own.box, bounds, size, keepOff, heightAt);
+    // Clear of everything (the preferred places too, if it can be); else (with places to hide from) at least clear of
+    // those; else the usual place.
+    const spot = avoid.length || prefer.length
+      ? (prefer.length ? fit([...avoid, ...prefer]) : null) ?? (avoid.length ? fit(avoid) : null) ?? (hideFrom.length ? fit(hideFrom) : undefined)
+      : undefined;
     if (spot === null) {
       this.useWidth(0);
       return this.setCrowded(true);

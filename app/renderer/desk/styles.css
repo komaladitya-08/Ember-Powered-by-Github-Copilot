@@ -1,7 +1,7 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--label); font: var(--type-callout); user-select: none; }
-/* A quiet frame; the accent only while you drive the desk yourself. */
+/* A quiet frame; the accent while your keys go to the desk (you drive it, and the picture has the keyboard). */
 body { display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid var(--separator); }
-body.control { border-color: var(--accent); }
+body.control:has(#screen:focus) { border-color: var(--accent); }
 /* The bar: what Ember works in, and its controls. One line at any width (the title shortens, then the hint goes);
    30 px tall, as view.ts's window sizes expect (a 16:10 picture under it). */
 header {
@@ -26,9 +26,11 @@ button:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--fo
 #hide { width: 24px; padding: 0; font-size: 11px; }
 body.control #control { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); }
 body.control #control:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
-#screen { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
-/* Its focus ring inside the window (the window's edge would clip one outside). */
+/* A black keyline round the picture, so a focus ring inside it reads (3:1) over a light app too. */
+#screen { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; border: 1px solid #000; object-fit: contain; background: #000; }
+/* Its focus ring inside the window (the window's edge would clip one outside); taken over, the accent frame says it. */
 #screen:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+body.control #screen:focus-visible { outline: none; }
 /* No picture until the first frame: an <img> without one shows a broken-image icon. */
 body:not(.live) #screen { visibility: hidden; }
 body.control #screen { cursor: crosshair; }

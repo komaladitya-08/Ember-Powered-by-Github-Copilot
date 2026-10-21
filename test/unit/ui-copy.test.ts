@@ -178,10 +178,11 @@ describe("page styles that keep things readable and reachable", () => {
   };
 
   it("keeps keyboard focus clear of the section links (WCAG 2.4.11)", () => {
-    // Wide: the links are a sidebar in a column of their own, beside the content, so nothing scrolls under them.
+    // Wide: the links are a fixed sidebar and the content starts past it, so nothing scrolls under them.
     const wide = home.slice(home.indexOf("@media (min-width: 640px) {"));
-    expect(wide).toMatch(/body:not\(\.first-run\) \.home > \* \{ grid-column: 2;/);
-    expect(wide).toMatch(/\.jump \{\s*grid-column: 1; grid-row: 1 \/ span 40; position: sticky;/);
+    const sidebar = Number(/\.home > \.jump \{\s*position: fixed; left: 0; top: 0; bottom: 0; width: (\d+)px;/.exec(wide)![1]);
+    const inset = Number(/body:not\(\.first-run\) \.home \{[^}]*padding: \d+px \d+px \d+px (\d+)px;/.exec(wide)![1]);
+    expect(inset).toBeGreaterThan(sidebar);
     // Narrow: one row that scrolls away with the page (never sticky).
     expect(home.slice(0, home.indexOf("@media (min-width: 640px) {"))).not.toMatch(/\.jump \{[^}]*position: sticky/);
   });

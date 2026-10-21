@@ -150,11 +150,17 @@ html {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-synthesis: none;
-  /* Scrollbars as on a Mac: a thin thumb, no track, no arrows. scrollbar-color inherits; scrollbar-width does not,
-     so every inner scroller sets scrollbar-width: thin too. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--scroll-thumb) transparent;
 }
+/* Scrollbars as on a Mac: a slim rounded thumb, no track, no arrows, in every scroller. (Chromium ignores these on an
+   element that sets scrollbar-width or scrollbar-color, and only these remove the arrows: so no scroller sets those.) */
+::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
+::-webkit-scrollbar-thumb { min-height: 28px; border: 3px solid transparent; border-radius: var(--r-capsule); background: var(--scroll-thumb) padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--scroll-thumb), white 25%); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+/* A key chord ("Ctrl+Alt+Y") never breaks across lines. */
+.chord { white-space: nowrap; }
 
 /* Read out by screen readers, never seen. */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

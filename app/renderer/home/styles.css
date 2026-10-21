@@ -205,7 +205,8 @@ progress[hidden] { display: none; }
 /* Grants under "ask before every action": shown (with the note above them), but plainly not in force. */
 .plain-list.off li > span:first-child { color: var(--muted); }
 .plain-list li > button, .plain-list li > .managed-tag { flex: none; }
-.plain-list .btn.quiet { background: transparent; box-shadow: none; color: var(--red-text); font-weight: 500; padding: 3px 8px; }
+/* Its words end at the row's trailing edge, where the switches and pop-ups end (its padding hangs past it). */
+.plain-list .btn.quiet { background: transparent; box-shadow: none; color: var(--red-text); font-weight: 500; padding: 3px 8px; margin-right: -8px; }
 @media (hover: hover) { .plain-list .btn.quiet:hover { background: rgba(255, 255, 255, 0.08); } }
 .plain-list .btn.quiet:focus-visible { box-shadow: var(--focus-ring); }
 .managed-tag { color: var(--muted); font: var(--type-footnote); }
@@ -224,7 +225,7 @@ progress[hidden] { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
 
 /* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes ───── */
-.conversation { list-style: none; margin: 0; padding: 10px 0; max-height: 360px; overflow-y: auto; display: grid; gap: 2px; scrollbar-width: thin; }
+.conversation { list-style: none; margin: 0; padding: 10px 0; max-height: 360px; overflow-y: auto; display: grid; gap: 2px; }
 .conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 4px 16px; color: var(--muted); }
 /* Who and when on one line, then the words on their own line (the zero-height ::before breaks the line). */
 .conversation li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 4px 14px; }
@@ -233,7 +234,7 @@ progress[hidden] { display: none; }
 .conversation .who { font: var(--type-caption); color: var(--muted); padding-left: 6px; }
 .conversation .ember .who { color: var(--accent); }
 .conversation .task .who { color: var(--green-text); }
-.conversation .problem .who { color: var(--warn); }
+.conversation .problem .who { color: var(--red-text); }
 .conversation time { color: var(--label-3); font: var(--type-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
 .conversation li.you time { padding-right: 6px; }
 .conversation p {
@@ -245,7 +246,7 @@ progress[hidden] { display: none; }
 .conversation li.task p, .conversation li.problem p { background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); }
 
 /* ───── What Ember did: time, a fixed-width state tag, the step ───── */
-.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; scrollbar-width: thin; }
+.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
 .activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 14px 16px; color: var(--muted); }
 .activity li { display: grid; grid-template-columns: 4.6em 6.4em 1fr; gap: 10px; align-items: baseline; margin: 0 16px; padding: 9px 0; font: var(--type-callout); }
 .activity li + li:not(.day) { border-top: 1px solid var(--line); }
@@ -284,8 +285,7 @@ body.first-run .after-setup { display: none !important; }
 
 /* ── Section links. Narrow: one row of capsules that scrolls sideways and away with the page. ── */
 .jump {
-  display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; margin-top: -12px;
-  -webkit-mask-image: linear-gradient(to right, #000 92%, transparent);
+  display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: -16px -4px 0; padding: 4px;
 }
 .jump a {
   flex: none; position: relative; padding: 5px 11px; border-radius: var(--r-capsule); color: var(--muted); text-decoration: none;
@@ -299,12 +299,10 @@ h2, summary { scroll-margin-top: 16px; }
 /* Wide: a sidebar beside the content, as System Settings. It sits in its own column, so nothing scrolls under it and
    whatever scrolls into view (a section, or what has keyboard focus) is never hidden by it (WCAG 2.4.11). */
 @media (min-width: 640px) {
-  body:not(.first-run) .home { max-width: none; margin: 0; padding: 0 28px 48px 0; grid-template-columns: 200px minmax(0, 1fr); column-gap: 28px; }
-  body:not(.first-run) .home > * { grid-column: 2; max-width: 680px; }
-  body:not(.first-run) .home > .hero { margin-top: 30px; }
+  body:not(.first-run) .home { max-width: none; margin: 0; padding: 30px 28px 48px 228px; grid-template-columns: minmax(0, 680px); }
   body:not(.first-run) .home > .jump {
-    grid-column: 1; grid-row: 1 / span 40; position: sticky; top: 0; align-self: start; height: 100vh; max-width: none;
-    margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto; -webkit-mask-image: none;
+    position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 2;
+    margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
     background: #181517; box-shadow: inset -1px 0 0 var(--separator);
   }
   .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
@@ -351,3 +349,9 @@ html { scroll-padding-top: 16px; }
 .fold-note.warn { color: var(--warn); }
 .fold[open] > summary { margin-bottom: 10px; }
 .fold > .hint { margin-top: 10px; }
+
+/* Increase contrast: the section you are in and the slider's empty track get edges of 3:1 or more. */
+@media (prefers-contrast: more) {
+  .jump a[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--control-edge); }
+  .pick-row input[type="range"]::-webkit-slider-runnable-track { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}

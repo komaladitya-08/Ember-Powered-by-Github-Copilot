@@ -66,6 +66,10 @@ let bubbleShown = false;
 let handleRect: Rect | null = null;
 /** What the bubble keeps off: the handle, the task cards, and any windows main names. */
 let avoid: Rect[] = [];
+/** The ring round the control Ember works on: kept off too, where the bubble can also keep off the rest. */
+let focusOff: Rect[] = [];
+/** Clears the status pill's words once it has faded out (see onState). */
+let statusClear: ReturnType<typeof setTimeout> | null = null;
 /** The windows main names (the settings window while the user works in it), in this overlay's coordinates. */
 let windows: Rect[] = [];
 let avoidKey = "null";
@@ -136,9 +140,10 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   statusEl.hidden = !s.status;
   const statusText = statusEl.querySelector("span")!;
   // Its words stay while it fades out (not an empty capsule), and go once it has: the same status shown again is
-  // announced again.
+  // announced again. A newer status cancels an older fade's clearing (it would empty the newer words as they fade).
+  if (statusClear) { clearTimeout(statusClear); statusClear = null; }
   if (s.status) { if (statusText.textContent !== s.status) statusText.textContent = s.status; }
-  else if (statusText.textContent) setTimeout(() => { if (statusEl.hidden) statusText.textContent = ""; }, 250);
+  else if (statusText.textContent) statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
   // Cards sit at a fixed place, so their buttons are measured only when the cards change.
   if (renderTasks(s.tasks)) measureTasks();
   else if (keepOffKey(s) !== avoidKey) measureTasks();
@@ -185,9 +190,10 @@ function measureTasks(): void {
   avoidKey = keepOffKey(state);
   windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
   list.push(...windows);
-  // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you).
+  // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you) where
+  // it can do that and still keep off the handle, the cards and the windows above.
   const f = state?.focus;
-  if (f && f.width > 2 && f.height > 2) list.push({ x: f.x - bounds.x - 8, y: f.y - bounds.y - 8, width: f.width + 16, height: f.height + 16 });
+  focusOff = f && f.width > 2 && f.height > 2 ? [{ x: f.x - bounds.x - 8, y: f.y - bounds.y - 8, width: f.width + 16, height: f.height + 16 }] : [];
   let cardsAt: Rect | null = null;
   if (tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
@@ -444,7 +450,7 @@ function draw(now: number): void {
     // Conversation section has its words); a question stays, wherever it must go.
     // (An answer opened in full is pinned: it stays on screen too.)
     const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:")) || state?.bubble.expanded === true;
-    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows)) interactiveDirty = true;
+    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)) interactiveDirty = true;
     // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
     // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on
     // Ember never lands on what it hides. Following the cursor, it lets them through; and sitting on the control

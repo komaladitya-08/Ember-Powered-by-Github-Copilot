@@ -23,7 +23,7 @@ body { font: var(--type-callout); color: var(--label); }
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
-.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; }
 /* A card is a notification: glass, the task's state as a symbol on the left, its words, then its buttons.
    min-width 0 and wrapping anywhere: a long unbroken word wraps inside the card instead of stretching it off screen. */
 .task {
@@ -46,9 +46,10 @@ body { font: var(--type-callout); color: var(--label); }
   -webkit-mask: var(--sym) center / 22px no-repeat;
 }
 /* The older ended cards folded into one line at the top of the stack, with Close all for the failures among them. */
-.task.more { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 44px; border-radius: var(--r-lg); }
+.task.more { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 44px; border-radius: var(--r-xl); }
 .task.more::before { top: 50%; margin-top: -11px; background: var(--gray); -webkit-mask: var(--sym-more) center / 22px no-repeat; }
 .more-text { flex: 1; min-width: 0; display: grid; }
+.more-text > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task.more .task-actions { flex: none; margin-top: 0; }
 .tasks > [hidden] { display: none; }
 /* Stop / Close: the overlay is click-through except over these (reported to the main process). */

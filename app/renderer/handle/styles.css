@@ -38,7 +38,7 @@ body.fallback #line {
 body.fallback .thought {
   display: block; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 2px;
   /* Room for the scrollbar always: sized without it but laid out with it, the last line was cut. */
-  scrollbar-gutter: stable; scrollbar-width: thin;
+  scrollbar-gutter: stable;
   white-space: pre-line; overflow-wrap: anywhere; color: var(--label); font: var(--type-body);
 }
 body.fallback .thought:empty { display: none; }
@@ -90,5 +90,7 @@ body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px
 .mic[data-state="error"] { background: var(--red); }
 body.fallback .mic { left: 86px; top: 94px; }
 @keyframes mic-pulse { 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .mic::after { animation: none !important; } }
+/* Calm: no breathing, so hearing you shows as a still halo (waiting shows none). */
+@media (prefers-reduced-motion: reduce) { .mic::after { animation: none !important; } .mic[data-state="active"]::after { opacity: 0.85; } }
 html.calm .mic::after { animation: none !important; }
+html.calm .mic[data-state="active"]::after { opacity: 0.85; }

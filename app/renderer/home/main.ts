@@ -584,6 +584,8 @@ function markCurrent(section: string): void {
     else a.removeAttribute("aria-current");
   }
 }
+// The window opens at the top: the first section is the one you are in.
+markCurrent(sectionOf(jumpLinks[0]));
 // While scrolling: the link of the section at the top is marked.
 let scrollQueued = false;
 window.addEventListener("scroll", () => {
