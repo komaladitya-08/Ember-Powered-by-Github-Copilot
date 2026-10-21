@@ -130,6 +130,8 @@ function desktop(o: {
   shell?: ShellOverlay[] | { overlays: ShellOverlay[]; complete: boolean } | Error; element?: (id: number) => Partial<ElementInfo>;
   /** What the secret scan answers (a function: each time it is asked). */
   scan?: SecretFieldsResult | Error | (() => SecretFieldsResult | Error);
+  /** Every window the sidecar lists (default: only the one read). */
+  listed?: AxWindow[];
 }) {
   const calls: Record<string, unknown>[] = [];
   const scans: unknown[] = [];
@@ -142,7 +144,7 @@ function desktop(o: {
       const a = o.answers?.[Math.min(calls.length, o.answers.length) - 1];
       return { window: o.window, nodes: o.window ? o.nodes ?? [] : [], ms: 1, ...a };
     },
-    listWindows: async () => ({ windows: o.window ? [o.window] : [] }),
+    listWindows: async () => ({ windows: o.listed ?? (o.window ? [o.window] : []) }),
     scaleElements: (ids: number[], k: number) => { scaled.push([ids, k]); },
     markSecret: async (ids: number[]) => { marked.push(ids); },
     readElement: async (id: number) => { rechecked.push(id); return { role: "text", name: "", states: [], bounds: null, ...o.element?.(id) }; },
@@ -314,6 +316,18 @@ describe("reading a named window", () => {
     });
     await lister.windows();
     expect(listed).toEqual([{ ownPid: 999 }]);
+  });
+
+  it("lists every open window, not just the focused one", async () => {
+    const terminal = { ...axWin(42, "Terminal", { x: 0, y: 0, width: 400, height: 300 }), app: "Terminal" };
+    const thunar = { ...axWin(7, "Home", { x: 0, y: 0, width: 400, height: 300 }), app: "Thunar", active: false };
+    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
+    const { perception } = desktop({ window: terminal, nodes: [frame], stack: [], listed: [terminal, thunar] });
+    const text = await perception.describe();
+    expect(text).toContain("Open windows:");
+    expect(text).toContain('"Terminal": "Terminal" (focused by the user)');
+    expect(text).toContain('"Thunar": "Home"');
+    expect(text).toContain('<screen source="open-windows" untrusted="true">');
   });
 });
 

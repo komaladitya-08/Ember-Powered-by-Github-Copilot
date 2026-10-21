@@ -312,17 +312,33 @@ export class Perception {
     }
     // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
     if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    if (seen.ember) return EMBERS_OWN;
+    const open = await this.openWindows();
+    if (seen.ember) return `${EMBERS_OWN}${open}`;
     const title = seen.window?.name || seen.x11Window?.title || "";
     if (!seen.window) {
-      if (seen.busy) return BUSY_APP;
+      if (seen.busy) return `${BUSY_APP}${open}`;
       const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
-      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}`;
+      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${open}`;
     }
     const focus = focusedElement(seen.nodes);
     const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
     const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
-    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}`;
+    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${open}`;
+  }
+
+  /** Every open window (not just the focused one), so the conversation can answer "what apps are open". */
+  private async openWindows(): Promise<string> {
+    let wins: AxWindow[];
+    try {
+      wins = await this.windows();
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+      return "";
+    }
+    if (!wins.length) return "";
+    // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
+    const lines = wins.map(w => `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
+    return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${lines.join("\n")}\n</screen>`;
   }
 
   /**
