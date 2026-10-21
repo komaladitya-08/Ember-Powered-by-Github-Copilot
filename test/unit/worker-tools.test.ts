@@ -12,6 +12,8 @@ import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** The result a worker already ended with (a cancelled guide ends itself, without a finish_task). */
+const resultOf = (w: Worker) => (w as unknown as { result: { success: boolean; stopped?: boolean; summary: string } | null }).result;
 
 function makeWorker(o: {
   blocked?: boolean; busy?: boolean; role?: string; name?: string; states?: () => string[] | null; pointer?: () => { x: number; y: number; mask: number }; mode?: "guide";
@@ -542,11 +544,10 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     const waiting = click.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
     setTimeout(() => { down = true; }, 100);
     expect((await waiting).textResultForLlm).toMatch(/pressed .Cancel/);
-    const closed = await click.call("finish_task", { success: true, summary: "You picked a font." });
-    expect(closed.textResultForLlm).toMatch(/didn't finish/);
-    expect((click.w as unknown as { result: { success: boolean; summary: string } }).result).toEqual({
-      success: false, summary: "The user cancelled. You picked a font.",
-    });
+    // It ends at once as a calm stop: no model turn to say "Switching windows" first, and no failure framing.
+    expect(resultOf(click.w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
+    const again = await click.call("finish_task", { success: true, summary: "You picked a font." });
+    expect(again.textResultForLlm).toMatch(/already finished/);
 
     let gone = false;
     const away = makeWorker({
@@ -558,6 +559,7 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     const left = away.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
     setTimeout(() => { gone = true; }, 100);
     expect((await left).textResultForLlm).toMatch(/closed without this being used/);
+    expect(resultOf(away.w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
   });
 
   it("a click on the search box, while Ember pointed at a row, says so", async () => {
@@ -583,7 +585,7 @@ describe("guide words and highlights (live retest: font chooser)", () => {
 
   it("Cancel in a dialog whose Size field AT-SPI still reports ends the step and clears the highlight", async () => {
     let title = "Font";
-    const { call, flown } = makeWorker({
+    const { w, call, flown } = makeWorker({
       role: "spin button", name: "Size", parentRole: "dialog", mode: "guide",
       live: () => ({ bounds: { x: 80, y: 120, width: 48, height: 22 } }),
       pointer: () => ({ x: 0, y: 0, mask: 0 }),
@@ -594,8 +596,7 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     setTimeout(() => { title = "notes.txt - Mousepad"; }, 80);
     expect((await waiting).textResultForLlm).toMatch(/cancelled|closed this step/i);
     expect(flown.at(-1)).toBeNull();
-    const closed = await call("finish_task", { success: true, summary: "You set the size." });
-    expect(closed.textResultForLlm).toMatch(/didn't finish/);
+    expect(resultOf(w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
   });
 
   it("a field whose box collapses to nothing loses its highlight", async () => {
