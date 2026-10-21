@@ -96,6 +96,19 @@ describe("Confirmer", () => {
     await expect(q2).resolves.toBeNull();
   });
 
+  it("keeps the task beside a step's question, so a question about Enter alone still says what it is for", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(p => shown.push(p), { armMs: 0 });
+    const q = c.ask({
+      title: "May I?", context: "Start a new line in my note, type Butter, and save the file.",
+      prompt: "Borrow your keyboard to press Enter in Mousepad?",
+      options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+    });
+    expect(shown.at(-1)!.bubble?.thought).toBe("Borrow your keyboard to press Enter in Mousepad?\nYour task: Start a new line in my note, type Butter, and save the file.");
+    c.cancelAll();
+    await expect(q).resolves.toBeNull();
+  });
+
   it("ignores clicks in a question's first moments, and the next question waits a beat (no double-click approvals)", async () => {
     let t = 0;
     const shown: Partial<EmberState>[] = [];
