@@ -12,6 +12,7 @@ import { holdKeyboard } from "../../app/main/hands/keybuffer";
 const requireCjs = createRequire(import.meta.url);
 const has = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
 const xvfb = has("Xvfb");
+const xdotool = has("xdotool");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 function xlib() {
@@ -110,6 +111,27 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     expect(a.received()).toBe("x");
   });
 
+  it.skipIf(!xdotool)("buffers the first word when the hotkey grab drops under xdotool", async () => {
+    const grabber = L.XOpenDisplay(display);
+    apps.push(grabber);
+    // What Electron's global shortcut does: a passive grab on Ctrl+Alt+Space, active while the keys are held.
+    const space = Number(L.XKeysymToKeycode(grabber, Number(L.XStringToKeysym("space"))));
+    // XGrabKey returns 1 on success (not GrabSuccess=0 like XGrabKeyboard).
+    expect(L.XGrabKey(grabber, space, 4 | 8, L.XDefaultRootWindow(grabber), 0, 1, 1)).toBe(1);
+    L.XSync(grabber, 0);
+    const child = spawn("xdotool", ["key", "ctrl+alt+space", "type", "hello"], { env: { ...process.env, DISPLAY: display }, stdio: "ignore" });
+    const ev = Buffer.alloc(192);
+    let type = 0;
+    while (type !== 2) { L.XNextEvent(grabber, ev); type = ev.readInt32LE(0); }
+    // The hotkey callback: holdKeyboard() runs while the hotkey's own grab is still active and "hello" is on its way.
+    // It must keep retrying for the whole hold (#22) so the word is buffered, not left in the focused app (#17).
+    const held = holdKeyboard({ display, maxMs: 800 });
+    expect(held).not.toBeNull();
+    await new Promise<void>(resolve => child.once("exit", () => resolve()));
+    await sleep(40);
+    expect(held!.stop()).toMatchObject({ text: "hello", submit: false, cancel: false });
+  });
+
   it("keeps trying for the whole hold when another grab outlasts the first retry window", async () => {
     const a = app();
     const grabber = L.XOpenDisplay(display);
@@ -118,7 +140,8 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     L.XSync(grabber, 0);
     // The hotkey's own grab can stay up while its keys are held: it must not make Ember give up and let the
     // first letters through to the app.
-    const held = holdKeyboard({ display, maxMs: 1200 });
+    const events: string[] = [];
+    const held = holdKeyboard({ display, maxMs: 1200, log: event => events.push(event) });
     expect(held).not.toBeNull();
     await sleep(500);
     expect(held!.holding()).toBe(false);
@@ -127,6 +150,9 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     const start = Date.now();
     while (!held!.holding() && Date.now() - start < 300) await sleep(1);
     expect(held!.holding()).toBe(true);
+    // #17's grab diagnostics survive #22: the status change and the eventual grab are both logged.
+    expect(events).toContain("keys.grab_status");
+    expect(events).toContain("keys.grab");
     a.type("hi");
     await sleep(40);
     expect(a.received()).toBe("");
