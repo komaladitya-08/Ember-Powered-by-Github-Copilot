@@ -139,7 +139,7 @@ export class DeskView {
         // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
         ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa, this.handle()),
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
-        backgroundColor: "#1a0f0b",
+        backgroundColor: "#000000",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
       });
       this.win = win;

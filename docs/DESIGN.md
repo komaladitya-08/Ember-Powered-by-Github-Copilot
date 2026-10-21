@@ -45,12 +45,34 @@ They share one emotion rig, so switching never changes behaviour.
 
 ## Bubble and motion
 
-- **Reasoning bubble** (`packages/bubble`): smoked glass, always dark so it reads over any
-  app; state chip, one-line intent, streaming thought (last three lines), current step
-  with its reason, and buttons when Ember needs a decision.
+- **Reasoning bubble** (`packages/bubble`): dark glass, always dark so it reads over any
+  app; state (a dot and a word), one-line intent, streaming thought (last three lines),
+  current step with its reason, and buttons when Ember needs a decision. While Ember
+  thinks or listens, an ember-coloured glow breathes round its edge.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
+
+## Design system (`app/renderer/shared/ember.css`)
+
+Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
+Guidelines and its current design language (Liquid Glass, macOS 26/27), adapted to a Linux desktop.
+
+- **Type:** Inter (bundled, SIL OFL 1.1) stands in for SF Pro, with optical sizes and Inter's own
+  tracking (tighter as text grows). Sentence case everywhere; no tracked capitals or monospace labels.
+- **Colour:** Apple's dark system palette. The accent is system orange (#FF9230), used for the one
+  main action and for status, never as decoration; text on filled buttons is dark (white on orange
+  fails contrast). Labels are a warm white at 100 / 66 / 52 %. `test/unit/design-system.test.ts`
+  checks the contrast of every pair.
+- **Layers:** windows (settings, desk) are the content layer: opaque grouped sections, rounded-rectangle
+  buttons, switches, pop-up menus. What floats over other apps (bubble, task cards, handle, Ask box,
+  status pill) is glass: a near-opaque body with a sheen, a rim lit from the top left and layered
+  shadows, and capsule buttons. There is no backdrop blur: with software compositing it would cost a
+  core and could not see other apps anyway.
+- **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
+- **Motion:** springs as CSS `linear()` curves; only transform and opacity animate. Calm mode and the
+  desktop's reduced motion stop every endless animation; Increase Contrast and Reduce Transparency
+  have their own fallbacks.
 
 ## Code
 

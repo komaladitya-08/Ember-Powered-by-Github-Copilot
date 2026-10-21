@@ -1,20 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <radialGradient id="body" cx="42%" cy="38%" r="70%">
-      <stop offset="0" stop-color="#5b463e"/><stop offset="0.6" stop-color="#2c201c"/><stop offset="1" stop-color="#171110"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a2c27"/><stop offset="1" stop-color="#130e0d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="60%" r="52%">
+      <stop offset="0" stop-color="#ff8a2a" stop-opacity="0.5"/><stop offset="0.55" stop-color="#ff6a1a" stop-opacity="0.14"/><stop offset="1" stop-color="#ff6a1a" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="eye" cx="50%" cy="45%" r="60%">
-      <stop offset="0" stop-color="#fff7e0"/><stop offset="1" stop-color="#ffd27a"/>
+    <radialGradient id="sheen" cx="50%" cy="0%" r="80%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/><stop offset="0.4" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="0.7" stop-color="#ffffff" stop-opacity="0.04"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.18"/>
+    </linearGradient>
+    <radialGradient id="body" cx="40%" cy="32%" r="74%">
+      <stop offset="0" stop-color="#604a41"/><stop offset="0.58" stop-color="#2c201c"/><stop offset="1" stop-color="#110b0a"/>
+    </radialGradient>
+    <radialGradient id="eye" cx="50%" cy="42%" r="62%">
+      <stop offset="0" stop-color="#fff8e6"/><stop offset="1" stop-color="#ffc861"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff5a1f"/><stop offset="0.55" stop-color="#ff9230"/><stop offset="1" stop-color="#ffd27a"/>
+    </linearGradient>
+    <radialGradient id="mitten" cx="38%" cy="32%" r="72%">
+      <stop offset="0" stop-color="#ffc77a"/><stop offset="0.55" stop-color="#ff9230"/><stop offset="1" stop-color="#d9520e"/>
+    </radialGradient>
+    <clipPath id="tile-clip"><rect x="8" y="8" width="112" height="112" rx="25"/></clipPath>
   </defs>
-  <rect width="128" height="128" rx="28" fill="#1a120e"/>
-  <path d="M52 30c0-10 6-14 6-14s2 8 6 8 4-10 4-10 8 6 6 16z" fill="#ff8a2a"/>
-  <circle cx="64" cy="68" r="38" fill="url(#body)"/>
-  <path d="M46 58l10 14-8 10M80 60l-8 12 10 8M60 92l6-10" stroke="#ff8a2a" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.8"/>
-  <ellipse cx="51" cy="64" rx="7" ry="9" fill="url(#eye)"/>
-  <ellipse cx="77" cy="64" rx="7" ry="9" fill="url(#eye)"/>
-  <circle cx="52" cy="65" r="3" fill="#2a1208"/><circle cx="78" cy="65" r="3" fill="#2a1208"/>
-  <path d="M56 82q8 7 16 0" stroke="#ffb06a" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <circle cx="20" cy="84" r="9" fill="#ff9a3d" stroke="#4a160a" stroke-width="2"/>
-  <circle cx="108" cy="84" r="9" fill="#ff9a3d" stroke="#4a160a" stroke-width="2"/>
+  <!-- The tile: warm graphite, lit from above, its rim catching the light at the top left. -->
+  <rect x="8" y="8" width="112" height="112" rx="25" fill="url(#tile)"/>
+  <g clip-path="url(#tile-clip)">
+    <rect x="8" y="8" width="112" height="112" fill="url(#glow)"/>
+    <rect x="8" y="8" width="112" height="64" fill="url(#sheen)"/>
+  </g>
+  <!-- Cinder: a coal with glowing cracks, ember eyes, a flame tuft and two mittens. -->
+  <g transform="translate(64 72) scale(1.12) translate(-64 -72)">
+  <ellipse cx="64" cy="99" rx="23" ry="3.6" fill="#000000" opacity="0.35"/>
+  <path d="M55.5 44c-1.5-8.5 4-14 4-14s1.2 6.2 4.6 6.2S67 27 67 27s8.6 6.6 6 17z" fill="url(#flame)"/>
+  <circle cx="64" cy="71" r="27" fill="url(#body)"/>
+  <path d="M41.5 69l5.5 7-3.5 6.5M86.5 70l-5 6.5 4.5 5.5M60 95.5l4.5-6.5 3.5 2" stroke="#ff9230" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+  <ellipse cx="54" cy="68" rx="5.2" ry="6.6" fill="url(#eye)"/>
+  <ellipse cx="74" cy="68" rx="5.2" ry="6.6" fill="url(#eye)"/>
+  <circle cx="55" cy="69.2" r="2.3" fill="#2a1208"/><circle cx="75" cy="69.2" r="2.3" fill="#2a1208"/>
+  <circle cx="55.9" cy="68.2" r="0.8" fill="#ffffff"/><circle cx="75.9" cy="68.2" r="0.8" fill="#ffffff"/>
+  <path d="M58.5 82q5.5 4.6 11 0" stroke="#ffb06a" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+  <circle cx="31" cy="82" r="7.5" fill="url(#mitten)" stroke="#4a160a" stroke-width="1.4"/>
+  <circle cx="97" cy="82" r="7.5" fill="url(#mitten)" stroke="#4a160a" stroke-width="1.4"/>
+  </g>
+  <rect x="8.5" y="8.5" width="111" height="111" rx="24.5" fill="none" stroke="url(#rim)" stroke-width="1"/>
 </svg>

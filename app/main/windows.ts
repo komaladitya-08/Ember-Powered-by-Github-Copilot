@@ -12,7 +12,7 @@ export function createHomeWindow(): BrowserWindow {
     minHeight: 420,
     title: "Ember",
     show: false,
-    backgroundColor: "#16100d",
+    backgroundColor: "#121011",
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(appDir, "preload", "home.cjs"),
