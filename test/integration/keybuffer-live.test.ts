@@ -12,7 +12,6 @@ import { holdKeyboard } from "../../app/main/hands/keybuffer";
 const requireCjs = createRequire(import.meta.url);
 const has = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
 const xvfb = has("Xvfb");
-const xdotool = has("xdotool");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 function xlib() {
