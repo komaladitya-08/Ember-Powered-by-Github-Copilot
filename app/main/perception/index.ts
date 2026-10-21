@@ -540,7 +540,7 @@ export class Perception {
     };
   }
 
-  /** Visible windows (app, title, physical bounds), never-look ones (by app, title or X11 class) left out. */
+  /** Visible windows (app, title, physical bounds), never-look and password-prompt ones (by app, title or X11 class) left out. */
   async windows(): Promise<AxWindow[]> {
     const { windows } = await this.o.sidecar.listWindows({ ownPid: this.ownPid });
     const list = this.o.neverLook().filter(i => i.trim());
@@ -548,7 +548,8 @@ export class Perception {
     const privatePids = new Set(list.length && stack ? stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid) : []);
     return windows.flatMap(w => {
       const m = stack && w.bounds ? matchFrame(w, stack) : null;
-      if (isNeverLook(w, list) || (w.pid != null && privatePids.has(w.pid)) || (m && isNeverLook({ app: m.window.wmClass, name: m.window.title }, list))) return [];
+      if (isNeverLook(w, list) || isSecurityWindow(w) || (w.pid != null && privatePids.has(w.pid))
+        || (m && (isNeverLook({ app: m.window.wmClass, name: m.window.title }, list) || isSecurityWindow({ app: m.window.wmClass, title: m.window.title })))) return [];
       const k = w.bounds && stack ? this.frameScale(w, stack, m) : 1;
       return [k !== 1 ? { ...w, bounds: scaleBounds(w.bounds!, k) } : w];
     });

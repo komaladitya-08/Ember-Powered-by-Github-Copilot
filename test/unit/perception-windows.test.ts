@@ -363,6 +363,32 @@ describe("reading a named window", () => {
     expect(text).toContain('<screen source="open-windows" untrusted="true">');
     expect(text).toContain('"Thunar": "Home"');
   });
+
+  it("leaves a background password prompt out of the open-window list, by app name and by X11 class", async () => {
+    const terminal = { ...axWin(42, "Terminal", { x: 0, y: 0, width: 400, height: 300 }), app: "Terminal" };
+    const polkit = { ...axWin(50, "Authentication Required", { x: 0, y: 0, width: 300, height: 200 }), app: "polkit-gnome-authentication-agent-1", active: false };
+    // Its accessibility app is unhelpful; only the X11 class says it asks for a password.
+    const keyring = { ...axWin(51, "Password", { x: 100, y: 100, width: 200, height: 150 }), app: "app", active: false };
+    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
+    const stack = [top(1, 42, { x: 0, y: 0, width: 400, height: 300 }, "Terminal"), top(2, 50, { x: 0, y: 0, width: 300, height: 200 }, "Authentication Required"),
+      { ...top(3, 51, { x: 100, y: 100, width: 200, height: 150 }, "Password"), wmClass: "gcr-prompter" }];
+    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, polkit, keyring] });
+    expect((await perception.windows()).map(w => w.name)).toEqual(["Terminal"]);
+    const text = await perception.describe();
+    expect(text).toContain('"Terminal": "Terminal"');
+    expect(text).not.toContain("Authentication Required");
+    expect(text).not.toContain('"Password"');
+  });
+
+  it("leaves a background never-look window out of the open-window list", async () => {
+    const terminal = { ...axWin(42, "Terminal", { x: 0, y: 0, width: 400, height: 300 }), app: "Terminal" };
+    const vault = { ...axWin(7, "My Vault", { x: 0, y: 0, width: 300, height: 200 }), app: "KeePassXC", active: false };
+    const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Terminal", states: [], bounds: { x: 0, y: 0, width: 400, height: 300 } };
+    const stack = [top(1, 42, { x: 0, y: 0, width: 400, height: 300 }, "Terminal"), top(2, 7, { x: 0, y: 0, width: 300, height: 200 }, "My Vault")];
+    const { perception } = desktop({ window: terminal, nodes: [frame], stack, listed: [terminal, vault], neverLook: ["keepassxc"] });
+    expect((await perception.windows()).map(w => w.name)).toEqual(["Terminal"]);
+    expect(await perception.describe()).not.toContain("My Vault");
+  });
 });
 
 describe("window screenshots", () => {
