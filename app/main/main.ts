@@ -645,12 +645,13 @@ function start(): void {
     if (!consented()) { showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
+    // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
+    // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 round
+    // trips can outlast the hotkey's own grab, and by then xdotool has already typed the first word into the app.
+    const held = look ? holdKeyboard({ log: (event, fields) => log.info(event, fields) }) : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
-    // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
-    // keyboard meanwhile and hands what was typed to the box.
-    const held = look ? holdKeyboard() : null;
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.

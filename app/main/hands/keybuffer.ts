@@ -18,6 +18,12 @@ export const GRAB_TRY_MS = 400;
 /** How long holdKeyboard() itself waits for the hotkey grab to drop, so the first letter is not already in the app. */
 export const GRAB_SPIN_MS = 50;
 
+/** XGrabKeyboard's return values, for the log (a grab that fails silently leaves every letter in the user's app). */
+export const GRAB_STATUS = ["GrabSuccess", "AlreadyGrabbed", "GrabInvalidTime", "GrabNotViewable", "GrabFrozen"] as const;
+export function grabStatusName(status: number): string {
+  return (GRAB_STATUS as readonly string[])[status] ?? `GrabError(${status})`;
+}
+
 const requireCjs = createRequire(__filename);
 
 /** What was typed while Ember held the keyboard: the text, and whether it ended with Enter (send) or Esc (close). */
@@ -55,7 +61,7 @@ export interface KeyBuffer {
 }
 
 /** Starts holding the keyboard (null where there is no X display or libX11). */
-export function holdKeyboard(o: { display?: string; maxMs?: number } = {}): KeyBuffer | null {
+export function holdKeyboard(o: { display?: string; maxMs?: number; log?: (event: string, fields: Record<string, unknown>) => void } = {}): KeyBuffer | null {
   let x: ReturnType<typeof bind>;
   try {
     x = bind();
@@ -72,19 +78,36 @@ export function holdKeyboard(o: { display?: string; maxMs?: number } = {}): KeyB
   const ev = Buffer.alloc(192);
   const keysym = [0];
   const chars = Buffer.alloc(16);
-  /** GrabModeAsync for pointer and keyboard; CurrentTime. 0: GrabSuccess. Never Sync: ungrab would replay into the app. */
-  const tryGrab = () => x.XGrabKeyboard(dpy, root, 0, 1, 1, 0) === 0;
+  let attempts = 0;
+  let lastStatus = -1;
+  /** GrabModeAsync for pointer and keyboard; CurrentTime. Never Sync: ungrab would replay into the app. */
+  const tryGrab = () => {
+    const status = x.XGrabKeyboard(dpy, root, 0, 1, 1, 0);
+    attempts++;
+    if (status === 0) {
+      if (!grabbed) o.log?.("keys.grab", { status: grabStatusName(status), attempts, ms: Date.now() - t0 });
+      grabbed = true;
+    } else if (status !== lastStatus) {
+      // AlreadyGrabbed is expected while the hotkey's own grab still has the keyboard: log each change, not every try.
+      o.log?.("keys.grab_status", { status: grabStatusName(status), attempts, ms: Date.now() - t0 });
+    }
+    lastStatus = status;
+    return status === 0;
+  };
   while (!grabbed && Date.now() - t0 < GRAB_SPIN_MS) {
-    if (tryGrab()) grabbed = true;
-    else x.XFlush(dpy);
+    if (tryGrab()) break;
+    x.XFlush(dpy);
   }
   if (grabbed) drain();
   const poll = setInterval(() => {
     if (done) return;
     try {
       if (!grabbed) {
-        if (tryGrab()) grabbed = true;
-        else if (Date.now() - t0 > GRAB_TRY_MS) { finish(); return; }
+        if (!tryGrab() && Date.now() - t0 > GRAB_TRY_MS) {
+          o.log?.("keys.grab_failed", { status: grabStatusName(lastStatus), attempts, ms: Date.now() - t0 });
+          finish();
+          return;
+        }
       }
       if (grabbed) drain();
     } catch {

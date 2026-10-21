@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { GRAB_SPIN_MS, HOLD_MAX_MS, keysymText, typedKey, type Typed } from "../../app/main/hands/keybuffer";
+import { GRAB_SPIN_MS, HOLD_MAX_MS, grabStatusName, keysymText, typedKey, type Typed } from "../../app/main/hands/keybuffer";
 
 const empty = (): Typed => ({ text: "", submit: false, cancel: false });
 const press = (keysym: number, text = "", state = 0) => typedKey(empty(), { keysym, text, state });
@@ -43,5 +43,11 @@ describe("what was typed while Ember held the keyboard", () => {
     expect(HOLD_MAX_MS).toBe(1500);
     expect(GRAB_SPIN_MS).toBeGreaterThan(0);
     expect(GRAB_SPIN_MS).toBeLessThan(HOLD_MAX_MS);
+  });
+
+  it("names a failed grab instead of hiding its status", () => {
+    expect(grabStatusName(0)).toBe("GrabSuccess");
+    expect(grabStatusName(1)).toBe("AlreadyGrabbed");
+    expect(grabStatusName(99)).toBe("GrabError(99)");
   });
 });
