@@ -1,7 +1,10 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
 import { Confirmer, guardWhileAsking } from "../../app/main/agent/confirm";
-import { findApp, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
+import { findApp, listApps, parseDesktopFile, type DesktopApp } from "../../app/main/hands/system";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import type { TaskCard, EmberState } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
@@ -163,7 +166,7 @@ describe("Confirmer", () => {
 describe("apps", () => {
   it("parses visible applications from .desktop files", () => {
     const text = "[Desktop Entry]\nType=Application\nName=Text Editor\nGenericName=Text Editor\nKeywords=notepad;gedit;\nExec=gedit %U\n[Desktop Action new]\nName=New Window\n";
-    expect(parseDesktopFile(text)).toEqual({ name: "Text Editor", keywords: ["text editor", "notepad", "gedit"], visible: true, exec: "gedit %U" });
+    expect(parseDesktopFile(text)).toEqual({ name: "Text Editor", keywords: ["text editor", "notepad", "gedit"], visible: true, exec: "gedit %U", generic: "text editor" });
     expect(parseDesktopFile("[Desktop Entry]\nType=Application\nName=X\nNoDisplay=true\n")?.visible).toBe(false);
     expect(parseDesktopFile("[Desktop Entry]\nType=Link\nName=X\n")).toBeNull();
   });
@@ -180,12 +183,84 @@ describe("apps", () => {
   });
   it("picks the file manager, not a file helper listed before it (live: Thunar vs Bulk Rename)", () => {
     const apps: DesktopApp[] = [
-      { id: "thunar-bulk-rename", name: "Bulk Rename", file: "", keywords: ["bulk rename", "bulk", "renamer", "files", "folders"], categories: ["Utility", "Core", "GTK", "Filesystem"] },
-      { id: "thunar", name: "Thunar", file: "", keywords: ["file manager", "file", "manager", "files", "folder"], categories: ["System", "FileTools", "FileManager", "Utility"] },
+      { id: "thunar-bulk-rename", name: "Bulk Rename", file: "", generic: "bulk rename", keywords: ["bulk rename", "bulk", "renamer", "files", "folders"], categories: ["Utility", "Core", "GTK", "Filesystem"] },
+      { id: "thunar", name: "Thunar", file: "", generic: "file manager", keywords: ["file manager", "file", "manager", "files", "folder"], categories: ["System", "FileTools", "FileManager", "Utility"] },
     ];
     expect(findApp(apps, "file manager")?.id).toBe("thunar");
     expect(findApp(apps, "files")?.id).toBe("thunar");
     expect(findApp(apps, "bulk rename")?.id).toBe("thunar-bulk-rename");
+  });
+  it("reaches an app's name and GenericName even when other apps' ids hold the query (live: XFCE settings dialogs)", () => {
+    // The real XFCE 4.20 files, cut to the keys findApp reads, read back through listApps as on the desk.
+    const files: Record<string, string> = {
+      "org.xfce.mousepad": "Name=Mousepad\nGenericName=Text Editor\nCategories=Utility;TextEditor;GTK;",
+      "org.xfce.mousepad-settings": "Name=Text Editor Settings\nCategories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;",
+      "thunar": "Name=Thunar File Manager\nGenericName=File Manager\nKeywords=file manager;explorer;finder;browser;folders;directory;\nCategories=System;Core;GTK;FileTools;FileManager;",
+      "thunar-bulk-rename": "Name=Bulk Rename\nGenericName=Bulk Rename\nKeywords=bulk;renamer;renaming;thunar;files;folders;\nCategories=Utility;Core;GTK;Filesystem;",
+      "thunar-settings": "Name=File Manager Settings\nKeywords=thunar;settings;preferences;configure;thumbnails;\nCategories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;",
+      "xfce4-mime-settings": "Name=Default Applications\nKeywords=file;type;extension;association;open with;file manager;\nCategories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;",
+      "xfce4-mouse-settings": "Name=Mouse and Touchpad\nKeywords=settings;buttons;scroll;direction;pointer;\nCategories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;",
+      "xfce4-settings-editor": "Name=Settings Editor\nKeywords=registry;regedit;configuration file;\nCategories=XFCE;GTK;Settings;DesktopSettings;X-XFCE-SettingsDialog;",
+      "xfce4-settings-manager": "Name=Settings Manager\nKeywords=control;panel;center;system;settings;personalize;hardware;\nCategories=X-XFCE;Settings;DesktopSettings;",
+    };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-apps-"));
+    try {
+      fs.mkdirSync(path.join(root, "applications"));
+      for (const [id, keys] of Object.entries(files)) fs.writeFileSync(path.join(root, "applications", `${id}.desktop`), `[Desktop Entry]\nType=Application\n${keys}\n`);
+      const apps = listApps({ XDG_DATA_HOME: path.join(root, "none"), XDG_DATA_DIRS: root });
+      expect(apps.find(a => a.id === "thunar")?.generic).toBe("file manager");
+      // Either order: XFCE 4.18's ids list Settings Manager before Settings Editor, 4.20's after.
+      for (const list of [apps, [...apps].reverse()]) {
+        expect(findApp(list, "Settings")?.id).toBe("xfce4-settings-manager");
+        expect(findApp(list, "Mouse")?.id).toBe("xfce4-mouse-settings");
+        // Default Applications has no GenericName: its first keyword "file" isn't one.
+        expect(findApp(list, "Files")?.id).toBe("thunar");
+        expect(findApp(list, "Text Editor")?.id).toBe("org.xfce.mousepad");
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("finds camelCase names asked for in lower case (gThumb, PulseAudio, LibreOffice)", () => {
+    const apps: DesktopApp[] = [
+      { id: "libreoffice-calc", name: "LibreOffice Calc", file: "", generic: "spreadsheet", keywords: ["spreadsheet", "accounting", "stats"] },
+      { id: "libreoffice-startcenter", name: "LibreOffice", file: "", generic: "office", keywords: ["office", "suite"] },
+      { id: "libreoffice-writer", name: "LibreOffice Writer", file: "", generic: "word processor", keywords: ["word processor", "text", "letter"] },
+      { id: "org.gnome.gThumb", name: "gThumb", file: "", generic: "image viewer", keywords: ["image viewer", "picture", "photo"] },
+      { id: "pavucontrol", name: "PulseAudio Volume Control", file: "", generic: "volume control", keywords: ["volume control", "pavucontrol", "microphone", "mixer"] },
+    ];
+    expect(findApp(apps, "gthumb")?.id).toBe("org.gnome.gThumb");
+    expect(findApp(apps, "GThumb")?.id).toBe("org.gnome.gThumb");
+    expect(findApp(apps, "pulseaudio")?.id).toBe("pavucontrol");
+    expect(findApp(apps, "libreoffice")?.id).toBe("libreoffice-startcenter");
+    expect(findApp(apps, "libreoffice writer")?.id).toBe("libreoffice-writer");
+    expect(findApp(apps, "spreadsheet")?.id).toBe("libreoffice-calc");
+  });
+  it("ranks an app's name above another app's reverse-DNS id ending (live: Desktop vs Flathub's org.telegram.desktop)", () => {
+    const apps: DesktopApp[] = [
+      { id: "org.telegram.desktop", name: "Telegram Desktop", file: "", keywords: ["tg", "chat", "im", "messaging", "messenger", "sms", "tdesktop"] },
+      { id: "xfce-backdrop-settings", name: "Desktop", file: "", keywords: [], categories: ["XFCE", "GTK", "Settings", "DesktopSettings"] },
+    ];
+    expect(findApp(apps, "Desktop")?.id).toBe("xfce-backdrop-settings");
+    expect(findApp(apps, "telegram")?.id).toBe("org.telegram.desktop");
+  });
+  it("doesn't match a query across the gap between two name words (tv is not in Document Viewer)", () => {
+    const apps: DesktopApp[] = [
+      { id: "org.gnome.Evince", name: "Document Viewer", file: "", keywords: ["pdf", "ps", "document", "viewer", "evince"] },
+      { id: "org.gnome.Totem", name: "Videos", file: "", keywords: ["video", "movie", "film", "clip", "series", "player", "dvd", "tv", "disc"] },
+    ];
+    expect(findApp(apps, "tv")?.id).toBe("org.gnome.Totem");
+  });
+  it("doesn't hand a tie to an app Ember won't start (live: Vim's Text Editor vs Mousepad 0.6.1)", () => {
+    const apps: DesktopApp[] = [
+      { id: "org.xfce.mousepad", name: "Mousepad", file: "", generic: "text editor", keywords: ["text editor"], exec: "mousepad %U", categories: ["Utility", "TextEditor", "GTK"] },
+      { id: "vim", name: "Vim", file: "", generic: "text editor", keywords: ["text editor", "text", "editor"], exec: "vim %F", terminal: true, categories: ["Utility", "TextEditor"] },
+    ];
+    for (const list of [apps, [...apps].reverse()]) {
+      expect(findApp(list, "editor")?.id).toBe("org.xfce.mousepad");
+      expect(findApp(list, "text")?.id).toBe("org.xfce.mousepad");
+      expect(findApp(list, "vim")?.id).toBe("vim");
+    }
   });
 });
 
