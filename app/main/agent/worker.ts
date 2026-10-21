@@ -1056,10 +1056,15 @@ export class Worker {
     ];
   }
 
+  /** What the user stopping says: a guide has no actions of its own, so stopping it cancelled the guide. */
+  private stoppedSummary(): string {
+    return this.spec.mode === "guide" ? "The guide was cancelled." : "Stopped.";
+  }
+
   async run(signal: AbortSignal): Promise<WorkerResult> {
     const d = this.d;
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
-    if (signal.aborted) return { success: false, summary: "Stopped.", stopped: true };
+    if (signal.aborted) return { success: false, summary: this.stoppedSummary(), stopped: true };
     // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
     if (!d.model && !d.runtimeDefault) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
     const onAbort = () => this.stopNow(null);
@@ -1157,7 +1162,7 @@ export class Worker {
       d.flyTo(null);
       if (this.place) d.onDesk?.(null, this.place);
     }
-    if (this.halted && this.haltReason === null) return { success: false, summary: "Stopped.", stopped: true };
+    if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
