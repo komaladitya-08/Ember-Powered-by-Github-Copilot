@@ -10,20 +10,36 @@ import { shapeRects } from "./follow";
 
 const requireCjs = createRequire(__filename);
 
+// The overlay reports new rectangles every frame while Ember flies, so libX11 is bound once and a display stays
+// open until closeInputShape(): binding and opening one per call blocked the main thread about a millisecond each
+// time. One connection per display name (a test passes its own Xvfb); "" is $DISPLAY. null: koffi, libX11 or
+// libXext is missing, and won't appear later.
+let lib: ReturnType<typeof bind> | null | undefined;
+const open = new Map<string, unknown>();
+
 /**
  * Sets X window `xid`'s ShapeInput to `rects` (DIP, scaled to pixels). An empty list makes the
  * window let every click through. False when there is no X display or libXext.
  */
 export function setInputShape(xid: number, rects: readonly Rect[], scale = 1, display?: string): boolean {
   if (!xid) return false;
-  let x: ReturnType<typeof bind>;
-  try {
-    x = bind();
-  } catch {
-    return false;
+  if (lib === undefined) {
+    try {
+      lib = bind();
+    } catch {
+      lib = null;
+    }
   }
-  const dpy = x.XOpenDisplay(display ?? null);
-  if (!dpy) return false;
+  const x = lib;
+  if (!x) return false;
+  const key = display ?? "";
+  let dpy = open.get(key);
+  if (!dpy) {
+    // Only an open display is kept: one that isn't there now is tried again next time.
+    dpy = x.XOpenDisplay(display ?? null);
+    if (!dpy) return false;
+    open.set(key, dpy);
+  }
   try {
     const pixels = shapeRects(rects, scale);
     if (!pixels.length) {
@@ -41,13 +57,19 @@ export function setInputShape(xid: number, rects: readonly Rect[], scale = 1, di
       }
       x.XShapeCombineRectangles(dpy, xid, 2, 0, 0, buf, pixels.length, 0, 0);
     }
-    x.XFlush(dpy);
+    // A round trip, not just a flush: the shape is in place when this returns (as closing the display used to
+    // ensure), so a press right after it lands on the new region. About 20 µs on a local server.
+    x.XSync(dpy, 0);
     return true;
   } catch {
     return false;
-  } finally {
-    x.XCloseDisplay(dpy);
   }
+}
+
+/** Closes the displays setInputShape keeps open (the overlay stopping, Ember quitting); the next call opens one again. */
+export function closeInputShape(): void {
+  for (const dpy of open.values()) lib?.XCloseDisplay(dpy);
+  open.clear();
 }
 
 function bind() {
@@ -57,7 +79,7 @@ function bind() {
   return {
     XOpenDisplay: x11.func("void *XOpenDisplay(const char *name)"),
     XCloseDisplay: x11.func("int XCloseDisplay(void *dpy)"),
-    XFlush: x11.func("int XFlush(void *dpy)"),
+    XSync: x11.func("int XSync(void *dpy, int discard)"),
     XShapeCombineRectangles: xext.func("void XShapeCombineRectangles(void *dpy, unsigned long dest, int kind, int xOff, int yOff, void *rects, int n, int op, int ordering)"),
   };
 }

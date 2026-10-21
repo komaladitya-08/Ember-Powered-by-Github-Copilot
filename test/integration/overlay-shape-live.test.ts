@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { setInputShape } from "../../app/main/xshape";
+import { closeInputShape, setInputShape } from "../../app/main/xshape";
 
 const requireCjs = createRequire(import.meta.url);
 const has = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
@@ -47,6 +47,8 @@ describe.skipIf(!xvfb)("overlay input shape on a real X server", () => {
     L = xlib();
   });
   afterAll(() => {
+    // Before the server goes: closing a display whose server is gone is an X I/O error (Xlib exits the process).
+    closeInputShape();
     for (const d of apps) L.XCloseDisplay(d);
     server?.kill();
   });
@@ -92,6 +94,21 @@ describe.skipIf(!xvfb)("overlay input shape on a real X server", () => {
     expect(overlay.clicks()).toBe(1);
     expect(beneath.clicks()).toBe(0);
     clickAt(20, 20);
+    expect(overlay.clicks()).toBe(0);
+    expect(beneath.clicks()).toBe(1);
+  });
+
+  it("each new shape replaces the last at once, over the display kept open (Ember flying moves the rectangles every frame)", () => {
+    const beneath = win({ x: 0, y: 0, w: 400, h: 300 });
+    const overlay = win({ x: 0, y: 0, w: 400, h: 300, override: true });
+    for (let i = 0; i < 20; i++) expect(setInputShape(overlay.id, [{ x: 100 + i * 10, y: 100, width: 60, height: 24 }], 1, display)).toBe(true);
+    beneath.clicks();
+    overlay.clicks();
+    // The last rectangle is 290..350: a press there hits the overlay, one where the first was goes beneath.
+    clickAt(320, 110);
+    expect(overlay.clicks()).toBe(1);
+    expect(beneath.clicks()).toBe(0);
+    clickAt(120, 110);
     expect(overlay.clicks()).toBe(0);
     expect(beneath.clicks()).toBe(1);
   });
