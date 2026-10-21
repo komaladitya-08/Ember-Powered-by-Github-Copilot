@@ -1218,6 +1218,31 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("a task keeps the terminal the user named instead of doing it in another app", async () => {
+    const { host, specs, session, tool } = await withTasks();
+    sim.holdTurns = true;
+    await host.ask("open the terminal and create a file called notes.txt", mail);
+    session.nextTurn();
+    // The conductor rewrote the method away: Ember refuses rather than opening a file manager.
+    expect(await tool("start_task")({ goal: "Create notes.txt in the Files app" })).toMatch(/terminal.*another app/is);
+    expect(specs).toHaveLength(0);
+    // A goal that keeps the user's method goes ahead; the worker refuses to act in the terminal itself.
+    expect(await tool("start_task")({ goal: "Open the terminal and create notes.txt" })).toMatch(/started/);
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0].userWords).toBe("open the terminal and create a file called notes.txt");
+    await host.stop();
+  });
+
+  it("mentioning the terminal's text size isn't a request to use the terminal", async () => {
+    const { host, specs, session, tool } = await withTasks();
+    sim.holdTurns = true;
+    await host.ask("make my terminal text bigger", mail);
+    session.nextTurn();
+    expect(await tool("start_task")({ goal: "Make the text a bit bigger" })).toMatch(/started/);
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    await host.stop();
+  });
+
   it("Stop drops the requests waiting behind the turn; a message the user didn't send takes no request's context; a restart starts clean", async () => {
     const { host, specs, session, tool } = await withTasks();
     sim.holdTurns = true;

@@ -26,6 +26,10 @@ import type { AtspiSidecar, Bounds } from "../perception/sidecar";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 
+/** Did the user name the terminal (or a shell) as the way to do this? */
+const ASKS_TERMINAL = /\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\b[^.!?\n]{0,40}\b(?:terminal|shell|command[- ]line|command prompt|console)\b|\b(?:in|from|via|using|with|through)\s+(?:the\s+|a\s+)?(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
+const NAMES_TERMINAL = /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
+
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
   perception: Perception;
@@ -806,6 +810,9 @@ export class AgentHost {
           // it goes with this task.
           const r = this.turn;
           const said = this.userWordsOf(r);
+          // The method the user named is part of the task: never let a goal turn "in the terminal" into another app.
+          if (said.words && ASKS_TERMINAL.test(said.words) && !NAMES_TERMINAL.test(goal))
+            return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
           const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
