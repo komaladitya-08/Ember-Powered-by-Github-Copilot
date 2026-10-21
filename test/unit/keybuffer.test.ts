@@ -22,9 +22,12 @@ describe("what was typed while Ember held the keyboard", () => {
     expect(typedKey(empty(), { keysym: 0xff1b, text: "", state: 0 }).cancel).toBe(true);
   });
 
-  it("Ctrl, Alt or Super held types nothing (the hotkey's own keys too)", () => {
-    expect(press(0x61, "a", 4).text).toBe("");
-    expect(press(0x61, "a", 8).text).toBe("");
+  it("a letter typed while the hotkey's Ctrl/Alt are still held is kept; Space and Super shortcuts are not", () => {
+    // The first letter often comes before the user has let go of Ctrl+Alt. It is their letter, not ^C.
+    expect(press(0x63, "c", 4).text).toBe("c");
+    expect(press(0x63, "c", 8).text).toBe("c");
+    expect(press(0x63, "c", 4 | 8).text).toBe("c");
+    expect(press(0x20, " ", 4 | 8).text).toBe("");
     expect(press(0x61, "a", 64).text).toBe("");
     expect(press(0x61, "a", 0).text).toBe("a");
   });

@@ -605,10 +605,14 @@ function start(): void {
   const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
 
   // ───── Copilot brain ─────
+  /** The X window of the ask box as last given the keyboard (0: not yet). */
+  let askXid = 0;
   const askWindow = new AskWindow({
     keepOff: () => handle?.bounds ?? null,
     // As the handle's menu takes the keyboard: the window manager is asked, and X is told too.
-    takeFocus: xid => { xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
+    takeFocus: xid => { askXid = xid; xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
+    // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees.
+    hasFocus: (): boolean => !x11Ref || (askXid !== 0 && x11Ref.focusWindow()?.id === askXid),
     onReveal: source => log.info("ask.reveal", { source }),
   });
   let agent: AgentHost | null = null;
@@ -647,9 +651,9 @@ function start(): void {
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { askWindow.focus(); return; }
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
-    // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 round
-    // trips can outlast the hotkey's own grab, and by then xdotool has already typed the first word into the app.
-    const held = look ? holdKeyboard({ log: (event, fields) => log.info(event, fields) }) : null;
+    // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
+    // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
+    const held = look ? holdKeyboard() : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();

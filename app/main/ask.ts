@@ -71,10 +71,11 @@ export class AskWindow {
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives X window
    * `xid` the keyboard (a window manager that prevents focus stealing would leave it with the app the user is in,
-   * and their first letters would go there). `onReveal`: every time the box is actually shown (the only path that
-   * maps it): live unprompted opens that bypassed `openAsk` show up here.
+   * and their first letters would go there). `hasFocus`: whether X itself says the box has the keyboard now (Electron
+   * can report focus before the window manager has moved it). `onReveal`: every time the box is actually shown (the
+   * only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
    */
-  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void; onReveal?: (source: string) => void } = {}) {}
+  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void } = {}) {}
 
   /** Makes the box ahead of time (hidden), so the first Ctrl+Alt+Space opens it at once. */
   prepare(): void {
@@ -190,7 +191,7 @@ export class AskWindow {
     return new Promise(resolve => {
       const t0 = Date.now();
       const check = () => {
-        const ok = !win.isDestroyed() && win.isVisible() && win.isFocused() && this.loaded;
+        const ok = !win.isDestroyed() && win.isVisible() && win.isFocused() && this.loaded && (this.o.hasFocus?.() ?? true);
         if (ok || win.isDestroyed() || Date.now() - t0 > ms) { clearInterval(timer); resolve(ok); }
       };
       const timer = setInterval(check, 10);

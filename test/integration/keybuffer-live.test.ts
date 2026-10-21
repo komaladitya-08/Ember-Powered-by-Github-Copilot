@@ -111,26 +111,27 @@ describe.skipIf(!xvfb)("holding the keyboard on a real X server", () => {
     expect(a.received()).toBe("x");
   });
 
-  it.skipIf(!xdotool)("buffers the first word when the hotkey grab drops under xdotool", async () => {
+  it("keeps trying for the whole hold when another grab outlasts the first retry window", async () => {
+    const a = app();
     const grabber = L.XOpenDisplay(display);
-    try {
-      // What Electron's global shortcut does: a passive grab on Ctrl+Alt+Space, which is active while the keys are held.
-      const space = Number(L.XKeysymToKeycode(grabber, Number(L.XStringToKeysym("space"))));
-      L.XGrabKey(grabber, space, 4 | 8, L.XDefaultRootWindow(grabber), 0, 1, 1);
-      L.XSync(grabber, 0);
-      const child = spawn("xdotool", ["key", "ctrl+alt+space", "type", "hello"], { env: { ...process.env, DISPLAY: display }, stdio: "ignore" });
-      const ev = Buffer.alloc(192);
-      let type = 0;
-      while (type !== 2) { L.XNextEvent(grabber, ev); type = ev.readInt32LE(0); }
-      // The hotkey callback: holdKeyboard() runs while the hotkey's own grab is still active and "hello" is on its way.
-      const held = holdKeyboard({ display, maxMs: 800 });
-      expect(held).not.toBeNull();
-      await new Promise<void>(resolve => child.once("exit", () => resolve()));
-      await sleep(40);
-      expect(held!.stop()).toMatchObject({ text: "hello", submit: false, cancel: false });
-    } finally {
-      L.XCloseDisplay(grabber);
-    }
+    apps.push(grabber);
+    expect(L.XGrabKeyboard(grabber, L.XDefaultRootWindow(grabber), 0, 1, 1, 0)).toBe(0);
+    L.XSync(grabber, 0);
+    // The hotkey's own grab can stay up while its keys are held: it must not make Ember give up and let the
+    // first letters through to the app.
+    const held = holdKeyboard({ display, maxMs: 1200 });
+    expect(held).not.toBeNull();
+    await sleep(500);
+    expect(held!.holding()).toBe(false);
+    L.XUngrabKeyboard(grabber, 0);
+    L.XSync(grabber, 0);
+    const start = Date.now();
+    while (!held!.holding() && Date.now() - start < 300) await sleep(1);
+    expect(held!.holding()).toBe(true);
+    a.type("hi");
+    await sleep(40);
+    expect(a.received()).toBe("");
+    expect(held!.stop().text).toBe("hi");
   });
 
   it("grabs as soon as another client's hotkey-style grab drops (no 5 ms wait)", async () => {

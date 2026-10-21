@@ -97,6 +97,22 @@ describe("the ask box", () => {
     expect(sent.filter(x => Array.isArray(x) && x[0] === "agent:ask-typed")).toHaveLength(1);
   });
 
+  it("waits for X focus, not just Electron's, before it counts as having the keyboard", async () => {
+    vi.useFakeTimers();
+    let ours = false;
+    const ask = new AskWindow({ hasFocus: () => ours });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    ask.show({ x: 400, y: 300 });
+    const ready = ask.hasKeyboard(200);
+    await vi.advanceTimersByTimeAsync(30);
+    // Electron says focused (the window is visible), but X still has the user's app: keep holding the keys.
+    ours = true;
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(ready).resolves.toBe(true);
+  });
+
   it("hiding the box takes the pointer off it (a leftover mapped window would steal a click into the app)", () => {
     const revealed: string[] = [];
     const ask = new AskWindow({ onReveal: s => revealed.push(s) });

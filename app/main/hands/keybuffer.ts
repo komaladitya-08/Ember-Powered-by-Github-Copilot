@@ -5,16 +5,15 @@
  * has the keyboard. The grab never outlives HOLD_MAX_MS, whatever happens.
  *
  * The grab is taken on this connection before holdKeyboard() returns (a short spin: the hotkey's own grab holds the
- * keyboard until Space is released). XTEST/xdotool keys are real device events: once the grab is up they come here,
- * not to Mousepad. GrabModeAsync, so giving the keyboard back does not replay what was held into the focused app.
+ * keyboard until Space is released), and tried again for the whole hold if another grab still has it. XTEST/xdotool
+ * keys are real device events: once the grab is up they come here, not to Mousepad. GrabModeAsync, so giving the
+ * keyboard back does not replay what was held into the focused app.
  */
 
 import { createRequire } from "node:module";
 
 /** Longest Ember holds the keyboard. */
 export const HOLD_MAX_MS = 1500;
-/** How long it tries to take the keyboard after the first spin (the hotkey's own grab holds it until its key is released). */
-export const GRAB_TRY_MS = 400;
 /** How long holdKeyboard() itself waits for the hotkey grab to drop, so the first letter is not already in the app. */
 export const GRAB_SPIN_MS = 50;
 
@@ -33,16 +32,26 @@ export interface Typed { text: string; submit: boolean; cancel: boolean }
 export interface KeyPress { keysym: number; text: string; state: number }
 
 const CONTROL = 4, MOD1 = 8, MOD4 = 64;
-const BACKSPACE = 0xff08, RETURN = 0xff0d, KP_ENTER = 0xff8d, ESCAPE = 0xff1b;
+const BACKSPACE = 0xff08, RETURN = 0xff0d, KP_ENTER = 0xff8d, ESCAPE = 0xff1b, SPACE = 0x20;
 
-/** One key into what was typed. Shortcuts (Ctrl, Alt, Super held: the hotkey's own keys too) type nothing. */
+/** Whether `text` is something a person meant to type (a printable character, not a control code). */
+const printable = (text: string): string =>
+  text && [...text].every(c => { const n = c.codePointAt(0) ?? 0; return n >= 32 && n !== 127; }) ? text : "";
+
+/**
+ * One key into what was typed. A letter typed before the hotkey's Ctrl/Alt are let go still counts: that is the
+ * user's first letter, and dropping it (or leaving it in the app) is what the grab is here to prevent. Space is the
+ * hotkey itself, and Super combinations are shortcuts, so those type nothing.
+ */
 export function typedKey(t: Typed, k: KeyPress): Typed {
   if (t.submit || t.cancel) return t;
   if (k.keysym === ESCAPE) return { ...t, cancel: true };
   if (k.keysym === RETURN || k.keysym === KP_ENTER) return { ...t, submit: t.text.trim().length > 0 };
-  if (k.state & (CONTROL | MOD1 | MOD4)) return t;
+  if (k.state & MOD4) return t;
   if (k.keysym === BACKSPACE) return { ...t, text: [...t.text].slice(0, -1).join("") };
-  return k.text && [...k.text].every(c => { const n = c.codePointAt(0) ?? 0; return n >= 32 && n !== 127; }) ? { ...t, text: t.text + k.text } : t;
+  const text = printable(k.text);
+  if ((k.state & (CONTROL | MOD1)) && (k.keysym === SPACE || !text)) return t;
+  return text ? { ...t, text: t.text + text } : t;
 }
 
 /** The text a keysym types: Latin-1 keysyms are their own code, Unicode ones are 0x1000000 + the code point. */
@@ -102,13 +111,7 @@ export function holdKeyboard(o: { display?: string; maxMs?: number; log?: (event
   const poll = setInterval(() => {
     if (done) return;
     try {
-      if (!grabbed) {
-        if (!tryGrab() && Date.now() - t0 > GRAB_TRY_MS) {
-          o.log?.("keys.grab_failed", { status: grabStatusName(lastStatus), attempts, ms: Date.now() - t0 });
-          finish();
-          return;
-        }
-      }
+      if (!grabbed && tryGrab()) grabbed = true;
       if (grabbed) drain();
     } catch {
       finish();
