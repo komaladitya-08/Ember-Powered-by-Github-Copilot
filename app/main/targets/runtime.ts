@@ -289,10 +289,12 @@ export function productionParts(deps: TargetsDeps): TargetsParts {
 /** What main hands the runtime beyond TargetsDeps (an extension of the contract; optional, so tests may leave it out). */
 export interface TargetsDepsExtra {
   /**
-   * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, its screen locked,
-   * or its connection dropped or closed (§5.3.4, §5.3.9, §5.1.11); the runtime's bubble says which.
+   * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, or its connection
+   * dropped or closed (§5.3.9, §5.1.11); with `only: "desktop"`, only the running tasks that used its desktop: its screen
+   * locked or its session went inactive (§5.3.4 step 8), and a task running only commands there goes on. The runtime's
+   * bubble says which.
    */
-  stopTasksOn?(target: TargetId): void;
+  stopTasksOn?(target: TargetId, only?: "desktop"): void;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -540,9 +542,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!c) { c = { state: "closed", link: null, target: null, abort: null, offs: [], activate: false }; conns.set(hostId, c); }
     return c;
   };
-  /** The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on. */
-  const stopTasks = (hostId: string) => {
-    try { deps.stopTasksOn?.(targetIdOf("ssh", hostId)); } catch (err) { log.warn("targets.stop_tasks_failed", { err }); }
+  /** The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on; `only`: those on its desktop. */
+  const stopTasks = (hostId: string, only?: "desktop") => {
+    try {
+      if (only) deps.stopTasksOn?.(targetIdOf("ssh", hostId), only);
+      else deps.stopTasksOn?.(targetIdOf("ssh", hostId));
+    } catch (err) {
+      log.warn("targets.stop_tasks_failed", { err });
+    }
   };
   const dropTarget = (c: Conn) => {
     for (const off of c.offs.splice(0)) { try { off(); } catch { /* the link is gone */ } }
@@ -566,10 +573,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     try {
       target = createRemoteTarget({
         host, link, log: log.child(`ssh-${hostId}`), settings, admin, window: commandWindow, makeParts: parts.remoteParts,
-        onLocked: () => {
-          // A screen that locks mid-task stops that computer's tasks (§5.3.4 step 8); the next task asks for it again.
-          stopTasks(hostId);
-          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, { title: `Stopped on ${host.id}`, thought: `${host.id}'s screen locked, so I stopped working there.`, actions: [], mood: "attention" }, INFO_MS);
+        onDesktopLost: locked => {
+          // A screen that locks or a session that goes inactive mid-task stops the tasks using that desktop (§5.3.4 step
+          // 8); tasks running only commands there go on (their window is on this PC). The next task asks for it again.
+          stopTasks(hostId, "desktop");
+          const why = locked ? `${host.id}'s screen locked` : `${host.id}'s desktop session isn't active any more`;
+          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, { title: `Stopped on ${host.id}`, thought: `${why}, so I stopped working on its screen.`, actions: [], mood: "attention" }, INFO_MS);
           refresh();
         },
         onConsoleStop: () => {

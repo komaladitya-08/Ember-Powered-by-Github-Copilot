@@ -55,8 +55,11 @@ export function createRemoteTarget(o: {
   admin: () => LoadedAdminPolicy;
   window: CommandWindowPort;
   makeParts: (link: RemoteLink, o: { log: Logger; settings: SettingsStore; localAdmin: () => LoadedAdminPolicy; hostLabel: string; login: string }) => RemoteTargetParts;
-  /** The desktop dropped because the remote's screen locked (the runtime says so in the bubble). */
-  onLocked?: () => void;
+  /**
+   * The desktop Ember was using there dropped (§5.3.4 step 8): its screen locked (`locked`), or its session went
+   * inactive or can't be used any more. The runtime stops the tasks that used that desktop and says so in the bubble.
+   */
+  onDesktopLost?: (locked: boolean) => void;
   /** Someone at the remote pressed Stop on Ember's notice. */
   onConsoleStop?: () => void;
 }): RemoteTarget {
@@ -73,10 +76,11 @@ export function createRemoteTarget(o: {
   };
   const offs: (() => void)[] = [];
   const listen = (f: () => () => void) => { try { offs.push(f()); } catch (err) { o.log.warn("targets.remote_listen_failed", { err }); } };
-  // Heard before the parts hear it (listening first): a lock is a desktop in use that this report takes away.
+  // Heard before the parts hear it (listening first): a lock, or a session gone inactive, is a desktop in use that this
+  // report takes away (the remote reports an inactive session with access none and no session of its own).
   listen(() => o.link.on("desktop.changed", d => {
     const was = judged()?.desktop ?? welcome.desktop.access;
-    if (was !== "none" && d.access === "none" && d.session?.locked) o.onLocked?.();
+    if (was !== "none" && d.access === "none") o.onDesktopLost?.(d.session?.locked === true);
   }));
   try {
     parts = o.makeParts(o.link, { log: o.log, settings: o.settings, localAdmin: o.admin, hostLabel: label, login: o.host.resolved.user });

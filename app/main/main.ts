@@ -1482,8 +1482,9 @@ function start(): void {
       jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
       // The command card's key hint: only the keys Ember holds for the question up now.
       keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
-      // A computer whose connection went, whose screen locked or where someone pressed Stop: its tasks stop here too.
-      stopTasksOn: target => { agent?.cancelTasksOn(target); },
+      // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or
+      // session went inactive: those that used its desktop.
+      stopTasksOn: (target, only) => { agent?.cancelTasksOn(target, only); },
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });

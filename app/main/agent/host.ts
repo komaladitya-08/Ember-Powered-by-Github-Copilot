@@ -24,6 +24,7 @@ import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
 import type { PerceptionPort, SidecarPort } from "../perception/ports";
+import type { DesktopUse } from "../targets/hands";
 import type { TargetHands, TargetsForAgent } from "../targets/types";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import { terminalRequest } from "../policy/vocabulary";
@@ -461,6 +462,8 @@ export class AgentHost {
   private readonly outcomes = new Map<string, Presenter>();
   /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
   private readonly taskBindings = new Map<string, TargetBinding>();
+  /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
+  private readonly taskDesktop = new Map<string, () => boolean>();
   /**
    * What the conversation's prompt promised when it was created (§3.15): kept for its resumes (the system message is
    * kept with it), and compared with now on every request.
@@ -828,6 +831,7 @@ export class AgentHost {
           const text = taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
+          this.taskDesktop.delete(task.id);
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
           this.taskPresenters.delete(task.id);
           const said = this.remember("task", text);
@@ -860,6 +864,8 @@ export class AgentHost {
             : { ok: false as const, why: id === "local" ? "Ember can't work on this computer's screen here." : "Ember can't work on that computer here." };
           if (!got.ok) return refusedWorker(spec, got.why);
           const h = got.hands;
+          const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
+          if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
           return new Worker({
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1333,17 +1339,20 @@ export class AgentHost {
 
   /**
    * Stops every task bound to `target` (a queued one ends before it starts, a running one is aborted, with its question
-   * if it asked one): someone at that computer pressed Stop, its screen locked, or its connection went (§5.3.4,
-   * §5.3.9, §5.1.11). Tasks on other computers go on. Returns how many it stopped.
+   * if it asked one): someone at that computer pressed Stop, or its connection went (§5.3.9, §5.1.11). With `only:
+   * "desktop"` (its screen locked or its session went inactive, §5.3.4 step 8), only the running tasks that used its
+   * desktop: one running only commands there goes on (its command window is on this PC), and a queued one hasn't used
+   * it; a running task that can't say counts as one that did. Tasks on other computers go on. Returns how many it stopped.
    */
-  cancelTasksOn(target: TargetId): number {
+  cancelTasksOn(target: TargetId, only?: "desktop"): number {
     let n = 0;
     for (const t of this.tasks?.list() ?? []) {
       if ((t.targetId ?? "local") !== target || (t.status !== "running" && t.status !== "queued")) continue;
+      if (only === "desktop" && (t.status === "queued" || this.taskDesktop.get(t.id)?.() === false)) continue;
       this.tasks?.cancel(t.id);
       n++;
     }
-    if (n) this.o.log.info("agent.target_tasks_stopped", { kind: target.split(":")[0], n });
+    if (n) this.o.log.info("agent.target_tasks_stopped", { kind: target.split(":")[0], n, ...(only ? { only } : {}) });
     return n;
   }
 

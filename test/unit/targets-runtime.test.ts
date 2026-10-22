@@ -643,7 +643,7 @@ describe("SSH targets", () => {
     expect(r.t.agent.describeTargets()).toContain("apps on its screen");
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.t.agent.describeTargets()).toContain("no desktop session");
-    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's screen locked, so I stopped working there." }) });
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's screen locked, so I stopped working on its screen." }) });
   });
 
   it("on a stall, says so and offers Disconnect; on loss, works here again and offers Reconnect", async () => {
@@ -1254,16 +1254,33 @@ describe("the remote and WSL seams (INT)", () => {
     l.emit("console.stop", { at: SINCE });
     expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "Someone at build-01 pressed Stop." }) });
+    // A lock stops only the tasks that used its desktop; the others are main's to judge (the host's cancelTasksOn).
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
     l.move("stalled");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
     l.move("lost");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(3);
+    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01"]);
     await connected(r);
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(4);
+    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01"]);
     expect(r.stopTasksOn.mock.calls.every(c => c[0] === "ssh:build-01")).toBe(true);
+  });
+
+  it("stops the tasks using a remote's desktop when its session goes inactive, as for a lock (§5.3.4 step 8)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "screen", notice: "shown" } }) });
+    const l = await connected(r);
+    // The agent reports an inactive session with access none and no session of its own.
+    l.emit("desktop.changed", { access: "none", notice: "off" });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's desktop session isn't active any more, so I stopped working on its screen." }) });
+    // Nothing more to take away: said once.
+    l.emit("desktop.changed", { access: "none", notice: "off" });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
   });
 
   it("asks for a remote's desktop before each task: its reads and steps wait for the answer, and access comes back after a lock", async () => {
