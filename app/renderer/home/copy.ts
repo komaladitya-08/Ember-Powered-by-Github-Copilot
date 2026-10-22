@@ -5,7 +5,7 @@
  */
 
 import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
-import { KEYS, SHORTCUTS, type OS, type ShortcutId } from "../../shared/shortcuts";
+import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
@@ -107,11 +107,29 @@ const KEY_NAMES: Record<string, string> = {
   left: "Left", right: "Right", home: "Home", end: "End", pageup: "Page Up", page_up: "Page Up", prior: "Page Up",
   pagedown: "Page Down", page_down: "Page Down", next: "Page Down", insert: "Insert",
 };
-/** Each OS's names: the shared ones with its modifier labels on top ("super" is "Win" on Windows; Linux's are the same as above). */
+/** The canonical modifier an X keysym is on an OS: Super and Meta are its logo key (Win, or ⌘ on a Mac). */
+function modifierToken(keysym: string, kc: KeyConventions): string | undefined {
+  if (/^(super|meta)_/i.test(keysym)) return kc.logoToken;
+  return ({ control: "ctrl", alt: "alt", shift: "shift" } as Record<string, string>)[keysym.split("_")[0].toLowerCase()];
+}
+/**
+ * An OS's key names: the shared ones with its modifier labels on top, and every other spelling of a modifier read the
+ * same way, so "control+a" and "ctrl+a" both say "Control+A" on a Mac and "meta+e" says "Win+E" on Windows (a task's
+ * keys are logged as the model wrote them). On Linux the labels and aliases equal KEY_NAMES' own: today's names.
+ */
+function keyNames(kc: KeyConventions): Readonly<Record<string, string>> {
+  const spellings: [string, string][] = [["control", "Control_L"], ["super", "Super_L"], ["meta", "Meta_L"], ...Object.entries(kc.extraModifiers)];
+  const aliases = spellings.flatMap(([name, keysym]): [string, string][] => {
+    const token = modifierToken(keysym, kc);
+    const label = token === undefined ? undefined : kc.labels[token];
+    return label === undefined ? [] : [[name, label]];
+  });
+  return { ...KEY_NAMES, ...Object.fromEntries(aliases), ...kc.labels };
+}
 const KEY_NAMES_BY_OS: Readonly<Record<OS, Readonly<Record<string, string>>>> = {
-  linux: { ...KEY_NAMES, ...KEYS.linux.labels },
-  win32: { ...KEY_NAMES, ...KEYS.win32.labels },
-  darwin: { ...KEY_NAMES, ...KEYS.darwin.labels },
+  linux: keyNames(KEYS.linux),
+  win32: keyNames(KEYS.win32),
+  darwin: keyNames(KEYS.darwin),
 };
 /** A key as people write it on `os`: "ctrl+s" → "Ctrl+S", "Return" → "Enter" ("cmd+s" → "Cmd+S" on a Mac). */
 export function keyLabel(key: string, os: OS = "linux"): string {
@@ -226,8 +244,8 @@ export function auditCopySegments(auditCopy: string): Segment[] {
 
 /**
  * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
- * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives back the page's own markup, so
- * applying it changes nothing a person or a screen reader can tell.
+ * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives
+ * back the page's own markup, so applying it changes nothing a person or a screen reader can tell.
  */
 export function homePatches(p: StatusPlatform): HomePatch[] {
   const chords = (Object.keys(SHORTCUTS.linux) as ShortcutId[])
@@ -245,4 +263,13 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     { selector: "#audit-dir", content: [auditDirLabel(p)] },
     p.auditCopy ? { selector: "#journal-hint", content: auditCopySegments(p.auditCopy), hidden: false } : { selector: "#journal-hint", hidden: true },
   ];
+}
+
+/**
+ * Whether the window reads the status again each time it comes back: only off Linux, where permissions, the microphone
+ * switch and the login item change in the OS's own settings, outside Ember (§9.8). Linux reads it once, as before:
+ * every read runs the environment check, and on Linux that runs gsettings in main.
+ */
+export function rereadsStatusOnFocus(p: StatusPlatform | undefined): boolean {
+  return p !== undefined && p.os !== "linux";
 }

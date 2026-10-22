@@ -11,8 +11,8 @@ import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, usageLine,
-  type HomePatch, type Segment,
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus, retryMessage,
+  tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 
 declare global {
@@ -248,8 +248,11 @@ function applyPatch(p: HomePatch): void {
     for (const [name, value] of Object.entries(p.attrs ?? {})) el.setAttribute(name, value);
   }
 }
+/** The OS words on the page, to leave it alone when a fresh status brings the same ones (a screen reader keeps its place). */
+let shownPlatform = "";
 function renderPlatform(p: StatusPlatform | undefined): void {
-  if (!p) return;
+  if (!p || JSON.stringify(p) === shownPlatform) return;
+  shownPlatform = JSON.stringify(p);
   const before = JSON.stringify(entryWords(platform));
   if (!platform) useAppNames(p.os);
   platform = p;
@@ -260,11 +263,11 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (JSON.stringify(entryWords(p)) !== before) { shownActivity = ""; void refreshActivity(); }
   renderTagline();
 }
-// Permissions, the microphone switch and the login item change in the OS's own settings, outside Ember: off Linux
-// the status is read again whenever the window comes back. (Linux reads it once, as before: its check runs gsettings.)
+// Permissions, the microphone switch and the login item change in the OS's own settings: off Linux the status is
+// read again whenever the window comes back (rereadsStatusOnFocus says why Linux doesn't).
 let refreshing = false;
 window.addEventListener("focus", () => {
-  if (!platform || platform.os === "linux" || refreshing) return;
+  if (!rereadsStatusOnFocus(platform) || refreshing) return;
   refreshing = true;
   window.ember.getStatus().then(s => {
     renderPlatform(s.platform);

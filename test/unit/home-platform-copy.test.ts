@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   LINUX_ENTRY_WORDS, NEVER_LOOK_DEFAULTS, auditCopySegments, auditDirLabel, chordSegments, describeEntry, emptyConversationText, entryWords, homePatches,
-  keyLabel, micOffText, missingDefaults, tagline, type HomePatch, type Segment,
+  keyLabel, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
 } from "../../app/renderer/home/copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts";
@@ -253,6 +253,23 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(keyLabel("cmd+s", "darwin")).toBe("Cmd+S");
     expect(keyLabel("ctrl+alt+shift+cmd+Return", "darwin")).toBe("Control+Option+Shift+Cmd+Enter");
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "cmd+s", app: "TextEdit" }, entryWords(MAC))?.what).toBe("Press Cmd+S in TextEdit");
+  });
+
+  it("reads every spelling of a modifier as the OS names it (keys are logged as the model wrote them)", () => {
+    expect(keyLabel("control+a", "darwin")).toBe(keyLabel("ctrl+a", "darwin"));
+    expect(keyLabel("control+a", "darwin")).toBe("Control+A");
+    expect(keyLabel("command+option+s", "darwin")).toBe("Cmd+Option+S");
+    expect(keyLabel("opt+left", "darwin")).toBe("Option+Left");
+    expect(keyLabel("super+space", "darwin")).toBe("Cmd+Space");
+    expect(keyLabel("meta+e", "win32")).toBe("Win+E");
+    expect(keyLabel("Control+Escape", "win32")).toBe("Ctrl+Esc");
+  });
+
+  it("reads the status again when the window comes back only off Linux (§9.8; Linux's read runs gsettings)", () => {
+    expect(rereadsStatusOnFocus(undefined)).toBe(false);
+    expect(rereadsStatusOnFocus(LINUX)).toBe(false);
+    expect(rereadsStatusOnFocus(WINDOWS)).toBe(true);
+    expect(rereadsStatusOnFocus(MAC)).toBe(true);
   });
 
   it("restores each OS's own never-look defaults", () => {
