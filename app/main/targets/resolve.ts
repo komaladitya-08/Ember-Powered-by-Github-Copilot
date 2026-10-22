@@ -162,17 +162,30 @@ export function otherTargetsNamed(words: string, targets: readonly NamedTarget[]
   return out;
 }
 
-/** The place words before a computer-looking name that make it a place the user named (the lead's ruling on it). */
-const HOST_PLACE = new Set(["on", "in", "at", "onto", "into"]);
-/** Punctuation around a word that isn't part of it ("on prod-db.", "(on prod-db)", "on 'prod-db'"). */
-const AROUND = /^[("'‘“[]+|[)"'’”\].,;:!?]+$/gu;
+/**
+ * The place words before a computer-looking name that make it a place the user named (the lead's ruling on it): rule 3's
+ * own (on, in, at, inside, over, via, into, onto), and "from" and "ssh" ("delete the logs from prod-db", "ssh prod-db and
+ * clean build/"), which name a computer as plainly.
+ */
+const HOST_PLACE = new Set([...PLACE, "from", "ssh"]);
+/** Words that may sit between a place word (and its determiner) and the name: "on the server prod-db", "ssh to prod-db". */
+const HOST_NOUN = new Set(["server", "host", "machine", "box", "computer", "pc", "vm", "node", "instance", "container", "to"]);
+/** Punctuation around a word that isn't part of it ("on prod-db.", "(on prod-db)", "on 'prod-db'", "on `prod-db`"). */
+const AROUND = /^[("'‘“[«‹<{`*]+|[)"'’”\]».,;:!?›>}`*]+$/gu;
+/** Dashes of every kind, read as the hyphen a host name has ("prod‐db" with U+2010 is prod-db). */
+const DASHES = /\p{Pd}/gu;
 /** A host name or ssh alias: letters, digits, dots, hyphens and underscores, starting and ending with a letter or digit. */
 const HOST_LIKE = /^[a-z0-9](?:[a-z0-9._-]{0,251}[a-z0-9])?$/i;
 /** An ssh-style destination: user@host, maybe with a folder after a colon ("deploy@prod-db:/srv"). */
 const USER_AT_HOST = /^[a-z0-9._-]{1,64}@([a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)(?::[a-z0-9._/~-]*)?$/i;
 const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
-/** Numbers and amounts ("5", "2024", "1.5", "5pm", "3rd", "64gb", "10s"), and versions ("v2", "v1.2.3"): never computers. */
-const AMOUNT = /^(?:\d+(?:[.,:]\d+)*[a-z]{0,3}|v\d+(?:\.\d+)*)$/i;
+/**
+ * Numbers, amounts, dates and ranges ("5", "2024", "1.5", "5pm", "3rd", "64gb", "10s", "2026-10-22", "10-20"), and
+ * versions ("v2", "v1.2.3"): never computers.
+ */
+const AMOUNT = /^(?:\d+(?:[.,:/-]\d+)*[a-z]{0,3}|v\d+(?:\.\d+)*)$/i;
+/** A host with a port or a folder after it ("prod-db:22", "10.0.0.5:2222", "prod-db:/srv/app"): the host is the name. */
+const HOST_PORT = /^([^:@/]+):(?:\d{1,5}|[/~][\w./~-]*)$/;
 /** File name endings: "in main.ts", "into notes.md" name a file, not a computer. */
 const FILE_EXT = new Set([
   "c", "cc", "cfg", "cjs", "conf", "cpp", "cs", "css", "csv", "db", "deb", "doc", "docx", "env", "exe", "gif", "go", "gz", "h", "hpp", "htm",
@@ -191,6 +204,8 @@ const COMMON_HYPHENATED = /^(?:(?:top|bottom|upper|lower|far|middle)-(?:left|rig
 function hostOfPlace(word: string): string | null {
   const at = USER_AT_HOST.exec(word);
   if (at) return at[1];
+  const port = HOST_PORT.exec(word);
+  if (port) return hostOfPlace(port[1]);
   if (!HOST_LIKE.test(word) || !/[.\-\d]/.test(word)) return null;
   if (IPV4.test(word)) return word;
   if (AMOUNT.test(word) || COMMON_HYPHENATED.test(word)) return null;
@@ -203,29 +218,38 @@ function hostOfPlace(word: string): string | null {
  * The places the user's own words name that look like a computer but that none of `targets` is (the lead's ruling on
  * the wrong-target risk): "delete build/ on prod-db" names prod-db, which isn't a computer Ember knows or a host of the
  * user's ssh config, so the task binds to the active computer, and D4.4 must never announce there. A place is a place
- * word (on, in, at, onto, into; "the", "my" or "our" may follow it) and then a word with a dot, a hyphen or a digit, or
- * an ssh-style user@host; file names ("in main.ts"), numbers and amounts ("in 5 minutes", "at 5pm"), versions and
- * everyday words ("on the desktop", "in my home folder", "on line 12") are not. A name any of `targets` answers to (the
- * bound one's included) is left out: otherTargetsNamed speaks for the others. As the user wrote them, deduplicated, at
- * most five, each at most 64 characters (only letters, digits and `.-_@:/` reach the card).
+ * word (HOST_PLACE; "the", "my" or "our" may follow it, then a word such as "server" or "host") and then a word with a
+ * dot, a hyphen or a digit, or an ssh-style user@host, maybe with a port or a folder after a colon; or such a word as
+ * the request's first, followed by ":" or "," ("prod-db: delete build/", rule 3). File names ("in main.ts"), numbers,
+ * amounts and dates ("in 5 minutes", "at 5pm"), versions and everyday words ("on the desktop", "in my home folder", "on
+ * line 12") are not. A name any of `targets` answers to (the bound one's included) is left out: otherTargetsNamed
+ * speaks for the others. As the user wrote them, deduplicated, at most five, each at most 64 characters (only letters,
+ * digits and `.-_@:/~` reach the card).
  */
 export function placesNamed(words: string, targets: readonly NamedTarget[]): string[] {
   const known = new Set(targets.flatMap(t => t.names.map(normaliseName)).filter(n => n !== ""));
-  const tokens = String(words ?? "").normalize("NFKC").split(/\s+/u).map(t => t.replace(AROUND, "")).filter(t => t !== "");
+  const raw = String(words ?? "").normalize("NFKC").replace(DASHES, "-").split(/\s+/u).filter(t => t !== "");
+  const tokens = raw.map(t => t.replace(AROUND, "")).filter(t => t !== "");
   const out: string[] = [];
+  const consider = (token: string) => {
+    // "on prod-db's desktop": the name without its possessive.
+    const word = token.replace(/['’]s$/u, "");
+    const host = hostOfPlace(word);
+    if (host === null || word.length > 64) return;
+    const n = normaliseName(host);
+    if (n === "" || known.has(n) || out.some(o => o.toLowerCase() === word.toLowerCase())) return;
+    out.push(word);
+  };
+  // Rule 3's other form: the request's first word, then ":" or "," ("prod-db: delete build/").
+  if (raw.length > 1 && /[:,]$/.test(raw[0])) consider(raw[0].replace(AROUND, ""));
   for (let i = 0; i < tokens.length - 1 && out.length < 5; i++) {
     if (!HOST_PLACE.has(tokens[i].toLowerCase())) continue;
     let k = i + 1;
     if (DETERMINER.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) k++;
-    // "on prod-db's desktop": the name without its possessive.
-    const word = tokens[k].replace(/['’]s$/u, "");
-    const host = hostOfPlace(word);
-    if (host === null || word.length > 64) continue;
-    const n = normaliseName(host);
-    if (n === "" || known.has(n) || out.some(o => o.toLowerCase() === word.toLowerCase())) continue;
-    out.push(word);
+    if (HOST_NOUN.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) k++;
+    consider(tokens[k]);
   }
-  return out;
+  return out.slice(0, 5);
 }
 
 /** The target a name given by the model stands for (exactly one of its names, or this computer's fixed words), or null. */

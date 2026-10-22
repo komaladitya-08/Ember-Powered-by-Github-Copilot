@@ -142,13 +142,14 @@ wildcard, a folder outside the one you named, another branch, remote, changelist
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
 
-**When your words name another computer.** If your words for the task also name a computer other than the one the
-task runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
-looks like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5": a name with a dot, a
-hyphen or a digit, or `user@host`, after on, in, at, onto or into), nothing in that task runs on an announcement:
-every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but this runs on this
-computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still run. Everyday places
-("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count.
+**When your words name another computer.** If your words for the task also name a computer other than the one the task
+runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that looks
+like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5", "from the server web-2", "ssh
+prod-db and …", "prod-db: …": a name with a dot, a hyphen or a digit, or `user@host`, after on, in, at, inside, over,
+via, into, onto, from or ssh, or first in the request before a colon or a comma), nothing in that task runs on an
+announcement: every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but this
+runs on this computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still run.
+Everyday places ("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count.
 
 These **always ask, even when you asked for them**: secrets (anything in §2.4's secrets item), downloading and
 running code, commands that keep running after Ember stops, and anything Ember can't read with certainty. Every

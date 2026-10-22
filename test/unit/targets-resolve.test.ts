@@ -180,6 +180,28 @@ describe("placesNamed (the lead's ruling: a computer Ember doesn't know, named a
     expect(placesNamed("on prod-db and on Prod-DB, delete build/", all)).toEqual(["prod-db"]);
   });
 
+  it("finds the same computer in the other ways a request names one", () => {
+    // Rule 3's other place words, and "from" and "ssh".
+    for (const w of ["via", "over", "inside", "from"]) expect(placesNamed(`delete build/ ${w} prod-db`, all)).toEqual(["prod-db"]);
+    expect(placesNamed("ssh prod-db and delete build/", all)).toEqual(["prod-db"]);
+    expect(placesNamed("ssh to prod-db, then delete build/", all)).toEqual(["prod-db"]);
+    // A word for a computer between the place word and the name.
+    expect(placesNamed("delete build/ on the server prod-db", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on host 10.0.0.5", all)).toEqual(["10.0.0.5"]);
+    // The request's first word before ":" or "," (rule 3), as for a computer Ember knows.
+    expect(placesNamed("prod-db: delete build/", all)).toEqual(["prod-db"]);
+    expect(placesNamed("deploy@prod-db, delete build/", all)).toEqual(["deploy@prod-db"]);
+    // A port or a folder after the host, other dashes, other quotes.
+    expect(placesNamed("delete build/ on prod-db:22", all)).toEqual(["prod-db:22"]);
+    expect(placesNamed("delete build/ at 10.0.0.5:2222", all)).toEqual(["10.0.0.5:2222"]);
+    expect(placesNamed("delete build/ on prod‐db", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on `prod-db`", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on «prod-db»", all)).toEqual(["prod-db"]);
+    // Known ones stay left out in every form.
+    expect(placesNamed("build-01: delete build/", all)).toEqual([]);
+    expect(placesNamed("delete build/ on the server build-01:22", all)).toEqual([]);
+  });
+
   it("leaves out every name a known target answers to, the bound one's included", () => {
     expect(placesNamed("delete build/ on build-01", all)).toEqual([]);
     expect(placesNamed("delete build/ on build-01.example.com", all)).toEqual([]);
@@ -192,6 +214,8 @@ describe("placesNamed (the lead's ruling: a computer Ember doesn't know, named a
     "fix the bug in main.ts and delete build/", "write it into notes.md", "delete build/ in 5 minutes", "remind me at 5pm",
     "delete the cache in v1.2", "click the button in the top-right corner", "open it in read-only mode", "delete build/ on 2 files",
     "delete everything in src/app", "delete build/ in ~/proj", "run it on Linux", "delete build/", "",
+    "delete the lines from 10-20", "on 2026-10-22, delete build/", "delete files over 10MB", "at 17:30, delete build/",
+    "regenerate my ssh keys", "Note: delete build/", "copy it from main.ts", "on the server, delete build/",
   ])("names no computer in %j", words => {
     expect(placesNamed(words, all)).toEqual([]);
   });
