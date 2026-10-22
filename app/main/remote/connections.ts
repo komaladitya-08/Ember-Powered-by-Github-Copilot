@@ -39,7 +39,7 @@ import { RemoteError, runAttempt, WorkerLink, type AttemptResult, type LinkPort,
 import { loadShipped, partsArchive, planShipped, shippedCandidates, type Shipped } from "./parts-cache";
 import { planInstall, type Plan } from "./plan";
 import { ensureRuntime, RuntimeError, type RuntimeFs } from "./runtime-download";
-import { ioregPlatformUuid, isThisComputer, selfIdentity, type SelfIdentity } from "./same-machine";
+import { ioregPlatformUuid, isThisComputer, sameMachine, selfIdentity, type SelfIdentity } from "./same-machine";
 import { childEnv, hopCommand, MAX_HOPS, sshArgv, sshCheckArgv, sshEnv, SshArgvError, sshGArgv, sshGHopArgv, sshVersionArgv, type AskpassEnv } from "./ssh-argv";
 import { askpassWorks, knownHostsDiscarded, minimumVersion, parseSshG, parseSshVersion, sshClientPath, SshConfigError, unfixableSessionOption, versionAtLeast, type SshConfig, type SshVersion } from "./ssh-config";
 import { bootstrapFailure, classifySshFailure, cleanLine, isLanAddress, MESSAGES, type SshFailure } from "./ssh-errors";
@@ -515,8 +515,11 @@ export function createConnections(o: {
     const me = await self();
     const wantOs = probe.os === "Darwin" ? "darwin" : probe.os === "Linux" ? "linux" : null;
     const wantArch = /^(x86_64|amd64)$/.test(probe.arch ?? "") ? "x64" : /^(aarch64|arm64)$/.test(probe.arch ?? "") ? "arm64" : null;
+    // The welcome's machine id is judged by the probe's own rule (§5.1.14): machine and boot id together on Linux, so a
+    // clone of this PC's image with its own boot id (critique remote-22) is let through here as it was before upload.
+    const sameAsThis = sameMachine({ os: probe.os ?? "", machine: w.machineIdHash, boot: probe.boot ?? "", wsl: probe.wsl ?? "" }, me) !== null;
     const odd = w.partsId !== partsId || w.os !== wantOs || w.arch !== wantArch || !w.home.startsWith("/") || !w.facts.home.startsWith("/") || !Number.isInteger(w.uid)
-      || (!o.allowLoopback && me.machine !== null && w.machineIdHash === me.machine);
+      || (!o.allowLoopback && sameAsThis);
     if (odd) throw new ConnectError(MESSAGES.answeredOddly(h), "protocol");
     return w;
   }

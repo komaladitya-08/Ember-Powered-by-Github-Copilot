@@ -504,6 +504,15 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     await expect(r.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "protocol", message: "build-01 answered in a way Ember can't check." });
   });
 
+  it("judges the welcome's machine id by the probe's rule: this PC refused, a clone with its own boot id let through", async () => {
+    const pcMachine = createHash("sha256").update("pc-machine\n").digest("hex");
+    const pcBoot = createHash("sha256").update("pc-boot\n").digest("hex");
+    const clone = track(rig({ agent: () => agent({ hello: () => welcome({ machineIdHash: pcMachine }) }) }));
+    await expect(clone.conns.connect(record(), { interactive: true })).resolves.toBeTruthy();
+    const same = track(rig({ remotes: [{ probe: { boot: pcBoot } }], agent: () => agent({ hello: () => welcome({ machineIdHash: pcMachine }) }) }));
+    await expect(same.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "protocol" });
+  });
+
   it("classifies a bootstrap error and a login that never ran the set-up", async () => {
     const r = track(rig({ remotes: [{ error: "busy-install" }] }));
     await expect(r.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "busy-install" });
