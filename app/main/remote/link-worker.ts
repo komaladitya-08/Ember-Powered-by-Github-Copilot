@@ -319,7 +319,8 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
         return new Promise<Decision>(resolve => {
           decide = d => {
             decide = null;
-            idle();
+            // (An attempt that ended while Ember decided, ssh gone, waits for nothing more.)
+            if (!outcomePosted && !exited) idle();
             if (d.kind === "install") {
               resolve({ kind: "install", line: d.line, archives: d.archives.map(a => ({ name: a.name, bytes: a.bytes, open: () => deps.openArchive(a.path) })) });
             } else if (d.kind === "serve") {
