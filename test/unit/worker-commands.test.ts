@@ -65,7 +65,7 @@ function commandService(binding: TargetBinding, o: { cap?: CommandCapability["st
 function makeWorker(o: {
   target?: TargetBinding; commands?: CommandService | null; spec?: Partial<TaskSpec>; answer?: string; vision?: boolean;
   onAuthorized?: (s: ActStamp) => void; grantKey?: (app: string) => string; system?: WorkerSystem;
-  doAction?: () => Promise<unknown>; grants?: Record<string, "act">; confirmEvery?: boolean;
+  doAction?: () => Promise<unknown>; grants?: Record<string, "act">; confirmEvery?: boolean; handler?: { role: string; name: string };
 } = {}) {
   const events: string[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -79,6 +79,7 @@ function makeWorker(o: {
     perception: { perceive: async () => ({ ...seen, text: "[1] push button \"Bold\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
     sidecar: {
       readElement: async () => ({ role: node.role, name: node.name, states: node.states, bounds: node.bounds }),
+      ...(o.handler ? { canDo: async () => ({ tier1: true, action: "click", handler: o.handler }) } : {}),
       doAction: async () => { events.push("doAction"); if (o.doAction) return o.doAction(); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: node.bounds } }; },
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.confirmEvery ? { confirmEveryAction: () => true, allowGrants: () => false } : {}) }),
@@ -207,6 +208,16 @@ describe("gate 1's stamp (§2.1, critique integration-6)", () => {
     // Measured when the step is sent, from the user's yes: the 350 ms pause is in it.
     expect(stamps[0].ageMs).toBeGreaterThanOrEqual(300);
     expect(stamps[0].ageMs).toBeLessThan(10_000);
+  });
+
+  it("names the element the step acts on as the target read it, not the control the click was judged as", async () => {
+    const stamps: ActStamp[] = [];
+    const { call, asked } = makeWorker({ target: { ...REMOTE, desktop: "text" }, onAuthorized: s => stamps.push(s), confirmEvery: true, grants: {}, handler: { role: "link", name: "Formatting help" } });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("success");
+    // The question was about the link the click goes to; gate 2 re-reads element 1 itself and compares it with the stamp.
+    expect(String(asked[0].prompt)).toContain("Formatting help");
+    expect(stamps[0].element).toEqual({ role: "push button", name: "Bold" });
   });
 
   it("an allowed step carries no approval; a typed value only as its hash", async () => {

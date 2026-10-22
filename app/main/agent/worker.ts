@@ -1886,7 +1886,7 @@ export class Worker {
       if (this.isOver) return STOPPED();
       // The user may have taken over the desk while Ember waited for the question, the window or its turn.
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
-      this.authorized(req);
+      this.authorized(req, { role: node.role, name: node.name });
       const res = await run();
       if (kind === "text" && res.ok) this.noteTyped(field, prior + (value ?? ""));
       // A row or an icon chosen by a click is all that is selected there now: what the keys selected before is gone.
@@ -3229,15 +3229,18 @@ export class Worker {
   /**
    * The step `req` that authorize() just let through runs now: the target hears gate 1's stamp first, with its age
    * measured now, after the window lease and the pre-step pause (§2.1, critique integration-6). Only remotes listen.
+   * `acted`: the element the step acts on as the target last read it (its own role and name, §5.5: gate 2 compares them
+   * with the element it reads by id), where the request judged another (the control a click goes to, a label's name).
    */
-  private authorized(req: ActionRequest): void {
+  private authorized(req: ActionRequest, acted?: { role: string; name: string }): void {
     const on = this.d.onAuthorized;
     const auth = this.lastAuth;
     if (!on || !auth) return;
     const now = performance.now();
+    const element = acted ?? req.element;
     on({
       taskId: this.spec.id, kind: req.kind, app: req.app, window: req.window,
-      element: req.element ? { role: req.element.role, name: req.element.name } : null,
+      element: element ? { role: element.role, name: element.name } : null,
       ...(req.value !== undefined ? { valueSha256: sha256Hex(req.value) } : {}),
       verdict: auth.verdict, approval: auth.approvedAt !== null ? { given: true } : null,
       ageMs: Math.max(0, Math.round(now - (auth.approvedAt ?? auth.at))),
