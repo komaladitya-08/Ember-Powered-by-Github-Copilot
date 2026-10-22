@@ -665,6 +665,30 @@ describe("SSH targets", () => {
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
   });
 
+  it("stops saying \"trying again\" once SA gives up reconnecting, and asks for a sign-in when that is what it needs (§8.2)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01"), hostRecord("build-02")]) });
+    const l = await connected(r);
+    l.move("lost");
+    const failed = (hostId: string, kind: string, retry: boolean, message = "build-01 didn't accept your key.") => { for (const p of r.progress) p(hostId, { step: "failed", message, retry, kind }); };
+    failed("build-01", "network", true);
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
+    failed("build-01", "auth", false);
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
+    }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu first." });
+    // Ten minutes of network failures: said as it is, with Reconnect.
+    const l2 = await connected(r, "build-02");
+    l2.move("lost");
+    failed("build-02", "network", false, "Ember can't reach build-02 (no route).");
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "Ember can't reach build-02 (no route).", mood: "error" }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-02")!.state).toBe("off");
+    // A connect's own failure (not a reconnect's) is connect()'s to say.
+    failed("build-02", "auth", false);
+    expect(r.showState).not.toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "build-02 needs you to sign in again" }) });
+  });
+
   it("adopts the link SA brought back by itself after a loss", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);

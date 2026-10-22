@@ -632,8 +632,29 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     timers.shift()?.();
     await new Promise(res => setTimeout(res, 150));
     expect(timers).toHaveLength(0);
-    expect(r.progress.at(-1)?.[1]).toMatchObject({ step: "failed", kind: "auth" });
+    expect(r.progress.at(-1)?.[1]).toMatchObject({ step: "failed", kind: "auth", retry: false });
     expect(r.cards).toEqual([]);
+  });
+
+  it("tells each failed reconnect with whether another try follows (the runtime says \"trying again\" only then)", async () => {
+    const timers: (() => void)[] = [];
+    const r = track(rig({
+      remotes: [{}, { fail: () => ({ stderr: "ssh: connect to host build-01.example.com port 22: Network is unreachable\n", code: 255 }) }, { fail: () => ({ stderr: "Permission denied (publickey,password).\n", code: 255 }) }],
+      internals: { setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => undefined },
+    }));
+    const link = await r.conns.connect(record(), { interactive: true });
+    r.muxes[0].close("ssh exited");
+    await settle();
+    expect(link.state).toBe("lost");
+    timers.shift()?.();
+    await new Promise(res => setTimeout(res, 150));
+    const failed = () => r.progress.filter(([, p]) => p.step === "failed").map(([, p]) => p as Extract<ConnectProgress, { step: "failed" }>);
+    expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true]]);
+    expect(timers).toHaveLength(1);
+    timers.shift()?.();
+    await new Promise(res => setTimeout(res, 150));
+    expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true], ["auth", false]]);
+    expect(timers).toHaveLength(0);
   });
 
   it("disconnects with bye and EOF, and doesn't reconnect", async () => {

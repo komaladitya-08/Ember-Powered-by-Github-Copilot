@@ -54,6 +54,7 @@ import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception,
 import { registerTargetsIpc, type ActResult } from "./ipc";
 import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, withFlowExtras, type WarmService } from "./local-service";
 import { targetMenu } from "./menu";
+import { signInAgain } from "../../renderer/overlay/target-copy";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
@@ -1044,6 +1045,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
             return;
           }
           if (adopt(hostId, link)) { hideBubble(`lost:${hostId}`); refresh(); }
+          return;
+        }
+        if (p.step === "failed" && c?.state === "lost" && !p.retry) {
+          // SA stopped reconnecting after a loss: no more "trying again". A sign-in it can't do in batch mode (a
+          // password, a passphrase outside the agent, a host key to accept) is §8.2's "sign in again".
+          c.state = "closed";
+          const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
+          const words = signIn ? signInAgain(hostId) : null;
+          bubble(`lost:${hostId}`, {
+            title: words?.title ?? `Can't reconnect to ${hostId}`, thought: words?.text ?? (p.fix ? `${p.message} ${p.fix}` : p.message),
+            actions: [{ id: `conn:${hostId}:reconnect`, label: "Reconnect", primary: true }], mood: signIn ? "attention" : "error",
+          });
+          refresh();
           return;
         }
         if (c?.state !== "connecting") return;
