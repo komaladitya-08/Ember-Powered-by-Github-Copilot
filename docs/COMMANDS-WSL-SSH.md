@@ -39,8 +39,8 @@ start of the request, so "send build-01's report to Ana" names no computer. Only
 a screen, in a file or in a command's output.
 
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
-a question; moving text from one computer to another happens only through a step Ember asks about. Task cards and
-questions say where they act ("on build-01", "in Ubuntu (WSL)"), and the spoken question starts "On build-01, …".
+a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
+bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 
 ## 2. Commands
 
@@ -321,7 +321,7 @@ on build-01."). Helper versions unused for 30 days are deleted.
 
 Ember uses build-01's screen only when **the same user it logged in as is the person at that computer's own screen**
 (its local console session), and only while that screen is unlocked. While it does, build-01 shows a small window
-"Ember on <PC name> is using this screen." with a **Stop** button; a click there stops everything ("Stopped on
+"Ember on &lt;PC name&gt; is using this screen." with a **Stop** button; a click there stops everything ("Stopped on
 build-01" — "Someone at build-01 pressed Stop."). If build-01's administrator requires it, someone at that screen must
 first click **Allow**.
 
@@ -385,19 +385,19 @@ within those 20 seconds (an administrator can set 3 to 120).
 
 | Ember says | What to do |
 |---|---|
-| "Ember can't find SSH on this computer. Install OpenSSH (…), then try again." | Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client |
+| "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again." | As it says |
 | "Ember can't find build-01. Check the name, or add it to your SSH config." | Check the name |
-| "Ember can't reach build-01 (…). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
-| "Your SSH settings for build-01 have a line this SSH can't use: …" | Fix or remove that line |
+| "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
+| "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |
 | "build-01 took too long to answer (a jump host or sign-in helper may be waiting)." | Check the jump host or sign-in helper |
-| "build-01 refused after too many keys. …" | Add `IdentitiesOnly yes` and the right `IdentityFile` for build-01 to your SSH config |
+| "build-01 refused after too many keys. Add `IdentitiesOnly yes` and the right `IdentityFile` for build-01 to your SSH config." | As it says |
 | "build-01's settings throw host keys away, so Ember can't check it's really build-01." | Remove `UserKnownHostsFile /dev/null` for that host |
 | "build-01 didn't run Ember's set-up (it may be Windows, or this login runs a fixed program)." | Ember needs a normal shell login there |
 | "build-01's system is too old for Ember (it needs glibc 2.28 or newer, as in RHEL 8 or Ubuntu 20.04)." | Ember can't work there |
 | "build-01 doesn't have room for Ember's helper (it needs about 400 MB in your home folder)." | Free some space |
 | "build-01 doesn't let programs run from your home folder, so Ember can't run there." | Ask its administrator (§6.6) |
-| "build-01's security software doesn't let programs from your home folder run. …" | Ask its administrator to trust Ember's helper (§6.6) |
-| "Ember couldn't download what it needs for build-01 (…)." | Check the internet connection, or ask your administrator about a mirror |
+| "build-01's security software doesn't let programs from your home folder run. Ask its administrator to allow Ember's helper (fapolicyd trust), or to install the Ember remote package." | §6.6 |
+| "Ember couldn't download what it needs for build-01 (&lt;reason&gt;). Check your internet connection, or ask your administrator about a mirror." | As it says; the mirror is §6.1's `ssh.runtimeMirror` |
 | "Your organisation doesn't allow Ember to connect to build-01." | Your administrator's `ssh.allowedHosts` |
 | "build-01's administrator doesn't allow Ember there." / "build-01's Ember policy is broken, so Ember won't work there." | build-01's own policy (§6.4) |
 
@@ -475,7 +475,7 @@ uses them.
 | Windows | `HKLM\SOFTWARE\Policies\Ember`, value `PolicyJson` (`REG_SZ` or `REG_MULTI_SZ`) |
 | macOS | `/Library/Application Support/Ember/policy.json` (root-owned folder and file) |
 
-docs/DEVELOPING.md §5, §10.7 and §11.7 say how to deploy each.
+[DEVELOPING.md](DEVELOPING.md) §5, §10.7 and §11.7 say how to deploy each.
 
 ### 6.4 The remote computer's own policy
 
@@ -519,7 +519,7 @@ against Ember's SHA-256 list when it is installed. A root-owned remote package i
 ### 6.7 What is recorded
 
 The audit log gains command, connection and WSL entries: what was decided for each command (its classes, the rule,
-"requested by the user" when it ran on an announcement), each answer, start and end (exit code, duration, how much
+and that the user requested it when it ran on an announcement), each answer, start and end (exit code, duration, how much
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
 recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
 command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
@@ -557,4 +557,4 @@ Each item says what Ember can't do in this release and what happens instead.
 | L25 | A link changed between Ember's check and the run | Paths are judged on their real target too, so links into secret folders ask |
 | L26 | Output can steer the model in ways rules can't see | Instruction-like output makes every later command in the task ask; dangerous commands always show the whole command |
 
-(L13 is a rule for Ember's code, in docs/DEVELOPING.md §14.)
+(L13 is a rule for Ember's code, in [DEVELOPING.md](DEVELOPING.md) §14.3.)
