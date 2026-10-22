@@ -6,6 +6,7 @@ import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId } from "./shortcuts";
+import type { TargetSummary } from "./targets";
 
 export const IPC = {
   getStatus: "ember:get-status",
@@ -111,6 +112,10 @@ export interface Status {
     retentionDays: number;
     /** Never-look entries the administrator set: shown locked; they never go into the user's own list. */
     neverLook: string[];
+    /** Each kind of computer's commands mode (admin.ts commandMode): the Commands section shows what is locked. */
+    commands?: { local: "off" | "ask" | "on"; wsl: "off" | "ask" | "on"; ssh: "off" | "ask" | "on" };
+    /** The administrator lists the SSH hosts Ember may reach (`ssh.allowedHosts`). */
+    sshHostsLimited?: boolean;
   };
   /** Absent from a main that doesn't send it yet: the window then keeps its Linux markup and strings. */
   platform?: StatusPlatform;
@@ -182,6 +187,8 @@ export interface AskContext {
   history: string[];
   /** The box has just opened (not a later update of what Ember will see): what was left in it is selected. */
   opened?: boolean;
+  /** Where a request goes when it names no computer (the picker's choice, §8.1); absent or null: this computer. */
+  target?: TargetSummary | null;
 }
 
 export interface EmberAskApi {

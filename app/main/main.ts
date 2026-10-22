@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
-import { managedKeys } from "./admin";
+import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -354,7 +354,8 @@ function start(): void {
     settingsNotice,
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
-      neverLook: policy.neverLook },
+      neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
+      sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
   })));
   ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
@@ -755,13 +756,15 @@ function start(): void {
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
-    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory }, source);
+    // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
+    const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
+    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
       const sees = t ? [t.app && friendlyApp(t.app), t.title].filter(Boolean).join(" · ") || null : null;
-      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory };
+      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory, target: askTarget() };
       askWindow.setContext(ctx);
     });
   };
