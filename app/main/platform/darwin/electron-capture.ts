@@ -19,7 +19,8 @@ export const CAPTURE_TIMEOUT_MS = 3000;
 /**
  * The byte order of NativeImage.toBitmap() on macOS: BGRA (Chromium's N32 on little-endian). The darwin-system
  * integration test captures a pure red swatch and checks this constant against the bytes it gets, so a build that
- * ever hands out RGBA is caught there and this switches the module to swapping red and blue.
+ * ever hands out RGBA is caught there and this switches the module to swapping red and blue. On macos-15 with
+ * Electron 44 (CI runs 120 to 123) the swatch's centre came back as 00 00 FF FF: BGRA.
  */
 export const THUMBNAIL_ORDER: "bgra" | "rgba" = "bgra";
 

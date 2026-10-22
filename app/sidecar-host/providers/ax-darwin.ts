@@ -37,7 +37,9 @@ import {
 /**
  * How elements are keyed: "hash" (`<pid>:h<CFHash>`, index paths only for duplicates within one answer) or "path"
  * (`<pid>:p<CGWindowID>/<child indices>:<AX role>`, stable while the window's structure is) for every element: the
- * fallback should CI show that CFHash differs between host processes (design §5.3, R4).
+ * fallback should CI show that CFHash differs between host processes (design §5.3, R4). It doesn't: on macos-15
+ * (CI runs 120 to 123) a second host process gave the bench's password field the same key, and its 200 rows had 200
+ * different ones, so "hash" stays.
  */
 export const KEY_MODE: "hash" | "path" = "hash";
 /** How long a Chromium app gets to build its tree after AXManualAccessibility is set, before its first read. */
