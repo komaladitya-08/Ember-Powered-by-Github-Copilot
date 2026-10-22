@@ -76,6 +76,8 @@ export class FakeHelper implements DistroSidecar {
   bus: string = "proc";
   /** find_bus answers this once (then `bus`). */
   restartOnce = false;
+  /** find_bus takes longer than Ember waits: the process is ended. */
+  findBusTooLong = false;
   frames: FrameSpec[] = [];
   /** Nodes per frame path; their bounds are in the app's pixels. */
   nodes = new Map<string, AxNode[]>();
@@ -119,6 +121,11 @@ export class FakeHelper implements DistroSidecar {
     this.calls.push({ method, params });
     if (method === "status") return Promise.resolve({ version: 3, python: "3.10", toolkitAccessibility: true, apps: 3, uid: this.uid, wslg: this.wslg, bus: "none", pyatspi: this.pyatspi } as T);
     if (method === "find_bus") {
+      if (this.findBusTooLong) {
+        // AtspiSidecar ends a process whose answer took too long.
+        this.crash();
+        return Promise.reject(new Error("accessibility helper was restarted (an earlier request took too long)"));
+      }
       if (this.restartOnce) {
         this.restartOnce = false;
         return Promise.resolve({ bus: "x11", restart: true } as T);

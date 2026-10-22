@@ -147,6 +147,24 @@ describe("identifying a WSLg window", () => {
     expect(h.wsl.runningNowCalls).toBe(2);
   });
 
+  it("doesn't start a helper again on every look when it was ended while choosing its bus", async () => {
+    const { h, r } = ubuntu();
+    h.setups.set("Ubuntu", helper => { helper.findBusTooLong = true; });
+    expect((await r.refresh()).windows.size).toBe(0);
+    const helper = h.helperOf("Ubuntu")!;
+    for (let i = 0; i < 3; i++) {
+      h.state.now += IDENTITY_MS + 1;
+      await r.refresh();
+    }
+    expect(helper.calls.filter(c => c.method === "status")).toHaveLength(1);
+    expect(h.wsl.runningNowCalls).toBe(1);
+    // Later it is tried again, with every check.
+    h.setups.set("Ubuntu", x => { x.frames = [geditScene({ ...h, windows: { stack: [] } } as never).frame]; });
+    h.state.now += 30_000;
+    expect((await r.refresh()).windows.size).toBe(1);
+    expect(h.wsl.runningNowCalls).toBe(2);
+  });
+
   it("restarts a helper only through the checks, never on its own (critique wsl-20)", async () => {
     const { h, r } = ubuntu();
     await r.refresh();

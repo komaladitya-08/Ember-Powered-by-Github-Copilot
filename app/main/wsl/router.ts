@@ -495,6 +495,13 @@ export class WslRouter {
     }
     const bus = await this.findBus(st, sc, titles);
     if (bus === "restart") return null;
+    if (sc.pid === null) {
+      // It went while choosing its bus (find_bus took too long and it was ended): not started again on every look.
+      st.problem = "start";
+      st.retryAt = this.d.now() + RETRY_MS;
+      this.stopHelper(st);
+      return null;
+    }
     st.verifiedPid = sc.pid;
     st.problem = bus === "none" ? "bus" : null;
     return sc;
