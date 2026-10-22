@@ -10,9 +10,12 @@
  * - Structures go in Buffers passed as `void *`, which koffi hands over in place (no copy), so pointers the system
  *   writes into them (a token label's SID) stay valid while the Buffer lives.
  * - Win32 BOOL is `int` (koffi's `bool` is one byte).
- * - Nothing here sends a message to another process's window (a hung app would hang Ember): titles come from
- *   GetWindowTextW, which reads the stored caption of another process's window, or InternalGetWindowText for
- *   Ember's own; restoring a window uses ShowWindowAsync.
+ * - No synchronous cross-thread window call: nothing here sends a message to another process's window or waits for
+ *   another thread to handle one, because Ember calls these on its main thread and a busy app (not only a hung one)
+ *   would then freeze the overlay and the stop shortcut. Titles come from GetWindowTextW, which reads the stored
+ *   caption of another process's window, or InternalGetWindowText for Ember's own; restoring a window uses
+ *   ShowWindowAsync and raising one SetWindowPos with SWP_ASYNCWINDOWPOS (BringWindowToTop, ShowWindow and a plain
+ *   SetWindowPos wait for the window's thread, so none of them is bound).
  * - Only 64-bit processes: the structure layouts (layouts.ts) are the 64-bit ones, and SendInput is refused unless
  *   koffi agrees on INPUT's layout.
  */
@@ -92,9 +95,15 @@ export interface Win32Api {
   currentThreadId(): number;
   attachThreadInput(from: number, to: number, attach: boolean): boolean;
   setForeground(hwnd: number): boolean;
-  bringToTop(hwnd: number): boolean;
+  /**
+   * Puts a top-level window at the top of the z-order without waiting for its thread: SetWindowPos(HWND_TOP) with
+   * SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS, which posts the request to the window's thread (BringWindowToTop is
+   * the same call made synchronously, which waits for a busy app).
+   */
+  bringToTopAsync(hwnd: number): boolean;
   /** ShowWindowAsync: never waits for the window's thread. */
   showWindowAsync(hwnd: number, command: number): boolean;
+  /** SetFocus, for Ember's own windows only: they live on the calling (main) thread, so nothing waits on another. */
   setFocus(hwnd: number): void;
   /** The input desktop's name ("Default", "Winlogon"…), or null when it can't be opened (the secure desktop). */
   inputDesktopName(): string | null;
@@ -106,6 +115,8 @@ export interface Win32Api {
 export const SM = { SWAPBUTTON: 23, XVIRTUALSCREEN: 76, YVIRTUALSCREEN: 77, CXVIRTUALSCREEN: 78, CYVIRTUALSCREEN: 79 } as const;
 
 const GW_HWNDNEXT = 2, GW_OWNER = 4, GA_ROOT = 2, GWL_STYLE = -16, GWL_EXSTYLE = -20;
+/** SetWindowPos's flags for "raise it, nothing else, and don't wait": SWP_NOSIZE | SWP_NOMOVE | SWP_ASYNCWINDOWPOS. */
+export const RAISE_ASYNC_FLAGS = 0x0001 | 0x0002 | 0x4000;
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9, DWMWA_CLOAKED = 14, LWA_ALPHA = 0x2, MONITOR_DEFAULTTONULL = 0;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 0x0008, TOKEN_ELEVATION = 20, TOKEN_INTEGRITY_LEVEL = 25;
 const DESKTOP_READOBJECTS = 0x0001, UOI_NAME = 2, MAPVK_VK_TO_VSC = 0, VK_SHIFT = 0x10, VK_LSHIFT = 0xa0;
@@ -186,7 +197,7 @@ export const WIN32_FUNCTIONS: Readonly<Record<string, readonly string[]>> = {
     "int __stdcall ToUnicodeEx(uint32_t vk, uint32_t scan, const uint8_t *state, void *buf, int size, uint32_t flags, void *layout)",
     "int __stdcall AttachThreadInput(uint32_t from, uint32_t to, int attach)",
     "int __stdcall SetForegroundWindow(void *hwnd)",
-    "int __stdcall BringWindowToTop(void *hwnd)",
+    "int __stdcall SetWindowPos(void *hwnd, void *after, int x, int y, int cx, int cy, uint32_t flags)",
     "int __stdcall ShowWindowAsync(void *hwnd, int command)",
     "void * __stdcall SetFocus(void *hwnd)",
     "void * __stdcall OpenInputDesktop(uint32_t flags, int inherit, uint32_t access)",
@@ -310,7 +321,7 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
   const GetKeyboardLayout = need("GetKeyboardLayout"), VkKeyScanExW = need("VkKeyScanExW"), MapVirtualKeyExW = need("MapVirtualKeyExW");
   const ToUnicodeEx = fn.ToUnicodeEx;
   const AttachThreadInput = need("AttachThreadInput"), SetForegroundWindow = need("SetForegroundWindow");
-  const BringWindowToTop = need("BringWindowToTop"), ShowWindowAsync = need("ShowWindowAsync"), SetFocus = need("SetFocus");
+  const SetWindowPos = need("SetWindowPos"), ShowWindowAsync = need("ShowWindowAsync"), SetFocus = need("SetFocus");
   const OpenInputDesktop = need("OpenInputDesktop"), GetUserObjectInformationW = need("GetUserObjectInformationW");
   const CloseDesktop = need("CloseDesktop"), GetDC = need("GetDC"), ReleaseDC = need("ReleaseDC");
   const GetThreadDpiAwarenessContext = fn.GetThreadDpiAwarenessContext, SetThreadDpiAwarenessContext = fn.SetThreadDpiAwarenessContext;
@@ -464,7 +475,8 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
     currentThreadId: () => GetCurrentThreadId(),
     attachThreadInput: (from, to, attach) => AttachThreadInput(from, to, attach ? 1 : 0) !== 0,
     setForeground: hwnd => !!hwnd && SetForegroundWindow(hwnd) !== 0,
-    bringToTop: hwnd => !!hwnd && BringWindowToTop(hwnd) !== 0,
+    // HWND_TOP is NULL; with SWP_ASYNCWINDOWPOS the call returns once the request is posted.
+    bringToTopAsync: hwnd => !!hwnd && SetWindowPos(hwnd, null, 0, 0, 0, 0, RAISE_ASYNC_FLAGS) !== 0,
     showWindowAsync: (hwnd, command) => !!hwnd && ShowWindowAsync(hwnd, command) !== 0,
     setFocus(hwnd) {
       if (hwnd) SetFocus(hwnd);

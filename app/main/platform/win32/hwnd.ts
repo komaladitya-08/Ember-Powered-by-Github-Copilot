@@ -1,8 +1,13 @@
 /**
  * Reading and activating top-level windows through Win32Api: the helpers windows.ts and input.ts share, so both
- * describe a window, find its program and bring it to the front the same way (one HWND id space for both). Nothing
- * here can block on a hung app: no message is sent to another process's window, and the thread attach that
- * activation may need is never made with a hung thread.
+ * describe a window, find its program and bring it to the front the same way (one HWND id space for both).
+ *
+ * The rule here: no synchronous cross-thread window call on the main thread. Ember runs these on Electron's main
+ * thread, which also draws the overlay and receives the stop shortcut's WM_HOTKEY, so a call that waits for another
+ * app's thread would freeze Ember whenever that app is merely busy, not only when it is hung. So no message is sent
+ * to another process's window; restoring uses ShowWindowAsync and raising uses SetWindowPos with SWP_ASYNCWINDOWPOS
+ * (never BringWindowToTop, ShowWindow or a plain SetWindowPos, which wait for the window's thread); and the thread
+ * attach that activation may need is never made with a hung thread.
  */
 
 import type { Rect, X11Window } from "../types";
@@ -113,9 +118,12 @@ const SW_RESTORE = 9;
  * 2. if Ember has the foreground, SetForegroundWindow is allowed: hand it over;
  * 3. otherwise send an empty input event first (the foreground lock lets the process that sent the last input
  *    take the foreground), then SetForegroundWindow;
- * 4. last, join the foreground thread's input state (AttachThreadInput), BringWindowToTop and SetForegroundWindow,
- *    and always detach. Never with a hung thread: attaching to it would hang Ember.
- * No Alt tap: it toggles menu mnemonics in the user's app. Callers verify with focusedWindow(), as on X11.
+ * 4. last, join the foreground thread's input state (AttachThreadInput), raise the window without waiting for its
+ *    thread (SetWindowPos with SWP_ASYNCWINDOWPOS, where BringWindowToTop would wait for a busy app) and
+ *    SetForegroundWindow, and always detach. Never with a hung thread: attaching to it would hang Ember.
+ * Nothing else is called on the target: ShowWindowAsync, the async SetWindowPos, SetForegroundWindow and the
+ * hung-guarded AttachThreadInput, plus the empty input event. No Alt tap: it toggles menu mnemonics in the user's
+ * app. Callers verify with focusedWindow(), as on X11.
  */
 export function activateWindow(api: Win32Api, hwnd: number, ownPid: number): void {
   if (!hwnd || !api.isWindow(hwnd)) return;
@@ -136,7 +144,7 @@ export function activateWindow(api: Win32Api, hwnd: number, ownPid: number): voi
   if (!theirs || theirs === own || api.isHung(now) || api.isHung(hwnd)) return;
   if (!api.attachThreadInput(own, theirs, true)) return;
   try {
-    api.bringToTop(hwnd);
+    api.bringToTopAsync(hwnd);
     api.setForeground(hwnd);
   } finally {
     api.attachThreadInput(own, theirs, false);

@@ -214,7 +214,7 @@ class FakeDesktop implements Win32Api {
     if (ok) this.fg = hwnd;
     return ok;
   }
-  bringToTop(hwnd: number) { this.calls.push(`bringToTop:${hwnd}`); return true; }
+  bringToTopAsync(hwnd: number) { this.calls.push(`bringToTopAsync:${hwnd}`); return true; }
   showWindowAsync(hwnd: number, command: number) {
     this.calls.push(`showWindowAsync:${hwnd}:${command}`);
     const w = this.win(hwnd);
@@ -467,7 +467,7 @@ describe("activating a window (the documented foreground order)", () => {
     d.fg = 0x50;
     d.lock = "attach";
     windowsOn(d).activate(0x40);
-    expect(d.calls).toEqual(["sendInput", "setForeground:64", "attach:1->3000:true", "bringToTop:64", "setForeground:64", "attach:1->3000:false"]);
+    expect(d.calls).toEqual(["sendInput", "setForeground:64", "attach:1->3000:true", "bringToTopAsync:64", "setForeground:64", "attach:1->3000:false"]);
     expect(d.fg).toBe(0x40);
     expect(d.attached).toBe(false);
   });
@@ -494,6 +494,50 @@ describe("activating a window (the documented foreground order)", () => {
     const d = desktop();
     windowsOn(d).activate(0x999);
     expect(d.calls).toEqual([]);
+  });
+
+  it("never waits for another app's thread: only ShowWindowAsync, async SetWindowPos, SetForegroundWindow and a hung-guarded attach", () => {
+    // Every Win32 call activate() may make on a foreign window, in every foreground-lock state: reads that never
+    // touch the window's thread, and the four actions that don't wait for it (plus the empty input event).
+    const reads = new Set(["foregroundWindow", "isWindow", "isIconic", "isHung", "threadProcess", "currentThreadId"]);
+    const actions = new Set(["showWindowAsync", "bringToTopAsync", "setForeground", "attachThreadInput", "sendInput"]);
+    const cases: { name: string; set(d: FakeDesktop): void; target?: number }[] = [
+      { name: "already in front", set: d => { d.fg = 0x40; } },
+      { name: "Ember in front", set: d => { d.fg = 0x21; d.lock = "closed"; } },
+      { name: "after Ember's input", set: d => { d.fg = 0x50; d.lock = "input"; } },
+      { name: "needing the attach", set: d => { d.fg = 0x50; d.lock = "attach"; } },
+      { name: "refused", set: d => { d.fg = 0x50; d.lock = "closed"; } },
+      { name: "hung foreground", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x50)!.hung = true; } },
+      { name: "hung target", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x40)!.hung = true; } },
+      { name: "minimised target", set: d => { d.fg = 0x50; d.lock = "attach"; }, target: 0x70 },
+    ];
+    for (const c of cases) {
+      const d = desktop();
+      c.set(d);
+      const used: string[] = [];
+      const api = new Proxy(d, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            used.push(String(prop));
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        },
+      });
+      const ws = openWin32Windows({ screen, api })!;
+      opened.push(ws);
+      ws.activate(c.target ?? 0x40);
+      for (const name of used) expect(reads.has(name) || actions.has(name), `${c.name}: ${name}`).toBe(true);
+      const hung = c.name.startsWith("hung");
+      // The attach is the last resort: only when SetForegroundWindow failed and neither thread is hung.
+      expect(used.includes("attachThreadInput"), `${c.name}: attach`).toBe(["needing the attach", "refused", "minimised target"].includes(c.name));
+      if (hung) expect(d.calls.some(call => call.startsWith("attach")), c.name).toBe(false);
+      // Raised only while attached (the foreground lock allows it then), and always detached afterwards.
+      const raise = d.calls.indexOf(`bringToTopAsync:${c.target ?? 0x40}`);
+      if (raise >= 0) expect(d.calls.slice(0, raise).filter(call => call.startsWith("attach")).pop(), c.name).toMatch(/:true$/);
+      expect(d.attached, `${c.name}: detached`).toBe(false);
+    }
   });
 });
 
