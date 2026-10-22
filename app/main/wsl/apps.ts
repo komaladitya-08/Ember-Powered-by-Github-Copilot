@@ -215,12 +215,13 @@ export function withWslApps(apps: AppCatalog, o: { wsl: () => WslService | null;
     const why = wslgRefusal(argv, fresh);
     if (why) throw new Error(/[.!?]$/.test(why) ? why : `Ember can't open that app: ${why}.`);
     const p = wslgLaunch(argv)!;
-    // Its default user as the distro itself says (L17, critique wsl-7): a uid not learned yet is asked for now.
+    if (linuxTerminal(app, p.argv) || apps.isTerminalApp({ id: app.id, name: app.name })) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
+    // Its default user as the distro itself says (L17, critique wsl-7): a uid not learned yet is asked for now (after the
+    // checks that need nothing from the distro, so a stopped one is never started only to refuse its app).
     const d = (p.distro ? fresh.distros.find(x => x.name.toLowerCase() === p.distro!.toLowerCase()) : fresh.distros.find(x => x.isDefault))!;
     const root = await runsAsRoot(wsl, d);
     if (root === null) throw new Error(`Ember couldn't tell which user ${d.name} runs apps as, so it didn't open that app.`);
     if (root) throw new Error("Ember doesn't use Linux apps of a distro that runs as root.");
-    if (linuxTerminal(app, p.argv) || apps.isTerminalApp({ id: app.id, name: app.name })) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
     const explorer = expandEnvironmentStrings("%SystemRoot%\\explorer.exe", env);
     if (!wpath.isAbsolute(explorer) || explorer.includes("%")) throw new Error("Ember couldn't find Windows' own folder, so it can't open apps.");
     // The shortcut as the Start menu would open it: Ember never starts wslg.exe (or the distro's shell) itself.

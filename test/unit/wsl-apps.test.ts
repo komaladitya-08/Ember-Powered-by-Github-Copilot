@@ -234,6 +234,12 @@ describe("withWslApps", () => {
     const user = setup({ facts: unknown(true), files: file, wsl: { defaultUid: async () => 1000, runner: runner(false) } });
     await user.apps.launch(gedit);
     expect(user.spawned).toHaveLength(1);
+    // A terminal is refused before anything is asked of the distro: a stopped one isn't started just to say no.
+    asked.length = 0;
+    const term = setup({ facts: unknown(false), files: { [gedit.file]: lnk("-d Ubuntu -- X=1 xterm") }, wsl: { defaultUid: async () => { asked.push("uid"); return null; }, runner: runner(false) } });
+    await expect(term.apps.launch(gedit)).rejects.toThrow("Ember doesn't run terminals");
+    expect(asked).toEqual([]);
+    expect(term.spawned).toEqual([]);
   });
 
   it("leaves every other app to the Windows catalogue", () => {
