@@ -34,6 +34,7 @@ import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, produ
 import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
 import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
+import { validConsent } from "../../app/main/remote/prompt-window";
 import type { IpcLike, TargetsDeps, WebContentsLike } from "../../app/main/targets/types";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
@@ -1111,7 +1112,9 @@ describe("small helpers", () => {
   it("splits what the user typed into a destination and a port", () => {
     expect(splitDest("deploy@build-01:2222")).toEqual({ dest: "deploy@build-01", port: 2222 });
     expect(splitDest("ssh://deploy@build-01:22/")).toEqual({ dest: "deploy@build-01", port: 22 });
-    expect(splitDest("[fe80::1]:22")).toEqual({ dest: "[fe80::1]", port: 22 });
+    // SA's reading (parseTypedDestination): the brackets only set the port apart.
+    expect(splitDest("[fe80::1]:22")).toEqual({ dest: "fe80::1", port: 22 });
+    expect(splitDest("build-01:")).toBeNull();
     expect(splitDest("fe80::1")).toEqual({ dest: "fe80::1" });
     expect(splitDest("build-01")).toEqual({ dest: "build-01" });
     expect(splitDest("-oProxyCommand=x")).toBeNull();
@@ -1145,6 +1148,21 @@ describe("small helpers", () => {
 });
 
 describe("the remote and WSL seams (INT)", () => {
+  it("makes every SSH card one the prompt window will show: its lines within 2000 characters, its hash its own", () => {
+    const facts = (extra?: HostRecord["extra"]) => ({ label: "build-01", resolved: { user: "deploy", hostname: "build-01.example.com", port: 22, jump: ["jump@bastion:2200"] }, desktopOff: false, graceSeconds: 20, machineChanged: true, ...(extra ? { extra } : {}) });
+    const long = (n: number) => `/home/ana/.ssh/${String(n).padStart(2, "0")}${"k".repeat(1000)}`;
+    for (const extra of [undefined, { identityFiles: ["~/.ssh/id_ed25519"] }, { identityFiles: Array.from({ length: 16 }, (_, i) => long(i)), configFile: long(99) }]) {
+      for (const os of ["linux", "win32", "darwin"] as const) {
+        const card = sshConsent({ os, target: "ssh:build-01", facts: facts(extra) });
+        expect(validConsent(card), JSON.stringify(extra)?.slice(0, 40)).toBe(true);
+        expect(Math.max(...card.body.map(l => l.length))).toBeLessThanOrEqual(2000);
+      }
+    }
+    // A short carried line is today's words.
+    expect(sshConsent({ os: "linux", target: "ssh:build-01", facts: facts({ identityFiles: ["~/.ssh/a", "~/.ssh/b"], configFile: "~/.ssh/c" }) }).body)
+      .toContain("It uses the keys ~/.ssh/a and ~/.ssh/b and the settings file ~/.ssh/c, as your own ssh did.");
+  });
+
   it("builds its real parts with SA's noticing and WB's helpers", () => {
     const r = rig();
     const real = productionParts(r.deps);

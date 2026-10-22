@@ -36,6 +36,7 @@ import type { QuickContext } from "../perception";
 import type { PlatformDoctorRow, SystemPlatform } from "../platform/types";
 import { PolicyEngine } from "../policy/policy";
 import { createConnections } from "../remote/connections";
+import { parseTypedDestination } from "../remote/destination";
 import { createPromptWindow } from "../remote/prompt-window";
 import { emberNamesRegExp } from "../remote/protocol";
 import { sshDestination, userSshProcesses } from "../remote/notice-ssh";
@@ -128,23 +129,12 @@ export function hostIdFor(alias: string, taken: ReadonlySet<string>): string {
   }
 }
 
-/** "user@host:22", "ssh://user@host:22", "[::1]:22" → the destination ssh gets and a port apart (§5.1.2), or null. */
+/**
+ * "user@host:22", "ssh://user@host:22", "[::1]:22" → the destination ssh gets and a port apart (§5.1.2), or null: SA's
+ * own reading of what the user typed (parseTypedDestination), so settings' Add takes exactly what a connect accepts.
+ */
 export function splitDest(raw: string): { dest: string; port?: number } | null {
-  let s = String(raw ?? "").trim();
-  if (s.startsWith("ssh://")) s = s.slice(6).replace(/\/$/, "");
-  let port: number | undefined;
-  const bracket = /^(.*\])(?::(\d{1,5}))?$/.exec(s);
-  if (bracket) {
-    s = bracket[1];
-    if (bracket[2]) port = Number(bracket[2]);
-  } else {
-    // One colon only: host:port (a bare IPv6 address has several and keeps them).
-    const m = /^([^:]+):(\d{1,5})$/.exec(s);
-    if (m) { s = m[1]; port = Number(m[2]); }
-  }
-  if (port !== undefined && (port < 1 || port > 65535)) return null;
-  if (!/^(?!-)[A-Za-z0-9._%+@[\]:-]{1,255}$/.test(s)) return null;
-  return { dest: s, ...(port !== undefined ? { port } : {}) };
+  return parseTypedDestination(String(raw ?? ""));
 }
 
 /** Megabytes for the connecting bubble ("12 of 29 MB"). */
