@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
+import { OFFICE_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
@@ -754,6 +754,8 @@ const RUN_ANSWER = /^(run|execute|launch|ausfuhren|lancer|ejecutar|esegui|execut
 /** RUNS_PROGRAM_EXTRA[os] and RUN_FILE_DIALOG_EXTRA[os] (./vocabulary.ts) as expressions, or null where the OS adds none. */
 const runsProgramExtra = perOS(os => (RUNS_PROGRAM_EXTRA[os].length ? anyOf([...RUNS_PROGRAM_EXTRA[os]]) : null));
 const runFileDialogExtra = perOS(os => (RUN_FILE_DIALOG_EXTRA[os].length ? anyOf([...RUN_FILE_DIALOG_EXTRA[os]]) : null));
+/** RUN_ANSWER_EXTRA[os] (./vocabulary.ts) as a whole word starting the label, as RUN_ANSWER is, or null where the OS adds none. */
+const runAnswerExtra = perOS(os => (RUN_ANSWER_EXTRA[os].length ? new RegExp(`^(${foldLabel(RUN_ANSWER_EXTRA[os].join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u") : null));
 /** Does activating this control make a file executable or run one (by `os`'s words too)? */
 function runsProgram(role: string, name: string, dialog: { name: string; text: string } | undefined, os: OS): boolean {
   const label = plainText(name);
@@ -762,7 +764,9 @@ function runsProgram(role: string, name: string, dialog: { name: string; text: s
   // The file's execute bit, by a check box on its Permissions page.
   if (TOGGLE_ROLES.test(role) && (RUN_ONLY.test(label) || EXECUTABLE_WORD.test(label))) return true;
   const asks = plainText(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
-  return RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks) || !!runFileDialogExtra(os)?.test(asks));
+  const osRunDialog = !!runFileDialogExtra(os)?.test(asks);
+  // The OS's own answers (Gatekeeper's "Open") run the file only in its own dialogs.
+  return (RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks) || osRunDialog)) || (osRunDialog && !!runAnswerExtra(os)?.test(label));
 }
 /** "Paste" menu items and buttons, in the languages of RISKY_WORDS (GTK's and the browsers' own words). */
 const PASTE_WORDS = ["paste", "einfügen", "coller", "pegar", "incolla", "colar", "plakken", "wklej", "вставить", "вставь", "klistra in", "indsæt",

@@ -170,6 +170,18 @@ export const RUN_FILE_DIALOG_EXTRA: Readonly<Record<OS, readonly string[]>> = {
   darwin: ["are you sure you want to open it", "downloaded from the internet"],
 };
 
+/**
+ * Answers that run the file in the OS's own run dialogs (RUN_FILE_DIALOG_EXTRA), beyond policy.ts's RUN_ANSWER (a whole
+ * word at the start of the label, written with its accents, folded when matched): on macOS Gatekeeper's "Open", which
+ * runs the downloaded app or script it asks about, in English and the languages of RUNS_PROGRAM_EXTRA. Counted only in
+ * those dialogs: anywhere else "Open" is an ordinary button (an Open panel's opens a document).
+ */
+export const RUN_ANSWER_EXTRA: Readonly<Record<OS, readonly string[]>> = {
+  linux: [],
+  win32: [],
+  darwin: ["open", "öffnen", "ouvrir", "abrir", "apri", "openen", "開く", "打开", "打開", "열기"],
+};
+
 /** A box where text typed in runs a program (File Explorer's address box runs "cmd" with Enter). */
 export interface TypingRefusal {
   /** The app, tested on ActionRequest.app (trimmed). */

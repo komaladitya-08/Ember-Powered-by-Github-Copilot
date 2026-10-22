@@ -15,8 +15,8 @@ import {
 } from "../../app/main/hands/terminals";
 import { PolicyEngine, isRiskyLabel, isSecurityWindow, refusesTyping, type ActionRequest } from "../../app/main/policy/policy";
 import {
-  FILE_PATH_WORDS, OFFICE_APP, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP,
-  TERMINAL_REQUEST, TYPING_REFUSED, WEB_APP,
+  FILE_PATH_WORDS, OFFICE_APP, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE,
+  TABBED_APP, TERMINAL_REQUEST, TYPING_REFUSED, WEB_APP,
 } from "../../app/main/policy/vocabulary";
 import { CLIPBOARD_FORMATS, savableFormat } from "../../app/main/agent/clipboard-formats";
 import { electronClipboard } from "../../app/main/agent/clipboard";
@@ -215,6 +215,30 @@ describe("risky and run-a-program labels on macOS", () => {
     expect(RUN_FILE_DIALOG_EXTRA.darwin).toContain("are you sure you want to open it");
     // Gatekeeper's own window belongs to CoreServicesUIAgent, a security app: Ember stays out of it whatever its buttons say.
     expect(isSecurityWindow({ app: "CoreServicesUIAgent" }, M)).toBe(true);
+  });
+
+  it("never presses Gatekeeper's Open, which runs the downloaded app it asks about, and judges Open elsewhere as before", () => {
+    const gatekeeper = { name: "", text: "“tool” is an app downloaded from the Internet. Are you sure you want to open it?" };
+    for (const label of ["Open", "OPEN", "Öffnen", "Ouvrir", "Abrir", "Apri", "Openen", "開く", "開く(O)", "打开", "打開", "열기"]) {
+      for (const kind of ["click", "cursor_click"] as const) {
+        expect(engine().decide({ ...click(label, "push button", { dialog: gatekeeper }), kind }), `${kind} ${label}`)
+          .toMatchObject({ verdict: "deny", tier: "never", reason: "Ember doesn't run programs, so it never makes files executable or runs them" });
+      }
+    }
+    expect(engine().decide({ ...click("Open", "push button", { dialog: gatekeeper }), kind: "keys", value: "Return" }).tier).toBe("never");
+    expect(engine().decide(click("Cancel", "push button", { dialog: gatekeeper })).tier).not.toBe("never");
+    expect(engine().decide(click("Opener", "push button", { dialog: gatekeeper })).tier).not.toBe("never");
+    // An Open panel's "Open" (even on an executable's preview), and any other dialog's, opens a document.
+    for (const dialog of [{ name: "Open", text: "Kind: Unix executable" }, { name: "Recent Items", text: "Open the most recent document?" }]) {
+      expect(engine().decide(click("Open", "push button", { dialog })).tier, dialog.name).not.toBe("never");
+    }
+    expect(RUN_ANSWER_EXTRA.darwin).toContain("open");
+    // Linux and Windows have no such answer: their own words are RUN_ANSWER's ("Run").
+    expect([RUN_ANSWER_EXTRA.linux, RUN_ANSWER_EXTRA.win32]).toEqual([[], []]);
+    for (const os of ["linux", "win32"] as const) {
+      const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ finder: "act" }), keys: KEYS[os], os });
+      expect(e.decide(click("Open", "push button", { dialog: gatekeeper })).tier, os).not.toBe("never");
+    }
   });
 
   it("has no box that runs what is typed (Finder's Go to Folder only goes there)", () => {
