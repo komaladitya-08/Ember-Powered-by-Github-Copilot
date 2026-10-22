@@ -72,7 +72,8 @@ describe("composing Linux's SystemPlatform", () => {
 describe("paths", () => {
   it("are today's: ~/.config/ember, the linux-x64 runtime, the fixed folder text and no rename retries", () => {
     const p = linuxSystem(deps()).paths;
-    expect(p.userData("/home/u/.config", "/home/u")).toBe("/home/u/.config/ember");
+    // Built with path.join, as main.ts always did: the exact string on Linux, backslashes when this suite runs on Windows.
+    expect(p.userData("/home/u/.config", "/home/u")).toBe(path.join("/home/u/.config", "ember"));
     expect([p.runtimeId, p.runtimeExe]).toEqual(["linux-x64", "copilot-runtime"]);
     expect(p.dataDirLabel("/tmp/anything")).toBe("~/.config/ember");
     expect(p.dataDirLabel("/tmp/anything", "settings.json")).toBe("~/.config/ember/settings.json");
