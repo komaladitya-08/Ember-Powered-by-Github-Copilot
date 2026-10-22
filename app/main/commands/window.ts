@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../shared/commands";
 import type { OS } from "../../shared/shortcuts";
+import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, RunExit, RunningCommand } from "./types";
@@ -80,7 +81,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const isRunId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{16}$/.test(v);
 const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-const str = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
+const str = (v: unknown, max: number, min = 0) => typeof v === "string" && v.length >= min && v.length <= max;
 
 /** What an approval binds to (§3.9.1, R-cmd-1): sha256Hex(`${target}\0${shell}\0${cwd}\0${command}`). */
 export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command">): string {
@@ -89,12 +90,12 @@ export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "co
 
 /**
  * A card the window can show: every field of the right type and size, and its sha256 the hash of exactly the target,
- * shell, folder and command it shows (so the hash an Allow carries back is of what the user saw). A malformed card is
- * never shown, so it can't be allowed.
+ * shell, folder and command it shows (so the hash an Allow carries back is of what the user saw), for a target id Ember
+ * knows (the header names the place from it). A malformed card is never shown, so it can't be allowed.
  */
 export function validCard(c: unknown): c is CommandCard {
   if (!isObj(c)) return false;
-  return isRunId(c.runId) && str(c.target, 200) && str(c.targetLabel, 200) && (c.login === undefined || str(c.login, 255))
+  return isRunId(c.runId) && str(c.target, 200) && parseTargetId(c.target as string) !== null && str(c.targetLabel, 200, 1) && (c.login === undefined || str(c.login, 255))
     && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string) && str(c.cwd, 4096) && str(c.command, 64 * 1024)
     && (c.command as string).length > 0 && isSha(c.sha256) && str(c.taskId, 200) && str(c.taskTitle, 1000)
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64

@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
 import { MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { statusLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
@@ -317,6 +318,11 @@ describe("one card at a time", () => {
     expect(validCard(card())).toBe(true);
     expect(validCard({ ...card(), runId: "0123" })).toBe(false);
     expect(validCard({ ...card(), command: "" })).toBe(false);
+    // A target id Ember doesn't know, or no label for it: never shown, even with a hash of its own fields.
+    expect(validCard(card({ target: "ftp:build-01" as CommandCard["target"] }))).toBe(false);
+    expect(validCard(card({ target: "ssh:Build-01" as CommandCard["target"] }))).toBe(false);
+    expect(validCard(card({ targetLabel: "" }))).toBe(false);
+    expect(validCard(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe(true);
   });
 
   it("never shows a card whose hash isn't of the very target, shell, folder and command it shows (R-cmd-1)", async () => {
@@ -595,6 +601,20 @@ describe("a run's tab", () => {
     const r4 = new FakeRun("0123456789abcdef");
     ok.ctl.attach(card({ mode: "run" }), r4);
     expect(r4.stops).toEqual([]);
+  });
+
+  it("shows a remote's reason and the names it reports with every character visible, and cut short (§7.2)", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.finish({ ended: "refused-remote", code: null, error: "policy says no\u202e.ti dewolla\n" + "x".repeat(5000) });
+    await vi.runAllTimersAsync();
+    const status = page().last().tabs[0].status;
+    expect(status.startsWith("build-01 refused it: policy says no⟨RLO⟩.ti dewolla x")).toBe(true);
+    expect(status).not.toMatch(/[\u202e\n]/);
+    expect([...status].length).toBeLessThan(400);
+    const names = statusLine({ code: 0, signal: null, ended: "exit", ms: 1000, stragglers: ["ma\u200bke", "y".repeat(500)] } as RunExit, { label: "build-01", os: "linux" });
+    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}….`);
   });
 
   it("names how a run ended for its tab's symbol", () => {

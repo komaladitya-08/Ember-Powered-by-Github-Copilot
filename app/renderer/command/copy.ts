@@ -7,6 +7,7 @@
 import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import type { CommandCard, RunExit, ShellId } from "../../main/commands/types";
+import { segmentLabel, visibleText } from "./visible";
 
 /** The window's title (it matches EMBER_WINDOW's "ember commands", so no task reads or acts in it). */
 export const WINDOW_TITLE = "Ember commands";
@@ -62,8 +63,20 @@ export function tabLabel(command: string): string {
   return chars.length > 40 ? `${chars.slice(0, 40).join("")}…` : chars.join("");
 }
 
-/** A reason in a sentence, without the full stop it may already end with. */
-const clause = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
+/**
+ * Text from outside Ember's own words (a remote's reason for refusing, a program name a remote reported) as one short
+ * line: every control, bidi and invisible character shown as its token (§7.2: remote strings are shown with them made
+ * visible and length-capped), cut at `max` characters.
+ */
+export function outsideText(s: unknown, max: number): string {
+  const one = (typeof s === "string" ? s : "").replace(/[ \t\r\n]+/g, " ").trim();
+  const shown = visibleText(one).map(segmentLabel).join("");
+  const chars = [...shown];
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : shown;
+}
+
+/** A reason in a sentence (shown as outsideText), without the full stop it may already end with. */
+const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+$/, "");
 
 /** "1 program it started is still running: make." / "2 programs it started are still running: a, b." */
 export function stragglerText(names: readonly string[]): string {
@@ -98,7 +111,7 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
     case "refused-remote": line = `${o.label} refused it: ${clause(exit.error) || "it gave no reason"}.`; break;
     default: line = `Ended after ${d}.`;
   }
-  const more = stragglerText(Array.isArray(exit.stragglers) ? exit.stragglers.filter(n => typeof n === "string") : []);
+  const more = stragglerText(Array.isArray(exit.stragglers) ? exit.stragglers.filter(n => typeof n === "string").map(n => outsideText(n, 64)) : []);
   return more ? `${line} ${more}` : line;
 }
 
