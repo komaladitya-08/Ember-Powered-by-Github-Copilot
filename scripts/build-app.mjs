@@ -1,5 +1,6 @@
 // Builds the Electron app into dist/app:
-//   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages)
+//   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
+//   desk-agent.cjs, voice.cjs and ax-sidecar.cjs (helpers Ember runs as plain Node)
 import { build } from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,17 @@ await Promise.all([
     ...common,
     entryPoints: ["app/main/desk/agent-process.ts"],
     outfile: "dist/app/desk-agent.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "koffi", "sharp"],
+  }),
+  // The accessibility host on Windows and macOS (app/sidecar-host): Ember's own binary runs it as plain Node, and it
+  // speaks the Python AT-SPI sidecar's protocol. It never imports electron.
+  build({
+    ...common,
+    entryPoints: ["app/sidecar-host/main.ts"],
+    outfile: "dist/app/ax-sidecar.cjs",
     platform: "node",
     format: "cjs",
     target: "node24",
