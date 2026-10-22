@@ -203,8 +203,9 @@ describe("wslLaunch", () => {
   });
 
   it("cleans the Windows side's environment as §3.3.1 says", () => {
-    const e = windowsRunEnv({ ...ENV, ORIGINAL_XDG_CURRENT_DESKTOP: "GNOME", XDG_CURRENT_DESKTOP: "Unity", APPIMAGE: "/x" }, { pty: false, runId: RUN_ID });
-    for (const gone of ["GH_TOKEN", "COPILOT_AGENT", "NODE_OPTIONS", "EMBER_LOG_LEVEL", "ELECTRON_NO_ATTACH_CONSOLE", "SUDO_ASKPASS", "APPIMAGE", "ORIGINAL_XDG_CURRENT_DESKTOP"]) {
+    const e = windowsRunEnv({ ...ENV, ORIGINAL_XDG_CURRENT_DESKTOP: "GNOME", XDG_CURRENT_DESKTOP: "Unity", APPIMAGE: "/x", "BASH_FUNC_ls%%": "() { x; }", CdPath: "C:\\x" }, { pty: false, runId: RUN_ID });
+    // RUN's commandEnv: its rules for every run, exported functions and CDPATH (any spelling on Windows) among them.
+    for (const gone of ["GH_TOKEN", "COPILOT_AGENT", "NODE_OPTIONS", "EMBER_LOG_LEVEL", "ELECTRON_NO_ATTACH_CONSOLE", "SUDO_ASKPASS", "APPIMAGE", "ORIGINAL_XDG_CURRENT_DESKTOP", "BASH_FUNC_ls%%", "CdPath"]) {
       expect(e[gone]).toBeUndefined();
     }
     expect(e).toMatchObject({ NPM_TOKEN: "npm_user_own", XDG_CURRENT_DESKTOP: "GNOME", EMBER_RUN_ID: RUN_ID, TERM: "dumb", Path: "C:\\Windows\\System32" });
@@ -223,6 +224,9 @@ describe("wslLaunch", () => {
     expect(() => wslLaunch(spec({ command: "a\0b" }), pty, o)).toThrow(/NUL/);
     expect(() => wslLaunch(spec({ runId: "x;y" }), pty, o)).toThrow(/id/);
     expect(() => wslLaunch(spec({ command: "日".repeat(11_000) }), pty, o)).toThrow(/too long/);
+    // RUN's launcher checks the rest: a distro name wsl.exe could read as more, a character that can't pass exactly.
+    expect(() => wslLaunch(spec(), pty, { ...o, distro: "Ubuntu --exec x" })).toThrow(/name/);
+    expect(() => wslLaunch(spec({ command: "echo \ud800" }), pty, o)).toThrow(/exactly as shown/);
   });
 });
 
@@ -560,7 +564,8 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
     await vi.advanceTimersByTimeAsync(0);
     expect(exit).toMatchObject({ ended: "stopped-user" });
-    expect(run.stragglers()).toEqual(["sleep", "?[2Jfake?sudo"]);
+    // Named by RUN's rules: terminal codes and direction marks a process put in its own name are dropped.
+    expect(run.stragglers()).toEqual(["sleep", "[2Jfakesudo"]);
     expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 2)).toBe(true);
   });
 

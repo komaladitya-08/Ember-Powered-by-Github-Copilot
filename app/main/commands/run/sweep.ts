@@ -10,11 +10,15 @@
 import type { OS } from "../../../shared/shortcuts";
 
 /**
- * The in-distro / remote sweep (§3.13, critique wsl-18), fed on stdin to `/bin/sh -s -- <SIGNAL> <runId>` (never on an
- * argv; `sweepArgs` makes the two words: INT, TERM or KILL, without SIG): every process whose environment holds exactly
- * `EMBER_RUN_ID=<runId>` gets `kill -<SIGNAL>`. The shell running it must not carry that variable itself.
+ * The in-distro sweep (§3.13, critique wsl-18), fed on stdin to `/bin/sh -s -- <SIGNAL> <runId>` (never on an argv;
+ * `sweepArgs` makes the two words: INT, TERM, KILL, or 0 to look without signalling): every process whose environment
+ * holds exactly `EMBER_RUN_ID=<runId>` gets `kill -<SIGNAL>` and is named on stdout as `<pid> <comm>`, so the last sweep
+ * can say what is still running (the design's one-liner, plus that line). The shell running it must not carry that
+ * variable itself.
  */
-export const sweepScript = 'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null && kill -$1 "${p#/proc/}" 2>/dev/null; done\n';
+export const sweepScript =
+  'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null || continue; kill -$1 "${p#/proc/}" 2>/dev/null; ' +
+  'printf \'%s %s\\n\' "${p#/proc/}" "$(cat "$p/comm" 2>/dev/null)"; done\n';
 
 /** A run id as RunSpec makes them: 16 lower-case hex digits. */
 export const RUN_ID = /^[0-9a-f]{16}$/;
@@ -24,13 +28,19 @@ const SWEEP_SIGNALS: ReadonlySet<string> = new Set(["SIGINT", "SIGTERM", "SIGKIL
 
 /**
  * sweepScript's two arguments (after `/bin/sh -s --`) for a ladder step: the signal without its SIG prefix (dash's
- * `kill -SIGTERM` is "Illegal option -S", so the sweep would signal nothing) and the run id. Throws on anything else,
- * so nothing but these two words can reach the script.
+ * `kill -SIGTERM` is "Illegal option -S", so the sweep would signal nothing), or "0" for null (only look: what a run
+ * that ended by itself left running), and the run id. Throws on anything else, so nothing but these two words can
+ * reach the script.
  */
-export function sweepArgs(signal: NodeJS.Signals, runId: string): [string, string] {
-  if (!SWEEP_SIGNALS.has(signal)) throw new Error(`the sweep doesn't send ${String(signal)}`);
+export function sweepArgs(signal: NodeJS.Signals | null, runId: string): [string, string] {
+  if (signal !== null && !SWEEP_SIGNALS.has(signal)) throw new Error(`the sweep doesn't send ${String(signal)}`);
   if (!RUN_ID.test(runId)) throw new Error("not a run id");
-  return [signal.slice(3), runId];
+  return [signal === null ? "0" : signal.slice(3), runId];
+}
+
+/** The `<pid> <comm>` lines sweepScript printed, as the names the status line may repeat (programName's rules). */
+export function sweptNames(stdout: string): string[] {
+  return stdout.split("\n").map(l => /^\d+ (.*)$/.exec(l.replace(/\r$/, ""))?.[1]).filter((n): n is string => n !== undefined).map(programName).filter(Boolean);
 }
 
 /** Whether a NUL-separated environment block (`/proc/<pid>/environ`) holds exactly `EMBER_RUN_ID=<runId>` as an entry. */

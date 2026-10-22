@@ -66,6 +66,14 @@ const DISTRO_NAME = /^[A-Za-z0-9._-]+$/;
 /** An absolute Windows path Ember can hand to CreateProcess as a program. */
 const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
 
+/** What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). */
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM"];
+/**
+ * §3.3.1's non-interactive defaults as a WSL pipe run carries them into the distro (WSLENV takes a variable's value
+ * from Windows' side, so the values are fixed here): a program that wants an answer fails at once instead of waiting.
+ */
+export const WSL_PIPE_DEFAULTS: Readonly<Record<string, string>> = { GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" };
+
 /** A UTF-16 surrogate without its pair: it can't be encoded as UTF-8, and Node would hand the shell U+FFFD in its place. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -122,8 +130,10 @@ export function launchArgv(
         EMBER_RUN_ID: spec.runId,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),
         TERM: pty ? "xterm-256color" : "dumb",
+        // A pipe run can't take typing: §3.3.1's non-interactive defaults, fixed values, cross into the distro too.
+        ...(pty ? {} : WSL_PIPE_DEFAULTS),
         // Replaces the user's WSLENV: only these cross into the distro (X11 and the rest of Windows' don't).
-        WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u",
+        WSLENV: [...WSLENV_RUN, ...(pty ? [] : Object.keys(WSL_PIPE_DEFAULTS))].map(n => `${n}/u`).join(":"),
       },
     };
   }

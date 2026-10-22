@@ -254,6 +254,9 @@ describe("launchArgv", () => {
     expect(got.args).toEqual([JOB_HOST.script, "--batch", "--", "C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "/home/ana/src", "--exec", "/usr/bin/bash", "--noprofile", "--norc", "-c", WSL_EVAL]);
     expect(got.env.EMBER_INNER).toBe(posixBody({ pty: false, from: "b64" }));
     expect(got.env.TERM).toBe("dumb");
+    // Nobody can type into a pipe run: the non-interactive defaults (fixed values) cross into the distro (RUN's gap).
+    expect(got.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
+    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
   });
 
   it("never puts the command text on the argv, whatever the target", () => {
