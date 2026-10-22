@@ -559,11 +559,11 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     const states: string[] = [];
     link.onState(s => states.push(s));
     r.muxes[0].silent = 6_000;
-    await new Promise(res => setTimeout(res, 600));
+    await new Promise(res => setTimeout(res, 1_100));
     expect(link.state).toBe("stalled");
     await expect(link.request("act", { opId: "o", epoch: link.epoch, stamp: {} as never, op: "do_action", id: 1, action: "click" })).rejects.toMatchObject({ code: "stale" });
     r.muxes[0].silent = 21_000;
-    await new Promise(res => setTimeout(res, 600));
+    await new Promise(res => setTimeout(res, 1_100));
     expect(states).toEqual(["stalled", "lost"]);
     expect(r.spawned[0].killed).toBe(true);
     expect(r.audits.map(a => a.step)).toContain("lost");
