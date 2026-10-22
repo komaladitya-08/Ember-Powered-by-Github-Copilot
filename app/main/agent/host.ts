@@ -978,8 +978,10 @@ export class AgentHost {
             if (!b.ok) return b.why;
             if (b.binding.kind === "ssh") return "Ember can't point at things on another computer's screen. Explain the steps in words instead.";
           }
-          // Nothing is promised that can't be done: a window Ember can't read is one it can't point into.
-          const target = this.turn?.target ?? undefined;
+          // Nothing is promised that can't be done: a window Ember can't read is one it can't point into. A window read on
+          // another computer is never one to point into here (G14): the guide then finds its own on this screen.
+          const read = this.turn;
+          const target = read?.targetId?.startsWith("ssh:") ? {} : read?.target ?? undefined;
           const stops = this.stops;
           const why = await this.cantGuide(target);
           // Stop, or a restart or sign-out, came while the window was read: nothing starts (as the conductor refuses after Stop).

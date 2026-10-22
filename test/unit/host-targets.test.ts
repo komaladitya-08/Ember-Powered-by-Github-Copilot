@@ -345,6 +345,18 @@ describe("show_me and describe_screen by target (§2.6)", () => {
     await host.stop();
   });
 
+  it("a guide on this screen never starts in a window read on another computer (G14)", async () => {
+    const { t } = fakeTargets({ active: "ssh:build-01" });
+    const { host, tool, specs } = await started({ hands: hands(), targets: t });
+    await host.ask("show me how to open the settings on this computer", { target: { title: "Settings", pid: 3 }, text: "<screen>Settings</screen>", targetId: "ssh:build-01" } as never);
+    await tool("show_me")({ goal: "open the settings" });
+    await host.ask("show me how to open the mail on this computer", { target: { title: "Mail", pid: 3 }, text: "<screen>Mail</screen>" });
+    await tool("show_me")({ goal: "open the mail" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs.map(s => [s.mode, s.target])).toEqual([["guide", {}], ["guide", { title: "Mail", pid: 3 }]]);
+    await host.stop();
+  });
+
   it("describe_screen reads the named computer's screen through its agent, this screen through main", async () => {
     const { t } = fakeTargets({ caps: () => ({ commands: false, targets: true }), screens: { "ssh:build-01": "<screen>build-01: Terminal</screen>" } });
     const { host, tool } = await started({ hands: hands(), targets: t, describeScreen: async () => "<screen>Mail</screen>" });
