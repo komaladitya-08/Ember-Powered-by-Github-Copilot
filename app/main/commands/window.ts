@@ -149,13 +149,14 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       return null;
     }
     win = w;
-    wire();
+    try { wire(); } catch (err) { note("error", "commands.ipc_failed", { err }); }
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
       view = null;
-      // Closed during a countdown: the user didn't get to see it to the end, so the command doesn't run (fail closed).
-      for (const a of [...queue]) settleAnnouncement(a, false);
+      // Closed during a countdown: the user didn't get to see it to the end, so no command waiting there runs (fail
+      // closed), and the window doesn't come back for the next one.
+      cancelAnnouncements();
     });
     return w;
   }
@@ -276,6 +277,16 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     a.endsAt = Date.now() + a.ms;
     a.timer = setTimeout(() => settleAnnouncement(a, true), a.ms);
     push();
+  }
+
+  /** Every announcement, shown or waiting, ends as "don't run" at once. */
+  function cancelAnnouncements(): void {
+    for (const a of queue.splice(0)) {
+      if (a.timer) clearTimeout(a.timer);
+      a.settle(false);
+    }
+    push();
+    settle();
   }
 
   function settleAnnouncement(a: Announcement, ok: boolean): void {
@@ -470,8 +481,8 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
 
     dispose() {
       if (disposed) return;
-      for (const a of [...queue]) settleAnnouncement(a, false);
       disposed = true;
+      cancelAnnouncements();
       for (const t of tabs) dropTab(t);
       tabs = [];
       card = null;

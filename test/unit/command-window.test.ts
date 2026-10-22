@@ -384,6 +384,22 @@ describe("announcing (D4.4, \u00a73.9.2)", () => {
     await expect(p5).resolves.toBe(false);
   });
 
+  it("ends every waiting announcement when the window is closed, without opening it again", async () => {
+    const { ctl, windows } = setup();
+    const first = ctl.announce(card(), 4000, new AbortController().signal);
+    const second = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    windows[0].close();
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
+    expect(windows).toHaveLength(1);
+    const third = ctl.announce(card(), 4000, new AbortController().signal);
+    const fourth = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    ctl.dispose();
+    await expect(third).resolves.toBe(false);
+    await expect(fourth).resolves.toBe(false);
+    expect(windows).toHaveLength(2);
+  });
+
   it("counts down one announcement at a time, each for its whole time once shown", async () => {
     const { ctl, page } = setup();
     const first = ctl.announce(card(), 4000, new AbortController().signal);

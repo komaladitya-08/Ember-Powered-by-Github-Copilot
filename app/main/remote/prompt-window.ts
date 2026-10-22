@@ -119,7 +119,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
       return null;
     }
     win = w;
-    wire();
+    try { wire(); } catch (err) { note("error", "prompt.ipc_failed", { err }); }
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
