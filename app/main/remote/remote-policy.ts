@@ -118,10 +118,11 @@ export function remoteDesktop(o: {
 }): RemoteDesktop {
   const { welcome: w, state, combined: c, label } = o;
   const none = (why: string): RemoteDesktop => ({ desktop: "none", why });
-  if (w.os === "darwin") return none(`${label} is a Mac: Ember runs commands there, but doesn't use its desktop yet.`);
+  // The words are §5.3.4's and §5.3.5's where the design gives them (§8.7 "desktop none").
+  if (w.os === "darwin") return none("Ember can't use a Mac's screen over SSH yet; it can run commands there.");
   if (w.os !== "linux") return none(`Ember can't use ${label}'s desktop yet: it runs commands only.`);
-  if (w.isWsl) return none(`${label} is WSL on another PC: its apps show on that PC's screen, so Ember runs commands only.`);
-  if (w.uid === 0) return none(`Ember is signed in to ${label} as root, and it never uses a desktop as root.`);
+  if (w.isWsl) return none(`${label} is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.`);
+  if (w.uid === 0) return none("Ember doesn't use a desktop as root.");
   if (c.error !== undefined) return none(`An administrator's policy couldn't be read, so Ember doesn't use ${label}'s desktop.`);
   if (c.features.ssh === false || c.ssh.desktop === false) return none(`An administrator turned off Ember's use of ${label}'s desktop.`);
   if (state.session?.locked) return none(`${label}'s screen is locked.`);
