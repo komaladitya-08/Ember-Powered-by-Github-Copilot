@@ -523,6 +523,7 @@ jobs:
           sudo sqlite3 "$db" "DELETE FROM access WHERE service='kTCCServiceListenEvent'"
           sudo launchctl kickstart -k system/com.apple.tccd.system || sudo pkill -x tccd
           sleep 2
+          echo "Input Monitoring rows now: $(sudo sqlite3 "$db" "SELECT count(*) FROM access WHERE service='kTCCServiceListenEvent'") (system), $(sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "SELECT count(*) FROM access WHERE service='kTCCServiceListenEvent'" || echo '?') (user)"
           EMBER_DARWIN_TEST=1 node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts -t "sees a key another process holds down"
       - name: "Attribution, before Ember.app's grant: opened as users open it, Ember can't read apps (nothing is borrowed from the runner's granted processes)"
         # Started through LaunchServices, Ember.app is its own responsible process to TCC, as when a user opens it; the
@@ -552,6 +553,29 @@ jobs:
           cat "$report"
           # Copilot warns (not signed in on a runner) rather than failing: a missing runtime is the failure.
           node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
+      - name: "Input Monitoring evidence (Q10), as Ember sees it: Ember.app with Accessibility but no Input Monitoring row of its own"
+        # Prints what Ember's check-up says of Input Monitoring once the bundle's listen row is gone (the evidence the
+        # suites can't give: their processes need Accessibility to post the key they look for), then puts it back.
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          bundle=$(plutil -extract CFBundleIdentifier raw -o - dist/package/Ember.app/Contents/Info.plist)
+          rows="$RUNNER_TEMP/ember-listen-row.sql"
+          sudo sqlite3 "$db" ".mode insert access" "SELECT * FROM access WHERE service='kTCCServiceListenEvent' AND client='$bundle'" > "$rows"
+          restore() {
+            sudo sqlite3 "$db" < "$rows"
+            sudo launchctl kickstart -k system/com.apple.tccd.system || sudo pkill -x tccd || true
+          }
+          trap restore EXIT
+          sudo sqlite3 "$db" "DELETE FROM access WHERE service='kTCCServiceListenEvent' AND client='$bundle'"
+          sudo launchctl kickstart -k system/com.apple.tccd.system || sudo pkill -x tccd
+          sleep 2
+          echo "Ember.app's rows now: $(sudo sqlite3 "$db" "SELECT group_concat(service, ', ') FROM access WHERE client='$bundle'")"
+          report="$RUNNER_TEMP/doctor-q10.txt"
+          : > "$report"
+          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-q10.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
+          grep -E '^(ok|warn|FAIL) +(Accessibility|Input Monitoring|Mouse and keyboard)' "$report" || { cat "$report" "$RUNNER_TEMP/doctor-q10.err"; exit 1; }
       - name: What the system said when something failed (crash reports, alerts)
         if: failure()
         continue-on-error: true
