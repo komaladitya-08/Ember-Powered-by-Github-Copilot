@@ -399,7 +399,12 @@ export class CursorBorrow {
         check();
         keyboardOnTarget();
         keyboardFree();
-        const { modifiers, key } = parseCombo(combo, this.keys);
+        // The logo key's other names ("win", "logo") as the policy read them (policy.canonicalKeys: ⌘ on macOS), so the
+        // key pressed is the one the user was asked about. On Linux the policy refuses every logo-key combination, and
+        // the spellings stay today's.
+        const kc = this.keys;
+        const spelled = kc.os === "linux" ? combo : combo.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+");
+        const { modifiers, key } = parseCombo(spelled, kc);
         const sym = x.keysymOf(key);
         if (!sym) throw new Error(`unknown key "${key}"`);
         // The key in the active layout when it has one (with Shift if it's on the shifted level there, like

@@ -3,11 +3,14 @@
  * (change_setting only with settings to change, open_on_desk only with a desk), apps are matched as the OS names
  * programs, the keys Ember presses itself are the OS's (⌘A, Delete, ⌘V on macOS), the authentication-prompt guard
  * uses the OS's vocabulary, and its words and shortcuts reach what the model and the user read. Without a system the
- * worker is Linux's, as before.
+ * worker is Linux's, as before. The clipboard around its paste follows the OS's formats (§4.10).
  */
 
 import { describe, expect, it } from "vitest";
 import { LINUX_WORKER_SYSTEM, Worker, afterKeys, dialogNote, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
+import { electronClipboard, holdsPassword } from "../../app/main/agent/clipboard";
+import { CLIPBOARD_FORMATS } from "../../app/main/agent/clipboard-formats";
+import type { ClipboardFormats } from "../../app/main/platform/types";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
@@ -240,5 +243,53 @@ describe("a Save dialog's note on another OS", () => {
     expect(dialogNote(dialog, [], "save it as notes.txt")).toBe("");
     expect(dialogNote(dialog, [], "save it as notes.txt", "darwin")).toBe("");
     expect(dialogNote(dialog, [], "save it", "win32")).toMatch(/^\nNote: the user named no file/);
+  });
+});
+
+describe("the clipboard around a paste on another OS", () => {
+  class Item { constructor(readonly data: Record<string, unknown>) {} }
+  /** A clipboard as Electron lists it, read and written through `formats` (Linux's by default). */
+  function board(initial: Record<string, unknown>[], formats?: ClipboardFormats) {
+    const entry = (d: Record<string, unknown>) => ({ types: Object.keys(d), getType: async (t: string) => d[t] });
+    const state = { items: initial.map(entry), writes: [] as Record<string, unknown>[][], texts: [] as string[] };
+    const cb = electronClipboard<Item>({
+      read: async () => state.items,
+      write: async items => { state.writes.push(items.map(i => i.data)); state.items = items.map(i => entry(i.data)); },
+      writeText: async t => { state.texts.push(t); state.items = [entry({ "text/plain": t })]; },
+      clear: () => { state.items = []; },
+    }, Item as unknown as new (d: Record<string, never>) => Item, 200, formats);
+    return { state, cb };
+  }
+  /** A Mac's rules as V plans them while rich formats are unverified: MIME types saved, the concealed marker not. */
+  const mac: ClipboardFormats = {
+    savable: t => /^[\w.+-]+\/[\w.+-]+/.test(t),
+    passwordMarker: t => t === "org.nspasteboard.ConcealedType",
+    ownTextMarkers: ["org.nspasteboard.TransientType"],
+  };
+
+  it("never puts back a password manager's copy marked in a format the OS doesn't save (fails closed)", async () => {
+    const b = board([{ "text/plain": "hunter2", "org.nspasteboard.ConcealedType": "" }], mac);
+    const saved = await b.cb.save();
+    expect(saved.items).toEqual([{ "text/plain": "hunter2" }]);
+    expect(holdsPassword(saved)).toBe(true);
+  });
+
+  it("marks Ember's own text with the OS's markers, and writes plain text on Linux as before", async () => {
+    const b = board([], mac);
+    await b.cb.writeText("hello");
+    expect(b.state.writes).toEqual([[{ "text/plain": "hello", "org.nspasteboard.TransientType": "1" }]]);
+    const linux = board([], CLIPBOARD_FORMATS.linux);
+    await linux.cb.writeText("hello");
+    expect([linux.state.texts, linux.state.writes]).toEqual([["hello"], []]);
+  });
+
+  it("judges Linux's password marker as before, with or without the formats given", async () => {
+    for (const formats of [undefined, CLIPBOARD_FORMATS.linux]) {
+      const b = board([{ "text/plain": "hunter2", "x-kde-passwordManagerHint": "secret" }], formats);
+      expect(holdsPassword(await b.cb.save())).toBe(true);
+      const plain = board([{ "text/plain": "notes" }], formats);
+      const saved = await plain.cb.save();
+      expect([holdsPassword(saved), "password" in saved]).toEqual([false, false]);
+    }
   });
 });

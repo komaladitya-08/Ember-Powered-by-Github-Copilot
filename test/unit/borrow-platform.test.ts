@@ -179,6 +179,15 @@ describe("key combinations as the OS spells them", () => {
     await expect(new CursorBorrow(x).borrow(hand => hand.keys("cmd+s"), fast)).rejects.toThrow(/unknown modifier "cmd"/);
   });
 
+  it("presses what the policy asked about for the logo key's other names on macOS (\"win+s\" is ⌘S), and not on Linux", async () => {
+    const { s, x } = fakeInput();
+    await new CursorBorrow(x, { keys: KEYS.darwin }).borrow(async hand => { await hand.keys("win+s"); await hand.keys("logo+s"); }, fast);
+    const cmdS = [`key ${SUPER_L} down`, `key ${0x73} down`, `key ${0x73} up`, `key ${SUPER_L} up`];
+    expect(s.log.filter(l => l.startsWith("key"))).toEqual([...cmdS, ...cmdS]);
+    await expect(new CursorBorrow(x).borrow(hand => hand.keys("win+s"), fast)).rejects.toThrow(/unknown modifier "win"/);
+    await expect(new CursorBorrow(x, { keys: KEYS.linux }).borrow(hand => hand.keys("logo+s"), fast)).rejects.toThrow(/unknown modifier "logo"/);
+  });
+
   it("parses the Mac's modifier names only with its conventions (L4)", () => {
     expect(parseCombo("cmd+s", KEYS.darwin)).toEqual({ modifiers: ["Super_L"], key: "s" });
     expect(parseCombo("option+shift+left", KEYS.darwin)).toEqual({ modifiers: ["Alt_L", "Shift_L"], key: "Left" });

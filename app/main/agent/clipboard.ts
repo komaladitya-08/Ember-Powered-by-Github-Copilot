@@ -116,9 +116,12 @@ export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (da
       const looks: unknown[] = [];
       // A copy is told apart from a new one by its formats and text; one without text (a picture) can't be.
       let comparable = true;
+      // A password manager's marker in a format the OS's rules don't save (listed, so never read back): still its copy.
+      let unsavedMarker = false;
       for (const item of await by(cb.read(), deadline)) {
         // Read now, every format: the clipboard is about to hold Ember's text instead.
         const types = item.types.filter(t => formats.savable(t));
+        unsavedMarker ||= item.types.some(t => !formats.savable(t) && marksPassword(formats, t));
         const pictures = types.filter(t => PICTURE.test(targetOf(t)));
         const others = types.filter(t => !pictures.includes(t));
         const data: Record<string, unknown> = {};
@@ -146,8 +149,9 @@ export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (da
         comparable &&= !!text;
         looks.push([item.types, item.types.includes("text/plain") ? text : null]);
       }
-      // Said only when it holds one (absent, holdsPassword judges the formats by Linux's marker, as before).
-      const password = items.some(data => Object.keys(data).some(t => marksPassword(formats, t)));
+      // Said only when it holds one (absent, holdsPassword judges the formats by Linux's marker, as before). Linux saves
+      // its marker, so there it is read like any format; elsewhere a marker that isn't saved fails closed.
+      const password = unsavedMarker || items.some(data => Object.keys(data).some(t => marksPassword(formats, t)));
       return { items, ...(comparable ? { look: JSON.stringify(looks) } : {}), ...(password ? { password } : {}) };
     },
     // A picture copied while Ember waited has the same formats as the one saved: that is saved again.
