@@ -1436,9 +1436,16 @@ function start(): void {
     } : undefined;
     // Where tasks act (this computer, WSL distros, computers over SSH) and their commands (§2): made whether or not this
     // screen has hands (without them, this computer is commands only).
+    // The runtime's channels hear only Ember's own bundled pages (each handler then checks which window sent it).
+    const fromPage = (e: { senderFrame: { url: string } | null }) => isTrustedSender(e.senderFrame?.url ?? "");
     const ipc: IpcLike = {
-      on: (channel, fn) => { ipcMain.on(channel, (e, ...args) => fn({ sender: e.sender }, ...args)); },
-      handle: (channel, fn) => { ipcMain.handle(channel, (e, ...args) => fn({ sender: e.sender }, ...args)); },
+      on: (channel, fn) => { ipcMain.on(channel, (e, ...args) => { if (fromPage(e)) fn({ sender: e.sender }, ...args); else log.warn("targets.ipc_untrusted", { channel }); }); },
+      handle: (channel, fn) => {
+        ipcMain.handle(channel, (e, ...args) => {
+          if (!fromPage(e)) throw new Error(`untrusted IPC sender on ${channel}`);
+          return fn({ sender: e.sender }, ...args);
+        });
+      },
     };
     let elevatedNow: boolean | undefined;
     targets = createTargets({

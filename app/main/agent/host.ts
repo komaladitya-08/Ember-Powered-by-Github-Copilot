@@ -19,7 +19,7 @@ import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
-import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "./worker";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
@@ -33,8 +33,8 @@ import { PLATFORM_WORDS } from "../../shared/words";
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
 
-/** A task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
-const refusedWorker = (why: string): WorkerLike => ({
+/** The worker for a task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
+const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
   run: async () => ({ success: false, summary: why }),
   steer: async () => false,
   dispose: async () => undefined,
@@ -821,7 +821,7 @@ export class AgentHost {
           if (hands) h = hands;
           else {
             const got = targets!.handsFor(spec.targetId ?? "local");
-            if (!got.ok) return refusedWorker(got.why);
+            if (!got.ok) return refusedWorker(spec, got.why);
             h = on = got.hands;
           }
           return new Worker({
