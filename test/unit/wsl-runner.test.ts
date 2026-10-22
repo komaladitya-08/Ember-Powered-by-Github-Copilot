@@ -12,7 +12,7 @@ import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/
 import type { JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
-  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts,
+  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS,
   parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
@@ -234,12 +234,13 @@ function hereDoc(script: string): string[] {
 /** A distro behind a fake wsl.exe and job host. Runs (anything not a fixed script) are left for the test to drive. */
 function distro(o: {
   facts?: string; listed?: WslDistro | null; running?: boolean; jobHost?: JobHostRef | null; sweepNames?: Record<string, string[]>;
-  hang?: ("facts" | "KILL" | "TERM")[]; inspect?: (lines: string[]) => string | null; git?: string;
+  hang?: ("facts" | "boot" | "KILL" | "TERM")[]; inspect?: (lines: string[]) => string | null; git?: string;
 } = {}) {
   const runs: SpawnCall[] = [];
   const sweeps: { signal: string; call: SpawnCall; at: number }[] = [];
   const probes: SpawnCall[] = [];
   const uids: number[] = [];
+  const boots: SpawnCall[] = [];
   let running = o.running ?? true;
   const fake = fakeSpawn(call => {
     const tail = call.wsl.slice(call.wsl.indexOf("--exec") + 1);
@@ -258,6 +259,9 @@ function distro(o: {
           const out = o.inspect ? o.inspect(hereDoc(script)) : hereDoc(script).map(p => `1\t${p}\n`).join("");
           if (out === null) answerWith(call, { stderr: utf16("chdir failed\r\n"), code: 1 });
           else answerWith(call, { stdout: out });
+        } else if (script === "true\nexit\n") {
+          boots.push(call);
+          if (!o.hang?.includes("boot")) answerWith(call, { stdout: "" });
         } else if (script.includes("rev-parse")) {
           answerWith(call, { stdout: o.git ?? "branch=main\npush=\nupstream=origin/main\n" });
         } else {
@@ -277,7 +281,7 @@ function distro(o: {
     isRunning: () => running, runningNow: async () => new Set(running ? ["Ubuntu"] : []), windows: () => WINDOWS,
     winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid), trackSecrets: fallbackSecretTracker,
   });
-  return { runner, runs, sweeps, probes, uids, log, calls: fake.calls, setRunning: (v: boolean) => { running = v; } };
+  return { runner, runs, sweeps, probes, boots, uids, log, calls: fake.calls, setRunning: (v: boolean) => { running = v; } };
 }
 
 /** Waits (through microtasks only) until `cond` holds. */
@@ -441,6 +445,34 @@ describe("WSL runner: starting a stopped distro", () => {
     expect(statuses).toEqual(["Starting Ubuntu…", null]);
   });
 
+  it("starts a distro that stopped since its facts with a no-op first, then hands it the command", async () => {
+    const w = distro();
+    await w.runner.facts();
+    w.setRunning(false);
+    const statuses: (string | null)[] = [];
+    w.runner.onStatus(t => void statuses.push(t));
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.boots).toHaveLength(1);
+    expect(w.runs).toHaveLength(1);
+    expect(statuses).toEqual(["Starting Ubuntu…", null]);
+    w.runs[0].child.out(MARKER);
+    w.runs[0].child.exit(0);
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0 });
+  });
+
+  it("never hands the command to wsl.exe when Stop comes while the distro boots", async () => {
+    const w = distro({ hang: ["boot"] });
+    await w.runner.facts();
+    w.setRunning(false);
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.boots).toHaveLength(1);
+    run.stop("user");
+    expect(await run.done).toMatchObject({ ended: "stopped-user" });
+    expect(w.runs).toHaveLength(0);
+  });
+
   it("stops a run that is still waiting for the distro without ever spawning it", async () => {
     const w = distro({ running: false, hang: ["facts"] });
     const run = w.runner.start(spec());
@@ -502,6 +534,41 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(child.killed).toBe(true);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await run.done).toMatchObject({ ended: "stopped-task" });
+  });
+
+  it("holds a Stop that comes before the command started until it starts, then climbs the ladder at once", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    const child = w.runs[0].child;
+    run.stop("user");
+    await vi.advanceTimersByTimeAsync(1_000);
+    // Nothing to interrupt yet, and wsl.exe isn't killed (that could orphan the launcher about to run the command).
+    expect(child.written).toHaveLength(0);
+    expect(w.sweeps).toHaveLength(0);
+    expect(child.killed).toBe(false);
+    child.out(MARKER);
+    expect(Buffer.concat(child.written).toString("latin1")).toBe("\x03");
+    await vi.advanceTimersByTimeAsync(LADDER_MS.last + 10);
+    expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
+    expect(child.killed).toBe(true);
+    expect(await run.done).toMatchObject({ ended: "stopped-user" });
+  });
+
+  it("ends wsl.exe after 5 s when a stopped command never starts, and sweeps for a late launcher", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    const child = w.runs[0].child;
+    run.stop("task");
+    await vi.advanceTimersByTimeAsync(PRESTART_STOP_MS - 1);
+    expect(child.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.killed).toBe(true);
+    expect(await run.done).toMatchObject({ ended: "stopped-task", code: null });
+    await vi.advanceTimersByTimeAsync(LADDER_MS.last + 10);
+    expect(w.sweeps.map(s => s.signal).every(s => s === "KILL")).toBe(true);
+    expect(w.sweeps.length).toBeGreaterThanOrEqual(2);
   });
 
   it("ends a stopped run even if its job host somehow outlives TerminateProcess", async () => {

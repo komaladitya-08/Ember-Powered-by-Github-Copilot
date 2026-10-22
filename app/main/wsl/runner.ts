@@ -468,6 +468,12 @@ const KEEP_HEAD = 64 * 1024, KEEP_ALL = 4 * 1024 * 1024;
 const HOLD_MAX = 256 * 1024;
 /** The launcher's start marker (POSIX_PRELUDE's `printf "\033]777;ember-start\007"`). */
 export const START_MARKER = Buffer.from("\x1b]777;ember-start\x07", "latin1");
+/**
+ * A Stop that comes after wsl.exe was started but before the command started waits this long for it to start (the
+ * ladder then runs at once), then ends wsl.exe: killing it earlier could leave a launcher that is about to run the
+ * command orphaned inside the distro (critique wsl-16).
+ */
+export const PRESTART_STOP_MS = 5_000;
 /** How long after the last sweep a stopped run whose job host is somehow still there ends anyway. */
 const UNKILLABLE_MS = 2_000;
 /** The job host's exit code when it couldn't make or join its job (run/job-host.ts's JOB_FAILED). */
@@ -565,6 +571,11 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     }
   };
 
+  const boot = async (): Promise<boolean> => {
+    const r = await mayStart(() => d.exec.run(["-d", name, "--cd", "~", "--exec", "/bin/sh", "-s"], { stdin: scriptInput("true"), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
+    return !r.error && !r.timedOut && r.code === 0;
+  };
+
   const sweep = async (signal: "INT" | "TERM" | "KILL" | "0", runId: string): Promise<string[]> => {
     const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", signal, runId], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
     return r.stdout.toString("utf8").split("\n").map(l => /^\d+ (.*)$/.exec(l)?.[1]?.trim() ?? "").filter(Boolean);
@@ -605,7 +616,7 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
       return r ? parseGitFacts(r.stdout.toString("utf8")) : null;
     },
     start(spec) {
-      const run = new Run(spec, d, { factsAndLines, usable, mayStart, sweep, setStatus, now, lastFacts: () => cache?.facts ?? null });
+      const run = new Run(spec, d, { factsAndLines, usable, sweep, boot, now, lastFacts: () => cache?.facts ?? null });
       runs.add(run);
       void run.done.then(() => runs.delete(run));
       run.begin();
@@ -626,9 +637,9 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
 interface RunnerParts {
   factsAndLines: () => Promise<{ facts: RunnerFacts; lines: FactsLines }>;
   usable: () => Promise<WslDistro>;
-  mayStart: <T>(fn: () => Promise<T>) => Promise<T>;
   sweep: (signal: "INT" | "TERM" | "KILL" | "0", runId: string) => Promise<string[]>;
-  setStatus: (t: string | null) => void;
+  /** Starts the stopped distro with a no-op ("Starting <distro>…" meanwhile); false when it didn't start. */
+  boot: () => Promise<boolean>;
   now: () => number;
   lastFacts: () => RunnerFacts | null;
 }
@@ -660,7 +671,6 @@ class Run {
   private stragglerNames: string[] = [];
   private readonly timers: ReturnType<typeof setTimeout>[] = [];
   private ladder: Promise<void> | null = null;
-  private bootStatus = false;
 
   constructor(private readonly spec: RunSpec, private readonly d: WslRunnerDeps, private readonly r: RunnerParts) {
     this.t0 = r.now();
@@ -711,9 +721,13 @@ class Run {
       this.pty = launch.pty;
       this.tracker = d.trackSecrets({ interactive: this.pty });
     }
-    if (!d.isRunning()) {
-      this.bootStatus = true;
-      this.r.setStatus(`Starting ${d.distro}…`);
+    // A stopped distro is started first with a no-op, so a Stop while it boots ends the run before the command is
+    // handed to wsl.exe at all ("Starting Ubuntu…" meanwhile).
+    if (!d.isRunning() && !(await d.runningNow()).has(d.distro)) {
+      if (this.stopWhy || this.ended) return;
+      const boot = await this.r.boot();
+      if (this.stopWhy || this.ended) return;
+      if (!boot) throw new Error(`${d.distro} didn't start`);
     }
     const child = d.spawn(launch.command, launch.args, { ...WSL_SPAWN_OPTIONS, env: launch.env });
     this.child = child;
@@ -754,16 +768,14 @@ class Run {
     const out = Buffer.concat(h.out);
     if (out.indexOf(START_MARKER) < 0) return;
     this.started = true;
-    if (this.bootStatus) {
-      this.bootStatus = false;
-      this.r.setStatus(null);
-    }
     // wsl.exe's own warnings before the start (UTF-16LE from an inbox wsl.exe) are shown decoded, then the output.
     const warnings = decodeMessage(Buffer.concat(h.err), 2_000);
     h.out = [];
     h.err = [];
     if (warnings) this.emit(Buffer.from(`${warnings}\r\n`, "utf8"));
     this.emit(out);
+    // A Stop that came while the command was starting: the ladder begins now that there is something to stop.
+    if (this.stopWhy && !this.ladder && !this.exited) this.climb();
   }
 
   private emit(chunk: Buffer): void {
@@ -821,18 +833,46 @@ class Run {
     return this.typing ? [...this.typed, this.typing] : [...this.typed];
   }
 
-  /** The WSL ladder (§3.13). Step 1 is sent synchronously (the kill switch's 300 ms budget). */
+  /** Stop, the kill switch or the time limit: the WSL ladder once the command runs (step 1 synchronously). */
   stop(why: "user" | "task" | "killswitch" | "timeout"): void {
     if (this.ended || this.stopWhy) return;
     this.stopWhy = why;
-    const child = this.child;
-    if (!child) {
-      // Still checking or reading facts: it never spawns.
+    if (!this.child) {
+      // Still checking, reading facts or starting the distro: it never spawns.
       this.end({ ended: ENDED[why] });
       return;
     }
+    this.d.log.info("wsl.run_stopping", { distro: this.d.distro, runId: this.spec.runId, why, started: this.started });
+    if (!this.started && !this.exited) {
+      this.timers.push(setTimeout(() => this.neverStarted(), PRESTART_STOP_MS));
+      return;
+    }
+    this.climb();
+  }
+
+  /** A stopped run whose command never started: wsl.exe ends, and sweeps catch a launcher that starts late. */
+  private neverStarted(): void {
+    if (this.started || this.exited || !this.child) return;
     const runId = this.spec.runId;
-    this.d.log.info("wsl.run_stopping", { distro: this.d.distro, runId, why });
+    void this.r.sweep("KILL", runId);
+    try {
+      this.child.kill();
+    } catch {
+      // it ended by itself in the meantime
+    }
+    this.timers.push(setTimeout(() => void this.r.sweep("KILL", runId), LADDER_MS.last));
+    this.timers.push(setTimeout(() => {
+      if (this.exited || !this.stopWhy) return;
+      this.d.log.error("wsl.run_unkillable", { distro: this.d.distro, runId });
+      this.end({ ended: ENDED[this.stopWhy] });
+    }, LADDER_MS.last + UNKILLABLE_MS));
+  }
+
+  /** The WSL ladder (§3.13). Step 1 is sent synchronously (the kill switch's 300 ms budget). */
+  private climb(): void {
+    const child = this.child, why = this.stopWhy;
+    if (!child || !why || this.ladder) return;
+    const runId = this.spec.runId;
     if (this.pty && !this.exited) {
       try {
         child.stdin?.write("\x03");
@@ -877,6 +917,12 @@ class Run {
   private finish(): void {
     if (this.ended || !this.exited) return;
     const { code, signal } = this.exited;
+    if (!this.started && this.stopWhy && !this.ladder) {
+      // Stopped before its command started: nothing ran; a last sweep catches a launcher that started late.
+      this.end({ ended: ENDED[this.stopWhy], code, signal });
+      void this.r.sweep("KILL", this.spec.runId);
+      return;
+    }
     if (!this.started && !this.stopWhy) {
       const err = Buffer.concat(this.held.err), out = Buffer.concat(this.held.out);
       let why = decodeMessage(err) || decodeMessage(out);
@@ -899,7 +945,7 @@ class Run {
     });
   }
 
-  /** The process is gone: stop holding its stdin and stop the timeout (the ladder's sweeps go on). */
+  /** The process is gone: stop holding its stdin (the job host then ends its job; the ladder's sweeps go on). */
   private exitedQuietly(): void {
     try {
       this.child?.stdin?.end();
@@ -911,10 +957,6 @@ class Run {
   private end(e: Partial<RunExit> & { ended: RunExit["ended"] }): void {
     if (this.ended) return;
     this.ended = true;
-    if (this.bootStatus) {
-      this.bootStatus = false;
-      this.r.setStatus(null);
-    }
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
     const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };
