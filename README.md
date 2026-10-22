@@ -137,7 +137,8 @@ has the details, including what Ember can't do yet.
 npm ci && npm run dev      # needs Node 22 and npm 11, see docs/DEVELOPING.md
 ```
 
-- **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11)
+- **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11; SSH, WSL and
+  commands: M12)
 - [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4 §1–§9, Windows §10, macOS §11;
   SSH, WSL and commands §14)
 - [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md): commands, WSL and other computers, for users and administrators

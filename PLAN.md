@@ -8,6 +8,10 @@ To change a frozen decision, edit §2 in a PR that says what changed and why.
 it: §1 says what v1 now runs on, each §2 row the port changes carries a **Windows and macOS** note that points to
 §10, milestone M11 is in §4, §9 lists what is left, and §10 has the port's entry with its departures.
 
+**Extended 2026-10-22 for SSH, WSL and commands (M12)**, the same way: §1 says what Ember now does, the §2 rows it
+changes carry an **SSH, WSL and commands** note, new §2 rows record its decisions, milestone M12 is in §4, §5 adds the
+command rules, §7 its open questions, §9 item 8 what is left, and §10 its entry with its departures.
+
 ---
 
 ## 1. What v1 is
@@ -36,7 +40,16 @@ and Control+Shift+Command+… on a Mac. See M11 and §10.
 | U7 | Ember asks before anything risky and never types passwords | Confirmation tiers enforced in code |
 | U8 | An admin can lock features down and audit what Ember did | `/etc/ember/policy.json`, audit log |
 
-**Not in v1:** Wayland sessions, RHEL 9/10, ~~macOS, Windows~~ (added by M11), SSH, neural TTS, speaker
+**SSH, WSL and commands (M12, 2026-10-22).** Ember can also run commands on every computer it works on, in its own
+command window: ordinary commands at once, dangerous ones (deleting, publishing, secrets, system changes, download and
+run) only after asking, and exactly what the user's own words asked for after an announcement with a 4 s Stop. On
+Windows it works in WSL distros (Linux apps under WSLg, and commands). It works on Linux and macOS computers reached
+over SSH (commands everywhere; on a Linux computer, also the desktop of the same user at its own screen, every step
+asked), through a small helper copied there for the length of the connection. The brain stays on the PC: Copilot,
+voice and the GitHub token never leave it. Each is off until the user turns it on and accepts its card; an
+organisation policy can turn each off. See M12 and §10.
+
+**Not in v1:** Wayland sessions, RHEL 9/10, ~~macOS, Windows~~ (added by M11), ~~SSH~~ (added by M12), neural TTS, speaker
 verification, screenshot OCR redaction, multi-pointer X. See §9.
 
 ---
@@ -49,7 +62,7 @@ verification, screenshot OCR redaction, multi-pointer X. See §9.
 | Shell | **Electron 44.x** (pin exact), TypeScript, Node 24 inside Electron; Node 22 for tooling | Electron 44 needs GLIBC ≤ 2.25; launched under Xvfb/Xvnc on OL 8.4 |
 | Native-code rule | Every `.node`/`.so` must need ≤ GLIBC_2.28 / GLIBCXX_3.4.25; `scripts/check-symvers.sh` gates CI. **Windows and macOS:** no glibc gate; staging keeps only the target's own builds of koffi, sharp and the Copilot runtime (§10 M11) | robotjs 0.9.1, uiohook-napi, node-screenshots, sherpa-onnx-node all fail as shipped |
 | Agent loop | **`@github/copilot-sdk` 1.0.21** (pin), one `CopilotClient` over stdio to the bundled runtime | Runtime needs exactly GLIBC_2.28; sessions run fully in parallel in one process (~105–154 MB) |
-| SDK hardening | `mode:"empty"`, `baseDirectory` in userData, `availableTools: []` (custom tools only), `excludedBuiltinAgents: [all]`, empty `workingDirectory`; at startup verify the tool list and **fail closed** if any built-in is present | Built-ins (shell, edit, fetch) are on by default |
+| SDK hardening | `mode:"empty"`, `baseDirectory` in userData, `availableTools: []` (custom tools only), `excludedBuiltinAgents: [all]`, empty `workingDirectory`; at startup verify the tool list and **fail closed** if any built-in is present. **SSH, WSL and commands:** the built-ins stay off; commands run only through Ember's own `run_command` tool, its classifier and its command window (§10 M12) | Built-ins (shell, edit, fetch) are on by default |
 | System prompt | `customize`: replace identity/tone/tool instructions, remove code rules, **keep the platform safety section** | `replace` drops guardrails |
 | Sessions | **One conductor session + one worker session per task**, coordinated by a plain-TypeScript **TaskManager** | Parallel turns verified; conductor stays fast and image-free |
 | Conductor | Fast model, conversational, resumed by ID on restart, never receives images; tools: `start_task`, `steer_task`, `cancel_task`, `list_tasks`, `describe_screen` (text), `point_at`, `ask_user`, `set_appearance` | Keeps context small and cheap |
@@ -73,12 +86,16 @@ verification, screenshot OCR redaction, multi-pointer X. See §9.
 | Desk | `Xvnc` (tigervnc-server-minimal) `:N` on a Unix socket + `metacity` (AppStream) + `dbus-run-session` + `at-spi-bus-launcher`; a desk-agent child process with `DISPLAY=:N`; mini-view with `@novnc/novnc` over an IPC↔`net.Socket` bridge. **Windows and macOS:** no desk; `open_on_desk` is never offered (§10 M11) | All in AppStream, no EPEL needed |
 | Voice | Mic in a hidden renderer (echo cancellation on) → 16 kHz `AudioWorklet` → `utilityProcess` running **sherpa-onnx WASM**: keyword spotting ("hey ember", "ember stop"), Silero VAD, streaming Zipformer ASR; second-stage transcript check; 8 s follow-up window. **Windows and macOS:** the same WASM pipeline; models are unpacked in-process, with no system `tar` or `bzip2` (§10 M11) | Native addon needs glibc 2.32; WASM verified |
 | TTS | `speechSynthesis` with `--enable-speech-dispatcher` (espeak-ng), voice chosen by `lang`, played from the mic renderer so echo cancellation removes it; while Ember speaks, a "Hey Ember" its speakers didn't say makes it stop and listen. **Windows and macOS:** the system's own voices; speaker-output rejection (`parec`) is Linux-only, and the settings say so (§10 M11) | 0 voices without the flag; 100 with it |
-| Safety boundary | Deterministic **policy engine** in the main process behind one shared `onPreToolUse` + `onPermissionRequest` for all sessions | See §5 |
+| Safety boundary | Deterministic **policy engine** in the main process behind one shared `onPreToolUse` + `onPermissionRequest` for all sessions. **SSH, WSL and commands:** each SSH computer gets its own engine with both machines' policies combined, and the agent there checks every step again (gate 2), which can only refuse or ask (§10 M12) | See §5 |
 | Tests | Mock OpenAI-compatible server via BYOK `provider` for deterministic agent tests; per-PR rockylinux:8 container (Xvfb + D-Bus + AT-SPI + GTK fixture); nightly real RHEL 8.4 GNOME Xorg VM. **Windows and macOS:** per-PR `windows-2022` and `macos-15` jobs drive real desktops (a WinForms and an AppKit bench, Notepad, TextEdit); the eval stays Linux-only (§10 M11) | Mock server approach verified with real SDK loops |
 | Packaging | electron-builder **RPM** (+ AppImage); `rpmbuild` wrapper that unsets `LD_LIBRARY_PATH`; autostart entry with `--enable-speech-dispatcher`. **Windows and macOS:** a zip of `Ember\Ember.exe` (Ember's own version resource and icon, unsigned) and `Ember.app` (signed ad hoc) as a zip and a dmg; signing and notarisation are out of scope (§10 M11) | fpm breaks EL8 rpmbuild otherwise |
 | Platform layer (M11) | One composition root, `app/main/platform/`: `loadPlatform()` picks the backend by `process.platform` alone and gives main one `Platform` object (window system, input, overlay shaping, the accessibility helper's launch, system integration, the desk). Nothing outside it tests the OS. It loads under plain Node: Electron objects are passed in | Linux is wrapped, not rewritten, so it stays the same byte for byte (§10 M11) |
 | Screen units (M11) | Native units end to end: physical pixels on Linux and Windows (Per-Monitor-V2), points on macOS. Negative coordinates are valid off Linux. Only Ember's own windows use Electron's DIP | Mixed scaling and monitors left of the primary stay exact; one image pixel is one screen unit for masking (§10 M11) |
 | System integration (M11) | Windows: data in `%LOCALAPPDATA%\ember`, admin policy in `HKLM\SOFTWARE\Policies\Ember`, login item in the Run key, apps opened through `explorer.exe`. macOS: data in `~/Library/Application Support/ember`, admin policy in `/Library/Application Support/Ember/policy.json`, an SMAppService login item, apps opened with `open -a`. Audit log: the file only, on both | Apps never inherit Ember's environment (tokens); a policy Ember can't trust locks it down (§10 M11) |
+| Targets (M12) | A task acts on one target: this computer, a WSL distro (`wsl:<distro>`) or a computer reached over SSH (`ssh:<host>`), chosen only by the user's own words or the handle's **Work on** picker, never from screen text or results. The brain is local: Copilot sessions, questions, voice and the GitHub token stay on the PC; a remote is eyes, hands and a command runner under its own admin policy and audit | The owner's decisions; nothing Copilot-related on a remote (§10 M12) |
+| Commands (M12) | One `run_command` tool on every target, run in Ember's own command window (xterm.js 5.5.0, the one new dependency), with a PTY through `script(1)` or pipes; a hand-written conservative classifier (POSIX, PowerShell, cmd): ordinary commands run, the dangerous classes ask, a dangerous command the user's own words asked for exactly is announced with a 4 s Stop (never secrets, download-and-run, outliving the kill switch or anything unclear), tampering with Ember's own safety machinery is refused; an approval binds to the exact bytes, target and task, by click or chord only while the whole command shows; output untrusted, redacted best effort and bounded | Owner decision 4: most work needs commands; stop and ask only for dangerous ones (§10 M12) |
+| SSH (M12) | The system OpenSSH client with the user's settings and keys, one hardened `ssh -T … sh -s` per link (no forwarding, no ControlMaster of its own) carrying a fixed bootstrap and then a framed protocol; a pinned, SHA-256-checked Node 24 and Ember's parts copied per remote, nothing persisting; passwords through Ember's own prompt to ssh only | No network listener, no remote brain, no install left behind (§10 M12) |
+| WSL (M12) | Discovery from the registry and `wsl.exe` without starting a distro; commands through `wsl.exe --exec` under a kill-on-close job object; WSLg apps identified by an AT-SPI helper inside the distro and matched to their RAIL windows; unidentified ones stay remote surfaces | UI Automation sees a WSLg window as one opaque `msrdc` frame (§10 M12) |
 
 ---
 
@@ -266,6 +283,30 @@ passing tests per integration suite.
 | M11.11 | Integration and manual test: the platforms switched on in `loadPlatform()`; Ember-level checks (composition, Perception, masking, the overlay out of screenshots, the packaged host; on macOS Ember starts beside the user's app and the ask box takes keys without activating it); the manual plan on real machines (§9) | CI: ember-win32 and ember-darwin pass. Manual: every §9 check on Windows 11 23H2+, Windows 10 22H2, macOS 14 and 15 | M11.2–M11.10 | **CI part done**: ember-win32 5/5 (run 124), ember-darwin 7 (run 123). Manual part open |
 | M11.12 | Docs: PLAN.md, README.md and docs/DEVELOPING.md for Windows and macOS | A new developer can set up, test and package on each OS from the guide | M11.11 | **Done** 2026-10-22 |
 
+### M12 · SSH, WSL and commands
+
+Added 2026-10-22 (§1). Built as parallel packages on `ember-improve/20261022-ssh-wsl`, each against a shared contract
+(M12.1) and merged in order; TG wires everything and merges last. docs/DEVELOPING.md §14 says where each lives. No
+`remote.yml` job has run yet (GitHub Actions' budget ran out); the unit tests of each merged package pass on Linux.
+
+| ID | Task | Acceptance | Deps | Status |
+|---|---|---|---|---|
+| M12.1 | The contract (S0a): target, command, WSL and protocol types and schemas; the admin keys and settings; the fixed launcher texts; stubs; build entries; the Electron and target-path lint rules; `remote.yml` | No behaviour change; schema, R5 and lint tests | M11 | **Merged** |
+| M12.2 | The shared hooks (S0b): main's hooks, the Confirmer's panel questions, Ember's own windows masked in every capture, sidecar start rules, the policy's target seam | Linux, Windows and macOS unchanged with nothing turned on | M12.1 | **Merged** |
+| M12.3 | The framed stream both ends share (MX): priorities, credits, chunking | A Stop overtakes 4 MiB of output; bad frames reset | M12.1 | **Merged** |
+| M12.4 | The classifier (CL): POSIX, PowerShell and cmd tokenizers, the dangerous-class tables, paths, the intent matcher, the decision, redaction, output shaping, taint, `visibleText` | A corpus of 800 or more cases; nothing unparsable runs unasked | M12.1 | In progress |
+| M12.5 | Runners (RUN): launchers, environment, the stop ladder and sweep, the Windows job host | `commands-linux`, `commands-linux-el8` and the PowerShell part of `wsl-windows` | M12.1 | In progress |
+| M12.6 | Windows and pages (UI): the command window, the prompt window, badges, the Computers and Commands settings, every string | Every new string pinned; output can't change the card | M12.1 | **Merged** |
+| M12.7 | WSL discovery and commands (WA) | `wsl-windows`, `wsl2-windows` | M12.1 | **Merged**; jobs not run |
+| M12.8 | SSH transport (SA): argv, configuration, errors, askpass, the bootstrap, the install plan, the same-machine check, the Node.js download, noticing the user's ssh | `ssh-linux` (transport), `ssh-windows` | M12.1, M12.3 | In progress |
+| M12.9 | The remote agent (SB): serve, gate 2, desktop discovery, PNG capture, the remote's policy and audit, the parts and their packaging, its CI jobs | `ssh-linux`, `ssh-el8`, `wayland-remote`, `ssh-macos` (or "not testable on this runner") | M12.1, M12.3 | In progress |
+| M12.10 | The PC's side of a remote target (SC): perception, accessibility, apps and commands over the link, gate 1 per remote | Text built from a remote byte-identical to local Perception's | M12.2 | In progress |
+| M12.11 | WSLg apps (WB): the helper inside each distro, routing, window matching, identity and the joined vocabularies, Start-menu launching | `wslg-probe` artefacts; §9 item 8's manual checks | M12.2, M12.7 | In progress |
+| M12.12 | The agent (AG): `run_command` and its flow, the user's own words only for announcements, target tools, a worker per target | The flow's steps with fakes; today's prompts when nothing is on | M12.2 | **Merged** |
+| M12.13 | The targets runtime (TG): registry, naming and binding, hands per target, consent cards, the ssh offer, check-up rows, the settings channel | Every factory wired, with fakes | M12.4–M12.12 | Reviewed; merges after the others |
+| M12.14 | Docs (DOC): README.md, docs/DEVELOPING.md §14, docs/COMMANDS-WSL-SSH.md, CHANGELOG.md, this milestone | Every limitation L1-L26 stated with its fallback; the older-Ember lock-down in the release notes | M12.13 | Drafted; checked again after TG merges |
+| M12.15 | Remote extras (SX, may slip): §9 item 8 | A spike per sub-part decides whether it ships | M12.13 | Not started |
+
 **Critical path:** M0 → M1.2 → M2.3 → M2.5 → M3.1 → M4.1 → M8.1 → M4.6 → M5.2 → M10.
 
 ---
@@ -283,7 +324,19 @@ Also: screen, file and web content is untrusted data; the conductor only takes g
 per-app grants; never-look list before capture; audit log; admin policy; local kill switch;
 wake-word protections (second-stage check, self-mute, speaker-output rejection).
 On Windows, remote surfaces (Remote Desktop and WSLg windows) are refused for every action and blacked out of
-screenshots, because Ember can't tell what runs inside them (M11).
+screenshots, because Ember can't tell what runs inside them (M11); with WSL on, a WSLg window Ember identifies is
+treated as its Linux app (M12).
+
+Commands (M12) never go through a terminal of the user's: they run in Ember's own command window, where the user
+watches and can stop them. Ordinary commands run at once. Deleting or overwriting data, submitting or publishing,
+deleting from source control or a service, secrets, privilege and system changes, download-and-run, outliving the
+kill switch and anything the classifier can't read confidently ask, by a click or the approve chord on the card that
+shows the whole command (never "Always", never by voice or from a notification). A dangerous command the user's own
+words asked for exactly runs after a 4 s announcement with Stop, except secrets, download-and-run, outliving and
+unclear ones, which always ask. As root or an administrator every command asks. Commands that would change Ember's
+own policy, audit, sign-in, settings, install or processes, or drive Ember's windows, are refused. Output is
+untrusted; output that reads like instructions makes every later command in the task ask. On a computer reached over
+SSH every desktop step is asked, and the remote checks every step again under its own policy.
 
 ---
 
@@ -313,6 +366,11 @@ screenshots, because Ember can't tell what runs inside them (M11).
 | 2 | Copilot policy and data retention acceptable? | **Resolved 2026-10-15: yes.** |
 | 3 | Bundling a natural-sounding offline voice (Piper is GPL-3.0; espeak-ng, used for pronunciation, is GPL-3.0; each voice model has its own license) | **Open, not blocking v1.** v1 uses the system speech-dispatcher (separate RHEL package, no bundling). Decide before adding neural TTS: is Ember going to stay open source? |
 | 4 | Are target machines STIG-hardened (user namespaces off)? | **Unknown; handled both ways.** The RPM installs the setuid sandbox helper when namespaces are off (M9.2). Check with `sysctl user.max_user_namespaces` (0 = hardened). |
+| 5 | Should "Always in this app" ever cover apps on a computer reached over SSH? (M12) | **Default: no.** Every step on a remote screen asks. |
+| 6 | Should the model see a long command's output while it runs? (M12) | **Default: no.** It gets the output at the end, bounded. |
+| 7 | Should users be able to approve a class of commands for a whole task? (M12) | **Default: no.** An approval covers the exact command, computer, folder and task. |
+| 8 | Windows remote desktops through a per-connection scheduled task? (M12) | **Open.** Only after SX's endpoint-protection spike and the owner's yes (§9 item 8). |
+| 9 | Should VNC and xrdp desktops on remotes be used? (M12, L21) | **Default: no.** Such remotes get commands only; the owner may decide otherwise. |
 
 ---
 
@@ -336,7 +394,7 @@ screenshots, because Ember can't tell what runs inside them (M11).
 3. Neural TTS (license review), speaker verification, screenshot OCR redaction, injection classifier
 4. Desk under a separate Unix user; SDK sub-agent verifier inside workers
 5. ~~macOS, then Windows~~: done as M11 (2026-10-22); what is left of it is item 7
-6. SSH (design kept in `docs/RESEARCH.md` §9)
+6. ~~SSH~~: built as M12 (2026-10-22), with WSL and commands; what is left of it is item 8
 7. Windows and macOS, after M11:
    - **Manual checks on real machines** (Windows 11 23H2 or later, Windows 10 22H2, macOS 14 and 15 on Apple silicon,
      macOS 13 or an Intel Mac when one is available). CI can't show these: `windows-2022` is Windows Server, runs
@@ -402,6 +460,40 @@ screenshots, because Ember can't tell what runs inside them (M11).
    - **Linux, noticed during the port (pre-existing):** with a keymap of several XKB groups, a task's key
      combination can land on the key that holds Ember's approval chord in another group (the grab looks the key up
      in group 1, a borrow types in the active group).
+8. SSH, WSL and commands, after M12:
+   - **SX (may slip; each sub-part starts with a spike that decides whether it ships).** (1) A masked live view of a
+     Linux remote's screen (at most 1 frame a second, 1280 px) and the borrowed mouse there only while it is open,
+     which lets tier 1 there follow the local confirmation rules (lifts L4). (2) Windows remotes: the agent on
+     win-x64 with a PowerShell bootstrap and PowerShell commands (every command asks when the SSH token is elevated;
+     the card says key logins have no DPAPI or network credentials), then a desktop helper per connection (an
+     interactive scheduled task created and deleted per link, reached through a named pipe for the user's SID only):
+     the endpoint-protection spike and the owner's yes first (§7 question 8). (3) A Mac's desktop through an Ember.app
+     installed there (its TCC grants are lost on every update of an ad hoc-signed app).
+   - **CI owed:** every `remote.yml` job once its package has merged (`unit-matrix` on all three OSes, the commands,
+     SSH, Wayland, WSL and macOS jobs), and the design's checks marked "verify" there: util-linux 2.32's and BSD
+     `script`'s behaviour, Win32-OpenSSH's askpass from 8.4 and ProxyCommand without a shell, `ControlMaster=no` on
+     Win32-OpenSSH, the framed stream binary-safe through `wsl.exe` (L22), interop children inside the job object,
+     `wsl --list --running` never booting the VM, `RunOOBE`'s value name, a Wayland session's "text" desktop (L5),
+     macOS `ps -E` for the sweep.
+   - **Manual checks on real machines:** a Linux PC to a RHEL 8 GNOME/Xorg remote with the same user logged in (the
+     notice, every step asked, a masked screenshot, locking the screen stops it, Stop on the notice, an `ssh -X`
+     session's display never used, a VNC-only login gets commands only); the same with a Wayland session; a headless
+     server (`df -h` runs at once, `sudo dnf install` asks and the password is typed in the command window, `rm -r
+     build` after "delete the build folder" announces, `git push --force` after "push my branch" asks, a 10 s network
+     blip doesn't stop a build, a pulled cable stops it within 20 s, a STIG host with fapolicyd gives the exec-denied
+     message); a root login; Windows 11 with WSL 2 Ubuntu, systemd on and off (gedit identified, tier 1, menus not
+     blacked out, a pinentry window and a GTK 4 password field masked at 150 %, xterm unidentified, gnome-terminal
+     refused, `wsl --shutdown` not undone, which bus the apps use, WSL 1 commands only, VcXsrv refused); a Windows PC to
+     a Linux remote (ssh-agent, Ember's password prompt with OpenSSH 8.4 or newer, the 8.1 message, a jump host, `ssh`
+     in a WSL tab); a macOS PC to Linux and to a Mac (Homebrew tools, `~/Documents` with and without full disk access,
+     a LAN host on macOS 15); commands on each OS (the ordinary list runs, the dangerous list asks, the announced
+     examples, `xdotool` refused, a bidi override shown, instruction-like output making the next command ask); the
+     user's own ssh in GNOME Terminal, Windows Terminal and Terminal.app; the policy matrix on each OS, and an older
+     Ember locking down on the new keys.
+   - **Needs from the Windows backend** before WSLg windows get the borrowed mouse (L7): a pointer check for RAIL
+     windows that accepts only the target window or its owner chain, and a scancode text path for them.
+   - **Later:** a root-owned remote package for hardened hosts (L24); a JPEG encoder on remotes (L16); approval
+     fatigue on remotes and after output taint (every step or command asks), revisited with SX's view.
 
 ---
 
@@ -422,3 +514,4 @@ screenshots, because Ember can't tell what runs inside them (M11).
 | M9 Packaging and release | **In review** (PR #11) | **RPM (M9.1):** `scripts/package/stage.mjs` builds a self-contained folder: Electron renamed `ember`, the app, production modules only (Linux x64 glibc builds; no musl, wasm or other platforms' binaries; no source maps), and the sidecar. `rpm.sh` then builds `ember` with rpmbuild (an explicit spec, not electron-builder or fpm): explicit `Requires` with AutoReqProv off, and *Recommends* for the desk, speaking, microphone list, `gnome-shell-extension-top-icons` and the models. It uses an xz payload, which RHEL 8.4's rpm reads. It also builds `ember-voice-models` (125 MB, models trimmed to the files Ember loads, used without download). **AppImage** with pinned, SHA-256-checked appimagetool 1.9.1 and runtime. Sizes: RPM 162 MB, AppImage 186 MB. **Sandbox (M9.2):** `chrome-sandbox` is installed setuid root, so Ember stays sandboxed where `user.max_user_namespaces=0`; the AppImage falls back to `--no-sandbox` there and says so. **Doctor and autostart (M9.3):** `ember doctor` checks session, compositor, accessibility, XTest, sign-in or endpoint, admin policy, microphone, models, speech-dispatcher, desk, sandbox and free file watchers (inotify), and gives a fix for each problem (exit 1 if Ember can't work; it also runs without a display). **Start Ember when I log in** writes `~/.config/autostart/ember.desktop` with `--autostart`. **Install test (M9.4):** CI builds both packages on `rockylinux:8`, checks every binary against glibc 2.28, `dnf install`s the RPM (every Requires resolves from the distribution), runs `ember doctor`, and starts the installed Ember as a normal user. A test on a real RHEL 8.4 VM is still to do (no VM in CI); M10.3's nightly VM covers it. |
 | M10 Evaluation | **In review** (PR #12) | **Task suite (M10.1):** 27 OSWorld-style JSON tasks (`eval/tasks`) covering the test bench (tier 1), comfort settings (tier 0), the borrowed mouse (tier 3), Ember's desk (tier 2), guiding, a plain text editor (gedit/Mousepad), safety (injected "Delete all", a fake polkit prompt, password fields, "no" answers), and LibreOffice Writer, Firefox and Files (live tier). Checkers cover accessibility state, gsettings, files, fixture events, Ember's audit log, its final answer, and "nothing else changed" snapshots. Safety is judged from the audit log: out-of-scope actions, actions without the user's OK, and risky things never asked about. Deliberately broken tasks (no action, obeying the page, a side effect) all fail. **Per-PR tier (M10.2):** a scripted mock model replays each task through the real worker, perception, policy, hands, desk and audit log (CI job `eval`, rockylinux:8, a few minutes): **24/24 runnable tasks pass**, 0 out-of-scope actions, 0 unconfirmed actions. **Nightly tier (M10.3):** `nightly-eval.yml` runs the suite with a live model, pass^3, on a self-hosted RHEL 8.4 GNOME runner reverted to a snapshot. It is switched off until that runner and credentials exist (none here), so live success rates aren't measured yet. **Gates and dashboard (M10.4):** `dist/eval/report.html` tracks every §6 gate. Met here: AT-SPI read p95 17 ms, takeover max 9 ms, borrow released by the kill switch max 5 ms (tasks stop in ~60 ms), idle listening CPU 0.1 % (was 7.5 %: the eval found that the speakers stream was spotted even in silence, and that steady room noise kept the spotter running; both are fixed). **Not met:** wake → listening 458 ms (target 300; it was 600, and Ember now lights up before the transcript check and skips the speakers window when nothing is playing; the rest is the keyword model's own chunk latency, so a smaller-chunk model is the next step), and missed wakes 6–11 % on synthesized speech (target 5 %; 95 % CI 2–21 %; the threshold was lowered to 0.15 now that the check retracts near-misses). The eval also found that freshly synthesized test clips made CI flaky, so the clips are now committed. False wakes per hour need an office-noise corpus (not available); 0/65 near-miss phrases woke Ember. |
 | M11 Windows and macOS | **Built 2026-10-22**, green in CI (runs 123–125); the CI re-runs after the last fixes and the manual checks in §9 item 7 are open | **What was built.** One composition root, `app/main/platform/`: `loadPlatform()` gives main a `Platform` object by `process.platform`, and Linux's X11 modules sit behind it unchanged. **Windows:** a koffi window system and input over user32, gdi32 and dwmapi (`SendInput` with Unicode text, `GetAsyncKeyState` for takeover, GDI `BitBlt` capture). Ember's accessibility host (`dist/app/ax-sidecar.cjs`, Ember.exe in Node mode) reads apps through a C# 5 UI Automation bridge, which Windows PowerShell 5.1 compiles once per version into `%LOCALAPPDATA%\ember\uia-cache`. Apps open through `explorer.exe` from the Start Menu or by packaged-app id, with Explorer's environment, never Ember's. Also dark mode, the registry policy, the login item, setup checks with an **Unblock it** fix, and a check-up that names the helper's exact command line and DLL hash for allow-lists. **macOS:** koffi over CoreGraphics, AX and CoreFoundation (CGEvent input, key-state polling, AX at 0.25 s on the main thread), and `desktopCapturer` capture only with Screen Recording, resampled to points. The same host runs an in-process AX provider (0.8 s per app, keys from `CFHash`). Apps open with `open -a`; Dark Mode goes through System Events; the policy is a root-owned file; the login item is SMAppService's; each permission has a check and a fix; Ember keeps a Dock icon and an app menu. **Both:** Win+Alt+… and Control+Shift+Command+… shortcuts from one table, Command as the primary modifier on a Mac, and vocabularies for terminals, security windows, never-look defaults, risky labels and clipboard password markers. Packages: a zip with Ember.exe (its own name, version and icon; unsigned, and `NotSigned` rather than tampered with) and `ember-doctor.cmd`, and Ember.app (signed ad hoc) as a zip and a dmg. **How it was proven.** Real desktops in CI, every suite required. Windows, run 124: win32-desktop 15, uia-bridge 22, ax-sidecar 14, win32-system 11, win32-vocabulary 8, ember-win32 5/5; the packaged check-up shows 15 rows, all six shortcuts are held, and `ember-doctor.cmd` gives the check-up's exit code (the check that it also gives a failing one, with a broken policy, came after run 124). macOS, run 123: darwin-desktop 14/14 on Apple silicon and Intel, ax-sidecar-darwin 16/16, darwin-system 10/10, darwin-vocabulary 5/5, ember-darwin 7; Ember.app opened through LaunchServices can't read apps before its own grant and can after it, so nothing is borrowed from the runner's granted processes. Linux, run 125: green and unchanged. The runners also settled three questions: `CFHash` keys are the same in two host processes (keys stay hashes), thumbnails come back BGRA, and the Settings window the bridge lists matches the window system's frame by process id. **Departures and why.** (1) Ember.app's executable is renamed `Contents/MacOS/Ember` (D8 said keep "Electron"): Electron's `app.isPackaged` is false for an executable named "electron", so an installed Ember would honour development switches and `--inspect`. (2) The bridge's `PSModulePath` is set to Windows PowerShell's own modules folder, not removed (D3): without it, Windows PowerShell 5.1 rebuilds a default that includes the user's modules. (3) macOS permissions in CI go to every process TCC may hold responsible, and the packaged app is also checked through LaunchServices before and after its own grant (D10, supplemented): the runner's processes are already granted, so in-process tests prove nothing about Ember.app. (4) Activation and focus stay on `Input`, and Ember tells its own windows by process id (D1 put both on the window system): one owner per operation. (5) On Windows a window's frame is its DWM frame and `inner` is its client area (D2 said `inner` is the DWM frame); frame matching tries all three, so nothing is lost. (6) A Mac needs Input Monitoring before Ember borrows the keyboard. Whether key-state polling needs it is undocumented, so Ember fails closed; CI saw polling work without it while Accessibility was granted, but on a runner with SIP off, so the requirement stays until a real Mac shows the same. (7) Dark mode is the only tier-0 setting on both (D7: only what is verified). (8) `resedit` (MIT, build time only) gives Ember.exe its own version resource and icon and drops Electron's certificate table, which flipping the fuses voids: Task Manager, the privacy settings and firewall prompts say "Ember", and endpoint protection sees an unsigned file rather than a tampered one. (9) The Intel Mac job runs on the default branch, on tags and when asked (`intel`), and a manual run can pick one platform (`only`): macOS minutes cost ten times Linux's. (10) On Windows, remote surfaces (Remote Desktop and WSLg windows, drawn by `msrdc` or `mstsc`) are refused for every action and blacked out: Ember sees only the client program, so its terminal, security-window and never-look checks can't see inside. Speaker rejection stays Linux-only, and rich clipboard formats come back as text or HTML (§9). |
+| M12 SSH, WSL and commands | **In progress 2026-10-22**: S0a, S0b, MX, UI, WA and AG merged, TG reviewed, CL, RUN, SA, SB, SC and WB being built; no `remote.yml` run yet | **What it adds.** Commands on every computer (OWNER DECISION 4), in Ember's own command window; WSL distros on Windows (Linux apps under WSLg, and commands); Linux and macOS computers over SSH, with the brain, voice and the GitHub token kept on the PC. Users see it in docs/COMMANDS-WSL-SSH.md, developers in docs/DEVELOPING.md §14, administrators' keys and the older-Ember lock-down in CHANGELOG.md. **Departures and why** (each one with its fallback, listed as L1-L26 in docs/COMMANDS-WSL-SSH.md §7). (1) `CONSENT_VERSION` stays 1: three first-use cards (WSL, SSH per host, commands per target) with their own versions, because nothing new happens before its card. (2) Commands are allowed on every target, the local OS included, through `run_command` only (OWNER DECISION 4 replaced the earlier "local commands stay forbidden"); Ember still never types into the user's own terminals. (3) No termios is read: the user's typing and the output after a password-like prompt are withheld from the model instead (L2). (4) Windows commands run in Windows PowerShell 5.1 on pipes in a kill-on-close job object, without typing (L3): ConPTY would need a native dependency. (5) Linux remote desktops get tier 0 and tier 1 with every step asked, no borrowed mouse and no view (L4); Wayland remotes text only (L5); macOS remotes commands only and Windows remotes not yet (L6); VNC and xrdp sessions unused (L21). (6) The borrowed mouse stays refused in WSLg windows until the Windows backend can check RAIL windows (L7). (7) A remote command survives a silent link for 20 s (an administrator's 3-120 s) so network blips don't kill builds (L10). (8) R3's flat refusal of root is replaced for commands by "every command asks"; a remote desktop as root stays refused (L17). (9) A policy that exists but doesn't mention commands turns them off, and an older Ember locks down on the new keys (R5). |
