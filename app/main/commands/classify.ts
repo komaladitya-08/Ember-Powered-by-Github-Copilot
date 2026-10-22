@@ -86,6 +86,7 @@ export const SAYS = {
   screen: "Takes a picture of your screen without Ember's privacy filters.",
   tokenArg: "Puts a password or token on the command line.",
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
+  refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
 } as const;
 
@@ -139,6 +140,10 @@ interface Obj extends CommandObject {
   realDiffers?: boolean;
 }
 
+/** How a path use reaches Ember's own files, for the refusal's verb (§3.5.8): reading them, or changing or running them. */
+const READ_USES: ReadonlySet<PathUse> = new Set<PathUse>(["read", "readTree", "list", "cd"]);
+const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "read" : "safety");
+
 /** A pipeline's running state: did an earlier element fetch or decode, and what did the last one run. */
 interface PipeState { fetch: boolean; program: string }
 
@@ -148,6 +153,8 @@ class Classifier {
   commands: ParsedCommand[] = [];
   probe: string[] = [];
   refuse: { rule: string; says: string } | null = null;
+  /** Whether the refusal is only for reading Ember's own files (a later change or input refusal says more). */
+  private refusedRead = false;
   downloads: string[] = [];
   needsGit = false;
   programs: string[] = [];
@@ -197,8 +204,15 @@ class Classifier {
     if (this.at >= 0) this.globalOpts.add(this.at);
   }
 
-  refuseWith(rule: string, kind: "safety" | "input"): void {
-    if (!this.refuse) this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : SAYS.refuseInput };
+  /**
+   * Ember's own flat refusal (D4.5), in words for what the command would do: change ("safety"), only read ("read") or
+   * press keys in Ember's windows ("input"). The first one stands, except that a refusal for reading gives way to one
+   * for anything more.
+   */
+  refuseWith(rule: string, kind: "safety" | "read" | "input"): void {
+    if (this.refuse && !(this.refusedRead && kind !== "read")) return;
+    this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : SAYS.refuseInput };
+    this.refusedRead = kind === "read";
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -324,7 +338,7 @@ class Classifier {
     let secret = false;
     for (const f of forms) {
       const r = globReaches(f, use, sc.path, dotRule);
-      if (r.ember) this.refuseWith("ember.path", "safety");
+      if (r.ember) this.refuseWith("ember.path", accessOf(use));
       if (r.secret) secret = true;
     }
     if (secret) {
@@ -347,7 +361,7 @@ class Classifier {
 
   /** §3.6's rules on one absolute path. */
   private judge(abs: string, use: PathUse, env: PathEnv, text: string, sc: Scope, isPrefix = false): void {
-    if (isEmberPath(abs, env) || (sc.path !== env && isEmberPath(abs, sc.path))) this.refuseWith("ember.path", "safety");
+    if (isEmberPath(abs, env) || (sc.path !== env && isEmberPath(abs, sc.path))) this.refuseWith("ember.path", accessOf(use));
     // A glob's fixed folder: what it holds is judged by the pattern (useGlob), not the whole folder.
     if (!isPrefix && (use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, env)) this.refuseWith("ember.path", "safety");
     const child = (env.flavour === "win32" ? win32 : posix).join(abs, "x");
@@ -3716,7 +3730,9 @@ reg(NATIVE, ["net", "net1"], h => {
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
   const verb = (h.args[0]?.v ?? "").toLowerCase().replace(/^\//, "");
   const key = h.args[1]?.v ?? "";
-  if (h.args.some(a => a.v !== null && POLICY_KEY.test(a.v))) { h.e.refuseWith("ember.policy", "safety"); return; }
+  // `reg query|export|save|compare` only read the key (export and save write their file elsewhere, judged below).
+  const reads = h.key === "reg" && /^(query|export|save|compare)$/.test(verb);
+  if (h.args.some(a => a.v !== null && POLICY_KEY.test(a.v))) { h.e.refuseWith("ember.policy", reads ? "read" : "safety"); return; }
   if (/^(delete|import|restore|load|unload|copy)$/.test(verb) && policyAncestor(key)) { h.e.refuseWith("ember.policy", "safety"); return; }
   if (h.key === "regedit") { if (h.args.some(a => /^[/-]s$/i.test(a.v ?? ""))) h.e.add("system", "system.registry", "Changes the Windows registry."); else h.e.unclear("unclear.gui", SAYS.openApp); return; }
   if (h.key === "regini") { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
@@ -4253,7 +4269,7 @@ function psTargets(h: H, paths: Arg[], write: boolean): Arg[] {
   for (const p of paths) {
     const v = p.v;
     if (v === null) { files.push(p); continue; }
-    if (POLICY_KEY.test(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
+    if (POLICY_KEY.test(v)) { h.e.refuseWith("ember.policy", write ? "safety" : "read"); continue; }
     if (write && /^(remove-item|move-item|rename-item|clear-item)$/.test(h.key) && policyAncestor(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
     if (REGISTRY.test(v)) { if (write) h.e.add("system", "system.registry", "Changes the Windows registry."); continue; }
     if (/^env:/i.test(v)) { if (!write && (/^env:\\?\*?$/i.test(v) || SECRET_VAR.test(v.slice(4)))) h.e.add("secret", "secret.env", SAYS.env); continue; }
