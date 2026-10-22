@@ -1035,14 +1035,15 @@ describe("the doctor's rows (§8.8)", () => {
     expect(parseSshVersion("OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2")).toEqual({ major: 9, minor: 5, windows: true });
     expect(sshClientRow("win32", { path: "C:\\Windows\\System32\\OpenSSH\\ssh.exe", text: "OpenSSH_for_Windows_9.5p1" })).toMatchObject({ status: "ok", detail: "OpenSSH 9.5 (passwords through Ember's prompt)" });
     expect(sshClientRow("win32", { path: "x", text: "OpenSSH_for_Windows_8.1p1" })).toMatchObject({ status: "warn", detail: "Passwords can't be asked here: keys and the ssh-agent only" });
-    expect(sshClientRow("win32", { path: "x", text: "OpenSSH_for_Windows_7.7p1" })).toMatchObject({ status: "fail", detail: "OpenSSH is too old for Ember" });
-    expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "OpenSSH_7.4p1" })).toMatchObject({ status: "fail" });
-    expect(sshClientRow("linux", null)).toMatchObject({ status: "fail", detail: "No SSH client found", fix: expect.stringContaining("sudo dnf install openssh-clients") });
-    expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "dropbear v2022" })).toMatchObject({ status: "fail" });
+    expect(sshClientRow("win32", { path: "x", text: "OpenSSH_for_Windows_7.7p1" })).toMatchObject({ status: "warn", detail: "OpenSSH is too old for Ember" });
+    expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "OpenSSH_7.4p1" })).toMatchObject({ status: "warn" });
+    // SSH is optional: without a client the check-up warns, it never fails (a PC that never uses SSH still passes).
+    expect(sshClientRow("linux", null)).toMatchObject({ status: "warn", detail: "No SSH client found", fix: expect.stringContaining("sudo dnf install openssh-clients") });
+    expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "dropbear v2022" })).toMatchObject({ status: "warn" });
     expect(commandTerminalRow(null)).toMatchObject({ status: "warn", fix: "Install util-linux (`sudo dnf install util-linux`)." });
     expect(powershellRow({ path: "p", language: "ConstrainedLanguage" })).toMatchObject({ status: "warn" });
     expect(powershellRow(null)).toMatchObject({ status: "fail", detail: "Windows PowerShell isn't available" });
-    expect(remotePartsRow(null)).toEqual({ id: "remote-parts", label: "Helper for other computers", status: "fail", detail: "Missing from this install", fix: "Reinstall Ember." });
+    expect(remotePartsRow(null)).toEqual({ id: "remote-parts", label: "Helper for other computers", status: "warn", detail: "Missing from this install", fix: "Reinstall Ember." });
   });
 });
 
