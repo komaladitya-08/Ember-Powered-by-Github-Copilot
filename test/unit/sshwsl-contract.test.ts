@@ -637,10 +637,10 @@ describe("the other stubs", () => {
   });
 
   it("run, show and connect nothing, and fail closed", async () => {
+    // The local runner is package RUN's real one now (its own tests drive it with fakes): only its shape here, nothing run.
     const runner = createLocalRunner({ log: {} as never, os: "linux", env: {}, ember: { paths: [], pids: () => [], names: /ember/ }, home: "/home/ana", user: "ana", elevated: () => false, extraPath: [], jobHost: null });
-    await expect(runner.facts()).rejects.toThrow("not built");
-    await expect(runner.inspect(["/a", "/b"], "/")).resolves.toEqual([{ exists: null, real: null }, { exists: null, real: null }]);
-    await expect(runner.start(spec).done).resolves.toMatchObject({ ended: "failed-to-start" });
+    expect(runner.target).toBe("local");
+    expect(runner.running).toBe(0);
     const win = createCommandWindowPort({ create: () => { throw new Error("no window"); }, ipc: {} as never, log: {} as never, os: "linux", keyHint: () => null });
     expect(win.cardReady(1)).toBe(false);
     await expect(win.announce({} as never, 4000, new AbortController().signal)).resolves.toBe(false);
