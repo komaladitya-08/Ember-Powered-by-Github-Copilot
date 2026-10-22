@@ -1,7 +1,8 @@
 /**
  * Windows' Run dialog in the policy (vocabulary.ts READ_ONLY_WINDOW): its OK and Enter run whatever its box holds, the
  * last command included, so on Windows Ember only reads it, in each of Windows' main languages; other explorer.exe
- * windows and other apps' "Run" windows are judged as before, and Linux and macOS have no such window.
+ * windows (a folder named "Run" too, once it is known to be a frame, not a dialog) and other apps' "Run" windows are
+ * judged as before, and Linux and macOS have no such window.
  */
 
 import { describe, expect, it } from "vitest";
@@ -29,6 +30,17 @@ describe("the Run dialog on Windows", () => {
     expect(win.decide(click("explorer", "Documents")).tier).not.toBe("never");
     expect(win.decide(click("explorer", "Run options")).tier).not.toBe("never");
     expect(win.decide(click("vlc", "Run")).tier).not.toBe("never");
+  });
+
+  it("tells a File Explorer folder named \"Run\" (a frame) from the Run dialog (a dialog), and refuses a window whose role isn't known", () => {
+    const win = engine("win32");
+    const inWindow = (title: string, role?: string): ActionRequest => ({ ...click("explorer", title), windowId: { pid: 4321, path: "65812", ...(role !== undefined ? { role } : {}) } });
+    for (const title of ["Run", "Ausführen", "ファイル名を指定して実行"]) {
+      expect(win.decide(inWindow(title, "frame")).tier, title).not.toBe("never");
+      for (const role of ["dialog", "alert", "window", ""]) expect(win.decide(inWindow(title, role)), `${title} ${role}`).toMatchObject({ tier: "never", verdict: "deny" });
+      expect(win.decide(inWindow(title)).tier, title).toBe("never");
+    }
+    expect(READ_ONLY_WINDOW.win32[0]?.otherRole?.test("frame")).toBe(true);
   });
 
   it("has no such window on Linux or macOS", () => {

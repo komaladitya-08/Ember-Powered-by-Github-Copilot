@@ -1,9 +1,9 @@
 /**
  * The words the policy, the worker and the host match against, per OS: which windows are security prompts, which
  * apps are browsers, mail and office suites, which extra labels are risky, which boxes run what is typed into them,
- * how the user names the terminal, and what names a file. Pure data, keyed by OS, read through policy.ts and the
- * agent (one copy for every reader). The Linux rows are the expressions those files held before the port, moved
- * verbatim, and must not change (tests pin them).
+ * which windows Ember only reads, which apps run the programs they open, how the user names the terminal, and what
+ * names a file. Pure data, keyed by OS, read through policy.ts and the agent (one copy for every reader). The Linux rows
+ * are the expressions those files held before the port, moved verbatim, and must not change (tests pin them).
  *
  * The Windows and macOS rows (design §9.11) match what those systems report as a window's app: on Windows its
  * program's file name ("CredentialUIBroker", with or without ".exe"), on macOS the app's name in the user's language
@@ -170,6 +170,18 @@ export const RUN_FILE_DIALOG_EXTRA: Readonly<Record<OS, readonly string[]>> = {
   darwin: ["are you sure you want to open it", "downloaded from the internet"],
 };
 
+/**
+ * Answers that run the file in the OS's own run dialogs (RUN_FILE_DIALOG_EXTRA), beyond policy.ts's RUN_ANSWER (a whole
+ * word at the start of the label, written with its accents, folded when matched): on macOS Gatekeeper's "Open", which
+ * runs the downloaded app or script it asks about, in English and the languages of RUNS_PROGRAM_EXTRA. Counted only in
+ * those dialogs: anywhere else "Open" is an ordinary button (an Open panel's opens a document).
+ */
+export const RUN_ANSWER_EXTRA: Readonly<Record<OS, readonly string[]>> = {
+  linux: [],
+  win32: [],
+  darwin: ["open", "öffnen", "ouvrir", "abrir", "apri", "openen", "開く", "打开", "打開", "열기"],
+};
+
 /** A box where text typed in runs a program (File Explorer's address box runs "cmd" with Enter). */
 export interface TypingRefusal {
   /** The app, tested on ActionRequest.app (trimmed). */
@@ -218,16 +230,75 @@ export interface ReadOnlyWindow {
   readonly app: RegExp;
   /** The window's title, tested on ActionRequest.window (trimmed). */
   readonly title: RegExp;
+  /**
+   * The roles (ActionRequest.windowId.role) of the other windows with that app and title: one known to have such a role
+   * isn't this window and is judged as usual. A request that doesn't carry the window's role is refused (fail closed).
+   */
+  readonly otherRole?: RegExp;
 }
 
 /**
  * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' main languages), whose OK
  * and Enter run whatever its box holds, the last command typed there included, so a click is as good as typing one.
- * A File Explorer folder named "Run" shows the same title and app: refused too (fail closed). None on Linux and macOS.
+ * A File Explorer folder named "Run" has the same title and program, but it is a frame (CabinetWClass) where the Run
+ * dialog is a dialog (Win32's dialog class, #32770, which the accessibility host reads as one): a folder window known
+ * to be a frame is judged as usual, and one whose role the request doesn't carry is refused too. None on Linux and macOS.
  */
 export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> = {
   linux: [],
-  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu }],
+  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu, otherRole: /^frame$/ }],
+  darwin: [],
+};
+
+/** An app that runs a program or script it opens, with no dialog: what is refused there. */
+export interface OpensPrograms {
+  /** The app, tested on ActionRequest.app (trimmed). */
+  readonly app: RegExp;
+  /** The name of an item that is a program or script, tested on the item's normalised name (ActionRequest.element.name, trimmed). */
+  readonly item: RegExp;
+  /**
+   * Commands that open or run whatever is selected, as whole labels (written with their accents, folded when matched; an
+   * access key or "…" may follow): the request doesn't say what is selected, so they are refused whatever it is.
+   */
+  readonly commands: readonly string[];
+}
+
+/**
+ * What File Explorer (and the desktop, also explorer.exe) runs with no dialog when it opens it: programs, scripts and
+ * their hosts' files, installers and patches, screen savers, Control Panel items, shortcuts and Java archives. (Linux's
+ * file manager asks first: RUN_FILE_DIALOG.)
+ */
+const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|scr|pif|cpl|lnk|url|appref-ms|jar)$/i;
+
+/**
+ * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
+ * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
+ * PowerShell commands, in Windows' main languages (and a script's Open with Command Prompt, which runs it in a console,
+ * in English). An item is known by the extension its name shows: where Explorer
+ * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
+ * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
+ * item is judged as any other. None on Linux and macOS.
+ */
+export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
+  linux: [],
+  win32: [{
+    app: /^explorer(\.exe)?$/i,
+    item: RUNS_WHEN_OPENED,
+    commands: [
+      "open", "open with", "run as administrator", "run as different user", "run as a different user", "run with powershell",
+      "open with command prompt",
+      "öffnen", "öffnen mit", "als administrator ausführen", "als anderer benutzer ausführen", "mit powershell ausführen",
+      "ouvrir", "ouvrir avec", "exécuter en tant qu'administrateur", "exécuter en tant qu'autre utilisateur", "exécuter avec powershell",
+      "abrir", "abrir con", "abrir com", "ejecutar como administrador", "ejecutar como otro usuario", "ejecutar con powershell",
+      "executar como administrador", "executar como outro usuário", "executar com o powershell",
+      "apri", "apri con", "esegui come amministratore", "esegui come altro utente", "esegui con powershell",
+      "openen", "openen met", "als administrator uitvoeren", "als andere gebruiker uitvoeren", "uitvoeren met powershell",
+      "開く", "プログラムから開く", "管理者として実行", "別のユーザーとして実行", "powershell で実行",
+      "打开", "打开方式", "以管理员身份运行", "以其他用户身份运行", "使用 powershell 运行",
+      "開啟", "開啟檔案", "以系統管理員身分執行", "以不同使用者身分執行", "用 powershell 執行",
+      "열기", "연결 프로그램", "관리자 권한으로 실행", "다른 사용자로 실행", "powershell에서 실행",
+    ],
+  }],
   darwin: [],
 };
 

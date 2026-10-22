@@ -37,6 +37,7 @@ import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
+import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
@@ -1342,7 +1343,8 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
-        isTerminalApp: name => sys.apps.isTerminalApp({ id: name, name }),
+        // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal).
+        isTerminalApp: name => isTerminalWindowApp(name, sys.apps, platform.os),
         keys: sys.keys, os: platform.os, isSecurityWindow: sys.privacy.isSecurityWindow,
       }),
       // The window system's units to Electron's DIP (X11: ÷ the primary scale factor).

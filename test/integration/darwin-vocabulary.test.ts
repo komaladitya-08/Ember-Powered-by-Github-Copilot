@@ -1,7 +1,7 @@
 /**
  * The macOS vocabularies (design §9.11) against real windows: Terminal is a terminal by the owner name CoreGraphics
- * reports for its window and by its bundle id, the Console log viewer and Calculator are not (by the vocabulary's own
- * rows), System Settings' Privacy & Security pane and the privacy pages that grant apps access carry titles
+ * reports for its window and by its bundle id (also as the policy asks: the installed app shown by that owner name),
+ * the Console log viewer and Calculator are not (by the vocabulary's own rows), System Settings' Privacy & Security pane and the privacy pages that grant apps access carry titles
  * SECURITY_TITLE.darwin knows (they need Screen Recording to be read, which CI grants), an administrator prompt is
  * drawn by an owner SECURITY_APP.darwin knows (only with EMBER_MACSYS_TEST=1: it raises a real password prompt), and
  * through a real Electron, a password manager's concealed copy is recognised by CLIPBOARD_FORMATS.darwin and the text
@@ -17,7 +17,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDesktop, type DarwinDesktop } from "../../app/main/platform/darwin/desktop";
 import { SECURITY_OWNERS, type CGWindowEntry } from "../../app/main/platform/darwin/model";
-import { hasBuiltInShell, isTerminalApp } from "../../app/main/hands/system";
+import { hasBuiltInShell, isTerminalApp, isTerminalWindowApp } from "../../app/main/hands/system";
+import { darwinApps } from "../../app/main/platform/darwin/system/apps";
 import { TERMINAL_ID_WORDS, TERMINAL_NAME, TERMINALS } from "../../app/main/hands/terminals";
 import { isSecurityWindow } from "../../app/main/policy/policy";
 import { SECURITY_APP } from "../../app/main/policy/vocabulary";
@@ -85,6 +86,12 @@ describe.skipIf(!onMac && !required)("the macOS vocabularies against real window
     expect(isTerminalApp({ id: win.owner, name: win.owner }, M)).toBe(true);
     expect(isTerminalApp({ id, name: win.owner }, M)).toBe(true);
     expect(TERMINALS.darwin.has(win.owner.toLowerCase()) || TERMINAL_NAME.darwin.test(win.owner)).toBe(true);
+    // The policy's check (main.ts): the installed app shown by the window's owner name is Terminal, by its bundle id.
+    const catalogue = darwinApps();
+    const listed = catalogue.list().find(a => a.id.toLowerCase() === id.toLowerCase());
+    console.log(`Terminal in the catalogue: ${JSON.stringify(listed && { name: listed.name, keywords: listed.keywords })}`);
+    expect(listed && [listed.name, ...listed.keywords].map(n => n.toLowerCase()), "the owner name is one the catalogue shows it by").toContain(win.owner.toLowerCase());
+    expect(isTerminalWindowApp(win.owner, catalogue, M)).toBe(true);
     quit("Terminal");
   }, 60_000);
 
@@ -96,11 +103,12 @@ describe.skipIf(!onMac && !required)("the macOS vocabularies against real window
       expect(TERMINAL_NAME.darwin.test(win.owner)).toBe(false);
       expect(TERMINALS.darwin.has(win.owner.toLowerCase())).toBe(false);
       expect(hasBuiltInShell({ id, name: win.owner }, M)).toBe(false);
+      expect(isTerminalApp({ id, name: win.owner }, M)).toBe(false);
+      expect(isTerminalWindowApp(win.owner, darwinApps(), M)).toBe(false);
       expect(isSecurityWindow({ app: win.owner, title: win.title }, M)).toBe(false);
       quit(app);
     }
-    // hands/system.ts's idIsTerminal still takes any "console" id word for a terminal on every OS (reported);
-    // the macOS row says it shouldn't.
+    // hands/system.ts's idIsTerminal reads this row: no id word makes a Mac app a terminal ("console" would take Console).
     expect(TERMINAL_ID_WORDS.darwin).toEqual([]);
     expect(isTerminalApp({ id: "com.apple.calculator", name: "Calculator" }, M)).toBe(false);
   }, 90_000);
