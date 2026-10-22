@@ -251,6 +251,9 @@ async function slotOn(runner: CommandRunner, signal: AbortSignal): Promise<(() =
   };
 }
 
+/** A run's id: 16 lower-case hex digits, random per run (also its environment marker, EMBER_RUN_ID). */
+const newRunId = () => crypto.randomBytes(8).toString("hex");
+
 /** A first line for the bubble: the card's first reason, or a plain one. */
 const firstLine = (says: string[]) => says.find(l => l.trim()) ?? "This command needs your OK.";
 
@@ -525,7 +528,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // Step 9.
   if (refused) return denied(`Not allowed: ${d.reason} Don't try another way; tell the user in finish_task.`);
 
-  const runId = crypto.randomBytes(8).toString("hex");
+  let runId = newRunId();
   const sha256 = commandSha256(target, shell, cwd, a.command);
   const why = `Why: ${shownQuote(a.why, 200)}`;
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
@@ -533,9 +536,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
   });
   /** Asks with the command card; "once", "no" (said no or let it expire) or "stopped". */
-  const askCard = async (says: string[], q: string): Promise<"once" | "no" | "stopped"> => {
+  const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "stopped"> => {
     const question: PanelQuestion = {
-      title: "May I run a command?", context: ctx.task.title, prompt: `On ${place}: ${firstLine(says)}`,
+      title: "May I run a command?", context: ctx.task.title, prompt,
       options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
     };
@@ -593,11 +596,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
-        const answer = await askCard([...d.says, `${binding.label}'s own check also found:`, ...theirs], "remote");
+        const answer = await askCard([...d.says, `${binding.label}'s own check also found:`, ...theirs], "remote",
+          `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
         if (answer === "stopped") return STOPPED();
         if (answer === "no") return denied(SAID_NO);
         approvedAt = performance.now();
         rules = [...new Set([...rules, ...remoteRules(exit)])];
+        // A new run (its own id and tab); the approval is bound to the same bytes, folder, shell and computer.
+        runId = newRunId();
         continue;
       }
       if (exit.ended === "lost") factsCache.delete(ctx.state);
