@@ -10,8 +10,8 @@ see this in the "Before Ember starts" list; people who already use Ember aren't 
 new happens until they accept a card.
 
 Wherever Ember works, **your voice and your GitHub sign-in stay on this computer**. Listening, speech recognition,
-Copilot and Ember's answers all happen here; another computer only receives the steps Ember takes there and the
-commands it runs.
+the Copilot conversation and Ember's questions all stay here; another computer only receives the steps Ember takes
+there and the commands it runs.
 
 ## 1. Choosing where Ember works
 
@@ -47,10 +47,10 @@ bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 ### 2.1 Turning them on
 
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
-(WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card
-"Let Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered
-with a click only, never with the keys or by voice. Under each switch, **Ask me before every command** makes every
-command on that computer ask. **Open the command window** shows it.
+(WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card "Let
+Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered with
+a click only, never with Ember's approve keys or by voice. Under each switch, **Ask me before every command** makes
+every command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -101,7 +101,7 @@ Ember stops and asks before a command that:
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry, the firewall, users and groups,
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
-  out, stopping programs this command didn't start, your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
+  out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
   hooks;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task, `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without
@@ -127,8 +127,8 @@ If your own words for this task asked for that kind of operation on that compute
 command runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to
 GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
 announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds." and **Stop**), the command
-window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies** on Ember
-says it with "Say 'Ember, stop' to cancel." **Stop** in either place, the stop chord or "Ember, stop" within those
+window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies** on, Ember
+says it and adds "Say 'Ember, stop' to cancel." **Stop** in either place, the stop chord or "Ember, stop" within those
 4 seconds cancels it. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
@@ -261,12 +261,12 @@ changes to `.wslconfig` or `/etc/wsl.conf` ask.
   `user@host:port` or `ssh://user@host:port` and press **Connect**. The handle menu's **Bring Ember to a computer…**
   opens that section.
 - **Or let Ember notice your own `ssh`.** When the window you're in is a terminal and its title changes, Ember may
-  look (at most every 10 seconds) at your own `ssh` processes: the process list and the host they connect to, never
+  look (at most every 10 seconds) at your own `ssh` processes: their command lines (the host and a few options), never
   your terminal's contents. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own
   connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer
   once per run, and **Don't offer again** sticks. Turn the offers off with **Offer to bring Ember along when I connect
   with ssh**. Ember always opens its own connection; it never uses or types into yours.
-- **The card.** The first time (and again when the user, address or port your SSH settings give changes, or the
+- **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
   what it copies there (§4.3), that your voice and sign-in stay here, what it does on the screen there, and that
@@ -301,7 +301,7 @@ here when you ask something. Your request reaches build-01 as steps, never as au
 Ember checks build-01 first (system, free space, its own Ember policy, whether it is this same computer) and copies
 nothing until every check passes. Then it copies a small helper over the same SSH connection: Node.js (about 29 MB,
 which this computer downloads from nodejs.org, or your organisation's mirror, and checks against a pinned SHA-256
-before sending) and Ember's own parts (about 1-3 MB, shipped inside Ember), about 31 MB in all, unpacked to about
+before sending) and Ember's own parts (about 1 MB, shipped inside Ember), about 31 MB in all, unpacked to about
 125 MB; build-01 needs about 400 MB free in your home folder. build-01 checks every file again before running it. A
 newer Ember sends only what changed (about 1 MB).
 
@@ -313,9 +313,9 @@ newer Ember sends only what changed (about 1 MB).
 
 **Nothing persists.** The helper runs only while Ember is connected and stops when you disconnect, quit Ember, press
 the stop chord or the connection ends. Ember adds no service, autostart entry, cron job, LaunchAgent or scheduled
-task, writes nothing outside those folders, and opens no network port there. It refuses to work as root on build-01's
-screen, and only one Ember at a time works on a computer for a user ("Ember from another computer is already working
-on build-01."). Helper versions unused for 30 days are deleted.
+task, writes nothing outside those folders, and opens no network port there. Only one Ember at a time works on a
+computer for a user ("Ember from another computer is already working on build-01."). Helper versions unused for 30
+days are deleted.
 
 ### 4.4 build-01's screen
 
@@ -328,8 +328,8 @@ first click **Allow**.
 - **Every step there is asked**, Ember never borrows build-01's mouse and keyboard, and you aren't shown its screen.
   Screenshots taken there are masked on build-01 (never-look windows, password fields) before they leave it, and go
   only to the model. A live view of the remote screen may come later.
-- **The screen locks, or the user changes**: Ember stops working there ("build-01's screen locked, so I stopped
-  working there.").
+- **The screen locks, or that session stops being the active one**: Ember stops working there ("build-01's screen
+  locked, so I stopped working there.").
 - **No desktop, or only a VNC or xrdp session**: commands only ("build-01's desktop is a remote session: Ember will run
   commands only."). VNC and xrdp desktops aren't used because Ember can't be sure who sees its notice there.
 - **Wayland**: reading and using controls only, no screenshots. Until Ember's own test of it passes, a Wayland desktop
@@ -372,9 +372,10 @@ within those 20 seconds (an administrator can set 3 to 120).
 - **With Ember**: Settings › **Computers** › **Remove Ember from build-01** ("Remove Ember's helper from build-01? Its
   record of what Ember did there stays on build-01."). Ember connects, removes the helper, its consent record and its
   logs, and keeps the audit record. **Forget** removes the computer from Ember's list without touching it.
-- **Without Ember**, on build-01: run `sh ~/.local/share/ember-remote/versions/*/uninstall.sh` (macOS:
-  `sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh`); `README.txt` beside it says the same.
-  It too keeps the audit record. To remove everything, disconnect Ember first, then delete the folders:
+- **Without Ember**, on build-01: run the `uninstall.sh` in any version folder of the helper,
+  `sh ~/.local/share/ember-remote/versions/<version>/uninstall.sh` (macOS:
+  `sh ~/Library/Application\ Support/Ember\ Remote/versions/<version>/uninstall.sh`); `README.txt` beside it says the
+  same. It too keeps the audit record. To remove everything, disconnect Ember first, then delete the folders:
 
   ```bash
   rm -rf ~/.local/share/ember-remote ~/.local/state/ember-remote             # Linux
@@ -410,7 +411,7 @@ within those 20 seconds (an administrator can set 3 to 120).
 | **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". A missing client is a warning until you add a computer to connect to | Install or update OpenSSH (§4.8) |
 | **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | `sudo dnf install util-linux` |
 | **PowerShell for commands** (Windows, while your organisation allows commands here) | Windows PowerShell missing, or Constrained Language Mode ("command output may not be UTF-8, and SSH passwords can't be asked") | Turn on Windows PowerShell in Windows features |
-| **WSL** (Windows) | No distros; WSLg off ("Remove guiApplications=false from %USERPROFILE%\.wslconfig."); the built-in WSL ("Run `wsl --update`."); an X server showing Linux apps | As the row says |
+| **WSL** (Windows) | No distros; WSLg off ("Remove `guiApplications=false` from `%USERPROFILE%\.wslconfig`."); the built-in WSL ("Run `wsl --update`."); an X server showing Linux apps | As the row says |
 | **Linux apps in Ubuntu** | The helper, Python 3, pyatspi or the session bus is missing, or the distro runs as root | §3.3 |
 | **Accessibility in Ubuntu** | Toolkit accessibility is off | The row's button, then restart your Linux apps |
 | **Helper for other computers** (an installed Ember, while SSH is allowed) | Missing from this install: a warning until you add a computer to connect to | Reinstall Ember |
@@ -433,7 +434,7 @@ key, they can only make Ember stricter.
 | `ssh.allowedHosts` | up to 200 patterns | The only computers Ember may connect to (§6.5) |
 | `ssh.desktop` | `true` / `false` | On the PC, `false`: commands only on every remote, no desktop. On a remote: no desktop for Ember arriving over SSH |
 | `ssh.requireConsoleConsent` | `true` / `false` | On a remote: a person at its screen must click **Allow** before Ember reads anything there |
-| `ssh.runtimeMirror` | an `https://` URL | Where the PC downloads Node.js for remotes instead of `https://nodejs.org/dist/` (same layout: `v<version>/node-v<version>-<os>-<arch>.tar.xz`); still checked against Ember's pinned SHA-256 |
+| `ssh.runtimeMirror` | an `https://` URL | Where the PC downloads Node.js for remotes instead of `https://nodejs.org/dist/` (same layout: `v<version>/node-v<version>-<os>-<arch>.tar.xz` and `.tar.gz`); still checked against Ember's pinned SHA-256 |
 | `ssh.commandGraceSeconds` | 3 to 120 (default 20) | How long a command on a remote keeps running while the connection is silent; the smaller of both computers' values applies |
 
 `features.actions: false` also turns commands off on every computer: Ember then answers and guides but starts no
@@ -492,10 +493,10 @@ the remote's policy before it copies anything, and the helper reads it again eve
   Ember there: the remote's requirement can't be met by a PC that uses its own models.
 
 The helper keeps its own audit log on the remote (`~/.local/state/ember-remote/<machine>/audit/`, files readable by
-the user only, also sent to the system journal as sizes only), kept for the remote policy's `auditRetentionDays`
-(default 30). The PC never deletes or rewrites it, and removing Ember's helper keeps it. A user-space install can't
-stop the remote account itself (or root there) from changing the helper: the remote's policy binds an honest helper,
-and nothing from a remote can approve anything or run anything on the PC.
+the user only; on Linux also copied to the system journal, with commands, titles and values as sizes only), kept for
+the remote policy's `auditRetentionDays` (default 30). The PC never deletes or rewrites it, and removing Ember's
+helper keeps it. A user-space install can't stop the remote account itself (or root there) from changing the helper:
+the remote's policy binds an honest helper, and nothing from a remote can approve anything or run anything on the PC.
 
 ### 6.5 `ssh.allowedHosts`
 
@@ -518,8 +519,8 @@ against Ember's SHA-256 list when it is installed. A root-owned remote package i
 
 ### 6.7 What is recorded
 
-The audit log gains command, connection and WSL entries: what was decided for each command (its classes, the rule,
-and that the user requested it when it ran on an announcement), each answer, start and end (exit code, duration, how much
+The audit log gains command, connection and WSL entries: what was decided for each command (its classes, the rule, and
+that the user requested it when it ran on an announcement), each answer, start and end (exit code, duration, how much
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
 recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
 command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
@@ -534,7 +535,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L1 | No new consent page for existing users | A first-use card for WSL, for each SSH computer and for commands on each computer; nothing new happens until it is accepted |
 | L2 | Ember can't tell when a program has turned off echo for a password | Everything you type into a command is cut out of what Copilot gets, and so is the output after a password-like prompt until the program's next line (to the end of a command that can't take typing). It may hide a little more than needed |
 | L3 | Windows commands can't take typing; only Windows PowerShell 5.1 | Programs run non-interactively and fail instead of waiting; cmd runs inside PowerShell; Stop ends everything at once |
-| L4 | No borrowed mouse and no view of a remote screen | Every step there is asked; tier 1 actions and opening apps only |
+| L4 | No borrowed mouse and no view of a remote screen | Every step there is asked; Ember reads, uses controls and opens apps only |
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |

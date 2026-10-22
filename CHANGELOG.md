@@ -77,7 +77,8 @@ The organisation policy gains these keys. Like every key, they only make Ember s
 ### Changed
 
 - On Windows, a Linux app WSLg shows was refused and blacked out like a Remote Desktop window. With WSL on, Ember now
-  tells which app it is and treats it like any app; one it can't identify is still refused and blacked out. Linux apps
+  tells which app it is and treats it like any app (without borrowing the mouse there); one it can't identify is
+  still refused and blacked out. Linux apps
   shown by an X server on Windows (VcXsrv, X410, Xming, GWSL, Cygwin/X) are now refused and blacked out too.
 
 ### Limits you may meet
