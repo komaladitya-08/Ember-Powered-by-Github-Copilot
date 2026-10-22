@@ -238,6 +238,8 @@ function rig(o: {
   internals?: Partial<ConnectionsInternals>;
   allowLoopback?: boolean;
   archive?: (path: string) => Buffer;
+  /** What `ssh -V` prints (default: a current client for the OS). */
+  sshV?: string;
 } = {}) {
   const spawned: FakeChild[] = [];
   const muxes: FakeMux[] = [];
@@ -250,7 +252,7 @@ function rig(o: {
   const listeners = new Map<string, (c: net.Socket) => void>();
   const exec = async (argv: readonly string[]): Promise<ExecResult> => {
     execs.push(argv);
-    if (argv.includes("-V")) return { code: 0, stdout: "", stderr: o.os === "win32" ? "OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2\r\n" : "OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n" };
+    if (argv.includes("-V")) return { code: 0, stdout: "", stderr: o.sshV ?? (o.os === "win32" ? "OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2\r\n" : "OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n") };
     if (argv.includes("-G")) return { code: 0, stdout: o.g ? o.g(argv) : gOut(), stderr: "" };
     if (argv.includes("-O")) return { code: 255, stdout: "", stderr: "Control socket connect(/x): No such file or directory\n" };
     return { code: 1, stdout: "", stderr: "" };
@@ -413,6 +415,20 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(r.cards[0]).toMatchObject({ kind: "secret", secret: "password", login: "deploy" });
     const c = ref.c = track(rig({ remotes: [{ fail: () => auth }, { fail: async (run): Promise<typeof auth | null> => ((await (ref.c as Rig).askpass(run, "Password: ")) ? null : auth) }] }));
     await expect(c.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "cancelled", message: "Connection cancelled" });
+  });
+
+  it("on RHEL 8's ssh (8.0) a server asking in ssh's words gets the host's quoted question, never \"Unlock your SSH key\"", async () => {
+    const auth = { stderr: "alice@build-01.example.com: Permission denied (publickey,keyboard-interactive).\n", code: 255 };
+    const spoof = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";
+    type Rig = ReturnType<typeof rig>;
+    const ref: { r?: Rig } = {};
+    const r = ref.r = track(rig({
+      sshV: "OpenSSH_8.0p1, OpenSSL 1.1.1k  FIPS 25 Mar 2021\n",
+      remotes: [{ fail: () => auth }, { fail: async (run): Promise<typeof auth | null> => { await (ref.r as Rig).askpass(run, spoof); return auth; } }],
+    }));
+    await r.conns.connect(record(), { interactive: true }).catch(() => undefined);
+    expect(r.cards).toEqual([expect.objectContaining({ kind: "secret", secret: "other", host: "build-01", prompt: spoof })]);
+    expect(r.cards[0]).not.toHaveProperty("via");
   });
 
   it("never offers to accept a changed host key", async () => {

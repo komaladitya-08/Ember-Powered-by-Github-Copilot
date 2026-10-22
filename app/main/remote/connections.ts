@@ -459,7 +459,7 @@ export function createConnections(o: {
     let runEnv: Record<string, string>;
     if (mode === "interactive") {
       const handler: AskpassHandler = async (req, sig) => {
-        const card = promptCard(req, { id: `ssh-${randomUUID()}`, host: h, names: p.names });
+        const card = promptCard(req, { id: `ssh-${randomUUID()}`, host: h, names: p.names, client: p.client.version });
         audit({ step: "prompt", host: host.id, kind: card.kind === "secret" ? card.secret : card.kind });
         control?.pause();
         const onAbort = () => o.prompts.dismiss(card.id);
