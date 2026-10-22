@@ -5,10 +5,10 @@
 //   --update-fixtures  as --clips, but into test/fixtures/voice, replacing the committed clips. The voice is random
 //                      on every run, so new clips must pass the voice tests before they're committed (git restore
 //                      test/fixtures/voice puts the old ones back); the committed clips keep the tests repeatable.
+// Downloads (Node's https, honouring HTTPS_PROXY/NO_PROXY) and unpacking (app/voice/untar.ts) are the app's own, so
+// no system curl, tar or bzip2 is needed on any OS.
 // usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--clips | --update-fixtures]   (default dir: .cache/voice)
 import { build } from "esbuild";
-import { execFileSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,10 +31,10 @@ fs.mkdirSync(dir, { recursive: true });
 
 const bundle = path.join(dir, "models.cjs");
 await build({ entryPoints: [path.join(root, "app/voice/models.ts")], outfile: bundle, bundle: true, platform: "node", format: "cjs", logLevel: "error" });
-const { ensureModels, curlDownloader } = require(bundle);
+const { ensureModels, fetchModel, httpsDownloader } = require(bundle);
 const models = path.join(dir, "models");
 let last = -1;
-await ensureModels(models, curlDownloader, (done, total) => {
+await ensureModels(models, httpsDownloader, (done, total) => {
   const pct = Math.floor((done / total) * 100);
   if (pct !== last && pct % 10 === 0) { last = pct; console.log(`models ${pct}%`); }
 });
@@ -45,24 +45,15 @@ if (!ttsVoice) {
 }
 
 // A TTS voice to speak the test lines (test-only; not shipped). The evaluation looks for it here.
-const ttsDir = path.join(dir, "vits-piper-en_US-amy-low");
-const TTS_SHA256 = "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639";
-if (!fs.existsSync(ttsDir)) {
-  const tar = path.join(dir, "tts.tar.bz2");
-  // A failed download or unpack leaves nothing behind (a half-unpacked voice would be skipped next time).
-  try {
-    execFileSync("curl", ["-sSfL", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "30", "-o", tar, "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2"]);
-    // Pinned, like the speech models: nothing else is unpacked.
-    const sha256 = crypto.createHash("sha256").update(fs.readFileSync(tar)).digest("hex");
-    if (sha256 !== TTS_SHA256) throw new Error(`the TTS voice's download doesn't match its SHA-256 (got ${sha256})`);
-    execFileSync("tar", ["-xjf", tar, "-C", dir]);
-  } catch (err) {
-    fs.rmSync(ttsDir, { recursive: true, force: true });
-    throw err;
-  } finally {
-    fs.rmSync(tar, { force: true });
-  }
-}
+const TTS_VOICE = {
+  name: "TTS voice (test-only)", kind: "tar.bz2", target: "vits-piper-en_US-amy-low",
+  url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2",
+  sha256: "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639",
+};
+const ttsDir = path.join(dir, TTS_VOICE.target);
+// Pinned and unpacked like the speech models: a failed download or unpack leaves nothing behind (a half-unpacked
+// voice would be skipped next time).
+if (!fs.existsSync(ttsDir)) await fetchModel(dir, TTS_VOICE, httpsDownloader);
 if (!makeClips) {
   console.log(`models in ${models}\nTTS voice in ${ttsDir}`);
   process.exit(0);

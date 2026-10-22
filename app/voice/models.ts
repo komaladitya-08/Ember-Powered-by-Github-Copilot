@@ -1,13 +1,21 @@
 /**
  * Speech models Ember downloads on first use (about 126 MB), each pinned to a
- * SHA-256, into ~/.config/ember/models. Nothing is used until it verifies.
+ * SHA-256, into the models folder of Ember's data folder (~/.config/ember/models
+ * on Linux). Nothing is used until it verifies. Archives are unpacked in-process
+ * (untar.ts, bzip2.ts), so no system tar, bzip2 or curl is needed on any OS, into
+ * a staging folder that is moved into place whole: a half-unpacked model is never
+ * where Ember looks for one.
  */
 
-import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import type { IncomingMessage } from "node:http";
+import https from "node:https";
 import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ModelPaths } from "./sherpa";
+import { extractTarBz2 } from "./untar";
 
 const RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
 
@@ -76,6 +84,66 @@ export async function sha256File(file: string): Promise<string> {
   return h.digest("hex");
 }
 
+/** What fetchModel needs to know about a pinned download. */
+export type ModelDownload = Pick<ModelFile, "name" | "url" | "sha256" | "kind" | "target">;
+
+/**
+ * Renames, retrying briefly when the target is busy: on Windows an antivirus scanner or the search indexer
+ * often holds a file that was just written for a moment, and the rename fails with EPERM or EBUSY meanwhile.
+ */
+async function moveIntoPlace(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= 10 || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw err;
+      await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
+
+/** Unpacks a verified archive into `root`: into a staging folder first, then its top folder is moved into place. */
+async function unpackArchive(archive: string, root: string, m: ModelDownload): Promise<void> {
+  // A fixed name, so a staging folder left by a crash is cleared on the next try instead of piling up.
+  const staging = path.join(root, `.unpack-${m.target}`);
+  fs.rmSync(staging, { recursive: true, force: true, maxRetries: 5 });
+  fs.mkdirSync(staging);
+  try {
+    try {
+      // Only the model's own folder: an entry anywhere else (another model's folder, a marker) is refused.
+      await extractTarBz2(archive, staging, { topFolder: m.target });
+      if (!fs.statSync(path.join(staging, m.target), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`it has no ${m.target} folder`);
+    } catch (err) {
+      // "tar" in the message: the voice service tells the user the download couldn't be unpacked.
+      throw new Error(`${m.name}: the downloaded tar archive couldn't be unpacked: ${(err as Error).message}`, { cause: err });
+    }
+    const dest = path.join(root, m.target);
+    fs.rmSync(dest, { recursive: true, force: true, maxRetries: 5 });
+    await moveIntoPlace(path.join(staging, m.target), dest);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true, maxRetries: 5 });
+  }
+}
+
+/**
+ * Downloads one pinned model into `root`, checks its SHA-256 and puts it in place (unpacked, for an
+ * archive). Whatever happens, no partial download or half-unpacked model is left behind.
+ */
+export async function fetchModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<void> {
+  const tmp = path.join(root, `.download-${path.basename(m.url)}`);
+  try {
+    await download(m.url, tmp, progress);
+    const got = await sha256File(tmp);
+    if (got !== m.sha256) throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
+    if (m.kind === "file") await moveIntoPlace(tmp, path.join(root, m.target));
+    else await unpackArchive(tmp, root, m);
+  } finally {
+    fs.rmSync(tmp, { force: true, maxRetries: 5 });
+  }
+}
+
 /** Makes every model present and verified; skips ones already in place. */
 export async function ensureModels(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined): Promise<ModelPaths> {
   fs.mkdirSync(root, { recursive: true });
@@ -83,27 +151,8 @@ export async function ensureModels(root: string, download: Downloader, progress:
   for (const m of VOICE_MODELS) {
     if (verified(root, m)) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
     fs.rmSync(marker(root, m), { force: true });
-    const tmp = path.join(root, `.download-${path.basename(m.url)}`);
     const base = done;
-    // Whatever happens, no partial download (or half-unpacked model) is left behind.
-    try {
-      await download(m.url, tmp, bytes => progress(base + bytes, VOICE_MODELS_BYTES));
-      const got = await sha256File(tmp);
-      if (got !== m.sha256) throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
-      if (m.kind === "file") {
-        fs.renameSync(tmp, path.join(root, m.target));
-      } else {
-        fs.rmSync(path.join(root, m.target), { recursive: true, force: true });
-        try {
-          await new Promise<void>((resolve, reject) => execFile("tar", ["-xjf", tmp, "-C", root], err => (err ? reject(err) : resolve())));
-        } catch (err) {
-          fs.rmSync(path.join(root, m.target), { recursive: true, force: true });
-          throw err;
-        }
-      }
-    } finally {
-      fs.rmSync(tmp, { force: true });
-    }
+    await fetchModel(root, m, download, bytes => progress(base + bytes, VOICE_MODELS_BYTES));
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
     done += m.bytes;
     progress(done, VOICE_MODELS_BYTES);
@@ -111,7 +160,98 @@ export async function ensureModels(root: string, download: Downloader, progress:
   return modelPaths(root);
 }
 
-/** A downloader using curl (scripts and CI; honours the proxy environment). A transfer that stalls for 30 s fails. */
-export const curlDownloader: Downloader = (url, dest) => new Promise((resolve, reject) => {
-  execFile("curl", ["-sSfL", "--retry", "3", "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "30", "-o", dest, url], { timeout: 20 * 60_000 }, err => (err ? reject(err) : resolve()));
-});
+/** Retries after a transient failure (a stall, a dropped connection, HTTP 408, 429 or 5xx), as curl --retry 3 did. */
+const RETRIES = 3;
+const REDIRECTS = 10;
+
+/** A failure that may not happen again on a retry. */
+const retryable = (message: string): boolean => /nothing arrived for|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ECONNREFUSED|EPIPE|socket hang up|HTTP (408|429|5\d\d)/.test(message);
+
+/** How a downloader made by createHttpsDownloader behaves (the defaults are curl's old flags). */
+export interface HttpsDownloaderOptions {
+  /** A transfer that sends nothing for this long has stalled (ms; default 30 s). */
+  stallMs?: number;
+  /** The longest a whole download may take, retries included (ms; default 20 minutes). */
+  totalMs?: number;
+  /** The first retry's delay, doubling after each (ms; default 1 s). */
+  retryMs?: number;
+  /** Extra https.Agent options (tests pass a certificate authority). */
+  agent?: https.AgentOptions;
+}
+
+/**
+ * A downloader on Node's https, for scripts and CI (the app passes its own, on Chromium's network stack).
+ * It honours HTTPS_PROXY and NO_PROXY as curl did (Node 22.21+ and Electron's Node; older Node connects
+ * directly), follows redirects (to https only), fails on an HTTP error, and retries a stalled or dropped
+ * transfer three times.
+ */
+export function createHttpsDownloader(options: HttpsDownloaderOptions = {}): Downloader {
+  const stallMs = options.stallMs ?? 30_000;
+  const totalMs = options.totalMs ?? 20 * 60_000;
+  const retryMs = options.retryMs ?? 1000;
+
+  /** One attempt: follows redirects and streams the body to `dest`, reporting bytes so far. */
+  const attempt = async (url: string, dest: string, progress: (bytes: number) => void, deadline: number): Promise<void> => {
+    const ac = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const alive = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => ac.abort(), Math.min(stallMs, Math.max(0, deadline - Date.now())));
+    };
+    const agent = new https.Agent({ proxyEnv: process.env, ...options.agent });
+    alive();
+    try {
+      let at = new URL(url);
+      for (let hop = 0; ; hop++) {
+        if (at.protocol !== "https:") throw new Error(`download failed: a redirect went to ${at.protocol} instead of https:`);
+        const res = await new Promise<IncomingMessage>((resolve, reject) => {
+          https.get(at, { agent, signal: ac.signal, headers: { "user-agent": "ember-voice-models" } }, resolve).on("error", reject);
+        });
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          if (hop >= REDIRECTS) throw new Error("download failed: too many redirects");
+          at = new URL(res.headers.location, at);
+          continue;
+        }
+        if (status !== 200) {
+          res.resume();
+          throw new Error(`download failed: HTTP ${status}`);
+        }
+        let bytes = 0;
+        const count = new Transform({
+          transform(chunk: Buffer, _enc, done) {
+            bytes += chunk.length;
+            alive();
+            progress(bytes);
+            done(null, chunk);
+          },
+        });
+        await pipeline(res, count, fs.createWriteStream(dest), { signal: ac.signal });
+        return;
+      }
+    } catch (err) {
+      throw ac.signal.aborted ? new Error(`nothing arrived for ${stallMs / 1000} seconds (check the network or proxy)`) : err;
+    } finally {
+      clearTimeout(timer);
+      agent.destroy();
+    }
+  };
+
+  return async (url, dest, progress) => {
+    const deadline = Date.now() + totalMs;
+    for (let tries = 0; ; tries++) {
+      try {
+        await attempt(url, dest, progress, deadline);
+        return;
+      } catch (err) {
+        if (tries >= RETRIES || Date.now() >= deadline || !retryable(String((err as Error).message))) throw err;
+        progress(0);
+        await new Promise(resolve => setTimeout(resolve, retryMs * 2 ** tries));
+      }
+    }
+  };
+}
+
+/** The scripts' downloader: createHttpsDownloader with curl's old limits (30 s stall, 3 retries, 20 minutes). */
+export const httpsDownloader: Downloader = createHttpsDownloader();
