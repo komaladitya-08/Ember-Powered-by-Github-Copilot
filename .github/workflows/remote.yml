@@ -95,7 +95,7 @@ jobs:
           pgrep --version | head -1
           git --version
       - name: Commands with util-linux script, pipes without it, the stop ladder and the sweep
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
 
@@ -135,7 +135,7 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_COMMANDS_TEST=1 \
-            node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+            node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
 
   # Owner: SB (SA adds its file). sshd on 127.0.0.1:2222 and a jump host on 2223, the runner's own key authorised;
   # a GTK 3 window under Xvfb and a session bus for the desktop part.
@@ -188,7 +188,7 @@ jobs:
       - name: The remote agent's parts (dist/remote-parts), as the suites install them
         run: node scripts/package/remote-parts.mjs
       - name: Transport (ssh -G, batch and interactive connects, host keys, ProxyJump, ControlMaster) and the agent
-        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts
+        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -339,7 +339,7 @@ jobs:
         env:
           EMBER_WSL_TEST: "1"
       - name: Windows PowerShell commands under the job host (RUN)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
       - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA)
@@ -485,7 +485,7 @@ jobs:
       - name: The remote agent's parts (dist/remote-parts), as the suite installs them
         run: node scripts/package/remote-parts.mjs
       - name: Commands on macOS (zsh, BSD script's exit status, the ps -E sweep, Homebrew on PATH)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
       - name: The agent on macOS over SSH (commands only; a two-archive install)
