@@ -2,8 +2,8 @@
  * The smaller Windows pieces: where data lives and how the settings window names it, the runtime's ids, which() and
  * the gh lookup (PATH read case-insensitively, quotes stripped, .exe/.com only, winget/Scoop/Chocolatey folders after
  * PATH, kept a minute), the bundled speech-model folders, the screen-reader probe (asked once a minute, never
- * Chromium's own flag), reduced motion, the life cycle, and the Start Menu shortcut toasts need. Also the interim
- * copies of Phase 1's helpers the composition uses (withSystemDialog, hostEnv, hoverShaper, the clipboard row).
+ * Chromium's own flag), reduced motion, the life cycle, and the Start Menu shortcut toasts need. Also Phase 1's
+ * helpers as the composition takes them through interim.ts (withSystemDialog, hostEnv, hoverShaper, the clipboard row).
  */
 
 import { describe, expect, it } from "vitest";
@@ -151,7 +151,7 @@ describe("ensureShortcut", () => {
   });
 });
 
-describe("the interim Phase 1 helpers the composition uses", () => {
+describe("the Phase 1 helpers the composition takes through interim.ts", () => {
   it("withSystemDialog answers the check and keeps the backend's extras bound to the backend", () => {
     const backend = {
       kind: "win32", count: 0,

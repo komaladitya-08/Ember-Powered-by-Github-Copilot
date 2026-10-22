@@ -97,9 +97,9 @@ export const SHELL_APP: Readonly<Record<OS, RegExp>> = {
   // JetBrains launchers (pycharm64…), and the command surfaces: Start and Search (a name typed there, then Enter, starts
   // it), Task Manager's "Run new task" and PowerToys Run.
   win32: new RegExp("^(x?emacs(client)?w?|runemacs|g?vimx?|nvim(-qt)?|neovim(-qt)?|neovide|idle|thonny|spyder|code(-insiders| - insiders)?|codium|vscodium"
-    + "|cursor|windsurf|devenv|powershell_ise|notepad\\+\\+|atom|pulsar|subl|sublime_text|kate|geany|qtcreator|lazarus(-ide)?|netbeans(64)?|arduino( ide)?"
-    + "|rstudio|octave(-gui|-cli)?|matlab|jupyter[\\w-]*|eclipse|idea|intellij[\\w-]*|pycharm|clion|goland|webstorm|rider|phpstorm|rubymine|datagrip|dataspell"
-    + "|studio64|android-?studio|fleet|zed|lapce|codeblocks"
+    + "|cursor|windsurf|devenv|powershell_ise|notepad\\+\\+|atom|pulsar|subl|sublime_text|kate|geany|qtcreator|kdevelop|monodevelop|lazarus(-ide)?"
+    + "|netbeans(64)?|arduino( ide|-?ide)?|rstudio|octave(-gui|-cli)?|matlab|jupyter[\\w-]*|eclipse|idea|intellij[\\w-]*|pycharm|clion|goland|webstorm|rider"
+    + "|phpstorm|rubymine|datagrip|dataspell|studio64|android-?studio|jetbrains[\\w-]*|fleet|zed|lapce|codeblocks|gnvim"
     + "|searchhost|searchapp|searchui|startmenuexperiencehost|taskmgr|powertoys\\.powerlauncher)"
     // The 64-bit launchers' suffix and versions (pycharm64, idea64, emacs-29.1), and IDLE run as idle.pyw.
     + "(64|[-_]?\\d[\\w.]*)?(\\.pyw?)?$"),
