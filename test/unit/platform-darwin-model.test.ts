@@ -9,8 +9,8 @@
 import { describe, expect, it } from "vitest";
 import {
   OVERLAY_TITLE, SECURITY_OWNERS, axWindowId, bundleOf, clientWindowsOf, findWindowIn, frontWindowOf, keysInMap, ownFrontWindow,
-  parseMediaSourceId, pointerLandsOn, processName, sameFrame, secureInputState, stackOf, unionRect, windowEntry,
-  type CGWindowEntry, type RawWindowInfo, type TitledWindow,
+  dockTitled, isDockItself, parseMediaSourceId, pointerLandsOn, processName, sameFrame, secureInputState, stackOf, unionRect, windowEntry,
+  withDockStrip, type CGWindowEntry, type RawWindowInfo, type TitledWindow,
 } from "../../app/main/platform/darwin/model";
 
 const OWN = 4242;
@@ -127,6 +127,41 @@ describe("where a click lands", () => {
     const withAsk = [w(950, OWN, "Ember", "Ask Ember", 380, 280, 100, 50, 1000), ...LIST];
     expect(pointerLandsOn(withAsk, 400, 300, 101, OWN)).toBe(false);
   });
+  it("passes over the Dock's own display-covering window outside its strip, and only when AX gave the strip", () => {
+    // macos-15 at rest: the Dock's own window, titled "Dock", over the whole display above every app (CI run 120).
+    const dock = w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 20);
+    const list = [dock, ...LIST.filter(e => e.owner !== "Dock")];
+    expect(pointerLandsOn(list, 400, 300, 101, OWN)).toBe(false);
+    const strip = { x: 300, y: 830, width: 840, height: 70 };
+    const cut = withDockStrip(list, strip);
+    expect(cut[0]).toEqual({ ...dock, bounds: strip });
+    expect(pointerLandsOn(cut, 400, 300, 101, OWN)).toBe(true);
+    expect(pointerLandsOn(cut, 400, 850, 104, OWN)).toBe(false);
+    // AX can't tell: the whole display stays covered.
+    expect(withDockStrip(list, null)).toEqual(list);
+    // Another display's Dock window doesn't meet the strip: it goes.
+    expect(withDockStrip([w(8, 700, "Dock", "Dock", 1440, 0, 1920, 1080, 20)], strip)).toEqual([]);
+    // Mission Control's untitled window at the Dock's level, beside the titled Dock: not cut, it still covers.
+    const mc = w(64, 700, "Dock", "", 0, 0, 1440, 900, 20);
+    const up = withDockStrip([mc, dock, ...LIST.filter(e => e.owner !== "Dock")], strip);
+    expect(up.slice(0, 2)).toEqual([mc, { ...dock, bounds: strip }]);
+    expect(pointerLandsOn(up, 400, 300, 101, OWN)).toBe(false);
+    // Without titles (no Screen Recording) the level is all there is: both are taken for the Dock and cut.
+    expect(withDockStrip([{ ...mc }, { ...dock, title: "" }], strip).map(e => e.bounds)).toEqual([strip, strip]);
+  });
+
+  it("tells the Dock's own window from Mission Control's by its level, or by its title", () => {
+    expect(isDockItself(w(7, 700, "Dock", "", 0, 0, 1440, 900, 20))).toBe(true);
+    expect(isDockItself(w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 25))).toBe(true);
+    expect(isDockItself(w(9, 700, "Dock", "", 0, 0, 1440, 900, 18))).toBe(false);
+    expect(isDockItself(w(9, 701, "TextEdit", "Dock", 0, 0, 100, 100, 20))).toBe(false);
+    // Titles read (a window of the Dock's is titled "Dock"): an untitled one at its level is something else it draws.
+    expect(isDockItself(w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), true)).toBe(false);
+    expect(isDockItself(w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 20), true)).toBe(true);
+    expect(dockTitled([w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 20)])).toBe(true);
+    expect(dockTitled([w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), w(9, 701, "TextEdit", "Dock", 0, 0, 100, 100, 0)])).toBe(false);
+  });
+
   it("lands in the element's own window when the caller says the element is there", () => {
     expect(pointerLandsOn(LIST, 120, 120, 103, OWN)).toBe(false);
     expect(pointerLandsOn(LIST, 120, 120, 103, OWN, 101)).toBe(true);
@@ -193,6 +228,13 @@ describe("the system's credential and consent prompts (M17)", () => {
       "AuthenticationServicesAgent", "CoreServicesUIAgent", "ScreenSaverEngine", "SecurityAgent", "UserNotificationCenter",
       "coreautha", "coreauthd", "universalAccessAuthWarn",
     ]);
+  });
+
+  it("knows them, Keychain Access and Passwords by SECURITY_APP.darwin (any case, other languages, bundle ids), but not loginwindow or an app", () => {
+    for (const owner of ["SecurityAgent", "securityagent", "Keychain Access", "Schlüsselbundverwaltung", "com.apple.keychainaccess", "Passwords", "UserNotificationCenter"]) {
+      expect(SECURITY_OWNERS.has(owner), owner).toBe(true);
+    }
+    for (const owner of ["loginwindow", "com.apple.loginwindow", "TextEdit", "Finder", "Dock", "Ember", ""]) expect(SECURITY_OWNERS.has(owner), owner).toBe(false);
   });
 });
 

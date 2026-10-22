@@ -466,7 +466,8 @@ export function benchApp(pid = 4300, windowId = 9001): AppSpec {
   const rows: ElSpec[] = Array.from({ length: 200 }, (_, i) => ({
     role: "AXRow", subrole: "AXTableRow", id: `row${i + 1}`, selected: false, settable: ["AXSelected"],
     frame: at(120, 400 + i * 20, 200, 20),
-    children: [{ role: "AXStaticText", value: `Row ${i + 1}`, frame: at(122, 400 + i * 20, 196, 20) }],
+    // A cell-based NSTableView's cell is a text field that has its words only as its value (macos-15, CI run 120).
+    children: [{ role: "AXTextField", value: `Row ${i + 1}`, frame: at(122, 400 + i * 20, 196, 20) }],
   }));
   return {
     pid, owner: "osascript", focusedId: "name",

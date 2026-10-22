@@ -1,9 +1,11 @@
 /**
- * The macOS window system and input backends on a real Mac, against TextEdit with a fresh plain-text file in a
- * temporary folder: TextEdit's window is in the stack with its process and app name, activation from this process
- * (which has no UI) brings it to the front from behind Finder (through LaunchServices when macOS declines a
- * background activation), text typed with textKey (whatever the layout) arrives (read back over AX), Command+S
- * pressed by keysym saves it, the pointer follows a move, and nothing stays pressed.
+ * The macOS window system and input backends on a real Mac. Against the AppKit bench (test/fixtures/mac_bench.js, a
+ * window run by osascript, which needs no app to be launched): its window is in the stack with its process and app
+ * name and is found by its title, a click at its centre would land on it, the pointer follows a move, and nothing
+ * stays pressed. Against TextEdit with a fresh plain-text file in a temporary folder (what needs a real app launched
+ * through LaunchServices): activation from this process (which has no UI) brings it to the front from behind Finder
+ * (through LaunchServices when macOS declines a background activation), text typed with textKey (whatever the layout)
+ * arrives (read back over AX), and Command+S pressed by keysym saves it.
  * Without the Accessibility permission only the checks that need none run; with EMBER_DARWIN_TEST=1 the suite fails
  * instead of skipping (off macOS, without the backends, or without the permission), printing which binary needs the
  * grant so CI learns which client TCC wanted.
@@ -11,9 +13,11 @@
  * It also records the evidence the design leaves to CI: the permission answers (Input Monitoring, posting, Screen
  * Recording), the input source, whether secure input can be read, that no security prompt is up at rest, the median
  * cost of a borrow's polling calls, and whether a key another process posts shows in keysDown() (Input Monitoring
- * may gate it: design §8.5, Q10). When TextEdit's window doesn't show up, it prints every window of TextEdit's
- * process (on screen or not, any layer), what AX sees of the app and what is on screen, nudges it (unhide, open the
- * file again, and as a last resort an untitled document, with a warning) and fails with that report after 45 s.
+ * may gate it: design §8.5, Q10). It never asks macOS for a permission (CGRequestListenEventAccess and the like put up
+ * a prompt nobody answers on a runner), it only reads them. When TextEdit's window doesn't show up, it prints what
+ * the system's alerts on screen say, TextEdit's crash reports and log, every window of its process and what AX sees of
+ * the app, nudges it (unhide, open the file again, and as a last resort an untitled document, with a warning) and
+ * fails with that report after 45 s.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -33,11 +37,13 @@ import { openAX } from "../../app/main/platform/darwin/ax";
 import { openDesktop, type DarwinDesktop } from "../../app/main/platform/darwin/desktop";
 import { hiToolboxMissing } from "../../app/main/platform/darwin/hitoolbox";
 import { SECURITY_OWNERS } from "../../app/main/platform/darwin/model";
+import { BENCH_TITLE, alertReport, startBench, whyNoWindow, type Bench } from "./darwin-support";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
 const onMac = process.platform === "darwin";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const TEXT = "Ember 1é";
+const BOM = "\uFEFF";
 /** kVK_F13: no system action is bound to it, so a helper may hold it down for a moment. */
 const F13 = 0x69;
 const TEXTEDIT_APP = "/System/Applications/TextEdit.app";
@@ -167,16 +173,16 @@ function focusedText(): { value: string | null; selected: { location: number; le
 /** A warning the CI log shows as one (an annotation on GitHub Actions). */
 const warn = (text: string) => console.log(`${process.env.GITHUB_ACTIONS === "true" ? "::warning::" : "warning: "}${text}`);
 
-/** Everything that tells why TextEdit's window isn't on screen, for the CI log. */
-function textEditReport(ws: DarwinWindowSystem, pid: number, opened: string): string {
+/** Everything that tells why TextEdit's window isn't on screen, for the CI log (`since`: when it was opened). */
+function textEditReport(ws: DarwinWindowSystem, pid: number, opened: string, since: number): string {
   const ps = spawnSync("/bin/ps", ["-o", "pid,stat,etime,command", "-p", String(pid)], { encoding: "utf8" });
   return [
     `open: ${opened}`,
     `process: ${ps.stdout.trim()}`,
-    `every TextEdit pid: ${JSON.stringify(textEditPids())}`,
     `CoreGraphics, every window of ${pid} (any layer, on screen or not): ${JSON.stringify(allWindowsOf(pid))}`,
     `AX: ${JSON.stringify(axReport(pid))}`,
     `on screen now, top first: ${JSON.stringify(ws.stack().reverse().slice(0, 20).map(s => ({ id: s.id, pid: s.pid, owner: s.wmClass, layer0: !s.overrideRedirect, x: s.x, y: s.y, width: s.width, height: s.height })))}`,
+    whyNoWindow("TextEdit", since),
   ].join("\n  ");
 }
 
@@ -337,6 +343,75 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       await waitFor(() => !x.keysDown().includes(F13 + 8) && !raw.keyDown(F13), 2_000, "F13 to be up again");
     }, 15_000);
 
+    describe("in the AppKit bench", () => {
+      let dir = "";
+      let bench: Bench | null = null;
+      let pid = 0;
+      let win = 0;
+
+      beforeAll(async () => {
+        dir = mkdtempSync(join(tmpdir(), "ember-darwin-bench-"));
+        bench = await startBench(dir);
+        pid = bench.ready.pid;
+        win = bench.ready.window;
+        console.log(`darwin: bench ready ${JSON.stringify(bench.ready)}`);
+      }, 90_000);
+
+      afterAll(() => {
+        bench?.stop();
+        if (dir) rmSync(dir, { recursive: true, force: true });
+      });
+
+      it("lists the bench's window with its process and app name, and finds it by its title", async () => {
+        expect(ws.stack().find(s => s.id === win)).toMatchObject({ pid, wmClass: "osascript", overrideRedirect: false });
+        expect(ws.clientWindows().some(w => w.id === win && w.pid === pid && w.wmClass === "osascript" && w.wmClassName === "osascript")).toBe(true);
+        // By part of its title, as XInput's rules allow for an app's own windows.
+        await waitFor(() => x.findWindow("Ember Bench", pid) === win, 10_000, `findWindow to find "Ember Bench" in "${BENCH_TITLE}" over AX`);
+      });
+
+      it("would land a click in the bench's window: nothing listed above it covers it, and the session isn't locked", async () => {
+        const target = ws.stack().find(s => s.id === win);
+        expect(target).toBeDefined();
+        const at = { x: Math.round(target!.x + target!.width / 2), y: Math.round(target!.y + target!.height / 2) };
+        x.move(at.x, at.y);
+        await waitFor(() => {
+          const p = ws.pointer();
+          return p && Math.abs(p.x - at.x) <= 2 && Math.abs(p.y - at.y) <= 2;
+        }, 2_000, `the pointer at ${at.x},${at.y}`);
+        // A full-screen transparent system window (the Dock's, Notification Center's…) above every app would make every
+        // click "covered" and black out every window picture: name any such window for the CI log.
+        const stack = ws.stack();
+        const above = stack.slice(stack.findIndex(s => s.id === win) + 1)
+          .filter(s => at.x >= s.x && at.y >= s.y && at.x < s.x + s.width && at.y < s.y + s.height);
+        console.log(`darwin: windows above the bench at ${at.x},${at.y}: ${JSON.stringify(above.map(s => ({ owner: s.wmClass, title: s.title, layer: s.overrideRedirect ? "not 0" : 0, x: s.x, y: s.y, width: s.width, height: s.height })))}`);
+        expect(above).toEqual([]);
+        expect(x.pointerOn(win)).toBe(true);
+        expect(x.screenLocked()).toBe(false);
+        expect(x.keyboardGrabbed(win)).toBe(false);
+      }, 10_000);
+
+      it("moves the pointer where it was asked", async () => {
+        const main = screen.getPrimaryDisplay().bounds;
+        const to = { x: Math.round(main.x + main.width / 2) + 7, y: Math.round(main.y + main.height / 2) + 5 };
+        x.move(to.x, to.y);
+        await waitFor(() => {
+          const p = ws.pointer();
+          return p && Math.abs(p.x - to.x) <= 2 && Math.abs(p.y - to.y) <= 2;
+        }, 2_000, `the pointer at ${to.x},${to.y}`);
+      });
+
+      it("leaves nothing pressed after releaseAll()", async () => {
+        expect(x.keysym(x.keysymOf("Shift_L"), true)).toBe(true);
+        await sleep(100);
+        // Whether the session's key state shows Ember's own posted keys (the borrow filters them either way): for the CI log.
+        console.log(`darwin: a posted Shift shows in keysDown() = ${x.keysDown().includes(0x38 + 8)}, in CGEventSourceKeyState = ${raw.keyDown(0x38)}, in the flags = ${ws.keysDown()?.shift}`);
+        x.releaseAll();
+        await waitFor(() => x.keysDown().length === 0, 2_000, "no key down");
+        expect(ws.keysDown()).toEqual({ control: false, alt: false, space: false, shift: false, command: false });
+        expect(ws.pointer()!.mask & 0x1f00).toBe(0);
+      });
+    });
+
     describe("in TextEdit", () => {
       let dir = "";
       let file = "";
@@ -346,19 +421,19 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       let title = "";
       /** The window is the temporary file's (else an untitled document: the last resort, with a warning). */
       let fromFile = true;
+      let launchedAt = 0;
 
       beforeAll(async () => {
         dir = mkdtempSync(join(tmpdir(), "ember-darwin-"));
         file = join(dir, "ember.txt");
-        writeFileSync(file, "");
+        // A UTF-8 byte order mark: TextEdit reads (and saves) the file as UTF-8, with no preference changed.
+        writeFileSync(file, BOM);
         const before = new Set(textEditPids());
-        // A new TextEdit (-n), launched fresh without restored windows (-F), opening the file; plain text read and
-        // written as UTF-8, no automatic corrections, and plain-text untitled documents rather than the iCloud open panel.
-        const args = ["-n", "-F", "-a", "TextEdit", file, "--args",
-          "-ApplePersistenceIgnoreState", "YES", "-NSShowAppCentricOpenPanelInsteadOfUntitledFile", "NO", "-RichText", "NO",
-          "-PlainTextEncoding", "4", "-PlainTextEncodingForWrite", "4",
-          "-CorrectSpellingAutomatically", "NO", "-NSAutomaticSpellingCorrectionEnabled", "NO", "-SmartQuotes", "NO", "-SmartDashes", "NO",
-          "-TextReplacement", "NO"];
+        // A new TextEdit (-n), launched fresh without restored windows (-F), opening the file. Nothing of TextEdit's
+        // own settings goes on the command line: a value there arrives as a string, and TextEdit died at launch on
+        // every run that passed its number-valued ones (-PlainTextEncoding 4: CI runs 114 to 116).
+        const args = ["-n", "-F", "-a", "TextEdit", file, "--args", "-ApplePersistenceIgnoreState", "YES"];
+        launchedAt = Date.now();
         const launched = spawnSync("/usr/bin/open", args, { encoding: "utf8" });
         const opened = `open ${args.join(" ")} → ${launched.status} ${launched.stdout}${launched.stderr}`.trim();
         if (launched.status !== 0) throw new Error(`open -a TextEdit failed: ${opened}`);
@@ -373,16 +448,16 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
             title = await waitFor(() => axTitle(pid, win), 5_000, "TextEdit's window title over AX").catch(() => "");
             // Without an AX title, the window is the file's unless the untitled last resort was asked for.
             fromFile = title ? /^ember(\.txt)?$/i.test(title) : nudged < 3;
-            if (!fromFile) warn(`TextEdit never showed ${file}; the tests go on in "${title}", and Command+S is checked as Command+A:\n  ${textEditReport(ws, pid, opened)}`);
+            if (!fromFile) warn(`TextEdit never showed ${file}; the tests go on in "${title}", and Command+S is checked as Command+A:\n  ${textEditReport(ws, pid, opened, launchedAt)}`);
             break;
           }
           const waited = Date.now() - started;
-          if (waited > 45_000) throw new Error(`timed out waiting for TextEdit's window in the stack:\n  ${textEditReport(ws, pid, opened)}`);
+          if (waited > 45_000) throw new Error(`timed out waiting for TextEdit's window in the stack:\n  ${textEditReport(ws, pid, opened, launchedAt)}`);
           if (nudged === 0 && waited > 8_000) {
             // Log what is there, then unhide it and bring back a minimised window (a launch from a process without
             // UI may leave the app hidden).
             nudged++;
-            console.log(`darwin: no TextEdit window after 8 s:\n  ${textEditReport(ws, pid, opened)}`);
+            console.log(`darwin: no TextEdit window after 8 s:\n  ${textEditReport(ws, pid, opened, launchedAt)}`);
             const cf = openCoreFoundation()!, ax = openAX(cf)!;
             cf.own(ax.application(pid), app => {
               if (ax.boolean(app, "AXHidden")) ax.set(app, "AXHidden", cf.kFalse!);
@@ -414,14 +489,6 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
         if (dir) rmSync(dir, { recursive: true, force: true });
       });
 
-      it("lists TextEdit's window with its process and app name, and finds it by its title", async () => {
-        expect(ws.stack().find(s => s.id === win)).toMatchObject({ pid, wmClass: "TextEdit", overrideRedirect: false });
-        expect(ws.clientWindows().some(w => w.id === win && w.pid === pid && w.wmClass === "TextEdit" && w.wmClassName === "TextEdit")).toBe(true);
-        // By part of its title, as XInput's rules allow for an app's own windows ("ember" in "ember.txt").
-        const wanted = fromFile ? "ember" : title;
-        await waitFor(() => x.findWindow(wanted, pid) === win, 10_000, `findWindow to find "${wanted}" over AX (the window's AX title is "${title}")`);
-      });
-
       it("brings TextEdit's window to the front from a process without UI, and reports it as active and focused", async () => {
         // TextEdit, just opened, is already in front, and activate() does nothing for the focused window: put Finder
         // in front first (through LaunchServices, as the user would), so the activation really starts in the background.
@@ -440,27 +507,6 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
         expect(x.activeWindow()).toBe(win);
       }, 20_000);
 
-      it("would land a click in TextEdit's window: nothing listed above it covers it, and the session isn't locked", async () => {
-        const target = ws.stack().find(s => s.id === win);
-        expect(target).toBeDefined();
-        const at = { x: Math.round(target!.x + target!.width / 2), y: Math.round(target!.y + target!.height / 2) };
-        x.move(at.x, at.y);
-        await waitFor(() => {
-          const p = ws.pointer();
-          return p && Math.abs(p.x - at.x) <= 2 && Math.abs(p.y - at.y) <= 2;
-        }, 2_000, `the pointer at ${at.x},${at.y}`);
-        // A full-screen transparent system window (the Dock's, Notification Center's…) above every app would make every
-        // click "covered" and black out every window picture: name any such window for the CI log.
-        const stack = ws.stack();
-        const above = stack.slice(stack.findIndex(s => s.id === win) + 1)
-          .filter(s => at.x >= s.x && at.y >= s.y && at.x < s.x + s.width && at.y < s.y + s.height);
-        console.log(`darwin: windows above TextEdit at ${at.x},${at.y}: ${JSON.stringify(above.map(s => ({ owner: s.wmClass, title: s.title, layer: s.overrideRedirect ? "not 0" : 0, x: s.x, y: s.y, width: s.width, height: s.height })))}`);
-        expect(above).toEqual([]);
-        expect(x.pointerOn(win)).toBe(true);
-        expect(x.screenLocked()).toBe(false);
-        expect(x.keyboardGrabbed(win)).toBe(false);
-      }, 10_000);
-
       it("types text whatever the layout, and saves it with Command+S pressed by keysym", async () => {
         await waitFor(() => x.focusedWindow() === win || (x.activate(win), false), 10_000, "TextEdit's window to have the keyboard");
         for (const ch of TEXT) {
@@ -468,40 +514,20 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
           expect(x.textKey(ch, false)).toBe(true);
           await sleep(30);
         }
-        await waitFor(() => focusedText().value === TEXT, 5_000, () => `TextEdit's text to read "${TEXT}" over AX (it reads ${JSON.stringify(focusedText())})`);
+        await waitFor(() => focusedText().value?.replace(/^\uFEFF/, "") === TEXT, 5_000, () => `TextEdit's text to read "${TEXT}" over AX (it reads ${JSON.stringify(focusedText())})`);
         const command = x.keysymOf("Super_L"), letter = x.keysymOf(fromFile ? "s" : "a");
         expect(x.keysym(command, true)).toBe(true);
         expect(x.keysym(letter, true)).toBe(true);
         expect(x.keysym(letter, false)).toBe(true);
         expect(x.keysym(command, false)).toBe(true);
         if (fromFile) {
-          await waitFor(() => readFileSync(file, "utf8") === TEXT, 15_000, () => `the file to read "${TEXT}" (it reads ${JSON.stringify(readFileSync(file, "utf8"))})`);
+          const saved = () => readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+          await waitFor(() => saved() === TEXT, 15_000, () => `the file to read "${TEXT}" (it reads ${JSON.stringify(saved())}; on screen: ${alertReport() || "no alert"})`);
         } else {
           // Command+A selects the whole text: the same Command-and-letter path through the layout as Command+S.
           await waitFor(() => focusedText().selected?.length === TEXT.length, 5_000, () => `Command+A to select the text (${JSON.stringify(focusedText())})`);
         }
       }, 30_000);
-
-      it("moves the pointer where it was asked", async () => {
-        const main = screen.getPrimaryDisplay().bounds;
-        const to = { x: Math.round(main.x + main.width / 2) + 7, y: Math.round(main.y + main.height / 2) + 5 };
-        x.move(to.x, to.y);
-        await waitFor(() => {
-          const p = ws.pointer();
-          return p && Math.abs(p.x - to.x) <= 2 && Math.abs(p.y - to.y) <= 2;
-        }, 2_000, `the pointer at ${to.x},${to.y}`);
-      });
-
-      it("leaves nothing pressed after releaseAll()", async () => {
-        expect(x.keysym(x.keysymOf("Shift_L"), true)).toBe(true);
-        await sleep(100);
-        // Whether the session's key state shows Ember's own posted keys (the borrow filters them either way): for the CI log.
-        console.log(`darwin: a posted Shift shows in keysDown() = ${x.keysDown().includes(0x38 + 8)}, in CGEventSourceKeyState = ${raw.keyDown(0x38)}, in the flags = ${ws.keysDown()?.shift}`);
-        x.releaseAll();
-        await waitFor(() => x.keysDown().length === 0, 2_000, "no key down");
-        expect(ws.keysDown()).toEqual({ control: false, alt: false, space: false, shift: false, command: false });
-        expect(ws.pointer()!.mask & 0x1f00).toBe(0);
-      });
     });
   });
 });

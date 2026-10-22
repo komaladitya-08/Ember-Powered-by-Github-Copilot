@@ -15,10 +15,11 @@
   "Row 200", in a scroll view), Save (push button).
 
   Log lines (UTF-8, one object per line):
-    {"event":"ready","pid":N,"window":N,"title":"Ember Bench (macOS)","actions":true,"frame":{rect}}
+    {"event":"ready","pid":N,"window":N,"title":"Ember Bench (macOS)","actions":true,"frame":{rect},"controls":{...}}
       "window" is the CGWindowID (NSWindow windowNumber); "frame" is in points from the top left of the main display
-      (the space AX and the window list use); "actions" is false when JXA's ObjC.registerSubclass didn't work, so
-      Save's target-action (the "click" line) can't be heard.
+      (the space AX and the window list use); "controls" has each control's frame in the same space, by its label
+      (Notes and Rows: their scroll views), for a test that looks at a screenshot; "actions" is false when JXA's
+      ObjC.registerSubclass didn't work, so Save's target-action (the "click" line) can't be heard.
     {"event":"text","control":"Name","length":N}         (also Password and Notes)
     {"event":"toggle","control":"Remember me","checked":true}
     {"event":"select","control":"Theme","value":"Dark"}  (also Rows: "Row 5")
@@ -229,10 +230,28 @@ function bench(log, seconds) {
     if (event && !(typeof event.isNil === "function" && event.isNil())) app.sendEvent(event);
   };
 
+  /** Each control's frame on screen (points from the top left of the main display); one that can't be told is left out. */
+  const frames = () => {
+    const out = {};
+    const controls = { Name: name, Password: password, "Remember me": remember, Theme: theme, Volume: volume, Notes: notesScroll, Rows: tableScroll, Save: save };
+    for (const label of Object.keys(controls)) {
+      try {
+        const c = controls[label];
+        out[label] = topLeft(win.convertRectToScreen(c.convertRectToView(c.bounds, $())));
+      } catch {
+        // Left out: a test that needs it says which one it lacks.
+      }
+    }
+    return out;
+  };
+
   // Shown and settled before the ready line: the window list and AX know the window by then.
   for (let i = 0; i < 10; i++) pump(20);
   let last = look();
-  log({ event: "ready", pid: Number($.NSProcessInfo.processInfo.processIdentifier), window: Number(win.windowNumber), title: TITLE, actions: !!target, frame: topLeft(win.frame) });
+  log({
+    event: "ready", pid: Number($.NSProcessInfo.processInfo.processIdentifier), window: Number(win.windowNumber), title: TITLE, actions: !!target,
+    frame: topLeft(win.frame), controls: frames(),
+  });
 
   let why = "";
   while (!why) {

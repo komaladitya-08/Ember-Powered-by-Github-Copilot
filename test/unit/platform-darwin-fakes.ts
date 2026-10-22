@@ -82,9 +82,10 @@ export function fakeCF() {
 
 /**
  * A pretend AX API over the pretend CoreFoundation: one app (pid 500) with a focused window, and the system-wide
- * element's frontmost app (`state.frontmost`, null when AX can't name one).
+ * element's frontmost app (`state.frontmost`, null when AX can't name one). With `dockList`, every app element also
+ * holds an AXList with that frame (the Dock's strip of icons).
  */
-export function fakeAX(o: { windowIds?: boolean; failCopy?: boolean } = {}) {
+export function fakeAX(o: { windowIds?: boolean; failCopy?: boolean; dockList?: { x: number; y: number; width: number; height: number } } = {}) {
   const state = { frontmost: 500 as number | null };
   const f = fakeCF();
   const cf = makeCF(f.raw);
@@ -102,6 +103,12 @@ export function fakeAX(o: { windowIds?: boolean; failCopy?: boolean } = {}) {
     app: {
       AXFocusedWindow: () => (f.raw.CFRetain(element("window")), element("window")),
       AXWindows: () => f.make({ t: "array", v: [element("window")] }),
+      ...(o.dockList ? { AXChildren: () => f.make({ t: "array", v: [element("dockList")] }) } : {}),
+    },
+    dockList: {
+      AXRole: () => f.make({ t: "string", v: "AXList" }),
+      AXPosition: () => axValue(AX_VALUE.cgPoint, o.dockList?.x ?? 0, o.dockList?.y ?? 0),
+      AXSize: () => axValue(AX_VALUE.cgSize, o.dockList?.width ?? 0, o.dockList?.height ?? 0),
     },
     system: {
       AXFocusedApplication: () => (f.raw.CFRetain(element("frontApp")), element("frontApp")),

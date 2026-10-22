@@ -24,6 +24,7 @@ import { voiceOverRunning } from "../../app/main/platform/darwin/system/a11y";
 import { execRun } from "../../app/main/platform/darwin/system/exec";
 import { THUMBNAIL_ORDER } from "../../app/main/platform/darwin/electron-capture";
 import type { DesktopApp } from "../../app/main/hands/system";
+import { appWindow, waitFor, whyNoWindow } from "./darwin-support";
 
 const required = process.env.EMBER_MACSYS_TEST === "1";
 const onMac = process.platform === "darwin";
@@ -176,8 +177,9 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
       expect(() => catalogue.launch(terminal!)).toThrow(/terminals/);
     });
 
-    it("opens TextEdit through LaunchServices, as launchd's child rather than Ember's", async () => {
+    it("opens TextEdit through LaunchServices, as launchd's child rather than Ember's, and it stays up with a window", async () => {
       const before = new Set(pidsOf("TextEdit"));
+      const since = Date.now();
       let failed: unknown;
       darwinApps({ onLaunchError: e => { failed = e; } }).launch(apps.find(a => a.id.toLowerCase() === "com.apple.textedit")!);
       // A TextEdit that already runs (a developer's) is only brought forward: then that one is checked, and left running.
@@ -189,10 +191,16 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
       expect(failed, "open -a's failure").toBeUndefined();
       if (pid !== undefined) launched.push(pid);
       pid ??= [...before][0];
-      expect(pid, "a TextEdit process").toBeDefined();
+      expect(pid, `a TextEdit process:\n  ${whyNoWindow("TextEdit", since)}`).toBeDefined();
       const ppid = Number(spawnSync("/bin/ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim());
       expect(ppid).toBe(1);
-    }, 30_000);
+      // Up a while later, with a window of its own (a document or its open panel): an app that dies at launch (TextEdit
+      // did on CI runs 114 to 116) leaves only a crash report behind.
+      const shown = await waitFor("a window of TextEdit's", () => appWindow(pid!) ?? (pidsOf("TextEdit").includes(pid!) ? null : "gone"), 15_000).catch(() => null);
+      const window = shown && shown !== "gone" ? shown : null;
+      console.log(`TextEdit ${pid}: window ${JSON.stringify(window)}`);
+      expect(window, `TextEdit's window (${shown === "gone" ? "the process ended" : "none yet"}):\n  ${whyNoWindow("TextEdit", since)}`).not.toBeNull();
+    }, 45_000);
   });
 
   it("asks whether VoiceOver runs and gets an answer", async () => {

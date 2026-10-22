@@ -3,7 +3,7 @@
  * (hostLaunch: its own binary as plain Node, the UI Automation bridge's script and cache in its environment) and driven
  * through Ember's real client (AtspiSidecar) against the shared WinForms bench (test/fixtures/win_bench.ps1), whose log
  * says what each action did. Windows only: skipped elsewhere, and failing instead of skipping when EMBER_UIA_TEST=1
- * and something it needs is missing. On macOS it is skipped, saying why, until the macOS AX provider exists.
+ * and something it needs is missing. macOS has its own, against its AppKit bench: ax-sidecar-darwin.test.ts.
  *
  * The bench labels each control with the control's own accessible name (the label "Theme" beside the drop-down
  * "Theme"), so controls are looked up by name and role, never by name alone: the label comes first in the tree.
@@ -83,11 +83,7 @@ function buildHost(): string {
   return out;
 }
 
-describe.skipIf(process.platform !== "darwin")("the accessibility sidecar host on macOS", () => {
-  it.skip("is skipped until the macOS AX provider exists (the host answers \"unsupported\" there meanwhile)", () => undefined);
-});
-
-describe.skipIf(process.platform === "darwin" || (!available && !required))("the accessibility sidecar host on a real WinForms window", { timeout: 180_000 }, () => {
+describe.skipIf(!available && !required)("the accessibility sidecar host on a real WinForms window", { timeout: 180_000 }, () => {
   // Made when the tests run, not when they are collected (skipped ones too, on every platform).
   let dir = "";
   let cache = "";

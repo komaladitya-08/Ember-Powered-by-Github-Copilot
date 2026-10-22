@@ -8,7 +8,7 @@
 
 import type { AxWindow, OtherWindow, ShellOverlay } from "../main/perception/sidecar";
 import type { RawWindow } from "./provider";
-import { TOP, atspiRole } from "./roles";
+import { TOP, atspiRole, axOverlayRole } from "./roles";
 import { boundsOf } from "./tree";
 
 /** The protocol's description of a window (its title as the app gives it: Ember blanks private ones). */
@@ -150,10 +150,11 @@ const OVERVIEW_APPS = new Set(["startmenuexperiencehost", "searchhost", "searcha
 /**
  * What a top-level window is, of what the system draws over every window (shell_overlays): "dialog" (a credential or
  * consent prompt: no picture, no borrowing), "overview" (Task View, Alt+Tab, Start: pictures of every window), or null
- * for an ordinary window. Windows only; macOS will add its own (SecurityAgent, Mission Control).
+ * for an ordinary window. macOS's are roles.ts's axOverlayRole (credential and consent prompts, the lock screen).
  */
 export function overlayRole(w: RawWindow, vocabulary: "uia" | "ax"): "dialog" | "overview" | null {
-  if (vocabulary !== "uia" || !showing(w)) return null;
+  if (vocabulary === "ax") return showing(w) ? axOverlayRole(w) : null;
+  if (!showing(w)) return null;
   const app = (w.app ?? "").toLowerCase().replace(/\.exe$/, "");
   const cls = (w.className ?? "").toLowerCase();
   if (SECURITY_APPS.has(app) || SECURITY_CLASSES.has(cls)) return "dialog";

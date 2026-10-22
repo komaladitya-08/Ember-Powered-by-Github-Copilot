@@ -42,6 +42,10 @@ export const SECURE_INPUT_UNKNOWN_REASON = "Ember can't tell whether a password 
  * Shown without Input Monitoring: the user's keyboard brake is Ember seeing a key it doesn't hold, and whether
  * macOS shows other apps' keys to a process without the permission is undocumented, so Ember refuses rather than
  * risk typing on while the user types (design Q10: dropped only with evidence that key-state polling isn't gated).
+ * CI's evidence so far (macos-15, 15.7.9, CI runs 122 and 123): with Accessibility granted and no Input Monitoring row
+ * at all, CGPreflightListenEventAccess() answers true (Ember.app's own check-up says "Allowed" too) and a key another
+ * process holds shows in GetKeys and CGEventSourceKeyState; so this refusal only ever shows without Accessibility,
+ * which is refused first. Kept until the manual check on a real Mac (design §12.3 item 5) agrees.
  */
 export const INPUT_MONITORING_REASON =
   "Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard.";

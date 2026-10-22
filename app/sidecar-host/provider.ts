@@ -1,10 +1,11 @@
 /**
  * The contract between Ember's accessibility sidecar host (app/sidecar-host) and the platform below it: Windows UI
- * Automation through the C# bridge (providers/uia.ts), macOS AX (a later provider), or an in-memory desktop for tests
- * (providers/fake.ts). A provider reports raw platform facts and does raw platform actions; every protocol rule (ids,
- * secrets, labels, the AT-SPI vocabulary, budgets, verification and wording) lives in the host, so all platforms answer
- * Ember alike. It is coarse on purpose: a read of a window is one snapshot, not hundreds of calls, because a call to
- * the Windows bridge is a round trip to another process and AX calls block until the app answers.
+ * Automation through the C# bridge (providers/uia.ts), macOS AX in the host's own process (providers/ax-darwin.ts), or
+ * an in-memory desktop for tests (providers/fake.ts). A provider reports raw platform facts and does raw platform
+ * actions; every protocol rule (ids, secrets, labels, the AT-SPI vocabulary, budgets, verification and wording) lives in
+ * the host, so all platforms answer Ember alike. It is coarse on purpose: a read of a window is one snapshot, not
+ * hundreds of calls, because a call to the Windows bridge is a round trip to another process and AX calls block until
+ * the app answers.
  *
  * Units: what the platform reports, never scaled (Windows: physical pixels; macOS: points). Handles are numbers the
  * provider gives out and takes back (`release`); they mean nothing after the provider restarts (`generation`).
