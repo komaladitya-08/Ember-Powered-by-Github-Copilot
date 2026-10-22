@@ -5,7 +5,8 @@
 //   - paths (client_type 1): the binaries that may be TCC's responsible process for what the integration tests start
 //     (the development Electron, node, the shells, the runner's own processes) get Accessibility, Screen Recording and
 //     Input Monitoring's two halves (posting and listening to events) in the system database, and Apple Events to
-//     System Events (dark mode) in the user database, which the user's tccd evaluates;
+//     System Events (dark mode, the target named by its code requirement as tccd itself records it) in the user
+//     database, which the user's tccd evaluates;
 //   - Ember.app's bundle id (client_type 0), with the bundle's real code requirement: tccd checks a bundle client's
 //     requirement, and an ad hoc signature's designated requirement is its cdhash, so a NULL csreq describes no build.
 //     CI writes it only after a first doctor run through LaunchServices has shown that Ember has no grant to borrow.
@@ -41,11 +42,30 @@ export const APPLE_EVENTS = "kTCCServiceAppleEvents";
 /** The target of Ember's Apple Events: System Events changes dark mode. */
 export const SYSTEM_EVENTS = "com.apple.systemevents";
 
-/** An approval replayd keeps until this date (it asks again once a stored date has passed). */
-export const CAPTURE_APPROVED_UNTIL = "3024-01-01 00:00:00 +0000";
-
 /** The magic number every compiled code requirement (csreq -b) starts with. */
 const REQUIREMENT_MAGIC = 0xfade0c00;
+
+/**
+ * A compiled code requirement (csreq -b) saying `identifier "<id>" and anchor apple`, as hex: what tccd keeps as an
+ * Apple Events row's target identity (indirect_object_code_identity), and what the runner image's own rows for System
+ * Events carry. The blob: magic 0xfade0c00, its length, kind 1 (an expression), opAnd (6), opIdent (2) with the
+ * identifier as a length-prefixed string padded to four bytes, opAppleAnchor (3).
+ * @param {string} identifier
+ */
+export function appleAnchorRequirement(identifier) {
+  if (!/^[A-Za-z0-9.-]+$/.test(identifier)) throw new Error(`${JSON.stringify(identifier)} isn't a code identifier`);
+  const id = Buffer.from(identifier, "ascii");
+  const padded = Buffer.concat([id, Buffer.alloc((4 - (id.length % 4)) % 4)]);
+  const words = (...n) => Buffer.concat(n.map(v => { const b = Buffer.alloc(4); b.writeUInt32BE(v); return b; }));
+  const body = Buffer.concat([words(1, 6, 2, id.length), padded, words(3)]);
+  return Buffer.concat([words(REQUIREMENT_MAGIC, body.length + 8), body]).toString("hex");
+}
+
+/** System Events' requirement: the target identity of every Apple Events row CI writes. */
+export const SYSTEM_EVENTS_REQUIREMENT = appleAnchorRequirement(SYSTEM_EVENTS);
+
+/** An approval replayd keeps until this date (it asks again once a stored date has passed). */
+export const CAPTURE_APPROVED_UNTIL = "3024-01-01 00:00:00 +0000";
 
 /** A quoted SQL string. Control characters are refused: no client path or bundle id has them. */
 function sqlText(s) {
@@ -65,15 +85,15 @@ function sqlBlob(hex) {
 /**
  * One allowed grant, as an INSERT OR REPLACE (the table's key is service, client, client type and target). Columns
  * are named, so it works with every access-table layout macOS 13 to 15 have. auth_value 2 is "allowed", auth_reason 4
- * "set by the system".
- * @param {{ service: string; client: string; clientType: 0 | 1; csreq?: string | null; target?: string | null; now: number }} g
+ * "set by the system". `targetCsreq` is the target app's code requirement (hex), for Apple Events.
+ * @param {{ service: string; client: string; clientType: 0 | 1; csreq?: string | null; target?: string | null; targetCsreq?: string | null; now: number }} g
  */
 export function grantSql(g) {
   if (g.clientType !== 0 && g.clientType !== 1) throw new Error(`client type ${g.clientType}: 0 is a bundle id, 1 a path`);
   if (!Number.isInteger(g.now) || g.now <= 0) throw new Error("now must be a Unix time in seconds");
   return "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,"
     + "indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) "
-    + `VALUES(${sqlText(g.service)},${sqlText(g.client)},${g.clientType},2,4,1,${sqlBlob(g.csreq)},NULL,0,${sqlText(g.target ?? "UNUSED")},NULL,0,${g.now});`;
+    + `VALUES(${sqlText(g.service)},${sqlText(g.client)},${g.clientType},2,4,1,${sqlBlob(g.csreq)},NULL,0,${sqlText(g.target ?? "UNUSED")},${sqlBlob(g.targetCsreq)},0,${g.now});`;
 }
 
 /**
@@ -89,7 +109,7 @@ export function pathGrants(clients, now) {
   const unique = [...new Set(clients)].sort();
   return {
     system: unique.flatMap(client => SYSTEM_SERVICES.map(service => grantSql({ service, client, clientType: 1, now }))),
-    user: unique.map(client => grantSql({ service: APPLE_EVENTS, client, clientType: 1, target: SYSTEM_EVENTS, now })),
+    user: unique.map(client => grantSql({ service: APPLE_EVENTS, client, clientType: 1, target: SYSTEM_EVENTS, targetCsreq: SYSTEM_EVENTS_REQUIREMENT, now })),
   };
 }
 
@@ -106,7 +126,7 @@ export function bundleGrants(bundleId, csreq, now) {
   if (!csreq) throw new Error("a bundle client needs its code requirement");
   return {
     system: SYSTEM_SERVICES.map(service => grantSql({ service, client: bundleId, clientType: 0, csreq, now })),
-    user: [grantSql({ service: APPLE_EVENTS, client: bundleId, clientType: 0, csreq, target: SYSTEM_EVENTS, now })],
+    user: [grantSql({ service: APPLE_EVENTS, client: bundleId, clientType: 0, csreq, target: SYSTEM_EVENTS, targetCsreq: SYSTEM_EVENTS_REQUIREMENT, now })],
   };
 }
 
@@ -124,9 +144,10 @@ export function designatedRequirement(output) {
   return m[1];
 }
 
-/** A query for the grants of `services` in a database, one row each (the csreq as its size, not its bytes). */
+/** A query for the grants of `services` in a database, one row each (the requirements as their sizes, not their bytes). */
 export const showSql = services => "SELECT service, client, client_type, auth_value, "
-  + "CASE WHEN csreq IS NULL THEN 'csreq NULL' ELSE 'csreq ' || length(csreq) || ' bytes' END, indirect_object_identifier "
+  + "CASE WHEN csreq IS NULL THEN 'csreq NULL' ELSE 'csreq ' || length(csreq) || ' bytes' END, indirect_object_identifier, "
+  + "CASE WHEN indirect_object_code_identity IS NULL THEN '' ELSE 'target csreq ' || length(indirect_object_code_identity) || ' bytes' END "
   + `FROM access WHERE service IN (${services.map(sqlText).join(",")}) ORDER BY service, client;`;
 
 /**

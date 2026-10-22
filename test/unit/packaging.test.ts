@@ -14,7 +14,8 @@ import * as ResEdit from "resedit";
 import { doctorChecks, formatDoctor, type DoctorCheck, type DoctorProbes } from "../../app/main/doctor";
 import { checkDoctorRows, parseDoctorReport, parseExpectation } from "../../scripts/package/doctor-rows.mjs";
 import {
-  APPLE_EVENTS, SYSTEM_DB, SYSTEM_EVENTS, SYSTEM_SERVICES, ancestors, approveCapture, bundleGrants, captureApprovals, designatedRequirement,
+  APPLE_EVENTS, SYSTEM_DB, SYSTEM_EVENTS, SYSTEM_EVENTS_REQUIREMENT, SYSTEM_SERVICES, ancestors, appleAnchorRequirement, approveCapture, bundleGrants,
+  captureApprovals, designatedRequirement,
   grantBundle, grantPaths, parsePs, pathGrants, restartTccd, showSql, transaction, userDb, type Run,
 } from "../../scripts/package/tcc.mjs";
 import { createRequire } from "node:module";
@@ -523,6 +524,12 @@ describe("the Windows and macOS CI jobs", () => {
     expect(bridge).toContain('powershell="$(cygpath -W)/System32/WindowsPowerShell/v1.0/powershell.exe"');
     expect(bridge).toMatch(/export EMBER_UIA_CACHE/);
     expect(bridge).toMatch(/for pass in compiled cached/);
+    // With the bridge's environment: PSModulePath only the system modules folder (design departure 3).
+    expect(bridge).toContain('env -u PSMODULEPATH PSModulePath="$modules" "$powershell"');
+    expect(bridge).toContain('modules="$(cygpath -w -W)\\System32\\WindowsPowerShell\\v1.0\\Modules"');
+    // Compiled into a fresh cache under the source's hash, then loaded from it without compiling again.
+    expect(bridge).toMatch(/rm -rf "\$cache"\n[\s\S]*dll="\$cache\/ember_uia-\$\(sha256sum sidecar\/uia\/ember_uia\.cs/);
+    expect(bridge).toContain('find "$cache" -name \'ember_uia-*\' -newer "$compiled"');
     expect(bridge).not.toMatch(/^\s+(if|continue-on-error):/m);
     // The arguments Ember's accessibility host starts the bridge with.
     expect(fs.readFileSync(path.resolve("app/sidecar-host/providers/uia.ts"), "utf8")).toContain('["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", this.o.script]');
@@ -568,7 +575,7 @@ describe("the Windows and macOS CI jobs", () => {
     expect(x64).toContain("github.event_name == 'workflow_dispatch' && inputs.intel");
     expect(ci).toMatch(/^ {4}tags: \["v\*"\]$/m);
     expect(ci).toMatch(/^ {6}intel:\n {8}description: .+\n {8}type: boolean\n {8}default: false$/m);
-    for (const s of ["test \"$(uname -m)\" = x86_64", "node scripts/package/stage.mjs", "node scripts/package/archive.mjs", "lipo -archs", "fuses.mjs --check",
+    for (const s of ["test \"$(uname -m)\" = x86_64", "node scripts/package/stage.mjs", "node scripts/package/archive.mjs", "lipo -archs", "test \"$machos\" -gt 0", "fuses.mjs --check",
       "codesign --verify --deep --strict", "test/integration/darwin-desktop.test.ts", "node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember"]) {
       expect(x64, s).toContain(s);
     }
@@ -612,6 +619,21 @@ describe("the macOS privacy grants CI writes (tcc.mjs)", () => {
     const usr = database();
     usr.exec(transaction(user));
     expect(rows(usr).map(r => [r.service, r.client, r.indirect_object_identifier])).toEqual([...new Set(clients)].sort().map(c => [APPLE_EVENTS, c, SYSTEM_EVENTS]));
+    // The target named by its code requirement, as tccd records an approval; the system rows have no target.
+    for (const r of rows(usr)) expect(Buffer.from(r.indirect_object_code_identity as Uint8Array).toString("hex")).toBe(SYSTEM_EVENTS_REQUIREMENT);
+    for (const r of granted) expect(r.indirect_object_code_identity).toBeNull();
+  });
+
+  it("names System Events by its requirement, compiled as csreq compiles it and as the runner image's own rows carry it", () => {
+    // identifier "com.apple.systemevents" and anchor apple
+    expect(SYSTEM_EVENTS_REQUIREMENT).toBe("fade0c000000003400000001000000060000000200000016636f6d2e6170706c652e73797374656d6576656e7473000000000003");
+    const blob = Buffer.from(appleAnchorRequirement("com.apple.abc"), "hex");
+    expect([blob.readUInt32BE(0), blob.readUInt32BE(4), blob.length]).toEqual([0xfade0c00, 44, 44]);
+    expect([8, 12, 16, 20].map(o => blob.readUInt32BE(o))).toEqual([1, 6, 2, 13]); // an expression: and, identifier of 13 bytes
+    expect(blob.subarray(24, 37).toString("ascii")).toBe("com.apple.abc");
+    expect([...blob.subarray(37, 40)]).toEqual([0, 0, 0]); // padded to four bytes
+    expect(blob.readUInt32BE(40)).toBe(3); // anchor apple
+    expect(() => appleAnchorRequirement('x" or anchor apple generic')).toThrow(/code identifier/);
   });
 
   it.skipIf(!sqlite)("grants the bundle id with its compiled code requirement, not a NULL one", () => {

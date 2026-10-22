@@ -288,26 +288,39 @@ jobs:
       - name: The UI Automation bridge compiles and starts as Ember starts it, and stops when its input closes
         # Ember's accessibility host runs this command line: Windows PowerShell 5.1 (not pwsh), whose Add-Type compiles
         # ember_uia.cs with .NET Framework's C# 5 compiler into EMBER_UIA_CACHE, the assemblies loaded as the bootstrap
-        # loads them. Run twice: compiled, then loaded from the cache. With stdin closed it must print its ready line
-        # and exit 0.
+        # loads them, and PSModulePath only the system modules folder (no user or runner modules; design departure 3).
+        # Run twice: compiled into the cache (the build named after the source's SHA-256, its own hash beside it), then
+        # loaded from it without compiling again. With stdin closed it must print its ready line and exit 0.
         timeout-minutes: 5
         run: |
           powershell="$(cygpath -W)/System32/WindowsPowerShell/v1.0/powershell.exe"
+          modules="$(cygpath -w -W)\System32\WindowsPowerShell\v1.0\Modules"
           script="$(cygpath -w "$PWD/sidecar/uia/ember_uia.ps1")"
-          cache="$(cygpath -u "$RUNNER_TEMP")/uia"
+          temp="$(cygpath -u "$RUNNER_TEMP")"
+          cache="$temp/uia"
+          rm -rf "$cache"
           EMBER_UIA_CACHE="$(cygpath -w "$cache")"
           export EMBER_UIA_CACHE
+          dll="$cache/ember_uia-$(sha256sum sidecar/uia/ember_uia.cs | cut -d ' ' -f 1).dll"
+          compiled="$temp/uia-compiled.mark"
           for pass in compiled cached; do
             started=$(date +%s%3N)
-            if ! out=$("$powershell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$script" < /dev/null); then
+            if ! out=$(env -u PSMODULEPATH PSModulePath="$modules" "$powershell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$script" < /dev/null); then
               printf '%s\n' "$out"
               echo "the bridge failed ($pass)"
               exit 1
             fi
             # The first line must be the ready line, {"ready":true,...}; a fatal line means it couldn't start.
             node -e 'const [line, pass] = process.argv.slice(1); let j; try { j = JSON.parse(line); } catch {} if (j?.ready !== true) { console.error("no ready line (" + pass + "): " + line); process.exit(1); } console.log(pass + ": " + line)' "$(printf '%s\n' "$out" | head -n 1)" "$pass"
-            if ! ls "$cache"/ember_uia-*.dll > /dev/null 2>&1; then echo "nothing was compiled into $EMBER_UIA_CACHE"; exit 1; fi
-            echo "$pass: started, answered and exited in $(( $(date +%s%3N) - started )) ms"
+            if [ "$pass" = compiled ]; then
+              # The whole build is in the cache: a temporary file left behind, or a build run from memory, isn't.
+              if [ ! -f "$dll" ] || [ ! -f "$dll.sha256" ]; then echo "nothing was compiled into $EMBER_UIA_CACHE"; ls -la "$cache" || true; exit 1; fi
+              if [ "$(sha256sum "$dll" | cut -d ' ' -f 1)" != "$(tr -d '\r\n ' < "$dll.sha256")" ]; then echo "the cached build doesn't match its hash"; exit 1; fi
+              touch "$compiled"
+            elif [ -n "$(find "$cache" -name 'ember_uia-*' -newer "$compiled")" ]; then
+              echo "the second start compiled again instead of loading the cached build:"; ls -la --full-time "$cache"; exit 1
+            fi
+            echo "$pass: started and exited in $(( $(date +%s%3N) - started )) ms"
           done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
@@ -384,7 +397,7 @@ jobs:
           csrutil status || true
           system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Resolution|Main Display' || true
           services="'kTCCServiceAccessibility','kTCCServiceScreenCapture','kTCCServicePostEvent','kTCCServiceListenEvent','kTCCServiceAppleEvents'"
-          query="SELECT service, client, client_type, auth_value, indirect_object_identifier FROM access WHERE service IN ($services) ORDER BY service, client;"
+          query="SELECT service, client, client_type, auth_value, length(csreq), indirect_object_identifier, length(indirect_object_code_identity) FROM access WHERE service IN ($services) ORDER BY service, client;"
           echo "The image's grants, system database:"
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "$query" || echo "(unreadable)"
           echo "The image's grants, user database:"
@@ -455,7 +468,8 @@ jobs:
         run: |
           report="$RUNNER_TEMP/doctor-before.txt"
           : > "$report"
-          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor
+          # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
+          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
       - name: Grant Ember.app by its bundle id, with its real code requirement
         run: |
@@ -468,7 +482,8 @@ jobs:
         run: |
           report="$RUNNER_TEMP/doctor-after.txt"
           : > "$report"
-          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor
+          # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
+          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -529,12 +544,17 @@ jobs:
           exe="$app/Contents/MacOS/Ember"
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
           # Every Mach-O file in the bundle (Electron, its helpers and frameworks, koffi, sharp, the Copilot runtime).
-          find "$app" -type f -print0 | while IFS= read -r -d '' f; do
-            if file -b "$f" | grep -q 'Mach-O'; then
-              archs=$(lipo -archs "$f")
-              case " $archs " in *" x86_64 "*) ;; *) echo "$f: $archs (no x86_64)"; exit 1 ;; esac
-            fi
-          done
+          machos=0
+          while IFS= read -r -d '' f; do
+            case "$(file -b "$f")" in
+              *Mach-O*)
+                machos=$((machos + 1))
+                archs=$(lipo -archs "$f")
+                case " $archs " in *" x86_64 "*) ;; *) echo "$f: $archs (no x86_64)"; exit 1 ;; esac ;;
+            esac
+          done < <(find "$app" -type f -print0)
+          echo "$machos Mach-O files, each with x86_64"
+          test "$machos" -gt 0
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
@@ -542,7 +562,12 @@ jobs:
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
-          test "$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" = Ember
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = io.github.komaladitya08.ember
+          test "$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" = Ember && test ! -e "$app/Contents/MacOS/Electron"
+          plutil -extract NSMicrophoneUsageDescription raw -o - "$app/Contents/Info.plist"
+          test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES" && test -f "$app/Contents/Resources/LICENSES.chromium.html" && test -f "$app/Contents/Resources/LICENSE"
+          test -f "$app/Contents/Resources/ember.icns" && test ! -e "$app/Contents/Resources/default_app.asar"
+          test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
           test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
       - name: The packaged Ember.app starts and shows its window on Intel
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
