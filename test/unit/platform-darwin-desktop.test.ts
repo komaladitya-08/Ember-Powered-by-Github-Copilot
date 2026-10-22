@@ -262,4 +262,19 @@ describe("secure keyboard entry and Input Monitoring on macOS (M18, M3)", () => 
     expect(of(null, { kCGSSessionOnConsoleKey: true })).toEqual({ on: false, pid: null, app: "" });
     expect(of(null, null)).toEqual({ on: null, pid: null, app: "" });
   });
+
+  it("reads the session only when secure input is on or can't be asked (a borrow asks before every character)", () => {
+    const reads: string[] = [];
+    const desktop = (secure: boolean | null) => ({
+      secureInput: () => secure,
+      session: () => (reads.push("session"), { locked: false, secureInputPid: null }),
+      windows: () => [],
+      processPath: () => null,
+    });
+    expect(secureInputOf(desktop(false))).toEqual({ on: false, pid: null, app: "" });
+    expect(reads).toEqual([]);
+    secureInputOf(desktop(true));
+    secureInputOf(desktop(null));
+    expect(reads).toEqual(["session", "session"]);
+  });
 });

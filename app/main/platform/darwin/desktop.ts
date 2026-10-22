@@ -112,7 +112,10 @@ export interface DarwinSecureInput {
 
 /** Secure keyboard entry as the desktop reports it (see secureInputState() for how the two signals combine). */
 export function secureInputOf(desktop: Pick<DarwinDesktop, "secureInput" | "session" | "windows" | "processPath">): DarwinSecureInput {
-  const { on, pid } = secureInputState(desktop.secureInput(), desktop.session());
+  const api = desktop.secureInput();
+  // The session is read only when it matters (the holder while on, the signal when the call can't answer): a borrow
+  // asks before every character it types.
+  const { on, pid } = secureInputState(api, api === false ? null : desktop.session());
   if (pid === null) return { on, pid, app: "" };
   return { on, pid, app: desktop.windows().find(e => e.pid === pid)?.owner || processName(desktop.processPath(pid)) };
 }

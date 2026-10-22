@@ -1,9 +1,9 @@
 /**
  * The macOS window system and input backends on a real Mac, against TextEdit with a fresh plain-text file in a
- * temporary folder: TextEdit's window is in the stack with its process and app name, activation brings it to the
- * front (through LaunchServices when macOS declines a background activation), text typed with textKey (whatever the
- * layout) arrives (read back over AX), Command+S pressed by keysym saves it, the pointer follows a move, and nothing
- * stays pressed.
+ * temporary folder: TextEdit's window is in the stack with its process and app name, activation from this process
+ * (which has no UI) brings it to the front from behind Finder (through LaunchServices when macOS declines a
+ * background activation), text typed with textKey (whatever the layout) arrives (read back over AX), Command+S
+ * pressed by keysym saves it, the pointer follows a move, and nothing stays pressed.
  * Without the Accessibility permission only the checks that need none run; with EMBER_DARWIN_TEST=1 the suite fails
  * instead of skipping (off macOS, without the backends, or without the permission), printing which binary needs the
  * grant so CI learns which client TCC wanted.
@@ -317,8 +317,14 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
           await sleep(25);
         }
         const listen = ws.inputMonitoring();
+        // Without the permission, the answer settles Q10 only when the helper could post and both reads agree.
+        const verdict = listen !== false ? ""
+          : !facts.trusted ? ": no verdict (the helper wasn't trusted to post)"
+          : viaKeysDown && viaKeyState ? ": key-state polling is NOT gated by Input Monitoring"
+          : !viaKeysDown && !viaKeyState ? ": key-state polling looks gated by Input Monitoring"
+          : ": no verdict (GetKeys and CGEventSourceKeyState disagree)";
         console.log(`darwin: Input Monitoring = ${listen}; F13 held by another process (${JSON.stringify(facts)}) shows in keysDown() = ${viaKeysDown}, `
-          + `in CGEventSourceKeyState = ${viaKeyState}${listen === false ? (viaKeysDown ? ": key-state polling is NOT gated by Input Monitoring" : ": key-state polling looks gated by Input Monitoring") : ""}`);
+          + `in CGEventSourceKeyState = ${viaKeyState}${verdict}`);
         // With the permission the brake must work, through the one-call read (GetKeys) as through the per-key one (and
         // the helper, a child of this process, must have been allowed to post at all for that to mean anything).
         if (listen !== false) {
@@ -417,11 +423,18 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       });
 
       it("brings TextEdit's window to the front from a process without UI, and reports it as active and focused", async () => {
+        // TextEdit, just opened, is already in front, and activate() does nothing for the focused window: put Finder
+        // in front first (through LaunchServices, as the user would), so the activation really starts in the background.
+        const finder = spawnSync("/usr/bin/open", ["-a", "Finder"], { encoding: "utf8" });
+        const away = await waitFor(() => { const f = raw.frontmostPid(); return f !== null && f !== pid ? f : null; }, 5_000, "another app in front")
+          .catch(() => null);
+        if (away === null) warn(`TextEdit stayed in front after open -a Finder (${finder.status} ${finder.stderr}): the activation wasn't exercised from the background`);
         const fallbacks = logged.filter(l => l.startsWith("platform.activation_fallback")).length;
         x.activate(win);
-        await waitFor(() => x.focusedWindow() === win, 10_000, `TextEdit's window to have the keyboard (AX: ${JSON.stringify(axReport(pid))})`);
+        await waitFor(() => x.focusedWindow() === win, 10_000, () => `TextEdit's window to have the keyboard (AX: ${JSON.stringify(axReport(pid))})`);
         // Whether macOS declined the background activation and LaunchServices did it (R6-mac): for the CI log.
-        console.log(`darwin: activation went through LaunchServices = ${logged.filter(l => l.startsWith("platform.activation_fallback")).length > fallbacks}`);
+        console.log(`darwin: activation from the background (${away === null ? "not exercised" : `pid ${away} was in front`}) went through LaunchServices = `
+          + `${logged.filter(l => l.startsWith("platform.activation_fallback")).length > fallbacks}`);
         expect(ws.activeWindow()?.id).toBe(win);
         expect(ws.focusWindow()).toMatchObject({ id: win, pid, wmClass: "TextEdit" });
         expect(x.activeWindow()).toBe(win);
