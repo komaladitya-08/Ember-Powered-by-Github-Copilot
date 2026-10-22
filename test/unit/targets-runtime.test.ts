@@ -430,6 +430,19 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(guard.othersNamed("build-02 delete build/")).toEqual(["build-02"]);
   });
 
+  it("put no badge on a task that can only use apps for a computer's name that is just a word of the request", () => {
+    // Commands off, no SSH host: build-02 is only a Host of the user's ssh config.
+    const r = rig();
+    expect(r.t.agent.othersNamed!("local", "open the build-02 report in LibreOffice")).toEqual([]);
+    expect(r.t.agent.othersNamed!("local", "open build-02.example.com in Firefox")).toEqual([]);
+    // Named as a place, it still says where the task acts.
+    expect(r.t.agent.othersNamed!("local", "open the report on build-02")).toEqual(["build-02"]);
+    expect(r.t.agent.othersNamed!("local", "build-02: open the report")).toEqual(["build-02"]);
+    // With commands there, any name counts (D4.4's guard).
+    const cmd = rig({ settings: commandsOn("local") });
+    expect(cmd.t.agent.othersNamed!("local", "open the build-02 report in LibreOffice")).toEqual(["build-02"]);
+  });
+
   it("know the places the user names that look like a computer Ember doesn't know (the lead's ruling)", () => {
     const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("local") } });
     const got = r.t.agent.handsFor("local");

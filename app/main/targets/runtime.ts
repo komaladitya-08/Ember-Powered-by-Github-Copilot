@@ -1201,6 +1201,11 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const { known, labels } = knownNamed();
     return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
   };
+  /** The other computers the user's words name as a place (§2.3 rule 3: "on build-02", "build-02: …"), never as a word. */
+  const othersPlaced = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
+    return targetsNamed(words, known.filter(t => t.id !== bound), deps.os).map(id => labels.get(id) ?? "another computer");
+  };
   /**
    * The places the user's words name that look like a computer but are neither a target Ember knows nor a host of the
    * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
@@ -1350,8 +1355,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const agent: TargetsForAgent = {
     get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
     bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
-    // A place that looks like a computer Ember doesn't know counts too: the task's bubbles say where it acts.
-    othersNamed: (id, userWords) => { try { return [...othersNamed(id, userWords), ...unknownPlaces(userWords)]; } catch { return ["another computer"]; } },
+    // The task's bubbles say where it acts when the user's words name another computer: with commands there, any it
+    // names anywhere (as D4.4's guard counts them: such a task's commands never announce); without, only one named as a
+    // place, so a name that is just a word of the request ("open github.com in Firefox" with a `Host github.com` in the
+    // ssh config) adds no badge to a task that can only use apps. A place that looks like a computer Ember doesn't know
+    // counts in both.
+    othersNamed: (id, userWords) => {
+      try {
+        const named = safeState(commandsOf(id)) !== "off" ? othersNamed(id, userWords) : othersPlaced(id, userWords);
+        return [...named, ...unknownPlaces(userWords)];
+      } catch {
+        return ["another computer"];
+      }
+    },
   };
 
   // ── The picker and the bubble's actions ──
