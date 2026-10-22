@@ -19,14 +19,14 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, stepOf, type HandStep, type Presenter } from "./presenter";
 import type { Confirmer } from "./confirm";
-import type { Perception, WindowTarget } from "../perception";
-import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
+import type { WindowTarget } from "../perception";
+import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import type { AuditEntry, AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
-import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type SettingName } from "../hands/system";
+import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
 import { DIALOG_ROLES, deskWindowAt, type DeskPlace } from "../desk/place";
 import { focusedElement, isSheetCell } from "../perception/elements";
@@ -37,6 +37,10 @@ import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
 import type { AppCatalog, PrivacyVocabulary, SystemSettings } from "../platform/types";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
+import type { ActStamp, PerceptionPort, SidecarPort } from "../perception/ports";
+import type { TargetBinding } from "../targets/types";
+import type { CommandService } from "../commands/types";
+import type { TargetId } from "../../shared/targets";
 
 /**
  * What a worker needs of the OS it runs on (main passes its SystemPlatform, which has all of it): how keys are named
@@ -48,7 +52,10 @@ export interface WorkerSystem {
   keys: KeyConventions;
   words: PlatformWords;
   shortcuts: ShortcutTable;
-  apps: Pick<AppCatalog, "list" | "find" | "launch" | "isTerminalApp" | "programsOf" | "appKey">;
+  apps: Pick<AppCatalog, "list" | "find" | "isTerminalApp" | "programsOf" | "appKey"> & {
+    /** Starts the app. A remote's is asynchronous and throws gate 2's refusal (§2.6), so the worker awaits it. */
+    launch(app: DesktopApp): void | Promise<void>;
+  };
   settings: SystemSettings;
   privacy: Pick<PrivacyVocabulary, "isSecurityWindow">;
 }
@@ -76,8 +83,8 @@ export interface WorkerDeps {
   vision: boolean;
   provider?: ProviderConfig;
   workDir: string;
-  perception: Perception;
-  sidecar: AtspiSidecar;
+  perception: PerceptionPort;
+  sidecar: SidecarPort;
   policy: PolicyEngine;
   confirmer: Confirmer;
   audit: AuditLog;
@@ -131,11 +138,21 @@ export interface WorkerDeps {
   inotifyUsedUp?: () => boolean;
   /** The OS's keys, words, apps, settings and security vocabulary (default LINUX_WORKER_SYSTEM). */
   system?: WorkerSystem;
+  /** Where the task acts (default: this computer, as before targets existed). */
+  target?: TargetBinding;
+  /** The target's commands (absent or null: no run_command). */
+  commands?: CommandService | null;
+  /** The settings.grants key for an app on the task's target (default: the app's name in lower case). */
+  grantKey?: (app: string) => string;
+  /** Called with gate 1's stamp immediately before a step that policy allowed runs (remotes attach it to the step). */
+  onAuthorized?: (stamp: ActStamp) => void;
 }
 
 export interface TaskSpec {
   id: string;
   goal: string;
+  /** The target the task acts on, fixed for its life (absent: "local"). */
+  targetId?: TargetId;
   /**
    * What the user said or typed in the turn that started the task (and in turns that changed it): risky steps are
    * checked against these, never against the goal the conductor wrote (it may have read screen text). Without
@@ -1060,7 +1077,7 @@ export class Worker {
             // Compared as the OS names programs (on Windows without ".exe").
             const programs = apps.programsOf(app);
             const ours = (w: { app: string }) => programs.has(apps.appKey(w.app));
-            apps.launch(app);
+            await apps.launch(app);
             for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const wins = await this.perception.windows().catch(() => []);

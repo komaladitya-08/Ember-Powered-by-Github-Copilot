@@ -12,7 +12,7 @@ import { typesCharacter } from "./policy";
 
 export interface AuditEntry {
   task?: string;
-  event: "decision" | "action" | "confirm" | "task" | "stop";
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl";
   [key: string]: unknown;
 }
 
@@ -125,7 +125,10 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window", "error"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error", "cwd"]) size(e, k);
+    // A command's text goes as its size only, as typed text does; the size its entry already gives (before redaction
+    // and the 2000-character cut, §3.12) stays.
+    if (typeof e.command === "string") { if (typeof e.commandChars !== "number") e.commandChars = e.command.length; delete e.command; }
     if (!PLAIN_VALUE_KINDS.has(String(e.kind))) size(e, "value");
     else if (e.kind === "keys" && typeof e.value === "string" && typesCharacter(e.value)) { delete e.value; e.chars = 1; }
     for (const k of ["element", "after"]) {
