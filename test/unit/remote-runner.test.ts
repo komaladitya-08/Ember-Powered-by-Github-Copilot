@@ -76,6 +76,38 @@ describe("RemoteRunner: a run on the remote (§5.5)", () => {
     expect((await run.done).ended).toBe("exit");
   });
 
+  it("leaves no listener on a channel whose held bytes end the run while it subscribes (the exit came first)", async () => {
+    let answer: (v: OpResult<"cmd.run">) => void = () => undefined;
+    const { link, runner } = setup({ answer: () => new Promise(resolve => { answer = resolve; }) as never });
+    const listening = link.listening();
+    const spec = specOf();
+    const run = runner.start(spec);
+    link.emit("cmd.exit", exitOf(spec.runId, {}, 3));
+    link.bytes(31, enc("ok\n"));
+    answer({ status: "started", channel: 31, interactive: false });
+    expect((await run.done).ended).toBe("exit");
+    expect(link.listening()).toBe(listening);
+  });
+
+  it("stops a run the agent lets go past its own time limit", async () => {
+    vi.useFakeTimers();
+    const { link, runner } = setup();
+    const run = runner.start(specOf({ timeoutMs: 60_000 }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(link.of("cmd.stop")).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10_040);
+    expect(link.of("cmd.stop")).toEqual([{ runId: run.runId, why: "timeout" }]);
+    await vi.advanceTimersByTimeAsync(10_040);
+    expect((await run.done).ended).toBe("timeout");
+  });
+
+  it("sends no command whose text isn't whole Unicode (its bytes there would differ from the card's)", async () => {
+    const { link, runner } = setup();
+    const exit = await runner.start(specOf({ command: "rm \ud800-file" })).done;
+    expect([exit.ended, exit.error]).toEqual(["failed-to-start", "The command can't be sent to build-01 exactly as shown"]);
+    expect(link.of("cmd.run")).toEqual([]);
+  });
+
   it("sends nothing when the stamp doesn't bind this exact command to this computer", async () => {
     const { link, runner } = setup();
     const run = runner.start(specOf({}, { sha256: commandHash("ssh:other", specOf()) }));

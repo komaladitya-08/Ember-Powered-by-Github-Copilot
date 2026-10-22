@@ -64,6 +64,10 @@ const QUEUE_MAX = 64 * 1024;
 const TAIL_MS = 2000;
 /** After a Stop, how long the agent has to say the run ended before the PC ends it itself, plus the round trip. */
 const STOP_WAIT_MS = 10_000;
+/** A run the agent hasn't ended this long after its own time limit is stopped from here (an agent that never says). */
+const OVERDUE_MS = 10_000;
+/** A lone UTF-16 surrogate: text whose UTF-8 bytes would differ from what the card showed (it becomes U+FFFD there). */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 /** Lines of the user's typing kept at most, and the longest one (in memory only). */
 const MAX_TYPED_LINES = 1000;
 const MAX_TYPED_LINE = 4096;
@@ -152,6 +156,8 @@ class RemoteRun implements RemoteRunningCommand {
   private stopWhy: StopWhy | null = null;
   private stopSent = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Stops a run the agent lets go past its own time limit. */
+  private deadline: ReturnType<typeof setTimeout> | null = null;
   private queued: Uint8Array[] = [];
   private queuedBytes = 0;
   private readonly startedAt: number;
@@ -179,6 +185,8 @@ class RemoteRun implements RemoteRunningCommand {
     if (spec.stamp.sha256 !== commandHash(o.target, spec) || spec.stamp.taskId !== spec.taskId) {
       return this.end(this.failed("Ember lost track of this command, so it wasn't sent"));
     }
+    // Text that isn't whole Unicode reaches the remote as other bytes than the card showed (and than the hash covered).
+    if (LONE_SURROGATE.test(spec.command) || LONE_SURROGATE.test(spec.cwd)) return this.end(this.failed(`The command can't be sent to ${o.label} exactly as shown`));
     if (link.state === "lost" || link.state === "closed") return this.lose();
     const args = { epoch: link.epoch, spec };
     if (!OP_SCHEMAS["cmd.run"].args.safeParse(args).success) return this.end(this.failed(`The command can't be sent to ${o.label} as it is`));
@@ -208,8 +216,22 @@ class RemoteRun implements RemoteRunningCommand {
     this.channel = a.channel;
     this.answeredInteractive = a.interactive;
     this.tracker = this.trackerFor(a.interactive);
-    this.offBytes = link.onBytes(a.channel, b => this.bytes(b));
-    if (this.state !== "running") return;
+    const off = link.onBytes(a.channel, b => this.bytes(b));
+    if (this.state !== "running") {
+      // The bytes the link held for the channel ended the run while subscribing (its exit had come first): unsubscribe.
+      try { off(); } catch { /* gone with the link */ }
+      return;
+    }
+    this.offBytes = off;
+    // The agent ends a run at its time limit (§3.13); one it lets run on is stopped from here.
+    if (Number.isFinite(this.spec.timeoutMs) && this.spec.timeoutMs > 0) {
+      this.deadline = this.later(() => {
+        this.deadline = null;
+        if (this.state !== "running") return;
+        o.log.warn("remote.cmd_overdue", { runId: this.runId });
+        this.stop("timeout");
+      }, this.spec.timeoutMs + OVERDUE_MS);
+    }
     if (this.stopWhy) this.sendStop();
     const queued = this.queued;
     this.queued = [];
@@ -317,6 +339,8 @@ class RemoteRun implements RemoteRunningCommand {
     const wasRunning = this.state === "running";
     this.state = "ended";
     this.clearTimer();
+    if (this.deadline) this.ctx.timers.clearTimeout(this.deadline);
+    this.deadline = null;
     if (wasRunning) {
       const rest = this.decoder.decode();
       if (rest) this.track(rest);
