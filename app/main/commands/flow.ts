@@ -20,6 +20,7 @@ import type { Confirmer, Question } from "../agent/confirm";
 import type { Presenter } from "../agent/presenter";
 import type { AuditEntry } from "../policy/audit";
 import type { Agreement, ReadSource } from "../policy/policy";
+import { placesNamed } from "../targets/resolve";
 import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
@@ -119,21 +120,52 @@ export interface CommandConsentSource {
 export interface CommandTargetGuard {
   /** The labels of known targets other than this service's that the user's own words name anywhere. */
   othersNamed(words: string): string[];
+  /**
+   * The places the user's own words name that look like a computer but that Ember doesn't know ("delete build/ on
+   * prod-db": TG's placesNamed over every target and ssh-config host). Without it, the flow looks with this target's
+   * own names only.
+   */
+  placesNamed(words: string): string[];
 }
 
 /** The card's first line when the user's words also name another computer: it says which one runs the command. */
 export const wrongTargetLine = (others: string[], here: string) => `You also named ${listOf(others)}, but this runs ${here}.`;
+
+/** The card's first line when the user's words name a place that looks like a computer Ember doesn't know. */
+export const unknownPlaceLine = (places: string[], here: string) => `You named ${listOf(places)}, but this runs ${here}.`;
+
+/** Strings a guard gave: each once, at most five (anything else is dropped). */
+const guardList = (got: unknown): string[] =>
+  Array.isArray(got) ? [...new Set(got.filter((x): x is string => typeof x === "string" && x.trim() !== ""))].slice(0, 5) : [];
 
 /** The other computers the user's words name (the guard's answer; a guard that fails counts as naming one: it asks). */
 function othersNamedIn(svc: CommandService, words: string): string[] {
   const guard = (svc as CommandService & Partial<CommandTargetGuard>).othersNamed;
   if (typeof guard !== "function" || !words.trim()) return [];
   try {
-    const got = guard.call(svc, words);
-    return Array.isArray(got) ? [...new Set(got.filter((x): x is string => typeof x === "string" && x.trim() !== ""))].slice(0, 5) : [];
+    return guardList(guard.call(svc, words));
   } catch {
     return ["another computer"];
   }
+}
+
+/**
+ * The places the user's words name that look like a computer Ember doesn't know (the lead's ruling): the guard's answer,
+ * or, without one (no targets runtime), placesNamed over this target's own names. A guard that fails counts as naming
+ * one (it asks). Names `others` already gives (a known computer) are left out.
+ */
+function placesNamedIn(svc: CommandService, words: string, binding: TargetBinding, others: string[]): string[] {
+  if (!words.trim()) return [];
+  const guard = (svc as CommandService & Partial<CommandTargetGuard>).placesNamed;
+  let got: string[];
+  try {
+    got = typeof guard === "function" ? guardList(guard.call(svc, words))
+      : placesNamed(words, [{ id: binding.id, names: [binding.label, binding.id.slice(binding.id.indexOf(":") + 1)] }]);
+  } catch {
+    got = ["another computer"];
+  }
+  const said = new Set(others.map(normalName));
+  return got.filter(p => !said.has(normalName(p)));
 }
 
 /** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7). */
@@ -489,8 +521,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // command announces, and every question says where it runs, this computer included (DOC's review). Read again with
   // the words the decision reads (a steer may have come meanwhile).
   let others = othersNamedIn(svc, ctx.task.commandWords());
+  let places = placesNamedIn(svc, ctx.task.commandWords(), binding, others);
   const here = whereWords(binding) ?? `on ${place}`;
-  let where = whereWords(binding) ?? (others.length ? here : undefined);
+  let where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const task = ctx.task.id;
   const target = binding.id;
   const audit = (e: Record<string, unknown>) => ctx.audit({ event: "command", task, target, ...e });
@@ -569,7 +602,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.
   const words = ctx.task.commandWords();
   others = [...new Set([...others, ...othersNamedIn(svc, words)])].slice(0, 5);
-  where = whereWords(binding) ?? (others.length ? here : undefined);
+  places = [...new Set([...places, ...placesNamedIn(svc, words, binding, others)])].slice(0, 5);
+  where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const tainted = ctx.task.tainted();
   const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
@@ -579,16 +613,18 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
   let d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
   // D4.4's wrong-target guard: a command the user's words asked for still asks when they also name another computer,
-  // and every card of such a task (asking for any reason) says first which computer runs it.
-  if (d.verdict === "announce" && others.length) {
+  // or a place that looks like a computer Ember doesn't know ("delete build/ on prod-db", the lead's ruling), and every
+  // card of such a task (asking for any reason) says first which computer runs it.
+  if (d.verdict === "announce" && (others.length || places.length)) {
     d = {
-      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, "wrong-target"])],
-      reason: "It asks first: the user's words also name another computer.", armMs: Math.max(d.armMs, 1500),
+      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, ...(others.length ? ["wrong-target"] : []), ...(places.length ? ["unknown-place"] : [])])],
+      reason: others.length ? "It asks first: the user's words also name another computer." : "It asks first: the user's words name a computer Ember doesn't know.",
+      armMs: Math.max(d.armMs, 1500),
     };
   }
-  if (d.verdict === "ask" && others.length) {
-    const line = wrongTargetLine(others, here);
-    d = { ...d, says: [line, ...d.says.filter(l => l !== line)] };
+  if (d.verdict === "ask" && (others.length || places.length)) {
+    const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
+    d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
   const refused = d.verdict === "refuse";
   audit({

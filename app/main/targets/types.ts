@@ -99,9 +99,10 @@ export interface TargetsForAgent {
   /** What the prompts may promise now (§3.15). */
   caps(): PromptCaps;
   /**
-   * The labels of the computers other than `id` that the user's own words name ("this computer" for the PC): a task
-   * whose words do says where it acts in every bubble, this computer included, and never announces a command (D4.4's
-   * wrong-target guard, DOC's review). Optional: a host without a targets runtime has only this computer.
+   * The labels of the computers other than `id` that the user's own words name ("this computer" for the PC), and the
+   * places they name that look like a computer Ember doesn't know ("on prod-db"): a task whose words do says where it
+   * acts in every bubble, this computer included, and never announces a command (D4.4's wrong-target guard, DOC's
+   * review and the lead's ruling). Optional: a host without a targets runtime has only this computer.
    */
   othersNamed?(id: TargetId, userWords: string): string[];
 }

@@ -60,7 +60,7 @@ import {
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
-import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, targetsNamed, type NamedTarget } from "./resolve";
+import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placesNamed, targetsNamed, type NamedTarget } from "./resolve";
 import type { MenuItemLike, TargetBinding, TargetHands, TargetsDeps, TargetsForAgent, TargetsRuntime } from "./types";
 import { createWslService, isToolDistro } from "./wsl-service";
 
@@ -1051,6 +1051,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         return e ? commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
       },
       othersNamed: words => othersNamed(id, words),
+      placesNamed: words => unknownPlaces(words),
     });
   };
   const refuse = (why: string) => ({ ok: false as const, why });
@@ -1104,7 +1105,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * target Ember knows, connected or not, and the hosts of the user's ssh config it has no record of yet; this computer
    * as "this computer".
    */
-  const othersNamed = (bound: TargetId, words: string): string[] => {
+  const knownNamed = (): { known: NamedTarget[]; labels: Map<string, string> } => {
     rebuild();
     const known: NamedTarget[] = entries.map(e => ({ id: e.id, names: e.names }));
     const labels = new Map<string, string>(entries.map(e => [e.id, e.id === LOCAL_TARGET ? "this computer" : e.label]));
@@ -1117,8 +1118,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       known.push({ id, names: [alias] });
       labels.set(id, alias);
     }
+    return { known, labels };
+  };
+  const othersNamed = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
     return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
   };
+  /**
+   * The places the user's words name that look like a computer but are neither a target Ember knows nor a host of the
+   * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
+   */
+  const unknownPlaces = (words: string): string[] => placesNamed(words, knownNamed().known);
   const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
     try {
       rebuild();
@@ -1266,7 +1276,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const agent: TargetsForAgent = {
     get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
     bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
-    othersNamed: (id, userWords) => { try { return othersNamed(id, userWords); } catch { return ["another computer"]; } },
+    // A place that looks like a computer Ember doesn't know counts too: the task's bubbles say where it acts.
+    othersNamed: (id, userWords) => { try { return [...othersNamed(id, userWords), ...unknownPlaces(userWords)]; } catch { return ["another computer"]; } },
   };
 
   // ── The picker and the bubble's actions ──

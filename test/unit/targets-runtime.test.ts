@@ -416,6 +416,21 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(guard.othersNamed("build-02 delete build/")).toEqual(["build-02"]);
   });
 
+  it("know the places the user names that look like a computer Ember doesn't know (the lead's ruling)", () => {
+    const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("local") } });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    const guard = got.hands.commands as unknown as { placesNamed(words: string): string[] };
+    expect(r.t.agent.bind({ userWords: "delete build/ on prod-db" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    expect(guard.placesNamed("delete build/ on prod-db")).toEqual(["prod-db"]);
+    // Ember's own records and the user's ssh config hosts are known computers, not unknown places.
+    expect(guard.placesNamed("delete build/ on build-01")).toEqual([]);
+    expect(guard.placesNamed("delete build/ on build-02")).toEqual([]);
+    expect(guard.placesNamed("delete build/ on the desktop")).toEqual([]);
+    // The task's bubbles say it acts on this computer.
+    expect(r.t.agent.othersNamed!("local", "delete build/ on prod-db")).toEqual(["prod-db"]);
+  });
+
   it("give the runner Ember's own paths, names and pids (main's and its helpers', live)", () => {
     const r = rig();
     const o = r.runnerOpts();

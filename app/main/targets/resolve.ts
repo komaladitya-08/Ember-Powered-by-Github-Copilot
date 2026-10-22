@@ -162,6 +162,72 @@ export function otherTargetsNamed(words: string, targets: readonly NamedTarget[]
   return out;
 }
 
+/** The place words before a computer-looking name that make it a place the user named (the lead's ruling on it). */
+const HOST_PLACE = new Set(["on", "in", "at", "onto", "into"]);
+/** Punctuation around a word that isn't part of it ("on prod-db.", "(on prod-db)", "on 'prod-db'"). */
+const AROUND = /^[("'‘“[]+|[)"'’”\].,;:!?]+$/gu;
+/** A host name or ssh alias: letters, digits, dots, hyphens and underscores, starting and ending with a letter or digit. */
+const HOST_LIKE = /^[a-z0-9](?:[a-z0-9._-]{0,251}[a-z0-9])?$/i;
+/** An ssh-style destination: user@host, maybe with a folder after a colon ("deploy@prod-db:/srv"). */
+const USER_AT_HOST = /^[a-z0-9._-]{1,64}@([a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)(?::[a-z0-9._/~-]*)?$/i;
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+/** Numbers and amounts ("5", "2024", "1.5", "5pm", "3rd", "64gb", "10s"), and versions ("v2", "v1.2.3"): never computers. */
+const AMOUNT = /^(?:\d+(?:[.,:]\d+)*[a-z]{0,3}|v\d+(?:\.\d+)*)$/i;
+/** File name endings: "in main.ts", "into notes.md" name a file, not a computer. */
+const FILE_EXT = new Set([
+  "c", "cc", "cfg", "cjs", "conf", "cpp", "cs", "css", "csv", "db", "deb", "doc", "docx", "env", "exe", "gif", "go", "gz", "h", "hpp", "htm",
+  "html", "ini", "ipynb", "java", "jpeg", "jpg", "js", "json", "jsx", "kt", "lock", "log", "lua", "md", "mjs", "mp3", "mp4", "msi", "pdf",
+  "php", "png", "ppt", "pptx", "ps1", "py", "rb", "rpm", "rs", "scss", "sh", "sql", "svg", "swift", "tar", "tgz", "toml", "ts", "tsx", "txt",
+  "vue", "wav", "xls", "xlsx", "xml", "xz", "yaml", "yml", "zip",
+]);
+/** Everyday hyphenated words a request may put after a place word ("in the top-right corner", "in read-only mode"). */
+const COMMON_HYPHENATED = /^(?:(?:top|bottom|upper|lower|far|middle)-(?:left|right|hand|most|middle|centre|center)|(?:left|right)-(?:hand|most|side|click)|(?:full|split|half)-screen|(?:read|write)-only|real-time|built-in|drop-down|pop-?ups?|e-mail|double-click)$/i;
+
+/**
+ * Whether a word after a place word looks like a computer (the lead's ruling): a name with a dot, a hyphen or a digit
+ * ("prod-db", "web.example.com", "build01", "10.0.0.5") or an ssh-style user@host, and not a file name, a number or
+ * amount, a version or an everyday hyphenated word. Returns the computer's name (the host of user@host), or null.
+ */
+function hostOfPlace(word: string): string | null {
+  const at = USER_AT_HOST.exec(word);
+  if (at) return at[1];
+  if (!HOST_LIKE.test(word) || !/[.\-\d]/.test(word)) return null;
+  if (IPV4.test(word)) return word;
+  if (AMOUNT.test(word) || COMMON_HYPHENATED.test(word)) return null;
+  const dot = word.lastIndexOf(".");
+  if (dot > 0 && FILE_EXT.has(word.slice(dot + 1).toLowerCase())) return null;
+  return word;
+}
+
+/**
+ * The places the user's own words name that look like a computer but that none of `targets` is (the lead's ruling on
+ * the wrong-target risk): "delete build/ on prod-db" names prod-db, which isn't a computer Ember knows or a host of the
+ * user's ssh config, so the task binds to the active computer, and D4.4 must never announce there. A place is a place
+ * word (on, in, at, onto, into; "the", "my" or "our" may follow it) and then a word with a dot, a hyphen or a digit, or
+ * an ssh-style user@host; file names ("in main.ts"), numbers and amounts ("in 5 minutes", "at 5pm"), versions and
+ * everyday words ("on the desktop", "in my home folder", "on line 12") are not. A name any of `targets` answers to (the
+ * bound one's included) is left out: otherTargetsNamed speaks for the others. As the user wrote them, deduplicated, at
+ * most five, each at most 64 characters (only letters, digits and `.-_@:/` reach the card).
+ */
+export function placesNamed(words: string, targets: readonly NamedTarget[]): string[] {
+  const known = new Set(targets.flatMap(t => t.names.map(normaliseName)).filter(n => n !== ""));
+  const tokens = String(words ?? "").normalize("NFKC").split(/\s+/u).map(t => t.replace(AROUND, "")).filter(t => t !== "");
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length - 1 && out.length < 5; i++) {
+    if (!HOST_PLACE.has(tokens[i].toLowerCase())) continue;
+    let k = i + 1;
+    if (DETERMINER.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) k++;
+    // "on prod-db's desktop": the name without its possessive.
+    const word = tokens[k].replace(/['’]s$/u, "");
+    const host = hostOfPlace(word);
+    if (host === null || word.length > 64) continue;
+    const n = normaliseName(host);
+    if (n === "" || known.has(n) || out.some(o => o.toLowerCase() === word.toLowerCase())) continue;
+    out.push(word);
+  }
+  return out;
+}
+
 /** The target a name given by the model stands for (exactly one of its names, or this computer's fixed words), or null. */
 export function targetOfChoice(choice: string, targets: readonly NamedTarget[], os: OS = "linux"): TargetId | null {
   const c = normaliseName(choice);
