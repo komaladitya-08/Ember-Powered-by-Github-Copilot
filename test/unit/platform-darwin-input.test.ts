@@ -362,18 +362,21 @@ describe("why input can't reach a window on macOS", () => {
     expect(ACCESSIBILITY_REASON).toBe("Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility) to use the mouse and keyboard.");
   });
 
-  it("stops for secure keyboard entry held by another app, not by the target's own password field", () => {
+  it("stops for secure keyboard entry held by any app, the target's own password field included", () => {
     const { s, input } = setup();
     s.secure = true;
-    s.secureInputPid = 500;
-    expect(input.blockedReason(101)).toBeNull();
-    expect(input.keyboardGrabbed(101)).toBe(false);
+    s.secureInputPid = 500; // TextEdit, the target: its password field would get Ember's keys
+    expect(input.blockedReason(101)).toMatch(/^Secure keyboard entry is on in TextEdit \(/);
+    expect(input.keyboardGrabbed(101)).toBe(true);
     s.secureInputPid = 600;
     expect(input.blockedReason(101)).toMatch(/^Secure keyboard entry is on in Finder \(/);
     expect(input.keyboardGrabbed(101)).toBe(true);
     s.secureInputPid = null;
     expect(input.blockedReason(101)).toMatch(/^Secure keyboard entry is on \(/);
     expect(input.keyboardGrabbed()).toBe(true);
+    s.secure = false;
+    expect(input.blockedReason(101)).toBeNull();
+    expect(input.keyboardGrabbed(101)).toBe(false);
   });
 
   it("sees a locked session or a sleeping display", () => {

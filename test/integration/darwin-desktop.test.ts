@@ -178,6 +178,27 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       expect(x.activeWindow()).toBe(win);
     }, 20_000);
 
+    it("would land a click in TextEdit's window: nothing listed above it covers it, and the session isn't locked", async () => {
+      const target = ws.stack().find(s => s.id === win);
+      expect(target).toBeDefined();
+      const at = { x: Math.round(target!.x + target!.width / 2), y: Math.round(target!.y + target!.height / 2) };
+      x.move(at.x, at.y);
+      await waitFor(() => {
+        const p = ws.pointer();
+        return p && Math.abs(p.x - at.x) <= 2 && Math.abs(p.y - at.y) <= 2;
+      }, 2_000, `the pointer at ${at.x},${at.y}`);
+      // A full-screen transparent system window (the Dock's, Notification Center's…) above every app would make every
+      // click "covered" and black out every window picture: name any such window for the CI log.
+      const stack = ws.stack();
+      const above = stack.slice(stack.findIndex(s => s.id === win) + 1)
+        .filter(s => at.x >= s.x && at.y >= s.y && at.x < s.x + s.width && at.y < s.y + s.height);
+      console.log(`darwin: windows above TextEdit at ${at.x},${at.y}: ${JSON.stringify(above.map(s => ({ owner: s.wmClass, title: s.title, layer: s.overrideRedirect ? "not 0" : 0, x: s.x, y: s.y, width: s.width, height: s.height })))}`);
+      expect(above).toEqual([]);
+      expect(x.pointerOn(win)).toBe(true);
+      expect(x.screenLocked()).toBe(false);
+      expect(x.keyboardGrabbed(win)).toBe(false);
+    }, 10_000);
+
     it("types text whatever the layout, and saves it with Command+S pressed by keysym", async () => {
       await waitFor(() => x.focusedWindow() === win || (x.activate(win), false), 10_000, "TextEdit's window to have the keyboard");
       for (const ch of TEXT) {

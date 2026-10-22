@@ -96,7 +96,12 @@ export function makeDesktop(cf: CF, cg: CGRaw, ax: AX | null, hi: HIToolbox | nu
     layer: cf.number(cf.get(d, WINDOW_KEY.layer)),
     alpha: cf.number(cf.get(d, WINDOW_KEY.alpha)),
   });
-  const axWindow = (a: AX, w: Ref): AXWindowInfo => ({ id: a.windowId(w), title: a.string(w, "AXTitle", 1024) ?? "", frame: a.frame(w) });
+  // The frame only matters when there is no window id to match by: each attribute read is a round trip that can
+  // block Electron's main thread for the whole timeout, so AXPosition and AXSize aren't read when they aren't needed.
+  const axWindow = (a: AX, w: Ref): AXWindowInfo => {
+    const id = a.windowId(w);
+    return { id, title: a.string(w, "AXTitle", 1024) ?? "", frame: id ? null : a.frame(w) };
+  };
   /** Runs `fn` with another app's AX element (released afterwards); null without AX, and never for Ember itself. */
   const withApp = <T>(pid: number, fn: (app: Ref, a: AX) => T): T | null => {
     if (!ax || pid === ownPid) return null;

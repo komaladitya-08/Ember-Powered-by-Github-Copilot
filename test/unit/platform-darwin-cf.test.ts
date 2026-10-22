@@ -8,6 +8,8 @@
 import { describe, expect, it } from "vitest";
 import { makeCF, pointerArray, utf16ToString, type CFRaw, type Ref } from "../../app/main/platform/darwin/cf";
 import { AX_ERROR, AX_VALUE, axErrorName, decodeAXValue, makeAX, type AXRaw } from "../../app/main/platform/darwin/ax";
+import type { CGRaw, CGRect } from "../../app/main/platform/darwin/cg";
+import { makeDesktop } from "../../app/main/platform/darwin/desktop";
 
 type Obj =
   | { t: "string"; v: string }
@@ -300,5 +302,98 @@ describe("AXValue decoding and error names", () => {
     expect(axErrorName(-25204)).toBe("cannotComplete");
     expect(axErrorName(-25211)).toBe("apiDisabled");
     expect(axErrorName(1)).toBe("1");
+  });
+});
+
+/** CoreGraphics as far as the desktop's window list and session reads go, over the pretend CoreFoundation. */
+function fakeCG(f: ReturnType<typeof fakeCF>, o: { windows: Record<string, unknown>[]; session?: Record<string, unknown> | null }) {
+  const value = (v: unknown): Ref => (typeof v === "string" ? f.make({ t: "string", v })
+    : typeof v === "boolean" ? f.make({ t: "boolean", v })
+    : typeof v === "number" ? f.make({ t: "number", v })
+    : f.make({ t: "dictionary", v: Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).map(([k, x]) => [value(k), value(x)]) }));
+  const field = (dict: Ref, key: string) => {
+    const pair = (f.get(dict) as { v: [Ref, Ref][] }).v.find(([k]) => (f.get(k) as { v: string }).v === key);
+    return pair ? (f.get(pair[1]) as { v: number }).v : undefined;
+  };
+  const lists: Ref[] = [];
+  const cg = {
+    CGWindowListCopyWindowInfo: (option: number, relativeTo: number) => {
+      expect([option, relativeTo]).toEqual([17, 0]); // on screen only, no desktop elements, every window
+      const list = f.make({ t: "array", v: o.windows.map(value) });
+      lists.push(list);
+      return list;
+    },
+    CGRectMakeWithDictionaryRepresentation: (dict: Ref, out: Partial<CGRect>) => {
+      const [x, y, width, height] = ["X", "Y", "Width", "Height"].map(k => field(dict, k));
+      if ([x, y, width, height].some(n => n === undefined)) return false;
+      out.origin = { x: x!, y: y! };
+      out.size = { width: width!, height: height! };
+      return true;
+    },
+    CGSessionCopyCurrentDictionary: () => (o.session ? value(o.session) : null),
+  } as unknown as CGRaw;
+  return { cg, lists };
+}
+
+describe("the macOS desktop over stand-in frameworks", () => {
+  const textEdit = {
+    kCGWindowNumber: 101, kCGWindowOwnerPID: 500, kCGWindowOwnerName: "TextEdit", kCGWindowName: "notes.txt",
+    kCGWindowBounds: { X: -100, Y: 25, Width: 600, Height: 400 }, kCGWindowLayer: 0, kCGWindowAlpha: 1,
+  };
+
+  it("reads the window list front to back, drops entries it can't place, and releases the list once", () => {
+    const { f, cf, ax } = fakeAX();
+    const { cg, lists } = fakeCG(f, { windows: [{ ...textEdit }, { kCGWindowNumber: 7, kCGWindowOwnerPID: 1 }, { ...textEdit, kCGWindowNumber: 102, kCGWindowName: undefined, kCGWindowLayer: 101 }] });
+    const desktop = makeDesktop(cf, cg, ax, null, 4242);
+    expect(desktop.windows()).toEqual([
+      { id: 101, pid: 500, owner: "TextEdit", title: "notes.txt", bounds: { x: -100, y: 25, width: 600, height: 400 }, layer: 0, alpha: 1 },
+      { id: 102, pid: 500, owner: "TextEdit", title: "", bounds: { x: -100, y: 25, width: 600, height: 400 }, layer: 101, alpha: 1 },
+    ]);
+    expect(f.released).toEqual(lists);
+  });
+
+  it("never asks AX about Ember's own process", () => {
+    const { f, cf, ax, calls } = fakeAX();
+    const desktop = makeDesktop(cf, fakeCG(f, { windows: [textEdit] }).cg, ax, null, 500);
+    expect(desktop.focusedWindow(500)).toBeNull();
+    expect(desktop.appWindows(500)).toBeNull();
+    expect(desktop.raise(500, 101, { x: -100, y: 25, width: 600, height: 400 })).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("reads a window's frame over AX only when AX gives no window id, and releases the app element", () => {
+    const withIds = fakeAX();
+    const desktop = makeDesktop(withIds.cf, fakeCG(withIds.f, { windows: [] }).cg, withIds.ax, null, 4242);
+    expect(desktop.focusedWindow(500)).toEqual({ id: 101, title: "notes.txt", frame: null });
+    expect(desktop.appWindows(500)).toEqual([{ id: 101, title: "notes.txt", frame: null }]);
+    expect(withIds.f.released.some(r => withIds.f.objects.get(r)!.t === "axvalue")).toBe(false);
+    const apps = [...withIds.f.objects.entries()].filter(([, o]) => o.t === "element" && o.v === "app").map(([r]) => r);
+    expect(apps.map(r => withIds.f.counts.get(r))).toEqual([0, 0]);
+
+    const noIds = fakeAX({ windowIds: false });
+    const plain = makeDesktop(noIds.cf, fakeCG(noIds.f, { windows: [] }).cg, noIds.ax, null, 4242);
+    expect(plain.focusedWindow(500)).toEqual({ id: 0, title: "notes.txt", frame: { x: 100, y: 120, width: 600, height: 400 } });
+  });
+
+  it("raises the one window AX matches, and brings its app to the front", () => {
+    const { f, cf, ax, calls } = fakeAX();
+    const desktop = makeDesktop(cf, fakeCG(f, { windows: [] }).cg, ax, null, 4242);
+    expect(desktop.raise(500, 101, { x: 0, y: 0, width: 1, height: 1 })).toBe(true);
+    expect(calls).toEqual(["app 500", "set AXFrontmost=true", "perform AXRaise", "set AXMain=true"]);
+    calls.length = 0;
+    desktop.raise(500, 999, { x: 0, y: 0, width: 1, height: 1 }); // AX lists no such window: nothing is raised
+    expect(calls).toEqual(["app 500", "set AXFrontmost=true"]);
+  });
+
+  it("reads the lock state and the secure-input holder from the session", () => {
+    const session = (s: Record<string, unknown> | null) => {
+      const { f, cf, ax } = fakeAX();
+      return makeDesktop(cf, fakeCG(f, { windows: [], session: s }).cg, ax, null, 4242).session();
+    };
+    expect(session({ kCGSSessionOnConsoleKey: true })).toEqual({ locked: false, secureInputPid: null });
+    expect(session({ kCGSSessionOnConsoleKey: true, CGSSessionScreenIsLocked: true, kCGSSessionSecureInputPID: 88 })).toEqual({ locked: true, secureInputPid: 88 });
+    expect(session({ kCGSSessionOnConsoleKey: false })).toEqual({ locked: true, secureInputPid: null });
+    expect(session({ CGSSessionScreenIsLocked: 1, kCGSSessionSecureInputPID: 0 })).toEqual({ locked: true, secureInputPid: null });
+    expect(session(null)).toEqual({ locked: false, secureInputPid: null });
   });
 });

@@ -47,6 +47,7 @@ export interface RawWindowInfo {
 export interface AXWindowInfo {
   id: number;
   title: string;
+  /** Only read when `id` is 0 (it is what matches the window then); null otherwise or when unreadable. */
   frame: Rect | null;
 }
 

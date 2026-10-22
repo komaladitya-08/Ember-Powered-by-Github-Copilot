@@ -175,15 +175,14 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
     lastDown = { button, at: t, x: at.x, y: at.y, count: again ? prev!.count + 1 : 1 };
     return lastDown.count;
   };
-  /** The window's owner pid, from the window list (undefined when it isn't on screen). */
-  const pidOf = (window: number | undefined) => (window ? desktop.windows().find(e => e.id === window)?.pid : undefined);
-  /** The app holding secure keyboard entry against `window` ("" when unknown), or null when none does. */
-  const secureHolder = (window: number | undefined): string | null => {
+  /**
+   * The app holding secure keyboard entry ("" when unknown), or null when no app does. Whichever app holds it, a
+   * password is being typed: when it is the target itself, its password field has the keyboard and Ember's keys
+   * would land in it, so the target gets no exception.
+   */
+  const secureHolder = (): string | null => {
     if (!desktop.secureInput()) return null;
     const holder = desktop.session().secureInputPid;
-    const target = pidOf(window);
-    // The target's own password field doesn't keep input from it (policy keeps Ember out of the field itself).
-    if (holder !== null && target !== undefined && holder === target) return null;
     return holder !== null ? desktop.windows().find(e => e.pid === holder)?.owner ?? "" : "";
   };
   const releaseAll = (): void => {
@@ -366,16 +365,17 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
       return open && Number.isFinite(x) && Number.isFinite(y) && desktop.displaysAt(x, y) > 0;
     },
 
-    blockedReason(window) {
+    blockedReason() {
       if (!open) return null;
       if (!desktop.trusted()) return ACCESSIBILITY_REASON;
-      const holder = secureHolder(window);
+      const holder = secureHolder();
       return holder === null ? null : secureInputReason(holder);
     },
 
-    keyboardGrabbed(window) {
+    keyboardGrabbed() {
+      // CursorBorrow asks before every character: a password field taking the keyboard mid-borrow stops the typing.
       if (!open) return false;
-      return secureHolder(window) !== null;
+      return secureHolder() !== null;
     },
 
     pointerOn(window, elementWindow) {
