@@ -1965,6 +1965,110 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; read \"$x\" <<< foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; declare \"$x\"=1",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; test -v \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ -v \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; unset \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "[ -n \"$name\" ] && echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "npm.unpublish"
+   ]
+  },
+  {
+   "cmd": "yarn npm login",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
   }
  ]
 }

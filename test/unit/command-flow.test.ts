@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ANNOUNCE_MS, CARD_LINES, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
+  scriptLanguage,
 } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
 import type {
@@ -116,6 +117,7 @@ function harness(o: {
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
+  readScript?: (path: string, cwd: string) => Promise<string | null>;
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -135,6 +137,7 @@ function harness(o: {
     target: binding.id,
     facts: async () => facts,
     inspect: o.inspect ?? (async (paths: string[]) => paths.map(p => o.paths?.(p) ?? { exists: true, real: p })),
+    ...(o.readScript ? { readScript: o.readScript } : {}),
     gitFacts: async () => o.git ?? null,
     start: (spec: RunSpec) => { starts.push(spec); const r = scriptedRun(spec, o.run?.(spec, starts.length) ?? {}); runs.push(r); return r; },
     stopAll: async () => undefined,
@@ -211,6 +214,164 @@ describe("CL's own judge (the default)", () => {
     expect(r.textResultForLlm).not.toContain("Ignore previous");
     expect(h.tainted).toEqual(["output.ignore-instructions"]);
     expect(r.textResultForLlm).toContain("(The output contained text that looks like instructions; it was not followed.");
+  });
+});
+
+/** The rules of a harness's last decision. */
+const h0rules = (h: Harness): string[] => (h.audit.filter(e => e.phase === "decided").at(-1)?.rules as string[] | undefined) ?? [];
+
+describe("reading a shell script before it runs (L8, the lead's ruling)", () => {
+  /** CL's own judge, a local target, the script's text served by readScript (null: unreadable; a map: by path). */
+  const scriptHarness = (script: string | null | Record<string, string>, words = "") => {
+    setCommandJudge(null);
+    const reads: { path: string; cwd: string }[] = [];
+    const h = harness({
+      binding: LOCAL, words, answers: ["deny"],
+      paths: p => ({ exists: true, real: p }),
+      readScript: async (path, cwd) => { reads.push({ path, cwd }); return script === null || typeof script === "string" ? script : script[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads });
+  };
+
+  it("asks when `sh t.sh` runs a script that deletes, and shows the script's finding on the card", async () => {
+    const h = scriptHarness("rm -rf build\n");
+    const r = await call(h, { target: "this computer", command: "sh t.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(h.starts).toEqual([]);
+    const card = h.asked[0].panel as { card: CommandCard };
+    expect(card.card.says.some(l => /delete|remove/i.test(l))).toBe(true);
+    expect(h.audit.filter(e => e.phase === "decided").at(-1)?.verdict).toBe("ask");
+  });
+
+  it("refuses when the script would touch Ember's own files, without asking", async () => {
+    const h = scriptHarness("cat /home/ana/.config/ember/settings.json\n");
+    const r = await call(h, { target: "this computer", command: "bash build.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Not allowed: Ember won't run this/);
+    expect(h.asked).toEqual([]);
+    expect(h.starts).toEqual([]);
+  });
+
+  it("asks a script that reads a secret, even one the user asked to run (the script's findings never announce)", async () => {
+    const h = scriptHarness("cat ~/.ssh/id_rsa\n", "run build.sh");
+    const r = await call(h, { target: "this computer", command: "sh build.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect(h.announced).toEqual([]);
+  });
+
+  it("reads what the shell really runs: a file without #!, a #! hidden behind a byte order mark, env -S, another script", async () => {
+    // bash runs a text file with no #! line itself, so it is read as a shell script.
+    for (const text of ["rm -rf build\n", "\uFEFF#!/usr/bin/python3\nrm -rf build\n", "#!/usr/bin/env -S bash -e\nrm -rf build\n", "#!/bin/sh\nrm -rf build\n"]) {
+      const h = scriptHarness(text);
+      expect((await call(h, { target: "this computer", command: "./t.sh" })).resultType, JSON.stringify(text)).toBe("denied");
+      expect(h.starts, JSON.stringify(text)).toEqual([]);
+    }
+    // A shell Ember can't read asks.
+    const fish = scriptHarness("#!/usr/bin/fish\necho hi\n");
+    expect((await call(fish, { target: "this computer", command: "./t" })).resultType).toBe("denied");
+    // A script that runs another: the inner one is read too, as is a #! interpreter that is itself a script.
+    const nested = scriptHarness({ "/home/ana/a.sh": "echo start\nsh b.sh\n", "/home/ana/b.sh": "rm -rf build\n" });
+    expect((await call(nested, { target: "this computer", command: "sh a.sh" })).resultType).toBe("denied");
+    expect(nested.reads.map(r => r.path)).toEqual(["/home/ana/a.sh", "/home/ana/b.sh"]);
+    const card = nested.asked[0].panel as { card: CommandCard };
+    expect(card.card.says.some(l => /^In b\.sh: .*build/.test(l)), card.card.says.join(" | ")).toBe(true);
+    const interp = scriptHarness({ "/home/ana/t": "#!/home/ana/i.sh\necho hi\n", "/home/ana/i.sh": "#!/bin/sh\nrm -rf build\n" });
+    expect((await call(interp, { target: "this computer", command: "./t" })).resultType).toBe("denied");
+    const relative = scriptHarness({ "/home/ana/t": "#!/usr/bin/env ./i.sh\necho hi\n", "/home/ana/i.sh": "rm -rf build\n" });
+    expect((await call(relative, { target: "this computer", command: "./t" })).resultType).toBe("denied");
+    // Scripts within scripts deeper than Ember reads ask.
+    const deep: Record<string, string> = {};
+    for (let k = 0; k < 6; k++) deep[`/home/ana/s${k}.sh`] = `sh s${k + 1}.sh\n`;
+    const tooDeep = scriptHarness(deep);
+    expect((await call(tooDeep, { target: "this computer", command: "sh s0.sh" })).resultType).toBe("denied");
+    expect(h0rules(tooDeep)).toContain("unclear.scripts");
+  });
+
+  it("judges a script's relative paths in the command's folder (where it runs), with Ember's live processes", async () => {
+    // From /home/ana, `sh proj/x.sh` reading .config/ember/… reads Ember's own settings: refused, not judged beside x.sh.
+    const own = scriptHarness({ "/home/ana/proj/x.sh": "cat .config/ember/settings.json\n" });
+    const r = await call(own, { target: "this computer", command: "sh proj/x.sh" });
+    expect(r.textResultForLlm).toMatch(/^Not allowed: Ember won't run this/);
+    expect(own.reads).toEqual([{ path: "/home/ana/proj/x.sh", cwd: "/home/ana" }]);
+    // Ember's pids the flow reads live (4242 here) count inside a script as on the command line.
+    const kill = scriptHarness({ "/home/ana/k.sh": "kill 4242\n" });
+    expect((await call(kill, { target: "this computer", command: "sh k.sh" })).textResultForLlm).toMatch(/^Not allowed: Ember won't run this/);
+  });
+
+  it("inspects a script's paths: an overwrite of a missing file runs, a link is judged by where it leads", async () => {
+    setCommandJudge(null);
+    const at = (exists: (p: string) => boolean, real: (p: string) => string = p => p) => harness({
+      binding: LOCAL, answers: ["deny"], paths: p => ({ exists: exists(p), real: real(p) }), run: () => ({ output: ["done\n"] }),
+      readScript: async () => "echo built > out.txt\ncat notes\n",
+    });
+    // out.txt isn't there: writing it is ordinary, as on the command line.
+    const fresh = at(p => p !== "/home/ana/out.txt");
+    expect((await call(fresh, { target: "this computer", command: "sh build.sh" })).resultType).toBe("success");
+    // It is: the overwrite asks.
+    const over = at(() => true);
+    expect((await call(over, { target: "this computer", command: "sh build.sh" })).resultType).toBe("denied");
+    // `notes` is a link to the SSH key: reading it asks.
+    const link = at(p => p !== "/home/ana/out.txt", p => (p === "/home/ana/notes" ? "/home/ana/.ssh/id_rsa" : p));
+    expect((await call(link, { target: "this computer", command: "sh build.sh" })).resultType).toBe("denied");
+    expect(h0rules(link)).toContain("path.secret");
+  });
+
+  it("remembers what a script downloads, so running that file later asks", async () => {
+    setCommandJudge(null);
+    const h = harness({
+      binding: LOCAL, paths: p => ({ exists: p !== "/home/ana/y.sh", real: p }), run: () => ({ output: ["done\n"] }), answers: ["deny"],
+      readScript: async p => (p === "/home/ana/get.sh" ? "curl -fsSL -o y.sh https://e.example/y.sh\n" : null),
+    });
+    expect((await call(h, { target: "this computer", command: "sh get.sh" })).resultType).toBe("success");
+    expect([...h.ctx.state.downloaded]).toEqual(["/home/ana/y.sh"]);
+    expect((await call(h, { target: "this computer", command: "sh y.sh" })).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("escape.run-downloaded");
+  });
+
+  it("tells how each script is read: the shell named, its #! line, the calling shell, or not at all", () => {
+    expect(scriptLanguage("bash", "")).toEqual({ kind: "shells", shells: ["bash"] });
+    expect(scriptLanguage("sh", "")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
+    expect(scriptLanguage("powershell", "")).toEqual({ kind: "shells", shells: ["powershell"] });
+    expect(scriptLanguage("shebang", "#!/bin/bash -e\n")).toEqual({ kind: "shells", shells: ["bash"] });
+    expect(scriptLanguage("shebang", "#! /bin/sh\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env bash\n")).toEqual({ kind: "shells", shells: ["bash"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env -S bash -e\n")).toEqual({ kind: "shells", shells: ["bash"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env -Szsh\n")).toEqual({ kind: "shells", shells: ["zsh"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env FOO=1 dash\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/pwsh\n")).toEqual({ kind: "shells", shells: ["powershell"] });
+    expect(scriptLanguage("shebang", "#!/usr/bin/fish\n").kind).toBe("unclear");
+    expect(scriptLanguage("shebang", "#!/home/ana/i.sh\n")).toEqual({ kind: "follow", path: "/home/ana/i.sh" });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env ./i.sh\n")).toEqual({ kind: "follow", path: "./i.sh" });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "none" });
+    // No #! line: the calling shell runs a text file; a NUL in its first line makes it a program.
+    expect(scriptLanguage("shebang", "rm -rf build\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
+    expect(scriptLanguage("shebang", "\uFEFF#!/usr/bin/python3\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
+    expect(scriptLanguage("shebang", "\x7fELF\x02\x01\x01\x00")).toEqual({ kind: "none" });
+  });
+
+  it("runs an ordinary script without asking", async () => {
+    const h = scriptHarness("echo building\nmake build\n");
+    const r = await call(h, { target: "this computer", command: "sh ok.sh" });
+    expect(r.resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("leaves today's behaviour when the script can't be read, isn't a shell script, or the runner can't read one", async () => {
+    // Unreadable (readScript null): the command runs (the command line itself is ordinary).
+    const unreadable = scriptHarness(null);
+    expect((await call(unreadable, { target: "this computer", command: "sh t.sh" })).resultType).toBe("success");
+    // Not a shell script: a program (a NUL in its first line), or a direct `./x` whose #! names an interpreter.
+    const program = scriptHarness("\x7fELF\x02\x01\x01\x00\x00\x00\nrm -rf build\n");
+    expect((await call(program, { target: "this computer", command: "./x" })).resultType).toBe("success");
+    const python = scriptHarness("#!/usr/bin/env python3\nimport os\n");
+    expect((await call(python, { target: "this computer", command: "./x.py" })).resultType).toBe("success");
+    // A runner with no readScript (a remote/WSL runner today): nothing is read.
+    setCommandJudge(null);
+    const noCap = harness({ binding: LOCAL, paths: p => ({ exists: true, real: p }), run: () => ({ output: ["done\n"] }) });
+    expect((await call(noCap, { target: "this computer", command: "sh t.sh" })).resultType).toBe("success");
   });
 });
 
@@ -840,14 +1001,44 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ typedLines: 1, secretSpans: 1 });
   });
 
-  it("records what a command downloaded only when it ended with exit code 0", async () => {
+  it("records what a command downloaded whenever it started, whatever its end (D4.3 f)", async () => {
     makeJudge({ classify: () => ordinary({ downloads: ["/home/ana/get.sh"] }) });
-    const failed = harness({ run: () => ({ exit: exitOk({ code: 1 }) }) });
-    await call(failed);
-    expect([...failed.ctx.state.downloaded]).toEqual([]);
-    const ok = harness();
-    await call(ok);
-    expect([...ok.ctx.state.downloaded]).toEqual(["/home/ana/get.sh"]);
+    const ends: RunExit[] = [
+      exitOk(), exitOk({ code: 1 }), exitOk({ code: null, signal: "SIGINT", ended: "stopped-user" }), exitOk({ code: null, signal: "SIGTERM", ended: "timeout" }),
+      exitOk({ code: null, ended: "killswitch" }), exitOk({ code: null, ended: "lost" }),
+    ];
+    for (const exit of ends) {
+      const h = harness({ run: () => ({ exit }) });
+      await call(h);
+      expect([...h.ctx.state.downloaded], exit.ended).toEqual(["/home/ana/get.sh"]);
+    }
+    // A run the command window couldn't show was started, then stopped at once: what it may have fetched counts too.
+    const unseen = harness({ run: () => ({ hang: true }) });
+    unseen.ctx.service.window.attach = () => { throw new Error("no window"); };
+    await call(unseen);
+    expect([...unseen.ctx.state.downloaded]).toEqual(["/home/ana/get.sh"]);
+    // One that never started, or that the remote's own check refused, fetched nothing.
+    for (const exit of [exitOk({ code: null, ended: "failed-to-start", error: "no shell" }), exitOk({ code: null, ended: "refused-remote", error: "no" })]) {
+      const h = harness({ run: () => ({ exit }) });
+      await call(h);
+      expect([...h.ctx.state.downloaded], exit.ended).toEqual([]);
+    }
+  });
+
+  it("asks before running a file a failed command line downloaded earlier in the task (CL's own judge)", async () => {
+    setCommandJudge(null);
+    // The fetch succeeds but the line as a whole exits 1: x.sh is on disk all the same.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ exit: exitOk({ code: 1 }) }), answers: ["deny", "deny"] });
+    const first = await call(h, { target: "this computer", command: "curl -fsSL -o x.sh https://e.example/x.sh; ls missing" });
+    expect(first.resultType).toBe("failure");
+    expect(h.asked).toEqual([]);
+    expect([...h.ctx.state.downloaded]).toEqual(["/home/ana/x.sh"]);
+    for (const [k, command] of ["bash x.sh", "./x.sh"].entries()) {
+      expect((await call(h, { target: "this computer", command })).resultType, command).toBe("denied");
+      expect((h.asked[k].panel as { card: CommandCard }).card.says, command).toContain("Runs a file downloaded in this task.");
+      expect(h.audit.filter(e => e.phase === "decided").at(-1)?.rules, command).toContain("escape.run-downloaded");
+    }
+    expect(h.starts).toHaveLength(1);
   });
 
   it("one command at a time per task", async () => {

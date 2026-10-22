@@ -9460,6 +9460,734 @@
    "classes": [
     "secret"
    ]
+  },
+  {
+   "cmd": "command rm -v -rf build",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "command -- rm -rf build -V",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "command git push -v",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "git.push"
+   ]
+  },
+  {
+   "cmd": "command -V git",
+   "verdict": "run"
+  },
+  {
+   "cmd": "command make -p",
+   "verdict": "run"
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]' && printf -v \"$x\" %s foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v $x foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v\"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "o=-v; x='a[$(rm -rf build)]'; printf \"$o\" \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)] foo'; printf $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; read \"$x\" <<< foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; read -r -a \"$x\" <<< foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; declare \"$x\"=1",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; declare \"$x=1\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; typeset \"$x\"=1",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; export \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; readonly \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; test -v \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ -v \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ ! -R \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "o=-v; x='a[$(rm -rf build)]'; [ \"$o\" \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)]'; [ $x ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)]'; test ! $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; unset \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; unset -v $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; mapfile -t \"$x\" < list.txt",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; readarray \"$x\" < list.txt",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; wait -p \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; getopts ab \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; command printf -v \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "command printf -v 'a[$(rm y)]' %s x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "time unset 'a[$(rm y)]'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v \"$x\" foo",
+   "context": "darwin",
+   "shell": "zsh",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ -v \"$x\" ]",
+   "shell": "sh",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' \"$name\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "printf '%s %s\\n' $a \"$HOME\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "printf -v out '%s' \"$name\" && echo \"$out\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ -n \"$name\" ] && echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "test -z \"$name\" || echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$a\" = \"$b\" ] && echo same",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$n\" -gt 3 ] && echo many",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ -f \"$HOME/.profile\" ] && echo yes",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$name\" ] && echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "export NODE_ENV=\"$mode\" && npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "declare greeting=\"hello $name\"; echo \"$greeting\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "read -r first rest <<< \"$line\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "unset FOO BAR",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --access public",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --tolerate-republish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish",
+   "words": "publish this package to npm",
+   "verdict": "announce",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --tag beta",
+   "words": "publish this package to npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag add my-pkg@1.2.0 beta",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "npm.registry"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "npm.unpublish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag list my-pkg",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm login",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn npm logout",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn npm info react",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm audit",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm whoami",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm frobnicate",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.npm-verb"
+   ]
+  },
+  {
+   "cmd": "yarn npm",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.npm-verb"
+   ]
+  },
+  {
+   "cmd": "yarn npm \"$sub\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "yarn workspace web npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "words": "publish this package to npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach --all --topological --jobs 4 npm publish --tolerate-republish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A run build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces foreach --include 'pkg-*' run deploy",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces run release",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces run test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces focus web",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces list",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces info",
+   "verdict": "run"
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; echo $(( $1 ))",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.arith-variable"
+   ]
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; echo $(( ${1} + 1 ))",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.arith-variable"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; set -- 1 2; echo \"${@:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; echo \"${1:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; echo \"${*:1:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; arr=(1 2); echo \"${arr[@]:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; s=abc; echo \"${s:$1}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "z='([$(rm -rf build)]=1)'; declare -a arr=\"$z\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "y='[$(rm -rf build)]=1'; local -a \"arr=($y)\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "z='([$(rm -rf build)]=1)'; typeset -A m=$z",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "echo $(( $# + 1 ))",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo $(( $? ))",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${@:2}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${@: -1}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${1:-default}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "declare greeting=\"hello $name\"",
+   "verdict": "run"
   }
  ]
 }

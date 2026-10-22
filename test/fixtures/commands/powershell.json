@@ -5147,6 +5147,50 @@
     "escape",
     "destroy"
    ]
+  },
+  {
+   "cmd": "yarn npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "npm.unpublish"
+   ]
+  },
+  {
+   "cmd": "yarn npm logout",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn workspace web npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm info react",
+   "verdict": "run"
   }
  ]
 }

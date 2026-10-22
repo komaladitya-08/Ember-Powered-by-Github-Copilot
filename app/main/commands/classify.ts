@@ -41,6 +41,8 @@ type OS = ClassifyContext["os"];
 export const MAX_COMMAND_CHARS = 8000;
 /** At most this many paths are probed (§3.6); more → unclear. */
 export const MAX_PROBE = 64;
+/** At most this many scripts are read and classified per command (L8, the lead's ruling); more asks. */
+export const MAX_SCRIPTS = 16;
 
 /**
  * What classifyCommand returns beyond the contract (an extension in CL's own files; decide.ts reads it, everyone else
@@ -51,6 +53,26 @@ export interface ClassificationExtra extends Classification {
   cwd: string;
   /** A WSL command touching the drive mounts, a Windows-form path or a Windows program (§3.8.2's Windows line). */
   windowsReach: boolean;
+  /**
+   * Shell scripts this command runs by path (`sh x.sh`, `./x.sh`, `source x.sh`, `powershell -File x.ps1`, `cmd
+   * x.bat`): the flow reads each one and classifies its text as a nested command (L8, the lead's ruling), so a
+   * dangerous script asks and a refusal refuses. Interpreter scripts (node, python…) are not here: they run like a
+   * build (L8 unchanged).
+   */
+  scripts: ScriptRef[];
+}
+
+/** A shell script to read and classify (ClassificationExtra.scripts). */
+export interface ScriptRef {
+  /** Its path, resolved on the target (absolute). */
+  path: string;
+  /**
+   * How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (run directly: the `#!` line names the
+   * interpreter, and a text file without one is run by the calling shell).
+   */
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
+  /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
+  cwd: string;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -159,6 +181,13 @@ class Classifier {
   needsGit = false;
   programs: string[] = [];
   windowsReach = false;
+  scripts: ScriptRef[] = [];
+  /** Paths this command writes, moves or deletes (a script among them can't be read before it runs). */
+  written: { p: string; env: PathEnv }[] = [];
+  /** A part of the command writes files Ember can't name (an archive extracted, a patch applied, a checkout). */
+  writesUnnamed = false;
+  /** Scripts recorded only because a name may resolve to them (`.\x` → x.ps1), with what had been written by then. */
+  private candidates = new Map<ScriptRef, { written: number; unnamed: boolean }>();
   simpleCount = 0;
   /** The command being classified (index into commands), -1 before the first. */
   at = -1;
@@ -298,6 +327,7 @@ class Classifier {
     }
     if (a.glob) return this.useGlob(a, use, sc);
     const abs = resolveTargetPath(text, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    if (WRITES.has(use)) this.written.push({ p: abs, env: sc.path });
     if (!sc.foreign) this.addProbe(abs);
     this.judge(abs, use, sc.path, text, sc);
     const obj: Obj = { kind: "path", text, resolved: abs, abs };
@@ -323,6 +353,7 @@ class Classifier {
     const pattern = a.pattern ?? text;
     const absPattern = resolveTargetPath(pattern, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const prefix = globPrefix(absPattern, sc.path);
+    if (WRITES.has(use)) this.written.push({ p: prefix, env: sc.path });
     if (!sc.foreign) this.addProbe(prefix);
     this.judge(prefix, use, sc.path, text, sc, true);
     const dotRule = sc.family === "posix";
@@ -389,6 +420,62 @@ class Classifier {
     }
   }
 
+  /**
+   * Records a shell script this command runs by path, so the flow reads its text and classifies it (L8, the lead's
+   * ruling). Only a resolvable path on the target's own filesystem, not one this task downloaded (already escape),
+   * not a foreign scope's (another system Ember can't read). A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or
+   * more scripts than Ember reads (MAX_SCRIPTS) asks: what would run can't be read first.
+   */
+  recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
+    if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
+    if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
+    if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
+    if (this.isDownloaded(a, sc)) return;
+    const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    if (sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(abs)) {
+      this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
+      return;
+    }
+    // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
+    // own rule), and its text has no business on a card.
+    const real = this.ctx.real?.get(abs);
+    if ([abs, ...(real ? [real] : [])].some(p => secretKind(p, "read", sc.path) !== null || isEmberPath(p, sc.path))) return;
+    const cwd = sc.cwd ?? "";
+    if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd)) return;
+    if (this.scripts.length >= MAX_SCRIPTS) { this.unclear("unclear.scripts", "It runs more scripts than Ember reads first."); return; }
+    const ref: ScriptRef = { path: abs, as, cwd };
+    this.scripts.push(ref);
+    if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
+  }
+
+  /**
+   * Whether a script this command runs is one it writes, moves or unpacks itself. Order doesn't matter for a script
+   * named outright (a loop or a function may run it again after the write); a candidate counts only what was written
+   * before it (`git pull` in cmd isn't the git.cmd it may resolve to).
+   */
+  protected scriptWritten(): boolean {
+    return this.scripts.some(r => {
+      const snap = this.candidates.get(r);
+      if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(w => isUnder(r.path, w.p, w.env));
+      return this.writesUnnamed || this.written.some(w => isUnder(r.path, w.p, w.env));
+    });
+  }
+
+  /**
+   * A shell script run directly (`./x.sh`, `env ./x.sh`, `.\x.ps1`): PowerShell runs a `.ps1`, and for a path with no
+   * extension the first of `x.ps1`, `x.bat`, `x.cmd` there; a POSIX shell runs the file by its `#!` line (a text file
+   * without one, by the shell itself). A batch file is recorded by dispatch's batch branch.
+   */
+  scriptByPath(nameArg: Arg, pn: ReturnType<typeof programName>, sc: Scope): void {
+    if (sc.family === "powershell") {
+      if (/\.ps1$/i.test(pn.base)) this.recordScript(nameArg, "powershell", sc);
+      else if (pn.ext === "" && nameArg.v !== null && !nameArg.glob) {
+        this.recordScript(lit(`${nameArg.v}.ps1`), "powershell", sc, true);
+        for (const e of [".bat", ".cmd"]) this.recordScript(lit(nameArg.v + e), "cmd", sc, true);
+      }
+    } else if (sc.family === "posix" && pn.ext !== ".bat" && pn.ext !== ".cmd") this.recordScript(nameArg, "shebang", sc);
+  }
+
   /** Records a file this command downloads (§3.4.7), resolved against the scope's folder. */
   download(p: string | null, sc: Scope): void {
     if (!p || !sc.cwd) return;
@@ -419,7 +506,7 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
   return {
     shell, family: SHELL_FAMILY[shell] ?? "posix",
     findings: [{ cls: "unclear", rule: "internal", says: SAYS.unclear, program: "", objects: [], widening: [], at: -1 }],
-    refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], cwd, windowsReach: false,
+    refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], cwd, windowsReach: false, scripts: [],
   };
 }
 
@@ -472,8 +559,155 @@ const PROJECT_RUNNERS = new Set([
   "vitest", "mocha", "deno", "swift", "xcodebuild", "flutter", "dart", "stack", "cabal", "docker-compose", "podman-compose", "tsc",
 ]);
 
+/** git verbs that change files in the work tree (a script there may not be what is on disk now). */
+const GIT_TREE_WRITERS = new Set(["apply", "am", "checkout", "switch", "restore", "pull", "merge", "rebase", "cherry-pick", "revert", "stash", "reset", "clone", "worktree", "submodule", "read-tree", "checkout-index", "mv"]);
+/** Other version control tools' verbs that change files. */
+const VCS_TREE_WRITERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  svn: new Set(["update", "up", "checkout", "co", "export", "switch", "sw", "merge", "patch", "revert", "resolve"]),
+  hg: new Set(["update", "up", "checkout", "co", "pull", "revert", "import", "unshelve", "merge", "rebase", "graft", "backout"]),
+  p4: new Set(["sync", "unshelve", "revert", "integrate", "resolve", "copy", "merge", "undo", "clean", "reconcile"]),
+};
+
+/**
+ * Whether a program writes files Ember can't name (an archive extracted, a patch applied, a checkout, a file
+ * decompressed beside itself): a script this same command then runs may not be the one on disk now (L8).
+ */
+export function writesUnnamedFiles(key: string, args: readonly Arg[]): boolean {
+  const vs = args.map(a => a.v);
+  const opt = (re: RegExp): boolean => vs.some(v => v === null || re.test(v));
+  const verb = (valued: ReadonlySet<string>): string | null | undefined => {
+    for (let k = 0; k < vs.length; k++) {
+      const v = vs[k];
+      if (v === null) return null;
+      if (valued.has(v)) { k++; continue; }
+      if (!v.startsWith("-")) return v;
+    }
+    return undefined;
+  };
+  switch (key) {
+    case "tar": case "bsdtar": case "gtar":
+      return opt(/^--(extract|get)\b|^-[A-Za-z]*x/) || /^[A-Za-wyz]*x[A-Za-z]*$/.test(vs[0] ?? "");
+    case "unzip": return !opt(/^-[A-Za-z]*[lvtZp]/);
+    case "7z": case "7za": case "7zr": case "unrar": case "rar": {
+      const c = vs.find(v => v === null || !v.startsWith("-"));
+      return c === null || /^[xe]$/i.test(c ?? "");
+    }
+    case "jar": case "ar": return vs[0] === null || /^-?[A-Za-z]*x/.test(vs[0] ?? "");
+    case "cpio": return opt(/^-[A-Za-z]*i|^--extract/);
+    case "pax": return opt(/^-[A-Za-z]*r/);
+    case "patch": return !vs.includes("--dry-run");
+    case "gunzip": case "bunzip2": case "unxz": case "unzstd": case "unlzma": case "uncompress": case "unlz4":
+      return !opt(/^-[A-Za-z]*[ctl]|^--(stdout|to-stdout|test|list)$/);
+    case "gzip": case "bzip2": case "xz": case "zstd": case "lzma": case "lz4":
+      return opt(/^-[A-Za-z]*d|^--(decompress|uncompress)$/) && !opt(/^-[A-Za-z]*[ctl]|^--(stdout|to-stdout|test|list)$/);
+    case "git": {
+      const v = verb(new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"]));
+      return v === null || (v !== undefined && GIT_TREE_WRITERS.has(v));
+    }
+    case "svn": case "hg": case "p4": {
+      const v = verb(new Set(["-c", "-d", "-p", "-u", "-P", "-H", "-C", "-x", "-r", "-R", "--cwd", "--repository", "--config"]));
+      return v === null || (v !== undefined && VCS_TREE_WRITERS[key].has(v));
+    }
+    default: return false;
+  }
+}
+
 /** bash built-ins that take a variable's name (a subscript in it is evaluated as arithmetic). */
 const NAME_TAKERS = new Set(["printf", "read", "unset", "test", "[", "mapfile", "readarray", "declare", "typeset", "local", "export", "readonly", "wait", "getopts", "let", "eval"]);
+/** The declaration built-ins: an operand is a name or a `name=value` assignment. */
+const DECLARERS = new Set(["declare", "typeset", "local", "export", "readonly"]);
+/** `test`'s operators whose operand is a variable's name. */
+const TEST_NAME_OPS = new Set(["-v", "-R"]);
+/** Options of read and mapfile whose value is text or a number, never a name (read -a's value is a name). */
+const READ_TEXT_OPTS = "dinNptu";
+const MAPFILE_TEXT_OPTS = "dnOsucC";
+
+/**
+ * Whether an unresolved word could become several words when the shell runs it: an unquoted expansion splits on
+ * spaces, and `"$@"` or `"${a[@]}"` give one word per element even in quotes. Such a word could carry an option and
+ * a name at once (`x='-v a[$(…)]'; [ $x ]`).
+ */
+export function mayBecomeWords(raw: string): boolean {
+  let q: "'" | "\"" | null = null;
+  for (let k = 0; k < raw.length; k++) {
+    const c = raw[k];
+    if (q === "'") { if (c === "'") q = null; continue; }
+    if (c === "\\") { k++; continue; }
+    if (q === "\"" && c === "\"") { q = null; continue; }
+    if (q === null && (c === "'" || c === "\"")) { q = c; continue; }
+    if (c === "`" && q === null) return true;
+    if (c !== "$") continue;
+    const n = raw[k + 1] ?? "";
+    if (n === "@" || (n === "{" && /^\{[^}]*@/.test(raw.slice(k + 1)))) return true;
+    if (q === null && /[A-Za-z0-9_{(*#?$!-]/.test(n)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a name-taking built-in gets a variable's name Ember can't see (D4.3 g). bash evaluates the subscript of a
+ * name it is given (`printf -v`, `read`, `declare` with a value, `test -v`, `unset` of an array element), so
+ * `x='a[$(rm -rf build)]'; printf -v "$x" y` runs the hidden command. Every place a name can stand counts, and so
+ * does an unresolved word that could itself be the option taking a name (`printf "$o" "$x" y`) or split into an
+ * option and a name (`[ $x ]`). Written-out names are judged by their text (`a[$(…)]`) elsewhere.
+ */
+export function unseenName(key: string, args: readonly Arg[]): boolean {
+  const unres = (a: Arg | undefined): boolean => a !== undefined && a.v === null;
+  /**
+   * Walks the options: letters in `textOpts` take a text or number value, letters in `nameOpts` a name. Returns where
+   * the operands start (an unresolved word stops the walk: it could be an option too), or -1 for a name Ember can't
+   * see (or a text value that could split into one).
+   */
+  const options = (textOpts: string, nameOpts: string): number => {
+    let k = 0;
+    for (; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null || v === "--" || !v.startsWith("-") || v === "-") return v === "--" ? k + 1 : k;
+      for (let j = 1; j < v.length; j++) {
+        const c = v[j];
+        if (!textOpts.includes(c) && !nameOpts.includes(c)) continue;
+        if (j === v.length - 1) {
+          const value = args[k + 1];
+          if (nameOpts.includes(c) ? unres(value) : unres(value) && mayBecomeWords(value!.raw)) return -1;
+          k++;
+        }
+        break;
+      }
+    }
+    return k;
+  };
+  switch (key) {
+    case "printf": {
+      // printf [-v name] [--] format [arguments]: an unresolved format could be -v itself, or split into -v and a name.
+      const at = options("", "v");
+      return at < 0 || (unres(args[at]) && (at < args.length - 1 || mayBecomeWords(args[at].raw)));
+    }
+    case "test":
+    case "[": {
+      const ops = key === "[" && args.at(-1)?.v === "]" ? args.slice(0, -1) : args;
+      return ops.some((a, k) => unres(a) && (mayBecomeWords(a.raw) || TEST_NAME_OPS.has(ops[k - 1]?.v ?? "") || unres(ops[k + 1])));
+    }
+    case "read":
+    case "mapfile":
+    case "readarray": {
+      const at = options(key === "read" ? READ_TEXT_OPTS : MAPFILE_TEXT_OPTS, key === "read" ? "a" : "");
+      return at < 0 || args.slice(at).some(unres);
+    }
+    case "getopts":
+      return unres(args[1]) || (unres(args[0]) && mayBecomeWords(args[0].raw));
+    case "unset":
+    case "wait":
+      return args.some(unres);
+    default: {
+      if (!DECLARERS.has(key)) return false;
+      // An array declaration reads a value as a compound assignment whose subscripts run (`declare -a a="$v"` with
+      // v='([$(…)]=1)'): any value Ember can't see counts. Otherwise an assignment whose name is written out is fine
+      // whatever its value.
+      const array = args.some(a => a.v !== null && /^-[A-Za-z]*[aA]/.test(a.v));
+      return args.some(a => unres(a) && (array || !/^["']?[A-Za-z_][A-Za-z0-9_]*\+?=/.test(a.raw)));
+    }
+  }
+}
 
 /** Words that name the null device or the terminal (redirecting to them writes no file). */
 const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "$null", "con", "nul:"]);
@@ -509,6 +743,11 @@ class Engine extends Classifier {
   }
 
   private result(): ClassificationExtra {
+    // A script this same command writes, moves or unpacks before it runs (`echo … > t.sh; sh t.sh`, `cp a.sh t.sh &&
+    // ./t.sh`, `tar xf a.tar && sh t.sh`): what is on disk now isn't what will run (L8, the lead's ruling).
+    if (this.scriptWritten()) {
+      this.unclear("unclear.script-written", "It runs a script that this command writes first, so Ember can't read it beforehand.");
+    }
     const out: ClassificationExtra = {
       shell: this.topShell,
       family: SHELL_FAMILY[this.topShell] ?? "posix",
@@ -521,6 +760,7 @@ class Engine extends Classifier {
       commands: this.commands,
       cwd: this.ctx.cwd,
       windowsReach: this.windowsReach,
+      scripts: this.scripts,
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
     // row covers a finding of such a text.
@@ -1022,12 +1262,10 @@ class Engine extends Classifier {
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
+    if (writesUnnamedFiles(key, args)) this.writesUnnamed = true;
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
-    // A variable name with a subscript that runs a command (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`, `test -v …`).
-    if (sc.family === "posix" && NAME_TAKERS.has(key) && args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v))) {
-      this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
-    }
+    this.hiddenNames(key, args, sc);
     this.pipe.program = key;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
   }
@@ -1038,11 +1276,16 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      else this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
       const names = pn.ext ? [nameArg.v] : [nameArg.v, ...[".exe", ".com", ".bat", ".cmd"].map(e => nameArg.v + e)];
       if (names.some(n => this.isDownloaded(lit(n), sc))) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
+    // cmd runs `x` or `.\x` as x.bat or x.cmd from the current folder when one is there: read them first (L8).
+    if (sc.family === "cmd" && pn.ext === "" && nameArg.v !== null && !CMD_BUILTINS[key] && !nameArg.glob && !this.isDownloaded(nameArg, sc)) {
+      for (const e of [".bat", ".cmd"]) this.recordScript(lit(nameArg.v + e), "cmd", sc, true);
     }
     if (pn.interop) {
       this.windowsReach = true;
@@ -1053,6 +1296,7 @@ class Engine extends Classifier {
     if (pn.ext === ".bat" || pn.ext === ".cmd") {
       // A batch file runs under cmd, which re-reads its arguments (critique wsl-3).
       if (!pn.isPath) scriptName(h, nameArg.v ?? "");
+      if (!this.isDownloaded(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
       if (args.some(a => a.v === null || /[&|<>^%!]/.test(a.v))) this.unclear("unclear.batch-args", "cmd would read its arguments as commands.");
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
@@ -1166,13 +1410,32 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      else {
+        // `env ./x.sh`, `exec ./x.sh`, `timeout 5 ./x.sh` run the script as `./x.sh` does (L8, the lead's ruling).
+        this.scriptByPath(nameArg, pn, sc);
+        if (pn.ext === ".bat" || pn.ext === ".cmd") this.recordScript(nameArg, "cmd", sc);
+      }
       scriptName(inner, nameArg.v);
     }
     const n = NATIVE[key];
     if (n) n(inner);
     else generic(inner);
+    if (writesUnnamedFiles(key, inner.args)) this.writesUnnamed = true;
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
+    // `command printf -v …` and `time unset …` run the same built-ins.
+    this.hiddenNames(key, inner.args, sc);
+  }
+
+  /**
+   * A variable's name with a subscript that runs a command, written out (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`,
+   * `test -v …`) or out of Ember's sight (`printf -v "$x"`, `read "$x"`, `declare "$x"=1`; `unseenName`).
+   */
+  hiddenNames(key: string, args: readonly Arg[], sc: Scope): void {
+    if (sc.family !== "posix" || !NAME_TAKERS.has(key)) return;
+    if (args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v)) || unseenName(key, args)) {
+      this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
+    }
   }
 
   /**
@@ -1810,7 +2073,10 @@ reg(NATIVE, ["tee"], h => {
 reg(NATIVE, ["touch", "mkdir", "mkfifo", "mknod", "mktemp"], h => {
   const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mkdir" ? "m" : "pt", longValue: ["date", "reference", "mode", "tmpdir", "suffix", "context"] });
   if (h.key === "mktemp") return;
+  const mark = h.e.written.length;
   objsOf(h, h.key === "mknod" ? p.operands.slice(0, 1) : p.operands, "write");
+  // A new empty file or folder, or a time, doesn't change what a script says (a FIFO does: it is a stream).
+  if (h.key === "touch" || h.key === "mkdir") h.e.written.length = mark;
 });
 
 // Permissions (§3.5.5).
@@ -1820,7 +2086,10 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
   let ops = p.operands;
   if (h.key !== "setfacl" && h.key !== "chattr" && !values(p, "reference").length) ops = ops.slice(1);
   if (h.key === "chattr") ops = ops.filter(o => !/^[-+=]/.test(o.v ?? ""));
+  const mark = h.e.written.length;
   const objs = objsOf(h, ops, rec ? "permTree" : "write");
+  // Permissions don't change what a script says (`chmod +x t.sh && ./t.sh` reads t.sh as it is).
+  h.e.written.length = mark;
   const outside = objs.some(o => o.abs === null || !h.sc.home || !isUnder(o.abs, h.sc.home, h.sc.path)) && !objs.every(o => o.abs !== null && inWorkTree(o.abs, h.sc.path));
   if (rec || h.key === "chattr" || (outside && objs.some(o => o.abs !== null && writeKind(o.abs, h.sc.path) === "system")) || (h.key !== "chmod" && outside)) {
     h.e.add("system", "system.permissions", "Changes who may read or change files.", { objects: objs, widening: rec ? ["recursive"] : [] });
@@ -2060,16 +2329,21 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
     return;
   }
   const script = p.operands[0];
+  // bash reads its script as bash (brace expansion, `&>`), zsh as zsh; sh, dash and ksh as sh.
+  const readAs: ScriptRef["as"] | undefined = posixShell;
   if (script && !has(p, "s")) {
-    runScript(h, script);
+    runScript(h, script, readAs);
     if (!posixShell) h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`);
     return;
   }
-  intoInterpreter(h);
+  intoInterpreter(h, readAs);
 });
 
-/** An interpreter reading its program from stdin: download-and-run after a fetch, else unclear; with no stdin, interactive. */
-function intoInterpreter(h: H): void {
+/**
+ * An interpreter reading its program from stdin: download-and-run after a fetch, else unclear; with no stdin,
+ * interactive. A shell given a file (`bash < x.sh`) runs that file as a script: it is read first (L8), like `bash x.sh`.
+ */
+function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") {
     if (h.s.fetchBefore) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     else h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
@@ -2077,14 +2351,18 @@ function intoInterpreter(h: H): void {
   }
   if (h.s.stdin === "file") {
     // `bash < x.sh`: the file is the program.
-    for (const r of h.s.redirs) if (r.kind === "read" && r.target && h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    for (const r of h.s.redirs) {
+      if (r.kind !== "read" || !r.target) continue;
+      if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      else if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+    }
     return;
   }
   h.e.unclear("unclear.interactive", SAYS.interactive);
 }
 
 /** A script given to an interpreter or shell: judged by name, refused if Ember's, escape if downloaded in this task. */
-function runScript(h: H, script: Arg): void {
+function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   if (script.v === null) {
     if (script.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     else h.e.unclear("unclear.script", "It runs a script Ember can't name.");
@@ -2093,6 +2371,7 @@ function runScript(h: H, script: Arg): void {
   if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
   h.e.usePath(script, "exec", h.sc);
   if (h.e.isDownloaded(script, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 
@@ -2181,7 +2460,8 @@ reg(NATIVE, ["source", "."], h => {
     else h.e.unclear("unclear.source", "It runs a script Ember can't name.");
     return;
   }
-  runScript(h, script);
+  // A sourced script runs in the shell that sources it.
+  runScript(h, script, h.sc.shell === "zsh" || h.sc.shell === "bash" ? h.sc.shell : "sh");
 });
 
 reg(NATIVE, ["eval"], h => {
@@ -2205,9 +2485,19 @@ reg(NATIVE, ["let"], h => { h.e.unclear("unclear.arithmetic-command", "Its arith
 reg(NATIVE, ["hash"], h => { if (h.args.some(a => a.v !== null && /^-[A-Za-z]*p/.test(a.v))) h.e.unclear("unclear.hash", "It changes which program a name runs."); });
 
 reg(NATIVE, ["command"], h => {
-  if (h.args.some(a => a.v === "-p")) { h.e.unclear("unclear.command-p", "Ember can't tell which program this runs."); return; }
-  if (h.args.some(a => a.v === "-v" || a.v === "-V")) return;
-  h.e.unwrap(h, h.args[0]?.v === "--" ? h.args.slice(1) : h.args, "command");
+  // command [-pVv] [--] program [args]: only the options before the program are command's own; `command rm -v x`
+  // runs rm, while `command -v rm` only says where rm is.
+  let k = 0;
+  const own: string[] = [];
+  for (; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (v === "--") { k++; break; }
+    if (v === null || !/^-[A-Za-z]+$/.test(v)) break;
+    own.push(v);
+  }
+  if (own.some(o => o.includes("p"))) { h.e.unclear("unclear.command-p", "Ember can't tell which program this runs."); return; }
+  if (own.some(o => /[vV]/.test(o))) return;
+  h.e.unwrap(h, h.args.slice(k), "command");
 });
 reg(NATIVE, ["exec"], h => {
   const p = parseOpts(h.args, { shortValue: "a", stopAtOperand: true });
@@ -3087,6 +3377,72 @@ function languageInstall(h: H, specs: Arg[], widening: string[] = []): void {
   h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code).", { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
 }
 
+/** A package publish (`npm publish`, `yarn npm publish`): its tag, access and registry say how broad it is (§3.7). */
+function publishPackage(h: H, rest: Arg[], widening: string[], program: string): void {
+  const p = parseOpts(rest, { longValue: ["tag", "access", "registry", "otp", "provenance-file"] });
+  const w = [...widening];
+  for (const t of values(p, "tag")) w.push(`--tag=${t ?? ""}`);
+  for (const t of values(p, "access")) w.push(`--access=${t ?? ""}`);
+  if (values(p, "registry").length) w.push("--registry");
+  const target = p.operands[0];
+  h.e.add("publish", `${h.key}.publish`, `Publishes ${target?.v ?? "this package"} to the registry.`, { objects: [{ kind: "package", text: target?.v ?? "", abs: null }], widening: w, program });
+}
+
+/**
+ * `yarn npm <command>`: how Yarn 2 and later reach the npm registry (publish, tags, login). Its own commands are
+ * judged like npm's; one Ember doesn't know asks.
+ */
+function yarnNpm(h: H, rest: Arg[], widening: string[]): void {
+  const at = rest.findIndex(a => !isOption(a));
+  const sub = at < 0 ? undefined : rest[at].v;
+  const after = at < 0 ? [] : rest.slice(at + 1);
+  const what = after.find(a => !isOption(a))?.v;
+  switch (sub) {
+    case "publish": publishPackage(h, after, widening, "yarn npm publish"); return;
+    case "tag":
+      if (what === "add") { h.e.add("publish", "npm.registry", "Changes a package on the registry.", { program: "yarn npm tag add" }); return; }
+      if (what === "remove") { h.e.add("remote-delete", "npm.unpublish", "Removes a package's tag or owner from the registry.", { program: "yarn npm tag remove" }); return; }
+      if (what === "list") return;
+      break;
+    case "login": case "logout": h.e.add("secret", "secret.npm", SAYS.secrets); return;
+    case "info": case "audit": case "whoami": return;
+    default: break;
+  }
+  h.e.unclear("unclear.npm-verb", "Ember can't tell which yarn npm command this runs.");
+}
+
+/** Options of `yarn workspaces foreach` that take a value. */
+const FOREACH_VALUE = new Set(["--from", "-j", "--jobs", "--include", "--exclude"]);
+
+/**
+ * `yarn workspaces foreach [options] <command>` runs a yarn command in many workspaces (broader than one, so no
+ * request covers it); Yarn 1's `yarn workspaces run <script>` runs a script in each; `focus` installs. False: an
+ * ordinary workspaces command (list, info).
+ */
+function yarnWorkspaces(h: H, rest: Arg[]): boolean {
+  const sub = rest[0]?.v;
+  if (sub === undefined || (sub !== null && !["foreach", "run", "focus"].includes(sub))) return false;
+  if (sub === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return true; }
+  if (sub === "focus") { languageInstall(h, []); return true; }
+  h.e.markGlobalOptions();
+  let k = 1;
+  for (; sub === "foreach" && k < rest.length; k++) {
+    const v = rest[k].v;
+    if (v === null || !v.startsWith("-")) break;
+    if (FOREACH_VALUE.has(v)) k++;
+  }
+  const command = rest.slice(k);
+  if (command.length === 0) return true;
+  if (sub === "run") {
+    const name = command[0].v;
+    if (name === null) h.e.unclear("unclear.script", "It runs a script Ember can't name.");
+    else nameCheck(h, name);
+    return true;
+  }
+  NATIVE.yarn({ ...h, args: command });
+  return true;
+}
+
 reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const g = globals(h, h.key === "bun" || h.key === "corepack" ? "npm" : h.key);
   if (h.key !== "bun" && h.key !== "corepack") checkGlobals(h, h.key, g);
@@ -3104,16 +3460,8 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     return;
   }
   switch (verb) {
-    case "publish": {
-      const p = parseOpts(rest, { longValue: ["tag", "access", "registry", "otp", "provenance-file"] });
-      const w = [...widening];
-      for (const t of values(p, "tag")) w.push(`--tag=${t ?? ""}`);
-      for (const t of values(p, "access")) w.push(`--access=${t ?? ""}`);
-      if (values(p, "registry").length) w.push("--registry");
-      const target = p.operands[0];
-      h.e.add("publish", `${h.key}.publish`, `Publishes ${target?.v ?? "this package"} to the registry.`, { objects: [{ kind: "package", text: target?.v ?? "", abs: null }], widening: w, program: `${h.key} publish` });
-      return;
-    }
+    case "publish": publishPackage(h, rest, widening, `${h.key} publish`); return;
+    case "npm": if (h.key === "yarn") { yarnNpm(h, rest, widening); return; } break;
     case "deprecate": case "access": h.e.add("publish", "npm.registry", "Changes a package on the registry."); return;
     case "dist-tag": case "dist-tags": case "owner": case "author": case "team": case "org":
       if (/^(rm|remove|del|delete)$/.test(specs[0]?.v ?? "")) h.e.add("remote-delete", "npm.unpublish", "Removes a package's tag or owner from the registry.");
@@ -3143,6 +3491,7 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       return;
     case "cache": if (/^(clean|clear|rm|delete|prune)$/.test(specs[0]?.v ?? "")) h.e.add("destroy", "npm.cache", "Deletes the package manager's cache."); return;
     case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: specs.slice(1) }; NATIVE.yarn(inner); } return;
+    case "workspaces": if (h.key === "yarn" && yarnWorkspaces(h, rest)) return; break;
     case "exec-file": return;
     default: break;
   }
@@ -4195,7 +4544,7 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
     h.e.unclear("unclear.powershell-option", "Ember can't tell what PowerShell would run.");
     return;
   }
-  if (file) { runScript(h, file); return; }
+  if (file) { runScript(h, file, "powershell"); return; }
   if (text === null) { h.e.unclear("unclear.shell-text", "It runs PowerShell text Ember can't see."); return; }
   if (text === undefined || interactiveShell) {
     if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") { intoInterpreter(h); return; }

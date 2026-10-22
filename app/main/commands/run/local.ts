@@ -30,7 +30,7 @@ import type { CommandRunner, GitFacts, JobHostRef, PathFact, RunExit, RunningCom
 import { commandEnv, mergeEnv } from "./env";
 import { localFacts, SAFE_POSIX_PATH } from "./facts";
 import { gitRunner, readGitFacts } from "./git-facts";
-import { inspectPaths } from "./inspect";
+import { inspectPaths, readScriptText } from "./inspect";
 import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "./shells";
@@ -235,6 +235,8 @@ export interface RunnerDeps {
   /** The runner's facts without the live parts (pids, privilege). */
   facts(): Promise<RunnerFacts>;
   inspect(paths: string[], cwd: string): Promise<PathFact[]>;
+  /** A shell script's text (L8, the lead's ruling), so the classifier judges what it runs; null when unreadable. */
+  readScript(path: string, cwd: string): Promise<string | null>;
   gitFacts(cwd: string): Promise<GitFacts | null>;
   isDir(path: string): Promise<boolean>;
   tracker(o: { interactive: boolean }): SecretTracker;
@@ -249,6 +251,9 @@ export interface LocalRunnerOptions {
 
 /** createRunner's options: the local runner's, plus the target it reports and whether it runs on a remote (§3.3.1). */
 export type RunnerOptions = LocalRunnerOptions & { target?: TargetId; remote?: boolean };
+
+/** A CommandRunner that also reads a script's text (L8, the lead's ruling); the flow feature-detects readScript. */
+export type ScriptReadingRunner = CommandRunner & { readScript(path: string, cwd: string): Promise<string | null> };
 
 /** This computer's CommandRunner (local target). */
 export function createLocalRunner(o: {
@@ -299,7 +304,7 @@ export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): 
     return { ...f, privileged, ember: { paths: [...o.ember.paths], pids, names: o.ember.names } };
   };
 
-  return {
+  const runner: ScriptReadingRunner = {
     target: o.target ?? "local",
     facts: async () => live(await refresh()),
     inspect: async (paths, cwd) => {
@@ -307,6 +312,13 @@ export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): 
         return await d.inspect(paths, cwd);
       } catch {
         return paths.map(() => ({ exists: null, real: null }));
+      }
+    },
+    readScript: async (path, cwd) => {
+      try {
+        return await d.readScript(path, cwd);
+      } catch {
+        return null; // unreadable: today's behaviour (L8) unchanged
       }
     },
     gitFacts: async cwd => {
@@ -334,6 +346,7 @@ export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): 
       return runs.size;
     },
   };
+  return runner;
 }
 
 /** The real machine. */
@@ -364,6 +377,7 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
     },
     facts: () => localFacts({ os: o.os, env: o.env, home: o.home, user: o.user, elevated: o.elevated, extraPath: o.extraPath, ember: { paths: o.ember.paths, pids: [], names: o.ember.names } }),
     inspect: (paths, cwd) => inspectPaths(paths, cwd, { os: o.os }),
+    readScript: (path, cwd) => readScriptText(path, cwd, { os: o.os }),
     gitFacts: cwd => readGitFacts(cwd, gitRunner({ os: o.os, env: o.env, extraPath: o.extraPath })),
     isDir: p => fs.promises.stat(p).then(s => s.isDirectory(), () => false),
     tracker: trackSecretPrompts,

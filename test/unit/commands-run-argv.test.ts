@@ -163,6 +163,7 @@ function harness(facts: RunnerFacts, over: Partial<RunnerDeps> = {}): Harness & 
       },
       facts: async () => facts,
       inspect: async paths => paths.map(() => ({ exists: null, real: null })),
+      readScript: async () => null,
       gitFacts: async () => null,
       isDir: async () => true,
       tracker: () => ({ output() {}, enter() {}, spans: () => [] }),

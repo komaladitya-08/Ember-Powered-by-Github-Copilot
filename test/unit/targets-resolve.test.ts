@@ -66,7 +66,6 @@ describe("targetsNamed", () => {
   it("names this computer by its fixed words, per OS", () => {
     expect(targetsNamed("do it on this computer", all)).toEqual(["local"]);
     expect(targetsNamed("open my laptop's settings", all)).toEqual(["local"]);
-    expect(targetsNamed("do it here", all)).toEqual(["local"]);
     expect(targetsNamed("here's what I want: open gedit", all)).toEqual([]);
     expect(targetsNamed("run it locally", all)).toEqual(["local"]);
     expect(targetsNamed("open Notepad on Windows", all, "win32")).toEqual(["local"]);
@@ -132,6 +131,29 @@ describe("bindTarget (§2.3)", () => {
     expect(bind("open gedit", "build-01")).toEqual({ ok: false, why: NOT_NAMED });
     expect(bind("open gedit", "This computer")).toEqual({ ok: true, id: "local" });
     expect(bind("open gedit", "build-01", "ssh:build-01")).toEqual({ ok: true, id: "ssh:build-01" });
+  });
+
+  it("never moves a task off the picker's computer for a bare \"here\" (the review: a delete announced on the wrong one)", () => {
+    const here = [
+      "check what's taking space here", "Here is what I need: check the disk usage", "delete build/ here", "what's in here",
+      "list the files in here", "Ember, come here and delete build/", "move it over here", "do it here",
+    ];
+    for (const w of here) {
+      expect(targetsNamed(w, all), w).toEqual([]);
+      expect(bind(w, undefined, "ssh:build-01"), w).toEqual({ ok: true, id: "ssh:build-01" });
+      expect(bind(w, undefined, "wsl:Ubuntu"), w).toEqual({ ok: true, id: "wsl:Ubuntu" });
+      expect(bind(w), w).toEqual({ ok: true, id: "local" });
+      // The model can't use the word to pick this computer either.
+      expect(bind(w, "This computer", "ssh:build-01"), w).toEqual({ ok: false, why: NOT_NAMED });
+    }
+    // "here" beside a named computer is the folder there, not a second computer.
+    expect(bind("on build-01, list the files here")).toEqual({ ok: true, id: "ssh:build-01" });
+    expect(bind("delete build/ here on build-01", undefined, "local")).toEqual({ ok: true, id: "ssh:build-01" });
+    // This computer's own words still move the task, and still clash with another computer's name.
+    expect(bind("delete build/ on this computer", undefined, "ssh:build-01")).toEqual({ ok: true, id: "local" });
+    expect(bind("check the disk locally", undefined, "ssh:build-01")).toEqual({ ok: true, id: "local" });
+    expect(bind("on build-01, copy the logs to this computer")).toEqual({ ok: false, why: TWO_NAMED });
+    expect(namedAnywhere("check what's taking space here", local)).toBe(false);
   });
 
   it("tells the model to offer a connection for a computer the user named that Ember doesn't know", () => {

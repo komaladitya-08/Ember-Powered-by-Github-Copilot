@@ -81,29 +81,27 @@ function isPlace(folded: string, words: readonly Word[], i: number, j: number): 
   return POSSESSIVE.test(after);
 }
 
-/** The phrases that always mean this computer (rule 4), as normalised word sequences. */
+/**
+ * The phrases that always mean this computer (rule 4), as normalised word sequences. A bare "here" is not one ("check
+ * what's taking space here" with build-01 picked means build-01, the folder or the window the user is in): it would
+ * move a task off the picker's computer, and a requested delete would be announced and run on the wrong one (review).
+ */
 function localPhrases(os: OS): string[][] {
   const out = [
     ...["computer", "pc", "mac", "laptop", "machine"].map(w => ["this", w]),
     ...["computer", "pc", "mac", "laptop"].map(w => ["my", w]),
-    ["here"], ["locally"],
+    ["locally"],
   ];
   if (os === "win32") out.push(["on", "windows"]);
   if (os === "darwin") out.push(["on", "my", "mac"]);
   return out;
 }
 
-/** Where the first fixed phrase for this computer starts in `words`, or -1 (without a bare "here" when `here` is false). */
-function localAt(folded: string, words: readonly Word[], os: OS, here = true): number {
-  const phrases = localPhrases(os).filter(p => here || p.join(" ") !== "here");
+/** Where the first fixed phrase for this computer starts in `words`, or -1. */
+function localAt(words: readonly Word[], os: OS): number {
+  const phrases = localPhrases(os);
   for (let i = 0; i < words.length; i++) {
-    for (const p of phrases) {
-      if (!p.every((w, k) => words[i + k]?.text === w)) continue;
-      const last = words[i + p.length - 1];
-      // "here's" is "here is", not a place.
-      if (p.length === 1 && p[0] === "here" && /^['’]s(?![\p{L}\p{N}])/u.test(folded.slice(last.end))) continue;
-      return i;
-    }
+    if (phrases.some(p => p.every((w, k) => words[i + k]?.text === w))) return i;
   }
   return -1;
 }
@@ -118,7 +116,7 @@ export function targetsNamed(words: string, targets: readonly NamedTarget[], os:
   const found: { id: TargetId; at: number }[] = [];
   for (const t of targets) {
     if (t.id === "local") {
-      const at = localAt(folded, ws, os);
+      const at = localAt(ws, os);
       if (at >= 0) found.push({ id: t.id, at });
       continue;
     }
@@ -138,14 +136,14 @@ export function targetsNamed(words: string, targets: readonly NamedTarget[], os:
 export function namedAnywhere(words: string, t: NamedTarget, os: OS = "linux"): boolean {
   const folded = fold(String(words ?? ""));
   const ws = wordsOf(folded);
-  if (t.id === "local") return localAt(folded, ws, os) >= 0;
+  if (t.id === "local") return localAt(ws, os) >= 0;
   return t.names.some(n => runsOf(ws, normaliseName(n)).length > 0);
 }
 
 /**
  * The known targets other than `bound` that the user's words name anywhere, by any of their names and without rule 3
  * ("build-01 delete build/" names build-01 though it binds to the active computer); this computer by its fixed words
- * other than a bare "here" ("delete it here" is where the task already is). D4.4's wrong-target guard (DOC's review):
+ * (a bare "here" is none: "delete it here" is where the task already is). D4.4's wrong-target guard (DOC's review):
  * a dangerous command in a task whose words also name another computer always asks, never announces. Names shorter
  * than MIN_NAME count too: binding ignores them, so "delete build/ on pi" binds to the active computer, and only
  * this guard stops it announcing there (a name said by accident only makes a command ask).
@@ -156,7 +154,7 @@ export function otherTargetsNamed(words: string, targets: readonly NamedTarget[]
   const out: TargetId[] = [];
   for (const t of targets) {
     if (t.id === bound || out.includes(t.id)) continue;
-    const named = t.id === "local" ? localAt(folded, ws, os, false) >= 0 : t.names.some(n => runsOf(ws, normaliseName(n), 1).length > 0);
+    const named = t.id === "local" ? localAt(ws, os) >= 0 : t.names.some(n => runsOf(ws, normaliseName(n), 1).length > 0);
     if (named) out.push(t.id);
   }
   return out;
