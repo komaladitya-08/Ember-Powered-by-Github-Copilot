@@ -270,8 +270,10 @@ describe("visibleText (critique security-10)", () => {
     expect(kinds("r\u043c -rf")).toEqual([["plain", "r"], ["mixed", "\u043c"], ["plain", " -rf"]]);
     expect(kinds("\u043f\u0440\u0438\u0432\u0435\u0442 hello")).toEqual([["plain", "\u043f\u0440\u0438\u0432\u0435\u0442 hello"]]);
     expect(kinds("\u{1d42b}m")).toEqual([["mixed", "\u{1d42b}"], ["plain", "m"]]);
-    // Japanese mixes its scripts; digits and punctuation belong to none.
-    expect(kinds("cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt")).toEqual([["plain", "cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt"]]);
+    // Japanese mixes its own scripts, and digits and punctuation belong to none; Latin letters beside them are marked
+    // like any other mix (§3.9.1).
+    expect(kinds("cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb-2.\u6587\u66f8")).toEqual([["plain", "cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb-2.\u6587\u66f8"]]);
+    expect(kinds("cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt")).toEqual([["plain", "cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb."], ["mixed", "txt"]]);
     expect(kinds("ls -la ./build-01/")).toEqual([["plain", "ls -la ./build-01/"]]);
   });
 
