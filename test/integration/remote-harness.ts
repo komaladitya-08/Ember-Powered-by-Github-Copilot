@@ -5,7 +5,7 @@
  * the PC's own gate, so each suite can send the stamps gate 2 must judge. Test-only.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -140,10 +140,10 @@ export function command(text: string, o: { cwd: string; epoch?: number; yes?: bo
 }
 
 /**
- * Runs a command through gate 2 as the PC's flow does (§3.8.3 step 13): sent as decided; a needs_confirm is "asked" (the
- * test says yes) and sent again with its rules added and the yes. Resolves with the run's answer, exit and output.
+ * Starts a command through gate 2 as the PC's flow does (§3.8.3 step 13): sent as decided; a needs_confirm is "asked"
+ * (the test says yes) and sent again with its rules added and the yes. Resolves with the started run's arguments.
  */
-export async function runThrough(link: AgentLink, text: string, o: { cwd: string; epoch?: number; timeoutMs?: number }): Promise<{ channel: number; exit: EvMap["cmd.exit"]; output: string; asked: boolean }> {
+export async function startThrough(link: AgentLink, text: string, o: { cwd: string; epoch?: number; timeoutMs?: number }): Promise<{ a: OpArgs<"cmd.run">; channel: number; asked: boolean }> {
   let a = command(text, o);
   let r = await link.request("cmd.run", a);
   let asked = false;
@@ -153,9 +153,15 @@ export async function runThrough(link: AgentLink, text: string, o: { cwd: string
     r = await link.request("cmd.run", a);
   }
   if (r.status !== "started") throw new Error(`the command was refused: ${r.status} ${"reason" in r ? r.reason : ""}`);
+  return { a, channel: r.channel, asked };
+}
+
+/** Runs a command through gate 2 (startThrough) to its end: the run's answer, exit and output. */
+export async function runThrough(link: AgentLink, text: string, o: { cwd: string; epoch?: number; timeoutMs?: number }): Promise<{ channel: number; exit: EvMap["cmd.exit"]; output: string; asked: boolean }> {
+  const { a, channel, asked } = await startThrough(link, text, o);
   const exit = await link.event("cmd.exit", d => d.runId === a.spec.runId, o.timeoutMs ?? 30_000);
-  const output = (await link.waitBytes(r.channel, exit.outBytes)).toString("utf8");
-  return { channel: r.channel, exit, output, asked };
+  const output = (await link.waitBytes(channel, exit.outBytes)).toString("utf8");
+  return { channel, exit, output, asked };
 }
 
 /** A test sshd's settings (remote.yml's jobs export them; defaults for ssh-linux). */
@@ -167,8 +173,73 @@ export function sshTarget(): { host: string; port: number; user: string | null }
   };
 }
 
-/** ssh's argv for a batch connection to the test sshd running `remote` (a fixed command line). */
+/**
+ * ssh's argv for a batch connection to the test sshd running `remote` (a fixed command line). A local run may name its
+ * own key and known-hosts file (EMBER_SSH_TEST_IDENTITY, EMBER_SSH_TEST_KNOWN_HOSTS); CI uses the runner's defaults.
+ */
 export function sshArgs(remote: string, extra: string[] = []): string[] {
   const t = sshTarget();
-  return ["-T", "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-p", String(t.port), ...extra, "--", t.user ? `${t.user}@${t.host}` : t.host, remote];
+  const own = [
+    ...(process.env.EMBER_SSH_TEST_IDENTITY ? ["-i", process.env.EMBER_SSH_TEST_IDENTITY, "-o", "IdentitiesOnly=yes"] : []),
+    ...(process.env.EMBER_SSH_TEST_KNOWN_HOSTS ? ["-o", `UserKnownHostsFile=${process.env.EMBER_SSH_TEST_KNOWN_HOSTS}`] : []),
+  ];
+  return ["-T", "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ServerAliveInterval=15", ...own, "-p", String(t.port), ...extra, "--", t.user ? `${t.user}@${t.host}` : t.host, remote];
+}
+
+/** Runs a fixed command on the test sshd (stdin from `input`); its stdout, stderr and exit code. */
+export function sshRun(remote: string, input?: Uint8Array, extra: string[] = []): { code: number | null; stdout: string; stderr: string } {
+  const r = spawnSync("ssh", sshArgs(remote, extra), { input, encoding: "buffer", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+  return { code: r.status, stdout: r.stdout?.toString("utf8") ?? "", stderr: r.stderr?.toString("utf8") ?? "" };
+}
+
+/** What the test sshd's machine is: its OS and CPU as the parts name them. */
+export function remoteTarget(): { os: "linux" | "darwin"; target: string } {
+  const r = sshRun("uname -s; uname -m");
+  const [sys, cpu] = r.stdout.trim().split("\n");
+  const os = sys === "Darwin" ? "darwin" : sys === "Linux" ? "linux" : null;
+  const arch = cpu === "x86_64" ? "x64" : cpu === "aarch64" || cpu === "arm64" ? "arm64" : null;
+  if (!os || !arch) throw new Error(`the test sshd's machine isn't one an agent runs on: ${r.stdout} ${r.stderr}`);
+  return { os, target: `${os}-${arch}` };
+}
+
+/** The remote's parts folder for `partsId`, as a shell word ($HOME expanded there). */
+export function versionsDir(os: "linux" | "darwin", partsId: string): string {
+  if (!/^[A-Za-z0-9._+-]{1,80}$/.test(partsId)) throw new Error("not a parts id");
+  return os === "darwin" ? `"$HOME/Library/Application Support/Ember Remote/versions/${partsId}"` : `"$HOME/.local/share/ember-remote/versions/${partsId}"`;
+}
+
+/** The parts built by scripts/package/remote-parts.mjs (built now when missing). */
+export function partsBuilt(): { partsId: string; targets: Record<string, { file: string; sha256: string; bytes: number }> } {
+  const json = path.join(ROOT, "dist/remote-parts/remote-parts.json");
+  if (!fs.existsSync(json)) {
+    const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/package/remote-parts.mjs")], { cwd: ROOT, stdio: "inherit", timeout: 300_000 });
+    if (r.status !== 0) throw new Error("scripts/package/remote-parts.mjs failed");
+  }
+  return JSON.parse(fs.readFileSync(json, "utf8"));
+}
+
+/**
+ * Installs a target's parts on the test sshd as the bootstrap leaves them (§5.1.9 steps 2-5): unpacked into a staging
+ * folder, every file checked against manifest.sha256 with the remote's own tool, `.verified`, then renamed into place.
+ */
+export function installParts(os: "linux" | "darwin", target: string): string {
+  const parts = partsBuilt();
+  const t = parts.targets[target];
+  if (!t) throw new Error(`no parts for ${target}`);
+  const archive = fs.readFileSync(path.join(ROOT, "dist/remote-parts", t.file));
+  const d = versionsDir(os, parts.partsId);
+  const check = os === "darwin" ? "shasum -a 256 -c -s manifest.sha256" : "sha256sum -c --quiet manifest.sha256";
+  const r = sshRun(`set -e; umask 077; d=${d}; rm -rf "$d.staging"; mkdir -p "$d.staging"; cd "$d.staging"; tar -xzf -; ${check}; touch .verified; rm -rf "$d"; mv "$d.staging" "$d"`, archive);
+  if (r.code !== 0) throw new Error(`installing the parts failed: ${r.stderr}`);
+  return parts.partsId;
+}
+
+/** Connects to an agent served over ssh from the installed parts, run by `node` (an absolute path on the remote). */
+export function connectSsh(o: { os: "linux" | "darwin"; partsId: string; node: string; pcId?: string; extra?: string[] }): AgentLink {
+  if (!/^\/[A-Za-z0-9/._+-]+$/.test(o.node)) throw new Error("the remote node's path must be absolute and plain");
+  const pc = o.pcId ?? PC_ID;
+  if (!/^[0-9a-f]{32}$/.test(pc)) throw new Error("not a PC id");
+  // As the bootstrap does: the loader's and Node's variables unset, then exec (§5.1.9).
+  const unset = "unset NODE_OPTIONS NODE_PATH NODE_DEBUG NODE_REPL_EXTERNAL_MODULE BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH";
+  return connect("ssh", sshArgs(`${unset}; exec ${o.node} --disable-sigusr1 ${versionsDir(o.os, o.partsId)}/ember-remote.cjs serve --proto 1 --pc ${pc}`, o.extra ?? []), { partsId: o.partsId });
 }
