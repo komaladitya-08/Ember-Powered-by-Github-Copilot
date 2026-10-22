@@ -20,6 +20,7 @@ import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
 import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
+import { targetRules } from "./target-rules";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -513,8 +514,8 @@ export const isRiskyLabel = (s: string, os: OS = "linux") => RISKY.test(normaliz
 /** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
 export const isRiskyControl = (role: string, name: string, os: OS = "linux") => isRiskyLabel(name, os) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
 
-/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper). */
-const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone)$/;
+/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper, the command window). */
+const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone|ember commands)$/;
 /**
  * Is this one of Ember's own windows: its process's, an app called Ember, or (when its process isn't known) a window
  * titled like one? A task never acts in them: they answer Ember's questions and hold its settings. Another program's
@@ -850,6 +851,8 @@ function runsIn(runs: Runs, text: string): Set<string> {
   }
   return found;
 }
+// What a command carries from elsewhere in its task is judged as typing is (commands/carried.ts, critique integration-17).
+export { runsIn, runsOf, type Runs };
 
 /** Text around the place a number may continue through: enough for any number written out. */
 const NUMBER_CONTEXT = 40;
@@ -2009,6 +2012,9 @@ export class PolicyEngine {
     const win = { app: r.app, name: r.window };
     const never = (reason: string): Decision => ({ tier: "never", verdict: "deny", reason, prompt: plain });
 
+    // The never-rules for other targets' windows (WSLg apps: policy/target-rules.ts) come first.
+    const extra = targetRules(r, os);
+    if (extra) return extra;
     if ((r.app || r.window) && isNeverLook(win, this.o.neverLook())) return never("this app is on the user's never-look list");
     if (r.kind === "open_app" && r.value && isNeverLook({ app: r.value, name: r.value }, this.o.neverLook())) return never("this app is on the user's never-look list");
     const securityWindow = this.o.isSecurityWindow ?? (w => isSecurityWindow(w, os));

@@ -210,6 +210,14 @@ export interface SidecarLaunch {
   firstRequestMs?: number;
   /** Windows: no console window for it (or for what it starts). */
   windowsHide?: boolean;
+  /**
+   * May a new process start now? Asked before each start (a request finding none running, or a revive); false: the
+   * request fails with "accessibility helper not running" and nothing is spawned (a WSL distro's sidecar never boots a
+   * stopped distro, §4.3). Default: always.
+   */
+  mayStart?: () => boolean;
+  /** No new process after one exits (no revive): the next request starts one, if mayStart allows (critique wsl-20). */
+  noRevive?: boolean;
 }
 
 /**
@@ -248,6 +256,8 @@ export class AtspiSidecar {
   /** stop() was called: no helper is started again on its own (see revive). */
   private stopped = false;
   private reviving = false;
+  /** The id blocks this instance's processes were given (ownsId): every one, across restarts. */
+  private blocks = new Set<number>();
 
   /**
    * `env`: the environment of the desktop to read (Ember's desk has its own display and bus). `launch`: how to start a
@@ -259,7 +269,10 @@ export class AtspiSidecar {
     const live = this.helper;
     if (live && !live.done && live.child.exitCode === null && live.child.signalCode === null) return live;
     if (live) this.retire(live, "accessibility helper stopped");
-    const base = String(++idBlocks * ID_BLOCK);
+    if (this.launch?.mayStart && !this.launch.mayStart()) throw new Error("accessibility helper not running");
+    const block = ++idBlocks;
+    this.blocks.add(block);
+    const base = String(block * ID_BLOCK);
     const child = this.launch
       ? spawn(this.launch.command, this.launch.args, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -351,11 +364,13 @@ export class AtspiSidecar {
    * a helper that never answered isn't started over and over (the next request starts one).
    */
   private revive(): void {
-    if (this.stopped || this.reviving) return;
+    if (this.stopped || this.reviving || this.launch?.noRevive) return;
     this.reviving = true;
     setTimeout(() => {
       this.reviving = false;
       if (this.stopped || this.helper) return;
+      // (A launch that may not start now, a stopped WSL distro, isn't started by a revive either.)
+      if (this.launch?.mayStart && !this.launch.mayStart()) return;
       this.log.info("sidecar.revive", {});
       this.request("status").catch(() => undefined);
     }, 0);
@@ -400,6 +415,22 @@ export class AtspiSidecar {
   private newQuickLook(): void {
     for (const id of this.scratch) this.scales.delete(id);
     this.scratch = [];
+  }
+
+  /**
+   * Was element id `id` handed out by one of this instance's processes (now or before a restart)? Every process numbers
+   * its elements from its own block, so a reader over several sidecars (WSL's router) sends an id only to its owner.
+   */
+  ownsId(id: number): boolean {
+    if (!Number.isSafeInteger(id) || id <= 0) return false;
+    const block = Math.floor(id / ID_BLOCK);
+    return id > block * ID_BLOCK && this.blocks.has(block);
+  }
+
+  /** The process running now (null when none is): Ember's own, which a command may never stop (D4.5). */
+  get pid(): number | null {
+    const h = this.helper;
+    return h && !h.done && h.child.exitCode === null && h.child.signalCode === null ? h.child.pid ?? null : null;
   }
 
   /** Physical pixels per pixel element `id` reports (1 when its window isn't HiDPI, or the id isn't known). */
