@@ -86,6 +86,11 @@ export interface CommandGateInput {
   now?: () => number;
 }
 
+/** The widening judgeScripts tags a script's findings with. */
+const IN_SCRIPT = "in-script";
+/** A finding's rule id as gate 2 asks for it and the stamp must name it: a script's findings have their own. */
+export const ruleOf = (f: Finding): string => (f.widening.includes(IN_SCRIPT) ? `${IN_SCRIPT}:${f.rule}` : f.rule);
+
 /** inspect() within INSPECT_MS, else every path "couldn't tell" (which counts as existing). */
 async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[], cwd: string): Promise<PathFact[]> {
   const unknown = paths.map((): PathFact => ({ exists: null, real: null }));
@@ -106,8 +111,9 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * own classification with its own facts and real paths (a refusal denies; root asks without a yes); then every finding
  * the stamp doesn't cover asks, carrying this machine's card lines and rules. A finding is covered when the stamp
  * names its rule and its class (never for an always-ask class: secret, escape, unclear), or, after the user's yes, its
- * rule (the PC resends with the rules a needs_confirm
- * carried once the user said yes to them, §3.8.3 step 13). An approval older than 120 s counts as none.
+ * rule (the PC resends with the rules a needs_confirm carried once the user said yes to them, §3.8.3 step 13). A
+ * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
+ * id. An approval older than 120 s counts as none.
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const { spec } = i;
@@ -159,10 +165,15 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const findings = cls.findings.filter(f => !(f.ifExists && byPath.get(f.ifExists)?.exists === false));
   // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
   // "run" or "announce" no PC should send) covers nothing of it.
-  const covered = (f: Finding) => stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls)));
+  // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that
+  // carried it, under its own rule id: the PC's rule for `rm -r build` (announced or approved) never covers the same
+  // rule inside the script it runs.
+  const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
+    ? approval !== null && stamp.rules.includes(ruleOf(f))
+    : stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
-    const rules = [...new Set(extra.map(f => f.rule))].slice(0, 64);
+    const rules = [...new Set(extra.map(ruleOf))].slice(0, 64);
     return {
       status: "needs_confirm",
       reason: extra.length ? GATE_WORDS.disagree : asks[0],

@@ -179,6 +179,27 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     expect(yes).toMatchObject({ status: "ok", approved: true });
   });
 
+  it("never lets the PC's rule for the command line cover the same rule inside the script (announced or approved)", async () => {
+    const cmd = "rm -r build && sh t.sh";
+    const there = async (paths: string[]) => paths.map((): PathFact => ({ exists: true, real: null }));
+    const pcSaw = classifyCommand(cmd, "bash", { os: "linux", home: "/home/deploy", cwd: P, ember: facts().ember, downloaded: new Set() });
+    const rules = [...new Set(pcSaw.findings.map(f => f.rule))];
+    const classes = [...new Set(pcSaw.findings.map(f => f.cls))];
+    expect(rules).toEqual(["posix.rm"]);
+    const at = (stamp: Partial<CommandStamp>) => gateCommand(input({
+      spec: spec(stamp, { command: cmd }), classify: classifyCommand, inspect: there, readScript: async () => "rm -rf /home/deploy/src\n",
+    }));
+    // "delete build/" announced `rm -r build`: the script's rm of src isn't what the user named.
+    const announced = await at({ verdict: "announce", classes, rules });
+    expect(announced).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["in-script:posix.rm"] });
+    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes /home/deploy/src and everything in it."]);
+    // A yes to the PC's card (which couldn't show the script) doesn't cover it either; a yes to this question does.
+    expect((await at({ verdict: "ask", classes, rules, approval: { ageMs: 500 } })).status).toBe("needs_confirm");
+    expect(await at({ verdict: "ask", classes, rules: [...rules, "in-script:posix.rm"], approval: { ageMs: 500 } })).toMatchObject({ status: "ok", approved: true });
+    // Without a yes, a stamp naming the script's rule covers nothing of it (no PC announces a script).
+    expect((await at({ verdict: "announce", classes, rules: [...rules, "in-script:posix.rm"] })).status).toBe("needs_confirm");
+  });
+
   it("refuses a script that touches Ember's own files here, and runs an ordinary one", async () => {
     const own = reading("bash t.sh", { [`${P}/t.sh`]: "pkill -f ember-remote\n" }, { facts: facts({ ember: { paths: [], pids: [], names: emberNamesRegExp(["ember-remote"]) } }) });
     expect((await own.gate()).status).toBe("deny");
@@ -195,7 +216,7 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     written.paths.add(`${P}/t.sh`);
     const there = async (paths: string[]) => paths.map((p): PathFact => ({ exists: p === `${P}/t.sh`, real: null }));
     const own = reading("sh t.sh", {}, { task: { downloaded: new Set(), written }, inspect: there });
-    expect(await own.gate()).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
+    expect(await own.gate()).toMatchObject({ status: "needs_confirm", rules: ["in-script:unclear.script-unread"] });
     // Nothing there: nothing to read, nothing to ask.
     expect((await reading("sh t.sh", {}, { task: { downloaded: new Set(), written } }).gate()).status).toBe("ok");
     const dl = reading("sh x.sh", {}, { task: { downloaded: new Set([`${P}/x.sh`]), written: newTaskWrites() } });
@@ -217,7 +238,7 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
       }));
       // (b.sh is there: the default inspect says every path exists.)
       await vi.advanceTimersByTimeAsync(SCRIPTS_MS);
-      expect(await own).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
+      expect(await own).toMatchObject({ status: "needs_confirm", rules: ["in-script:unclear.script-unread"] });
     } finally {
       vi.useRealTimers();
     }

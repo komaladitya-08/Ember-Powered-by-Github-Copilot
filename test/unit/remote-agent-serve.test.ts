@@ -225,7 +225,7 @@ describe("serve (§5.3, §5.4)", () => {
     // …but once the task padded and wrote t.sh, running it asks.
     expect(res(await t.m.req("cmd.run", inTask("printf '%70000s' > t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
     made.add("/home/deploy/t.sh");
-    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "needs_confirm", rules: ["unclear.script-unread"] } });
+    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "needs_confirm", rules: ["in-script:unclear.script-unread"] } });
     // Another task didn't write it.
     expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "2-u")))).toMatchObject({ ok: true, v: { status: "started" } });
     // What the task downloaded counts too: running it is escape (gate 2 judged downloads as none before).
