@@ -43,8 +43,9 @@ Or run `Ember-0.1.0-x86_64.AppImage` without installing.
 Windows asks for no permission up front. For “Hey Ember”, desktop apps must be allowed the microphone (**Settings ›
 Privacy & security › Microphone › Let desktop apps access your microphone**). Start Ember normally, not as
 administrator. Ember won't borrow the mouse and keyboard for a window of a program that runs as administrator
-(Windows would drop its input there). It never acts in Remote Desktop windows or in Linux apps that WSL shows on
-Windows, and blacks them out of its screenshots, because it can't tell what runs inside them.
+(Windows would drop its input there). It never acts in Remote Desktop windows, or in a Linux app that WSL shows on
+Windows unless WSL is turned on for Ember and it can tell which app it is, and blacks such windows out of its
+screenshots, because it can't tell what runs inside them.
 
 To check this computer, open a Command Prompt or PowerShell in the `Ember` folder and run `.\ember-doctor.cmd`.
 
@@ -109,14 +110,39 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 If another app already holds one, the setup check says which, and Ember's handle in the bottom-right corner does the
 same things. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by default.
 
+## Commands, WSL and other computers
+
+Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Each is off until
+you turn it on in settings (**Commands**, **Computers**) and accept the card that says what it means.
+
+- **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
+  them. Most run straight away. Ember stops and asks before anything that deletes or overwrites data, pushes or
+  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code; when you asked for
+  exactly that yourself, it says so and gives you 4 seconds to stop it. It never runs a command that would change its
+  own safety settings, records or programs, or press keys in its own windows.
+- **WSL**: Ember reads and uses the Linux apps WSL shows on Windows, opens them, and runs commands in your distros.
+- **Other computers**: on your click, Ember opens its own SSH connection with your SSH settings and keys, copies a
+  small helper there (about 31 MB) that runs only while it is connected, and works there: commands, and the apps on
+  that computer's screen when you are the person logged in at it, asking before every step. When it sees you `ssh`
+  somewhere, it can offer to come along. Your voice and your GitHub sign-in always stay on this computer.
+
+The same switches turn them off, and the stop shortcut stops every command at once. Administrators can turn each off,
+or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember
+older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
+has the details, including what Ember can't do yet.
+
 ## Develop
 
 ```bash
 npm ci && npm run dev      # needs Node 22 and npm 11, see docs/DEVELOPING.md
 ```
 
-- **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11)
-- [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4 §1–§9, Windows §10, macOS §11)
+- **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11; SSH, WSL and
+  commands: M12)
+- [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4 §1–§9, Windows §10, macOS §11;
+  SSH, WSL and commands §14)
+- [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md): commands, WSL and other computers, for users and administrators
+- [CHANGELOG.md](CHANGELOG.md): release notes
 - [docs/RESEARCH.md](docs/RESEARCH.md): background research and evidence
 - [docs/DESIGN.md](docs/DESIGN.md): characters, emotions and motion
 - `demo/character-lab`: interactive character prototype (`npm run build:lab`)

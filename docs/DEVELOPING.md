@@ -2,7 +2,9 @@
 
 This guide gets a development copy of Ember running. §1–§9 cover RHEL 8.4 (also Rocky, Alma and Oracle Linux 8),
 Ember's first platform; §10 covers Windows 10 and 11, §11 macOS 13 and later, §12 the platform layer the three share,
-and §13 CI. What §5 says about using Ember holds on every OS, with that OS's shortcuts (README.md has the table).
+§13 CI, and §14 working on SSH, WSL and commands. What §5 says about using Ember holds on every OS, with that OS's
+shortcuts (README.md has the table). What users and administrators see of commands, WSL and other computers is in
+[COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md).
 
 ## 1. Log in to "GNOME on Xorg"
 
@@ -137,7 +139,9 @@ task, question, borrowed mouse, desk take-over and request still being spoken at
 after it. Apps you chose "Always" for are listed in **Apps & privacy** in the settings window (with **Remove**),
 next to the never-look list, which you can edit there too. **What Ember did** lists every request, question,
 action and refusal, by day. Text the keyboard can't type (accents, other layouts) is pasted, and your clipboard is
-put back afterwards.
+put back afterwards. With commands turned on (settings' **Commands** section), a task can also run commands, in
+Ember's own **Ember commands** window rather than a terminal of yours; it asks before dangerous ones
+([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
 
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
@@ -151,7 +155,8 @@ bottom-left corner shows what it is doing. Click **Take over** to enlarge it and
 yourself (Ember pauses), then **Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
 The desk has its own clipboard, its own app settings (`~/.config/ember/desk-profiles`), only the environment its
 apps need (no tokens or keys), and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
-(§2). Ember never runs terminals there (or anywhere). LibreOffice on the desk gets a profile of its own that runs no
+(§2). Ember never opens terminals there (or anywhere: commands, when turned on, run only in its own command window).
+LibreOffice on the desk gets a profile of its own that runs no
 macros: document macros, the macro editors and runners (the Basic IDE), extension installs and Tools > Options are
 switched off.
 
@@ -224,6 +229,9 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Speech models (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
+| Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
+| SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
+| Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 
 Environment variables for development:
 
@@ -234,6 +242,8 @@ Environment variables for development:
 | `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
+| `EMBER_TEST_ALLOW_LOOPBACK_SSH=1` | Development only: lets Ember connect over SSH to this same computer (`127.0.0.1`), for the SSH tests (§14.5) |
+| `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json`
 (matched against app name and window title; password managers and polkit are listed by default).
@@ -272,6 +282,13 @@ no listening) until it is fixed, and says so in its settings window. Every key i
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
 | `auditRetentionDays` | How long the audit log is kept (default 30) |
+| `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
+| `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |
+| `ssh` | Allowed hosts, no remote desktop, console consent, a Node.js mirror, the command grace |
+
+The last three are explained in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §6. A policy that exists but doesn't
+mention `commands` turns commands off. An Ember older than the release that added these keys reads them as a mistake
+and locks down, so update Ember before deploying a policy that uses them.
 
 Audit lines also go to the system journal: `journalctl -t ember-audit`. `/etc/ember/policy.json` must belong to root
 and be writable only by root, or Ember locks down. In a development checkout, `EMBER_ADMIN_POLICY=/path/to/policy.json`
@@ -585,6 +602,8 @@ its AppUserModelId, `io.github.komaladitya08.ember`.
 | Audit log (the file only: no copy goes to a system log) | `%LOCALAPPDATA%\ember\audit\audit-YYYY-MM.jsonl` |
 | Speech models | `%LOCALAPPDATA%\ember\models\`, or bundled: `Ember\resources\voice-models`, then `%ProgramData%\Ember\voice-models` |
 | The compiled accessibility helper | `%LOCALAPPDATA%\ember\uia-cache\` |
+| SSH's compiled password helper (OpenSSH 8.4 or newer) | `%LOCALAPPDATA%\ember\ssh\ember-askpass.exe` |
+| Node.js downloaded for other computers | `%LOCALAPPDATA%\ember\remote\runtime\` |
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
 
@@ -677,11 +696,23 @@ Desktop sessions, and WSLg, which draws each Linux app as an `msrdc` window), `m
 RemoteApp windows too), `msrdcw`, `Windows365` (the Windows App) and `RdClient.Windows` (the Store's Remote Desktop
 app). Ember names a window by its program, so to Ember whatever runs inside one, a Linux terminal, a password prompt
 or a whole remote desktop, is just "msrdc" or "mstsc": its terminal, security-window and never-look checks can't see
-in, and one grant would cover every Linux app. Until WSL support can identify the app inside, Ember refuses every
-action in these windows ("Ember can't tell what's inside a remote window…") and blacks them out of every screenshot.
-Reading their titles is unchanged. Other remote viewers (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't
-covered yet. The rule is `app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no Windows CI run
-has included it yet); Linux and macOS are unaffected.
+in, and one grant would cover every Linux app. So Ember refuses every action in these windows ("Ember can't tell
+what's inside a remote window…") and blacks them out of every screenshot. Reading their titles is unchanged. Other
+remote viewers (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't covered yet. The rule is
+`app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no Windows CI run has included it yet); Linux
+and macOS are unaffected.
+
+With WSL turned on for Ember (§14), WSLg's windows are identified instead: `app/main/wsl/rail.ts` tells WSLg's `msrdc`
+from a Remote Desktop client's by its program's path (`isWslgImage`), a helper inside the distro reads the Linux apps
+over AT-SPI, and `app/main/wsl/match.ts` pairs each RAIL window with its Linux window. A matched window's app becomes
+`wsl:<distro>:<program>` ("gedit (Ubuntu)" to the user) everywhere Ember names windows, so grants, never-look, the
+terminal and security-window checks apply to the Linux app itself, and it is no longer a remote surface. A window
+that can't be matched (no helper, no session bus, an app without AT-SPI such as xterm, two windows Ember can't tell
+apart) keeps "msrdc" and stays refused and blacked out; its title is then judged by the Linux vocabulary too (a Linux
+"Authentication Required" title is a security window). The borrowed mouse and keyboard stay refused in every WSLg
+window (`app/main/policy/target-rules.ts`) until the Windows backend checks a RAIL window's owner chain and types by
+scancode there. The Windows X servers `vcxsrv`, `x410`, `xming`, `xwin` (Cygwin/X) and `gwsl` join the remote
+surfaces: their windows are Linux apps Ember can't identify.
 
 ### 10.9 Troubleshooting
 
@@ -862,6 +893,7 @@ Gatekeeper does on first start.
 | Logs | `~/Library/Application Support/ember/logs/ember.log` |
 | Audit log (the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
+| SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
 | **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
 
 A copy run from the dmg or from Downloads is moved by macOS to a temporary place before it starts (App Translocation),
@@ -975,10 +1007,163 @@ To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run
 The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
 testable on this runner: <reason>", and PLAN.md §9 item 7 keeps it for a real machine.
 
+## 14. Working on SSH, WSL and commands
+
+What users and administrators see is in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md); this section is for changing the
+code. A task acts on one **target**: `local`, `wsl:<distro>` or `ssh:<host id>`. Ember's brain (Copilot, the
+conductor and workers, the bubble, questions, voice and the GitHub token) always stays on the PC; a WSL distro or a
+computer reached over SSH is eyes, hands and a command runner. PLAN.md M12 lists the packages and their state.
+
+### 14.1 Where the code lives
+
+| Folder | What it holds |
+|---|---|
+| `app/main/targets/` | The targets runtime (`runtime.ts`, the only part main calls): the registry of computers (`registry.ts`), naming a computer from the user's own words and binding a task to it (`resolve.ts`), each target's hands and command service, the handle menu's part, the first-use consent cards (`consent.ts`), noticing the user's own `ssh` (`offer.ts`), quick context, the settings window's channel and the check-up rows (`doctor.ts`) |
+| `app/main/commands/` | Commands on every target: the contract (`types.ts`); the classifier (`lex-posix.ts`, `lex-powershell.ts`, `lex-cmd.ts`, `tables.ts`, `paths.ts`, `classify.ts`), the intent matcher (`intent.ts`) and the decision (`decide.ts`); output shaping (`output.ts`, `redact.ts`, `prompts.ts`, `taint.ts`); `run_command`'s flow (`flow.ts`, with `carried.ts`) and the command window's controller (`window.ts`) |
+| `app/main/commands/run/` | Running a command: the fixed launchers (`shells.ts`: the command text travels in `EMBER_CMD`, never on any argv), the environment, the local runner (`local.ts`), the stop ladder and the sweep, and the Windows job host (`job-host.ts`: Ember's binary in Node mode holding a kill-on-close job object, so Stop ends the whole tree) |
+| `app/main/wsl/` | WSL discovery from the registry and `wsl.exe`, never starting a distro (`discover.ts`, `lxss.ts`, `decode.ts`), the WSL runner (`runner.ts`), the `wsl` check-up row (`doctor.ts`), and the WSLg layer: the router over UIA and each distro's AT-SPI helper (`router.ts`, `routed-sidecar.ts`, `routed-windows.ts`, `launch-sidecar.ts`), window matching (`match.ts`), RAIL identification (`rail.ts`), Start-menu launching (`apps.ts`) and the joined vocabularies (`privacy.ts`) |
+| `app/main/remote/` | The PC's side of SSH: the protocol's schemas (`protocol.ts`), the framed stream both ends share (`mux.ts`), the link's worker thread (`link-worker.ts`), connections (`connections.ts`), ssh's argv, configuration and errors, the bootstrap script (`scripts/bootstrap.sh`), the install plan and the same-machine check, the Node.js download, the askpass server, noticing ssh (`notice-ssh.ts`), the prompt window's controller (`prompt-window.ts`), and the remote target's perception, accessibility, apps and runner (`target.ts`, `remote-*.ts`) |
+| `app/remote/` | `ember-remote`, the agent Ember runs on a computer reached over SSH (plain Node 24, `main.ts`): the protocol loop, gate 2 (its own re-check of every step and command), desktop discovery and the desktop child, PNG capture, the single-instance lock, liveness, and the remote's own policy and audit |
+| `app/askpass/` | `askpass.cjs`, which ssh runs to ask for a password on a Linux or macOS PC (the answer comes from Ember's prompt window over a Unix socket made for that one ssh run) |
+| `app/renderer/command/`, `app/renderer/prompt/` | The command window (xterm.js, no add-ons) and the prompt window (host keys, passwords, consent cards) |
+| `app/shared/targets.ts`, `commands.ts`, `consent.ts`, `remote-ui.ts`, `visible-text.ts` | Target ids and summaries; the two windows' IPC names and types; the consent cards' versions (`FEATURE_CONSENT_VERSION`); `visibleText`, which shows every invisible character of a command |
+| `app/main/policy/target-rules.ts` | The policy's one seam for refusals that depend on the target (the borrowed mouse in WSLg windows) |
+| `sidecar/atspi/ember_atspi.py` | Also runs inside a WSL distro, with `EMBER_ATSPI_FIND_BUS=1` (finding the session bus the Linux apps use); without the variable it is the Linux sidecar, unchanged |
+| `sidecar/notice/ember_notice.py` | The notice with **Stop** on a remote's screen while Ember uses it |
+
+### 14.2 Builds and packages
+
+`npm run build` also builds `dist/app/askpass.cjs`, `dist/app/remote-link.cjs` (the link worker) and
+`dist/app/job-host.cjs`, the `command` and `prompt` pages, and the remote agent: `dist/remote/ember-remote.cjs`, with
+esbuild's metafile in `dist/remote/meta.json`. The agent's bundle takes `app/remote/capture-stub.ts` wherever code
+imports `app/main/perception/capture.ts`, so sharp isn't in it, and `test/unit/remote-agent-build.test.ts` checks from
+the metafile that nothing from Electron, sharp, the Copilot SDK, Node's network modules, the renderers or the
+PC-only folders is in it. `@xterm/xterm` 5.5.0 (MIT, pinned exactly, renderer only) is the one dependency this work
+added.
+
+What a remote runs is packaged per target (`linux-x64`, `linux-arm64`, `darwin-arm64`, `darwin-x64`):
+`scripts/package/remote-parts.mjs` writes `ember-remote-parts-<partsId>-<target>.tar.gz` and `remote-parts.json` into
+`dist/remote-parts/` with its own deterministic tar writer (the same bytes on every OS), every `package*` script runs
+it, and `stage.mjs` copies the folder to `resources/remote-parts/`, refusing to stage without it unless
+`--allow-missing-remote-parts` is given. `scripts/package/remote-runtime.json` pins the Node.js 24 release remotes run
+(`pinned`, `minimum`, and each target's file, size and SHA-256 from that release's signed `SHASUMS256.txt`); the PC
+downloads it on first use per target and checks it before sending.
+
+### 14.3 Rules for this code
+
+- **Electron** may be imported only in `main.ts`, `windows.ts`, `overlay.ts`, `handle.ts`, `ask.ts`, `voice.ts`,
+  `revive.ts`, `desk/view.ts` and the preloads; ESLint enforces it. The two new windows' factories are in
+  `windows.ts`, and their controllers take the window by injection.
+- **What a remote runs loads under plain Node**: nothing in the agent's import graph reaches Electron (the bundle
+  test). **koffi loads lazily**, inside the function that needs it, in `app/main/commands/**`, `app/main/wsl/**`,
+  `app/main/remote/**` and `app/remote/**`: a macOS remote ships no koffi, so a top-level import would crash the agent
+  there. Never `koffi.view()`.
+- **A target's paths use the target's rules**: `node:path/posix` or `node:path/win32`, or `resolveTargetPath`, never
+  `node:path`, in `app/main/commands/**`, `app/main/wsl/runner.ts`, `app/main/wsl/service.ts`, `app/main/remote/**`
+  and `app/remote/**` (ESLint enforces it): a Windows PC runs commands on Linux targets.
+- **Nothing on an argv that a user or a remote wrote**: commands travel in the environment, WSL's fixed scripts on
+  stdin, ssh's destination after `--`. Nothing secret is written on a remote. No network listener anywhere: askpass
+  and the remote's helpers use local IPC only (a 0600 Unix socket in a 0700 folder; a named pipe that admits only the
+  user's SID).
+- **Fail closed**: an unknown target, a malformed message from a remote or a distro, an unverifiable bundle, a policy
+  that can't be read, or a command that can't be shown exactly as it will run is refused, saying why in plain words.
+- **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
+  exact texts (`persona-commands.test.ts`), the terminal words are unchanged unless WSL is on, and Linux, Windows and
+  macOS behave as before.
+- **Consent**: `CONSENT_VERSION` stays 1. The three cards (WSL, SSH per host, commands per target) carry their own
+  versions in `FEATURE_CONSENT_VERSION` (`app/shared/consent.ts`): changing a card's text means bumping its version,
+  which asks that card again and nothing else. A card's text is hashed with the OS's stop chord already in it, and a
+  yes counts only with that hash.
+
+### 14.4 Tests and CI
+
+**Unit tests are OS-neutral.** They run on Linux here and in the Windows and macOS CI jobs, so spawn, the file
+system, `/proc`, koffi, timers and the environment come in as fakes or parameters: never read `process.env` or
+`process.platform`, never touch the real file system outside a temporary folder, never spawn `script`, `sh`, `ssh`,
+`wsl.exe` or PowerShell, and give the path flavour (`os`) explicitly. vitest runs with `environment: "node"`, so test
+renderer logic through exported pure modules (state reducers, option objects), never a DOM or xterm. Name the files
+`test/unit/{sshwsl,commands,wsl,ssh,remote,targets,command,prompt,askpass,visible-text}*`: those are what the
+`unit-matrix` job runs on every OS. The classifier's cases live in `test/fixtures/commands/{posix,powershell,cmd,wsl}.json`;
+add one with every fix.
+
+**Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
+variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
+unchanged. Pushes to `ember-improve/20261022-sshwsl-*` branches run every group but macOS; **Actions › remote › Run
+workflow** (or `gh workflow run remote.yml --ref <branch> -f only=ssh`) takes `ref` and `only` (`all`, `unit`,
+`commands`, `wsl`, `ssh`, `macos`, `wayland`); the macOS job runs only when dispatched and on Mondays, its minutes
+costing ten times Linux's. A suite named in a job that doesn't exist yet is skipped (`run-integration.mjs
+--allow-missing`). Each job's set-up belongs to the package named above it in the workflow.
+
+| Job | Runner | Suites (`test/integration/…`) | Variables |
+|---|---|---|---|
+| `unit-matrix` | `ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched | the SSH/WSL unit files | — |
+| `commands-linux`, `commands-linux-el8` | `ubuntu-24.04`; a `rockylinux:8` container (util-linux 2.32), as a normal user | `commands-local` | `EMBER_COMMANDS_TEST` |
+| `ssh-linux` | `ubuntu-24.04`, sshd on 127.0.0.1:2222 and a jump host on 2223 | `ssh-transport`, `remote-ssh`, `remote-desktop` (under Xvfb) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_REMOTE_DEV` (desktop) |
+| `ssh-el8` | a `rockylinux:8` container as the remote | `remote-el8` | `EMBER_SSH_TEST` |
+| `wayland-remote` | `ubuntu-24.04`, headless mutter | `remote-wayland` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
+| `wsl-windows` | `windows-2022`, Ubuntu 22.04 as WSL 1 with sshd | `wsl`, `commands-local` (PowerShell), `ssh-windows` | `EMBER_WSL_TEST`, `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST` |
+| `wsl2-windows` | `windows-2025`, WSL 2 with a non-root default user | `wsl` | `EMBER_WSL_TEST` |
+| `wslg-probe` | `windows-2025` | `wslg-probe`: records what WSLg looks like as artefacts, never passes or fails | `EMBER_WSL_TEST` |
+| `ssh-macos` | `macos-15` | `commands-local`, `remote-ssh` (commands only) | `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST_MACOS` |
+
+Hosted runners can't show another user's desktop session, real logind sessions (desktop discovery is tested with
+captured real `loginctl` and `busctl` output), macOS TCC, Windows remotes, NFS homes, real network loss, fapolicyd, or
+WSLg if the probe finds none: PLAN.md §9 item 8 keeps them for real machines.
+
+### 14.5 Running the suites yourself
+
+Build first (`npm run build`). Never point a test at another computer: the SSH suites connect only to this one.
+
+- **Commands** on Linux or macOS, as a normal user (as root every command asks); the Linux PTY path needs util-linux's
+  `script`:
+
+  ```bash
+  EMBER_COMMANDS_TEST=1 node scripts/run-integration.mjs test/integration/commands-local.test.ts
+  ```
+
+- **SSH** on Linux: start an sshd of your own on 127.0.0.1:2222 (and a second on 2223 as the jump host) with your key
+  authorised, add both host keys to `~/.ssh/known_hosts` and the `ember-master` and `ember-jumped` aliases to
+  `~/.ssh/config`, exactly as the `ssh-linux` job's set-up step does, then:
+
+  ```bash
+  EMBER_SSH_TEST=1 EMBER_TEST_ALLOW_LOOPBACK_SSH=1 node scripts/run-integration.mjs \
+    test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts
+  EMBER_SSH_TEST=1 EMBER_TEST_ALLOW_LOOPBACK_SSH=1 EMBER_REMOTE_DEV=1 \
+    dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" \
+    node scripts/run-integration.mjs test/integration/remote-desktop.test.ts
+  ```
+
+  They connect to your own account, so Ember's helper lands in your home folder; COMMANDS-WSL-SSH.md §4.7 says how to
+  remove it. `EMBER_TEST_ALLOW_LOOPBACK_SSH` lets Ember connect to this same computer, and only an unpackaged Ember
+  honours it; `EMBER_REMOTE_DEV` lets the agent run from `dist/remote` instead of a verified install, and an installed
+  agent ignores it.
+- **WSL** on Windows (Git Bash), with a distro that has a normal default user; the suite runs commands in it, which
+  starts it if it is stopped:
+
+  ```bash
+  EMBER_WSL_TEST=1 EMBER_WSL_TEST_DISTRO=Ubuntu-22.04 node scripts/run-integration.mjs test/integration/wsl.test.ts
+  ```
+
+  The `EMBER_WSL_EXPECT_*` variables the CI jobs set are optional: each pins one more fact about their distros.
+
+### 14.6 The policy, and Embers older than these keys
+
+`admin.ts` holds the new keys (`features.wsl`, `features.ssh`, `commands`, `ssh`) and the pure functions every side
+uses: `commandMode` (no policy: on; a policy without `commands`: off; a broken one: off), `adminSummary`, `combineAdmin`
+(each value the stricter of the PC's and a remote's, property-tested never to loosen either), `hostAllowed`, and
+`ADMIN_POLICY_PATHS` (the Linux and macOS files, which the remote agent reads). `LOCKDOWN` turns WSL, SSH and commands
+off. The schema is strict, so **an Ember from before these keys locks down when it reads a policy that uses them**:
+that is the intended fail-closed behaviour, and why CHANGELOG.md tells administrators to update Ember first. Any key
+added later has the same effect on the Embers before it: say so in the release notes.
+
 ## Repository layout
 
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
+  targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
+  commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
+  wsl/              WSL discovery, the WSL runner, the WSLg router and matcher
+  remote/           the PC's side of SSH: protocol, mux, link worker, connections, askpass, the remote target
   platform/         everything that differs by OS (§12): types.ts (the contract), index.ts (loadPlatform), compose.ts
                     (what the compositions share), which.ts, os.ts
     linux/          adapters over the X11 modules (x11.ts, xshape.ts, hands/*, the desk), behaving as before
@@ -986,15 +1171,19 @@ app/main/           Electron main process (settings, logging, environment checks
                     system/: apps (with a .lnk reader), registry, admin policy, login item, setup checks, check-up rows
     darwin/         window system and input over CoreGraphics, AX and CoreFoundation (koffi), desktopCapturer capture;
                     platform.ts composes macOS; system/: apps (with a plist reader), policy, login item, permissions
+app/remote/         ember-remote, the agent Ember runs on a computer reached over SSH (plain Node 24)
+app/askpass/        SSH's askpass helper for Linux and macOS PCs
 app/sidecar-host/   the Windows and macOS accessibility host (dist/app/ax-sidecar.cjs, Ember's binary in Node mode):
                     protocol, ids, secrets, labels, roles, launch.ts; providers/uia.ts (the bridge's client),
                     providers/ax-darwin*.ts (macOS AX), providers/fake.ts (tests)
-sidecar/atspi       Python accessibility helper (Linux: reads app controls over AT-SPI)
+sidecar/atspi       Python accessibility helper (Linux, and inside WSL distros: reads app controls over AT-SPI)
+sidecar/notice      the notice with Stop on a remote's screen while Ember uses it
 sidecar/uia         UI Automation bridge (Windows): ember_uia.ps1 (the bootstrap), ember_uia.cs (C# 5), PROTOCOL.md
 app/voice           wake word, VAD and speech recognition (runs in a utility process)
 app/preload/        contextBridge APIs, one per window
-app/renderer/       window pages (home, overlay, handle, ask, mic, desk)
-app/shared/         IPC channel names and types; per-OS tables: shortcuts.ts, words.ts, never-look.ts, apps.ts
+app/renderer/       window pages (home, overlay, handle, ask, mic, desk, command, prompt)
+app/shared/         IPC channel names and types; per-OS tables: shortcuts.ts, words.ts, never-look.ts, apps.ts;
+                    targets, commands, consent versions, the prompt window's cards
 packages/characters Ember's characters and the shared emotion rig
 packages/bubble     reasoning bubble
 packages/motion     follow spring and flight path
@@ -1003,7 +1192,7 @@ scripts/            build, RHEL 8 rebuild, binary checks, run-integration.mjs, p
                     layout.mjs per target, stage, archive, fuses, exe-resources, mac-bundle, tcc)
 packaging/          RPM spec, launcher, menu entry, example admin policy; windows/ember-doctor.cmd
 test/unit           Vitest tests;  test/smoke  launch test
-test/integration    real runtime, AT-SPI, and the Windows and macOS desktops
+test/integration    real runtime, AT-SPI, the Windows and macOS desktops, and commands, WSL and SSH (§14.4)
 test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_bench.ps1), the macOS bench
                     (mac_bench.js), plist samples, voice clips;  test/demo  recorded tours
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
