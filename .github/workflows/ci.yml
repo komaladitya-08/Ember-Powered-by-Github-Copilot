@@ -241,8 +241,10 @@ jobs:
       - run: npm run build
       - name: The UI Automation bridge compiles with Windows PowerShell 5.1's C# 5 compiler, as Ember runs it
         if: hashFiles('sidecar/uia/ember_uia.cs') != ''
-        shell: powershell
+        # Windows PowerShell 5.1 (powershell.exe), not pwsh: its Add-Type compiles C# 5 with .NET Framework's csc.
+        shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
         run: |
+          $ErrorActionPreference = "Stop"
           if ($PSVersionTable.PSVersion.Major -ne 5) { throw "this must be Windows PowerShell 5.1, not $($PSVersionTable.PSVersion)" }
           Add-Type -Path sidecar/uia/ember_uia.cs -ReferencedAssemblies UIAutomationClient,UIAutomationTypes,WindowsBase,System.Web.Extensions
           "compiled sidecar/uia/ember_uia.cs with PowerShell $($PSVersionTable.PSVersion)"
