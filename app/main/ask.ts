@@ -136,7 +136,8 @@ export class AskWindow {
     this.o.onReveal?.(this.source);
     win.show();
     win.focus();
-    this.o.takeFocus?.(this.idOf(win));
+    // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
+    try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
     this.sendContext();
   }
 

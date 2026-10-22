@@ -86,6 +86,18 @@ describe("the ask box's window id", () => {
     expect(ask.isWindow(0x3a00007)).toBe(false);
   });
 
+  it("still shows the box with its context when giving it the keyboard throws (best effort, as it always was)", () => {
+    const ask = new AskWindow({ takeFocus: () => { throw new Error("no window manager"); } });
+    ask.prepare();
+    const win = made[0]!;
+    const sent: string[] = [];
+    (win as unknown as { webContents: { send: (channel: string) => void } }).webContents.send = channel => { sent.push(channel); };
+    win.emit("ready-to-show");
+    expect(() => ask.show({ x: 400, y: 300 })).not.toThrow();
+    expect(win.visible).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
   it("is the X id by default, as on Linux before (and a handle that reads 0 is no window)", () => {
     const { ask, win, focused } = shownBox();
     expect(focused).toEqual([0x3a00007]);

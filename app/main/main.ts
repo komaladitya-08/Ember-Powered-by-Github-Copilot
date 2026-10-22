@@ -199,10 +199,13 @@ async function runDoctor(): Promise<void> {
   }
   const models = voiceModelsRoot();
   const probes = await sys.doctorProbes();
+  // Input that can't reach apps counts as missing. Asked about the window the user is in, not window 0: macOS answers
+  // for every window at once (the Accessibility permission, secure input), while Windows refuses a window it can't
+  // check, and 0 is never one, so every Windows check-up would say input was missing. Linux has no such question.
+  const blocked = ws && input?.blockedReason ? input.blockedReason(ws.activeWindow()?.id ?? 0) : null;
   const checks = doctorChecks({
     os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
-    // Input that can't reach apps (macOS without the Accessibility permission) counts as missing.
-    xtest: ws ? !!input && !input.blockedReason?.(0) : null,
+    xtest: ws ? !!input && !blocked : null,
     speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
     runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers, extra: probes.extra,
@@ -253,7 +256,8 @@ function start(): void {
     sys.lifecycle.focusOwnApp();
     if (sys.lifecycle.activateOwnWithInput) {
       const id = ownId(win);
-      if (id) inputRef?.activate(id);
+      // Best effort, as it always was: the window is shown and focused either way.
+      try { if (id) inputRef?.activate(id); } catch { /* the window manager wasn't asked */ }
     }
   };
   const showHome = () => {
@@ -300,8 +304,6 @@ function start(): void {
     log.info("instance.second", {});
     showHome();
   });
-  // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second.
-  if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHome());
 
   // No page may open windows or navigate away from our bundled files.
   app.on("web-contents-created", (_e, contents) => {
@@ -1442,7 +1444,9 @@ function start(): void {
       modelsRoot: speechModels.root,
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
-      micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open ${sys.words.settingsApp} › Privacy & security › Microphone.` : undefined,
+      // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
+      // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
+      micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
       onState: (state, detail) => {
         setState({ mic: state });
@@ -1476,6 +1480,10 @@ function start(): void {
     if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
+    // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
+    // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
+    // open settings over the decision just made.
+    if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHome());
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {

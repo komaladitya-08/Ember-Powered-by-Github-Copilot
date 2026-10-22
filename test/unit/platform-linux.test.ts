@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { loadPlatform } from "../../app/main/platform";
 import { linuxDesk } from "../../app/main/platform/linux/desk";
 import { DeskManager } from "../../app/main/desk/desk";
@@ -136,7 +137,8 @@ describe("the Linux platform", () => {
     expect(sys.os).toBe("linux");
     expect(sys.shortcuts).toBe(SHORTCUTS.linux);
     expect(sys.chromiumSwitches).toEqual(["enable-speech-dispatcher"]);
-    expect(sys.paths.userData("/home/u/.config", "/home/u")).toBe("/home/u/.config/ember");
+    // "/home/u/.config/ember" on Linux; path.join's own separators where this suite also runs (Windows CI).
+    expect(sys.paths.userData("/home/u/.config", "/home/u")).toBe(path.join("/home/u/.config", "ember"));
     expect(sys.fixes.ids).toEqual(["enable-accessibility"]);
     expect(sys.lifecycle.sessionEnd).toBeNull();
     expect(sys.lifecycle.appMenu).toBe(false);
