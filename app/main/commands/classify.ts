@@ -617,7 +617,18 @@ export function writesUnnamedFiles(key: string, args: readonly Arg[]): boolean {
       const c = vs.find(v => v === null || !v.startsWith("-"));
       return c === null || /^[xe]$/i.test(c ?? "");
     }
-    case "jar": case "ar": return vs[0] === null || /^-?[A-Za-z]*x/.test(vs[0] ?? "");
+    case "jar": return vs[0] === null || /^-?[A-Za-z]*x/.test(vs[0] ?? "") || opt(/^--extract$/);
+    case "ar": {
+      // The operation is the first word that isn't a long option (GNU ar takes --plugin P, --output D before it).
+      for (let k = 0; k < vs.length; k++) {
+        const v = vs[k];
+        if (v === null) return true;
+        if (v === "--plugin" || v === "--output" || v === "--target") { k++; continue; }
+        if (v.startsWith("--")) continue;
+        return /^-?[A-Za-z]*x/.test(v);
+      }
+      return false;
+    }
     case "cpio": return opt(/^-[A-Za-z]*i|^--extract/);
     case "pax": return opt(/^-[A-Za-z]*r/);
     case "patch": return !vs.includes("--dry-run");
@@ -688,9 +699,12 @@ export function unnamedWriteFolders(key: string, args: readonly Arg[], sc: Pick<
       }
       return into(dirs);
     }
-    case "ar":
-      // ar keeps a member's base name only, in the folder it runs in (P: the full name of a thin archive's member).
-      return /P/.test(vs[0] ?? "") ? null : [cwd];
+    case "ar": {
+      // ar keeps a member's base name only, in the folder it runs in (P: the full name of a thin archive's member;
+      // GNU ar's --output: a folder Ember doesn't follow).
+      const op = vs.find((v, k) => !v.startsWith("--") && !["--plugin", "--output", "--target"].includes(vs[k - 1] ?? "")) ?? "";
+      return /P/.test(op) || vs.some(v => /^--output\b/.test(v)) ? null : [cwd];
+    }
     case "gunzip": case "bunzip2": case "unxz": case "unzstd": case "unlzma": case "uncompress": case "unlz4":
     case "gzip": case "bzip2": case "xz": case "zstd": case "lzma": case "lz4": {
       // Each file's folder (a pattern's too, when only its name is a pattern); none for stdin to stdout.
@@ -699,6 +713,8 @@ export function unnamedWriteFolders(key: string, args: readonly Arg[], sc: Pick<
       for (let k = 0; k < vs.length; k++) {
         const v = vs[k];
         if (v === "-S" || v === "--suffix") { k++; continue; }
+        // zstd's --output-dir-flat and --output-dir-mirror: a folder Ember doesn't follow.
+        if (/^--output-dir/.test(v)) return null;
         if (v === "--") { files.push(...vs.slice(k + 1)); break; }
         if (!v.startsWith("-")) files.push(v);
       }
