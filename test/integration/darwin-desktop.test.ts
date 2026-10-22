@@ -2,7 +2,8 @@
  * The macOS window system and input backends on a real Mac, against TextEdit with a fresh plain-text file in a
  * temporary folder: TextEdit's window is in the stack with its process and app name, activation brings it to the
  * front (through LaunchServices when macOS declines a background activation), text typed with textKey (whatever the
- * layout) arrives, Command+S pressed by keysym saves it, the pointer follows a move, and nothing stays pressed.
+ * layout) arrives (read back over AX), Command+S pressed by keysym saves it, the pointer follows a move, and nothing
+ * stays pressed.
  * Without the Accessibility permission only the checks that need none run; with EMBER_DARWIN_TEST=1 the suite fails
  * instead of skipping (off macOS, without the backends, or without the permission), printing which binary needs the
  * grant so CI learns which client TCC wanted.
@@ -11,7 +12,8 @@
  * Recording), the input source, whether secure input can be read, that no security prompt is up at rest, the median
  * cost of a borrow's polling calls, and whether a key another process posts shows in keysDown() (Input Monitoring
  * may gate it: design §8.5, Q10). When TextEdit's window doesn't show up, it prints every window of TextEdit's
- * process (on screen or not, any layer), what AX sees of the app and what is on screen, instead of a bare timeout.
+ * process (on screen or not, any layer), what AX sees of the app and what is on screen, nudges it (unhide, open the
+ * file again, and as a last resort an untitled document, with a warning) and fails with that report after 45 s.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -79,13 +81,13 @@ function displayScreen(): ScreenLike {
   return { getPrimaryDisplay: () => all[0] ?? { bounds: { x: 0, y: 0, width: 0, height: 0 }, scaleFactor: 1 }, getAllDisplays: () => all };
 }
 
-/** Polls `fn` until it gives something truthy, or fails after `ms` saying what was awaited. */
-async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, what: string): Promise<T> {
+/** Polls `fn` until it gives something truthy, or fails after `ms` saying what was awaited (and what it found). */
+async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, what: string | (() => string)): Promise<T> {
   const until = Date.now() + ms;
   for (;;) {
     const v = fn();
     if (v) return v;
-    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > until) throw new Error(`timed out waiting for ${typeof what === "string" ? what : what()}`);
     await sleep(50);
   }
 }
@@ -140,6 +142,30 @@ function axReport(pid: number): Record<string, unknown> {
     systemFrontmostPid: cf.own(ax.element(ax.systemWide()!, "AXFocusedApplication"), a => ax.pid(a)),
   })) ?? { ax: "no application element" };
 }
+
+/** The AX title of window `id` of the app `pid` ("" when AX can't say). */
+function axTitle(pid: number, id: number): string {
+  const cf = openCoreFoundation();
+  const ax = cf ? openAX(cf) : null;
+  if (!cf || !ax) return "";
+  return cf.own(ax.application(pid), app => ax.withElements(app, "AXWindows", items =>
+    items.filter(w => ax.windowId(w) === id).map(w => ax.string(w, "AXTitle", 200) ?? "")[0] ?? "")) ?? "";
+}
+
+/** The focused element as AX sees it system-wide: its text and selection (what TextEdit's text view holds). */
+function focusedText(): { value: string | null; selected: { location: number; length: number } | null } {
+  const cf = openCoreFoundation();
+  const ax = cf ? openAX(cf) : null;
+  const system = ax?.systemWide();
+  if (!cf || !ax || !system) return { value: null, selected: null };
+  return cf.own(ax.element(system, "AXFocusedUIElement"), el => {
+    const range = ax.value(el, "AXSelectedTextRange");
+    return { value: ax.string(el, "AXValue", 1000), selected: range?.type === "range" ? { location: range.location, length: range.length } : null };
+  }) ?? { value: null, selected: null };
+}
+
+/** A warning the CI log shows as one (an annotation on GitHub Actions). */
+const warn = (text: string) => console.log(`${process.env.GITHUB_ACTIONS === "true" ? "::warning::" : "warning: "}${text}`);
 
 /** Everything that tells why TextEdit's window isn't on screen, for the CI log. */
 function textEditReport(ws: DarwinWindowSystem, pid: number, opened: string): string {
@@ -310,6 +336,10 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       let file = "";
       let pid = 0;
       let win = 0;
+      /** The window's AX title ("ember.txt", or "ember" with extensions hidden; "Untitled" for the last resort). */
+      let title = "";
+      /** The window is the temporary file's (else an untitled document: the last resort, with a warning). */
+      let fromFile = true;
 
       beforeAll(async () => {
         dir = mkdtempSync(join(tmpdir(), "ember-darwin-"));
@@ -317,9 +347,9 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
         writeFileSync(file, "");
         const before = new Set(textEditPids());
         // A new TextEdit (-n), launched fresh without restored windows (-F), opening the file; plain text read and
-        // written as UTF-8, no automatic corrections, and untitled documents rather than the iCloud open panel.
+        // written as UTF-8, no automatic corrections, and plain-text untitled documents rather than the iCloud open panel.
         const args = ["-n", "-F", "-a", "TextEdit", file, "--args",
-          "-ApplePersistenceIgnoreState", "YES", "-NSShowAppCentricOpenPanelInsteadOfUntitledFile", "NO",
+          "-ApplePersistenceIgnoreState", "YES", "-NSShowAppCentricOpenPanelInsteadOfUntitledFile", "NO", "-RichText", "NO",
           "-PlainTextEncoding", "4", "-PlainTextEncodingForWrite", "4",
           "-CorrectSpellingAutomatically", "NO", "-NSAutomaticSpellingCorrectionEnabled", "NO", "-SmartQuotes", "NO", "-SmartDashes", "NO",
           "-TextReplacement", "NO"];
@@ -334,6 +364,10 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
           if (found) {
             if (nudged) console.log(`darwin: TextEdit's window appeared after ${Date.now() - started} ms and ${nudged} nudge(s)`);
             win = found.id;
+            title = await waitFor(() => axTitle(pid, win), 5_000, "TextEdit's window title over AX").catch(() => "");
+            // Without an AX title, the window is the file's unless the untitled last resort was asked for.
+            fromFile = title ? /^ember(\.txt)?$/i.test(title) : nudged < 3;
+            if (!fromFile) warn(`TextEdit never showed ${file}; the tests go on in "${title}", and Command+S is checked as Command+A:\n  ${textEditReport(ws, pid, opened)}`);
             break;
           }
           const waited = Date.now() - started;
@@ -353,6 +387,11 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
             nudged++;
             const again = spawnSync("/usr/bin/open", ["-a", TEXTEDIT_APP, file], { encoding: "utf8" });
             console.log(`darwin: opened ${file} in TextEdit again: ${again.status} ${again.stderr}`);
+          } else if (nudged === 2 && waited > 28_000 && textEditPids().length === 1) {
+            // Last resort: reopen TextEdit without a file, which gives an untitled document (the launch said so).
+            nudged++;
+            const reopen = spawnSync("/usr/bin/open", ["-a", TEXTEDIT_APP], { encoding: "utf8" });
+            console.log(`darwin: reopened TextEdit for an untitled document: ${reopen.status} ${reopen.stderr}`);
           }
           await sleep(100);
         }
@@ -372,7 +411,9 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       it("lists TextEdit's window with its process and app name, and finds it by its title", async () => {
         expect(ws.stack().find(s => s.id === win)).toMatchObject({ pid, wmClass: "TextEdit", overrideRedirect: false });
         expect(ws.clientWindows().some(w => w.id === win && w.pid === pid && w.wmClass === "TextEdit" && w.wmClassName === "TextEdit")).toBe(true);
-        await waitFor(() => x.findWindow("ember.txt", pid) === win, 10_000, "findWindow to find ember.txt over AX");
+        // By part of its title, as XInput's rules allow for an app's own windows ("ember" in "ember.txt").
+        const wanted = fromFile ? "ember" : title;
+        await waitFor(() => x.findWindow(wanted, pid) === win, 10_000, `findWindow to find "${wanted}" over AX (the window's AX title is "${title}")`);
       });
 
       it("brings TextEdit's window to the front from a process without UI, and reports it as active and focused", async () => {
@@ -414,13 +455,18 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
           expect(x.textKey(ch, false)).toBe(true);
           await sleep(30);
         }
-        await sleep(300);
-        const command = x.keysymOf("Super_L"), s = x.keysymOf("s");
+        await waitFor(() => focusedText().value === TEXT, 5_000, () => `TextEdit's text to read "${TEXT}" over AX (it reads ${JSON.stringify(focusedText())})`);
+        const command = x.keysymOf("Super_L"), letter = x.keysymOf(fromFile ? "s" : "a");
         expect(x.keysym(command, true)).toBe(true);
-        expect(x.keysym(s, true)).toBe(true);
-        expect(x.keysym(s, false)).toBe(true);
+        expect(x.keysym(letter, true)).toBe(true);
+        expect(x.keysym(letter, false)).toBe(true);
         expect(x.keysym(command, false)).toBe(true);
-        await waitFor(() => readFileSync(file, "utf8") === TEXT, 15_000, `the file to read "${TEXT}" (it reads ${JSON.stringify(readFileSync(file, "utf8"))})`);
+        if (fromFile) {
+          await waitFor(() => readFileSync(file, "utf8") === TEXT, 15_000, () => `the file to read "${TEXT}" (it reads ${JSON.stringify(readFileSync(file, "utf8"))})`);
+        } else {
+          // Command+A selects the whole text: the same Command-and-letter path through the layout as Command+S.
+          await waitFor(() => focusedText().selected?.length === TEXT.length, 5_000, () => `Command+A to select the text (${JSON.stringify(focusedText())})`);
+        }
       }, 30_000);
 
       it("moves the pointer where it was asked", async () => {
