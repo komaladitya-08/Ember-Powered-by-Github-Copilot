@@ -34,9 +34,11 @@ the active computer's name beside "Ready", and the ask box shows a chip such as 
 
 **Naming one in a request.** Say or type where: "on build-01, check the disk", "in Ubuntu, list my home folder",
 "build-01: restart the web server". "WSL", "in Linux" and "the Linux side" mean your default distro. "This computer",
-"here" and "locally" mean this one. A name counts only after a place word (on, in, at, inside, over, via) or at the
-start of the request, so "send build-01's report to Ana" names no computer. Only your own words choose: never text on
-a screen, in a file or in a command's output.
+"here" and "locally" mean this one. A name counts only after a place word (on, in, at, inside, over, via, into,
+onto), as the request's first words followed by a colon or a comma ("build-01: …", "build-01, …"), or before "'s
+desktop", "'s screen", "'s server" and the like. So "send build-01's report to Ana" names no computer, and neither does
+"build-01 restart the web server": without the colon, that task goes to the computer Ember is set to work on. Only
+your own words choose: never text on a screen, in a file or in a command's output.
 
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
@@ -89,15 +91,17 @@ Ember stops and asks before a command that:
   clean, wipe, purge, reset and the like;
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
-  `twine upload`, `docker push`), copying files to another computer (`scp`, `rsync host:`, `curl -T`), and scripts or
-  targets named deploy, publish, release, push and the like;
+  `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
+  `curl -T`, `curl -d`, `ssh host <command>`), changing cloud services or clusters (`kubectl apply`,
+  `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
-- **reads or changes passwords, keys or other secrets**: anything under `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`,
-  `~/.kube`, `~/.config/gh`, `~/.docker/config.json`, `.netrc`, `.npmrc`, `.pypirc`, `.env` files, keychains and
-  credential stores, browser profiles, password managers, `/etc/shadow`, your shell history; printing tokens or
-  environment variables that may hold them (`gh auth token`, `env`, `printenv`); reading the clipboard; taking a
-  screenshot without Ember's privacy filters; a password or token written on the command line;
+- **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
+  `known_hosts` and `config`), `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gh`, `~/.docker/config.json`,
+  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, keychains and credential stores, browser profiles, password managers,
+  `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
+  `env`, `printenv`); reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
+  written on the command line;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry, the firewall, users and groups,
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
@@ -127,9 +131,9 @@ If your own words for this task asked for that kind of operation on that compute
 command runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to
 GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
 announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds." and **Stop**), the command
-window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies** on, Ember
-says it and adds "Say 'Ember, stop' to cancel." **Stop** in either place, the stop chord or "Ember, stop" within those
-4 seconds cancels it. The audit log records it as requested by you.
+window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies, questions
+and results out loud** on, Ember says it and adds "Say 'Ember, stop' to cancel." **Stop** in either place, the stop
+chord or "Ember, stop" within those 4 seconds cancels it. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. Anything broader than what you named asks: a force flag, a
@@ -153,9 +157,10 @@ click in Ember's own windows."
 
 A command's output goes to Copilot as part of the task, marked as untrusted data, at most 200 lines (the first 40 and
 the last 160). Before it leaves this computer Ember removes terminal codes, cuts out every line you typed, withholds
-everything after a password-like prompt, and hides the passwords, keys and tokens it recognises (GitHub, AWS, Slack,
-Google and npm tokens, private keys, JWTs, `password=` values and the like). Hiding is best effort: a secret in a form
-Ember doesn't recognise can get through, so don't print secrets on purpose.
+what follows a password-like prompt (until the program's next line after you press Enter, or to the end when the
+command can't take typing), and hides the passwords, keys and tokens it recognises (GitHub, AWS, Slack, Google and npm
+tokens, private keys, JWTs, `password=` values and the like). Hiding is best effort: a secret in a form Ember doesn't
+recognise can get through, so don't print secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
 sh`) is not followed: it marks the task, and every further command in that task asks you ("I'm checking each step: an
@@ -165,8 +170,10 @@ earlier command printed text that looked like instructions.").
 
 - **Stop** in the window, the task's **Stop**, the stop chord and "Ember, stop" end the command and the programs it
   started. A program that leaves on purpose (detaches and clears its environment, runs as another user through
-  `sudo`, or is handed to a service such as `docker run -d` or `systemd-run`) can keep running: Ember asks before such
-  commands, and the window names any program it started that is still running.
+  `sudo`, or is handed to a service such as `docker run -d` or `systemd-run`) can keep running. Ember asks before the
+  forms it recognises (`nohup`, `setsid`, `&`, `sudo`, `docker run -d`, `systemd-run` and the like), but a program
+  that detaches by itself can't be told from the command line; the window names any program it started that is still
+  running.
 - A command stops after 2 minutes unless the task gives it longer (at most 15 minutes): "Stopped after 2 min: it took
   too long."
 - Each task keeps one folder per computer, starting at your home folder. A command that is only `cd <folder>` changes
@@ -421,8 +428,9 @@ within those 20 seconds (an administrator can set 3 to 120).
 
 ### 6.1 The keys
 
-The organisation policy (the same file or registry value as for everything else: §6.3) gains these keys. Like every
-key, they can only make Ember stricter.
+The organisation policy (the same file or registry value as for everything else: §6.3) gains these keys. Compared
+with having no policy at all, none of them can make Ember less strict. But a policy that exists turns commands off
+until it says otherwise (§6.2), so adding `commands` to an existing policy is what allows them.
 
 | Key | Values | Effect |
 |---|---|---|
@@ -513,9 +521,12 @@ Ember's helper runs from the user's home folder (`~/.local/share/ember-remote/ru
 can run there. On a host where fapolicyd (DISA's RHEL 8 STIG requires it), a confined SELinux user or a `noexec` home
 stops programs in home folders, Ember says so ("build-01's security software doesn't let programs from your home
 folder run. Ask its administrator to allow Ember's helper (fapolicyd trust), or to install the Ember remote
-package.") and does nothing there. To allow it, trust those folders with the host's own tools (for fapolicyd, its
-trust database: `fapolicyd-cli --file add`), and again after an Ember update replaces them; build-01 checks every file
-against Ember's SHA-256 list when it is installed. A root-owned remote package is planned.
+package.") and does nothing there. To allow it, trust those folders with the host's own tools (for fapolicyd, add them
+to its trust database with `fapolicyd-cli --file add <folder>`, then `fapolicyd-cli --update`), and again after an
+Ember update replaces them. These files sit in the user's own home folder, so the user can change them after you trust
+them: with fapolicyd, set its `integrity` option to `sha256` (or `ima`) so that a changed file is no longer trusted.
+build-01 checks every file against Ember's SHA-256 list only when it is installed. A root-owned remote package is
+planned.
 
 ### 6.7 What is recorded
 
@@ -533,7 +544,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | # | Limit | What happens instead |
 |---|---|---|
 | L1 | No new consent page for existing users | A first-use card for WSL, for each SSH computer and for commands on each computer; nothing new happens until it is accepted |
-| L2 | Ember can't tell when a program has turned off echo for a password | Everything you type into a command is cut out of what Copilot gets, and so is the output after a password-like prompt until the program's next line (to the end of a command that can't take typing). It may hide a little more than needed |
+| L2 | Ember can't tell when a program has turned off echo for a password | Everything you type into a command is cut out of what Copilot gets, and so is the output after a password-like prompt until the program's next line after you press Enter (to the end of a command that can't take typing). It may hide a little more than needed |
 | L3 | Windows commands can't take typing; only Windows PowerShell 5.1 | Programs run non-interactively and fail instead of waiting; cmd runs inside PowerShell; Stop ends everything at once |
 | L4 | No borrowed mouse and no view of a remote screen | Every step there is asked; Ember reads, uses controls and opens apps only |
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
@@ -541,7 +552,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
 | L8 | Ember judges the command line, not what a script does inside | Builds and scripts run as ordinary unless their name says publish, delete, install and the like |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
-| L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before commands that outlive it and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, Linux programs of a WSL command run on until they write output or the distro stops |
+| L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, Linux programs of a WSL command run on until they write output or the distro stops |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured |
 | L12 | The remote account (and root there) can lie to Ember's helper or change it | Nothing from a remote can approve anything or run anything on the PC; its words are shown as untrusted |
 | L14 | Other programs of yours on the PC can reach Ember's SSH password channel, a shared SSH connection and a running command's text | They could already use your keys and SSH agent |

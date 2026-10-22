@@ -42,7 +42,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 
 ### For administrators
 
-The organisation policy gains these keys. Like every key, they only make Ember stricter.
+The organisation policy gains these keys. Compared with having no policy, none of them makes Ember less strict; but a
+policy that exists and doesn't mention `commands` turns commands off (below), so adding `commands` is what allows them.
 
 | Key | Effect |
 |---|---|
@@ -102,7 +103,8 @@ The organisation policy gains these keys. Like every key, they only make Ember s
 - Commands run without your shell profile, so aliases and tools set up there (conda, nvm, pyenv) are missing; on a Mac
   Homebrew's folders are added.
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks
-  before such commands. Over SSH, a command survives a silent connection for up to 20 seconds (an administrator can
+  before the forms it recognises (`nohup`, `setsid`, `&`, `sudo`, `docker run -d`…), but not before a program that
+  detaches by itself. Over SSH, a command survives a silent connection for up to 20 seconds (an administrator can
   set 3 to 120).
 - Another always-on-top window could cover the command card; the approve keys work only while the card shows the
   whole command.
