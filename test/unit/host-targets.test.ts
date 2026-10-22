@@ -272,6 +272,11 @@ describe("each worker gets its target's hands (§2.6)", () => {
     expect(d.grantKey("Gedit")).toBe("gedit");
     expect(d).not.toHaveProperty("emberPids");
     expect(localTargetHands(hands(), LINUX_WORKER_SYSTEM)).toMatchObject({ binding: LOCAL, commands: null });
+    // A task bound to another computer never runs on this screen's hands (fail closed), and no session is made.
+    const before = sim.sessions.length;
+    const away = real({ id: "9-b", goal: "x", target: {}, targetId: "ssh:build-01" }, () => undefined);
+    await expect(away.run(new AbortController().signal)).resolves.toEqual({ success: false, summary: "Ember can't work on that computer here." });
+    expect(sim.sessions.length).toBe(before);
     await host.stop();
   });
 

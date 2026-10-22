@@ -849,9 +849,12 @@ export class AgentHost {
         provider: !!this.o.provider,
         makeWorker: (spec, progress) => {
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
-          // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before.
-          const got = targets ? targets.handsFor(spec.targetId ?? "local")
-            : hands ? { ok: true as const, hands: localTargetHands(hands, this.sys) } : { ok: false as const, why: "Ember can't work on this computer's screen here." };
+          // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
+          // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
+          const id = spec.targetId ?? "local";
+          const got = targets ? targets.handsFor(id)
+            : hands && id === "local" ? { ok: true as const, hands: localTargetHands(hands, this.sys) }
+            : { ok: false as const, why: id === "local" ? "Ember can't work on this computer's screen here." : "Ember can't work on that computer here." };
           if (!got.ok) return refusedWorker(spec, got.why);
           const h = got.hands;
           return new Worker({
