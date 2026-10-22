@@ -57,7 +57,8 @@ describe("with nothing on, the prompts are today's word for word (critique integ
     expect(workerIdentity(PLATFORM_WORDS.linux, LOCAL)).toBe(WORKER_IDENTITY);
     for (const os of OSES) {
       const words = PLATFORM_WORDS[os];
-      expect(workerSystemMessage({ words, target: { ...LOCAL, screenOs: os, shellOs: os } }), os).toEqual(workerSystemMessage({ words }));
+      const target: TargetBinding = { ...LOCAL, screenOs: os, shellOs: os };
+      expect(workerSystemMessage({ words, target }), os).toEqual(workerSystemMessage({ words }));
     }
     expect(rulesOf(workerSystemMessage({ words: PLATFORM_WORDS.linux, settings: SETTINGS, desk: true }))).toBe(WORKER_RULES);
   });
