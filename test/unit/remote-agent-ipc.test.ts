@@ -88,6 +88,52 @@ describe("serve's side of the desktop child (desktop.ts)", () => {
   });
 });
 
+describe("watching the desktop while it is in use (§5.3.4 step 8, INT)", () => {
+  /** A controller whose child verifies the desktop, a discovery the test changes, and its ticks driven by hand. */
+  const rig = () => {
+    const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+    const proc = Object.assign(new EventEmitter(), { stdin, stdout, stderr, pid: undefined }) as unknown as ChildProcess;
+    readline.createInterface({ input: stdin }).on("line", l => {
+      const m = JSON.parse(l) as { t: string; id: number; op: string };
+      if (m.t === "req") stdout.write(`${JSON.stringify({ t: "res", id: m.id, ok: true, v: m.op === "init" ? { access: "screen", notice: "shown" } : {} })}\n`);
+    });
+    const session = { id: "2", type: "x11" as const, locked: false, active: true };
+    let found: Awaited<ReturnType<ConstructorParameters<typeof DesktopController>[0]["discover"]>> = { access: "screen", session, env: { DISPLAY: ":0" } };
+    let now = 0;
+    const changed: unknown[] = [];
+    const ticks: (() => void)[] = [];
+    const c = new DesktopController({
+      unavailable: null, host: "build-01", discover: async () => found, spawnChild: () => proc, baseEnv: {},
+      scripts: { atspi: "/a.py", notice: "/n.py" }, audit: async () => {}, changed: s => changed.push(s), consoleStop: () => {}, log: quiet, now: () => now,
+      every: fn => { ticks.push(fn); return { stop: () => { ticks.splice(ticks.indexOf(fn), 1); } }; },
+    });
+    const policy = { neverLook: [], actionsAllowed: true, confirmEveryAction: true, screenImages: true };
+    const tick = async () => { now += 5000; for (const f of [...ticks]) f(); await new Promise(r => setTimeout(r, 10)); };
+    return { c, changed, ticks, tick, policy, set: (f: typeof found) => { found = f; } };
+  };
+
+  it("tells the PC when the session goes inactive or locks between steps, and stops looking once the child is gone", async () => {
+    const r = rig();
+    expect(await r.c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy: r.policy })).toMatchObject({ access: "screen", notice: "shown" });
+    expect(r.ticks).toHaveLength(1);
+    await r.tick();
+    expect(r.changed).toEqual([]);
+    r.set({ access: "none", why: "build-01's screen is locked.", session: { type: "x11", locked: true, active: true } });
+    await r.tick();
+    expect(r.changed).toEqual([{ access: "none", why: "build-01's screen is locked.", session: { type: "x11", locked: true, active: true }, notice: "off" }]);
+    expect(r.ticks).toEqual([]);
+    expect(r.c.pid).toBeNull();
+  });
+
+  it("looks only while a child runs: never before desktop.state, nor after Stop", async () => {
+    const r = rig();
+    expect(r.ticks).toEqual([]);
+    await r.c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy: r.policy });
+    r.c.stop();
+    expect(r.ticks).toEqual([]);
+  });
+});
+
 describe("the notice's words (§5.3.9)", () => {
   it("names the PC as it reported itself", () => {
     expect(noticeText("ana-laptop")).toEqual({

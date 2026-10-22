@@ -21,6 +21,12 @@ const INIT_MS = 30_000;
 const INIT_CONSENT_MS = 150_000;
 /** A read or a step: the sidecar's own timeouts are shorter. */
 const OP_MS = 60_000;
+/**
+ * While the desktop is in use it is looked at again this often (§5.3.4 step 8 between steps too): a screen that locks or
+ * a session that goes inactive while no step comes is told to the PC at once (desktop.changed with access none), so it
+ * stops that computer's tasks then, not at their next step.
+ */
+export const WATCH_MS = 5000;
 
 /** What the controller needs of serve and the machine. */
 export interface DesktopDeps {
@@ -41,6 +47,8 @@ export interface DesktopDeps {
   consoleStop: () => void;
   log: Logger;
   now: () => number;
+  /** Runs `fn` every `ms` until stopped (default: an unref'd setInterval); tests pass their own. */
+  every?: (fn: () => void, ms: number) => { stop(): void };
 }
 
 /** The inputs of one `desktop.state` that the PC and both policies decide. */
@@ -63,6 +71,9 @@ export class DesktopController {
   private cached: { at: number; found: DesktopFound | NoDesktop } | null = null;
   private paused = false;
   private starting: Promise<DesktopState> | null = null;
+  /** The look every WATCH_MS while a child runs, and whether one is under way. */
+  private watch: { stop(): void } | null = null;
+  private looking = false;
 
   constructor(private d: DesktopDeps) {}
 
@@ -130,10 +141,26 @@ export class DesktopController {
           return this.lower({ access: "none", why: err instanceof Error ? err.message : `${this.d.host}'s screen can't be used now.`, notice: "off" });
         }
       }
+      this.watching();
       return (this.last = { access: f.access, session: { type: f.session.type, locked: false, active: true }, notice: "shown" });
     }
     this.stop();
     return this.startChild(f, ask);
+  }
+
+  /** Looks at the desktop every WATCH_MS while a child runs (recheck stops it and tells the PC when it has gone). */
+  private watching(): void {
+    if (this.watch) return;
+    const every = this.d.every ?? ((fn: () => void, ms: number) => {
+      const t = setInterval(fn, ms);
+      t.unref();
+      return { stop: () => clearInterval(t) };
+    });
+    this.watch = every(() => {
+      if (!this.child || this.paused || this.looking) return;
+      this.looking = true;
+      void this.recheck().catch(err => this.d.log.warn("remote.desktop_watch_failed", { err })).finally(() => { this.looking = false; });
+    }, WATCH_MS);
   }
 
   private async startChild(f: DesktopFound, ask: DesktopAsk): Promise<DesktopState> {
@@ -183,6 +210,7 @@ export class DesktopController {
       this.stop();
       return this.lower({ access: "none", ...(r.why ? { why: r.why } : {}), notice: r.notice });
     }
+    this.watching();
     return (this.last = { access: r.access, session: { type: f.session.type, locked: false, active: true }, notice: "shown" });
   }
 
@@ -238,6 +266,8 @@ export class DesktopController {
 
   /** Stops the child (its notice closes with it). */
   stop(): void {
+    this.watch?.stop();
+    this.watch = null;
     const c = this.child;
     if (!c) return;
     this.child = null;
