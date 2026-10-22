@@ -231,6 +231,7 @@ class RemoteRun implements RemoteRunningCommand {
       }
     }
     if (err instanceof RemoteError && err.remoteCode === "link") return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));
+    if (err instanceof RemoteError && err.remoteCode === "unchecked") return this.end(this.failed(unchecked(o.label).replace(/\.$/, "")));
     const said = err instanceof Error ? cleanRemote(err.message, 300) : "";
     this.end(this.failed(said ? `${o.label} couldn't start it: ${quoteUntrusted(said, 300)}` : `${o.label} couldn't start it`));
   }

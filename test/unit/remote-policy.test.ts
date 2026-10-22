@@ -160,6 +160,18 @@ describe("remoteTargetParts (§5.5)", () => {
     expect(parts.binding().desktop).toBe("none");
   });
 
+  it("doesn't let an answer asked for before the screen locked unlock it again", async () => {
+    const { link, parts } = make();
+    const screen = { access: "screen" as const, session: { type: "x11" as const, locked: false, active: true }, notice: "shown" as const };
+    let answer: (v: typeof screen) => void = () => undefined;
+    link.answer("desktop.state", () => new Promise(resolve => { answer = resolve; }));
+    const asked = parts.refreshDesktop();
+    link.emit("desktop.changed", { ...screen, session: { ...screen.session, locked: true } });
+    expect(parts.binding().desktop).toBe("none");
+    answer(screen);
+    expect((await asked).desktop).toBe("none");
+  });
+
   it("combines a changed remote policy into gate 1 and the binding", () => {
     const { link, parts } = make();
     expect(parts.policy.decide(click()).verdict).toBe("confirm");

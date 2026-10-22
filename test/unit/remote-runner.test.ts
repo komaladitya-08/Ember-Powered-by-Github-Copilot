@@ -115,6 +115,8 @@ describe("RemoteRunner: gate 2's answers (§3.16, critique security-3)", () => {
     expect((await stopped.runner.start(specOf()).done).error).toBe("It was stopped before it started");
     const silent = setup({ answer: () => { throw new Error("timeout"); } });
     expect((await silent.runner.start(specOf()).done).error).toBe("build-01 didn't answer in time, so the command wasn't started");
+    const odd = setup({ answer: () => ({ status: "started", channel: -1, interactive: true }) });
+    expect((await odd.runner.start(specOf()).done).error).toBe("build-01 answered in a way Ember can't check");
     const denied = setup({ answer: () => { throw agentError("denied", "no commands here"); } });
     expect(await denied.runner.start(specOf()).done).toMatchObject({ ended: "refused-remote", error: "no commands here" });
   });

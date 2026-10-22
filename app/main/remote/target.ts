@@ -93,12 +93,20 @@ export function remoteTargetParts(link: RemoteLink, o: {
     return { id, kind: "ssh", label, login: o.login, screenOs: os, shellOs: os, desktop: d.desktop, ...(d.why ? { desktopWhy: d.why } : {}) };
   };
 
-  /** A desktop the PC asked about (its own request): taken as the remote says, raising access included. */
+  /** What the desktop would be with the remote's report `s`. */
+  const desktopWith = (s: DesktopState) => remoteDesktop({ welcome, state: s, combined: combinedAdmin(o.localAdmin(), remoteAdmin), label, login: o.login }).desktop;
+  /** Reports taken from events so far (an answer asked for before the latest one may be older than it). */
+  let reported = 0;
+  /**
+   * A desktop the PC asked about (its own request): taken as the remote says, raising access included, unless the remote
+   * reported less since the question went out (then only an answer that gives no more is taken).
+   */
   let asking: Promise<TargetBinding> | null = null;
   const refreshDesktop = (): Promise<TargetBinding> => {
     if (asking) return asking;
+    const asked = reported;
     asking = askRemote(link, "desktop.state", {}, { label }).then(s => {
-      if (!disposed) state = s;
+      if (!disposed && (asked === reported || !lowerAccess(desktop().desktop, desktopWith(s)))) state = s;
       return binding();
     }, (err: unknown) => {
       log.warn("remote.desktop_state_failed", { err: err instanceof Error ? err.name : "error" });
@@ -114,12 +122,13 @@ export function remoteTargetParts(link: RemoteLink, o: {
     if (disposed || !checked.success) return;
     const next = checked.data;
     const before = desktop().desktop;
-    const after = remoteDesktop({ welcome, state: next, combined: combinedAdmin(o.localAdmin(), remoteAdmin), label, login: o.login }).desktop;
+    const after = desktopWith(next);
     if (lowerAccess(state.access, next.access) || lowerAccess(before, after)) {
       void refreshDesktop();
       return;
     }
     state = next;
+    reported++;
     // Steps given for a desktop that has gone can't go out any more.
     if (after === "none" && before !== "none") stamps.clear();
   }));
