@@ -9,15 +9,31 @@
 import type { OwnWindowHandle, ScreenLike, StackedWindow, WindowSystem, X11Image } from "../types";
 import { captureScreen } from "./capture";
 import { loadWin32, SM, type Win32Api } from "./ffi";
-import { activateWindow, appName, describe, factsOf, focusedTopLevel, topLevels, virtualScreen, visibleFrame, type ProgramMemo } from "./hwnd";
+import {
+  activateWindow, describe, factsOf, focusedTopLevel, namesOf, topLevels, virtualScreen, visibleFrame,
+  type DescribedWindow, type ProgramMemo, type WindowNames,
+} from "./hwnd";
 import { buttonMask, VK } from "./keys";
 import { hwndFromNativeHandle } from "./layouts";
 import { coversScreen, isAppWindow, isPopup } from "./rules";
 import { pointToDip, rectToDip } from "./units";
 
+/**
+ * A window in the Windows lists: X11's fields, `wmClass`, the Win32 class as `wmClassName`, and for a console window
+ * (named "conhost") the program its first client runs as `clientProgram` (an extension beyond types.ts).
+ */
+export type Win32Window = DescribedWindow;
+
+/** A stacked window, with a console window's `clientProgram` (an extension beyond types.ts). */
+export type Win32StackedWindow = StackedWindow & WindowNames;
+
 /** The Windows window system: WindowSystem plus activate(), which X11 code got from XInput. */
 export interface Win32WindowSystem extends WindowSystem {
   readonly kind: "win32";
+  activeWindow(): Win32Window | null;
+  focusWindow(): Win32Window | null;
+  clientWindows(): Win32Window[];
+  stack(): Win32StackedWindow[];
   /** GDI capture answers synchronously. */
   capture(x: number, y: number, width: number, height: number): X11Image | null;
   /**
@@ -45,7 +61,8 @@ export interface Win32WindowsDeps {
  *   `inner` the client area; `overrideRedirect` marks menus, tooltips and owned popups (rules.isPopup).
  * - clientWindows(): the apps' windows, as Alt+Tab would show them (rules.isAppWindow), top to bottom, minimised
  *   ones included; `wmClassName` is the Win32 window class.
- * - `wmClass` everywhere: the program's file name without ".exe" ("notepad"), the hosted app's for UWP frames.
+ * - `wmClass` everywhere: the program's file name without ".exe" ("notepad"), the hosted app's for UWP frames, and
+ *   "conhost" for console windows, whose first client's program ("python") is reported as `clientProgram`.
  */
 export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | null {
   const api = deps.api !== undefined ? deps.api : loadWin32();
@@ -85,7 +102,7 @@ export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | nu
     clientWindows() {
       if (!open) return [];
       const memo: ProgramMemo = new Map();
-      const out: ReturnType<WindowSystem["clientWindows"]> = [];
+      const out: Win32Window[] = [];
       for (const hwnd of topLevels(api)) {
         if (!api.isVisible(hwnd)) continue; // most top-level windows are hidden helpers: skip them before reading more
         const frame = visibleFrame(api, hwnd);
@@ -93,7 +110,7 @@ export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | nu
         if (!facts.pid || !isAppWindow(facts)) continue;
         out.push({
           id: hwnd, pid: facts.pid, title: facts.title, ...(frame ?? { x: 0, y: 0, width: 0, height: 0 }),
-          wmClass: appName(api, hwnd, facts.pid, facts.className, facts.title, memo), wmClassName: facts.className,
+          ...namesOf(api, hwnd, facts.pid, facts.className, facts.title, memo), wmClassName: facts.className,
         });
       }
       return out;
@@ -102,7 +119,7 @@ export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | nu
     stack() {
       if (!open) return [];
       const memo: ProgramMemo = new Map();
-      const out: StackedWindow[] = [];
+      const out: Win32StackedWindow[] = [];
       for (const hwnd of topLevels(api).reverse()) {
         if (!api.isVisible(hwnd) || api.isIconic(hwnd)) continue;
         const frame = visibleFrame(api, hwnd);
@@ -111,7 +128,7 @@ export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | nu
         if (!facts.pid || !coversScreen(facts, () => api.layeredAlpha(hwnd))) continue;
         out.push({
           id: hwnd, client: hwnd, pid: facts.pid, title: facts.title,
-          wmClass: appName(api, hwnd, facts.pid, facts.className, facts.title, memo),
+          ...namesOf(api, hwnd, facts.pid, facts.className, facts.title, memo),
           ...frame,
           outer: api.windowRect(hwnd) ?? frame,
           inner: api.clientRect(hwnd) ?? frame,

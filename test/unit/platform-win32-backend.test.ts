@@ -1,9 +1,10 @@
 /**
  * The Windows window system and input backends on a fake Win32 desktop (so they run on Linux): the stack and the
  * apps' windows as Ember sees them, UWP frames named after their app, focus, capture that fails closed, window ids,
- * the documented foreground order, and input that ends exactly where asked, presses logical buttons, tracks and lets
- * go of everything Ember holds (also at exit), reports only the user's keys, types any character, refuses elevated
- * windows and knows where a click lands. Both factories give null off Windows without a fake.
+ * console windows named conhost, the documented foreground order (never waiting for another app's thread), and
+ * input that ends exactly where asked, presses logical buttons, tracks and lets go of everything Ember holds (also at
+ * exit), reports only the user's keys, types any character, refuses elevated windows and knows where a click lands.
+ * Both factories give null off Windows without a fake.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -269,6 +270,18 @@ function desktop(): FakeDesktop {
   return d;
 }
 
+/** The typical desktop plus console windows: a Python REPL, ssh in a pseudo-console's window, and bare conhost. */
+function consoles(): FakeDesktop {
+  const d = desktop();
+  d.windows.unshift(
+    { hwnd: 0xb0, pid: 700, cls: "ConsoleWindowClass", title: "Python 3.12", visible: true, frame: { x: 50, y: 60, width: 700, height: 400 } },
+    { hwnd: 0xb1, pid: 710, cls: "PseudoConsoleWindow", title: "", visible: true, frame: { x: 60, y: 70, width: 300, height: 200 } },
+    { hwnd: 0xb2, pid: 720, cls: "ConsoleWindowClass", title: "conhost", visible: true, frame: { x: 70, y: 80, width: 300, height: 200 } },
+  );
+  d.images.set(700, "C:\\Python312\\python.exe").set(710, "C:\\Windows\\System32\\OpenSSH\\ssh.exe").set(720, "C:\\Windows\\System32\\conhost.exe");
+  return d;
+}
+
 const opened: { close(): void }[] = [];
 const windowsOn = (d: FakeDesktop) => { const ws = openWin32Windows({ screen, api: d })!; opened.push(ws); return ws; };
 const inputOn = (d: FakeDesktop, now?: () => number) => { const x = openWin32Input({ api: d, now })!; opened.push(x); return x; };
@@ -342,6 +355,36 @@ describe("the Windows window system", () => {
     expect(list.find(w => w.id === 0x40)).toEqual({ id: 0x40, pid: 200, title: "Untitled - Notepad", x: 100, y: 100, width: 800, height: 600, wmClass: "notepad", wmClassName: "Notepad" });
     expect(list.find(w => w.id === 0x50)).toMatchObject({ wmClass: "CalculatorApp", wmClassName: "ApplicationFrameWindow" });
     expect(list.find(w => w.id === 0x70)).toMatchObject({ wmClass: "msedge", title: "Inbox - Mail" });
+  });
+
+  it("names a console window conhost whatever runs in it, keeping its first client's program and process id", () => {
+    const d = consoles();
+    const ws = windowsOn(d);
+    // A Python REPL started from the Start menu: Windows reports python.exe's process for conhost's window.
+    expect(ws.stack().find(w => w.id === 0xb0)).toMatchObject({ pid: 700, wmClass: "conhost", clientProgram: "python", title: "Python 3.12" });
+    expect(ws.clientWindows().find(w => w.id === 0xb0)).toEqual({
+      id: 0xb0, pid: 700, title: "Python 3.12", x: 50, y: 60, width: 700, height: 400,
+      wmClass: "conhost", clientProgram: "python", wmClassName: "ConsoleWindowClass",
+    });
+    expect(ws.stack().find(w => w.id === 0xb1)).toMatchObject({ wmClass: "conhost", clientProgram: "ssh" }); // a pseudo-console
+    d.fg = 0xb0;
+    expect(ws.activeWindow()).toMatchObject({ id: 0xb0, wmClass: "conhost", clientProgram: "python", wmClassName: "ConsoleWindowClass" });
+    expect(ws.focusWindow()).toMatchObject({ id: 0xb0, wmClass: "conhost", clientProgram: "python" });
+  });
+
+  it("names a console window conhost even when its client's program can't be read, and adds nothing to other windows", () => {
+    const d = consoles();
+    d.images.delete(700);
+    const ws = windowsOn(d);
+    const python = ws.stack().find(w => w.id === 0xb0)!;
+    expect(python.wmClass).toBe("conhost");
+    expect("clientProgram" in python).toBe(false);
+    // conhost started on its own reports itself: there is no other client to show.
+    expect("clientProgram" in ws.stack().find(w => w.id === 0xb2)!).toBe(false);
+    expect(ws.stack().find(w => w.id === 0xb2)?.wmClass).toBe("conhost");
+    for (const w of [...ws.stack(), ...ws.clientWindows()].filter(w => ![0xb0, 0xb1, 0xb2].includes(w.id))) {
+      expect("clientProgram" in w, `0x${w.id.toString(16)}`).toBe(false);
+    }
   });
 
   it("lists an app window whose program the system won't name with an empty name, never another app's", () => {
@@ -761,6 +804,14 @@ describe("Windows input: windows", () => {
     expect(x.focusedWindow()).toBe(0x40);
     d.fg = 0x31;
     expect(x.focusedWindow()).toBe(0x31); // a dialog is its own top-level, as on X11
+  });
+
+  it("finds a console window by its one stable name, conhost, not by the program running in it", () => {
+    const x = inputOn(consoles());
+    expect(x.findWindow("Python 3.12", undefined, "conhost")).toBe(0xb0);
+    expect(x.findWindow("Python 3.12", undefined, "ConsoleWindowClass")).toBe(0xb0);
+    expect(x.findWindow("Python 3.12", undefined, "python")).toBe(0);
+    expect(x.findWindow("Python 3.12", 700)).toBe(0xb0);
   });
 
   it("finds windows by title like XInput does, dialogs and minimised windows included", () => {

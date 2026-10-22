@@ -1,11 +1,12 @@
 /**
  * App names on Windows (pure): a window's app is its program's file name without ".exe" (what never-look, password
  * prompts and grants match on, and what the sidecar reports), and a UWP app's frame is named after the app it hosts,
- * also when Windows has moved the app's window out of a minimised frame.
+ * also when Windows has moved the app's window out of a minimised frame. A console window is conhost's, whatever its
+ * first client runs.
  */
 
 import { describe, expect, it } from "vitest";
-import { hostedProgram, isUwpFrame, programName, sameProgram } from "../../app/main/platform/win32/names";
+import { consoleClient, hostedProgram, isConsoleWindow, isUwpFrame, programName, sameProgram } from "../../app/main/platform/win32/names";
 
 describe("program names", () => {
   it("keeps the file name without .exe, as the system spells it", () => {
@@ -52,5 +53,25 @@ describe("UWP frames", () => {
     expect(hostedProgram({ pid: 100, title: "Same" }, [], twins)).toBeNull();
     // The frame's own process doesn't name it, nor does a process the system wouldn't name.
     expect(hostedProgram({ pid: 100, title: "X" }, [{ pid: 100, program: "ApplicationFrameHost" }, { pid: 5, program: "" }], [])).toBeNull();
+  });
+});
+
+describe("console windows", () => {
+  it("knows a classic console and a pseudo-console's window by their class, in any case", () => {
+    expect(isConsoleWindow("ConsoleWindowClass")).toBe(true);
+    expect(isConsoleWindow("consolewindowclass")).toBe(true);
+    expect(isConsoleWindow("PseudoConsoleWindow")).toBe(true);
+    // Windows Terminal, mintty and the rest are named after their own program already.
+    expect(isConsoleWindow("CASCADIA_HOSTING_WINDOW_CLASS")).toBe(false);
+    expect(isConsoleWindow("mintty")).toBe(false);
+    expect(isConsoleWindow("")).toBe(false);
+  });
+
+  it("keeps the first client's program for display, but not conhost itself or a name the system wouldn't give", () => {
+    expect(consoleClient("python")).toBe("python");
+    expect(consoleClient("cmd")).toBe("cmd");
+    expect(consoleClient("conhost")).toBeUndefined();
+    expect(consoleClient("CONHOST.EXE")).toBeUndefined();
+    expect(consoleClient("")).toBeUndefined();
   });
 });
