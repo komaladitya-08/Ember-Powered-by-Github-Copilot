@@ -341,6 +341,9 @@ describe("what a distro says", () => {
     expect(linuxApp({ program: "python3", argv1: "-m", app: "My App" })).toBe("my-app");
     expect(linuxApp({ app: "" })).toBeNull();
     expect(linuxApp({ program: "evil:name", app: "" })).toBe("evil-name");
+    // Invisible characters (zero-width, bidi overrides) never reach an app id or hide a name from the vocabulary.
+    expect(linuxApp({ program: "ged\u202eit\u200b", app: "" })).toBe("gedit");
+    expect(linuxNames({ program: "gnome\u200b-terminal-server", app: "Ter\u2060minal" })).toEqual(["gnome-terminal-server", "terminal"]);
     expect(linuxNames({ program: "python3.10", argv0: "/usr/bin/python3", argv1: "/usr/bin/terminator", comm: "terminator", app: "Terminator" }))
       .toEqual(["python3.10", "python3", "terminator"]);
   });

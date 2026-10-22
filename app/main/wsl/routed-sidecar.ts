@@ -95,6 +95,7 @@ export class RoutedSidecar implements PerceptionSidecar, SidecarPort {
     const target = await this.router.target(params).catch(() => "base" as const);
     if (target === "base") return this.base.readWindow(params);
     if (target === "gone") return { window: null, nodes: [], ms: Date.now() - t0 };
+    if (target === "private") return { window: null, nodes: [], blocked: true, ms: Date.now() - t0 };
     const { neverLook, maxDepth, maxNodes, keep, cells } = params;
     const { res, owns } = await this.router.withHelper(target.distro, async sc => ({
       res: await sc.readWindow({

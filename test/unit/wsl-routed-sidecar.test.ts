@@ -175,6 +175,28 @@ describe("reading a WSLg window", () => {
     expect(u.calls.filter(c => c.method === "doAction")).toHaveLength(0);
   });
 
+  it("reads nothing of a never-look Linux window (hidden), by its title or as the foreground window: not even UIA's frame", async () => {
+    const h = harness();
+    h.wsl.add("Ubuntu");
+    const s = geditScene(h);
+    h.windows.stack.push(stacked(12, 4242, "Passwords and Keys (Ubuntu)", "msrdc", { x: 900, y: 0, width: 600, height: 400 }));
+    const seahorse = { pid: 801, path: "/org/a11y/atspi/accessible/5", app: "seahorse", name: "Passwords and Keys", program: "seahorse", bounds: { x: 0, y: 0, width: 600, height: 400 }, children: [{ x: 0, y: 0, width: 600, height: 400 }] };
+    h.setups.set("Ubuntu", x => { x.frames = [s.frame, seahorse]; });
+    const u = uia();
+    const routed = wrapWith(u.base, h.options, h.deps) as RoutedSidecar;
+    routers.push(routed);
+    await routerFor(h.options).refresh();
+    expect(await routed.readWindow({ pid: 4242, title: "Passwords and Keys (Ubuntu)" })).toMatchObject({ window: null, nodes: [], blocked: true });
+    expect(await routed.readWindow({ pid: 4242, title: "Passwords and Keys" })).toMatchObject({ blocked: true });
+    h.windows.foreground = 12;
+    h.state.now += 3000;
+    expect(await routed.readWindow({ pid: 4242 })).toMatchObject({ blocked: true });
+    expect(await routed.readWindow({})).toMatchObject({ blocked: true });
+    expect(u.calls.filter(c => c.method === "readWindow")).toEqual([]);
+    // gedit, beside it, is read as before.
+    expect((await routed.readWindow({ pid: 4242, title: "notes.txt - gedit (Ubuntu)" })).window?.app).toBe("wsl:Ubuntu:gedit");
+  });
+
   it("leaves a read naming another reader's window by its path (UIA's) to that reader, whatever its pid", async () => {
     const { routed, u, helper, h } = await scene();
     h.windows.foreground = 11;

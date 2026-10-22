@@ -138,9 +138,11 @@ export function linuxFrame(v: unknown): LinuxFrame | null {
 
 const lower = (s: string) => s.toLowerCase();
 const basename = (s: string) => s.slice(s.lastIndexOf("/") + 1);
+/** Without invisible format characters (zero-width, bidi controls): "gnome\u200b-terminal" is gnome-terminal. */
+const visible = (s: string) => s.replace(/\p{Cf}+/gu, "");
 
-/** A name fit for an app id: no colon, blank or control character. */
-const idPart = (s: string) => lower(s.trim()).replace(/[\s:\p{Cc}]+/gu, "-").slice(0, 64);
+/** A name fit for an app id: no colon, blank, control or invisible character (it is shown in questions and grants). */
+const idPart = (s: string) => lower(visible(s).trim()).replace(/[\s:\p{Cc}]+/gu, "-").slice(0, 64);
 
 /**
  * The window's app (§4.5): the program (/proc/<pid>/exe's basename), but for an interpreter or launcher (python3
@@ -155,8 +157,8 @@ export function linuxApp(f: Pick<LinuxFrame, "program" | "argv1" | "app">): stri
 
 /** Every name the window's Linux app goes by (exe, argv0, argv1, AT-SPI name, comm): the vocabulary union judges each. */
 export function linuxNames(f: Pick<LinuxFrame, "program" | "argv0" | "argv1" | "app" | "comm">): string[] {
-  const names = [f.program, f.argv0, f.argv1, f.comm].filter((n): n is string => !!n).map(n => lower(basename(n)));
-  if (f.app.trim()) names.push(lower(f.app.trim()));
+  const names = [f.program, f.argv0, f.argv1, f.comm].filter((n): n is string => !!n).map(n => lower(visible(basename(n))));
+  if (visible(f.app).trim()) names.push(lower(visible(f.app).trim()));
   return [...new Set(names.filter(Boolean))];
 }
 
@@ -672,9 +674,10 @@ export class WslRouter {
   /**
    * Which identified window a read names: a "wsl:" path (or gone: "gone"), a WSLg msrdc pid with the title of exactly one
    * identified window (or, without a title, the foreground one), or with nothing at all the foreground window when it
-   * is identified. "base": UIA's to read (another app, or a RAIL window nobody identified).
+   * is identified. "base": UIA's to read (another app, or a RAIL window nobody identified). "private": a never-look
+   * Linux window (hidden), which nobody reads, not even by its title through UIA.
    */
-  async target(params: { pid?: number; title?: string; path?: string }): Promise<WslWindow | "gone" | "base"> {
+  async target(params: { pid?: number; title?: string; path?: string }): Promise<WslWindow | "gone" | "base" | "private"> {
     const s = await this.current();
     if (params.path?.startsWith("wsl:")) {
       for (const w of s.windows.values()) if (w.path === params.path) return w;
@@ -683,10 +686,19 @@ export class WslRouter {
     // Another reader's path (UIA's) names exactly one window of its own: never a Linux window found by pid instead.
     if (params.path) return "base";
     const all = [...s.windows.values()];
-    if (params.pid == null && !params.title && !params.path) return s.windows.get(s.foreground) ?? "base";
+    if (params.pid == null && !params.title && !params.path) return s.hidden.has(s.foreground) ? "private" : s.windows.get(s.foreground) ?? "base";
     if (params.pid == null || ![...s.rails.values()].some(r => r.pid === params.pid)) return "base";
+    const hidden = [...s.hidden.keys()].map(h => s.rails.get(h)).filter((r): r is RailWindow => !!r && r.pid === params.pid);
+    if (!params.title) {
+      if (hidden.some(r => r.hwnd === s.foreground)) return "private";
+      return all.find(w => w.pid === params.pid && w.hwnd === s.foreground) ?? "base";
+    }
+    const named = (rail: string, distro: string) => {
+      const want = lower(railTitle(rail, [distro]));
+      return want === lower(railTitle(params.title!, [distro])) || lower(normaliseTitle(rail)) === lower(normaliseTitle(params.title!));
+    };
+    if (hidden.some(r => named(r.title, s.hidden.get(r.hwnd)!.distro))) return "private";
     const mine = all.filter(w => w.pid === params.pid);
-    if (!params.title) return mine.find(w => w.hwnd === s.foreground) ?? "base";
     const t = lower(normaliseTitle(params.title));
     const hits = mine.filter(w => lower(w.railTitle) === t || lower(normaliseTitle(w.frame.name)) === t || lower(railTitle(params.title!, [w.distro])) === lower(w.railTitle));
     if (hits.length === 1) return hits[0];
