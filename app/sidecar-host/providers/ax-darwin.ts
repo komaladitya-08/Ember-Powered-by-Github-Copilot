@@ -9,7 +9,8 @@
  *   renderers); its windows are listed from the window server's list alone. The system's credential and consent
  *   prompts (SecurityAgent and the rest: roles.ts's axOverlayRole) are listed so too, and never read.
  * - An app that doesn't answer within the 0.8 s messaging timeout is busy for 5 s (ax-darwin-read.ts), and its windows
- *   are listed as last seen; every other app keeps answering.
+ *   are listed as last seen; every other app keeps answering. The window list asks apps for WINDOWS_BUDGET_MS at most
+ *   (the frontmost first), so a few hung apps can't hold a request past the 5 s Ember waits.
  * - Elements are keyed `<pid>:h<CFHash>` (the exact 64-bit hash, the same in every host process for as long as the
  *   element lives in its app), so a password field found once stays secret across host restarts; two elements of one
  *   answer with the same hash get index-path keys instead (logged as ax.key_collision). KEY_MODE switches every key to
@@ -41,6 +42,12 @@ import {
 export const KEY_MODE: "hash" | "path" = "hash";
 /** How long a Chromium app gets to build its tree after AXManualAccessibility is set, before its first read. */
 const MANUAL_SETTLE_MS = 200;
+/**
+ * How long the window list may spend asking apps: past it, the apps not asked yet are listed from the window list
+ * alone, as busy (last seen). Every app that doesn't answer costs the 0.8 s messaging timeout, and a request Ember
+ * waits on longer than 5 s gets this process killed, which forgets which apps are busy (so the next one pays again).
+ */
+export const WINDOWS_BUDGET_MS = 2000;
 /** One point of slack when telling whether a window covers a display (AX and CG round alike, displays don't). */
 const COVER_SLACK = 1;
 
@@ -62,6 +69,7 @@ interface Held {
   key: string;
 }
 
+/** What the provider is made with (openProvider's; a fake API and clock in the tests). */
 export interface AxDarwinOptions {
   /** Opens the AX API (openAxApi on macOS; a fake in the tests); null: it can't be bound here. */
   open: () => AxApi | null;
@@ -213,9 +221,16 @@ export class AxDarwinProvider implements AxProvider {
       else byPid.set(e.pid, [e]);
     }
     let displays: Rect[] | null = null;
+    const now = this.o.now ?? Date.now;
+    const until = now() + WINDOWS_BUDGET_MS;
+    const late = () => now() >= until;
     const frontmost = this.frontmostPid(api);
     const out: RawWindow[] = [];
-    for (const [pid, list] of byPid) {
+    let cut = 0;
+    // The frontmost app first: its window is the one the user is in, which a request without a window means.
+    const order = [...byPid.keys()].sort((a, b) => Number(b === frontmost) - Number(a === frontmost));
+    for (const pid of order) {
+      const list = byPid.get(pid)!;
       const system = systemOverlays(list, (displays ??= api.displays()));
       if (system) {
         out.push(...system.entries.map(e => listedOnly(e, { platformSubrole: system.subrole })));
@@ -232,8 +247,13 @@ export class AxDarwinProvider implements AxProvider {
         out.push(...shown.map(e => listedOnly(e, { busy: true })));
         continue;
       }
+      if (late()) {
+        cut++;
+        out.push(...shown.map(e => listedOnly(e, { busy: true })));
+        continue;
+      }
       try {
-        out.push(...this.appWindows(api, pid, list, frontmost === pid));
+        out.push(...this.appWindows(api, pid, list, frontmost === pid, late));
       } catch (err) {
         if (err instanceof ProviderError && err.code === "denied") throw err;
         // Busy: listed as last seen. Anything else (an app with no accessibility): listed, with nothing to read.
@@ -241,6 +261,7 @@ export class AxDarwinProvider implements AxProvider {
         out.push(...shown.map(e => listedOnly(e, busy ? { busy: true } : {})));
       }
     }
+    if (cut) this.note("ax.windows_cut", { apps: cut });
     // Front to back as the window server stacks them; a window it doesn't list (minimised) after its app's others.
     const rank = (w: RawWindow) => (w.native !== undefined && z.has(w.native) ? z.get(w.native)! : entries.length);
     return out.map((w, i) => ({ w, i })).sort((a, b) => rank(a.w) - rank(b.w) || a.i - b.i).map(x => x.w);
@@ -249,9 +270,10 @@ export class AxDarwinProvider implements AxProvider {
   /**
    * An app's windows from AXWindows (one batched read each), each matched to its CGWindowID by _AXUIElementGetWindow,
    * else by its frame (then its title) among the app's on-screen windows; any on-screen window AX didn't list comes
-   * from the window list alone. `frontmost`: the app is the system-wide AXFocusedApplication.
+   * from the window list alone. `frontmost`: the app is the system-wide AXFocusedApplication. Past `late`, the AX windows
+   * not read yet are let go (their on-screen ones are listed from the window list).
    */
-  private appWindows(api: AxApi, pid: number, list: AxWindowEntry[], frontmost: boolean): RawWindow[] {
+  private appWindows(api: AxApi, pid: number, list: AxWindowEntry[], frontmost: boolean, late: () => boolean = () => false): RawWindow[] {
     const s = new AxSession(api, pid, this.busy, this.note);
     const app = api.app(pid);
     if (!app) throw new ProviderError("failed", "the app's accessibility element couldn't be made");
@@ -270,6 +292,10 @@ export class AxDarwinProvider implements AxProvider {
     try {
       for (; i < wins.length; i++) {
         const win = wins[i]!;
+        if (late()) {
+          for (; i < wins.length; i++) api.release(wins[i]!);
+          break;
+        }
         let f: Facts;
         try {
           f = s.facts(win, WINDOW_ATTRS);

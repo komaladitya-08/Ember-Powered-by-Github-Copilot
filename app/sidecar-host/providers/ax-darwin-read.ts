@@ -560,6 +560,7 @@ export interface Walked {
   trips: number;
 }
 
+/** A walk's budgets (the host's SnapshotOptions), and its clock for the tests. */
 export interface WalkOptions {
   maxDepth: number;
   maxNodes: number;
@@ -569,6 +570,7 @@ export interface WalkOptions {
   now?: () => number;
 }
 
+/** What a walk read, pre-order, and what it left out (see Snapshot). */
 export interface WalkResult { nodes: Walked[]; truncated: boolean; cut: string[]; busy: boolean }
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AX_ERROR } from "../../app/main/platform/darwin/ax";
 import { Host } from "../../app/sidecar-host/host";
 import type { RawNode, RawWindow } from "../../app/sidecar-host/provider";
-import { AxDarwinProvider, KEY_MODE, answerKeys, coversDisplay } from "../../app/sidecar-host/providers/ax-darwin";
+import { AxDarwinProvider, KEY_MODE, WINDOWS_BUDGET_MS, answerKeys, coversDisplay } from "../../app/sidecar-host/providers/ax-darwin";
 import { NEEDS_PERMISSION } from "../../app/sidecar-host/providers/ax-darwin-read";
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import { windowRole } from "../../app/sidecar-host/windows";
@@ -137,6 +137,25 @@ describe("the macOS AX provider's window list", () => {
     expect(later.find(w => w.pid === 5500)).toMatchObject({ title: "Other" });
     expect(later.find(w => w.pid === 5500)!.busy).toBeUndefined();
     expect(later.find(w => w.pid === 5500)!.handle).toBeGreaterThan(0);
+  });
+
+  it("asks apps for no longer than its budget, the frontmost first, listing the rest as last seen (never past Ember's 5 s)", async () => {
+    const hung = (pid: number, id: number): AppSpec => ({ pid, owner: `Hung ${pid}`, hung: true, windows: [{ role: "AXWindow", title: `H${pid}`, frame: at(0, 0, 200, 200), windowId: id }] });
+    const s = setup([hung(6001, 7101), hung(6002, 7102), hung(6003, 7103), hung(6004, 7104), benchApp(), emberApp()]);
+    s.fake.frontmost = BENCH;
+    s.fake.cost = 800; // every round trip waits out the messaging timeout
+    await s.p.start();
+    const t0 = s.fake.clock;
+    const ws = await s.p.topWindows();
+    expect(s.fake.clock - t0).toBeLessThanOrEqual(WINDOWS_BUDGET_MS + 3 * 800);
+    expect(bench(ws)).toMatchObject({ active: true });
+    expect(bench(ws).busy).toBeUndefined();
+    expect(bench(ws).handle).toBeGreaterThan(0);
+    const cut = ws.filter(w => w.pid > 6000 && w.pid < 6005);
+    expect(cut.map(w => [w.key, w.busy, w.handle])).toEqual([["7101", true, 0], ["7102", true, 0], ["7103", true, 0], ["7104", true, 0]]);
+    expect(s.notes).toContainEqual(["ax.windows_cut", { apps: expect.any(Number) }]);
+    // Only the bench's window is held (its handle); nothing of the apps that weren't asked.
+    expect([s.p.live, s.fake.outstanding]).toEqual([1, 1]);
   });
 
   it("keeps nothing of an app that stops answering between its windows (no handle is left behind)", async () => {
