@@ -135,6 +135,8 @@ jobs:
       - run: npm run build
       - name: Stage the app and check every binary against RHEL 8.4's glibc
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
           scripts/check-symvers.sh dist/package/ember > /dev/null
@@ -346,6 +348,8 @@ jobs:
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
         if: ${{ !cancelled() }}
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
@@ -519,6 +523,8 @@ jobs:
         id: stage
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
@@ -684,6 +690,8 @@ jobs:
           EMBER_DARWIN_TEST: "1"
       - name: Stage Ember.app for x64 (signed ad hoc), zip it and make the disk image
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused"
