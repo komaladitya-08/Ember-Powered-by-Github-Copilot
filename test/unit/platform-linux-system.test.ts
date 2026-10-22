@@ -196,7 +196,8 @@ describe("which", () => {
 
 describe("the setup-check inputs", () => {
   const RELEASE = 'ID="rhel"\nVERSION_ID="8.4"\n';
-  const env = { DISPLAY: ":0", XDG_SESSION_TYPE: "x11", PATH: "/usr/bin" };
+  // EMBER_PYTHON pins the interpreter (pickPython prefers /usr/libexec/platform-python where it exists, as on RHEL 8).
+  const env = { DISPLAY: ":0", XDG_SESSION_TYPE: "x11", PATH: "/usr/bin", EMBER_PYTHON: "python3" };
   const versions = { electron: "44.5.0", chrome: "152", node: "24.21.0" };
 
   it("are main.ts's readEnvironment construction, field by field", () => {
@@ -238,7 +239,7 @@ describe("the setup-check inputs", () => {
     probe();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
     const found = execFake({ "python3 -c import pyatspi": "" });
-    const once = accessibilityProbe({ env: {}, exec: found.exec, now: () => t });
+    const once = accessibilityProbe({ env: { EMBER_PYTHON: "python3" }, exec: found.exec, now: () => t });
     expect(once()).toEqual({ enabled: null, pyatspi: true });
     t += 100_000;
     once();
