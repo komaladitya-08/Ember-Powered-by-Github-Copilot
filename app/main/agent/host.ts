@@ -45,17 +45,6 @@ const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
   sessionId: null,
 });
 
-/**
- * Today's hands as a target's (§2.6), for a host built without a targets runtime (tests, the eval): this computer's
- * screen, no commands, grants by the app's name in lower case and window leases by the window's own key.
- */
-export function localTargetHands(hands: Hands, sys: WorkerSystem): TargetHands {
-  return {
-    ...hands, system: sys, commands: null, grantKey: app => app.toLowerCase(), leaseKey: key => key,
-    binding: { id: "local", kind: "local", label: "This computer", screenOs: sys.os, shellOs: sys.os, desktop: "screen" },
-  };
-}
-
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
   perception: PerceptionPort;
@@ -74,6 +63,17 @@ export interface Hands {
   cursor?: WorkerDeps["cursor"];
   /** The user's clipboard, for pasting text the keyboard can't type. */
   clipboard?: WorkerDeps["clipboard"];
+}
+
+/**
+ * Today's hands as a target's (§2.6), for a host built without a targets runtime (tests, the eval): this computer's
+ * screen, no commands, grants by the app's name in lower case and window leases by the window's own key.
+ */
+export function localTargetHands(hands: Hands, sys: WorkerSystem): TargetHands {
+  return {
+    ...hands, system: sys, commands: null, grantKey: app => app.toLowerCase(), leaseKey: key => key,
+    binding: { id: "local", kind: "local", label: "This computer", screenOs: sys.os, shellOs: sys.os, desktop: "screen" },
+  };
 }
 
 export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
