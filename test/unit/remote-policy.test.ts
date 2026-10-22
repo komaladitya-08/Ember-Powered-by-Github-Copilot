@@ -5,7 +5,7 @@ import { checkedWelcome, remoteTargetParts } from "../../app/main/remote/target"
 import { fakeLink, fakeSettings, NO_POLICY, policyOf, recordingLog, settle, welcomeOf } from "./remote-target-fakes";
 import type { ActionRequest } from "../../app/main/policy/policy";
 import type { AdminSummary } from "../../app/main/admin";
-import type { DesktopState } from "../../app/main/remote/protocol";
+import type { DesktopState, Welcome } from "../../app/main/remote/protocol";
 
 const click = (patch: Partial<ActionRequest> = {}): ActionRequest => ({
   taskId: "1-abcdef12", kind: "click", app: "gedit", window: "notes.txt - gedit", element: { role: "push button", name: "Bold" }, ...patch,
@@ -80,7 +80,7 @@ describe("gate 1 on a remote (§2.6's SSH column)", () => {
 
 describe("the remote desktop the PC lets Ember use (§2.5)", () => {
   const screen: DesktopState = { access: "screen", session: { type: "x11", locked: false, active: true }, notice: "shown" };
-  const base = { welcome: { os: "linux" as const, isWsl: false, uid: 1000 }, state: screen, combined: adminSummary(NO_POLICY), label: "build-01", login: "deploy" };
+  const base = { welcome: { os: "linux", isWsl: false, uid: 1000 } as Pick<Welcome, "os" | "isWsl" | "uid">, state: screen, combined: adminSummary(NO_POLICY), label: "build-01", login: "deploy" };
 
   it("uses an X11 desktop of the login's user in full", () => {
     expect(remoteDesktop(base)).toEqual({ desktop: "screen" });

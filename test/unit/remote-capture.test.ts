@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import sharp from "sharp";
+import sharp, { type SharpOptions } from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkRemoteImage, dropChannel, imageWaitMs, receiveImage } from "../../app/main/remote/remote-capture";
 import { fakeLink } from "./remote-target-fakes";
@@ -61,7 +61,7 @@ describe("checkRemoteImage (§7.2 item 5)", () => {
     const calls: unknown[] = [];
     const fake = ((input: unknown, opts: unknown) => {
       calls.push(opts);
-      return sharp(input as Buffer, opts as sharp.SharpOptions);
+      return sharp(input as Buffer, opts as SharpOptions);
     }) as unknown as typeof sharp;
     const bytes = await png(20, 10);
     await checkRemoteImage(bytes, refOf(bytes, { width: 20, height: 10, rect: { x: 0, y: 0, width: 20, height: 10 } }), [], "build-01", { sharp: fake });

@@ -118,12 +118,12 @@ describe("RemoteApps.launch (§2.6: asynchronous, through gate 2)", () => {
     const editor = apps.list()[0];
     link.answer("apps.launch", () => ({ status: "deny", reason: "This computer's administrator doesn't let Ember act in apps." }));
     stamps.add(stampOf("Text Editor"));
-    const denied = await apps.launch(editor).catch((e: unknown) => e as RemoteStepError);
+    const denied = (await apps.launch(editor).catch((e: unknown) => e)) as RemoteStepError;
     expect(denied).toBeInstanceOf(RemoteStepError);
     expect([denied.code, denied.message]).toEqual(["deny", "This computer's administrator doesn't let Ember act in apps."]);
     link.answer("apps.launch", () => ({ status: "needs_confirm", reason: "ask" }));
     stamps.add(stampOf("Text Editor"));
-    expect((await apps.launch(editor).catch((e: unknown) => e as RemoteStepError)).code).toBe("needs_confirm");
+    expect(((await apps.launch(editor).catch((e: unknown) => e)) as RemoteStepError).code).toBe("needs_confirm");
   });
 
   it("never starts a terminal or an app the remote didn't list, and sends nothing for them", async () => {
@@ -143,7 +143,7 @@ describe("remoteWorkerSystem (§2.6)", () => {
     const linux = remoteWorkerSystem("linux", apps);
     expect([linux.os, linux.keys, linux.words, linux.shortcuts]).toEqual(["linux", KEYS.linux, PLATFORM_WORDS.linux, SHORTCUTS.linux]);
     expect(linux.settings.available).toEqual({});
-    await expect(linux.settings.change("text-scaling", "1.25")).rejects.toThrow("Ember doesn't change settings on another computer.");
+    await expect(linux.settings.change("text_size", "1.25")).rejects.toThrow("Ember doesn't change settings on another computer.");
     expect(linux.privacy.isSecurityWindow({ app: "gcr-prompter", title: "Unlock private key" })).toBe(true);
     const mac = remoteWorkerSystem("darwin", apps);
     expect([mac.keys, mac.shortcuts]).toEqual([KEYS.darwin, SHORTCUTS.darwin]);

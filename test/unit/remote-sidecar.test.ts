@@ -190,7 +190,7 @@ describe("RemoteSidecar's steps carry gate 1's fresh stamp (§5.5, critique inte
     const { link, sidecar, stamps } = setup();
     stamps.add(stampOf());
     link.state = "stalled";
-    const err = await sidecar.doAction(1, "click").catch((e: unknown) => e as RemoteStepError);
+    const err = (await sidecar.doAction(1, "click").catch((e: unknown) => e)) as RemoteStepError;
     expect([err.code, err.message]).toEqual(["stale", "build-01 isn't answering right now, so nothing was sent."]);
     link.state = "ready";
     await expect(sidecar.doAction(1, "click")).rejects.toThrow(LOST_TRACK);
