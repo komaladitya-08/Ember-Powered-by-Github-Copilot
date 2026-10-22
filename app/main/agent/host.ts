@@ -18,13 +18,13 @@ import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
-import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
-import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "./worker";
+import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
 import type { PerceptionPort, SidecarPort } from "../perception/ports";
-import type { TargetsForAgent } from "../targets/types";
+import type { TargetHands, TargetsForAgent } from "../targets/types";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import { TERMINAL_REQUEST } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
@@ -32,6 +32,14 @@ import { PLATFORM_WORDS } from "../../shared/words";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
+
+/** The worker for a task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
+const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
+  run: async () => ({ success: false, summary: why }),
+  steer: async () => false,
+  dispose: async () => undefined,
+  sessionId: null,
+});
 
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
@@ -431,10 +439,13 @@ export class AgentHost {
   /** The OS's keys, words, apps, settings and security vocabulary (Linux's unless main passes its own). */
   private get sys(): WorkerSystem { return this.o.system ?? LINUX_WORKER_SYSTEM; }
 
+  /** The Confirmer tasks ask with: the hands', or without them (no window system) the task base's (§2.6). */
+  private get confirmer(): Confirmer | undefined { return this.o.hands?.confirmer ?? this.o.taskBase?.confirmer; }
+
   constructor(private o: HostOptions) {
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
-    const c = o.hands?.confirmer;
+    const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts });
@@ -766,15 +777,17 @@ export class AgentHost {
       void this.sweepTaskSessions(client);
 
       const hands = this.o.hands;
+      // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6).
+      const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
         && this.o.admin?.().features.screenImages !== false;
-      this.tasks = hands ? new TaskManager({
+      this.tasks = hands || targets ? new TaskManager({
         log: this.o.log.child("tasks"),
-        currentWindow: hands.currentWindow,
+        currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
-        audit: hands.audit,
+        audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
@@ -802,26 +815,40 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
-        makeWorker: (spec, progress) => new Worker({
-          client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision(), provider: this.o.provider,
-          workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-          perception: hands.perception, sidecar: hands.sidecar, policy: hands.policy, confirmer: hands.confirmer, audit: hands.audit,
-          settings: this.o.settings,
-          presenter: this.taskPresenter(spec.id, spec.goal),
-          lease: (key, owner, signal) => this.tasks!.lease(key, owner, signal),
-          flyTo: hands.flyTo,
-          cursor: hands.cursor,
-          clipboard: hands.clipboard,
-          pointer: hands.pointer,
-          activationKey: hands.activationKey,
-          desk: hands.desk,
-          onDesk: hands.onDesk,
-          onProgress: progress,
-          onUsage: (i, o) => this.recordUsage(i, o),
-          limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
-          inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
-          system: this.sys,
-        }, spec),
+        makeWorker: (spec, progress) => {
+          // This screen's hands for a task on this computer (as before); otherwise (no window system, or a task bound to
+          // another computer) the targets runtime's for the task's target, or why it can't take the task. A task bound
+          // elsewhere never runs on this screen's hands (fail closed).
+          const id = spec.targetId ?? "local";
+          let h: Hands, on: TargetHands | null = null;
+          if (hands && id === "local") h = hands;
+          else {
+            const got = targets ? targets.handsFor(id) : { ok: false as const, why: "Ember can't work on that computer here." };
+            if (!got.ok) return refusedWorker(spec, got.why);
+            h = on = got.hands;
+          }
+          return new Worker({
+            client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && (!on || on.binding.desktop === "screen"), provider: this.o.provider,
+            workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+            perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
+            settings: this.o.settings,
+            presenter: this.taskPresenter(spec.id, spec.goal),
+            lease: (key, owner, signal) => this.tasks!.lease(on ? on.leaseKey(key) : key, owner, signal),
+            flyTo: h.flyTo,
+            cursor: h.cursor,
+            clipboard: h.clipboard,
+            pointer: h.pointer,
+            activationKey: h.activationKey,
+            desk: h.desk,
+            onDesk: h.onDesk,
+            onProgress: progress,
+            onUsage: (i, o) => this.recordUsage(i, o),
+            limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
+            inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
+            system: on?.system ?? this.sys,
+            ...(on ? { target: on.binding, commands: on.commands, grantKey: on.grantKey, onAuthorized: on.onAuthorized } : {}),
+          }, spec);
+        },
       }) : null;
       const tasks = this.tasks;
       this.conductor = new Conductor({
@@ -1183,7 +1210,7 @@ export class AgentHost {
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     await this.conductor?.abort();
   }
 
@@ -1196,7 +1223,7 @@ export class AgentHost {
     // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
     this.reconnectAfterTasks = null;
     this.tasks?.cancelAll();
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
@@ -1231,7 +1258,7 @@ export class AgentHost {
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.
     this.tasks?.cancelAll(cutOff ?? undefined);
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);
     await this.tasks?.drain(2500);

@@ -16,7 +16,7 @@ import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
-import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
+import { coveringRects, elementScales, matchFrame, OVERLAY_TITLE, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
 import type { PerceptionSidecar } from "./ports";
@@ -308,35 +308,18 @@ export class Perception {
     } catch {
       return null;
     }
-    const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
-    // A private window: only its process (a task started there is refused), never its title.
-    if (seen.blocked) return { target: { pid }, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
-    const title = seen.window?.name || seen.x11Window?.title || "";
-    if (!title) return null;
-    const app = seen.window?.app ?? "";
-    const target = { pid, title, app, ...(seen.window?.path ? { path: seen.window.path } : {}) };
-    const focus = focusedElement(seen.nodes);
-    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
-    const secret = !!focus && isSecretNode(focus, label);
-    const lines = [`App: ${quoteUntrusted(app || "unknown", 60)}, window: ${quoteUntrusted(title, 100)}.`];
-    if (focus) lines.push(`Focused: ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 60)}` : ""}${secret ? " (a secret field; its contents are not shown)" : ""}.`);
-    if (focus && !secret) {
-      if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
-      else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
-    }
     // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
     // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
-    // read already took its turn.
-    const open = this.x11WindowLines();
-    if (open.length) lines.push("", "Open windows:", ...open);
-    return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>`, takesSelection: !secret && !focus?.selection };
+    // read already took its turn. (Listed only when the context will say it: not for a private or untitled window.)
+    const title = seen.window?.name || seen.x11Window?.title || "";
+    return quickContextText(seen, seen.blocked || !title ? [] : openWindowLines(this.x11Windows()));
   }
 
   /**
-   * Every app's top-level window as model-readable lines, Ember's own and private ones left out. `activeId`: the X11
-   * window the user is in, marked as focused.
+   * Every app's top-level window as open-window entries, Ember's own and private ones left out, each line said once.
+   * `activeId`: the X11 window the user is in, marked as focused.
    */
-  private x11WindowLines(activeId?: number): string[] {
+  private x11Windows(activeId?: number): OpenWindow[] {
     let wins: (X11Window & { wmClass: string; wmClassName?: string })[];
     try {
       wins = this.o.x11?.clientWindows() ?? [];
@@ -352,12 +335,14 @@ export class Perception {
       // which accessibility gives and the two parts joined don't match. On Windows wmClassName is the window class
       // ("Credential Dialog Xaml Host").
       && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && this.isSecurity({ app: part })))
-      .map(w => {
+      .map((w): OpenWindow => {
         // The class part of WM_CLASS ("VirtualBox Manager"); the last word of both, where only they are known.
         const cls = w.wmClassName ?? w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
-        return `- ${quoteUntrusted(friendlyApp(cls) || "unknown app", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}${w.id === activeId ? " (focused by the user)" : ""}`;
+        return { app: friendlyApp(cls) || "unknown app", title: w.title, active: w.id === activeId };
       });
-    return [...new Set(out)];
+    // Windows that read alike (two "Untitled" documents of one app) are listed once.
+    const said = new Set<string>();
+    return out.filter(w => { const line = openWindowLine(w); if (said.has(line)) return false; said.add(line); return true; });
   }
 
   /**
@@ -385,20 +370,8 @@ export class Perception {
       this.o.log.warn("perception.describe_failed", { err });
       return "Ember could not read the screen right now (the accessibility service did not answer).";
     }
-    // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
-    if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    const open = await this.openWindows(seen.x11Window?.id);
-    if (seen.ember) return `${EMBERS_OWN}${open}`;
-    const title = seen.window?.name || seen.x11Window?.title || "";
-    if (!seen.window) {
-      if (seen.busy) return `${BUSY_APP}${open}`;
-      const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
-      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${open}`;
-    }
-    const focus = focusedElement(seen.nodes);
-    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
-    const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
-    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${open}`;
+    // (Nothing more is listed for a private window.)
+    return describeText(seen, seen.blocked ? "" : await this.openWindows(seen.x11Window?.id));
   }
 
   /**
@@ -408,22 +381,16 @@ export class Perception {
    * context gave. `activeId`: the X11 window the user is in.
    */
   private async openWindows(activeId?: number): Promise<string> {
-    let lines: string[];
-    if (this.o.x11) {
-      lines = this.x11WindowLines(activeId);
-    } else {
-      let wins: AxWindow[];
-      try {
-        wins = await this.windows();
-      } catch (err) {
-        this.o.log.warn("perception.list_windows_failed", { err });
-        return "";
-      }
-      // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
-      lines = wins.map(w => `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
+    if (this.o.x11) return openWindowsBlock(this.x11Windows(activeId));
+    let wins: AxWindow[];
+    try {
+      wins = await this.windows();
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+      return "";
     }
-    if (!lines.length) return "";
-    return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${lines.join("\n")}\n</screen>`;
+    // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
+    return openWindowsBlock(wins.map(w => ({ app: w.app, title: w.name, active: w.active, ...(w.busy ? { busy: true } : {}) })));
   }
 
   /**
@@ -435,12 +402,7 @@ export class Perception {
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
     const stack = opts.image ? this.stackNow() : undefined;
     const seen = opts.target ? await this.read(opts.target, null, stack) : await this.focused(stack);
-    const text = seen.blocked
-      ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
-      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
-      : seen.busy ? BUSY_APP
-      : seen.ember ? EMBERS_OWN
-      : "The focused window exposes no accessibility information; use the screenshot.";
+    const text = perceivedText(seen);
     if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
     const x11 = this.o.x11;
@@ -478,6 +440,14 @@ export class Perception {
       this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
       return noShot("Ember couldn't check for private windows");
     }
+    // Ember's own windows (the command and prompt windows, settings, the ask box, the handle) never reach a model as
+    // pixels (critique integration-4): the whole screen's picture blacks out every one of them; a window's picture, those
+    // stacked over it (its covers hold them already). The overlay is hidden for the capture, and covers nothing.
+    const mine = this.ownWindows(stack, windowScope);
+    if (mine === null) {
+      this.o.log.warn("perception.capture_declined", { reason: "Ember's own windows could not be listed" });
+      return noShot("Ember couldn't check where its own windows are");
+    }
     const secrets = seen.nodes.filter(n => n.secret && n.bounds);
     const k = seen.axScale;
     // Before every picture the window's secret fields are looked for on their own too (in the app's own pixels): a
@@ -490,7 +460,7 @@ export class Perception {
       const known = new Set(secrets.map(n => rectKey(n.bounds!)));
       unread = more.filter(f => !physical(f.bounds, k).some(b => known.has(rectKey(b))));
     }
-    const blacked = [...mask, ...covers, ...shell.masks];
+    const blacked = [...mask, ...covers, ...mine, ...shell.masks];
     let coveredAfter = false;
     let dialogAfter = false;
     const capture = await (this.o.capture ?? captureRect)(x11, rect, {
@@ -517,7 +487,13 @@ export class Perception {
           blacked.push(...lateRects);
         }
         blacked.push(...priv);
-        if (!windowScope) return [...priv, ...fields];
+        if (!windowScope) {
+          // Ember's own windows where they are now (one may have opened or moved while the picture was taken).
+          const ownNow = this.ownWindows(now, false);
+          if (ownNow === null) return null;
+          blacked.push(...ownNow);
+          return [...priv, ...fields, ...ownNow];
+        }
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
@@ -543,6 +519,19 @@ export class Perception {
       return physical(now?.bounds ?? n.bounds!, k).map(pad);
     }));
     return places.flat();
+  }
+
+  /**
+   * The frames of Ember's own windows in `stack` (every one but the overlay, which is hidden for captures and lets clicks
+   * through); `windowScope`: a window's picture, which shows only what lies over it, already among its covers (so none
+   * here: an Ember window under it can't show). null when the stack can't be read for a picture of the whole screen
+   * (no picture then: fail closed).
+   */
+  private ownWindows(stack: StackedWindow[] | null | undefined, windowScope: boolean): Bounds[] | null {
+    if (windowScope) return [];
+    if (!stack) return null;
+    const own = this.ownPid;
+    return stack.filter(w => w.pid === own && w.title !== OVERLAY_TITLE).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 
   /**
@@ -694,6 +683,85 @@ export class Perception {
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
+
+/** One open window as the "Open windows" lists say it: its app (as the user knows it), its title, and how it is. */
+export interface OpenWindow { app: string; title: string; active: boolean; busy?: boolean }
+
+/** An open window's line: app and title quoted (screen text, untrusted), then whether the user is in it or it is busy. */
+function openWindowLine(w: OpenWindow): string {
+  return `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`;
+}
+
+/**
+ * The open windows' lines for quickContextText (one per window, in order). Pure: the PC builds a remote's context
+ * from its structured list with it (§5.5), so every string from there is quoted by Ember's own code.
+ */
+export function openWindowLines(lines: OpenWindow[]): string[] {
+  return lines.map(openWindowLine);
+}
+
+/**
+ * The open windows as describe() appends them: an untrusted <screen> block ("" for none). Pure (§5.5): the same text for
+ * this screen's windows and a remote's.
+ */
+export function openWindowsBlock(lines: OpenWindow[]): string {
+  if (!lines.length) return "";
+  return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${openWindowLines(lines).join("\n")}\n</screen>`;
+}
+
+/** What a worker's perceive_window says about what was read (before any screenshot note). Pure (§5.5). */
+export function perceivedText(seen: Seen): string {
+  return seen.blocked
+    ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
+    : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
+    : seen.busy ? BUSY_APP
+    : seen.ember ? EMBERS_OWN
+    : "The focused window exposes no accessibility information; use the screenshot.";
+}
+
+/**
+ * describe_screen's text for what was read, with `openBlock` (openWindowsBlock's text, or "") after it. Pure (§5.5):
+ * everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
+ */
+export function describeText(seen: Seen, openBlock: string): string {
+  if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
+  if (seen.ember) return `${EMBERS_OWN}${openBlock}`;
+  const title = seen.window?.name || seen.x11Window?.title || "";
+  if (!seen.window) {
+    if (seen.busy) return `${BUSY_APP}${openBlock}`;
+    const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
+    return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${openBlock}`;
+  }
+  const focus = focusedElement(seen.nodes);
+  const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+  const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
+  return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${openBlock}`;
+}
+
+/**
+ * The quick context for what was read (the window the user is in, what has focus, its selection or text), with
+ * `openLines` (openWindowLines's lines) as its list of open windows; null for a window with no title. Pure (§5.5).
+ */
+export function quickContextText(seen: Seen, openLines: string[]): QuickContext | null {
+  const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
+  // A private window: only its process (a task started there is refused), never its title.
+  if (seen.blocked) return { target: { pid }, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
+  const title = seen.window?.name || seen.x11Window?.title || "";
+  if (!title) return null;
+  const app = seen.window?.app ?? "";
+  const target = { pid, title, app, ...(seen.window?.path ? { path: seen.window.path } : {}) };
+  const focus = focusedElement(seen.nodes);
+  const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+  const secret = !!focus && isSecretNode(focus, label);
+  const lines = [`App: ${quoteUntrusted(app || "unknown", 60)}, window: ${quoteUntrusted(title, 100)}.`];
+  if (focus) lines.push(`Focused: ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 60)}` : ""}${secret ? " (a secret field; its contents are not shown)" : ""}.`);
+  if (focus && !secret) {
+    if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
+    else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
+  }
+  if (openLines.length) lines.push("", "Open windows:", ...openLines);
+  return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>`, takesSelection: !secret && !focus?.selection };
+}
 
 const rectKey = (b: Bounds) => `${b.x},${b.y},${b.width},${b.height}`;
 
