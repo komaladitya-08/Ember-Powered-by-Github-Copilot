@@ -496,7 +496,11 @@ async function selectOption(host: Host, params: Record<string, unknown>): Promis
     const still = await host.look(was.handle).catch(() => null);
     if (still && !still.selected) await perform(host, was.handle, "select").catch(() => undefined);
   }
-  return { ...await afterAction(host, entry, id), ok, option: names[index] };
+  const res = { ...await afterAction(host, entry, id), ok, option: names[index] };
+  // A drop-down that shows its choice must show this one: an option that says it is selected while its box still
+  // shows another (a list behind a closed box the app didn't hear about) wasn't chosen as far as the user can see.
+  if (ok && role === "combo box" && res.after?.selected !== undefined && res.after.selected !== "" && res.after.selected !== names[index]) res.ok = false;
+  return res;
 }
 
 /** A list's row chosen by its words: selected alone, as a click on it selects it (see chooseItem). */

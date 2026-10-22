@@ -315,6 +315,19 @@ describe("list_options and select_option", () => {
     expect(await call("select_option", { id: await id("Theme"), option: "System" })).toMatchObject({ ok: false, option: "System", after: { selected: "Light" } });
   });
 
+  it("says ok: false where the option says it is chosen but its box still shows another", async () => {
+    const { fake, call, id } = harness();
+    // The app didn't hear of the choice: its box goes on showing the old one.
+    fake.el("Dark").spec.onInvoke = undefined;
+    const theme = fake.el("Theme");
+    const realPerform = fake.perform.bind(fake);
+    fake.perform = async (h, op, value) => {
+      await realPerform(h, op, value);
+      theme.spec.value = "Light";
+    };
+    expect(await call("select_option", { id: await id("Theme"), option: "Dark" })).toMatchObject({ ok: false, option: "Dark", after: { selected: "Light" } });
+  });
+
   it("refuses what holds no options", async () => {
     const { fails, id } = harness();
     expect(await fails("list_options", { id: await id("Save") })).toBe("background_unavailable: this element has no selectable options");
