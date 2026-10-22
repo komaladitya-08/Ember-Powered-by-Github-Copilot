@@ -1,8 +1,8 @@
 /**
  * Helpers the per-OS compositions share: a window system with a system-dialog check added, the environment Ember
  * gives the helpers it starts, the hover-polling overlay shaper Windows and macOS use, the rule that puts Ember's
- * floating windows on every workspace, X11's screen bounds, and the accessibility helper's status as main keeps it. Pure and Electron-free
- * (plain Node, unit-tested on Linux): the compositions pass in what they know.
+ * floating windows on every workspace, X11's screen bounds, and the accessibility helper's status as main keeps it.
+ * Pure and Electron-free (plain Node, unit-tested on Linux): the compositions pass in what they know.
  */
 
 import type { FloatingKind, FloatingWindow, HelperStatus, OS, OverlayShaper, Rect, ScreenLike, WindowSystem } from "./types";
@@ -24,6 +24,9 @@ export function withSystemDialog<T extends WindowSystem>(ws: T, check: () => boo
       // The backend is the receiver, so its getters and methods see their own object, never the proxy.
       const v: unknown = Reflect.get(target, key, target);
       if (typeof v !== "function") return v;
+      // A frozen method must be reported as it is (a Proxy invariant); it is called with the proxy as `this` then.
+      const own = Reflect.getOwnPropertyDescriptor(target, key);
+      if (own && !own.configurable && own.writable === false) return v;
       const fn = v as (...a: unknown[]) => unknown;
       const known = bound.get(key);
       if (known && known.fn === fn) return known.bound;

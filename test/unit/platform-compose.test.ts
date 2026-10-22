@@ -65,6 +65,14 @@ describe("withSystemDialog", () => {
     expect(wrapped.pointer).toBe(wrapped.pointer);
   });
 
+  it("works over a frozen backend too (a Proxy may not report another value for a frozen method)", () => {
+    const { ws } = fakeWindows();
+    const wrapped = withSystemDialog(Object.freeze(ws), () => true);
+    expect(wrapped.systemDialogOpen()).toBe(true);
+    expect(wrapped.windowId({} as OwnWindowHandle)).toBe(7);
+    expect(wrapped.answer).toBe(42);
+  });
+
   it("lets a throwing check through to the caller, whose own wrapper fails closed", () => {
     const { ws } = fakeWindows();
     const wrapped = withSystemDialog(ws, () => { throw new Error("no desktop"); });
