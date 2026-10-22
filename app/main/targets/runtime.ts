@@ -493,7 +493,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const m = new Map<string, LinkView>();
     for (const [hostId, c] of conns) {
       const t = c.target;
-      m.set(hostId, { state: c.state, ...(t ? { desktop: t.desktop(), commands: safeState(t.service) } : {}) });
+      const why = t ? safeCap(t.service)?.why : undefined;
+      m.set(hostId, { state: c.state, ...(t ? { desktop: t.desktop(), commands: safeState(t.service), ...(why ? { commandsWhy: why } : {}) } : {}) });
     }
     return m;
   };
@@ -723,11 +724,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       }
       if (c.activate) setActive(targetIdOf("ssh", hostId)); else refresh();
       const headless = c.target?.desktop() === "none";
+      // A headless host is worked on through commands only: said so only when they aren't off there (L1: off until
+      // the user's card), else what turns them on.
+      const off = headless && safeState(c.target?.service ?? null) === "off";
+      let byAdmin = false;
+      try { byAdmin = off && c.target?.service.mode() === "off"; } catch { byAdmin = true; } // a mode that can't be read is off
       bubble(`connected:${hostId}`, {
         title: `Ember is on ${label}`,
-        thought: headless ? `${label} has no desktop, so I'll run commands there.` : "Ask away: I'll work there. Your voice and your sign-in stay on this computer.",
-        actions: [], mood: "done",
-      }, INFO_MS);
+        thought: !headless ? "Ask away: I'll work there. Your voice and your sign-in stay on this computer."
+          : !off ? `${label} has no desktop, so I'll run commands there.`
+            : byAdmin ? `${label} has no desktop, and your organisation has turned off commands there, so I can't work on it.`
+              : `${label} has no desktop, and commands are off there. Turn them on so I can work there.`,
+        actions: off && !byAdmin ? [{ id: `conn:${hostId}:commands`, label: "Turn on commands", primary: true }] : [], mood: off ? "attention" : "done",
+      }, off && !byAdmin ? undefined : INFO_MS);
       return { ok: true };
     } catch (err) {
       if (abort.signal.aborted) return stopped("Cancelled.");
@@ -1141,7 +1150,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const commands = liveCommands(t.service, id);
         // Reads and steps wait for the desktop's answer.
         const hands = remoteHands({ hostId: t.hostId, parts: t.parts, base: { audit, confirmer }, commands, ready: () => asking });
-        if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use, and commands are off there.`);
+        if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use. ${safeCap(t.service)?.why ?? "Commands are off there."}`);
         return { ok: true, hands };
       }
       const binding = bindingOf(e);
@@ -1365,11 +1374,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         if (parseTargetId(t)) pick(t as TargetId);
         return true;
       }
-      m = /^conn:([a-z0-9][a-z0-9._-]{0,63}):(cancel|disconnect|reconnect|stop)$/.exec(id);
+      m = /^conn:([a-z0-9][a-z0-9._-]{0,63}):(cancel|disconnect|reconnect|stop|commands)$/.exec(id);
       if (m) {
         const [, hostId, what] = m;
         if (what === "cancel") { conns.get(hostId)?.abort?.abort(); hideBubble(`connecting:${hostId}`); }
         else if (what === "reconnect") { hideBubble(); void connect(hostId, { interactive: true, activate: true }); }
+        else if (what === "commands") {
+          // A headless host's commands, turned on from its connected bubble: the commands card first (setCommands).
+          hideBubble(`connected:${hostId}`);
+          void setCommands(targetIdOf("ssh", hostId), true).then(r => {
+            if (r.ok) bubble(`connected:${hostId}`, { title: `Commands are on for ${hostId}`, thought: "Ask away: I'll run commands there.", actions: [], mood: "done" }, INFO_MS);
+            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, { title: `Commands stay off on ${hostId}`, thought: r.message ?? "", actions: [], mood: "error" }, INFO_MS);
+          }, err => log.warn("targets.commands_switch_failed", { err }));
+        }
         else { hideBubble(); void disconnect(hostId); }
         return true;
       }

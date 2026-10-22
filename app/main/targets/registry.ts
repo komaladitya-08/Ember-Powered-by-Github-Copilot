@@ -36,6 +36,8 @@ export interface LinkView {
   desktop?: DesktopAccess;
   /** Commands there now (the combined policy, the switch, the card). */
   commands?: CommandCapability["state"];
+  /** Why they are off there, in the capability's own words (who turned them off, and how to turn them on). */
+  commandsWhy?: string;
 }
 
 /** One target as the runtime keeps it. */
@@ -191,7 +193,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
     out.push({
       ...base, state: "ready", can, usable, ...(link.state === "stalled" ? { stalled: true } : {}),
       ...(link.state === "stalled" ? { why: `${label} isn't answering right now. Try again in a moment.` }
-        : usable ? {} : { why: `${label} has no desktop Ember can use, and commands are off there.` }),
+        : usable ? {} : { why: `${label} has no desktop Ember can use. ${link.commandsWhy ?? "Commands are off there."}` }),
     });
   }
   return out;

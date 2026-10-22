@@ -623,7 +623,31 @@ describe("SSH targets", () => {
     expect(h.hands.commands!.capability().askEvery).toBe("root");
     const off = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") }, welcome: welcome({ desktop: { access: "none", notice: "off" }, remoteAdmin: { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "off" } } }) });
     await connected(off);
-    expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
+    expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Your organisation has turned off commands on computers reached over SSH." });
+    // The connected bubble says so, with nothing to turn on.
+    expect(off.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "Ember is on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
+    }) });
+  });
+
+  it("never says it will run commands on a headless host whose commands are off: it offers to turn them on (the card first)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "none", why: "build-01 has no desktop.", notice: "off" } }) });
+    await connected(r);
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "Ember is on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
+      actions: [{ id: "conn:build-01:commands", label: "Turn on commands", primary: true }],
+    }) });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
+    expect(r.t.bubbleAction("conn:build-01:commands")).toBe(true);
+    await flush(); await flush();
+    expect(r.cards.at(-1)?.feature).toBe("commands");
+    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: 1 } });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Commands are on for build-01", thought: "Ask away: I'll run commands there." }) });
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
+    // With commands on, the old words are true.
+    const on = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") }, welcome: welcome({ desktop: { access: "none", notice: "off" } }) });
+    await connected(on);
+    expect(on.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ thought: "build-01 has no desktop, so I'll run commands there.", actions: [] }) });
   });
 
   it("lets a remote's newly read policy only tighten commands for the link, never loosen them", async () => {
@@ -1362,7 +1386,7 @@ describe("the remote and WSL seams (INT)", () => {
     expect(r.t.agent.describeTargets()).toContain("no desktop session");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
     // (With commands off there, a task needs the desktop: refused now, while the question goes out.)
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
     expect(r.refreshes).toHaveLength(2);
     r.refreshes[1].release();
     await flush();
