@@ -5,7 +5,8 @@
  */
 
 import { openX11, type X11 } from "../../x11";
-import type { OwnWindowHandle, Rect, ScreenLike, WindowSystem } from "../types";
+import type { OwnWindowHandle, ScreenLike, WindowSystem } from "../types";
+import { primaryScaledUnion } from "../compose";
 
 /**
  * The X id of one of Ember's own windows (the native handle's first 32 bits on X11), or 0 when it can't be read
@@ -17,18 +18,6 @@ export function x11WindowId(win: OwnWindowHandle): number {
   } catch {
     return 0;
   }
-}
-
-/**
- * The union of every display's DIP bounds, times the primary display's scale factor: the whole X screen in physical
- * pixels (what main.ts computed for perception's screen bounds).
- */
-export function primaryScaledUnion(screen: ScreenLike): Rect {
-  const scale = screen.getPrimaryDisplay().scaleFactor || 1;
-  const all = screen.getAllDisplays().map(d => d.bounds);
-  const x0 = Math.min(...all.map(b => b.x)), y0 = Math.min(...all.map(b => b.y));
-  const x1 = Math.max(...all.map(b => b.x + b.width)), y1 = Math.max(...all.map(b => b.y + b.height));
-  return { x: x0 * scale, y: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
 }
 
 /**

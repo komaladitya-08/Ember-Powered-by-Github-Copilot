@@ -2,15 +2,19 @@
  * Ember main process: single instance, settings, logging, environment checks,
  * the windows (home, overlay, handle, ask box), the Copilot brain, perception,
  * hands and voice, and the wiring between them.
+ *
+ * Everything that differs per OS comes from one Platform object (platform/index.ts,
+ * chosen by the OS alone, never by $DISPLAY): the window system and input, overlay shaping,
+ * the accessibility helper's launch, the desk and the system integration. This file
+ * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
-import { loadAdminPolicy, managedKeys, providerApiKey } from "./admin";
+import { managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createHomeWindow, isTrustedSender } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -18,39 +22,33 @@ import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/over
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
-import { openX11 } from "./x11";
-import { friendlyApp } from "../shared/apps";
-import { AtspiSidecar, pickPython } from "./perception/sidecar";
+import { friendlyApp, useAppNames } from "../shared/apps";
+import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
-import { isSecurityWindow } from "./policy/policy";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
-import { launchCommand, syncAutostart } from "./autostart";
-import { AuditLog, journalSink } from "./policy/audit";
+import { AuditLog } from "./policy/audit";
 import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
-import { openXInput, xinputError } from "./hands/input";
-import { handClipboardToManager, readSelection } from "./hands/clipboard-handoff";
 import { CursorBorrow } from "./hands/borrow";
-import { holdKeyboard } from "./hands/keybuffer";
 import { freshAskPress } from "./hotkey";
-import { DeskManager } from "./desk/desk";
-import { openDeskPlace, type DeskPlace } from "./desk/place";
-import { isTerminalApp } from "./hands/system";
+import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, idleWord, inotifyUse, type Hands } from "./agent/host";
+import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } from "./agent/host";
 import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
-
+import { loadPlatform } from "./platform";
+import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
+import type { FixId, HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -68,12 +66,25 @@ if (app.isPackaged && debugSwitch) {
   app.exit(2);
 }
 
-// Chromium on Linux speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
-if (process.platform === "linux") app.commandLine.appendSwitch("enable-speech-dispatcher");
+/**
+ * This OS's pieces. Made before ready: building it touches nothing of Electron's `screen` and calls no app.getPath
+ * (PlatformDeps' rule); its window system and input open after ready.
+ */
+const platform = loadPlatform({
+  electron: { app, screen, desktopCapturer, systemPreferences, shell, powerMonitor, browserWindow: BrowserWindow },
+  packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: process.env,
+});
+const sys = platform.system;
+useAppNames(platform.os);
 
-// ~/.config/ember unless overridden (tests use a temp dir).
+// Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
+for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(s);
+
+// ~/.config/ember on Linux unless overridden (tests use a temp dir).
 app.setName("ember");
-app.setPath("userData", process.env.EMBER_USER_DATA ?? path.join(app.getPath("appData"), "ember"));
+app.setPath("userData", process.env.EMBER_USER_DATA ?? sys.paths.userData(app.getPath("appData"), app.getPath("home")));
+// Windows toasts need the app's AppUserModelId, set before ready.
+if (sys.lifecycle.appUserModelId) app.setAppUserModelId(sys.lifecycle.appUserModelId);
 const userData = app.getPath("userData");
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
@@ -93,6 +104,8 @@ function startupFailed(err: unknown): void {
   log.error("app.start_failed", { err });
   const message = err instanceof Error ? err.message : String(err);
   void app.whenReady().then(() => {
+    // A dialog with no parent window comes up in front only once Ember is the active app (macOS).
+    sys.lifecycle.focusOwnApp();
     dialog.showErrorBox("Ember couldn't start", `${message}\n\nThe details are in ${log.file}.`);
     app.exit(1);
   });
@@ -112,106 +125,103 @@ if (process.argv.includes("--doctor")) {
   }
 }
 
-let pyatspiPresent: boolean | null = null;
-let pyatspiProbed = 0;
-/** Set once Ember has tried the X display, and once it knows which shortcuts it got. */
-let x11Reachable: boolean | undefined;
+/** What openWindows() returned (undefined until it has run), and which of Ember's shortcuts another app holds. */
+let wsState: WindowSystem | null | undefined;
 let shortcutsTaken: string[] | undefined;
+/** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
+let helper: HelperStatus | null | undefined;
 
-/** Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? */
-function probeAccessibility(): { enabled: boolean | null; pyatspi: boolean } {
-  let enabled: boolean | null = null;
-  try {
-    const out = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
-    enabled = out.trim() === "true";
-  } catch { /* no gsettings (not GNOME) */ }
-  // Asked again (at most every 30 s) while it is missing: the user may have just installed it.
-  if (pyatspiPresent === null || (!pyatspiPresent && Date.now() - pyatspiProbed > 30_000)) {
-    pyatspiProbed = Date.now();
-    try {
-      execFileSync(pickPython(), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
-      pyatspiPresent = true;
-    } catch {
-      pyatspiPresent = false;
-    }
-  }
-  return { enabled, pyatspi: pyatspiPresent };
-}
-
+/** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper). */
 function readEnvironment(): EnvReport {
-  let osRelease: string | null = null;
-  try { osRelease = fs.readFileSync("/etc/os-release", "utf8"); } catch { /* not Linux */ }
-  const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
-  return inspectEnvironment({
-    env: process.env,
-    osRelease,
-    glibc: header?.glibcVersionRuntime ?? null,
-    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
-    platform: process.platform,
-    arch: process.arch,
-    accessibility: process.platform === "linux" ? probeAccessibility() : undefined,
-    x11: x11Reachable,
-    shortcutsTaken,
-  });
+  return inspectEnvironment(sys.environment({ windows: wsState, shortcutsTaken, helper }));
 }
 
-/** Speech models installed with Ember (the ember-voice-models package) are used in place of a download. */
+/**
+ * Speech models installed with Ember (the ember-voice-models package, which puts them in "/usr/share/ember/voice-models"
+ * on Linux; sys.voice says where on each OS) are used in place of a download.
+ */
 function voiceModelsRoot(): { root: string; bundled: boolean } {
-  const bundled = [devEnv("EMBER_VOICE_MODELS"), "/usr/share/ember/voice-models", path.join(process.resourcesPath ?? "", "voice-models")]
+  const bundled = [devEnv("EMBER_VOICE_MODELS"), ...sys.voice.bundledModelDirs(process.resourcesPath ?? "")]
     .find((d): d is string => !!d && modelsReady(d));
   return bundled ? { root: bundled, bundled: true } : { root: path.join(userData, "models"), bundled: false };
 }
 
-const which = (cmd: string) => (process.env.PATH ?? "/usr/bin:/bin").split(":").some(d => { try { fs.accessSync(path.join(d, cmd), fs.constants.X_OK); return true; } catch { return false; } });
+/** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
+const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnDefaults });
+
+// Packaged builds ship the sidecar under resources/; development runs it from the repo.
+const sidecarScript = () => app.isPackaged
+  ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
+  : path.join(app.getAppPath(), "sidecar", "atspi", "ember_atspi.py");
+
+/** Where Ember runs from, for the accessibility helper's launch (main.cjs's folder holds ax-sidecar.cjs). */
+const sidecarContext = (): SidecarContext => ({
+  appDir: __dirname, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged, userData, execPath: process.execPath,
+});
+
+/**
+ * The doctor's "Accessibility helper" row (Windows, macOS): the shared host started once, asked for its status within
+ * its cold-start time, and stopped. undefined on Linux, where nothing is started (the Python sidecar starts on demand).
+ */
+async function doctorHelper(): Promise<HelperStatus | null | undefined> {
+  const launch = platform.sidecarLaunch(sidecarContext());
+  if (!launch) return undefined;
+  const sidecar = new AtspiSidecar(sidecarScript(), log.child("atspi"), undefined, undefined, launch);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("no answer")), (launch.firstRequestMs ?? 5000) + 1000); });
+    return toHelperStatus(await Promise.race([sidecar.status(), late]));
+  } catch (err) {
+    log.warn("doctor.helper_unavailable", { err });
+    return null;
+  } finally {
+    clearTimeout(timer);
+    sidecar.stop();
+  }
+}
 
 async function runDoctor(): Promise<void> {
   await app.whenReady();
-  const x11 = process.env.DISPLAY ? openX11() : null;
-  x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
+  const ws = wsState = platform.openWindows(log);
+  helper = await doctorHelper();
   const env = readEnvironment();
-  const xin = x11 ? openXInput() : null;
-  const admin = loadAdminPolicy(devEnv("EMBER_ADMIN_POLICY"));
-  const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env });
+  // The doctor never logged xtest.unavailable: no logger.
+  const input = platform.openInput(ws, null);
+  const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
+  const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
   let auth: DoctorProbes["auth"] = null;
   if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
   else {
-    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage)).catch(() => null);
+    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), ghOptions()).catch(() => null);
     // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
     const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
     if (t && !ignored) auth = { kind: "github", source: t.source };
   }
-  let microphones: string[] | null;
-  try {
-    microphones = execFileSync("pactl", ["list", "short", "sources"], { encoding: "utf8", timeout: 3000 })
-      .split("\n").map(l => l.split("\t")[1]).filter((n): n is string => !!n && !n.endsWith(".monitor"));
-  } catch { microphones = which("pactl") ? [] : null; }
   const models = voiceModelsRoot();
-  let userNamespaces = false;
-  try { userNamespaces = Number(fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8")) > 0; } catch { /* not Linux */ }
-  try { if (fs.readFileSync("/proc/sys/kernel/unprivileged_userns_clone", "utf8").trim() === "0") userNamespaces = false; } catch { /* not Debian */ }
-  let suidHelper = false;
-  try { const st = fs.statSync(path.join(path.dirname(process.execPath), "chrome-sandbox")); suidHelper = st.uid === 0 && (st.mode & 0o4000) !== 0; } catch { /* none */ }
+  const probes = await sys.doctorProbes();
   const checks = doctorChecks({
-    env, compositor: x11 ? x11.hasCompositor() : null, xtest: x11 ? !!xin : null,
-    // What Chromium speaks through (spd-say isn't packaged on RHEL 8, so it can't be the test).
-    speechDispatcher: which("speech-dispatcher") || ["/usr/lib64/libspeechd.so.2", "/usr/lib/x86_64-linux-gnu/libspeechd.so.2"].some(f => fs.existsSync(f)), microphones,
+    os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
+    // Input that can't reach apps (macOS without the Accessibility permission) counts as missing.
+    xtest: ws ? !!input && !input.blockedReason?.(0) : null,
+    speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
-    runtime: runtime.exists, auth, admin, desk: DeskManager.available(), sandbox: { userNamespaces, suidHelper },
-    fileWatchers: inotifyUse(),
+    runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers, extra: probes.extra,
+    shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
   process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
-  xin?.close();
-  x11?.close();
+  input?.close();
+  ws?.close();
   app.exit(checks.some(c => c.status === "fail") ? 1 : 0);
 }
 
 function start(): void {
-  // The administrator's policy (/etc/ember/policy.json) overrides the user's settings.
-  const admin = loadAdminPolicy(devEnv("EMBER_ADMIN_POLICY"));
+  // The administrator's policy (/etc/ember/policy.json on Linux) overrides the user's settings.
+  const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
   if (admin.error) log.error("admin_policy.invalid", { error: admin.error, note: "locked down until it is fixed" });
   else if (admin.source) log.info("admin_policy.loaded", { file: admin.source });
   const policy = admin.policy;
-  const settings = new SettingsStore(path.join(userData, "settings.json"), policy);
+  // Windows: antivirus and sync tools briefly lock a file being replaced, so the save tries again.
+  const settings = new SettingsStore(path.join(userData, "settings.json"), policy, { renameRetries: sys.paths.renameRetries });
   const loaded = settings.load();
   if (loaded.recoveredFrom) log.warn("settings.recovered", { backup: loaded.recoveredFrom });
   // Edits made by hand (never-look list, grants) are picked up while Ember runs.
@@ -226,16 +236,25 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
+  const ownId = (win: OwnWindowHandle): number => {
+    try { return wsRef?.windowId(win) ?? 0; } catch { return 0; }
+  };
   /**
    * One of Ember's own windows comes to the front with the keyboard. A window manager that prevents focus stealing
    * (xfwm4, Mutter) keeps a window Ember opens from its overlay or a hotkey behind the user's app otherwise: Ember asks
-   * as a pager does (a direct user action), which they honour.
+   * as a pager does (a direct user action), which they honour. Windows' foreground rules need the input backend too;
+   * on macOS Ember activates itself (an AX call into its own process would wait for its own main thread).
    */
   const bringToFront = (win: BrowserWindow) => {
     if (win.isDestroyed()) return;
     win.show();
     win.focus();
-    try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) xinputRef?.activate(xid); } catch { /* not X11 */ }
+    sys.lifecycle.focusOwnApp();
+    if (sys.lifecycle.activateOwnWithInput) {
+      const id = ownId(win);
+      if (id) inputRef?.activate(id);
+    }
   };
   const showHome = () => {
     // A bubble that only points to settings (a greeting, "Read all") goes: settings has it now. An expanded answer's
@@ -281,6 +300,8 @@ function start(): void {
     log.info("instance.second", {});
     showHome();
   });
+  // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second.
+  if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHome());
 
   // No page may open windows or navigate away from our bundled files.
   app.on("web-contents-created", (_e, contents) => {
@@ -297,6 +318,20 @@ function start(): void {
       return fn(...args);
     };
 
+  /** What the settings window says differently on this OS (shortcuts, the data folder, the microphone, fixes). */
+  const platformStatus = (): NonNullable<Status["platform"]> => ({
+    os: platform.os,
+    shortcuts: Object.fromEntries(Object.entries(sys.shortcuts).map(([id, d]) => [id, { label: d.label, keys: d.keys }])) as NonNullable<Status["platform"]>["shortcuts"],
+    dataDir: sys.paths.dataDirLabel(userData),
+    settingsFile: sys.paths.dataDirLabel(userData, "settings.json"),
+    auditCopy: sys.auditCopy(),
+    micIndicator: sys.words.micIndicator,
+    permissionsNote: sys.words.permissionsNote,
+    speakerRejection: sys.voice.speakerMonitor,
+    fixLabels: Object.fromEntries(sys.fixes.ids.map(id => [id, sys.fixes.label(id)])),
+    desk: !!platform.desk && platform.desk.available().ok,
+    autostartNote: sys.autostart.note(),
+  });
   ipcMain.handle(IPC.getStatus, guard((): Status => ({
     appVersion: app.getVersion(),
     settings: settings.get(),
@@ -306,6 +341,7 @@ function start(): void {
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
       neverLook: policy.neverLook },
+    platform: platformStatus(),
   })));
   ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
@@ -321,9 +357,10 @@ function start(): void {
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     return settings.update(ownNeverLook(patch), { soon: sizeOnly });
   }));
-  ipcMain.handle(IPC.applyFix, guard((fix: string) => {
-    if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
-    execFileSync("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
+  // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch).
+  ipcMain.handle(IPC.applyFix, guard(async (fix: string) => {
+    if (!sys.fixes.ids.includes(fix as FixId)) throw new Error(`unknown fix: ${fix}`);
+    await sys.fixes.apply(fix as FixId);
     log.info("fix.applied", { fix });
     return readEnvironment();
   }));
@@ -358,6 +395,8 @@ function start(): void {
   const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
     if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
   }, ms);
+  /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
+  const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   const greet = () => {
@@ -365,13 +404,13 @@ function start(): void {
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
     const waiting = phase === "error" && (agent?.waitingForNetwork ?? false);
-    const keys = hasKey("Control+Alt+Space") && hasKey("Control+Alt+X")
-      ? "Press Ctrl+Alt+Space to ask me anything; Ctrl+Alt+X stops me."
+    const keys = hasKey(sc.ask.accel) && hasKey(sc.stop.accel)
+      ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
     const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
-      ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey("Control+Alt+E") ? " (Ctrl+Alt+E)" : ""} to connect me.`
+      ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
       actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
@@ -392,6 +431,8 @@ function start(): void {
     if (!n) { app.quit(); return; }
     quitAsking?.abort();
     const mine = quitAsking = new AbortController();
+    // A question with no parent window comes up in front only once Ember is the active app (macOS).
+    sys.lifecycle.focusOwnApp();
     try {
       const { response } = await dialog.showMessageBox({
         type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0, signal: mine.signal,
@@ -404,18 +445,18 @@ function start(): void {
   };
   /** The handle's menu is open (or opening): a second click doesn't open another one over it. */
   let menuOpen = false;
-  /** The app window the user was last in (an X client window), for giving focus back after Ember's own windows. */
+  /** The app window the user was last in (an X client window on Linux), for giving focus back after Ember's own windows. */
   let userWindow = 0;
   /** The window the ask box was opened over (it may be one of Ember's: settings, the quit question). */
   let askOver = 0;
   /** The window the user took Ember's desk over from (the keyboard goes back there on hand back). */
   let deskTakenFrom = 0;
   /**
-   * The window with the keyboard now (an X client window, 0 if none), noted as the user's when it isn't Ember's.
-   * `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
+   * The window with the keyboard now (an X client window on Linux, 0 if none), noted as the user's when it isn't
+   * Ember's. `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
    */
   const focusNow = (): { id: number; ember: boolean } => {
-    const f = x11Ref?.focusWindow();
+    const f = wsRef?.focusWindow();
     if (!f) return { id: 0, ember: false };
     if (f.pid !== process.pid) userWindow = f.id;
     return { id: f.id, ember: f.pid === process.pid };
@@ -425,15 +466,15 @@ function start(): void {
    * up; else to the user's window, or, when that has gone too, to the topmost app window that isn't Ember's.
    */
   /** Windows on screen, bottom to top. */
-  const shownWindows = () => x11Ref?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
+  const shownWindows = () => wsRef?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];
   const giveFocusBack = (back: number) => {
     const shown = shownWindows();
     // Never the ask box: activating its X window would map it without openAsk (a click into the app looked like Ask opening).
     if (back && askWindow.isWindow(back)) back = askOver && !askWindow.isWindow(askOver) ? askOver : 0;
-    if (back && shown.some(w => w.client === back)) { xinputRef?.activate(back); return; }
+    if (back && shown.some(w => w.client === back)) { inputRef?.activate(back); return; }
     const apps = shown.filter(w => w.pid !== process.pid);
     const to = apps.some(w => w.client === userWindow) ? userWindow : apps.at(-1)?.client ?? userWindow;
-    if (to && !askWindow.isWindow(to)) xinputRef?.activate(to);
+    if (to && !askWindow.isWindow(to)) inputRef?.activate(to);
   };
   const showMenu = () => {
     if (!handle || menuOpen) return;
@@ -441,7 +482,7 @@ function start(): void {
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
-    const label = (text: string, accel: string) => hasKey(accel) ? `${text}   ${accel.replace("Control", "Ctrl")}` : text;
+    const label = (text: string, def: { accel: string; label: string }) => hasKey(def.accel) ? `${text}   ${def.label}` : text;
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
@@ -450,17 +491,17 @@ function start(): void {
     let menuClosing = false;
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", "Control+Alt+Space"), registerAccelerator: false, click: () => {
+      { label: label("Ask Ember…", sc.ask), registerAccelerator: false, click: () => {
         if (menuClosing) { log.info("ask.menu_ignored", { reason: "menu-closing" }); return; }
         opens = true; openAsk({ look: false, over: back, source: "menu" });
       } },
-      { label: label("Stop everything", "Control+Alt+X"), registerAccelerator: false, click: () => stopEverything("menu") },
+      { label: label("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", "Control+Alt+M"), registerAccelerator: false, click: toggleMute }]
+        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", "Control+Alt+E"), registerAccelerator: false, click: () => { opens = true; showHome(); } },
+      { label: label("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
@@ -498,14 +539,16 @@ function start(): void {
       if (kept && !opens) giveFocusBack(fromDesk && !deskInControl ? deskTakenFrom : back);
     }, 150) });
     win.setFocusable(true);
-    const xid = Number(win.getNativeWindowHandle().readUInt32LE(0));
+    const xid = ownId(win);
     // Open once the keyboard is really on the handle, and has stayed there: the X server says so, and Electron has
     // seen the focus come (each can come first; a focus change after the menu opened closed it at once, and with no
-    // window manager its keys went to the app behind).
+    // window manager its keys went to the app behind). The X server's word is an X11 check: elsewhere Electron's is
+    // enough (a macOS panel that takes the keyboard never shows up as the focus window).
     let focusSeen = win.isFocused();
     const onFocus = () => { focusSeen = true; };
     win.on("focus", onFocus);
-    const hasKeyboard = () => focusSeen && win.isFocused() && (!x11Ref || x11Ref.focusWindow()?.id === xid);
+    const ws = wsRef;
+    const hasKeyboard = () => focusSeen && win.isFocused() && (!ws || ws.kind !== "x11" || ws.focusWindow()?.id === xid);
     let opened = false, steady = 0;
     const go = () => {
       if (opened) return;
@@ -514,13 +557,13 @@ function start(): void {
     };
     // Nor while the click on the handle is still held: the menu opens under the pointer, and the release would choose
     // its first item ("Ask Ember…": the ask box opened by itself).
-    const released = () => ((x11Ref?.pointer()?.mask ?? 0) & 0x1f00) === 0;
+    const released = () => ((wsRef?.pointer()?.mask ?? 0) & 0x1f00) === 0;
     const poll = setInterval(() => { if (win.isDestroyed()) go(); else if (hasKeyboard() && released()) { if (++steady >= 2) go(); } else steady = 0; }, 10);
     // No focus within a moment (no X input here): the menu opens anyway, once the button is up (at most a second).
     const menuAsked = Date.now();
     const late = setTimeout(function later() { if (released() || Date.now() - menuAsked > 1000) go(); else setTimeout(later, 20); }, 250);
     win.focus();
-    if (xinputRef?.focusInput) xinputRef.focusInput(xid);
+    if (inputRef?.focusInput) inputRef.focusInput(xid);
   };
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
@@ -562,10 +605,10 @@ function start(): void {
    * Questions are answered with keys too (Orca and keyboard users can't click the bubble): Y allows, N says
    * not now. "Always" is a click only: a global key would take an app's own Ctrl+Alt+A and grant for good.
    */
-  const QUESTION_KEYS = [
-    { accel: "Control+Alt+Y", which: "primary", hint: "Ctrl+Alt+Y allow", say: "Control Alt Y to allow" },
-    { accel: "Control+Alt+N", which: "deny", hint: "Ctrl+Alt+N not now", say: "Control Alt N for not now" },
-  ] as const;
+  const QUESTION_KEYS: readonly { accel: string; which: "primary" | "deny"; hint: string; say: string }[] = [
+    { accel: sc.allow.accel, which: "primary", hint: `${sc.allow.label} allow`, say: `${sc.allow.say} to allow` },
+    { accel: sc.deny.accel, which: "deny", hint: `${sc.deny.label} not now`, say: `${sc.deny.say} for not now` },
+  ];
   let questionKeys: string[] = [];
   const holdQuestionKeys = () => {
     if (questionKeys.length) return;
@@ -602,28 +645,28 @@ function start(): void {
   const notify = (title: string, body: string) => {
     try { if (Notification.isSupported()) new Notification({ title, body: body.slice(0, 240), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
   };
-  let screenReader: boolean | null = null;
-  /** Orca running: speak questions and results even without "Speak replies". */
-  const screenReaderOn = () => {
-    if (screenReader === null) {
-      try { screenReader = execFileSync("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { encoding: "utf8", timeout: 2000 }).trim() === "true"; } catch { screenReader = false; }
-      setTimeout(() => { screenReader = null; }, 60_000).unref?.();
-    }
-    return screenReader || app.isAccessibilitySupportEnabled();
-  };
   let askHistory: string[] = [];
-  /** Speak replies (or a screen reader runs), unless the organisation turned speaking off. */
-  const maySpeak = () => policy.features.speak !== false && (settings.get().speak || screenReaderOn());
+  /** Speak replies (or a screen reader runs: Orca, Narrator, VoiceOver), unless the organisation turned speaking off. */
+  const maySpeak = () => policy.features.speak !== false && (settings.get().speak || sys.a11y.screenReaderOn());
 
   // ───── Copilot brain ─────
-  /** The X window of the ask box as last given the keyboard (0: not yet). */
+  /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
   let askXid = 0;
   const askWindow = new AskWindow({
     keepOff: () => handle?.bounds ?? null,
-    // As the handle's menu takes the keyboard: the window manager is asked, and X is told too.
-    takeFocus: xid => { askXid = xid; xinputRef?.activate(xid); xinputRef?.focusInput?.(xid); },
-    // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees.
-    hasFocus: (): boolean => !x11Ref || (askXid !== 0 && x11Ref.focusWindow()?.id === askXid),
+    windowId: w => ownId(w),
+    floating: platform.overlay.floating("ask"),
+    // As the handle's menu takes the keyboard: the window manager is asked, and X is told too. On macOS the box is a
+    // panel that takes the keyboard on show() without activating Ember (the user's app stays the active one).
+    takeFocus: id => {
+      askXid = id;
+      if (!sys.lifecycle.activateForAsk) return;
+      sys.lifecycle.focusOwnApp();
+      if (id && sys.lifecycle.activateOwnWithInput) { inputRef?.activate(id); inputRef?.focusInput?.(id); }
+    },
+    // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees
+    // (an X11 check, needed only where Ember holds the keyboard while the box opens).
+    hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
     onReveal: source => log.info("ask.reveal", { source }),
   });
   let agent: AgentHost | null = null;
@@ -635,9 +678,11 @@ function start(): void {
   const consented = () => hasConsent(settings.get());
   const captureContext = () => {
     if (!perception || !consented()) { callContext = Promise.resolve(null); return; }
-    // What is selected in the user's window, asked for now (some apps don't tell it through accessibility).
-    const active = x11Ref?.activeWindow();
-    const selected = active && active.pid !== process.pid ? readSelection({ sameClientAs: active.id }).catch(() => "") : Promise.resolve("");
+    // What is selected in the user's window, asked for now (some apps don't tell it through accessibility; Linux's
+    // PRIMARY selection, which other OSes don't have).
+    const active = wsRef?.activeWindow();
+    const clip = platform.clipboard;
+    const selected = active && active.pid !== process.pid && clip ? clip.readSelection(active.id).catch(() => "") : Promise.resolve("");
     callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
   const askEmber = async (text: string) => {
@@ -664,7 +709,7 @@ function start(): void {
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
     // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
     // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
-    const held = look ? holdKeyboard({ log: (event, fields) => log.info(event, fields) }) : null;
+    const held = look && platform.keyboardHold ? platform.keyboardHold({ log: (event, fields) => log.info(event, fields) }) : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
@@ -717,8 +762,11 @@ function start(): void {
   let shownForAnswer = false;
   /** "Hide Ember" while there is no overlay to hold it (no compositor): the next overlay starts hidden. */
   let keptHidden = false;
-  let xinputRef: ReturnType<typeof openXInput> = null;
-  let x11Ref: ReturnType<typeof openX11> = null;
+  /** The window system and input, once opened after ready (null: none on this desktop). */
+  let inputRef: Input | null = null;
+  let wsRef: WindowSystem | null = null;
+  /** The accessibility helper's client, once made after ready. */
+  let sidecarRef: AtspiSidecar | null = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
   let showBorrowing: (() => void) | null = null;
   /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
@@ -797,10 +845,6 @@ function start(): void {
         break;
     }
   };
-  // Packaged builds ship the sidecar under resources/; development runs it from the repo.
-  const sidecarScript = () => app.isPackaged
-    ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
-    : path.join(app.getAppPath(), "sidecar", "atspi", "ember_atspi.py");
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
   let signInAbort: AbortController | null = null;
@@ -830,12 +874,12 @@ function start(): void {
     const msg = err instanceof Error ? err.message : String(err);
     if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
     if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
-    return explainStartError(err, { online: net.isOnline() });
+    return explainStartError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   };
   /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
-    const found = await resolveToken(tokens).catch(() => null);
+    const found = await resolveToken(tokens, ghOptions()).catch(() => null);
     currentToken = found?.token ?? null;
     await agent?.start(currentToken, found?.source);
     return { found: !!found, source: found?.source ?? null };
@@ -860,7 +904,7 @@ function start(): void {
       say({ state: "waiting", message: "In a terminal, run “gh auth login”. Ember will notice within a few seconds and connect; no restart needed." });
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
-        const found = await resolveToken(tokens).catch(() => null);
+        const found = await resolveToken(tokens, ghOptions()).catch(() => null);
         if (ac.signal.aborted) return;
         if (found && found.token !== before) {
           currentToken = found.token;
@@ -886,7 +930,7 @@ function start(): void {
       const kept = tokens?.save(token) ?? false;
       if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
       currentToken = token;
-      await connected(await agent?.start(token, "stored"), kept ? undefined : "Signed in. No keyring is available, so you'll need to sign in again next time.");
+      await connected(await agent?.start(token, "stored"), kept ? undefined : `Signed in. ${sys.words.keyringMissing}, so you'll need to sign in again next time.`);
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }
@@ -963,17 +1007,18 @@ function start(): void {
     overlay?.broadcastSettings(s);
     handle?.sendSettings(s);
   });
-  // "Start Ember when I log in" keeps ~/.config/autostart/ember.desktop in step.
+  // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step.
   const autostart = () => {
     try {
-      if (syncAutostart(settings.get().startAtLogin, launchCommand({ packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath() }))) {
+      if (sys.autostart.sync(settings.get().startAtLogin)) {
         log.info("autostart.updated", { on: settings.get().startAtLogin });
       }
     } catch (err) { log.warn("autostart.failed", { err }); }
   };
   autostart();
   settings.onChange(autostart);
-  if (process.argv.includes("--autostart")) log.info("app.autostart");
+  const atLogin = sys.autostart.launchedAtLogin(process.argv);
+  if (atLogin) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
   /** The brain's start (finding a sign-in, then connecting): what the greeting and onboarding wait for. */
   let brainStart: Promise<unknown> = Promise.resolve();
@@ -1010,25 +1055,43 @@ function start(): void {
     wasOnboarded = s.onboarded;
   });
 
+  /**
+   * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10): settings are saved and
+   * whatever Ember holds is let go of at once, as quitting would.
+   */
+  let sessionEnding = false;
+  const endSession = (source: string) => {
+    if (sessionEnding) return;
+    sessionEnding = true;
+    log.info("app.session_end", { source });
+    try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
+    borrowRef?.stop();
+    inputRef?.releaseAll();
+    sidecarRef?.stop();
+    voice?.stop();
+  };
+  if (sys.lifecycle.sessionEnd === "power-monitor-shutdown") powerMonitor.on("shutdown", () => endSession("shutdown"));
   // An X id of one of Ember's windows, taken while they exist (at will-quit they are gone): the clipboard's
-  // owner is told apart by it.
+  // owner is told apart by it (Linux only: elsewhere the system keeps the clipboard after Ember quits).
   let emberXid = 0;
   app.on("browser-window-created", (_e, w) => {
-    if (!emberXid && process.env.DISPLAY) try { emberXid = Number(w.getNativeWindowHandle().readUInt32LE(0)); } catch { /* not X11 */ }
+    if (!emberXid && platform.clipboard) emberXid = platform.clipboard.ownerId(w);
+    if (sys.lifecycle.sessionEnd === "window-session-end") w.on("session-end", () => endSession("session-end"));
   });
   // Quitting waits (up to 3 s) for the brain to stop: that is when this run's conversation is deleted. Meanwhile a
   // clipboard Ember holds (after a paste it put the user's back) goes to the clipboard manager (≤ 2 s), or
-  // quitting would empty it.
+  // quitting would empty it. Not while the session ends: there is no time to wait then.
   let quitting = false;
   app.on("will-quit", e => {
     globalShortcut.unregisterAll();
     overlay?.stop();
-    if (quitting) return;
+    if (quitting || sessionEnding) return;
     quitting = true;
     e.preventDefault();
     const brain = agent ? Promise.race([agent.stop(), new Promise(r => setTimeout(r, 3000))]).catch(() => undefined) : Promise.resolve();
-    const clip = emberXid
-      ? handClipboardToManager({ ourWindow: emberXid }).then(result => log.info("clipboard.handoff", { result }), err => log.warn("clipboard.handoff_failed", { err }))
+    const clipboardBridge = platform.clipboard;
+    const clip = emberXid && clipboardBridge
+      ? clipboardBridge.handOff(emberXid).then(result => log.info("clipboard.handoff", { result }), err => log.warn("clipboard.handoff_failed", { err }))
       : Promise.resolve();
     void Promise.all([brain, clip]).finally(() => app.exit(0));
   });
@@ -1045,21 +1108,37 @@ function start(): void {
     session.defaultSession.setSpellCheckerEnabled(false);
     session.defaultSession.setSpellCheckerLanguages([]);
     session.defaultSession.on("spellcheck-dictionary-download-begin", (_e, lang) => log.warn("spellcheck.download", { lang }));
-    const x11 = x11Ref = process.env.DISPLAY ? openX11() : null;
-    x11Reachable = process.env.DISPLAY ? !!x11 : undefined;
+    // macOS: an application menu whose Quit (Command+Q) asks as the handle's Quit does; its Edit menu is what makes
+    // Command+C/V/X/A/Z work in the settings window's fields.
+    if (sys.lifecycle.appMenu) {
+      Menu.setApplicationMenu(Menu.buildFromTemplate([
+        { label: "Ember", submenu: [
+          { label: "Settings…", accelerator: "Command+,", click: () => showHome() },
+          { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
+          { label: "Quit Ember", accelerator: "Command+Q", click: () => void quitEmber() },
+        ] },
+        { role: "editMenu" },
+        { role: "windowMenu" },
+      ]));
+    }
+    // Windows: the Start Menu shortcut toasts need (made once, for the zip build).
+    sys.lifecycle.ensureShortcut();
+    // Linux: X11 only with $DISPLAY, as always (the platform reads it).
+    const ws = wsRef = wsState = platform.openWindows(log);
     const env = readEnvironment();
-    let compositing = x11 ? x11.hasCompositor() : false;
+    let compositing = ws ? ws.hasCompositor() : false;
     askWindow.setOpaque(!compositing);
-    // Made now (hidden), so Ctrl+Alt+Space opens it at once: a box still loading took the first letters typed.
+    // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed.
     if (consented()) askWindow.prepare();
-    // X11 has one global scale factor; XQueryPointer reports physical pixels.
+    // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
+    // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {
-      const p = x11?.pointer();
-      if (!p) return screen.getCursorScreenPoint();
-      const scale = screen.getPrimaryDisplay().scaleFactor || 1;
-      return { x: p.x / scale, y: p.y / scale, buttons: p.mask & 0x1f00 };
+      const p = ws?.pointer();
+      if (!ws || !p) return screen.getCursorScreenPoint();
+      const d = ws.toDipPoint(p);
+      return { x: d.x, y: d.y, buttons: p.mask & 0x1f00 };
     };
-    app.on("will-quit", () => x11?.close());
+    app.on("will-quit", () => ws?.close());
     log.info("app.ready", {
       version: app.getVersion(),
       os: env.os,
@@ -1072,9 +1151,9 @@ function start(): void {
     });
 
     const makeOverlay = (hidden = false) => {
-      const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor);
-      // GNOME's "Animations" switch off counts as asking for calm mode.
-      try { o.systemReducedMotion = execFileSync("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { /* not GNOME */ }
+      const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor, platform.overlay);
+      // The system asking for less motion (GNOME's "Animations" switch off) counts as asking for calm mode.
+      try { o.systemReducedMotion = sys.a11y.systemReducedMotion(); } catch { /* not known: Ember's own setting only */ }
       o.avoid = () => handle?.bounds ?? null;
       o.setState(lastState);
       o.setHidden(hidden);
@@ -1085,7 +1164,7 @@ function start(): void {
     /** The pill with a compositor, the card without one (transparent windows paint black then). */
     const makeHandle = () => {
       const old = handle;
-      handle = new HandleWindow(() => settings.get(), !overlay);
+      handle = new HandleWindow(() => settings.get(), !overlay, { floating: platform.overlay.floating("handle"), forward: platform.overlay.forward });
       handle.sendState(lastState);
       old?.destroy();
       deskViewRef?.handleMoved();
@@ -1094,10 +1173,10 @@ function start(): void {
     else log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
     makeHandle();
     // The compositor can go and come back (GNOME Shell restarting, another window manager): Ember follows,
-    // so its full-screen overlay never turns the desktop black.
-    if (x11) {
+    // so its full-screen overlay never turns the desktop black. (Windows and macOS always composite.)
+    if (ws?.compositorMayChange) {
       const watch = setInterval(() => {
-        const now = x11.hasCompositor();
+        const now = ws.hasCompositor();
         if (now === compositing) return;
         compositing = now;
         askWindow.setOpaque(!now);
@@ -1120,11 +1199,12 @@ function start(): void {
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
     let lastAskPress = 0;
     const shortcuts: Record<string, () => void> = {
-      "Control+Alt+E": showHome,
+      [sc.settings.accel]: showHome,
       // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
-      // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it.
-      "Control+Alt+Space": () => {
-        const now = Date.now(), chord = x11Ref?.keysDown() ?? null;
+      // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it. Elsewhere a callback is
+      // one press (trusted, debounced).
+      [sc.ask.accel]: () => {
+        const now = Date.now(), chord = platform.shortcutsReReported ? ws?.keysDown() ?? null : null;
         if (!freshAskPress(chord, now, lastAskPress)) {
           log.info("ask.hotkey_ignored", { at: now - lastAskPress, chord });
           return;
@@ -1132,7 +1212,7 @@ function start(): void {
         lastAskPress = now;
         openAsk();
       },
-      "Control+Alt+X": () => stopEverything("hotkey"), "Control+Alt+M": () => toggleMute(),
+      [sc.stop.accel]: () => stopEverything("hotkey"), [sc.mute.accel]: () => toggleMute(),
     };
     const registerShortcuts = () => {
       const taken: string[] = [];
@@ -1154,28 +1234,32 @@ function start(): void {
     tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage);
     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
     let adminKey: string | undefined;
-    try { adminKey = policy.provider ? providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
+    try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
     const testProvider = devEnv("EMBER_TEST_PROVIDER_URL");
     const provider = testProvider
       ? { type: "openai" as const, baseUrl: testProvider, apiKey: "test" }
       : policy.provider
         ? { type: policy.provider.type, baseUrl: policy.provider.baseUrl, apiKey: adminKey, wireApi: policy.provider.wireApi, azure: policy.provider.azure }
         : undefined;
-    const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env });
+    const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
-    // Perception: the accessibility sidecar (text) and X11 capture (images).
-    const sidecar = new AtspiSidecar(sidecarScript(), log.child("atspi"));
+    // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
+    // AT-SPI sidecar (no launch); Windows and macOS the shared host, run as Ember's own binary.
+    const launch = platform.sidecarLaunch(sidecarContext());
+    const sidecar = sidecarRef = new AtspiSidecar(sidecarScript(), log.child("atspi"), undefined, undefined, launch);
     app.on("will-quit", () => sidecar.stop());
+    // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
+    // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
+    if (launch) {
+      setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, () => { helper = null; }), atLogin ? 60_000 : 10_000).unref();
+    }
     perception = new Perception({
-      sidecar, x11, log: log.child("perception"),
+      sidecar, x11: ws, log: log.child("perception"),
       neverLook: () => settings.get().privacy.neverLook,
-      screenBounds: () => {
-        const scale = screen.getPrimaryDisplay().scaleFactor || 1;
-        const all = screen.getAllDisplays().map(d => d.bounds);
-        const x0 = Math.min(...all.map(b => b.x)), y0 = Math.min(...all.map(b => b.y));
-        const x1 = Math.max(...all.map(b => b.x + b.width)), y1 = Math.max(...all.map(b => b.y + b.height));
-        return { x: x0 * scale, y: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
-      },
+      // Every display in the window system's units; Electron's displays (X11's arithmetic) when none opened.
+      screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
+      words: sys.words,
+      isSecurityWindow: sys.privacy.isSecurityWindow,
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
         const hw = handle?.win && !handle.win.isDestroyed() ? handle.win : null;
@@ -1186,17 +1270,17 @@ function start(): void {
     });
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
-    audit = new AuditLog(path.join(userData, "audit"), undefined, journalSink(err => log.warn("audit.journal_failed", { err })));
+    audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
-      blocked: () => borrowRef?.driving ?? false,
+      // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
+      blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
       onChange: questionChanged,
       keyHint: questionKeyHint,
     });
-    const scale = () => screen.getPrimaryDisplay().scaleFactor || 1;
-    const xinput = xinputRef = x11 ? openXInput() : null;
-    if (x11 && !xinput) log.warn("xtest.unavailable", { err: xinputError });
+    // Linux warns xtest.unavailable when XTest is missing.
+    const xinput = inputRef = platform.openInput(ws, log);
     // A borrow still running lets go (keys up, pointer home) before the connection closes.
     app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
@@ -1215,12 +1299,15 @@ function start(): void {
       onChange: showBorrowing,
       // Never the ask box (it hid when the borrow took the keyboard), nor a window that isn't on screen any more.
       mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),
+      keys: sys.keys,
     }) : null;
     borrowRef = borrow;
     // Ember's desk: started the first time a task needs it, torn down when Ember quits.
     // Desk apps get only the environment they need; the test bench's event log is passed on in development only.
+    // (Linux only: there is no desk on Windows and macOS.)
     const benchLog = devEnv("EMBER_BENCH_LOG");
-    const deskManager = new DeskManager(log.child("desk"), benchLog ? { env: { EMBER_BENCH_LOG: benchLog } } : {});
+    const deskFactory = platform.desk;
+    const deskManager = deskFactory ? deskFactory.create(log.child("desk"), benchLog ? { env: { EMBER_BENCH_LOG: benchLog } } : {}) : null;
     const deskView = new DeskView(log.child("desk-view"), on => {
       deskInControl = on;
       overlay?.setState({ tasks: on ? [] : lastState.tasks });
@@ -1234,13 +1321,15 @@ function start(): void {
         deskTakenFrom = back;
         return () => giveFocusBack(back);
       },
+      windowId: w => ownId(w),
     });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;
     // A desk whose display died is gone: the next desk task starts a new one.
-    deskManager.onDead(() => { deskPlace = null; });
-    app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager.stop(); });
-    const hands: Hands | undefined = x11 ? {
+    deskManager?.onDead(() => { deskPlace = null; });
+    app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager?.stop(); });
+    // Built whenever a window system opened: reading apps (tier 1) needs no input backend.
+    const hands: Hands | undefined = ws ? {
       perception, sidecar, audit, confirmer,
       policy: new PolicyEngine({
         neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
@@ -1248,15 +1337,17 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
-        isTerminalApp: name => isTerminalApp({ id: name, name }),
+        isTerminalApp: name => sys.apps.isTerminalApp({ id: name, name }),
+        keys: sys.keys, os: platform.os, isSecurityWindow: sys.privacy.isSecurityWindow,
       }),
-      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? { x: b.x / scale(), y: b.y / scale(), width: b.width / scale(), height: b.height / scale() } : null }),
+      // The window system's units to Electron's DIP (X11: ÷ the primary scale factor).
+      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? ws.toDip(b) : null }),
       currentWindow: () => {
-        const w = x11.activeWindow();
+        const w = ws.activeWindow();
         // Ember's own windows (ask box, settings) are not a task's target.
         if (!w || w.pid === process.pid) return null;
         // A private window: its process only (a task there is refused), never its title.
-        const priv = isNeverLook({ app: w.wmClass ?? "", name: w.title }, settings.get().privacy.neverLook) || isSecurityWindow({ app: w.wmClass ?? "", title: w.title });
+        const priv = isNeverLook({ app: w.wmClass ?? "", name: w.title }, settings.get().privacy.neverLook) || sys.privacy.isSecurityWindow({ app: w.wmClass ?? "", title: w.title });
         return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
@@ -1265,20 +1356,21 @@ function start(): void {
         const codes = ["Return", "KP_Enter", "space"].map(n => xinput.keycodeOf(xinput.keysymOf(n))).filter(c => c > 0);
         return () => { const down = xinput.keysDown(); return codes.some(c => down.includes(c)); };
       })() : undefined,
-      // Every format the user had on the clipboard comes back after a paste, not just text.
-      clipboard: electronClipboard(clipboard, ClipboardItem),
-      desk: DeskManager.available().ok && policy.features.desk !== false ? () => (deskPlace ??= openDeskPlace(deskManager, {
+      // Every format the user had on the clipboard comes back after a paste, not just text (the formats are the OS's).
+      clipboard: electronClipboard(clipboard, ClipboardItem, undefined, sys.clipboardFormats),
+      // Offered only where the desk can start and the organisation allows it (Linux with Xvfb, xauth and dbus-daemon).
+      desk: deskFactory && deskManager && deskFactory.available().ok && policy.features.desk !== false ? () => (deskPlace ??= deskFactory.openPlace(deskManager, {
         sidecarScript: sidecarScript(), log: log.child("desk"), neverLook: () => settings.get().privacy.neverLook,
         profiles: path.join(userData, "desk-profiles"), userInControl: () => deskView.userInControl,
       }).catch(err => { deskPlace = null; throw err; })) : undefined,
       // The view counts the tasks on the desk; it stays up a little after the last one leaves, so the user sees the result.
       // A task leaving a desk that has since died doesn't hide the view another task uses on the new desk.
-      onDesk: (place, previous) => { if (previous) deskView.leave(previous); if (place) deskView.show(place); },
+      onDesk: deskFactory ? (place, previous) => { if (previous) deskView.leave(previous); if (place) deskView.show(place); } : undefined,
       cursor: borrow && xinput ? {
         borrow,
         findWindow: (title, pid) => xinput.findWindow(title, pid),
         // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
-        activeWindow: () => { const w = x11.focusWindow() ?? x11.activeWindow(); return w ? { app: w.wmClass, title: w.title, pid: w.pid } : null; },
+        activeWindow: () => { const w = ws.focusWindow() ?? ws.activeWindow(); return w ? { app: w.wmClass, title: w.title, pid: w.pid } : null; },
         // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
         setBorrowing: showBorrowing,
       } : undefined,
@@ -1311,6 +1403,8 @@ function start(): void {
       reachable: gitHubReachable((url, init) => net.fetch(url, init)),
       // A proxy set only in GNOME Settings reaches the Copilot runtime too (it reads only HTTPS_PROXY).
       resolveProxy: url => session.defaultSession.resolveProxy(url),
+      // This OS's words, keys, apps, settings and privacy vocabulary for the conductor and workers.
+      system: sys,
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
@@ -1323,7 +1417,7 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
-      const found = provider ? null : await resolveToken(tokens);
+      const found = provider ? null : await resolveToken(tokens, ghOptions());
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       currentToken = found?.token ?? null;
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
@@ -1346,7 +1440,9 @@ function start(): void {
     voice = new VoiceService({
       log: log.child("voice"),
       modelsRoot: speechModels.root,
-      monitor: settings.get().voice.speakerRejection,
+      // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
+      monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
+      micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open ${sys.words.settingsApp} › Privacy & security › Microphone.` : undefined,
       onEvent: onVoice,
       onState: (state, detail) => {
         setState({ mic: state });
@@ -1367,11 +1463,17 @@ function start(): void {
     const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
-    settings.onChange(() => { if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); } });
+    let micConsent = settings.get().voice.consent;
+    settings.onChange(next => {
+      // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
+      if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));
+      micConsent = next.voice.consent;
+      if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
+    });
     app.on("will-quit", () => voice?.stop());
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
-    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !process.argv.includes("--autostart")) showHome();
+    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
 

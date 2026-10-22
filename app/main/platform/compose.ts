@@ -1,11 +1,11 @@
 /**
  * Helpers the per-OS compositions share: a window system with a system-dialog check added, the environment Ember
  * gives the helpers it starts, the hover-polling overlay shaper Windows and macOS use, the rule that puts Ember's
- * floating windows on every workspace, and the accessibility helper's status as main keeps it. Pure and Electron-free
+ * floating windows on every workspace, X11's screen bounds, and the accessibility helper's status as main keeps it. Pure and Electron-free
  * (plain Node, unit-tested on Linux): the compositions pass in what they know.
  */
 
-import type { FloatingKind, FloatingWindow, HelperStatus, OS, OverlayShaper, WindowSystem } from "./types";
+import type { FloatingKind, FloatingWindow, HelperStatus, OS, OverlayShaper, Rect, ScreenLike, WindowSystem } from "./types";
 import { TEST_SWITCHES } from "../../sidecar-host/launch";
 
 /**
@@ -118,6 +118,19 @@ export function hoverShaper(os: "win32" | "darwin"): OverlayShaper {
     forward: os === "darwin",
     floating: kind => ({ options: { ...table[kind].options }, allWorkspaces: table[kind].allWorkspaces }),
   };
+}
+
+/**
+ * The union of every display's DIP bounds, times the primary display's scale factor: the whole screen in physical
+ * pixels as X11 counts them (one global scale). The Linux window system's screenBounds, and main's fallback for
+ * perception when no window system opened.
+ */
+export function primaryScaledUnion(screen: ScreenLike): Rect {
+  const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+  const all = screen.getAllDisplays().map(d => d.bounds);
+  const x0 = Math.min(...all.map(b => b.x)), y0 = Math.min(...all.map(b => b.y));
+  const x1 = Math.max(...all.map(b => b.x + b.width)), y1 = Math.max(...all.map(b => b.y + b.height));
+  return { x: x0 * scale, y: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
 }
 
 /** What setVisibleOnAllWorkspaces takes (Electron's BrowserWindow, structurally). */
