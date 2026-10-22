@@ -246,6 +246,14 @@ export function createConnections(o: {
     return { client: c, cfg, hops, controlPath, names, lan: isLanAddress(cfg.hostname) };
   }
 
+  /** Refuses a host whose ssh -G resolution isn't the one the user consented to (§7.4: asked again). */
+  function sameResolution(p: Prepared, host: HostRecord, h: string): void {
+    const r = resolvedOf(p);
+    if (r.user !== host.resolved.user || r.hostname !== host.resolved.hostname || r.port !== host.resolved.port || r.jump.join(",") !== host.resolved.jump.join(",")) {
+      throw new ConnectError(MESSAGES.resolutionChanged(h), "resolution-changed");
+    }
+  }
+
   function resolvedOf(p: Prepared): Resolved {
     return {
       user: p.cfg.user,
@@ -548,10 +556,7 @@ export function createConnections(o: {
       if (!/^[0-9a-f]{32}$/.test(o.pcId())) throw new ConnectError(MESSAGES.unknown(h), "internal");
       progress(host.id, { step: "resolving" });
       const p = await prepare(host.dest, host.port, host.extra, host.via, h);
-      const r = resolvedOf(p);
-      if (r.user !== host.resolved.user || r.hostname !== host.resolved.hostname || r.port !== host.resolved.port || r.jump.join(",") !== host.resolved.jump.join(",")) {
-        throw new ConnectError(MESSAGES.resolutionChanged(h), "resolution-changed");
-      }
+      sameResolution(p, host, h);
       audit({ step: "connect", host: host.id, interactive: mode.interactive, reconnect: mode.reconnect });
       let run = await attempt(p, host, h, "batch", false, signal, "plan");
       if (run.r.kind === "failed") {
@@ -698,6 +703,8 @@ export function createConnections(o: {
       try {
         progress(host.id, { step: "resolving" });
         const p = await prepare(host.dest, host.port, host.extra, host.via, h);
+        // Removal goes only to the computer the user allowed, as a connection does.
+        sameResolution(p, host, h);
         let run = await attempt(p, host, h, "batch", false, abort.signal, "uninstall");
         if (run.r.kind === "failed") {
           await run.port.terminate().catch(() => undefined);

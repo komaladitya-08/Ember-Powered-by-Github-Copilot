@@ -82,7 +82,10 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
   const host = (): HostRecord => ({ id: "wsl-sshd", dest: "127.0.0.1", port: PORT, resolved: { user: "root", hostname: "127.0.0.1", port: PORT, jump: [] }, consent: { version: 1, at: new Date().toISOString() } });
 
   it("connects in batch mode with ControlMaster=no and ControlPath=none, and runs the bootstrap", async () => {
-    await connections(true).uninstall(host());
+    const c = connections(true);
+    // The login Win32-OpenSSH sends (the runner's, or the ssh config's User) is the one the record must hold.
+    const r = await c.resolve("127.0.0.1", { port: PORT });
+    await c.uninstall({ ...host(), resolved: { user: r.user, hostname: r.hostname, port: r.port, jump: r.jump } });
   });
 
   it("refuses this PC's own WSL on loopback without the test switch, before anything is uploaded", async () => {

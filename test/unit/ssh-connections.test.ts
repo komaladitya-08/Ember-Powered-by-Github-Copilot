@@ -525,6 +525,10 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     await r.conns.uninstall(record());
     expect(r.spawned[0].decision).toBe("UNINSTALL");
     expect(r.audits.at(-1)).toMatchObject({ step: "uninstalled", host: "build-01" });
+    // Only to the computer the user allowed: a host that now resolves elsewhere gets nothing run on it.
+    const moved = track(rig({ g: () => gOut({ hostname: "203.0.113.99" }) }));
+    await expect(moved.conns.uninstall(record())).rejects.toMatchObject({ kind: "resolution-changed" });
+    expect(moved.spawned).toEqual([]);
   });
 
   it("resolves a typed destination for the consent card, with its jump hops", async () => {
