@@ -1,5 +1,6 @@
 /**
- * Admin lockdown (M8.7): /etc/ember/policy.json, written by the machine's
+ * Admin lockdown (M8.7): /etc/ember/policy.json on Linux (each OS's location is
+ * the platform's policy source, which reuses parseAdminPolicy), written by the machine's
  * administrator. It can only make Ember stricter: turn features off, keep
  * apps out of Ember's sight, require a click for every action, pin or limit
  * models, point Ember at the organisation's own model endpoint (BYOK) and
@@ -74,6 +75,27 @@ const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
   confirmEveryAction: true,
 });
 
+/** Ember locked down because of `source`: what a policy that exists but can't be used means (fail closed). */
+export function lockedDown(source: string, error: string): LoadedAdminPolicy {
+  return { policy: LOCKDOWN, source, error };
+}
+
+/**
+ * The policy in `raw` (JSON text) from `source`, checked against AdminPolicySchema: anything that isn't valid JSON
+ * or breaks the schema locks Ember down, naming `source`. Every OS's policy source ends here (the Linux and macOS
+ * files, the Windows registry value).
+ */
+export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy {
+  try {
+    const parsed = AdminPolicySchema.safeParse(JSON.parse(raw));
+    if (parsed.success) return { policy: parsed.data, source };
+    const issue = parsed.error.issues[0];
+    return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}`);
+  } catch (err) {
+    return lockedDown(source, `${source} is not valid JSON: ${(err as Error).message}`);
+  }
+}
+
 /**
  * Reads the administrator's policy. `file` is /etc/ember/policy.json except in
  * development (main passes EMBER_ADMIN_POLICY only for unpackaged builds, so a
@@ -86,24 +108,17 @@ export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwn
     raw = fs.readFileSync(file, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { policy: AdminPolicySchema.parse({}), source: null };
-    return { policy: LOCKDOWN, source: file, error: `can't read ${file}: ${(err as Error).message}` };
+    return lockedDown(file, `can't read ${file}: ${(err as Error).message}`);
   }
   if (opts.requireRootOwned ?? file === ADMIN_POLICY_FILE) {
     try {
       const st = fs.statSync(file);
-      if (st.uid !== 0 || (st.mode & 0o022) !== 0) return { policy: LOCKDOWN, source: file, error: `${file} must belong to root and be writable only by root` };
+      if (st.uid !== 0 || (st.mode & 0o022) !== 0) return lockedDown(file, `${file} must belong to root and be writable only by root`);
     } catch (err) {
-      return { policy: LOCKDOWN, source: file, error: `can't check ${file}: ${(err as Error).message}` };
+      return lockedDown(file, `can't check ${file}: ${(err as Error).message}`);
     }
   }
-  try {
-    const parsed = AdminPolicySchema.safeParse(JSON.parse(raw));
-    if (parsed.success) return { policy: parsed.data, source: file };
-    const issue = parsed.error.issues[0];
-    return { policy: LOCKDOWN, source: file, error: `${file}: ${issue.path.join(".") || "(top)"}: ${issue.message}` };
-  } catch (err) {
-    return { policy: LOCKDOWN, source: file, error: `${file} is not valid JSON: ${(err as Error).message}` };
-  }
+  return parseAdminPolicy(raw, file);
 }
 
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
