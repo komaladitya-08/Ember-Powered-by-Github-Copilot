@@ -151,14 +151,16 @@ export function shellsOf(facts: RunnerFacts | null, fallback: ShellId[]): ShellI
 
 /** One process as a process table lists it: `run` when it carries a command run's marker (the user's work, not Ember's). */
 export interface ProcRow { pid: number; ppid: number; run: boolean }
+/** A process and its parent; `run` when already known. */
+export type ParentRow = Omit<ProcRow, "run"> & { run?: boolean };
 
 /**
  * Ember's own processes from a process table (D4.5): every descendant of Ember's main process (the accessibility
  * helper, the Copilot runtime, ssh and its askpass, WSL helpers, the desk), except a command's run and everything under
  * it, which are the user's work and may be stopped like any other program (critique integration-24, S0b's hand-off).
  */
-export function ownTree(rows: readonly ProcRow[], root: number): number[] {
-  const children = new Map<number, ProcRow[]>();
+export function ownTree(rows: readonly ParentRow[], root: number, isRun?: (pid: number) => boolean): number[] {
+  const children = new Map<number, ParentRow[]>();
   for (const r of rows) {
     if (r.pid === r.ppid) continue;
     const list = children.get(r.ppid);
@@ -170,7 +172,8 @@ export function ownTree(rows: readonly ProcRow[], root: number): number[] {
   while (queue.length) {
     const p = queue.shift()!;
     for (const c of children.get(p) ?? []) {
-      if (seen.has(c.pid) || c.run) continue;
+      // A row's own `run`, else asked only now: only Ember's descendants are ever looked into.
+      if (seen.has(c.pid) || (c.run ?? isRun?.(c.pid) ?? false)) continue;
       seen.add(c.pid);
       out.push(c.pid);
       queue.push(c.pid);
@@ -193,18 +196,37 @@ export interface ProcReader {
   environ(pid: number): Uint8Array | null;
 }
 
-/** Linux's process table: parents from stat, a command run by its EMBER_RUN_ID marker (§3.3). */
-export function linuxProcTable(r: ProcReader): ProcRow[] {
-  const marker = Buffer.from("EMBER_RUN_ID=");
-  const rows: ProcRow[] = [];
+/** Linux's processes and their parents (from stat only). */
+export function linuxParents(r: ProcReader): ParentRow[] {
+  const rows: ParentRow[] = [];
   for (const pid of r.pids()) {
     const s = r.stat(pid);
     const ppid = s === null ? null : statParent(s);
-    if (ppid === null) continue;
-    const env = r.environ(pid);
-    rows.push({ pid, ppid, run: !!env && Buffer.from(env).includes(marker) });
+    if (ppid !== null) rows.push({ pid, ppid });
   }
   return rows;
+}
+
+/** The environment marker every command run carries (§3.3). */
+const RUN_MARKER = Buffer.from("EMBER_RUN_ID=");
+
+/** A process carries a command run's EMBER_RUN_ID marker in its environment. */
+function carriesRunMarker(r: ProcReader, pid: number): boolean {
+  const env = r.environ(pid);
+  return !!env && Buffer.from(env).includes(RUN_MARKER);
+}
+
+/** Linux's process table: parents from stat, a command run by its EMBER_RUN_ID marker (§3.3). */
+export function linuxProcTable(r: ProcReader): ProcRow[] {
+  return linuxParents(r).map(p => ({ pid: p.pid, ppid: p.ppid, run: carriesRunMarker(r, p.pid) }));
+}
+
+/**
+ * Ember's own processes on Linux (ownTree over /proc): the environment is read only for Ember's own descendants, never
+ * for the user's other programs (whose environments can hold their secrets).
+ */
+export function linuxOwnPids(r: ProcReader, root: number): number[] {
+  return ownTree(linuxParents(r), root, pid => carriesRunMarker(r, pid));
 }
 
 /**

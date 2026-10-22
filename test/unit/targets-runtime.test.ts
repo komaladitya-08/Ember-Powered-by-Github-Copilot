@@ -29,7 +29,7 @@ import type { ConsentPanel } from "../../app/shared/consent";
 import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
 import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
-import { linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
+import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
 import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, progressWords, splitDest, type CommandWindow, type PromptWindow, type TargetsParts } from "../../app/main/targets/runtime";
 import type { IpcLike, TargetsDeps, WebContentsLike } from "../../app/main/targets/types";
 
@@ -570,6 +570,55 @@ describe("SSH targets", () => {
     expect(r.remoteParts).toHaveBeenCalledTimes(2);
   });
 
+  it("never adopts a link SA brought back from another computer, or for a host the user disconnected", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const l = await connected(r);
+    l.move("lost");
+    // Another machine answers under the same name: let go, and Reconnect (with its card) offered instead.
+    r.links.set("build-01", fakeLink("build-01", welcome({ machineIdHash: "f".repeat(64) })));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
+    expect(r.remoteParts).toHaveBeenCalledTimes(1);
+    expect(r.conns.disconnect).toHaveBeenCalledWith("build-01");
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Lost build-01", thought: expect.stringMatching(/came back as a different computer/) }) });
+    // The user disconnected: a link that comes back anyway isn't used.
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
+    r.links.set("build-01", fakeLink("build-01"));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
+    expect(r.remoteParts).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets go of a link that comes up after Cancel or the kill switch, and saves nothing for a host forgotten meanwhile", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    // SA answers with a link although the kill switch was pressed while it connected.
+    r.conns.connect.mockImplementationOnce(async (h: HostRecord) => {
+      await new Promise<void>(res => setTimeout(res, 0));
+      const fl = fakeLink(h.id);
+      r.links.set(h.id, fl);
+      return fl.link;
+    });
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    void r.t.stopAll();
+    await expect(pending).resolves.toEqual({ ok: false, message: "Cancelled." });
+    expect(r.conns.disconnect).toHaveBeenCalledWith("build-01");
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
+    expect(r.remoteParts).not.toHaveBeenCalled();
+
+    // Forgotten while its card was up: the record isn't written back.
+    let answer!: (a: PromptAnswer) => void;
+    const f = rig({ settings: withHosts([hostRecord("build-02", { consent: { version: 0, at: null } })]) });
+    f.pw.ask.mockImplementationOnce(() => new Promise<PromptAnswer>(res => { answer = res; }));
+    const asking = f.invoke(TARGETS_IPC.act, f.home, { kind: "connect", hostId: "build-02" });
+    await flush();
+    await f.invoke(TARGETS_IPC.act, f.home, { kind: "forget", hostId: "build-02" });
+    answer({ id: "consent-1", ok: true, sha256: f.pw.ask.mock.calls[0][0].consent!.sha256 });
+    await expect(asking).resolves.toEqual({ ok: false, message: "Cancelled." });
+    expect(f.settings.get().targets.hosts).toEqual([]);
+    expect(f.conns.connect).not.toHaveBeenCalled();
+  });
+
   it("says what failed in §8.7's words, and offers to try again when it may help", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", "Check you're on the right network or VPN.", true));
@@ -651,12 +700,26 @@ describe("WSL targets", () => {
     await flush();
     const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
     expect(b).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
+    // Offered once discovery has shown a distro to work in.
+    await flush();
+    expect(r.wsl.facts).toHaveBeenCalled();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
     r.showState.mockClear();
-    r.t.agent.bind({ userWords: "open gedit in WSL" });
+    expect(r.t.agent.bind({ userWords: "open gedit in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. The user can turn it on in Ember's settings (Computers)." });
+    await flush();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
+  });
+
+  it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
+    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
+    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL has no Linux distro Ember can use on this computer." });
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
   });
 
   it("never offers a distro still to be set up, and says how to set it up", async () => {
@@ -698,6 +761,8 @@ describe("the kill switch's part and quitting", () => {
     expect(r.wslRunners.get("Ubuntu")!.stopAll).toHaveBeenCalledWith("killswitch");
     expect(l.link.stop).toHaveBeenCalledTimes(1);
     expect(remote.stopAll).toHaveBeenCalledWith("killswitch");
+    // SA's own part too: its reconnects end and a link not yet a target here is stopped.
+    expect(r.conns.stopAll).toHaveBeenCalledTimes(1);
     release();
     await flush();
     expect(done).toBe(false);
@@ -790,13 +855,37 @@ describe("question panels (§3.9)", () => {
 
   it("passes the card's own answers to the Confirmer as panel answers with their hash", () => {
     const r = rig();
+    r.t.questionChanged({ n: 3, question: commandQ });
     r.onAnswer()!({ n: 3, answer: "once", sha256: card.sha256 });
+    r.t.questionChanged({ n: 5, question: consentQ });
+    r.onConsent()!({ n: 5, answer: "once", sha256: consent.sha256 });
     r.onConsent()!({ n: 5, answer: "deny", sha256: consent.sha256 });
-    expect(r.answers).toEqual([{ id: "q3:once", via: "panel", proof: { sha256: card.sha256 } }, { id: "q5:deny", via: "panel", proof: { sha256: consent.sha256 } }]);
+    expect(r.answers).toEqual([
+      { id: "q3:once", via: "panel", proof: { sha256: card.sha256 } },
+      { id: "q5:once", via: "panel", proof: { sha256: consent.sha256 } },
+      { id: "q5:deny", via: "panel", proof: { sha256: consent.sha256 } },
+    ]);
+  });
+
+  it("lets each window allow only its own kind of question, and only the one up now (R7)", () => {
+    const r = rig();
+    // No question up: nothing to allow.
+    r.onAnswer()!({ n: 3, answer: "once", sha256: card.sha256 });
+    // The prompt window can't allow a command, and the command window can't allow a consent card.
+    r.t.questionChanged({ n: 3, question: commandQ });
+    r.onConsent()!({ n: 3, answer: "once", sha256: card.sha256 });
+    r.onAnswer()!({ n: 2, answer: "once", sha256: card.sha256 });
+    r.t.questionChanged({ n: 5, question: consentQ });
+    r.onAnswer()!({ n: 5, answer: "once", sha256: consent.sha256 });
+    expect(r.answers).toEqual([]);
+    // "Not now" is taken from either.
+    r.onAnswer()!({ n: 5, answer: "deny", sha256: consent.sha256 });
+    expect(r.answers).toEqual([{ id: "q5:deny", via: "panel", proof: { sha256: consent.sha256 } }]);
   });
 
   it("without UI's answer hook, hears COMMANDS_IPC.answer only from the command window's own page", async () => {
     const r = rig({ commandWindowExtras: false });
+    r.t.questionChanged({ n: 3, question: commandQ });
     await r.invoke("commands:answer", { id: 9, send: vi.fn() }, { n: 3, answer: "once", sha256: card.sha256 });
     expect(r.answers).toEqual([]);
     await r.invoke("commands:answer", { id: 2, send: vi.fn() }, { n: 3, answer: "once", sha256: "nope" });
@@ -941,6 +1030,15 @@ describe("Ember's own processes (D4.5; S0b's hand-off)", () => {
       environ: pid => (pid === 4002 ? env("A=1\0EMBER_RUN_ID=0123456789abcdef\0") : pid === 4001 ? env("A=1\0") : null),
     });
     expect(table).toEqual([{ pid: 4000, ppid: 1, run: false }, { pid: 4001, ppid: 4000, run: false }, { pid: 4002, ppid: 4000, run: true }]);
+    // Production reads the environment of Ember's own descendants only, never the user's other programs'.
+    const read: number[] = [];
+    const reader = {
+      pids: () => [1, 4000, 4001, 4002, 4005, 4006, 900],
+      stat: (pid: number) => `${pid} (x) S ${({ 1: 0, 4000: 1, 4001: 4000, 4002: 4000, 4005: 4002, 4006: 4001, 900: 1 } as Record<number, number>)[pid]} 0`,
+      environ: (pid: number) => { read.push(pid); return pid === 4002 ? env("EMBER_RUN_ID=0123456789abcdef\0") : env("A=1\0"); },
+    };
+    expect(linuxOwnPids(reader, 4000).sort()).toEqual([4001, 4006]);
+    expect(read.sort()).toEqual([4001, 4002, 4006]);
     expect(psProcTable("  500     1 /Applications/Ember.app/Contents/MacOS/Ember\n  501   500 /usr/bin/script\n  502   500 copilot-runtime\n", 500))
       .toEqual([{ pid: 500, ppid: 1, run: false }, { pid: 501, ppid: 500, run: true }, { pid: 502, ppid: 500, run: false }]);
   });
@@ -973,7 +1071,7 @@ describe("small helpers", () => {
   });
 
   it("reads only literal Host aliases from an ssh config", () => {
-    expect(configHosts("Host build-02 *.corp !bad\n  HostName x\nhost db-03\nMatch exec foo\n")).toEqual(["build-02", "db-03"]);
+    expect(configHosts("Host build-02 *.corp !bad -oops\n  HostName x\nhost db-03\nMatch exec foo\n")).toEqual(["build-02", "db-03"]);
   });
 
   it("says each connecting step in §8.2's words", () => {

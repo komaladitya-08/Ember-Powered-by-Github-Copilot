@@ -47,7 +47,7 @@ import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChang
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, wslBinding, type HandsBase } from "./hands";
 import { registerTargetsIpc, type ActResult } from "./ipc";
-import { createLocalService, forgetCommands, linuxProcTable, ownTree, psProcTable, setCommandsSwitch, type WarmService } from "./local-service";
+import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, type WarmService } from "./local-service";
 import { targetMenu } from "./menu";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
@@ -182,7 +182,8 @@ export function configHosts(text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     const m = /^\s*Host\s+(.+?)\s*$/i.exec(line);
     if (!m) continue;
-    for (const h of m[1].split(/\s+/)) if (h && !/[*?!]/.test(h) && /^[A-Za-z0-9._-]{1,255}$/.test(h)) out.push(h);
+    // Never one ssh would read as an option ("-oProxyCommand…"): the destination validator refuses those too.
+    for (const h of m[1].split(/\s+/)) if (h && !/[*?!]/.test(h) && /^(?!-)[A-Za-z0-9._-]{1,255}$/.test(h)) out.push(h);
   }
   return out;
 }
@@ -249,7 +250,7 @@ export function productionParts(deps: TargetsDeps): TargetsParts {
       const now = Date.now();
       if (deps.os === "linux") {
         if (now - proc.at > 1000) {
-          try { proc = { at: now, rows: ownTree(linuxProcTable(procReader), process.pid) }; } catch { proc = { at: now, rows: [] }; }
+          try { proc = { at: now, rows: linuxOwnPids(procReader, process.pid) }; } catch { proc = { at: now, rows: [] }; }
         }
         return proc.rows;
       }
@@ -578,6 +579,7 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
     } else {
       dropTarget(c);
       c.state = "closed";
+      hideBubble(`stalled:${hostId}`);
       if (settings.get().targets.active === targetIdOf("ssh", hostId)) {
         setActive(LOCAL_TARGET);
         bubble("back", { title: "Back on this computer", thought: `${hostId} isn't connected any more, so I'll work here.`, actions: [], mood: "attention" }, INFO_MS);
@@ -618,18 +620,21 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       if (sshNeedsConsent(host, resolved)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
         if (!(await askCard(card))) return stopped("Not now.");
+        // Cancelled, forgotten or stopped by the kill switch while the card was up: nothing is saved or connected.
+        if (abort.signal.aborted) return stopped("Cancelled.");
         host = { ...host, resolved, consent: consentGiven("ssh", parts.now()) };
         saveHost(host);
       }
       if (abort.signal.aborted) return stopped("Cancelled.");
       const link = await conn.connect(host, { interactive: o.interactive, signal: abort.signal });
+      // A link that came up as the user cancelled (or pressed the kill switch) is let go, never adopted.
+      const letGo = async (message: string): Promise<ActResult> => { await conn.disconnect(hostId).catch(() => undefined); return stopped(message); };
+      if (abort.signal.aborted) return letGo("Cancelled.");
       // Another computer under the same name than the one the user said yes to: asked again (§7.4).
       if (machineChanged(host, link.welcome.machineIdHash)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card))) {
-          await conn.disconnect(hostId).catch(() => undefined);
-          return stopped("Not now.");
-        }
+        if (!(await askCard(card))) return letGo("Not now.");
+        if (abort.signal.aborted) return letGo("Cancelled.");
         host = { ...host, consent: consentGiven("ssh", parts.now()) };
       }
       host = { ...host, machineIdHash: link.welcome.machineIdHash, lastUsed: parts.now().toISOString() };
@@ -786,11 +791,18 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
   };
 
   // ── Panel answers (the command card's and a consent card's own buttons) ──
-  const confirmAnswer = (a: PanelAnswer) => {
+  // Each window answers only its own kind of question (R7: a command is allowed only from the command window's card, a
+  // consent card only from the prompt window's): the Confirmer checks the hash, not which window sent it. "Not now"
+  // passes from either (the Confirmer takes it from anywhere).
+  const confirmAnswer = (kind: "command" | "consent") => (a: PanelAnswer) => {
+    if (a.answer !== "deny" && (current?.n !== a.n || current.question.panel?.kind !== kind)) {
+      log.warn("targets.panel_answer_refused", { kind });
+      return;
+    }
     try { deps.confirmer()?.answer(`q${a.n}:${a.answer}`, "panel", { sha256: a.sha256 }); } catch (err) { log.warn("targets.panel_answer_failed", { err }); }
   };
   if (commandWindow.onAnswer) {
-    commandWindow.onAnswer(confirmAnswer);
+    commandWindow.onAnswer(confirmAnswer("command"));
   } else {
     // The card's Allow sends COMMANDS_IPC.answer; only the command window's own page is heard (§3.9.1).
     deps.ipc.on(COMMANDS_IPC.answer, (e, raw) => {
@@ -800,11 +812,11 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       const r = raw as { n?: unknown; answer?: unknown; sha256?: unknown } | null;
       if (!r || typeof r !== "object" || typeof r.n !== "number" || !Number.isSafeInteger(r.n) || (r.answer !== "once" && r.answer !== "deny")
         || typeof r.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(r.sha256)) return;
-      confirmAnswer({ n: r.n, answer: r.answer, sha256: r.sha256 });
+      confirmAnswer("command")({ n: r.n, answer: r.answer, sha256: r.sha256 });
     });
   }
   // A consent question's yes comes only from its card's own button; without UI's hook it can only be declined (fail closed).
-  if (promptWindow.onConsent) promptWindow.onConsent(confirmAnswer);
+  if (promptWindow.onConsent) promptWindow.onConsent(confirmAnswer("consent"));
   else log.info("targets.consent_answers_unwired", {});
   const hidePanel = (q: { n: number; question: Question }) => {
     const p = q.question.panel;
@@ -913,9 +925,25 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       offs.push(cs.onProgress((hostId, p) => {
         const c = conns.get(hostId);
         if (p.step === "ready") {
-          // SA brought the link back by itself (a reconnect after a loss): the target is rebuilt on the new link.
+          // SA brought the link back by itself (a reconnect after a loss): the target is rebuilt on the new link. Never
+          // for a host the user disconnected meanwhile, and never for another computer than the one the user said yes
+          // to under this name (§7.4): that one is let go, and Reconnect (an interactive connect) shows the card again.
           const link = cs.link(hostId);
-          if (link && c && c.state !== "connecting" && c.link !== link && adopt(hostId, link)) { hideBubble(`lost:${hostId}`); refresh(); }
+          if (!link || !c || c.state === "connecting" || c.state === "closed" || c.link === link) return;
+          const host = hostOf(hostId);
+          if (host && machineChanged(host, link.welcome.machineIdHash)) {
+            log.warn("targets.reconnect_machine_changed", { host: hostId });
+            void cs.disconnect(hostId).catch(() => undefined);
+            dropTarget(c);
+            c.state = "lost";
+            bubble(`lost:${hostId}`, {
+              title: `Lost ${hostId}`, thought: `${hostId} came back as a different computer, so Ember didn't use it. Reconnect to check it.`,
+              actions: [{ id: `conn:${hostId}:reconnect`, label: "Reconnect", primary: true }], mood: "error",
+            });
+            refresh();
+            return;
+          }
+          if (adopt(hostId, link)) { hideBubble(`lost:${hostId}`); refresh(); }
           return;
         }
         if (c?.state !== "connecting") return;
@@ -1013,7 +1041,14 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
         if (deps.os === "win32" && !entries.some(x => x.kind === "wsl") && targetsNamed(words, [{ id: "wsl:WSL", names: [...WSL_WORDS] }], deps.os).length) {
           if (!wslAllowed(admin())) return refuse("Your organisation doesn't allow Ember to work in WSL.");
           if (!wsl) return refuse("WSL isn't installed on this computer.");
-          if (!wslOn()) { offerWsl(); return refuse("WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)."); }
+          // Discovery has looked and found no distro Ember could use (WSL's installer alone, or only tools' distros).
+          const none = "WSL has no Linux distro Ember can use on this computer.";
+          if (wslFacts && !defaultDistro(wslFacts)) return refuse(none);
+          if (!wslOn()) {
+            // "Ember can work in WSL" only once discovery shows a distro to work in (it reads the registry; nothing starts).
+            void refreshWsl().then(() => { if (defaultDistro(wslFacts)) offerWsl(); });
+            return refuse("WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers).");
+          }
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
@@ -1204,6 +1239,10 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
         const t = c.target;
         if (t) { call(() => t.link.stop()); call(() => t.parts.runner.stopAll("killswitch")); }
       }
+      // SA's own part: reconnects after a loss end, connects under way are cancelled, and a link not (yet) a target here
+      // (one awaiting a card, one SA just brought back) is told to stop too.
+      const cs = connections;
+      if (cs) call(() => cs.stopAll());
       const settled = await Promise.allSettled(waits);
       const failed = settled.filter(r => r.status === "rejected").length;
       if (failed) log.warn("targets.stop_parts_failed", { failed });
