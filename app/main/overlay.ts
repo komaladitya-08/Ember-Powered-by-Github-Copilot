@@ -4,17 +4,21 @@
  * toward the cursor) lives here in global coordinates, so it can cross
  * displays; each overlay renderer only draws what falls inside its bounds.
  *
- * Linux has no `forward` option for click-through, so hover is detected by
- * polling the cursor against the interactive rectangles each renderer reports.
+ * Clicks reach an overlay only inside the interactive rectangles each renderer
+ * reports: on Linux through the X input region the platform's shaper sets (Linux
+ * has no `forward` option for click-through); on Windows and macOS, which have no
+ * input region, by polling the cursor against those rectangles.
  */
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
 import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
-import { setInputShape, closeInputShape } from "./xshape";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
+import type { OverlayShaper } from "./platform/types";
+import { applyAllWorkspaces } from "./platform/compose";
+import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 
 const appDir = __dirname;
@@ -24,7 +28,7 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
-  /** ShapeInput is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
+  /** The input region is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
   shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
@@ -46,6 +50,8 @@ export class OverlayManager {
     private log: Logger,
     /** Cursor in global DIP, and the mouse buttons held (X's mask) when known; defaults to Electron's (which can be stale on X11). */
     private cursor: () => { x: number; y: number; buttons?: number } = () => screen.getCursorScreenPoint(),
+    /** The platform's input regions and window options (Linux XShape by default; hover polling elsewhere). */
+    private shaper: OverlayShaper = linuxOverlayShaper(),
   ) {
     const c = this.cursor();
     this.follower = new Follower({ x: c.x + 60, y: c.y + 60 });
@@ -79,7 +85,7 @@ export class OverlayManager {
     screen.off("display-metrics-changed", this.onMetrics);
     for (const id of [...this.overlays.keys()]) this.destroy(id);
     // The X connection the input shapes went over goes with the windows (a new manager opens its own).
-    closeInputShape();
+    this.shaper.release();
   }
 
   setHidden(on: boolean): void {
@@ -204,21 +210,20 @@ export class OverlayManager {
 
   /**
    * Clicks hit only the reported rectangles. On X11 that is the window's ShapeInput (so a press on Allow or Stop
-   * is the overlay's even if hover polling has not run yet). Without a shape, hover-to-interact is the fallback.
+   * is the overlay's even if hover polling has not run yet). Without a shape (Windows, macOS), hover-to-interact.
    */
   private applyHits(o: Overlay): void {
     if (o.win.isDestroyed()) return;
     const rects = this.borrowing ? [] : o.interactive;
     const hit = rects.length > 0;
     const scale = o.display.scaleFactor || 1;
-    const xid = xidOf(o.win);
-    if (hit && xid && setInputShape(xid, rects, scale)) {
+    if (hit && this.shaper.setInputRegion(o.win, rects, scale)) {
       if (o.clickThrough) {
         o.win.setIgnoreMouseEvents(false);
         o.clickThrough = false;
         // setIgnoreMouseEvents(false) restores a full input region: put the holes back. Only then: the reports
         // come every frame while Ember flies, and an already shaped window needs the one request above.
-        setInputShape(xid, rects, scale);
+        this.shaper.setInputRegion(o.win, rects, scale);
       }
       o.shaped = true;
       return;
@@ -226,8 +231,17 @@ export class OverlayManager {
     o.shaped = false;
     if (!hit && !o.clickThrough) {
       o.clickThrough = true;
-      o.win.setIgnoreMouseEvents(true);
+      this.passThrough(o.win);
     }
+  }
+
+  /**
+   * Clicks go through `win` to what is under it. macOS forwards the pointer's moves meanwhile (the renderer sees
+   * hover); Linux and Windows take no options, as always (on Windows `forward` would hook every app's mouse).
+   */
+  private passThrough(win: BrowserWindow): void {
+    if (this.shaper.forward) win.setIgnoreMouseEvents(true, { forward: true });
+    else win.setIgnoreMouseEvents(true);
   }
 
   owns(sender: Electron.WebContents): boolean {
@@ -253,6 +267,7 @@ export class OverlayManager {
 
   private create(display: Display): void {
     if (this.overlays.has(display.id)) return;
+    const floating = this.shaper.floating("overlay");
     const win = new BrowserWindow({
       ...display.bounds,
       transparent: true,
@@ -270,6 +285,7 @@ export class OverlayManager {
       show: false,
       type: "toolbar",
       title: "Ember overlay",
+      ...floating.options,
       webPreferences: {
         preload: path.join(appDir, "preload", "overlay.cjs"),
         contextIsolation: true,
@@ -280,8 +296,8 @@ export class OverlayManager {
       },
     });
     win.setAlwaysOnTop(true, "screen-saver");
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    win.setIgnoreMouseEvents(true);
+    applyAllWorkspaces(win, floating.allWorkspaces);
+    this.passThrough(win);
     const overlay: Overlay = { win, display, interactive: [], clickThrough: true, shaped: false, cards: null };
     this.overlays.set(display.id, overlay);
     // Every load (also after a crash and reload) gets the current picture.
@@ -300,7 +316,7 @@ export class OverlayManager {
       overlay.interactive = [];
       overlay.clickThrough = true;
       overlay.shaped = false;
-      if (!win.isDestroyed()) win.setIgnoreMouseEvents(true);
+      if (!win.isDestroyed()) this.passThrough(win);
     });
     win.on("closed", () => this.overlays.delete(display.id));
     void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
@@ -346,25 +362,17 @@ export class OverlayManager {
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
       if (!still) o.win.webContents.send(OVERLAY.frame, frame);
-      // ShapeInput already delivers presses on the buttons. Hover-to-interact is only the fallback when a
-      // shape could not be set (no X, a test double): a press that starts while still click-through still
-      // goes through, which is why live clicks on Allow/Stop missed the overlay until the shape was used.
+      // ShapeInput already delivers presses on the buttons. Hover-to-interact is the way where a shape could not
+      // be set (Windows, macOS, no X, a test double): a press that starts while still click-through still goes
+      // through, which is why live clicks on Allow/Stop missed the overlay on X11 until the shape was used.
       if (o.shaped) continue;
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
       const over = !this.borrowing && takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0);
       if (over === o.clickThrough) {
         o.clickThrough = !over;
-        o.win.setIgnoreMouseEvents(!over);
+        if (over) o.win.setIgnoreMouseEvents(false); else this.passThrough(o.win);
         this.log.debug("overlay.clickthrough", { display: o.display.id, clickThrough: !over });
       }
     }
-  }
-}
-
-function xidOf(win: BrowserWindow): number {
-  try {
-    return win.getNativeWindowHandle().readUInt32LE(0);
-  } catch {
-    return 0;
   }
 }
