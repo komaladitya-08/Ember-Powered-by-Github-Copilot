@@ -385,6 +385,23 @@ jobs:
         # Server 2022 has neither PowerToys nor Game Bar, so nothing else holds Ember's chords: one reported taken means
         # Electron couldn't register it (with Ember's Windows chords, that Super isn't the Windows key to RegisterHotKey).
         run: node test/smoke/launch.mjs --exe dist/package/Ember/Ember.exe --forbid shortcut.unavailable
+      - name: "Ember's check-up from the packaged Ember.exe: its helper reads apps, its input works, its Copilot runtime is there"
+        # The report decides, not the exit code: on this runner Ember runs as administrator (a warning row) and isn't
+        # signed in to GitHub (a warning row). "Copilot" failing would mean the runtime is missing from the package.
+        timeout-minutes: 5
+        run: |
+          report="$RUNNER_TEMP/doctor.txt"
+          status=0
+          dist/package/Ember/Ember.exe --doctor > "$report" 2> "$RUNNER_TEMP/doctor.err" || status=$?
+          cat "$report"
+          echo "exit status $status"
+          if [ "$EMBER_CI_ELEVATED" = 1 ]; then admin=warn; else admin=ok; fi
+          node scripts/package/doctor-rows.mjs "$report" "Compositor=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
+      - name: "Ember-level checks: Ember's composition and Perception against the bench, its overlay out of screenshots, the packaged host"
+        run: node scripts/run-integration.mjs test/integration/ember-win32.test.ts
+        env:
+          EMBER_WIN32_TEST: "1"
+          EMBER_PACKAGED_APP: dist/package/Ember
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
