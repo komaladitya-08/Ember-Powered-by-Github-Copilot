@@ -1,0 +1,422 @@
+/**
+ * Synthetic input on macOS: Ember's Input (XInput's members, so CursorBorrow and its fakes work unchanged) over
+ * CGEvent. Events are posted at the HID tap from one event source whose local-event suppression is off, so the
+ * user's own mouse and keyboard keep working and can take over at once. Keys keep X's vocabulary (keysym names and
+ * numbers); key codes are CGKeyCode + 8 (kVK_ANSI_A is 0, and 0 means "no key" to callers); buttons and the button
+ * mask are X's. The modifiers Ember holds are set as flags on every event it posts. Posting needs the Accessibility
+ * permission, without which macOS drops events silently: blockedReason() says so. AX calls (focus, titles,
+ * activation) run with a 0.25 s timeout on Electron's main thread and never target Ember's own process. Whatever
+ * Ember holds is let go by releaseAll(), by close() and when the process exits (a key posted down stays down).
+ * createDarwinInput() holds the logic over a DarwinDesktop and a DarwinPoster, so it is unit-tested with fakes.
+ */
+
+import { strokeFor, type KeyLayout } from "../../hands/keymap";
+import type { Input, OwnWindowHandle } from "../types";
+import { EVENT, FLAG, MOUSE_BUTTON } from "./cg";
+import { openDesktop, openPoster, desktopError, type DarwinDesktop, type DarwinPoster } from "./desktop";
+import { resolveActive, resolveFocus } from "./focus";
+import {
+  MAX_CG_KEY, SHORTCUT_FLAGS, VK, buildLayout, cgKeyOf, charKeysym, isModifierKey, keyFlags, keysymOf, modifierFlags,
+  namedKey, toCode, usNeedsShift,
+} from "./keys";
+import { clientWindowsOf, findWindowIn, parseMediaSourceId, pointerLandsOn, sameFrame, type AXWindowInfo, type TitledWindow } from "./model";
+
+/** Shown when Ember isn't trusted for Accessibility (macOS would drop its events without a word). */
+export const ACCESSIBILITY_REASON =
+  "Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility) to use the mouse and keyboard.";
+
+/** Shown while another app holds secure keyboard entry. */
+export function secureInputReason(app: string): string {
+  const where = app ? ` in ${app}` : "";
+  return `Secure keyboard entry is on${where} (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't use the mouse or keyboard until it's off.`;
+}
+
+/** Lines one wheel notch scrolls (X's buttons 4–7 are one notch each; 3 matches Windows' default). */
+export const LINES_PER_NOTCH = 3;
+/** Two presses of a button this close in time and place make a double click (NSEvent's default interval). */
+export const DOUBLE_CLICK_MS = 500;
+const DOUBLE_CLICK_SLOP = 4;
+/** How long findWindow() may spend reading app windows over AX (ms). */
+const FIND_BUDGET_MS = 1000;
+
+interface ButtonEvents { cg: number; down: number; up: number; drag: number }
+const OTHER = { down: EVENT.otherMouseDown, up: EVENT.otherMouseUp, drag: EVENT.otherMouseDragged };
+/** X button → CGMouseButton and its event types (8 and 9 are back and forward). */
+const BUTTONS: Record<number, ButtonEvents> = {
+  1: { cg: MOUSE_BUTTON.left, down: EVENT.leftMouseDown, up: EVENT.leftMouseUp, drag: EVENT.leftMouseDragged },
+  2: { cg: MOUSE_BUTTON.center, ...OTHER },
+  3: { cg: MOUSE_BUTTON.right, down: EVENT.rightMouseDown, up: EVENT.rightMouseUp, drag: EVENT.rightMouseDragged },
+  8: { cg: 3, ...OTHER },
+  9: { cg: 4, ...OTHER },
+};
+/** X wheel buttons → [lines, columns] for one notch (CG: positive lines scroll up, positive columns scroll left). */
+const WHEEL: Record<number, [number, number]> = {
+  4: [LINES_PER_NOTCH, 0], 5: [-LINES_PER_NOTCH, 0], 6: [0, LINES_PER_NOTCH], 7: [0, -LINES_PER_NOTCH],
+};
+
+/** X button-mask bits of the buttons, and X modifier-mask bits of the CGEventFlags. */
+const BUTTON_MASKS: [cgButton: number, mask: number][] = [[MOUSE_BUTTON.left, 256], [MOUSE_BUTTON.center, 512], [MOUSE_BUTTON.right, 1024]];
+const MODIFIER_MASKS: [flag: number, mask: number][] = [
+  [FLAG.shift, 1], [FLAG.alphaShift, 2], [FLAG.control, 4], [FLAG.alternate, 8], [FLAG.command, 64],
+];
+
+/** What openDarwinInput() may take from main. */
+export interface DarwinInputDeps {
+  /**
+   * Extension: Electron's BrowserWindow.getFocusedWindow(). When one of Ember's windows has the keyboard,
+   * focusedWindow() says so (its id), so keys meant for another window are never typed into Ember's.
+   */
+  focusedOwnWindow?: () => OwnWindowHandle | null;
+}
+
+/** Input on macOS, with the optional members it implements. */
+export interface DarwinInput extends Input {
+  textKey(ch: string, down: boolean): boolean;
+  onScreen(x: number, y: number): boolean;
+  blockedReason(window: number): string | null;
+  layout(): KeyLayout | null;
+  keyboardGrabbed(window?: number): boolean;
+  pointerOn(window: number, elementWindow?: number): boolean;
+  screenLocked(): boolean;
+}
+
+/** Tunables and seams for the tests. */
+export interface DarwinInputOptions {
+  ownPid?: number;
+  now?: () => number;
+  /** Registers `fn` to run at process exit; returns the unregister. Defaults to process.on("exit"). */
+  onExit?: (fn: () => void) => () => void;
+}
+
+const defaultOnExit = (fn: () => void) => {
+  process.on("exit", fn);
+  return () => {
+    process.off("exit", fn);
+  };
+};
+
+/** Ember's Input over a DarwinDesktop and a DarwinPoster. */
+export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, deps: DarwinInputDeps = {}, o: DarwinInputOptions = {}): DarwinInput {
+  const ownPid = o.ownPid ?? process.pid;
+  const now = o.now ?? Date.now;
+  let open = true;
+  /** Key codes (CGKeyCode + 8) Ember holds, modifiers included, in the order they went down. */
+  const keysHeld = new Set<number>();
+  /** X buttons Ember holds (never the wheel). */
+  const buttonsHeld = new Set<number>();
+  /** Characters typed with textKey() that are down, and the CGKeyCode each went down on. */
+  const textHeld = new Map<string, number>();
+  let last: { x: number; y: number } | null = null;
+  let lastDown: { button: number; at: number; x: number; y: number; count: number } | null = null;
+  const layouts = new WeakMap<object, KeyLayout>();
+
+  const ownFocusedId = () => {
+    const win = deps.focusedOwnWindow?.();
+    if (!win) return 0;
+    try {
+      return parseMediaSourceId(win.getMediaSourceId());
+    } catch {
+      return 0; // a destroyed window
+    }
+  };
+  const focus = { desktop, ownPid, ownFocusedId };
+
+  /** The flags every event carries: the modifiers Ember holds (with their device bits), like hardware events. */
+  const heldFlags = (): number => {
+    let flags = FLAG.nonCoalesced;
+    for (const code of keysHeld) flags |= modifierFlags(code - 8);
+    return flags;
+  };
+  const safely = (fn: () => void) => {
+    try {
+      fn();
+    } catch {
+      // one failed post must not keep the rest of releaseAll() from letting go
+    }
+  };
+  const where = () => desktop.pointer() ?? last;
+
+  const layout = (): KeyLayout | null => {
+    if (!open) return null;
+    const source = desktop.keyboardLayout();
+    if (!source) return null;
+    let built = layouts.get(source);
+    if (!built) layouts.set(source, (built = buildLayout((key, mods) => source.translate(key, mods))));
+    return built;
+  };
+  const keycodeOf = (sym: number): number => {
+    if (!open || !sym) return 0;
+    const named = namedKey(sym);
+    if (named >= 0) return toCode(named);
+    // A character's key depends on the layout. Where it can't be read there is no safe guess: a US position on an
+    // AZERTY keyboard turns Command+A into Command+Q.
+    const l = layout();
+    if (!l) return 0;
+    return (strokeFor(sym, l.typing) ?? strokeFor(sym, l.shortcuts))?.code ?? 0;
+  };
+  const keycode = (code: number, down: boolean): void => {
+    if (!open) return;
+    const cg = cgKeyOf(code);
+    if (cg < 0) return;
+    // The held set first, so a modifier's own event already carries (or no longer carries) its flag.
+    if (down) keysHeld.add(code);
+    else keysHeld.delete(code);
+    poster.key(cg, down, heldFlags() | keyFlags(cg));
+  };
+  const sendButton = (button: number, down: boolean, at: { x: number; y: number }, clickState: number) => {
+    const b = BUTTONS[button]!;
+    poster.mouse(down ? b.down : b.up, Math.round(at.x), Math.round(at.y), b.cg, clickState, heldFlags());
+  };
+  const clickCount = (button: number, at: { x: number; y: number }): number => {
+    const t = now();
+    const prev = lastDown;
+    const again = !!prev && prev.button === button && t - prev.at <= DOUBLE_CLICK_MS
+      && Math.abs(prev.x - at.x) <= DOUBLE_CLICK_SLOP && Math.abs(prev.y - at.y) <= DOUBLE_CLICK_SLOP;
+    lastDown = { button, at: t, x: at.x, y: at.y, count: again ? prev!.count + 1 : 1 };
+    return lastDown.count;
+  };
+  /** The window's owner pid, from the window list (undefined when it isn't on screen). */
+  const pidOf = (window: number | undefined) => (window ? desktop.windows().find(e => e.id === window)?.pid : undefined);
+  /** The app holding secure keyboard entry against `window` ("" when unknown), or null when none does. */
+  const secureHolder = (window: number | undefined): string | null => {
+    if (!desktop.secureInput()) return null;
+    const holder = desktop.session().secureInputPid;
+    const target = pidOf(window);
+    // The target's own password field doesn't keep input from it (policy keeps Ember out of the field itself).
+    if (holder !== null && target !== undefined && holder === target) return null;
+    return holder !== null ? desktop.windows().find(e => e.pid === holder)?.owner ?? "" : "";
+  };
+  const releaseAll = (): void => {
+    if (!open) return;
+    const codes = [...keysHeld];
+    // Ordinary keys first, so each goes up with the modifiers it went down with; then the modifiers.
+    for (const code of [...codes.filter(c => !isModifierKey(c - 8)), ...codes.filter(c => isModifierKey(c - 8))]) {
+      keysHeld.delete(code);
+      safely(() => poster.key(code - 8, false, heldFlags() | keyFlags(code - 8)));
+    }
+    for (const [ch, cg] of textHeld) safely(() => (cg === VK.ansiA ? poster.text(cg, ch, false, FLAG.nonCoalesced) : poster.key(cg, false, FLAG.nonCoalesced)));
+    textHeld.clear();
+    const at = where() ?? { x: 0, y: 0 };
+    for (const b of buttonsHeld) safely(() => sendButton(b, false, at, lastDown?.button === b ? lastDown.count : 1));
+    buttonsHeld.clear();
+  };
+  const unregisterExit = (o.onExit ?? defaultOnExit)(releaseAll);
+
+  return {
+    pointer() {
+      if (!open) return null;
+      const p = desktop.pointer();
+      return p ? { x: Math.round(p.x), y: Math.round(p.y) } : null;
+    },
+
+    pointerState() {
+      if (!open) return null;
+      const p = desktop.pointer();
+      if (!p) return null;
+      const flags = desktop.flags();
+      let mask = 0;
+      for (const [cg, bit] of BUTTON_MASKS) if (desktop.buttonDown(cg)) mask |= bit;
+      for (const [flag, bit] of MODIFIER_MASKS) if (flags & flag) mask |= bit;
+      return { x: Math.round(p.x), y: Math.round(p.y), mask };
+    },
+
+    move(x, y) {
+      if (!open) return;
+      const at = { x: Math.round(x), y: Math.round(y) };
+      // While a button is held a move is a drag, as the hardware sends it (left wins, then right, then the others).
+      const held = buttonsHeld.has(1) ? 1 : buttonsHeld.has(3) ? 3 : [...buttonsHeld][0];
+      if (held !== undefined) {
+        const b = BUTTONS[held]!;
+        poster.mouse(b.drag, at.x, at.y, b.cg, lastDown?.button === held ? lastDown.count : 1, heldFlags());
+      } else {
+        poster.mouse(EVENT.mouseMoved, at.x, at.y, MOUSE_BUTTON.left, 0, heldFlags());
+      }
+      last = at;
+    },
+
+    button(button, down) {
+      if (!open) return;
+      const wheel = WHEEL[button];
+      if (wheel) {
+        // One notch on the press; the release has no wheel event (and is never held).
+        if (down) poster.scroll(wheel[0], wheel[1], heldFlags());
+        return;
+      }
+      if (!BUTTONS[button]) return;
+      const at = where();
+      if (down) {
+        if (!at) return; // nowhere known to press: no click at a guess
+        buttonsHeld.add(button);
+        sendButton(button, true, at, clickCount(button, at));
+      } else {
+        buttonsHeld.delete(button);
+        sendButton(button, false, at ?? { x: 0, y: 0 }, lastDown?.button === button ? lastDown.count : 1);
+      }
+    },
+
+    keysym(sym, down) {
+      if (!open) return false;
+      const code = keycodeOf(sym);
+      if (!code) return false;
+      keycode(code, down);
+      return true;
+    },
+
+    keycode,
+
+    keysymOf(name) {
+      return keysymOf(name);
+    },
+
+    keysDown() {
+      if (!open) return [];
+      const down: number[] = [];
+      // Caps Lock is left out: its key state can read as down while the lock is on, which isn't the user acting.
+      for (let cg = 0; cg <= MAX_CG_KEY; cg++) if (cg !== VK.capsLock && desktop.keyDown(cg)) down.push(toCode(cg));
+      return down;
+    },
+
+    keycodeOf,
+
+    needsShift(sym) {
+      if (!open || namedKey(sym) >= 0) return false;
+      const l = layout();
+      if (l) return (strokeFor(sym, l.typing) ?? strokeFor(sym, l.shortcuts))?.shift ?? false;
+      return usNeedsShift(sym);
+    },
+
+    activeWindow() {
+      if (!open) return 0;
+      // The same window WindowSystem.activeWindow() reports: the one to give the keyboard back to after a borrow.
+      return resolveActive(focus, desktop.windows())?.id ?? 0;
+    },
+
+    screenSize() {
+      if (!open) return { width: 0, height: 0 };
+      const main = desktop.mainDisplay();
+      return main ? { width: main.width, height: main.height } : { width: 0, height: 0 };
+    },
+
+    findWindow(title, pid, wmClass) {
+      if (!open || !title) return 0;
+      const apps = clientWindowsOf(desktop.windows());
+      const theirs = pid !== undefined && apps.some(w => w.pid === pid);
+      const considered = theirs ? apps.filter(w => w.pid === pid) : apps;
+      // CGWindowList's titles need Screen Recording; AX has them (one AXWindows read per app, within a budget).
+      const ax = new Map<number, AXWindowInfo[] | null>();
+      const until = now() + FIND_BUDGET_MS;
+      const windows: TitledWindow[] = considered.map(w => {
+        if (w.title || w.pid === ownPid) return { id: w.id, pid: w.pid!, owner: w.wmClass, title: w.title };
+        if (!ax.has(w.pid!)) ax.set(w.pid!, now() > until ? null : desktop.appWindows(w.pid!));
+        const listed = ax.get(w.pid!);
+        if (!listed) return { id: w.id, pid: w.pid!, owner: w.wmClass, title: null }; // unknown: findWindowIn won't guess
+        const match = listed.filter(a => (a.id ? a.id === w.id : sameFrame(a.frame, w)));
+        // AX read the app: a window it doesn't list, or lists twice alike, has no title Ember can use.
+        return { id: w.id, pid: w.pid!, owner: w.wmClass, title: match.length === 1 ? match[0]!.title : "" };
+      });
+      return findWindowIn(windows, title, theirs ? pid : undefined, wmClass);
+    },
+
+    focusedWindow() {
+      if (!open) return 0;
+      return resolveFocus(focus, desktop.windows())?.id ?? 0;
+    },
+
+    activate(window) {
+      if (!open || !window) return;
+      const list = desktop.windows();
+      const e = list.find(w => w.id === window);
+      // Ember's own windows are focused by main through Electron: AX on Ember's process would block its main thread.
+      if (!e || e.pid === ownPid) return;
+      if (resolveFocus(focus, list)?.id === window) return;
+      desktop.raise(e.pid, window, e.bounds);
+    },
+
+    sync() {
+      // CGEventPost hands each event over at once: there is nothing to flush.
+    },
+
+    releaseAll,
+
+    close() {
+      if (!open) return;
+      releaseAll();
+      open = false;
+      unregisterExit();
+      poster.close();
+      desktop.dispose?.();
+    },
+
+    layout,
+
+    textKey(ch, down) {
+      if (!open || [...ch].length !== 1) return false;
+      // Under Command, Control or Option a typed character would be a shortcut instead.
+      if (heldFlags() & SHORTCUT_FLAGS) return false;
+      const named = ch === "\n" || ch === "\r" ? VK.return : ch === "\t" ? VK.tab : -1;
+      if (named < 0 && !charKeysym(ch)) return false; // control characters type nothing
+      if (named >= 0) poster.key(named, down, FLAG.nonCoalesced);
+      else poster.text(VK.ansiA, ch, down, FLAG.nonCoalesced);
+      if (down) textHeld.set(ch, named >= 0 ? named : VK.ansiA);
+      else textHeld.delete(ch);
+      return true;
+    },
+
+    onScreen(x, y) {
+      return open && Number.isFinite(x) && Number.isFinite(y) && desktop.displaysAt(x, y) > 0;
+    },
+
+    blockedReason(window) {
+      if (!open) return null;
+      if (!desktop.trusted()) return ACCESSIBILITY_REASON;
+      const holder = secureHolder(window);
+      return holder === null ? null : secureInputReason(holder);
+    },
+
+    keyboardGrabbed(window) {
+      if (!open) return false;
+      return secureHolder(window) !== null;
+    },
+
+    pointerOn(window, elementWindow) {
+      if (!open || !window) return false;
+      const p = desktop.pointer();
+      return !!p && pointerLandsOn(desktop.windows(), p.x, p.y, window, ownPid, elementWindow);
+    },
+
+    screenLocked() {
+      if (!open) return false;
+      return desktop.session().locked || desktop.displayAsleep();
+    },
+  };
+}
+
+/** Why the last openDarwinInput() returned null (for the log). */
+export let darwinInputError: unknown = null;
+
+/**
+ * Synthetic input on macOS, or null off macOS or when CoreGraphics or an event source isn't available
+ * (darwinInputError says why). It opens without the Accessibility permission; blockedReason() reports it missing.
+ */
+export function openDarwinInput(deps: DarwinInputDeps = {}): DarwinInput | null {
+  if (process.platform !== "darwin") {
+    darwinInputError = new Error("not macOS");
+    return null;
+  }
+  try {
+    const desktop = openDesktop();
+    if (!desktop) {
+      darwinInputError = desktopError;
+      return null;
+    }
+    const poster = openPoster();
+    if (!poster) {
+      darwinInputError = new Error("cannot create a CoreGraphics event source");
+      return null;
+    }
+    return createDarwinInput(desktop, poster, deps);
+  } catch (err) {
+    darwinInputError = err;
+    return null;
+  }
+}
