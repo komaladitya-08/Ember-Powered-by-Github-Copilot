@@ -25,9 +25,11 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
-import type {
-  Classification, ClassifyContext, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandRunner, CommandService, DecideInput,
-  GitFacts, PathFact, RunCommandArgs, RunExit, RunnerFacts, RunningCommand, RunSpec, ShellId,
+import {
+  ALWAYS_ASK,
+  type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
+  type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
+  type RunSpec, type ShellId,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -107,8 +109,11 @@ export interface CommandConsentSource {
 export const ANNOUNCE_MS = 4000;
 /** Runs one target runs at once; a fourth waits for a slot, honouring its task's stop (§3.8.3). */
 export const MAX_RUNS_PER_TARGET = 3;
-/** A run_command call's default time limit (§3.13). */
+/** A run_command call's default time limit (§3.13), and its longest. */
 export const DEFAULT_TIMEOUT_S = 120;
+const MAX_TIMEOUT_S = 900;
+/** The shells run_command may run in (cmd only inside PowerShell, L3): a target that reports another is not believed. */
+const RUN_SHELLS: ReadonlySet<string> = new Set<ShellId>(["bash", "zsh", "sh", "powershell"]);
 /** How long the target's facts may take (a WSL distro may have to boot). */
 const FACTS_MS = 30_000;
 /** How long inspect and git facts may take. */
@@ -128,6 +133,7 @@ const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 const NOT_JUDGED = "Ember can't check commands here, so it won't run them. Don't try another way; tell the user in finish_task.";
 const SAID_NO = "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
+const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 
 /** The card's lines for the reasons the flow itself holds (§3.8.4). */
 export const CARD_LINES = {
@@ -337,7 +343,7 @@ type PanelQuestion = Question & {
   clickOnly?: boolean;
 };
 
-/** Why every command asks on this target, from the flow's own view (§3.8.2 rules 4-8), for the guard below. */
+/** Why every command asks on this target, from the flow's own view (§3.8.2 rules 1-8), for the guard below. */
 interface AskReasons {
   words: string;
   privileged: boolean;
@@ -347,14 +353,21 @@ interface AskReasons {
   userAskEvery: boolean;
   tainted: boolean;
   carried: { from: string[] } | null;
+  /** The classification decided on, and the target's answer for its paths: its refusal and findings hold too. */
+  cls?: Classification;
+  paths?: ReadonlyMap<string, PathFact>;
 }
 
 /**
- * CL's decision held to the flow's invariants: the administrator's "off" refuses; root, the administrator's or the
- * user's "ask every", a tool-owned distro, taint and carried text make a command that would run or announce ask; and
- * an announcement needs the user's own words (critique security-1: a task without them can only ask).
+ * CL's decision held to the flow's invariants: the classification's refusal (D4.5) and the administrator's "off"
+ * refuse; root, the administrator's or the user's "ask every", a tool-owned distro, taint and carried text make a
+ * command that would run or announce ask; a finding the decision kept never runs unasked, and secrets, escapes and
+ * unclear commands never announce (D4.4); an announcement needs the user's own words (critique security-1: a task
+ * without them can only ask); and a verdict the flow doesn't know asks.
  */
 export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBinding["kind"]): CommandDecision {
+  const refuse = r.cls?.refuse ?? null;
+  if (refuse && d.verdict !== "refuse") return { ...d, verdict: "refuse", reason: refuse.says, rules: [...new Set([...d.rules, refuse.rule])], requested: undefined };
   if (d.verdict === "refuse") return d;
   if (r.mode === "off") {
     const where = kind === "local" ? "on this computer" : kind === "wsl" ? "in WSL" : "on computers reached over SSH";
@@ -371,10 +384,21 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   if (r.askEvery === "root" && !r.privileged) { lines.push(r.os === "win32" ? CARD_LINES.admin : CARD_LINES.root); policyOnly = false; }
   if (r.tainted) { lines.push(CARD_LINES.tainted); policyOnly = false; }
   if (r.carried) { lines.push(CARD_LINES.carried(r.carried.from)); policyOnly = false; }
+  // The findings that stand once the target said which overwritten paths don't exist (§3.8.2 rule 3).
+  const left = (r.cls?.findings ?? []).filter(f => !(f.ifExists !== undefined && r.paths?.get(f.ifExists)?.exists === false));
+  const missed = (ordinary && left.length > 0)
+    || (d.verdict === "announce" && [...d.classes, ...left.map(f => f.cls)].some(c => ALWAYS_ASK.has(c)))
+    || (d.verdict !== "run" && d.verdict !== "announce");
+  if (missed) {
+    policyOnly = false;
+    for (const f of left) if (f.says.trim() && !lines.includes(f.says)) lines.push(f.says);
+  }
   const unrequested = d.verdict === "announce" && (!r.words.trim() || !d.requested);
-  if (!lines.length && !unrequested) return d;
+  if (!lines.length && !unrequested && !missed) return d;
   return {
     ...d, verdict: "ask", requested: undefined,
+    classes: [...new Set([...d.classes, ...left.map(f => f.cls)])],
+    rules: [...new Set([...d.rules, ...left.map(f => f.rule)])],
     says: [...lines.filter(l => !d.says.includes(l)), ...d.says],
     unasked: d.unasked || !r.words.trim(),
     armMs: Math.max(d.armMs, ordinary && policyOnly && !unrequested ? 500 : 1500),
@@ -399,7 +423,7 @@ function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: n
     case "failed-to-start":
       return fail(`It couldn't start: ${o.redact(exit.error ?? "an unknown error").replace(/</g, "‹").replace(/[.\s]+$/, "").slice(0, 300)}.`);
     case "refused-remote":
-      return denied(`${o.label} refused it: ${forModel(exit.error ?? "no reason given")}. Don't try another way; tell the user in finish_task.`);
+      return denied(`${o.label} refused it: ${forModel(o.redact(exit.error ?? "no reason given"))}. Don't try another way; tell the user in finish_task.`);
   }
 }
 
@@ -467,8 +491,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const facts = await factsOf(ctx);
   if (ctx.isOver()) return STOPPED();
   if (!facts) return fail(`${place} didn't say what it can run commands with in time. Try again in a moment, or finish the task saying so.`);
-  // cmd is never a run_command shell (L3: it runs only inside PowerShell's `cmd /c`).
-  const shells: ShellId[] = facts.shells.filter(s => s !== "cmd");
+  // cmd is never a run_command shell (L3: it runs only inside PowerShell's `cmd /c`); a shell Ember doesn't know isn't one.
+  const shells: ShellId[] = facts.shells.filter(s => RUN_SHELLS.has(s));
   const shell = a.shell ?? shells[0];
   if (!shell || !shells.includes(shell)) return fail(`${shell ?? "That shell"} isn't available on ${place}. Shells here: ${shells.join(", ") || "none"}.`);
   const home = facts.home;
@@ -480,8 +504,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
     if (f.exists === false) return fail(`There's no folder ${cwd} on ${place}.`);
   }
 
-  // Step 4: pass 1. Ember's own pids are read now (they change as helpers restart); a remote's are its own.
-  const ember = { ...facts.ember, pids: binding.kind === "local" ? [...new Set([...facts.ember.pids, ...ctx.emberPids()])] : facts.ember.pids };
+  // Step 4: pass 1. Ember's own pids are read now (they change as helpers restart): on this computer, and in WSL, whose
+  // commands reach this computer's processes too (taskkill.exe, Stop-Process through interop); a remote's are its own.
+  const ember = { ...facts.ember, pids: binding.kind !== "ssh" ? [...new Set([...facts.ember.pids, ...ctx.emberPids()])] : facts.ember.pids };
   const cctx: ClassifyContext = {
     os: facts.os, home, cwd, ember, downloaded: ctx.state.downloaded,
     ...(facts.wsl ? { wsl: { mountRoot: facts.wsl.mountRoot, windows: facts.wsl.windows } } : {}),
@@ -517,7 +542,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const mode = svc.mode();
   const userAskEvery = svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
-  const d = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried }, binding.kind);
+  const d = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
@@ -559,30 +584,32 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
     approvedAt = performance.now();
   }
 
-  // Step 11: an announcement with its Stop window (D4.4).
-  if (d.verdict === "announce" && d.requested) {
-    const stopId = `ui:cmdstop:${runId}`;
-    ctx.presenter.announce(d.requested.announce, stopId);
-    let go = false;
-    try {
-      go = await svc.window.announce(card("announce", [...d.says, why]), ANNOUNCE_MS, ctx.signal);
-    } catch (err) {
-      ctx.log.warn("commands.announce_failed", { task, err });
-    } finally {
-      ctx.presenter.endAnnouncement(stopId);
-    }
-    if (ctx.isOver()) return STOPPED();
-    if (!go) {
-      audit({ phase: "answered", answer: "deny", q: "announce" });
-      return denied(STOPPED_BEFORE);
-    }
-  }
-
-  // Steps 12-14: run (a remote's own check may ask once more), then shape what it printed.
-  const timeoutS = a.timeoutSeconds ?? DEFAULT_TIMEOUT_S;
+  // A run slot on this target (MAX_RUNS_PER_TARGET), taken before an announcement: its countdown ends in the run, not
+  // in a wait for another task's command to end.
+  const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(1, Math.round(a.timeoutSeconds ?? DEFAULT_TIMEOUT_S)));
   const release = await slotOn(svc.runner, ctx.signal);
   if (!release) return STOPPED();
   try {
+    // Step 11: an announcement with its Stop window (D4.4).
+    if (d.verdict === "announce" && d.requested) {
+      const stopId = `ui:cmdstop:${runId}`;
+      ctx.presenter.announce(d.requested.announce, stopId);
+      let go = false;
+      try {
+        go = await svc.window.announce(card("announce", [...d.says, why]), ANNOUNCE_MS, ctx.signal);
+      } catch (err) {
+        ctx.log.warn("commands.announce_failed", { task, err });
+      } finally {
+        ctx.presenter.endAnnouncement(stopId);
+      }
+      if (ctx.isOver()) return STOPPED();
+      if (!go) {
+        audit({ phase: "answered", answer: "deny", q: "announce" });
+        return denied(STOPPED_BEFORE);
+      }
+    }
+
+    // Steps 12-14: run (a remote's own check may ask once more), then shape what it printed.
     let rules = d.rules;
     let asked = false;
     for (;;) {
@@ -591,10 +618,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
         stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
       });
       if (run === "stopped") return STOPPED();
+      if (run === "unseen") return fail(UNSEEN);
       const { exit } = run;
       // The remote's gate 2 refused the run before it started: its end is audited here (the error is sized in the journal).
       if (exit.ended === "refused-remote") {
-        audit({ phase: "ended", runId, ended: exit.ended, code: null, signal: null, ms: exit.ms, needsConfirm: exit.needsConfirm === true, error: exit.error ?? "" });
+        audit({ phase: "ended", runId, ended: exit.ended, code: null, signal: null, ms: exit.ms, needsConfirm: exit.needsConfirm === true, error: j.redactSecrets(exit.error ?? "") });
       }
       if (exit.ended === "refused-remote" && exit.needsConfirm && !asked) {
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
@@ -624,12 +652,14 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
 
 /**
  * Starts the run with its stamp computed now (the approval's age measured at send: critique integration-6), shows it in
- * the command window, and waits for its end or the task's stop. "stopped": the task stopped (the run was told to stop).
+ * the command window, and waits for its end or the task's stop. "stopped": the task stopped (the run was told to stop);
+ * "unseen": the command window couldn't show it, so it was stopped at once (a command never runs where the user can't
+ * watch and stop it, D4.2). A run that ends after its task stopped still has its end audited.
  */
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
   stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null };
-}): Promise<RunOutcome | "stopped"> {
+}): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
   const { cols, rows } = ctx.size();
@@ -656,13 +686,30 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     forgetTyped: () => running.forgetTyped(),
     stop: why => running.stop(why),
   };
+  const failed = (err: unknown): RunExit => ({ code: null, signal: null, ended: "failed-to-start", ms: 0, error: err instanceof Error ? err.message : String(err) });
+  const ended: Promise<RunExit | null> = running.done.catch(failed);
+  /** The end of a run the flow returned from early (its task stopped, or it couldn't be shown): audited when it comes. */
+  const auditLateEnd = () => {
+    void ended.then(exit => {
+      const typed = running.typedLines().length;
+      running.forgetTyped();
+      if (!exit) return;
+      ctx.audit({
+        event: "command", phase: "ended", task: o.stamp.taskId, target: svc.binding.id, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal,
+        ms: exit.ms, outBytes: out.bytes, secretSpans: tracker.spans().length, typedLines: typed,
+      });
+    });
+  };
   try {
     svc.window.attach(o.card, shown);
   } catch (err) {
     ctx.log.warn("commands.attach_failed", { task: o.stamp.taskId, err });
+    running.stop("task");
+    unsubscribe();
+    await within(ended, STOP_GRACE_MS, null);
+    auditLateEnd();
+    return "unseen";
   }
-  const failed = (err: unknown): RunExit => ({ code: null, signal: null, ended: "failed-to-start", ms: 0, error: err instanceof Error ? err.message : String(err) });
-  const ended: Promise<RunExit | null> = running.done.catch(failed);
   // The task's stop stops the run; the tool returns once it ended, or STOP_GRACE_MS later whatever the runner does.
   let onStop = () => undefined as void;
   const stopped = new Promise<RunExit | null>(resolve => {
@@ -675,7 +722,10 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   backstop.unref?.();
   try {
     const exit = await Promise.race([ended, stopped]);
-    if (!exit || ctx.isOver()) return "stopped";
+    if (!exit || ctx.isOver()) {
+      auditLateEnd();
+      return "stopped";
+    }
     out.end();
     return { exit, out, tracker, running };
   } finally {

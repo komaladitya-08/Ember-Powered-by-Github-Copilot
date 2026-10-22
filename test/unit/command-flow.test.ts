@@ -317,6 +317,18 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     const remote = makeJudge();
     await call(harness());
     expect(remote.classified[0][2].ember.pids).toEqual([10]);
+    // A WSL command reaches this computer's processes too (taskkill.exe through interop): Ember's own pids count there.
+    const wsl = makeJudge();
+    await call(harness({ binding: WSL }), { target: "Ubuntu" });
+    expect(wsl.classified[0][2].ember.pids).toEqual([10, 4242]);
+  });
+
+  it("offers only shells Ember knows, whatever the target reports", async () => {
+    makeJudge();
+    const h = harness({ facts: { shells: ["fish" as never, "bash"] } });
+    expect((await call(h, { shell: "fish" as never })).textResultForLlm).toBe("fish isn't available on build-01. Shells here: bash.");
+    await call(h);
+    expect(h.starts[0].shell).toBe("bash");
   });
 });
 
@@ -504,6 +516,51 @@ describe("the user's own words only (critique security-1)", () => {
     const ask = decision({ verdict: "ask", says: ["x"] });
     expect(heldDecision(ask, { ...base, tainted: true }, "ssh")).toBe(ask);
   });
+
+  it("holds CL's decision to its own classification: a refusal refuses, a finding never runs unasked, d/f/g never announce", () => {
+    const base = { words: "delete build", privileged: false, os: "linux" as const, mode: "on" as const, askEvery: null, userAskEvery: false, tainted: false, carried: null };
+    const rm = { cls: "destroy" as const, rule: "posix.rm", says: "Deletes build and everything in it.", program: "rm", objects: [], widening: [], at: 0 };
+    const secret = { cls: "secret" as const, rule: "secret.path", says: "Reads or changes passwords, keys or other secrets.", program: "cat", objects: [], widening: [], at: 0 };
+    // D4.5: the classification refuses, whatever the decision said.
+    expect(heldDecision(decision(), { ...base, cls: ordinary({ refuse: { rule: "ember.paths", says: "Ember won't run this: it would change Ember's own safety settings, records or programs." } }) }, "local"))
+      .toMatchObject({ verdict: "refuse", reason: "Ember won't run this: it would change Ember's own safety settings, records or programs.", rules: ["ember.paths"] });
+    // A dangerous finding the decision let run asks, with its words, class and rule.
+    expect(heldDecision(decision(), { ...base, cls: ordinary({ findings: [rm] }) }, "ssh"))
+      .toMatchObject({ verdict: "ask", says: [rm.says], classes: ["destroy"], rules: ["posix.rm"], armMs: 1500 });
+    // An overwrite of a path the target says isn't there is no finding (§3.8.2 rule 3): it runs.
+    const over = { ...rm, rule: "redirect.overwrite", ifExists: "/home/ana/out.txt" };
+    const run = decision();
+    expect(heldDecision(run, { ...base, cls: ordinary({ findings: [over] }), paths: new Map([["/home/ana/out.txt", { exists: false, real: null }]]) }, "ssh")).toBe(run);
+    expect(heldDecision(run, { ...base, cls: ordinary({ findings: [over] }), paths: new Map([["/home/ana/out.txt", { exists: null, real: null }]]) }, "ssh")).toMatchObject({ verdict: "ask" });
+    // Secrets, escapes and unclear commands always ask, even when the user asked for them (D4.4).
+    const announce = decision({ verdict: "announce", classes: ["secret"], says: [secret.says], requested: { intent: "x", announce: "Doing it, as you asked." } });
+    expect(heldDecision(announce, { ...base, cls: ordinary({ findings: [secret] }) }, "ssh")).toMatchObject({ verdict: "ask", requested: undefined, armMs: 1500 });
+    expect(heldDecision({ ...announce, classes: ["destroy"] }, { ...base, cls: ordinary({ findings: [{ ...secret, cls: "escape" }] }) }, "ssh")).toMatchObject({ verdict: "ask" });
+    // A verdict the flow doesn't know asks.
+    expect(heldDecision(decision({ verdict: "maybe" as never }), base, "ssh")).toMatchObject({ verdict: "ask", armMs: 1500 });
+  });
+
+  it("a decision that would run a dangerous command (or announce a secret) asks in the flow", async () => {
+    const rm = { cls: "destroy" as const, rule: "posix.rm", says: "Deletes build and everything in it.", program: "rm", objects: [], widening: [], at: 0 };
+    makeJudge({ classify: () => ordinary({ findings: [rm] }), decide: () => decision() });
+    const h = harness({ words: "delete build" });
+    await call(h, { command: "rm -r build" });
+    expect(h.asked).toHaveLength(1);
+    expect((h.asked[0].panel as { card: CommandCard }).card.says[0]).toBe(rm.says);
+    expect(h.starts[0].stamp).toMatchObject({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"] });
+    const secret = { ...rm, cls: "secret" as const, rule: "secret.path", says: "Reads or changes passwords, keys or other secrets." };
+    makeJudge({ classify: () => ordinary({ findings: [secret] }), decide: () => decision({ verdict: "announce", classes: ["secret"], rules: ["secret.path"], requested: { intent: "x", announce: "Reading it, as you asked." } }) });
+    const k = harness({ words: "show me my ssh key" });
+    await call(k, { command: "cat ~/.ssh/id_ed25519" });
+    expect(k.announced).toEqual([]);
+    expect(k.asked).toHaveLength(1);
+    // And a classification that refuses refuses, whatever the decision says.
+    makeJudge({ classify: () => ordinary({ refuse: { rule: "ember.input", says: "Ember won't run this: it could press keys or click in Ember's own windows." } }), decide: () => decision() });
+    const x = harness();
+    const r = await call(x, { command: "xdotool key ctrl+alt+y" });
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "Not allowed: Ember won't run this: it could press keys or click in Ember's own windows. Don't try another way; tell the user in finish_task." });
+    expect(x.starts).toEqual([]);
+  });
 });
 
 describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
@@ -529,6 +586,8 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       [exitOk({ ended: "failed-to-start", code: null, error: "There is no distribution with the supplied name." }), "failure", "It couldn't start: There is no distribution with the supplied name."],
       [exitOk({ ended: "killswitch", code: null }), "denied", "Stopped. Do nothing more."],
       [exitOk({ ended: "refused-remote", code: null, error: "This computer's administrator has turned off commands from Ember." }), "denied", "build-01 refused it: \"This computer's administrator has turned off commands from Ember.\""],
+      // A remote's words are redacted before the model gets them.
+      [exitOk({ ended: "refused-remote", code: null, error: "no: ghp_abcdef" }), "denied", "build-01 refused it: \"no: [secret hidden]\""],
     ];
     for (const [exit, type, text] of cases) {
       const h = harness({ run: () => ({ exit }) });
@@ -538,14 +597,27 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     }
   });
 
-  it("the task's stop stops the run, and the tool says only that", async () => {
+  it("the task's stop stops the run, and the tool says only that; the run's end is still audited and its typing forgotten", async () => {
     makeJudge();
-    const h = harness({ run: () => ({ hang: true }) });
+    const h = harness({ run: () => ({ hang: true, typed: ["hunter22"] }) });
     const r = call(h);
     await vi.waitFor(() => expect(h.runs).toHaveLength(1));
     h.abort.abort();
     expect(await r).toEqual({ resultType: "denied", textResultForLlm: "Stopped. Do nothing more." });
     expect(h.runs[0].stops).toEqual(["task"]);
+    await vi.waitFor(() => expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ runId: h.starts[0].runId, ended: "stopped-task", typedLines: 1 }));
+    expect(h.runs[0].forgot()).toBe(true);
+  });
+
+  it("a run the command window can't show is stopped at once: a command never runs where the user can't watch it", async () => {
+    makeJudge();
+    const h = harness({ run: () => ({ hang: true }) });
+    h.ctx.service.window.attach = () => { throw new Error("no window"); };
+    const r = await call(h);
+    expect(r).toMatchObject({ resultType: "failure" });
+    expect(r.textResultForLlm).toMatch(/^Ember couldn't show the command in its command window, so it stopped it at once/);
+    expect(h.runs[0].stops).toEqual(["task"]);
+    await vi.waitFor(() => expect(phases(h)).toEqual(["decided", "started", "ended"]));
   });
 
   it("keeps the user's typing out: typed lines go to shaping and are forgotten, Enter reaches the secret tracker", async () => {
@@ -606,6 +678,28 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     await vi.waitFor(() => expect(shared.runs).toHaveLength(MAX_RUNS_PER_TARGET + 1));
     for (const r of shared.runs) r.stop("user");
     await Promise.all(results.slice(0, 4));
+  });
+});
+
+describe("an announcement and the run slots", () => {
+  it("counts down only once a slot is free, so the run follows its announcement at once", async () => {
+    makeJudge({ decide: i => (i.cls.programs[0] === "git" ? decision({ verdict: "announce", says: ["Pushes."], requested: { intent: "git.push", announce: "Pushing, as you asked." } }) : decision()) });
+    const shared = harness({ run: () => ({ hang: true }) });
+    const runner = shared.ctx.service.runner;
+    const busy = [0, 1, 2].map(() => { const h = harness({ run: () => ({ hang: true }) }); h.ctx.service = { ...shared.ctx.service, runner } as CommandService; return h; });
+    const running = busy.map(h => call(h));
+    await vi.waitFor(() => expect(shared.runs).toHaveLength(MAX_RUNS_PER_TARGET));
+    makeJudge({ classify: () => ordinary({ programs: ["git"] }), decide: () => decision({ verdict: "announce", says: ["Pushes."], requested: { intent: "git.push", announce: "Pushing, as you asked." } }) });
+    const pusher = harness({ words: "push my branch" });
+    pusher.ctx.service = { ...shared.ctx.service, runner, window: pusher.ctx.service.window } as CommandService;
+    const pushed = call(pusher, { command: "git push origin main" });
+    await tick();
+    expect(pusher.announced).toEqual([]);
+    shared.runs[0].stop("user");
+    await vi.waitFor(() => expect(pusher.announced).toHaveLength(1));
+    await vi.waitFor(() => expect(shared.runs).toHaveLength(MAX_RUNS_PER_TARGET + 1));
+    for (const r of shared.runs) r.stop("user");
+    await Promise.all([...running, pushed]);
   });
 });
 
