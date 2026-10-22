@@ -526,6 +526,19 @@ describe("activating a window (the documented foreground order)", () => {
     expect(d.fg).toBe(0x50);
   });
 
+  it("doesn't attach to the target's own thread, where the async raise would wait for it", () => {
+    // Notepad's Save as dialog has the foreground and Notepad's window is asked for: one thread, so attaching to the
+    // foreground thread would put Ember on the target's input queue, where SWP_ASYNCWINDOWPOS no longer posts.
+    const d = desktop();
+    d.fg = 0x31;
+    d.lock = "attach";
+    expect(d.threadProcess(0x31).tid).toBe(d.threadProcess(0x40).tid);
+    windowsOn(d).activate(0x40);
+    expect(d.calls).toEqual(["sendInput", "setForeground:64"]);
+    expect(d.fg).toBe(0x31);
+    expect(d.attached).toBe(false);
+  });
+
   it("restores a minimised window without waiting on its thread", () => {
     const d = desktop();
     windowsOn(d).activate(0x70);
@@ -553,6 +566,7 @@ describe("activating a window (the documented foreground order)", () => {
       { name: "hung foreground", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x50)!.hung = true; } },
       { name: "hung target", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x40)!.hung = true; } },
       { name: "minimised target", set: d => { d.fg = 0x50; d.lock = "attach"; }, target: 0x70 },
+      { name: "foreground on the target's thread", set: d => { d.fg = 0x31; d.lock = "attach"; } },
     ];
     for (const c of cases) {
       const d = desktop();

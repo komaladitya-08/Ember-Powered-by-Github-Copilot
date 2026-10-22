@@ -5,8 +5,9 @@
  * The rule here: no synchronous cross-thread window call on the main thread. Ember runs these on Electron's main
  * thread, which also draws the overlay and receives the stop shortcut's WM_HOTKEY, so a call that waits for another
  * app's thread would freeze Ember whenever that app is merely busy, not only when it is hung. So no message is sent
- * to another process's window; restoring uses ShowWindowAsync and raising uses SetWindowPos with SWP_ASYNCWINDOWPOS
- * (never BringWindowToTop, ShowWindow or a plain SetWindowPos, which wait for the window's thread); and the thread
+ * to another process's window; restoring uses ShowWindowAsync; raising uses SetWindowPos with SWP_ASYNCWINDOWPOS,
+ * never BringWindowToTop, ShowWindow or a plain SetWindowPos (they wait for the window's thread), and never while
+ * Ember shares the window's thread's input queue (SWP_ASYNCWINDOWPOS posts only across queues); and the thread
  * attach that activation may need is never made with a hung thread.
  */
 
@@ -142,7 +143,9 @@ const SW_RESTORE = 9;
  *    take the foreground), then SetForegroundWindow;
  * 4. last, join the foreground thread's input state (AttachThreadInput), raise the window without waiting for its
  *    thread (SetWindowPos with SWP_ASYNCWINDOWPOS, where BringWindowToTop would wait for a busy app) and
- *    SetForegroundWindow, and always detach. Never with a hung thread: attaching to it would hang Ember.
+ *    SetForegroundWindow, and always detach. Never with a hung thread: attaching to it would hang Ember. Not when
+ *    the foreground window is the target's own thread's either: attached to that thread, Ember would share the
+ *    target's input queue, where SWP_ASYNCWINDOWPOS no longer posts and SetWindowPos waits for that thread.
  * Nothing else is called on the target: ShowWindowAsync, the async SetWindowPos, SetForegroundWindow and the
  * hung-guarded AttachThreadInput, plus the empty input event. No Alt tap: it toggles menu mnemonics in the user's
  * app. Callers verify with focusedWindow(), as on X11.
@@ -164,6 +167,8 @@ export function activateWindow(api: Win32Api, hwnd: number, ownPid: number): voi
   const own = api.currentThreadId();
   const theirs = now ? api.threadProcess(now).tid : 0;
   if (!theirs || theirs === own || api.isHung(now) || api.isHung(hwnd)) return;
+  // Sharing the target's input queue would make the raise synchronous (SWP_ASYNCWINDOWPOS posts only across queues).
+  if (api.threadProcess(hwnd).tid === theirs) return;
   if (!api.attachThreadInput(own, theirs, true)) return;
   try {
     api.bringToTopAsync(hwnd);

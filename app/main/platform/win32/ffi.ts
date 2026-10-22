@@ -14,8 +14,9 @@
  *   another thread to handle one, because Ember calls these on its main thread and a busy app (not only a hung one)
  *   would then freeze the overlay and the stop shortcut. Titles come from GetWindowTextW, which reads the stored
  *   caption of another process's window, or InternalGetWindowText for Ember's own; restoring a window uses
- *   ShowWindowAsync and raising one SetWindowPos with SWP_ASYNCWINDOWPOS (BringWindowToTop, ShowWindow and a plain
- *   SetWindowPos wait for the window's thread, so none of them is bound).
+ *   ShowWindowAsync and raising one SetWindowPos with SWP_ASYNCWINDOWPOS, the only way it is called (BringWindowToTop
+ *   and ShowWindow wait for the window's thread, so neither is bound; SWP_ASYNCWINDOWPOS posts only to a thread on
+ *   another input queue, which hwnd.ts's activation makes sure of).
  * - Only 64-bit processes: the structure layouts (layouts.ts) are the 64-bit ones, and SendInput is refused unless
  *   koffi agrees on INPUT's layout.
  */
@@ -98,7 +99,8 @@ export interface Win32Api {
   /**
    * Puts a top-level window at the top of the z-order without waiting for its thread: SetWindowPos(HWND_TOP) with
    * SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS, which posts the request to the window's thread (BringWindowToTop is
-   * the same call made synchronously, which waits for a busy app).
+   * the same call made synchronously, which waits for a busy app). The request is posted only when the calling thread
+   * and the window's thread are on different input queues: never call it attached to the window's thread.
    */
   bringToTopAsync(hwnd: number): boolean;
   /** ShowWindowAsync: never waits for the window's thread. */
