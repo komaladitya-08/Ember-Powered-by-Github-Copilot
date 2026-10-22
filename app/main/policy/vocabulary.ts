@@ -349,3 +349,17 @@ export const TERMINAL_REQUEST: Readonly<Record<OS, TerminalRequestWords>> = {
   win32: terminalWords(TERMINAL_WIN32, /\b(?:terminal|shell|command[- ]line|command prompt|console|power[- ]?shell|pwsh|cmd(?:\.exe)?|wsl)\b/i),
   darwin: terminalWords(TERMINAL_DARWIN, /\b(?:terminal|shell|command[- ]line|iterm2?)\b/i),
 };
+
+/**
+ * Windows with WSL turned on (§3.15, critique integration-25): "WSL" alone names a place to work ("open gedit in
+ * WSL"), not a terminal; "the WSL terminal" and "a WSL shell" still name one (the "<word> terminal|shell" form).
+ */
+export const TERMINAL_REQUEST_WSL: TerminalRequestWords = terminalWords(
+  String.raw`terminal|console(?![- ]companion)|command[- ]line|command prompt|power[- ]?shell|pwsh|cmd(?:\.exe)?|git[- ]bash|shell|[\w.-]+\s+(?:terminal|shell)`,
+  /\b(?:terminal|shell|command[- ]line|command prompt|console|power[- ]?shell|pwsh|cmd(?:\.exe)?)\b/i,
+);
+
+/** The terminal words in force: today's row for the OS, or the WSL row on Windows while WSL is on (chosen by state). */
+export function terminalRequest(os: OS, wslOn: boolean): TerminalRequestWords {
+  return os === "win32" && wslOn ? TERMINAL_REQUEST_WSL : TERMINAL_REQUEST[os];
+}

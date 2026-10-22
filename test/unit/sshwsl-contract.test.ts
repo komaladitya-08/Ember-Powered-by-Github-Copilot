@@ -644,8 +644,9 @@ describe("the other stubs", () => {
     const prompts = createPromptWindow({ create: () => { throw new Error("no window"); }, ipc: {} as never, log: {} as never, os: "linux" });
     await expect(prompts.ask({ id: "p1", kind: "touch", host: "build-01" })).resolves.toEqual({ id: "p1", ok: false });
     expect(prompts.consentReady(1)).toBe(false);
-    expect(carriedText("echo hi", [], "say hi", "linux")).toEqual({ from: ["unknown"] });
-    await expect(runCommandTool({ target: "This computer", command: "ls", why: "list" }, {} as CommandFlowContext)).resolves.toMatchObject({ resultType: "failure" });
+    // Package AG built carried.ts and flow.ts (command-flow.test.ts): nothing read carries nothing; a stopped task runs nothing.
+    expect(carriedText("echo hi", [], "say hi", "linux")).toBeNull();
+    await expect(runCommandTool({ target: "This computer", command: "ls", why: "list" }, { isOver: () => true } as CommandFlowContext)).resolves.toMatchObject({ resultType: "denied" });
     const conns = createConnections({} as Parameters<typeof createConnections>[0]);
     await expect(conns.connect(HostRecordSchema.parse(host()), { interactive: true })).rejects.toBeInstanceOf(ConnectError);
     expect(conns.link("build-01")).toBeNull();

@@ -120,7 +120,9 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     // The worker runs: its session was made, and it was asked to do the goal.
     expect(taskSessions()).toHaveLength(1);
     expect(taskSessions()[0].sent.join("\n")).toContain("run the tests in ~/project");
-    expect(t.asked).toEqual(["local"]);
+    // Asked for this computer's hands (when binding, and again when the worker starts), never another computer's.
+    expect(t.asked.length).toBeGreaterThan(0);
+    expect(t.asked.every(id => id === "local")).toBe(true);
     // The task base's audit log has its request; the window it started in is none (no screen).
     expect(base.written).toContainEqual(expect.objectContaining({ event: "task", phase: "asked", goal: "run the tests in ~/project", window: undefined }));
     expect(host.tasks!.list()).toEqual([expect.objectContaining({ status: "running", title: "run the tests in ~/project" })]);
@@ -134,17 +136,17 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     await host.stop();
   });
 
-  it("ends a task the targets runtime refuses at once, with its words, and makes no session for it", async () => {
+  it("refuses a task the targets runtime can't take before anything is queued, with its words, and makes no session for it", async () => {
     const why = "Ember can't use this computer's screen here, and commands aren't available yet.";
     const t = targets(() => ({ ok: false, why }));
     const base = taskBase();
     const { host } = makeHost({ targets: t.agent, taskBase: base.base });
     await host.start(TOKEN, "stored");
-    await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {});
-    await until(() => host.tasks!.list()[0]?.status === "failed");
-    expect(host.tasks!.list()[0]).toMatchObject({ status: "failed", result: { success: false, summary: why } });
+    // §2.6: the computer's hands are asked for when the task is bound; one that can't take it refuses it there.
+    expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toBe(why);
+    expect(host.tasks!.list()).toEqual([]);
     expect(taskSessions()).toEqual([]);
-    expect(base.written).toContainEqual(expect.objectContaining({ event: "task", phase: "failed", summary: why }));
+    expect(base.written).not.toContainEqual(expect.objectContaining({ event: "task" }));
     await host.stop();
   });
 
@@ -167,18 +169,16 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     await host.stop();
   });
 
-  it("uses the hands, not the targets runtime, when the screen has them (today's tasks)", async () => {
-    const t = targets(() => ({ ok: false, why: "never asked" }));
+  it("uses the screen's hands for a task on this computer when there is no targets runtime (today's tasks)", async () => {
     const hands = {
       perception: {} as never, sidecar: {} as never, policy: {} as never, audit: { write() {} } as never,
       confirmer: { waiting: false, settled: async () => undefined, cancelAll() {} } as never, flyTo() {}, currentWindow: () => ({ pid: 42, title: "notes.txt", app: "gedit" }),
     };
-    const { host } = makeHost({ hands, targets: t.agent, taskBase: taskBase().base });
+    const { host } = makeHost({ hands, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
     await tool(conductor(), "start_task").handler({ goal: "save my document" }, {});
     await until(() => taskSessions()[0]?.sent.length > 0);
     expect(taskSessions()).toHaveLength(1);
-    expect(t.asked).toEqual([]);
     expect(taskSessions()[0].sent.join("\n")).toContain("notes.txt");
     await host.stop();
   });
