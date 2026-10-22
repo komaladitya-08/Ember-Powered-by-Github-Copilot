@@ -88,7 +88,8 @@ export function runFixedScript(o: { wslExe: string; distro: string; script: stri
     child.stdout.on("data", (b: Buffer) => { if (out.reduce((n, x) => n + x.length, 0) < 65_536) out.push(b); });
     child.stderr.on("data", () => undefined);
     child.on("error", () => finish(null));
-    child.on("exit", (code: number | null) => finish(code === 0 && out.length ? Buffer.concat(out).toString("utf8") : null));
+    // "close", not "exit": every byte of stdout has been read by then.
+    child.on("close", (code: number | null) => finish(code === 0 && out.length ? Buffer.concat(out).toString("utf8") : null));
     child.stdin.on("error", () => undefined);
     child.stdin.end(`${o.script}\n${(o.input ?? []).map(l => `${l}\n`).join("")}`);
   });

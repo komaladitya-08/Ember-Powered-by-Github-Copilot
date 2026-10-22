@@ -405,7 +405,7 @@ function fakeSpawn(runs: { command: string; args: string[]; stdin: string }[], o
     const run = { command, args, stdin: "" };
     runs.push(run);
     const stdout = new EventEmitter(), stderr = new EventEmitter(), child = new EventEmitter();
-    const stdin = Object.assign(new EventEmitter(), { end: (s: string) => { run.stdin = s; setTimeout(() => { stdout.emit("data", Buffer.from(out)); child.emit("exit", code); }, 0); } });
+    const stdin = Object.assign(new EventEmitter(), { end: (s: string) => { run.stdin = s; setTimeout(() => { stdout.emit("data", Buffer.from(out)); child.emit("close", code); }, 0); } });
     return Object.assign(child, { stdin, stdout, stderr, kill: () => true }) as unknown as ReturnType<SpawnLike>;
   };
 }
