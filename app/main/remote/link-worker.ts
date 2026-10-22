@@ -97,7 +97,8 @@ function workerLogger(port: WorkerPort): Logger {
 
 /** The escalation deadline (§5.1.11): min(10 s, max(1 s, 3 × idle RTT + bytes in flight ÷ throughput)). */
 export function escalationMs(rttMs: number, inFlight: { bytes: number; throughput: number }): number {
-  const transfer = inFlight.throughput > 0 ? (inFlight.bytes / inFlight.throughput) * 1000 : 0;
+  // Bytes in flight with no throughput measured yet can't be timed: the cap applies.
+  const transfer = inFlight.bytes <= 0 ? 0 : inFlight.throughput > 0 ? (inFlight.bytes / inFlight.throughput) * 1000 : Infinity;
   const ms = 3 * (Number.isFinite(rttMs) ? Math.max(0, rttMs) : 0) + (Number.isFinite(transfer) ? transfer : 10_000);
   return Math.min(10_000, Math.max(1_000, ms));
 }

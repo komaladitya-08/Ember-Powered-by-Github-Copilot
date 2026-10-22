@@ -291,6 +291,7 @@ export class WorkerLink implements RemoteLink {
     try { this.port.post({ t: "kill", why }); } catch { /* gone */ }
     this.setState("lost", why);
     for (const f of this.off.splice(0)) f();
+    this.sshGone();
     await this.port.terminate().catch(() => undefined);
   }
 }
