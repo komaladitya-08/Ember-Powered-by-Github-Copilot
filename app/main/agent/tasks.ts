@@ -31,10 +31,16 @@ export interface Task {
   mode?: "do" | "guide";
 }
 
+/**
+ * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
+ * nothing more.
+ */
+export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId">;
+
 export interface TaskManagerDeps {
   log: Logger;
   /** Builds the worker for a task (with its own presenter and tools). */
-  makeWorker: (spec: TaskSpec, progress: (text: string) => void) => Worker;
+  makeWorker: (spec: TaskSpec, progress: (text: string) => void) => WorkerLike;
   /** Deletes a worker's Copilot session (conversation and files). */
   deleteSession: (sessionId: string) => Promise<void>;
   /** The window the user is in right now. */
@@ -78,7 +84,7 @@ export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): strin
 export class TaskManager {
   private tasks = new Map<string, Task>();
   private queue: { task: Task; spec: TaskSpec }[] = [];
-  private running = new Map<string, { worker: Worker; abort: AbortController }>();
+  private running = new Map<string, { worker: WorkerLike; abort: AbortController }>();
   private leases = new Map<string, { owner: string; waiters: (() => void)[] }>();
   private unreported: Task[] = [];
   private n = 0;

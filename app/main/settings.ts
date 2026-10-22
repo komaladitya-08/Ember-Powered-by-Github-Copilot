@@ -13,12 +13,65 @@ import { z } from "zod";
 import { applyAdminPolicy, type AdminPolicy } from "./admin";
 import { CONSENT_VERSION } from "../shared/consent";
 import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
+import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
 import { HOST_OS } from "./platform/os";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
 
 export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
+
+/** A first-use consent card's record (§7.4): the card's version the user said yes to (0: not yet) and when. */
+const ConsentRecord = z.object({ version: z.number().int().min(0).default(0), at: z.string().nullable().default(null) }).default({ version: 0, at: null });
+
+/** No control characters (they could hide what a value says, or end a line in ssh's config). */
+const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/; // eslint-disable-line no-control-regex -- control characters are exactly what's refused here
+/** §5.1.2's destination validator (validDest): an alias, user@host or user@host:port; never an option. */
+const DEST = /^(?!-)[A-Za-z0-9._%+@[\]:-]{1,255}$/;
+/** §5.1.2's jump hop validator (validHop): stricter, no "%" (ssh expands it in a ProxyCommand) and no brackets. */
+const HOP = /^(?!-)[A-Za-z0-9._@:-]{1,255}$/;
+/** An identity or config file carried from the user's ssh command line: absolute or ~/-relative. */
+const SSH_FILE = /^(\/|~\/|[A-Za-z]:[\\/])/;
+/** The -o options a host record may carry (§2.7's allow-list) and the characters their values may hold. */
+const SSH_OPTIONS = new Set(["Port", "User", "ProxyJump", "IdentityFile", "IdentitiesOnly", "HostKeyAlias", "HostName"]);
+const SSH_OPTION_VALUE = /^[A-Za-z0-9._@:/~+-]{1,255}$/;
+const port = z.number().int().min(1).max(65535);
+const sshFile = z.string().min(2).max(1024).regex(SSH_FILE).regex(NO_CONTROL);
+const isTargetId = (v: unknown): v is TargetId => typeof v === "string" && parseTargetId(v) !== null;
+
+/** A host the user added (remote/types.ts HostRecord), checked field by field: a record that fails is dropped alone. */
+export const HostRecordSchema = z.object({
+  id: z.string().regex(HOST_ID),
+  dest: z.string().regex(DEST),
+  port: port.optional(),
+  extra: z.object({
+    jump: z.array(z.string().regex(HOP)).max(8).optional(),
+    identityFiles: z.array(sshFile).max(16).optional(),
+    configFile: sshFile.optional(),
+    options: z.record(z.string().refine(k => SSH_OPTIONS.has(k)), z.string().regex(SSH_OPTION_VALUE)).optional(),
+  }).strict().optional(),
+  via: z.custom<"local" | `wsl:${string}`>(v => v === "local" || (typeof v === "string" && v.startsWith("wsl:") && DISTRO_NAME.test(v.slice(4)))).optional(),
+  resolved: z.object({
+    user: z.string().min(1).max(255).regex(NO_CONTROL),
+    hostname: z.string().min(1).max(255).regex(NO_CONTROL),
+    port,
+    jump: z.array(z.string().regex(HOP)).max(8),
+  }),
+  consent: ConsentRecord,
+  machineIdHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  lastUsed: z.string().max(64).optional(),
+});
+
+/** The settings of one target's commands (§3.9.3): the user's switch, "Ask before every command", and the card. */
+const TargetCommands = z.object({
+  on: z.boolean().default(false),
+  askEvery: z.boolean().default(false),
+  consent: ConsentRecord,
+});
+
+/** Destinations whose ssh offer the user dismissed ("Don't offer again"): at most this many. */
+const DISMISSED_MAX = 200;
+const dismissedOffer = z.string().min(1).max(255).regex(NO_CONTROL);
 
 export const SettingsSchema = z.object({
   version: z.literal(1).default(1),
@@ -59,6 +112,22 @@ export const SettingsSchema = z.object({
   }).default({ conductor: null, worker: null }),
   /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
   reduceMotion: z.boolean().default(false),
+  /** Where Ember works (§2): the picker's target, the SSH hosts the user added, WSL, and this install's id. */
+  targets: z.object({
+    /** The picker's choice: requests that name no computer go here. */
+    active: z.custom<TargetId>(isTargetId).default("local"),
+    /** Offer to come along when the user runs ssh themselves (§2.7). */
+    offerSsh: z.boolean().default(true),
+    dismissedOffers: z.array(dismissedOffer).max(DISMISSED_MAX).default([]),
+    /** Each id once. */
+    hosts: z.array(HostRecordSchema).max(100).refine(h => new Set(h.map(x => x.id)).size === h.length, "host ids must be unique").default([]),
+    /** WSL turned on (after its card). */
+    wsl: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+    /** This Ember install's id (§5.1.13): 32 hex digits the targets runtime makes at first use; "" until then. */
+    pcId: z.string().regex(/^(?:[0-9a-f]{32})?$/).default(""),
+  }).default({ active: "local", offerSsh: true, dismissedOffers: [], hosts: [], wsl: { on: false, consent: { version: 0, at: null } }, pcId: "" }),
+  /** Commands per target id (§3.9.3): off until the user turns them on with the commands card. */
+  commands: z.partialRecord(z.string().refine(isTargetId), TargetCommands).default({}),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -77,6 +146,21 @@ function repairObject(key: keyof Shape, v: Record<string, unknown>): unknown {
   if (key === "privacy") {
     const list = Array.isArray(v.neverLook) ? v.neverLook.filter((x): x is string => typeof x === "string" && x.length <= 100).slice(0, 100) : undefined;
     return list ? { neverLook: list } : {};
+  }
+  // Commands: each target's entry kept on its own.
+  if (key === "commands") return Object.fromEntries(Object.entries(v).filter(([id, c]) => isTargetId(id) && TargetCommands.safeParse(c).success));
+  // Targets: each host record and dismissed offer kept on its own (one bad record doesn't forget the others), then
+  // every other field as below.
+  if (key === "targets") {
+    const ids = new Set<string>();
+    const hosts = Array.isArray(v.hosts) ? v.hosts.filter(h => {
+      const r = HostRecordSchema.safeParse(h);
+      if (!r.success || ids.has(r.data.id)) return false;
+      ids.add(r.data.id);
+      return true;
+    }).slice(0, 100) : undefined;
+    const dismissed = Array.isArray(v.dismissedOffers) ? v.dismissedOffers.filter(x => dismissedOffer.safeParse(x).success).slice(0, DISMISSED_MAX) : undefined;
+    v = { ...v, ...(hosts ? { hosts } : {}), ...(dismissed ? { dismissedOffers: dismissed } : {}) };
   }
   // Other objects: keep each sub-field that is valid on its own.
   let kept = { ...(DEFAULT_SETTINGS[key] as Record<string, unknown>) };

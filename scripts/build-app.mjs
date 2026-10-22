@@ -1,20 +1,56 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs and ax-sidecar.cjs (helpers Ember runs as plain Node)
+//   desk-agent.cjs, voice.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
+//   as plain Node)
+// and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
+// meta.json (esbuild's metafile, which the agent's bundle test checks).
 import { build } from "esbuild";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
+const remoteOut = new URL("dist/remote/", root);
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
 
-const pages = ["home", "overlay", "handle", "ask", "mic", "desk"];
+const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt"];
+
+// The remote agent's bundle takes app/remote/capture-stub.ts wherever code imports app/main/perception/capture.ts, so
+// sharp's loader never enters it (§5.2.2). esbuild's own `alias` maps package names only, so this plugin maps the file.
+const captureFile = fileURLToPath(new URL("app/main/perception/capture.ts", root));
+const captureStub = fileURLToPath(new URL("app/remote/capture-stub.ts", root));
+const remoteCaptureStub = {
+  name: "remote-capture-stub",
+  setup(b) {
+    b.onResolve({ filter: /(^|[\\/])capture(\.ts)?$/ }, args => {
+      if (!args.path.startsWith(".")) return undefined;
+      const p = path.resolve(args.resolveDir, args.path);
+      return p === captureFile || `${p}.ts` === captureFile ? { path: captureStub } : undefined;
+    });
+  },
+};
 
 await rm(out, { recursive: true, force: true });
+await rm(remoteOut, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
+await mkdir(remoteOut, { recursive: true });
+
+// The remote agent: plain Node 24 on the remote, koffi beside it (loaded lazily, only by the desktop child).
+const remote = build({
+  ...common,
+  entryPoints: ["app/remote/main.ts"],
+  outfile: "dist/remote/ember-remote.cjs",
+  platform: "node",
+  format: "cjs",
+  target: "node24",
+  external: ["koffi"],
+  plugins: [remoteCaptureStub],
+  metafile: true,
+});
 
 await Promise.all([
+  remote,
   build({
     ...common,
     entryPoints: ["app/main/main.ts"],
@@ -55,6 +91,21 @@ await Promise.all([
     target: "node24",
     external: ["electron", "sherpa-onnx"],
   }),
+  // SSH's askpass helper (Linux and macOS PCs), the link worker thread, and the Windows job host for commands: plain
+  // Node, never electron.
+  ...[
+    ["app/askpass/main.ts", "dist/app/askpass.cjs"],
+    ["app/main/remote/link-worker.ts", "dist/app/remote-link.cjs"],
+    ["app/main/commands/run/job-host.ts", "dist/app/job-host.cjs"],
+  ].map(([entry, outfile]) => build({
+    ...common,
+    entryPoints: [entry],
+    outfile,
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "koffi"],
+  })),
   build({
     ...common,
     entryPoints: ["app/renderer/mic/worklet.ts"],
@@ -94,3 +145,10 @@ for (const p of pages) {
 // (Inter, SIL OFL 1.1: its licence ships beside the fonts and in THIRD_PARTY_NOTICES).
 await cp(new URL("app/renderer/shared/", root), new URL("renderer/shared/", out), { recursive: true });
 await cp(new URL("assets/fonts/", root), new URL("renderer/fonts/", out), { recursive: true });
+// The command window's terminal styles (@xterm/xterm, MIT). Without the package installed the build goes on: only the
+// command window lacks them.
+await cp(new URL("node_modules/@xterm/xterm/css/xterm.css", root), new URL("renderer/command/xterm.css", out)).catch(err => {
+  if (err.code !== "ENOENT") throw err;
+  console.warn("warning: node_modules/@xterm/xterm/css/xterm.css is missing (run npm ci): the command window has no terminal styles");
+});
+await writeFile(new URL("meta.json", remoteOut), JSON.stringify((await remote).metafile));

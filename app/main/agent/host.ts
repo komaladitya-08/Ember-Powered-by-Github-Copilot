@@ -21,8 +21,10 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
-import type { Perception, WindowTarget } from "../perception";
-import type { AtspiSidecar, Bounds } from "../perception/sidecar";
+import type { WindowTarget } from "../perception";
+import type { Bounds } from "../perception/sidecar";
+import type { PerceptionPort, SidecarPort } from "../perception/ports";
+import type { TargetsForAgent } from "../targets/types";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import { TERMINAL_REQUEST } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
@@ -33,8 +35,8 @@ const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
 
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
-  perception: Perception;
-  sidecar: AtspiSidecar;
+  perception: PerceptionPort;
+  sidecar: SidecarPort;
   policy: PolicyEngine;
   audit: AuditLog;
   confirmer: Confirmer;
@@ -135,6 +137,10 @@ export interface HostOptions {
   turnSilentMs?: number;
   /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
   inotifyUsedUp?: () => boolean;
+  /** Where tasks act (§2): the targets runtime's view for the host (absent: this computer only, as before). */
+  targets?: TargetsForAgent;
+  /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
+  taskBase?: { audit: AuditLog; confirmer: Confirmer };
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */

@@ -1,0 +1,448 @@
+# SSH, WSL and commands on GitHub's runners (design §10.2): the SSH/WSL unit files on every OS, and the integration
+# suites that need a real sshd, WSL, script(1) or a desktop session. Each integration file skips without its variable
+# and fails when the variable is "1" and the facility is missing; a test file that doesn't exist yet is skipped here
+# (run-integration.mjs --allow-missing), so every job is green or skipped until its package lands.
+#
+# Each job's owner (named above it) edits only that job's set-up steps; ci.yml is not touched by any SSH/WSL package.
+# Run one job by hand with workflow_dispatch, `only` set to its group (unit, commands, wsl, ssh, macos, wayland).
+# macOS minutes cost ten times Linux's: the macOS job runs only on dispatch (only: all or macos) and once a week.
+name: remote
+
+on:
+  push:
+    branches: ["ember-improve/20261022-sshwsl-*"]
+  schedule:
+    # Mondays 04:23 UTC: the macOS job only.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The branch, tag or commit to test (empty: the one dispatched from)"
+        type: string
+        default: ""
+      only:
+        description: "Run only one group of jobs (pushes run every group but macOS)"
+        type: choice
+        options: [all, unit, commands, wsl, ssh, macos, wayland]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only || 'all' }}
+  cancel-in-progress: true
+
+env:
+  # No job here starts Electron itself: the binary isn't needed for lint, unit tests, the build or these suites.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  # Owner: S0a. The SSH/WSL unit files (OS-neutral by rule) on Linux and Windows, and on macOS when dispatched.
+  unit-matrix:
+    name: SSH/WSL unit tests (${{ matrix.os }})
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'unit'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","windows-2022","macos-15"]' || '["ubuntu-24.04","windows-2022"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout (as .gitattributes says)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: The SSH/WSL unit files (vitest filters; a filter no file matches yet is fine)
+        run: >-
+          npx vitest run --passWithNoTests
+          test/unit/sshwsl test/unit/lint-boundaries test/unit/commands test/unit/wsl test/unit/ssh test/unit/remote
+          test/unit/targets test/unit/command test/unit/prompt test/unit/askpass test/unit/visible-text
+
+  # Owner: RUN. Local commands on Ubuntu 24.04 (util-linux script with a PTY).
+  commands-linux:
+    name: Commands on Linux (Ubuntu 24.04)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Commands with util-linux script, pipes without it, the stop ladder and the sweep
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        env:
+          EMBER_COMMANDS_TEST: "1"
+
+  # Owner: RUN. Local commands on RHEL 8's util-linux 2.32 (script ends its session at stdin's EOF), as a normal user.
+  commands-linux-el8:
+    name: Commands on Linux (rockylinux:8, util-linux 2.32)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: rockylinux:8
+    steps:
+      - name: System packages (build tools, util-linux's script, procps for the sweep)
+        run: |
+          dnf -y -q install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3
+          useradd -m ci
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Commands as a normal user (root would make every command ask)
+        run: |
+          chown -R ci .
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_COMMANDS_TEST=1 \
+            node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+
+  # Owner: SB (SA adds its file). sshd on 127.0.0.1:2222 and a jump host on 2223, the runner's own key authorised;
+  # a GTK 3 window under Xvfb and a session bus for the desktop part.
+  ssh-linux:
+    name: SSH to Linux (sshd on localhost, Ubuntu 24.04)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: System packages (sshd, Xvfb, a session bus, AT-SPI, GTK 3 for the test window)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q openssh-server xvfb xauth dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0
+      - name: Two sshds of the test's own (127.0.0.1:2222, and 2223 as a jump host) with the runner's new key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          d="$RUNNER_TEMP/sshd" && mkdir -p "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_ed25519"
+          sudo mkdir -p /run/sshd
+          for port in 2222 2223; do
+            printf '%s\n' "Port $port" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd-$port.pid" \
+              "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" "KbdInteractiveAuthentication no" \
+              "UsePAM yes" "AllowTcpForwarding yes" > "$d/sshd-$port.conf"
+            sudo /usr/sbin/sshd -t -f "$d/sshd-$port.conf"
+            sudo /usr/sbin/sshd -f "$d/sshd-$port.conf"
+          done
+          ssh-keyscan -p 2222 127.0.0.1 >> ~/.ssh/known_hosts
+          ssh-keyscan -p 2223 127.0.0.1 >> ~/.ssh/known_hosts
+          # An alias that makes ssh share a master connection (the ControlMaster test), and one through the jump host.
+          printf '%s\n' "Host ember-master" "  HostName 127.0.0.1" "  Port 2222" "  ControlMaster auto" \
+            "  ControlPath ~/.ssh/cm-%C" "  ControlPersist 60" "Host ember-jumped" "  HostName 127.0.0.1" "  Port 2222" \
+            "  ProxyJump 127.0.0.1:2223" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh -o BatchMode=yes -p 2222 127.0.0.1 true
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Transport (ssh -G, batch and interactive connects, host keys, ProxyJump, ControlMaster) and the agent
+        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+      - name: The remote desktop child against Xvfb (discovery inputs injected; logind isn't available on runners)
+        run: >-
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"
+          node scripts/run-integration.mjs --allow-missing test/integration/remote-desktop.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+          EMBER_REMOTE_DEV: "1"
+
+  # Owner: SB. A rockylinux:8 container as the remote (glibc 2.28, platform-python 3.6, util-linux 2.32), reached at
+  # its own address (not loopback) on port 2222.
+  ssh-el8:
+    name: SSH to RHEL 8 (rockylinux:8 container)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: The remote (sshd, python3-pyatspi, util-linux, xz) with the runner's new key for a normal user
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          docker run -d --name el8 rockylinux:8 sleep infinity
+          docker exec el8 dnf -y -q install openssh-server python3-pyatspi util-linux xz tar procps-ng which findutils
+          docker exec el8 useradd -m deploy
+          docker exec el8 install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+          docker cp ~/.ssh/id_ed25519.pub el8:/home/deploy/.ssh/authorized_keys
+          docker exec el8 sh -c 'chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys'
+          docker exec el8 ssh-keygen -A
+          docker exec el8 /usr/sbin/sshd -p 2222
+          host="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' el8)"
+          for i in $(seq 1 20); do ssh-keyscan -p 2222 "$host" >> ~/.ssh/known_hosts 2>/dev/null && break; sleep 1; done
+          ssh -o BatchMode=yes -p 2222 "deploy@$host" true
+          printf '%s\n' "EMBER_SSH_TEST_HOST=$host" "EMBER_SSH_TEST_PORT=2222" "EMBER_SSH_TEST_USER=deploy" >> "$GITHUB_ENV"
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: The real bootstrap on glibc 2.28 (install, serve, commands, headless desktop "none", a racing install)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/remote-el8.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+
+  # Owner: SB. A headless mutter Wayland session with AT-SPI and a GTK test window: the "text" desktop path (L5).
+  wayland-remote:
+    name: SSH to a Wayland session (headless mutter)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wayland'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: System packages (mutter, AT-SPI, GTK 3, sshd)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mutter dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0 openssh-server
+      - name: sshd on 127.0.0.1:2222 with the runner's new key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          d="$RUNNER_TEMP/sshd" && mkdir -p "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_ed25519"
+          sudo mkdir -p /run/sshd
+          printf '%s\n' "Port 2222" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd.pid" \
+            "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" "KbdInteractiveAuthentication no" \
+            "UsePAM yes" > "$d/sshd.conf"
+          sudo /usr/sbin/sshd -f "$d/sshd.conf"
+          ssh-keyscan -p 2222 127.0.0.1 >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -p 2222 127.0.0.1 true
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Reading and a tier-1 action in a Wayland session (until green, Wayland remotes stay commands only)
+        run: |
+          dbus-run-session -- bash -c '
+            mutter --headless --wayland --no-x11 --virtual-monitor 1280x1024 & sleep 3
+            node scripts/run-integration.mjs --allow-missing test/integration/remote-wayland.test.ts'
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+
+  # Owner: WA (RUN and SA add their files). Ubuntu 22.04 as WSL1 (the inbox UTF-16 wsl.exe path) with sshd on 2222;
+  # Windows PowerShell commands under the job host; Win32-OpenSSH to the WSL1 sshd.
+  wsl-windows:
+    name: WSL1, Windows commands and Windows SSH (windows-2022)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    runs-on: windows-2022
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout (as .gitattributes says)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-22.04
+          wsl-version: 1
+          additional-packages: openssh-server util-linux python3
+      - name: sshd in the distro on port 2222
+        shell: wsl-bash {0}
+        run: |
+          ssh-keygen -A
+          mkdir -p /run/sshd
+          setsid /usr/sbin/sshd -p 2222 < /dev/null > /dev/null 2>&1 &
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: WSL discovery, facts and the WSL runner (WA)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/wsl.test.ts
+        env:
+          EMBER_WSL_TEST: "1"
+      - name: Windows PowerShell commands under the job host (RUN)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        env:
+          EMBER_COMMANDS_TEST: "1"
+      - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-windows.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+
+  # Owner: WA. The Store WSL as WSL2 with a non-root default user (critique wsl-12).
+  wsl2-windows:
+    name: WSL2 (windows-2025)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout (as .gitattributes says)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-22.04
+          wsl-version: 2
+          wsl-shell-user: ember
+          wsl-conf: |
+            [user]
+            default=ember
+          additional-packages: util-linux python3
+      - name: The distro restarts so its default user (ember, not root) applies
+        run: wsl.exe --terminate Ubuntu-22.04
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: WSL2 discovery, facts, the runner and the job host ladder (WA)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/wsl.test.ts
+        env:
+          EMBER_WSL_TEST: "1"
+
+  # Owner: WB. Records what WSLg looks like on the runner (artefacts only: never pass or fail until it is stable).
+  wslg-probe:
+    name: WSLg probe (windows-2025, artefacts only)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout (as .gitattributes says)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-22.04
+          wsl-version: 2
+          wsl-shell-user: ember
+          wsl-conf: |
+            [user]
+            default=ember
+          additional-packages: util-linux python3 x11-apps gedit python3-pyatspi at-spi2-core
+      - name: The distro restarts so its default user (ember, not root) applies
+        run: wsl.exe --terminate Ubuntu-22.04
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Probe WSLg (RAIL windows, UIA tree, session buses, AT-SPI extents); says so and skips where WSLg is absent
+        continue-on-error: true
+        run: node scripts/run-integration.mjs --allow-missing test/integration/wslg-probe.test.ts
+        env:
+          EMBER_WSL_TEST: "1"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: wslg-probe
+          path: dist/wslg-probe/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Owner: SB. Commands on macOS (zsh, BSD script) and SSH to the runner's own sshd (commands only on macOS remotes).
+  # Only on dispatch (only: all or macos) and weekly.
+  ssh-macos:
+    name: Commands and SSH on macOS (macos-15)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'macos'))
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: sshd on 127.0.0.1:2222 with the runner's new key (verify that it starts on this runner)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          d="$RUNNER_TEMP/sshd" && mkdir -p "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_ed25519"
+          printf '%s\n' "Port 2222" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd.pid" \
+            "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" "KbdInteractiveAuthentication no" > "$d/sshd.conf"
+          sudo /usr/sbin/sshd -f "$d/sshd.conf" && sleep 1 && ssh-keyscan -p 2222 127.0.0.1 >> ~/.ssh/known_hosts \
+            && ssh -o BatchMode=yes -p 2222 127.0.0.1 true \
+            && echo "EMBER_SSH_TEST_MACOS=1" >> "$GITHUB_ENV" \
+            || echo "::warning::not testable on this runner: sshd can't start (the SSH suite skips)"
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Commands on macOS (zsh, BSD script's exit status, the ps -E sweep, Homebrew on PATH)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        env:
+          EMBER_COMMANDS_TEST: "1"
+      - name: The agent on macOS over SSH (commands only; a two-archive install)
+        run: node scripts/run-integration.mjs --allow-missing test/integration/remote-ssh.test.ts
+        env:
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
