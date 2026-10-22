@@ -319,9 +319,14 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
   }
   const read: ReadRecord = { window: win, raw, roles, ctx, generation: host.provider.generation };
   const keys = new Map<string, WireKey>();
+  const held = new Set<number>();
   const out = secret.map(i => {
     const k = host.keyOf(raw[i]);
     if (k) keys.set(`${k[0]} ${k[1]}`, k);
+    // What clips the field is kept with it (Ember asks where it shows now while a picture is taken).
+    for (let a = raw[i].parent; a >= 0; a = raw[a].parent) {
+      if (!held.has(a) && holdsToo(raw[a], roles[a])) { held.add(a); host.snapshots.hold({ handle: raw[a].handle, read, index: a }); }
+    }
     return { id: host.snapshots.add({ handle: raw[i].handle, read, index: i }), role: roles[i], bounds: boundsOf(raw[i].bounds)! };
   });
   const busy = !!snap.busy;
@@ -539,7 +544,7 @@ async function atPoint(host: Host, params: Record<string, unknown>): Promise<unk
     if (secret) break;
     ctx = childContext(ctx, el, role);
   }
-  if (last && !secret && GENERIC_ROLES.has(chain[chain.length - 1].role)) {
+  if (last && !secret && !late && Date.now() < until && GENERIC_ROLES.has(chain[chain.length - 1].role)) {
     // An empty grouping container: the app told nothing about what shows there.
     const kids = await host.children(last.handle, 1).catch(() => [{}]);
     if (!kids.length) chain[chain.length - 1].empty = true;

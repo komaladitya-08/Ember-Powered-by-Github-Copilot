@@ -227,8 +227,12 @@ export interface UiaOptions {
   /** Tests: a stand-in bridge to run instead of Windows PowerShell. */
   command?: string;
   args?: string[];
-  /** How long one start() waits for the ready line (the start goes on after that). */
+  /**
+   * How long the first start() of a bridge waits for its ready line (the start goes on after that), and how long later
+   * ones wait while it is still starting: Ember gives a host's requests their usual time once it has answered once.
+   */
   startMs?: number;
+  againMs?: number;
   /** A UIA call's deadline in the bridge. */
   deadlineMs?: number;
   /** How long past its deadline an answer may take before the bridge counts as stuck (killed, started again). */
@@ -243,7 +247,16 @@ export interface UiaOptions {
 }
 
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
-interface Bridge { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; ready: Promise<void>; isReady: boolean; done: boolean; dpi?: string }
+interface Bridge {
+  child: ChildProcessWithoutNullStreams;
+  pending: Map<number, Pending>;
+  ready: Promise<void>;
+  isReady: boolean;
+  done: boolean;
+  /** A request has already waited the first start's whole time for it. */
+  waited: boolean;
+  dpi?: string;
+}
 
 /** The bridge's longest deadline for one call. */
 const MAX_DEADLINE_MS = 4000;
@@ -265,6 +278,7 @@ export class UiaProvider implements AxProvider {
   private stopped = false;
   private readonly env: NodeJS.ProcessEnv;
   private readonly startMs: number;
+  private readonly againMs: number;
   private readonly deadlineMs: number;
   private readonly graceMs: number;
   private readonly retryMs: number;
@@ -274,6 +288,7 @@ export class UiaProvider implements AxProvider {
   constructor(private o: UiaOptions) {
     this.env = o.env ?? process.env;
     this.startMs = o.startMs ?? 18_000;
+    this.againMs = o.againMs ?? 3000;
     this.deadlineMs = o.deadlineMs ?? 800;
     this.graceMs = o.graceMs ?? 2000;
     this.retryMs = o.retryMs ?? 60_000;
@@ -294,9 +309,12 @@ export class UiaProvider implements AxProvider {
       this.bridge = this.launch();
     }
     const b = this.bridge;
+    // The first request waits out a cold start; later ones, while it still starts, only a little (they have 5 s).
+    const ms = b.waited ? this.againMs : this.startMs;
+    b.waited = true;
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`the accessibility bridge is still starting (Windows PowerShell compiles it on its first start); try again in a moment`)), this.startMs);
+      timer = setTimeout(() => reject(new Error(`the accessibility bridge is still starting (Windows PowerShell compiles it on its first start); try again in a moment`)), ms);
     });
     try {
       await Promise.race([b.ready, waited]);
@@ -313,7 +331,7 @@ export class UiaProvider implements AxProvider {
     const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
     // Nobody may be waiting when a start fails in the background: that is no unhandled rejection.
     ready.catch(() => undefined);
-    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false };
+    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, waited: false };
     const first = this.starts++ === 0;
     const fail = (why: string) => {
       if (b.done) return;

@@ -177,9 +177,15 @@ describe("the bridge client", () => {
     expect(windows[1]).toMatchObject({ handle: 0, key: "4661", busy: true, title: "Not Responding" });
   });
 
-  it("lets a slow first start go on in the background instead of starting it again", async () => {
-    const { p, spawned } = provider({ FAKE_BRIDGE_READY_MS: "600" }, { startMs: 150 });
+  it("lets a slow first start go on in the background instead of starting it again, and keeps later requests short", async () => {
+    const { p, spawned } = provider({ FAKE_BRIDGE_READY_MS: "900" }, { startMs: 300, againMs: 100 });
+    let t0 = Date.now();
     expect(await failure(p.start())).toMatch(/still starting/);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
+    // Ember's later requests have their usual 5 s: they aren't held for the first start's whole time.
+    t0 = Date.now();
+    expect(await failure(p.start())).toMatch(/still starting/);
+    expect(Date.now() - t0).toBeLessThan(250);
     await new Promise(r => setTimeout(r, 700));
     await p.start();
     expect(spawned).toHaveLength(1);
