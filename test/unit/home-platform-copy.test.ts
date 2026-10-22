@@ -217,7 +217,7 @@ describe("the settings window with a Windows or macOS status", () => {
     const root = apply(page(), homePatches(MAC));
     const chip = select(root, "[data-shortcut=\"stop\"]")[0];
     expect(chip.children.map(markup).join("")).toBe("<kbd>Control</kbd>+<kbd>Shift</kbd>+<kbd>Command</kbd>+<kbd>X</kbd>");
-    expect(visible(around(root, "permissions-note"))).toBe(`${TODAY["permissions-note"]} macOS will ask you to allow Accessibility and Screen Recording for Ember.`);
+    expect(visible(around(root, "permissions-note"))).toBe(`${TODAY["permissions-note"]} macOS will ask you to allow Accessibility, Screen Recording and Input Monitoring for Ember.`);
     expect(visible(around(root, "data-dir"))).toContain("in ~/Library/Application Support/ember. What you ask");
     expect(visible(around(root, "audit-dir"))).toBe("Every decision and action is also in ~/Library/Application Support/ember/audit/.");
     expect(visible(around(root, "mic-indicator"))).toMatch(/again\. macOS shows an orange dot in the menu bar while Ember listens\. Control\+Shift\+Command\+M turns the microphone off and on\.$/);

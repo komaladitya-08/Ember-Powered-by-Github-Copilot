@@ -10,9 +10,9 @@ describe("never-look defaults", () => {
     expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
   });
 
-  it("leave Windows and macOS to their own package (empty until it fills them)", () => {
-    expect(NEVER_LOOK_DEFAULTS.win32).toEqual([]);
-    expect(NEVER_LOOK_DEFAULTS.darwin).toEqual([]);
+  it("start Windows and macOS with their own password managers and the system's password prompt (design §9.11)", () => {
+    expect(NEVER_LOOK_DEFAULTS.win32).toEqual(["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"]);
+    expect(NEVER_LOOK_DEFAULTS.darwin).toEqual(["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "keychain access", "securityagent"]);
   });
 
   it("are what a fresh install on this OS starts with", () => {
