@@ -131,6 +131,131 @@ export function inputLayoutMatches(koffi: Koffi): boolean {
     && u + koffi.offsetof(key, "dwFlags") === k.dwFlags && u + koffi.offsetof(key, "dwExtraInfo") === k.dwExtraInfo;
 }
 
+/** The struct passed by value to WindowFromPoint and MonitorFromPoint (koffi type names are process-wide). */
+const POINT_TYPE = "EmberWin32Point";
+let pointType: unknown = null;
+
+/** Defines the named types WIN32_FUNCTIONS uses (once per process; later calls do nothing). */
+export function defineWin32Types(koffi: Koffi): void {
+  pointType ??= koffi.struct(POINT_TYPE, { x: "int32_t", y: "int32_t" });
+}
+
+/**
+ * Every Win32 function the backend calls, by DLL, in koffi's prototype syntax: the one place their C types live.
+ * HWND, HDC and other handles are `void *` (koffi accepts numbers and BigInts for them, and returns BigInt or null);
+ * structures are Buffers passed as `void *`.
+ */
+export const WIN32_FUNCTIONS: Readonly<Record<string, readonly string[]>> = {
+  "user32.dll": [
+    "int __stdcall GetCursorPos(void *point)",
+    "int16_t __stdcall GetAsyncKeyState(int vk)",
+    "int __stdcall GetSystemMetrics(int index)",
+    "void * __stdcall GetForegroundWindow()",
+    "void * __stdcall GetTopWindow(void *hwnd)",
+    "void * __stdcall GetWindow(void *hwnd, uint32_t cmd)",
+    "void * __stdcall GetAncestor(void *hwnd, uint32_t flags)",
+    "int __stdcall IsWindow(void *hwnd)",
+    "int __stdcall IsWindowVisible(void *hwnd)",
+    "int __stdcall IsIconic(void *hwnd)",
+    "int __stdcall IsHungAppWindow(void *hwnd)",
+    // GetWindowLongW is enough for the style words (only GWLP_ pointer values need the Ptr variant).
+    "int32_t __stdcall GetWindowLongW(void *hwnd, int index)",
+    "int __stdcall GetClassNameW(void *hwnd, void *buf, int max)",
+    "int __stdcall GetWindowTextW(void *hwnd, void *buf, int max)",
+    "int __stdcall InternalGetWindowText(void *hwnd, void *buf, int max)",
+    "uint32_t __stdcall GetWindowThreadProcessId(void *hwnd, _Out_ uint32_t *pid)",
+    "int __stdcall GetWindowRect(void *hwnd, void *rect)",
+    "int __stdcall GetClientRect(void *hwnd, void *rect)",
+    "int __stdcall ClientToScreen(void *hwnd, void *point)",
+    "void * __stdcall FindWindowExW(void *parent, void *after, const char16_t *cls, const char16_t *title)",
+    "int __stdcall GetLayeredWindowAttributes(void *hwnd, _Out_ uint32_t *key, _Out_ uint8_t *alpha, _Out_ uint32_t *flags)",
+    "int __stdcall GetGUIThreadInfo(uint32_t tid, void *info)",
+    `void * __stdcall WindowFromPoint(${POINT_TYPE} point)`,
+    `void * __stdcall MonitorFromPoint(${POINT_TYPE} point, uint32_t flags)`,
+    "uint32_t __stdcall SendInput(uint32_t count, void *inputs, int size)",
+    "void * __stdcall GetKeyboardLayout(uint32_t tid)",
+    "int16_t __stdcall VkKeyScanExW(uint16_t ch, void *layout)",
+    "uint32_t __stdcall MapVirtualKeyExW(uint32_t code, uint32_t type, void *layout)",
+    "int __stdcall AttachThreadInput(uint32_t from, uint32_t to, int attach)",
+    "int __stdcall SetForegroundWindow(void *hwnd)",
+    "int __stdcall BringWindowToTop(void *hwnd)",
+    "int __stdcall ShowWindowAsync(void *hwnd, int command)",
+    "void * __stdcall SetFocus(void *hwnd)",
+    "void * __stdcall OpenInputDesktop(uint32_t flags, int inherit, uint32_t access)",
+    "int __stdcall GetUserObjectInformationW(void *obj, int index, void *buf, uint32_t size, _Out_ uint32_t *needed)",
+    "int __stdcall CloseDesktop(void *desktop)",
+    "void * __stdcall GetDC(void *hwnd)",
+    "int __stdcall ReleaseDC(void *hwnd, void *hdc)",
+    "void * __stdcall GetThreadDpiAwarenessContext()",
+    "int __stdcall GetAwarenessFromDpiAwarenessContext(void *context)",
+    "void * __stdcall SetThreadDpiAwarenessContext(void *context)",
+  ],
+  "gdi32.dll": [
+    "void * __stdcall CreateCompatibleDC(void *hdc)",
+    "void * __stdcall CreateDIBSection(void *hdc, void *info, uint32_t usage, _Out_ void **bits, void *section, uint32_t offset)",
+    "void * __stdcall SelectObject(void *hdc, void *object)",
+    "int __stdcall BitBlt(void *dst, int x, int y, int width, int height, void *src, int sx, int sy, uint32_t rop)",
+    "int __stdcall DeleteObject(void *object)",
+    "int __stdcall DeleteDC(void *hdc)",
+    "int __stdcall GdiFlush()",
+  ],
+  "dwmapi.dll": [
+    "int32_t __stdcall DwmGetWindowAttribute(void *hwnd, uint32_t attribute, void *value, uint32_t size)",
+  ],
+  "kernel32.dll": [
+    "void * __stdcall OpenProcess(uint32_t access, int inherit, uint32_t pid)",
+    "int __stdcall CloseHandle(void *handle)",
+    "int __stdcall QueryFullProcessImageNameW(void *process, uint32_t flags, void *buf, _Inout_ uint32_t *size)",
+    "uint32_t __stdcall GetCurrentThreadId()",
+    "void * __stdcall GetCurrentProcess()",
+  ],
+  "advapi32.dll": [
+    "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
+    "int __stdcall GetTokenInformation(void *token, int kind, void *buf, uint32_t size, _Out_ uint32_t *returned)",
+  ],
+};
+
+/**
+ * What may be missing without the backend failing: DWM's attributes (windows then count as uncloaked, framed by
+ * their window rectangle), the token calls (every window is then "unchecked": refused for input), the internal
+ * title read (GetWindowTextW is used) and the DPI calls (older than Windows 10 1607).
+ */
+const OPTIONAL_LIBRARIES: ReadonlySet<string> = new Set(["dwmapi.dll", "advapi32.dll"]);
+const OPTIONAL_FUNCTIONS: ReadonlySet<string> = new Set([
+  "InternalGetWindowText", "GetThreadDpiAwarenessContext", "GetAwarenessFromDpiAwarenessContext", "SetThreadDpiAwarenessContext",
+]);
+
+/** The function name in a prototype ("int __stdcall GetCursorPos(void *point)" → "GetCursorPos"). */
+export function functionName(declaration: string): string {
+  return /(\w+)\s*\(/.exec(declaration)?.[1] ?? "";
+}
+
+/** A bound function, or null for an optional one that isn't there. */
+type Bound = ((...args: unknown[]) => any) | null; // eslint-disable-line @typescript-eslint/no-explicit-any -- koffi's results are untyped
+
+/** Binds WIN32_FUNCTIONS from the libraries `load` opens; throws when a required library or function is missing. */
+function bindFunctions(load: (name: string) => Pick<import("koffi").LibraryHandle, "func">): Record<string, Bound> {
+  const fns: Record<string, Bound> = {};
+  for (const [library, declarations] of Object.entries(WIN32_FUNCTIONS)) {
+    let lib: Pick<import("koffi").LibraryHandle, "func"> | null = null;
+    try {
+      lib = load(library);
+    } catch (err) {
+      if (!OPTIONAL_LIBRARIES.has(library)) throw err;
+    }
+    for (const declaration of declarations) {
+      const name = functionName(declaration);
+      try {
+        fns[name] = lib ? (lib.func(declaration) as Bound) : null;
+      } catch (err) {
+        if (!OPTIONAL_FUNCTIONS.has(name) && !OPTIONAL_LIBRARIES.has(library)) throw err;
+        fns[name] = null;
+      }
+    }
+  }
+  return fns;
+}
+
 /** The bound API, once per process (undefined: not tried yet; null: not available). */
 let loaded: Win32Api | null | undefined;
 /** Why the last loadWin32() gave null (for the log). */
@@ -142,84 +267,49 @@ export function loadWin32(): Win32Api | null {
   loaded = null;
   if (process.platform !== "win32") return null;
   try {
-    loaded = bind(requireCjs("koffi") as Koffi);
+    const koffi = requireCjs("koffi") as Koffi;
+    loaded = bindWin32(koffi, name => koffi.load(name));
   } catch (err) {
     win32Error = err;
   }
   return loaded;
 }
 
-function bind(koffi: Koffi): Win32Api {
+/**
+ * Binds the Win32 API with `koffi` (its types, sizes and memory decoding) from the libraries `load` opens. Exported
+ * for tests, which pass fake libraries; everything else goes through loadWin32().
+ */
+export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("koffi").LibraryHandle, "func">): Win32Api {
   if (koffi.sizeof("void *") !== 8) throw new Error("the Windows backend needs a 64-bit process");
-  const user32 = koffi.load("user32.dll"), gdi32 = koffi.load("gdi32.dll"), kernel32 = koffi.load("kernel32.dll");
-  const optional = (name: string) => { try { return koffi.load(name); } catch { return null; } };
-  const dwmapi = optional("dwmapi.dll"), advapi32 = optional("advapi32.dll");
-  const maybe = (lib: import("koffi").LibraryHandle | null, decl: string) => {
-    try { return lib ? lib.func(decl) : null; } catch { return null; }
+  defineWin32Types(koffi);
+  const fn = bindFunctions(load);
+  const need = (name: string) => {
+    const f = fn[name];
+    if (!f) throw new Error(`${name} isn't available`);
+    return f;
   };
-  const POINT = koffi.struct({ x: "int32_t", y: "int32_t" });
-
-  const GetCursorPos = user32.func("int __stdcall GetCursorPos(void *point)");
-  const GetAsyncKeyState = user32.func("int16_t __stdcall GetAsyncKeyState(int vk)");
-  const GetSystemMetrics = user32.func("int __stdcall GetSystemMetrics(int index)");
-  const GetForegroundWindow = user32.func("void * __stdcall GetForegroundWindow()");
-  const GetTopWindow = user32.func("void * __stdcall GetTopWindow(void *hwnd)");
-  const GetWindow = user32.func("void * __stdcall GetWindow(void *hwnd, uint32_t cmd)");
-  const GetAncestor = user32.func("void * __stdcall GetAncestor(void *hwnd, uint32_t flags)");
-  const IsWindow = user32.func("int __stdcall IsWindow(void *hwnd)");
-  const IsWindowVisible = user32.func("int __stdcall IsWindowVisible(void *hwnd)");
-  const IsIconic = user32.func("int __stdcall IsIconic(void *hwnd)");
-  const IsHungAppWindow = user32.func("int __stdcall IsHungAppWindow(void *hwnd)");
-  // GetWindowLongW is enough for the style words (only GWLP_ pointer values need the Ptr variant).
-  const GetWindowLongW = user32.func("int32_t __stdcall GetWindowLongW(void *hwnd, int index)");
-  const GetClassNameW = user32.func("int __stdcall GetClassNameW(void *hwnd, void *buf, int max)");
-  const GetWindowTextW = user32.func("int __stdcall GetWindowTextW(void *hwnd, void *buf, int max)");
-  const InternalGetWindowText = maybe(user32, "int __stdcall InternalGetWindowText(void *hwnd, void *buf, int max)");
-  const GetWindowThreadProcessId = user32.func("uint32_t __stdcall GetWindowThreadProcessId(void *hwnd, _Out_ uint32_t *pid)");
-  const GetWindowRect = user32.func("int __stdcall GetWindowRect(void *hwnd, void *rect)");
-  const GetClientRect = user32.func("int __stdcall GetClientRect(void *hwnd, void *rect)");
-  const ClientToScreen = user32.func("int __stdcall ClientToScreen(void *hwnd, void *point)");
-  const FindWindowExW = user32.func("void * __stdcall FindWindowExW(void *parent, void *after, const char16_t *cls, const char16_t *title)");
-  const GetLayeredWindowAttributes = user32.func("int __stdcall GetLayeredWindowAttributes(void *hwnd, _Out_ uint32_t *key, _Out_ uint8_t *alpha, _Out_ uint32_t *flags)");
-  const GetGUIThreadInfo = user32.func("int __stdcall GetGUIThreadInfo(uint32_t tid, void *info)");
-  const WindowFromPoint = user32.func("__stdcall", "WindowFromPoint", "void *", [POINT]);
-  const MonitorFromPoint = user32.func("__stdcall", "MonitorFromPoint", "void *", [POINT, "uint32_t"]);
-  const SendInput = user32.func("uint32_t __stdcall SendInput(uint32_t count, void *inputs, int size)");
-  const GetKeyboardLayout = user32.func("void * __stdcall GetKeyboardLayout(uint32_t tid)");
-  const VkKeyScanExW = user32.func("int16_t __stdcall VkKeyScanExW(uint16_t ch, void *layout)");
-  const MapVirtualKeyExW = user32.func("uint32_t __stdcall MapVirtualKeyExW(uint32_t code, uint32_t type, void *layout)");
-  const AttachThreadInput = user32.func("int __stdcall AttachThreadInput(uint32_t from, uint32_t to, int attach)");
-  const SetForegroundWindow = user32.func("int __stdcall SetForegroundWindow(void *hwnd)");
-  const BringWindowToTop = user32.func("int __stdcall BringWindowToTop(void *hwnd)");
-  const ShowWindowAsync = user32.func("int __stdcall ShowWindowAsync(void *hwnd, int command)");
-  const SetFocus = user32.func("void * __stdcall SetFocus(void *hwnd)");
-  const OpenInputDesktop = user32.func("void * __stdcall OpenInputDesktop(uint32_t flags, int inherit, uint32_t access)");
-  const GetUserObjectInformationW = user32.func("int __stdcall GetUserObjectInformationW(void *obj, int index, void *buf, uint32_t size, _Out_ uint32_t *needed)");
-  const CloseDesktop = user32.func("int __stdcall CloseDesktop(void *desktop)");
-  const GetDC = user32.func("void * __stdcall GetDC(void *hwnd)");
-  const ReleaseDC = user32.func("int __stdcall ReleaseDC(void *hwnd, void *hdc)");
-  const GetThreadDpiAwarenessContext = maybe(user32, "void * __stdcall GetThreadDpiAwarenessContext()");
-  const GetAwarenessFromDpiAwarenessContext = maybe(user32, "int __stdcall GetAwarenessFromDpiAwarenessContext(void *context)");
-  const SetThreadDpiAwarenessContext = maybe(user32, "void * __stdcall SetThreadDpiAwarenessContext(void *context)");
-
-  const CreateCompatibleDC = gdi32.func("void * __stdcall CreateCompatibleDC(void *hdc)");
-  const CreateDIBSection = gdi32.func("void * __stdcall CreateDIBSection(void *hdc, void *info, uint32_t usage, _Out_ void **bits, void *section, uint32_t offset)");
-  const SelectObject = gdi32.func("void * __stdcall SelectObject(void *hdc, void *object)");
-  const BitBlt = gdi32.func("int __stdcall BitBlt(void *dst, int x, int y, int width, int height, void *src, int sx, int sy, uint32_t rop)");
-  const DeleteObject = gdi32.func("int __stdcall DeleteObject(void *object)");
-  const DeleteDC = gdi32.func("int __stdcall DeleteDC(void *hdc)");
-  const GdiFlush = gdi32.func("int __stdcall GdiFlush()");
-
-  const DwmGetWindowAttribute = maybe(dwmapi, "int32_t __stdcall DwmGetWindowAttribute(void *hwnd, uint32_t attribute, void *value, uint32_t size)");
-
-  const OpenProcess = kernel32.func("void * __stdcall OpenProcess(uint32_t access, int inherit, uint32_t pid)");
-  const CloseHandle = kernel32.func("int __stdcall CloseHandle(void *handle)");
-  const QueryFullProcessImageNameW = kernel32.func("int __stdcall QueryFullProcessImageNameW(void *process, uint32_t flags, void *buf, _Inout_ uint32_t *size)");
-  const GetCurrentThreadId = kernel32.func("uint32_t __stdcall GetCurrentThreadId()");
-  const GetCurrentProcess = kernel32.func("void * __stdcall GetCurrentProcess()");
-
-  const OpenProcessToken = maybe(advapi32, "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)");
-  const GetTokenInformation = maybe(advapi32, "int __stdcall GetTokenInformation(void *token, int kind, void *buf, uint32_t size, _Out_ uint32_t *returned)");
+  const GetCursorPos = need("GetCursorPos"), GetAsyncKeyState = need("GetAsyncKeyState"), GetSystemMetrics = need("GetSystemMetrics");
+  const GetForegroundWindow = need("GetForegroundWindow"), GetTopWindow = need("GetTopWindow"), GetWindow = need("GetWindow");
+  const GetAncestor = need("GetAncestor"), IsWindow = need("IsWindow"), IsWindowVisible = need("IsWindowVisible");
+  const IsIconic = need("IsIconic"), IsHungAppWindow = need("IsHungAppWindow"), GetWindowLongW = need("GetWindowLongW");
+  const GetClassNameW = need("GetClassNameW"), GetWindowTextW = need("GetWindowTextW"), InternalGetWindowText = fn.InternalGetWindowText;
+  const GetWindowThreadProcessId = need("GetWindowThreadProcessId"), GetWindowRect = need("GetWindowRect");
+  const GetClientRect = need("GetClientRect"), ClientToScreen = need("ClientToScreen"), FindWindowExW = need("FindWindowExW");
+  const GetLayeredWindowAttributes = need("GetLayeredWindowAttributes"), GetGUIThreadInfo = need("GetGUIThreadInfo");
+  const WindowFromPoint = need("WindowFromPoint"), MonitorFromPoint = need("MonitorFromPoint"), SendInput = need("SendInput");
+  const GetKeyboardLayout = need("GetKeyboardLayout"), VkKeyScanExW = need("VkKeyScanExW"), MapVirtualKeyExW = need("MapVirtualKeyExW");
+  const AttachThreadInput = need("AttachThreadInput"), SetForegroundWindow = need("SetForegroundWindow");
+  const BringWindowToTop = need("BringWindowToTop"), ShowWindowAsync = need("ShowWindowAsync"), SetFocus = need("SetFocus");
+  const OpenInputDesktop = need("OpenInputDesktop"), GetUserObjectInformationW = need("GetUserObjectInformationW");
+  const CloseDesktop = need("CloseDesktop"), GetDC = need("GetDC"), ReleaseDC = need("ReleaseDC");
+  const GetThreadDpiAwarenessContext = fn.GetThreadDpiAwarenessContext, SetThreadDpiAwarenessContext = fn.SetThreadDpiAwarenessContext;
+  const GetAwarenessFromDpiAwarenessContext = fn.GetAwarenessFromDpiAwarenessContext;
+  const CreateCompatibleDC = need("CreateCompatibleDC"), CreateDIBSection = need("CreateDIBSection"), SelectObject = need("SelectObject");
+  const BitBlt = need("BitBlt"), DeleteObject = need("DeleteObject"), DeleteDC = need("DeleteDC"), GdiFlush = need("GdiFlush");
+  const DwmGetWindowAttribute = fn.DwmGetWindowAttribute;
+  const OpenProcess = need("OpenProcess"), CloseHandle = need("CloseHandle"), QueryFullProcessImageNameW = need("QueryFullProcessImageNameW");
+  const GetCurrentThreadId = need("GetCurrentThreadId"), GetCurrentProcess = need("GetCurrentProcess");
+  const OpenProcessToken = fn.OpenProcessToken, GetTokenInformation = fn.GetTokenInformation;
 
   // Physical pixels everywhere: Electron's main process is per-monitor aware already (nothing changes there), but
   // plain Node (the integration tests) isn't, and Windows would then scale every coordinate on a high-DPI monitor.
@@ -232,14 +322,14 @@ function bind(koffi: Koffi): Win32Api {
     // Older than Windows 10 1607: coordinates stay as the process's awareness makes them.
   }
 
-  const rectOf = (fn: (hwnd: number, buf: Buffer) => number, hwnd: number): Rect | null => {
+  const rectOf = (call: (hwnd: number, buf: Buffer) => number, hwnd: number): Rect | null => {
     const buf = Buffer.alloc(16);
-    return hwnd && fn(hwnd, buf) ? readRect(buf) : null;
+    return hwnd && call(hwnd, buf) ? readRect(buf) : null;
   };
-  const textOf = (fn: (hwnd: number, buf: Buffer, max: number) => number, hwnd: number): string => {
+  const textOf = (call: (hwnd: number, buf: Buffer, max: number) => number, hwnd: number): string => {
     if (!hwnd) return "";
     const buf = Buffer.alloc(TEXT_UNITS * 2);
-    const n = fn(hwnd, buf, TEXT_UNITS);
+    const n = call(hwnd, buf, TEXT_UNITS);
     return n > 0 ? readUtf16(buf, n) : "";
   };
   const dwm = (hwnd: number, attribute: number, size: number): Buffer | null => {
