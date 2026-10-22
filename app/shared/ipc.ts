@@ -1,10 +1,11 @@
 /** IPC channel names and payload types shared by main, preload and renderers. */
 
-import type { EnvReport } from "../main/environment";
+import type { EnvReport, FixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
+import type { OS, ShortcutId } from "./shortcuts";
 
 export const IPC = {
   getStatus: "ember:get-status",
@@ -61,6 +62,33 @@ export interface VoiceStatus {
   modelsBytes: number;
 }
 
+/**
+ * What the settings window shows that differs by OS, built by main from its Platform object. Linux's reproduces the
+ * window's own markup and strings, so a Linux window looks exactly as it did before there were other OSes.
+ */
+export interface StatusPlatform {
+  os: OS;
+  /** Each global shortcut as Ember's copy writes it ("Ctrl+Alt+Space") and as key caps (["Ctrl", "Alt", "Space"]). */
+  shortcuts: Record<ShortcutId, { label: string; keys: readonly string[] }>;
+  /** How the window names the data folder ("~/.config/ember") and the settings file in it. */
+  dataDir: string;
+  settingsFile: string;
+  /** Where a copy of the audit log goes ("the system journal (journalctl -t ember-audit)"), or null when nothing copies it. */
+  auditCopy: string | null;
+  /** The voice consent's sentence about the OS's microphone indicator. */
+  micIndicator: string;
+  /** What the OS will ask the user to allow for Ember, said before Start ("" when nothing). */
+  permissionsNote: string;
+  /** Ember listens to the speakers to tell its own voice apart (Linux only): false drops that sentence from the consent. */
+  speakerRejection: boolean;
+  /** The button text of each setup-check fix this OS offers ("Turn on", "Open System Settings"). */
+  fixLabels: Partial<Record<FixId, string>>;
+  /** Ember's desk is offered here. */
+  desk: boolean;
+  /** A note under "Start Ember when I log in" (macOS waiting for approval, Windows turned off in Task Manager), or null. */
+  autostartNote: string | null;
+}
+
 export interface Status {
   appVersion: string;
   settings: Settings;
@@ -84,6 +112,8 @@ export interface Status {
     /** Never-look entries the administrator set: shown locked; they never go into the user's own list. */
     neverLook: string[];
   };
+  /** Absent from a main that doesn't send it yet: the window then keeps its Linux markup and strings. */
+  platform?: StatusPlatform;
 }
 
 /** One line of the activity timeline (an audit entry). */

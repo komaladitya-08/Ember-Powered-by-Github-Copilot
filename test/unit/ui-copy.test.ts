@@ -5,6 +5,8 @@ import {
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { HOST_OS } from "../../app/main/platform/os";
+import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
 
 describe("settings window words", () => {
@@ -49,7 +51,7 @@ describe("settings window words", () => {
   });
 
   it("keeps the never-look defaults the same as the settings defaults, with readable names", () => {
-    expect([...NEVER_LOOK_DEFAULTS]).toEqual(DEFAULT_SETTINGS.privacy.neverLook);
+    expect([...NEVER_LOOK_BY_OS[HOST_OS]]).toEqual(DEFAULT_SETTINGS.privacy.neverLook);
     expect(neverLookLabel("keepassxc")).toBe("KeePassXC");
     expect(neverLookLabel("polkit")).toBe("Password prompts (polkit)");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");

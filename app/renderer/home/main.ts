@@ -6,10 +6,14 @@
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, Presence, Status, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { CONSENT_VERSION } from "../../shared/consent";
+import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
-import { dayLabel, describeEntry, friendlyApp, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, usageLine } from "./copy";
+import {
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, usageLine,
+  type HomePatch, type Segment,
+} from "./copy";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -159,13 +163,16 @@ function renderTagline(): void {
   const text = tagline({
     failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
-  });
+  }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
 }
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
+/** The checks on screen, to leave them alone when a fresh status brings the same ones. */
+let shownChecks = "";
 function renderChecks(environment: Status["environment"]): void {
+  shownChecks = JSON.stringify(environment.checks);
   const hadFocus = $("checks").contains(document.activeElement);
   $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
@@ -183,7 +190,7 @@ function renderChecks(environment: Status["environment"]): void {
       const fix = c.fix;
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
-      btn.textContent = "Turn on";
+      btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
       btn.addEventListener("click", () => {
         btn.disabled = true;
         window.ember.applyFix(fix).then(renderChecks, err => {
@@ -208,13 +215,14 @@ function renderChecks(environment: Status["environment"]): void {
 }
 
 function render(status: Status): void {
+  renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
   const v = status.environment.versions;
   const facts: [string, string][] = [
     ["Ember", status.appVersion],
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`],
-    ["Settings", "~/.config/ember/settings.json"],
+    ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json"],
     ["Log file", status.logFile],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val]) => {
@@ -226,6 +234,43 @@ function render(status: Status): void {
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
 }
+
+// ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
+/** The OS words main sent; undefined while no status named them (the page's own markup is Linux's). */
+let platform: StatusPlatform | undefined;
+/** Rich text as elements: key caps in <kbd>, commands and paths in <code>. */
+const segmentNode = (s: Segment): Node => (typeof s === "string" ? document.createTextNode(s)
+  : "kbd" in s ? Object.assign(document.createElement("kbd"), { textContent: s.kbd }) : Object.assign(document.createElement("code"), { textContent: s.code }));
+function applyPatch(p: HomePatch): void {
+  for (const el of document.querySelectorAll<HTMLElement>(p.selector)) {
+    if (p.content) el.replaceChildren(...p.content.map(segmentNode));
+    if (p.hidden !== undefined) el.hidden = p.hidden;
+    for (const [name, value] of Object.entries(p.attrs ?? {})) el.setAttribute(name, value);
+  }
+}
+function renderPlatform(p: StatusPlatform | undefined): void {
+  if (!p) return;
+  const before = JSON.stringify(entryWords(platform));
+  if (!platform) useAppNames(p.os);
+  platform = p;
+  for (const patch of homePatches(p)) applyPatch(patch);
+  const muted = micOffText(p.shortcuts.mute.label);
+  if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
+  // Keys and the stop shortcut read differently on this OS: the lines already shown are written again.
+  if (JSON.stringify(entryWords(p)) !== before) { shownActivity = ""; void refreshActivity(); }
+  renderTagline();
+}
+// Permissions, the microphone switch and the login item change in the OS's own settings, outside Ember: off Linux
+// the status is read again whenever the window comes back. (Linux reads it once, as before: its check runs gsettings.)
+let refreshing = false;
+window.addEventListener("focus", () => {
+  if (!platform || platform.os === "linux" || refreshing) return;
+  refreshing = true;
+  window.ember.getStatus().then(s => {
+    renderPlatform(s.platform);
+    if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment);
+  }, () => { /* the next time the window comes back asks again */ }).finally(() => { refreshing = false; });
+});
 
 /** A settings file Ember couldn't use as it was (a hand edit): what happened and where the user's copy is. */
 function renderSettingsNotice(notice: string | null): void {
@@ -292,8 +337,9 @@ async function refreshActivity(): Promise<void> {
   let day = "";
   let today = 0;
   const items: HTMLLIElement[] = [];
+  const words = entryWords(platform);
   for (const e of entries) {
-    const d = describeEntry(e);
+    const d = describeEntry(e, words);
     if (!d) continue;
     if (items.length >= 80) break;
     // A heading for each day ("Today", "Yesterday", then dates): the list covers up to a month.
@@ -667,7 +713,7 @@ function renderPrivacy(s: Settings): void {
       ...theirs.map(item => row(neverLookLabel(item), () => {}, null)),
     ]
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: "Nothing on the list. Ember still never reads password prompts." })]));
-  $("never-look-defaults").hidden = missingDefaults(s.privacy.neverLook).length === 0;
+  $("never-look-defaults").hidden = missingDefaults(s.privacy.neverLook, platform?.os).length === 0;
   if (focusAfter) {
     const { list, index } = focusAfter;
     focusAfter = null;
@@ -695,7 +741,7 @@ $("never-look-add").addEventListener("input", () => listMsg(""));
 $("never-look-defaults").addEventListener("click", () => {
   if (!settings) return;
   const own = ownNeverLook(settings);
-  const back = missingDefaults(settings.privacy.neverLook);
+  const back = missingDefaults(settings.privacy.neverLook, platform?.os);
   const room = Math.max(0, NEVER_LOOK_MAX - own.length);
   void window.ember.updateSettings({ privacy: { neverLook: [...own, ...back.slice(0, room)] } });
   listMsg(room < back.length
@@ -728,7 +774,7 @@ window.ember.onPresence(renderPresence);
 // ───── Voice ─────
 const VOICE_TEXT: Record<string, string> = {
   off: "Off", "needs-models": "Speech models aren't downloaded yet (a one-time download)", downloading: "Downloading speech models…",
-  starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: "Microphone off (Ctrl+Alt+M to turn on)", error: "Not working",
+  starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: micOffText(), error: "Not working",
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;

@@ -1,28 +1,24 @@
-/** The settings window's words: pure functions, so they are unit-tested. */
+/**
+ * The settings window's words: pure functions, so they are unit-tested. Words that differ by OS come from the status
+ * main sends (`Status.platform`); every function defaults to Linux's, today's strings, so a window whose status doesn't
+ * name an OS reads exactly as before.
+ */
 
-import type { ActivityEntry } from "../../shared/ipc";
+import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
+import { KEYS, SHORTCUTS, type OS, type ShortcutId } from "../../shared/shortcuts";
+import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 
-/** What a fresh install never looks at (the same list as the settings defaults). */
-export const NEVER_LOOK_DEFAULTS: readonly string[] = ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"];
+/** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
+export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
 
-/** How the defaults read on screen (they are stored lower-case, as matched). */
-const NEVER_LOOK_NAMES: Record<string, string> = {
-  keepassxc: "KeePassXC",
-  seahorse: "Seahorse",
-  "passwords and keys": "Passwords and Keys",
-  "1password": "1Password",
-  bitwarden: "Bitwarden",
-  polkit: "Password prompts (polkit)",
-};
-
+/** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;
 }
 
-/** The defaults that are missing from `list` (case-insensitive). */
-export function missingDefaults(list: readonly string[]): string[] {
-  const have = new Set(list.map(x => x.trim().toLowerCase()));
-  return NEVER_LOOK_DEFAULTS.filter(d => !have.has(d));
+/** The defaults of `os` (Linux's unless the status names another) that are missing from `list` (case-insensitive). */
+export function missingDefaults(list: readonly string[], os: OS = "linux"): string[] {
+  return missingFor(list, os);
 }
 
 export { friendlyApp } from "../../shared/apps";
@@ -53,17 +49,17 @@ export function retryMessage(r: { found: boolean; source: string | null }, conne
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;
 }
 
-/** The line under "Ember" at the top of the window. */
+/** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
-}): string {
+}, askLabel = SHORTCUTS.linux.ask.label): string {
   if (t.failing) return "Ember needs a couple of things fixed before it can work on this machine.";
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
-  return `${where} Press Ctrl+Alt+Space to ask it anything.`;
+  return `${where} Press ${askLabel} to ask it anything.`;
 }
 
 /** "Today", "Yesterday", else the weekday and date. */
@@ -74,6 +70,16 @@ export function dayLabel(t: string, now = new Date()): string {
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** What the conversation list says while it is empty (its `data-empty`); `askLabel` is the ask shortcut as this OS writes it. */
+export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): string {
+  return `Nothing yet. Press ${askLabel} and ask Ember something.`;
+}
+
+/** The voice line while the microphone is off; `muteLabel` is the mute shortcut as this OS writes it. */
+export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
+  return `Microphone off (${muteLabel} to turn on)`;
 }
 
 /** Download progress for screen readers: only at 0, 25, 50, 75 and 100 %. */
@@ -101,12 +107,28 @@ const KEY_NAMES: Record<string, string> = {
   left: "Left", right: "Right", home: "Home", end: "End", pageup: "Page Up", page_up: "Page Up", prior: "Page Up",
   pagedown: "Page Down", page_down: "Page Down", next: "Page Down", insert: "Insert",
 };
-/** A key as people write it: "ctrl+s" → "Ctrl+S", "Return" → "Enter". */
-export function keyLabel(key: string): string {
+/** Each OS's names: the shared ones with its modifier labels on top ("super" is "Win" on Windows; Linux's are the same as above). */
+const KEY_NAMES_BY_OS: Readonly<Record<OS, Readonly<Record<string, string>>>> = {
+  linux: { ...KEY_NAMES, ...KEYS.linux.labels },
+  win32: { ...KEY_NAMES, ...KEYS.win32.labels },
+  darwin: { ...KEY_NAMES, ...KEYS.darwin.labels },
+};
+/** A key as people write it on `os`: "ctrl+s" → "Ctrl+S", "Return" → "Enter" ("cmd+s" → "Cmd+S" on a Mac). */
+export function keyLabel(key: string, os: OS = "linux"): string {
+  const names = KEY_NAMES_BY_OS[os];
   return key.split("+").map(part => {
     const k = part.trim();
-    return KEY_NAMES[k.toLowerCase()] ?? (k.length === 1 || /^f\d{1,2}$/i.test(k) ? k.toUpperCase() : k);
+    return names[k.toLowerCase()] ?? (k.length === 1 || /^f\d{1,2}$/i.test(k) ? k.toUpperCase() : k);
   }).join("+");
+}
+
+/** What "What Ember did" lines depend on beyond the entry: the OS (for key names) and the stop shortcut's label. */
+export interface EntryWords { readonly os: OS; readonly stopLabel: string }
+/** Linux's, today's words: what a line uses while the status names no OS. */
+export const LINUX_ENTRY_WORDS: EntryWords = { os: "linux", stopLabel: SHORTCUTS.linux.stop.label };
+/** The entry words for the OS a status names (Linux's without one). */
+export function entryWords(p?: StatusPlatform): EntryWords {
+  return p ? { os: p.os, stopLabel: p.shortcuts.stop.label } : LINUX_ENTRY_WORDS;
 }
 
 /** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
@@ -128,7 +150,7 @@ export function forUser(why: string | undefined): string | undefined {
 }
 
 /** One line of "What Ember did", or null for entries that the next line already says. */
-export function describeEntry(e: ActivityEntry): EntryView | null {
+export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_WORDS): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
   const control = e.element ? (e.element.name ? `“${e.element.name}”` : ROLE[e.element.role] ?? e.element.role) : e.value ? `“${e.value}”` : "";
   const where = e.app ? `in ${friendlyApp(e.app)}` : "";
@@ -138,7 +160,7 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
   const deskless = (s: string) => (e.tier === 2 || e.onDesk === true ? s.replace(/ \(your (keyboard|mouse)\)$/, "") : s);
   // Keys say which ("Press Ctrl+S in Mousepad"): the field they went to adds nothing.
   const what = e.kind === "keys"
-    ? [chosen ? `Press ${keyLabel(chosen)}` : "Press keys", where].filter(Boolean).join(" ")
+    ? [chosen ? `Press ${keyLabel(chosen, words.os)}` : "Press keys", where].filter(Boolean).join(" ")
     // The option chosen, and what it was chosen for: "Choose “Vegetarian” for “Meal” in Firefox".
     : e.kind === "select" && chosen && e.element
       ? [`Choose “${chosen}”`, e.element.name ? `for “${e.element.name}”` : "", where].filter(Boolean).join(" ")
@@ -164,8 +186,63 @@ export function describeEntry(e: ActivityEntry): EntryView | null {
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: forUser(e.error) };
     case "stop":
-      return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? "Ctrl+Alt+X" : e.source === "voice" ? "“Ember, stop”" : "menu"})` };
+      return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : "menu"})` };
     default:
       return null;
   }
+}
+
+/** Rich text in the settings window: plain text, a key cap (`<kbd>`) or a command or path (`<code>`). */
+export type Segment = string | { readonly kbd: string } | { readonly code: string };
+
+/**
+ * One change the OS makes to the settings window's markup: the elements `selector` finds (`#id`, or a shortcut's chord
+ * chips `[data-shortcut="stop"]`) get `content` in place of their children, are hidden or shown, and/or get `attrs`.
+ */
+export interface HomePatch {
+  readonly selector: string;
+  readonly content?: readonly Segment[];
+  readonly hidden?: boolean;
+  readonly attrs?: Readonly<Record<string, string>>;
+}
+
+/** A shortcut's key caps as a chord chip shows them: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd>. */
+export function chordSegments(keys: readonly string[]): Segment[] {
+  return keys.flatMap((kbd, i): Segment[] => (i ? ["+", { kbd }] : [{ kbd }]));
+}
+
+/** The audit folder as the window names it: inside the data folder, with the OS's separator. */
+export function auditDirLabel(p: Pick<StatusPlatform, "os" | "dataDir">): string {
+  const sep = p.os === "win32" ? "\\" : "/";
+  return `${p.dataDir.replace(/[\\/]+$/, "")}${sep}audit${sep}`;
+}
+
+/** The journal hint after the audit folder: " and in the system journal (<code>journalctl -t ember-audit</code>)". */
+export function auditCopySegments(auditCopy: string): Segment[] {
+  // A command in brackets at the end reads as code, as the window has always shown journalctl.
+  const m = /^(.*\()([^()]+)(\)[^()]*)$/.exec(auditCopy);
+  return m ? [` and in ${m[1]}`, { code: m[2] }, m[3]] : [` and in ${auditCopy}`];
+}
+
+/**
+ * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
+ * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives back the page's own markup, so
+ * applying it changes nothing a person or a screen reader can tell.
+ */
+export function homePatches(p: StatusPlatform): HomePatch[] {
+  const chords = (Object.keys(SHORTCUTS.linux) as ShortcutId[])
+    .map((id): HomePatch => ({ selector: `[data-shortcut="${id}"]`, content: chordSegments(p.shortcuts[id].keys) }));
+  return [
+    ...chords,
+    { selector: "#permissions-note", content: [p.permissionsNote], hidden: !p.permissionsNote },
+    { selector: "#data-dir", content: [p.dataDir] },
+    { selector: "#autostart-note", content: [p.autostartNote ?? ""], hidden: !p.autostartNote },
+    // Ember listens to what the speakers play (to tell its own voice apart) only where the OS lets it, today Linux's
+    // PulseAudio: elsewhere the consent doesn't say it does.
+    { selector: "#speaker-note", hidden: !p.speakerRejection },
+    { selector: "#conversation", attrs: { "data-empty": emptyConversationText(p.shortcuts.ask.label) } },
+    { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },
+    { selector: "#audit-dir", content: [auditDirLabel(p)] },
+    p.auditCopy ? { selector: "#journal-hint", content: auditCopySegments(p.auditCopy), hidden: false } : { selector: "#journal-hint", hidden: true },
+  ];
 }
