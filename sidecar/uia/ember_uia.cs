@@ -1982,11 +1982,6 @@ namespace Ember.Uia
   }
 
   /// <summary>
-  /// LegacyIAccessible, which UIA's .NET client has no types for: read through UIAutomationCore's documented flat
-  /// API (UiaGetPropertyValue, UiaGetPatternProvider) on the node the .NET element wraps. When that node can't be
-  /// reached, the legacy facts are simply missing.
-  /// </summary>
-  /// <summary>
   /// Classic list boxes (the Win32 "ListBox" class and WinForms' ListBox). .NET's client-side proxy selects an item of
   /// a single-selection list box with LB_SETCURSEL alone, which doesn't tell the app: a click makes the list box send
   /// its parent WM_COMMAND with LBN_SELCHANGE (when it has LBS_NOTIFY), and apps act on that (WinForms raises
@@ -2047,6 +2042,11 @@ namespace Ember.Uia
     }
   }
 
+  /// <summary>
+  /// LegacyIAccessible, which UIA's .NET client has no types for: read through UIAutomationCore's documented flat
+  /// API (UiaGetPropertyValue, UiaGetPatternProvider) on the node the .NET element wraps. When that node can't be
+  /// reached, the legacy facts are simply missing.
+  /// </summary>
   internal static class Legacy
   {
     private const int ControlTypePropertyId = 30003;

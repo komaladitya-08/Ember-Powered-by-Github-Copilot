@@ -411,6 +411,23 @@ jobs:
           cmd //d //c "$(cygpath -w "$launcher")" > "$RUNNER_TEMP/doctor-cmd.txt" 2>&1 || cmdstatus=$?
           echo "ember-doctor.cmd: exit status $cmdstatus, $(grep -c '' "$RUNNER_TEMP/doctor-cmd.txt") lines of output"
           test "$cmdstatus" = "$status"
+          # Both 0 proves little (a launcher that never ran Ember.exe gives 0 too): with an organisation policy that
+          # isn't JSON the check-up fails (exit 1), and ember-doctor.cmd must give 1 as well. HKLM needs an administrator.
+          if [ "$EMBER_CI_ELEVATED" = 1 ]; then
+            key='HKLM\SOFTWARE\Policies\Ember'
+            trap 'MSYS_NO_PATHCONV=1 reg delete "$key" /f /reg:64 > /dev/null 2>&1 || true' EXIT
+            MSYS_NO_PATHCONV=1 reg add "$key" /v PolicyJson /t REG_SZ /d "{" /f /reg:64 > /dev/null
+            failing=0
+            dist/package/Ember/Ember.exe --doctor > "$RUNNER_TEMP/doctor-locked.txt" 2>&1 || failing=$?
+            node scripts/package/doctor-rows.mjs "$RUNNER_TEMP/doctor-locked.txt" "Organisation policy=fail"
+            cmdfailing=0
+            cmd //d //c "$(cygpath -w "$launcher")" > /dev/null 2>&1 || cmdfailing=$?
+            echo "with a policy that isn't JSON: Ember.exe --doctor exit status $failing, ember-doctor.cmd exit status $cmdfailing"
+            test "$failing" = 1
+            test "$cmdfailing" = 1
+          else
+            echo "not testable on this runner: ember-doctor.cmd keeping a failing exit code: writing HKLM's policy needs an administrator"
+          fi
       - name: "Ember-level checks: Ember's composition and Perception against the bench, its overlay out of screenshots, the packaged host"
         if: ${{ !cancelled() }}
         run: node scripts/run-integration.mjs test/integration/ember-win32.test.ts
