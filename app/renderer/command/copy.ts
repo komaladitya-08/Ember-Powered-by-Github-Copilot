@@ -102,6 +102,11 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
   return more ? `${line} ${more}` : line;
 }
 
+/** The approve keys' hint under the card (§8.5), in the PC's own labels: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now". */
+export function keyHintText(os: OS): string {
+  return `${SHORTCUTS[os].allow.label} allow · ${SHORTCUTS[os].deny.label} not now`;
+}
+
 /** The hint under a run's terminal: typing goes to the command, or it can't take any; nothing once it has ended. */
 export function typingHint(t: { interactive: boolean; ended: boolean }): string {
   if (t.ended) return "";

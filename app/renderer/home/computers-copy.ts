@@ -152,7 +152,7 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
   for (const t of i.summaries) {
     const parsed = parseTargetId(t.id);
     if (!parsed || parsed.kind === "local") continue;
-    if (parsed.kind === "wsl" && i.settings.targets?.wsl?.on !== true) continue;
+    if (parsed.kind === "wsl" && (i.settings.targets?.wsl?.on !== true || i.admin.features.wsl === false)) continue;
     ids.push({ id: t.id, kind: parsed.kind, label: t.label });
   }
   // A host the user added shows even before the runtime lists it.

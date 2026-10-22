@@ -60,8 +60,8 @@ export function promptView(card: PromptCard): PromptView {
           p("Check it with whoever looks after ", { v: card.host }, " before you trust it."),
         ],
         field: null,
-        // "Trust and connect" is never the default: Enter cancels.
-        buttons: [ok("Trust and connect", { isDefault: false, armed: true }), cancel("Cancel", { isDefault: true })],
+        // "Trust and connect" is never the default (Enter cancels), and doesn't stand out: trusting is the risky choice.
+        buttons: [ok("Trust and connect", { primary: false, isDefault: false, armed: true }), cancel("Cancel", { isDefault: true })],
       };
     case "host-key-changed":
       return {

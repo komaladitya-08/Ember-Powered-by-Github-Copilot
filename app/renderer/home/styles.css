@@ -367,7 +367,8 @@ html { scroll-padding-top: 16px; }
 .targets li { min-height: 48px; }
 .target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
 .target-text b { font-weight: 600; }
-.target-detail { color: var(--muted); font: var(--type-footnote); }
+.target-name { min-width: 0; overflow-wrap: anywhere; }
+.target-detail { color: var(--muted); font: var(--type-callout); }
 .target-status { color: var(--muted); font: var(--type-callout); }
 .target-note { color: var(--muted); font: var(--type-footnote); }
 .target-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 60%; }

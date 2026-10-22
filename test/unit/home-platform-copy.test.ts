@@ -15,7 +15,7 @@ import { SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts"
 import { PLATFORM_WORDS } from "../../app/shared/words";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { consentPanel } from "../../app/main/remote/prompt-window";
-import { statusLine } from "../../app/renderer/command/copy";
+import { keyHintText, statusLine } from "../../app/renderer/command/copy";
 
 // ───── A small model of the page: elements, attributes and text, as home/index.html writes them ─────
 interface El { tag: string; attrs: Record<string, string>; children: Node[] }
@@ -351,6 +351,12 @@ describe("the stop chord in the SSH, WSL and commands words, per OS", () => {
     // Each OS's card is its own text, so its own hash.
     expect(hashes.size).toBe(3);
     expect(consentPanel({ feature: "wsl", os: "win32", target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }).body.join(" ")).not.toMatch(/\+X/);
+  });
+
+  it("writes each OS's approve keys in the command card's key hint", () => {
+    expect(keyHintText("linux")).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    expect(keyHintText("win32")).toBe("Win+Alt+Y allow · Win+Alt+N not now");
+    expect(keyHintText("darwin")).toBe("Control+Shift+Command+Y allow · Control+Shift+Command+N not now");
   });
 
   it("names each OS's chord when the kill switch stopped a command", () => {

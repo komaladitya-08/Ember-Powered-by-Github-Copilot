@@ -48,11 +48,8 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
   };
 }
 
-/**
- * How many columns and rows of the terminal's font fit in `host` (what new runs should start at). Measured with a
- * hidden line of the same font; a little is left over so the last column and row are never cut.
- */
-export function fitTerminal(host: HTMLElement): { cols: number; rows: number } | null {
+/** One character cell of the terminal's font, measured with a hidden line of it in `host` (CSS px), or null. */
+export function cellSize(host: HTMLElement): { width: number; height: number } | null {
   const probe = document.createElement("span");
   probe.textContent = "W".repeat(40);
   probe.setAttribute("aria-hidden", "true");
@@ -63,11 +60,17 @@ export function fitTerminal(host: HTMLElement): { cols: number; rows: number } |
   host.appendChild(probe);
   const r = probe.getBoundingClientRect();
   probe.remove();
-  const box = host.getBoundingClientRect();
-  if (!r.width || !r.height || !box.width || !box.height) return null;
-  const cellW = r.width / 40;
-  const cellH = Math.ceil(r.height * (XTERM_OPTIONS.lineHeight ?? 1));
-  const cols = Math.floor((box.width - 16) / cellW) - 1;
-  const rows = Math.floor((box.height - 8) / cellH);
+  if (!r.width || !r.height) return null;
+  return { width: r.width / 40, height: Math.ceil(r.height * (XTERM_OPTIONS.lineHeight ?? 1)) };
+}
+
+/**
+ * How many columns and rows fit a run's terminal in a window `width` × `height` CSS px with nothing above it but the
+ * tab's own parts (what new runs start at: a card shown for the moment doesn't make them smaller). A column and a few
+ * pixels are left over so the last column and row are never cut.
+ */
+export function fitTerminal(cell: { width: number; height: number }, width: number, height: number): { cols: number; rows: number } {
+  const cols = Math.floor((width - 16) / cell.width) - 1;
+  const rows = Math.floor((height - 8) / cell.height);
   return { cols: Math.max(20, Math.min(500, cols)), rows: Math.max(5, Math.min(200, rows)) };
 }

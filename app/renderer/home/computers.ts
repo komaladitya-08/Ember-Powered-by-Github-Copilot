@@ -74,9 +74,11 @@ function switchRow(s: Switch, onWant: (on: boolean) => void, cls = "switch-row")
 function computerItem(r: ComputerRow): HTMLLIElement {
   const li = el("li", "target-row");
   const text = el("span", "target-text");
-  text.append(el("b", "", r.name));
-  if (r.detail) text.append(el("span", "target-detail", ` · ${r.detail}`));
-  text.append(el("span", "target-status", r.status));
+  // "build-01 · deploy@build-01.example.com" on one line, then the status.
+  const name = el("span", "target-name");
+  name.append(el("b", "", r.name));
+  if (r.detail) name.append(el("span", "target-detail", ` · ${r.detail}`));
+  text.append(name, el("span", "target-status", r.status));
   if (r.note) text.append(el("span", "target-note", r.note));
   li.append(text);
   if (r.actions.length) {

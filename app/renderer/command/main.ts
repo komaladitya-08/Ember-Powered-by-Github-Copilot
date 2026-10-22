@@ -15,7 +15,7 @@ import {
 } from "./copy";
 import { INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView, type WindowView } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
-import { createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
+import { cellSize, createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
 
 declare global { interface Window { emberCommands: CommandsApi } }
 
@@ -332,12 +332,14 @@ function render(): void {
   reportSize();
 }
 
-/** Tells main what terminal size fits the window now, so new runs start at it. */
+/** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
+const TERM_CHROME_PX = 250;
+/** Tells main what terminal size fits the window now (without a card), so new runs start at it. */
 let sizeSent = "";
 function reportSize(): void {
-  const host = [...tabEls.values()].find(t => !t.panel.hidden)?.host ?? $("measure");
-  const fit = fitTerminal(host);
-  if (!fit) return;
+  const cell = cellSize($("measure"));
+  if (!cell) return;
+  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - TERM_CHROME_PX);
   const key = `${fit.cols}x${fit.rows}`;
   if (key === sizeSent) return;
   sizeSent = key;
