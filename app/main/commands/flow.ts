@@ -336,8 +336,9 @@ export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguag
   if (posixShell) return { kind: "shells", shells: posixShell === "sh" ? BOTH_SH : [posixShell] };
   if (name === "pwsh" || name === "powershell") return { kind: "shells", shells: ["powershell"] };
   if (OTHER_SHELLS.has(name)) return { kind: "unclear", says: `It runs a ${name} script, which Ember can't read.` };
-  // An interpreter by path is followed (a script there runs this one); a program there isn't a script and stops.
-  if (prog.startsWith("/") && baseOf(words[0] ?? "") !== "env") return { kind: "follow", path: prog };
+  // An interpreter by path (`#!/home/ana/i.sh`, `#!/usr/bin/env ./i.sh`) is followed: a script there runs this one; a
+  // program there isn't a script and stops. A bare name env looks up (python3) is an interpreter: L8 unchanged.
+  if (prog.includes("/")) return { kind: "follow", path: prog };
   return { kind: "none" };
 }
 
@@ -389,7 +390,13 @@ async function judgeScripts(cls: Classification, runner: CommandRunner, j: Comma
     const lang = scriptLanguage(ref.as, text);
     if (lang.kind === "none") continue;
     if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says); continue; }
-    if (lang.kind === "follow") { queue.push({ ref: { path: lang.path, as: "shebang", cwd: ref.cwd }, depth: depth + 1 }); continue; }
+    if (lang.kind === "follow") {
+      // A relative interpreter is found from the folder the command runs in.
+      if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
+      const path = flavour.isAbsolute(lang.path) ? lang.path : flavour.join(ref.cwd, lang.path);
+      queue.push({ ref: { path, as: "shebang", cwd: ref.cwd }, depth: depth + 1 });
+      continue;
+    }
     const name = flavour.basename(ref.path);
     const sctx: ClassifyContext = {
       os: env.os, home: env.home, cwd: ref.cwd, ember: env.ember, downloaded: env.downloaded,

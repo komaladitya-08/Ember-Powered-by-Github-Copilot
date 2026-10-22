@@ -279,6 +279,8 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(card.card.says.some(l => /^In b\.sh: .*build/.test(l)), card.card.says.join(" | ")).toBe(true);
     const interp = scriptHarness({ "/home/ana/t": "#!/home/ana/i.sh\necho hi\n", "/home/ana/i.sh": "#!/bin/sh\nrm -rf build\n" });
     expect((await call(interp, { target: "this computer", command: "./t" })).resultType).toBe("denied");
+    const relative = scriptHarness({ "/home/ana/t": "#!/usr/bin/env ./i.sh\necho hi\n", "/home/ana/i.sh": "rm -rf build\n" });
+    expect((await call(relative, { target: "this computer", command: "./t" })).resultType).toBe("denied");
     // Scripts within scripts deeper than Ember reads ask.
     const deep: Record<string, string> = {};
     for (let k = 0; k < 6; k++) deep[`/home/ana/s${k}.sh`] = `sh s${k + 1}.sh\n`;
@@ -341,6 +343,7 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "#!/usr/bin/pwsh\n")).toEqual({ kind: "shells", shells: ["powershell"] });
     expect(scriptLanguage("shebang", "#!/usr/bin/fish\n").kind).toBe("unclear");
     expect(scriptLanguage("shebang", "#!/home/ana/i.sh\n")).toEqual({ kind: "follow", path: "/home/ana/i.sh" });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env ./i.sh\n")).toEqual({ kind: "follow", path: "./i.sh" });
     expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "none" });
     // No #! line: the calling shell runs a text file; a NUL in its first line makes it a program.
     expect(scriptLanguage("shebang", "rm -rf build\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
