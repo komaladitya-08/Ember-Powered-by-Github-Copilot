@@ -2,8 +2,8 @@
  * Step 0b's hooks in the shared runtime (design §11.3): the Confirmer's panel questions (§3.9.1, R7), the accessibility
  * sidecar's launch gates and id ownership (§4.3, critique wsl-20, integration-20), the policy seams (critique
  * integration-17), Perception's exported text functions (§5.5: byte for byte today's text), the command and prompt
- * windows' factories (§3.10, critique integration-21), what the settings page may change (S0a's review) and the quit
- * question (§8.9). With S0a's stubs every hook gives today's behaviour. OS-neutral: the only process started is Node
+ * windows' factories (§3.10, critique integration-21), what the settings page may change (S0a's review), the quit
+ * question (§8.9), and that the journal keeps only the sizes of a command's text and folder (§3.12). With S0a's stubs every hook gives today's behaviour. OS-neutral: the only process started is Node
  * running a stand-in sidecar from a temporary folder.
  */
 
