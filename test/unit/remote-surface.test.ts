@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PolicyEngine, type ActionKind, type ActionRequest } from "../../app/main/policy/policy";
-import { REMOTE_SURFACE, isRemoteSurface, isWslgImage, remoteSurfaceCheck } from "../../app/main/policy/remote-surface";
+import { REMOTE_SURFACE, isRemoteSurface, isWindowsXServer, isWslgImage, remoteSurfaceCheck } from "../../app/main/policy/remote-surface";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow, Bounds } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, StackedWindow, X11Image } from "../../app/main/platform/types";
@@ -41,6 +41,18 @@ describe("which windows are remote surfaces", () => {
     }
   });
 
+  it("knows the X servers for Windows, whose windows are Linux apps nobody can tell apart (critique wsl-15)", () => {
+    for (const p of ["vcxsrv", "VcXsrv.exe", "x410", "X410.EXE", "xming", "Xming.exe", "xwin", "XWin.exe", "gwsl", "GWSL.exe"]) {
+      expect(isRemoteSurface(p, "win32"), p).toBe(true);
+      expect(isWindowsXServer(p, "win32"), p).toBe(true);
+    }
+    for (const p of ["msrdc", "mstsc", "xwinwrap", "x4100", "notepad"]) expect(isWindowsXServer(p, "win32"), p).toBe(false);
+    for (const os of ["linux", "darwin"] as const) for (const p of ["vcxsrv", "xwin", "gwsl"]) {
+      expect(isRemoteSurface(p, os), `${os} ${p}`).toBe(false);
+      expect(isWindowsXServer(p, os), `${os} ${p}`).toBe(false);
+    }
+  });
+
   it("takes no ordinary Windows app for one, nor a name that only contains one", () => {
     for (const p of ["", "notepad", "msedge", "explorer", "winword", "Code", "WindowsTerminal", "msrdcx", "xmstsc", "mstsc-notes", "Windows365Setup", "RdClient"]) {
       expect(isRemoteSurface(p, "win32"), p).toBe(false);
@@ -57,7 +69,7 @@ describe("which windows are remote surfaces", () => {
     expect(remoteSurfaceCheck("win32")?.("notepad")).toBe(false);
   });
 
-  it("tells WSLg's msrdc from a Remote Desktop client's by its folder, for the WSL work (nothing decides on it yet)", () => {
+  it("tells WSLg's msrdc from a Remote Desktop client's by its folder (the WSL router identifies only WSLg's)", () => {
     expect(isWslgImage("C:\\Program Files\\WSL\\msrdc.exe")).toBe(true);
     expect(isWslgImage("\\Device\\HarddiskVolume3\\Program Files\\WSL\\MSRDC.EXE")).toBe(true);
     expect(isWslgImage("C:\\Program Files\\WindowsApps\\MicrosoftCorporationII.WindowsSubsystemForLinux_1.2.5.0_x64__8wekyb3d8bbwe\\msrdc.exe")).toBe(true);
@@ -72,7 +84,7 @@ describe("the policy in a remote surface on Windows", () => {
   it("refuses every kind of action in a WSLg app's or a remote desktop's window, with the reason in plain words", () => {
     // A Linux terminal and a polkit prompt under WSLg pass the Windows terminal and security checks by name.
     for (const [app, title] of [["msrdc", "ada@laptop: ~"], ["msrdc", "Authentication Required"], ["mstsc", "build-server - Remote Desktop Connection"],
-      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"]]) {
+      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"], ["vcxsrv", "xterm"], ["x410", "gedit"], ["GWSL", "Authentication Required"]]) {
       for (const kind of IN_WINDOW) {
         const d = engine("win32").decide(request(kind, app, title));
         expect(d, `${kind} in ${app}`).toMatchObject({ tier: "never", verdict: "deny", reason: REASON });
@@ -172,6 +184,12 @@ describe("screenshots with a remote surface on screen", () => {
     expect(p.capture).not.toBeNull();
     expect(isBlack(await at(p.capture!, 220, 100))).toBe(true);
     expect(isGrey(await at(p.capture!, 60, 100))).toBe(true);
+  });
+
+  it("blacks out an X server's window (VcXsrv) the same way", async () => {
+    const xserver = top(4, 88, "vcxsrv", { x: 150, y: 0, width: 150, height: 200 }, "xterm");
+    const { perception } = desktop({ stack: () => [NOTEPAD, xserver], remote: remoteSurfaceCheck("win32") });
+    expect(await perception.privateWindows()).toEqual([{ x: 150, y: 0, width: 150, height: 200 }]);
   });
 
   it("blacks it out beside the never-look windows", async () => {

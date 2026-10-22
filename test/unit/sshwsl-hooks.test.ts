@@ -422,11 +422,19 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     }
   });
 
-  it("has a stub targetRules that decides nothing, for any request on any OS", () => {
-    for (const os of ["linux", "win32", "darwin"] as const) for (const r of CORPUS) expect(targetRules(r, os)).toBeNull();
+  it("has a targetRules (WB's) that decides nothing but tier 3 in WSLg apps on Windows, which it refuses", () => {
+    const tier3 = new Set(["cursor_click", "cursor_text", "keys", "scroll"]);
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const r of CORPUS) {
+        if (os === "win32" && tier3.has(r.kind) && r.app.startsWith("wsl:")) expect(targetRules(r, os)).toMatchObject({ tier: "never", verdict: "deny" });
+        else expect(targetRules(r, os)).toBeNull();
+      }
+    }
   });
 
   it("decides every request as before Step 0b with the stub (Ember's command window aside), asking the seam each time", () => {
+    // The seam answering as Step 0a's stub did (nothing): the decisions after it are today's.
+    seam.rule = () => null;
     const out: unknown[] = [];
     for (const os of ["linux", "win32", "darwin"] as const) {
       for (const r of CORPUS) out.push({ os, kind: r.kind, app: r.app, d: engine(os).decide(r) });

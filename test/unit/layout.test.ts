@@ -56,7 +56,7 @@ describe("the Windows layout", () => {
         // Ember.exe gets Ember's version resource and that icon (exe-resources.mjs).
         exeResources: true,
       });
-      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs"]);
+      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs", "sidecar/atspi/ember_atspi.py"]);
       expect(win.sidecarFiles.every(s => s.from === s.to)).toBe(true);
       // The doctor for a console, beside Ember.exe (cmd.exe waits for it and keeps its exit code).
       expect(win.launchers).toEqual([{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }]);
