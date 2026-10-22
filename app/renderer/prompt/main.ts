@@ -7,7 +7,7 @@
  */
 
 import type { PromptCard } from "../../shared/remote-ui";
-import { PROMPT_ARM_MS, consentHashText, partsText, pressResult, promptView, type Block, type ButtonView, type Part } from "./copy";
+import { PROMPT_ARM_MS, consentHashText, pressResult, promptView, type Block, type ButtonView, type Part } from "./copy";
 import type { PromptApi } from "./api";
 import { LEGEND_MIXED, LEGEND_TOKENS } from "../command/copy";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "../command/visible";
@@ -98,7 +98,8 @@ function show(next: PromptCard | null): void {
   const view = promptView(next);
   const legend = new Set<string>();
   $("title").replaceChildren(...partNodes(view.title, legend));
-  document.title = `Ember: ${partsText(view.title)}`;
+  // The window keeps its title "Ember" (§8.6): Ember's own windows are known by it where their process can't be told,
+  // and a host name or an SSH prompt never goes into a window title other programs read. The dialog is named by its h1.
   $("body").replaceChildren(...view.body.map(b => blockNode(b, legend)));
   $("legend").replaceChildren(...[...legend].map(l => el("p", "", l)));
   $("legend").hidden = legend.size === 0;

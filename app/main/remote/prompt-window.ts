@@ -99,6 +99,13 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
   const consentFns = new Set<(a: ConsentAnswer) => void>();
+  /**
+   * Consent questions shown and not yet hidden (the targets runtime hides each when its question ends). A card the user
+   * answered leaves the window at once, but if the Confirmer didn't take that answer (too soon, or while Ember moved the
+   * pointer) the question is still asked: the bubble's "Read it" (show()) brings its card back instead of leaving it
+   * unanswerable until it expires.
+   */
+  const consents = new Map<number, ConsentPanel>();
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
   const owns = (sender: WebContentsLike | undefined): boolean => {
@@ -141,6 +148,8 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
   function reveal(): void {
     if (!queue.length) {
       const w = live();
+      // The page lets go of the card too (so the same card shown again later is drawn afresh, its buttons live).
+      push();
       if (w) safe("hide", () => { if (w.isVisible()) w.hide(); });
       return;
     }
@@ -244,6 +253,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     showConsent(n, c) {
       if (disposed) return;
       if (!Number.isSafeInteger(n) || n < 0 || !validConsent(c)) { note("error", "prompt.consent_refused", { n }); return; }
+      consents.set(n, c);
       const existing = queue.find(x => x.card.kind === "consent" && x.card.n === n);
       // Asked again (the bubble's "Read it"): the same card comes back up.
       if (existing) { if (queue[0] === existing) reveal(); return; }
@@ -251,6 +261,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     },
 
     hideConsent(n) {
+      consents.delete(n);
       const e = queue.find(x => x.card.kind === "consent" && x.card.n === n);
       if (e) finish(e, { id: e.card.id, ok: false });
     },
@@ -270,6 +281,11 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     },
 
     show() {
+      if (disposed) return;
+      // A consent question still asked whose card went (answered, but the answer wasn't taken): it comes back.
+      for (const [n, c] of consents) {
+        if (!queue.some(x => x.card.kind === "consent" && x.card.n === n)) queue.push({ card: { id: `consent-${n}`, kind: "consent", n, consent: c } });
+      }
       if (queue.length) reveal();
     },
 
@@ -280,6 +296,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
       disposed = true;
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
       consentFns.clear();
+      consents.clear();
       const w = live();
       win = null;
       if (w) safe("close", () => w.close());

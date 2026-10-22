@@ -13,6 +13,7 @@ import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main
 import type { Logger } from "../../app/main/logger";
 import type { ConsentPanel } from "../../app/shared/consent";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 type Handler = (event: { sender: WebContentsLike }, ...args: unknown[]) => unknown;
 
@@ -238,6 +239,25 @@ describe("consent cards", () => {
     expect(windows[1].shown()).toMatchObject({ id: "consent-3" });
   });
 
+  it("come back with the bubble's Read it while their question is still asked, and not once it was hidden", () => {
+    const { ipc, ctl, win, page, consents } = setup();
+    const c = commandsCard();
+    ctl.showConsent(7, c);
+    // Answered, but (say) too soon for the Confirmer: the card left, the question is still asked.
+    ipc.send(PROMPT_IPC.answer, page(), { id: "consent-7", ok: true, sha256: c.sha256 });
+    expect(consents).toEqual([{ n: 7, answer: "once", sha256: c.sha256 }]);
+    expect(win().shown()).toBeNull();
+    ctl.show();
+    expect(win().shown()).toMatchObject({ id: "consent-7", n: 7 });
+    expect(win().visible).toBe(true);
+    // The question ended: hidden, and Read it brings nothing back.
+    ctl.hideConsent(7);
+    expect(win().shown()).toBeNull();
+    ctl.show();
+    expect(win().shown()).toBeNull();
+    expect(win().visible).toBe(false);
+  });
+
   it("asked directly (settings' switch), answer yes with their hash", async () => {
     const { ipc, ctl, page } = setup();
     const c = commandsCard();
@@ -275,6 +295,12 @@ describe("the page's buttons (pure press logic)", () => {
     const consent: PromptCard = { id: "consent-1", kind: "consent", n: 1, consent: commandsCard() };
     expect(pressResult(consent, ok(consent), field, 10, 0).kind).toBe("wait");
     expect(pressResult(consent, ok(consent), field, PROMPT_ARM_MS, 0)).toMatchObject({ kind: "consent", id: "consent-1", sha256: commandsCard().sha256 });
+  });
+
+  it("keeps the window's title \"Ember\" and builds nothing from HTML (read from the page's source)", () => {
+    const src = readFileSync(new URL("../../app/renderer/prompt/main.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/document\.title\s*=/);
+    expect(src).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
   });
 
   it("makes Cancel the default on a host key card and leaves Enter pressing nothing on a consent card", () => {
