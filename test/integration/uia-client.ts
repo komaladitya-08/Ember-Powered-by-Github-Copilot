@@ -189,6 +189,7 @@ export class UiaBridge {
     return { code: exit.code, ms: exit.at - start };
   }
 
+  /** Kills the bridge if it is still running (clean-up after a failed test; close() is the normal way out). */
   kill(): void {
     if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill();
   }

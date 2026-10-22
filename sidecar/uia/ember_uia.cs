@@ -6,8 +6,9 @@
 // never stalls requests for the others.
 //
 // Windows PowerShell 5.1 compiles this file with Add-Type, which runs the .NET Framework's C# 5 compiler: no string
-// interpolation, null-conditional operators, nameof, expression-bodied members or lambdas, auto-property
-// initialisers, out variables, tuples, pattern matching or local functions. Only mscorlib, System,
+// interpolation, null-conditional operators, nameof, expression-bodied members, auto-property initialisers, out
+// variables, tuples, pattern matching or local functions. Lambdas are C# 3, but the file uses anonymous methods
+// instead so that a plain "=>" check catches expression-bodied members. Only mscorlib, System,
 // UIAutomationClient, UIAutomationTypes and WindowsBase are referenced (no System.Core: no LINQ, no HashSet). The
 // file stays ASCII because the compiler reads a file without a byte-order mark in the ANSI code page; write any
 // other character as \uXXXX. test/unit/uia-files.test.ts checks all of this.
