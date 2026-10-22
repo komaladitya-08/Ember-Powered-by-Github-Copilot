@@ -115,6 +115,7 @@ function harness(o: {
   paths?: (p: string) => PathFact; git?: GitFacts | null; run?: (spec: RunSpec, n: number) => Parameters<typeof scriptedRun>[1];
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
+  othersNamed?: (words: string) => string[];
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -154,6 +155,7 @@ function harness(o: {
     userAskEvery: () => o.askEvery ?? false,
     mode: () => o.mode ?? "on",
     ...(o.consent !== undefined ? { consentPanel: () => o.consent ?? null } : {}),
+    ...(o.othersNamed ? { othersNamed: o.othersNamed } : {}),
   };
   const abort = o.abort ?? new AbortController();
   let isTainted = false;
@@ -487,6 +489,57 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "The user stopped it before it ran. Don't run it again; finish the task saying so." });
     expect(h.starts).toEqual([]);
     expect(h.ended).toHaveLength(1);
+  });
+});
+
+describe("the wrong-target guard (D4.4, DOC's review)", () => {
+  const pushes = () => makeJudge({ decide: () => decision({ verdict: "announce", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."], requested: { intent: "destroy", announce: "Deleting build, as you asked." }, armMs: 0 }) });
+  const known = (words: string) => (/build-?0?1/i.test(words) ? ["build-01"] : []);
+
+  it("asks, never announces, when the user's words also name another computer, and the card says where it runs first", async () => {
+    pushes();
+    const h = harness({ binding: LOCAL, words: "build-01 delete build/", othersNamed: known, answers: ["once"] });
+    const r = await call(h, { target: "this computer", command: "rm -r build" });
+    expect(h.announced).toEqual([]);
+    expect(h.windowAnnounce).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    const q = h.asked[0] as { where?: string; prompt: string; armMs: number; panel: { card: CommandCard } };
+    expect(q.panel.card.says[0]).toBe("You also named build-01, but this runs on this computer.");
+    expect(q.panel.card.mode).toBe("ask");
+    expect(q.where).toBe("on this computer");
+    expect(q.prompt).toBe("On this computer: You also named build-01, but this runs on this computer.");
+    expect(q.armMs).toBeGreaterThanOrEqual(1500);
+    expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "ask", rules: ["rm.recursive", "wrong-target"] });
+    expect(h.audit.find(e => e.phase === "decided")?.requested).toBeUndefined();
+    expect(h.starts[0].stamp).toMatchObject({ verdict: "ask" });
+    expect(r.resultType).toBe("success");
+  });
+
+  it("names the remote a command runs on when the words name this computer", async () => {
+    pushes();
+    const h = harness({ binding: REMOTE, words: "delete build/ on this computer", othersNamed: w => (/this computer/.test(w) ? ["this computer"] : []), answers: ["deny"] });
+    await call(h, { command: "rm -r build" });
+    expect((h.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You also named this computer, but this runs on build-01.");
+    expect(h.asked[0].where).toBe("on build-01");
+  });
+
+  it("announces as before when no other computer is named, and asks when the guard can't tell", async () => {
+    pushes();
+    const h = harness({ binding: LOCAL, words: "delete build/", othersNamed: known });
+    await call(h, { target: "this computer", command: "rm -r build" });
+    expect(h.announced).toHaveLength(1);
+    expect(h.asked).toEqual([]);
+    const broken = harness({ binding: LOCAL, words: "delete build/", othersNamed: () => { throw new Error("no registry"); }, answers: ["deny"] });
+    await call(broken, { target: "this computer", command: "rm -r build" });
+    expect(broken.announced).toEqual([]);
+    expect((broken.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You also named another computer, but this runs on this computer.");
+  });
+
+  it("leaves ordinary commands alone: they run as before", async () => {
+    makeJudge();
+    const h = harness({ binding: LOCAL, words: "build-01 list the files", othersNamed: known });
+    expect((await call(h, { target: "this computer", command: "ls" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
   });
 });
 

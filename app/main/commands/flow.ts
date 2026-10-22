@@ -112,6 +112,30 @@ export interface CommandConsentSource {
   consentPanel(): ConsentPanel | null;
 }
 
+/**
+ * A command service that knows the other computers Ember works on (built by the targets runtime): D4.4's wrong-target
+ * guard (DOC's review). Without it (no targets runtime: tests, the eval) this computer is the only one there is.
+ */
+export interface CommandTargetGuard {
+  /** The labels of known targets other than this service's that the user's own words name anywhere. */
+  othersNamed(words: string): string[];
+}
+
+/** The card's first line when the user's words also name another computer: it says which one runs the command. */
+export const wrongTargetLine = (others: string[], here: string) => `You also named ${listOf(others)}, but this runs ${here}.`;
+
+/** The other computers the user's words name (the guard's answer; a guard that fails counts as naming one: it asks). */
+function othersNamedIn(svc: CommandService, words: string): string[] {
+  const guard = (svc as CommandService & Partial<CommandTargetGuard>).othersNamed;
+  if (typeof guard !== "function" || !words.trim()) return [];
+  try {
+    const got = guard.call(svc, words);
+    return Array.isArray(got) ? [...new Set(got.filter((x): x is string => typeof x === "string" && x.trim() !== ""))].slice(0, 5) : [];
+  } catch {
+    return ["another computer"];
+  }
+}
+
 /** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7). */
 export const ANNOUNCE_MS = 4000;
 /** Runs one target runs at once; a fourth waits for a slot, honouring its task's stop (§3.8.3). */
@@ -461,7 +485,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
-  const where = whereWords(binding);
+  // The user's words also name another computer Ember knows ("build-01 delete build/" bound to the active one): no
+  // command announces, and every question says where it runs, this computer included (DOC's review).
+  const others = othersNamedIn(svc, ctx.task.commandWords());
+  const here = whereWords(binding) ?? `on ${place}`;
+  const where = whereWords(binding) ?? (others.length ? here : undefined);
   const task = ctx.task.id;
   const target = binding.id;
   const audit = (e: Record<string, unknown>) => ctx.audit({ event: "command", task, target, ...e });
@@ -546,7 +574,15 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
   const held = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
   // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
-  const d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
+  let d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
+  // D4.4's wrong-target guard: a command the user's words asked for still asks when they also name another computer,
+  // and the card says first which one runs it.
+  if (d.verdict === "announce" && others.length) {
+    d = {
+      ...d, verdict: "ask", requested: undefined, says: [wrongTargetLine(others, here), ...d.says], rules: [...new Set([...d.rules, "wrong-target"])],
+      reason: "It asks first: the user's words also name another computer.", armMs: Math.max(d.armMs, 1500),
+    };
+  }
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,

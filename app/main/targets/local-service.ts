@@ -10,6 +10,7 @@
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { commandMode, type LoadedAdminPolicy } from "../admin";
+import type { ConsentPanel } from "../../shared/consent";
 import type { CommandCapability, CommandMode, CommandRunner, CommandService, CommandWindowPort, RunnerFacts, ShellId } from "../commands/types";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
@@ -122,6 +123,36 @@ export function createLocalService(o: {
     facts: warm.facts,
   };
   return svc;
+}
+
+/** What the command flow asks of a target's service beyond the contract (flow.ts CommandConsentSource, CommandTargetGuard). */
+export interface FlowExtras {
+  /** The target's first-use commands card (§8.4.3) with its text hashed; null when it can't be shown. */
+  consentPanel(): ConsentPanel | null;
+  /** The labels of the other known computers the user's own words name (D4.4's wrong-target guard). */
+  othersNamed(words: string): string[];
+}
+
+/**
+ * `svc` as a worker gets it: the same service (its binding, runner and window are read through, so the flow's per-runner
+ * slots and facts stay its own), plus the flow's extras. A card that can't be built is none (nothing is turned on).
+ */
+export function withFlowExtras(svc: CommandService, extras: FlowExtras): CommandService & FlowExtras {
+  return {
+    get binding() { return svc.binding; },
+    capability: () => svc.capability(),
+    shells: () => svc.shells(),
+    get runner() { return svc.runner; },
+    get window() { return svc.window; },
+    consented: () => svc.consented(),
+    userAskEvery: () => svc.userAskEvery(),
+    mode: () => svc.mode(),
+    consentPanel: () => {
+      try { return extras.consentPanel(); } catch { return null; } // no card: commands stay off there
+    },
+    // A guard that fails throws on: the flow then counts another computer as named (it asks).
+    othersNamed: words => extras.othersNamed(words),
+  };
 }
 
 /** How long a runner whose facts couldn't be read is left alone before they are asked again. */

@@ -253,6 +253,17 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await host.stop();
   });
 
+  it("a local task whose words also name another computer says it acts on this computer (D4.4's wrong-target guard)", async () => {
+    const { t } = fakeTargets();
+    t.othersNamed = (id, words) => (id === "local" && /build-01/.test(words) ? ["build-01"] : []);
+    const { host, real } = await started({ hands: hands(), targets: t });
+    const named = (real({ id: "9-w", goal: "delete build", target: {}, userWords: "build-01 delete build/" }, () => undefined) as any).d;
+    expect((named.presenter as any).where).toBe("on this computer");
+    const plain = (real({ id: "9-v", goal: "delete build", target: {}, userWords: "delete build/" }, () => undefined) as any).d;
+    expect((plain.presenter as any).where).toBeUndefined();
+    await host.stop();
+  });
+
   it("a target that can't take the task when it runs ends it at once with why, and no session is made", async () => {
     const { t } = fakeTargets({ refuse: { "ssh:build-01": "build-01 isn't connected. Connect it from Ember's menu first." } });
     const { host, real } = await started({ hands: hands(), targets: t });

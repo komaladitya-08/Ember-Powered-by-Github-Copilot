@@ -98,6 +98,12 @@ export interface TargetsForAgent {
   activeLine(): string;
   /** What the prompts may promise now (§3.15). */
   caps(): PromptCaps;
+  /**
+   * The labels of the computers other than `id` that the user's own words name ("this computer" for the PC): a task
+   * whose words do says where it acts in every bubble, this computer included, and never announces a command (D4.4's
+   * wrong-target guard, DOC's review). Optional: a host without a targets runtime has only this computer.
+   */
+  othersNamed?(id: TargetId, userWords: string): string[];
 }
 
 /** The targets runtime main builds once (createTargets in app/main/targets/runtime.ts). */

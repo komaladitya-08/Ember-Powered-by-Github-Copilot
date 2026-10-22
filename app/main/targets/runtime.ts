@@ -47,7 +47,7 @@ import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChang
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, wslBinding, type HandsBase } from "./hands";
 import { registerTargetsIpc, type ActResult } from "./ipc";
-import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, type WarmService } from "./local-service";
+import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, withFlowExtras, type WarmService } from "./local-service";
 import { targetMenu } from "./menu";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
@@ -56,7 +56,7 @@ import {
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
-import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, targetsNamed } from "./resolve";
+import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, targetsNamed, type NamedTarget } from "./resolve";
 import type { MenuItemLike, TargetBinding, TargetHands, TargetsDeps, TargetsForAgent, TargetsRuntime } from "./types";
 import { createWslService, isToolDistro } from "./wsl-service";
 
@@ -998,11 +998,21 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
     }
     return base;
   };
-  /** A target's commands when they aren't off (its facts read once now, so its shells are its own). */
-  const liveCommands = (svc: CommandService | null): CommandService | null => {
+  /**
+   * A target's commands when they aren't off (its facts read once now, so its shells are its own), with what the
+   * command flow asks beyond the contract: the first-use commands card, and the other computers the user's words name.
+   */
+  const liveCommands = (svc: CommandService | null, id: TargetId): CommandService | null => {
     if (!svc || safeState(svc) === "off") return null;
     try { (svc as Partial<WarmService>).warm?.(); } catch { /* the shells stay the defaults */ }
-    return svc;
+    return withFlowExtras(svc, {
+      consentPanel: () => {
+        rebuild();
+        const e = entryOf(id);
+        return e ? commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
+      },
+      othersNamed: words => othersNamed(id, words),
+    });
   };
   const refuse = (why: string) => ({ ok: false as const, why });
   const handsFor = (id: TargetId): { ok: true; hands: TargetHands } | { ok: false; why: string } => {
@@ -1019,13 +1029,13 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
         const audit = deps.localHands?.audit ?? deps.audit();
         const confirmer = deps.localHands?.confirmer ?? deps.confirmer();
         if (!audit || !confirmer) return refuse("Ember can't keep its record of what it does, so it won't work there.");
-        const commands = liveCommands(t.service);
+        const commands = liveCommands(t.service, id);
         const hands = remoteHands({ hostId: t.hostId, parts: t.parts, base: { audit, confirmer }, commands });
         if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use, and commands are off there.`);
         return { ok: true, hands };
       }
       const binding = bindingOf(e);
-      const commands = liveCommands(commandsOf(id));
+      const commands = liveCommands(commandsOf(id), id);
       if (binding.desktop === "none" && !commands) {
         return refuse(e.kind === "local"
           ? "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings."
@@ -1038,6 +1048,26 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       log.error("targets.hands_failed", { err });
       return refuse("Ember can't work there right now.");
     }
+  };
+  /**
+   * The other computers the user's own words name besides `bound` (D4.4's wrong-target guard, DOC's review): every
+   * target Ember knows, connected or not, and the hosts of the user's ssh config it has no record of yet; this computer
+   * as "this computer".
+   */
+  const othersNamed = (bound: TargetId, words: string): string[] => {
+    rebuild();
+    const known: NamedTarget[] = entries.map(e => ({ id: e.id, names: e.names }));
+    const labels = new Map<string, string>(entries.map(e => [e.id, e.id === LOCAL_TARGET ? "this computer" : e.label]));
+    const taken = new Set(known.flatMap(t => t.names.map(normaliseName)));
+    let config: string[];
+    try { config = parts.sshConfigHosts(); } catch { config = []; } // no config: only Ember's own records count
+    for (const alias of config) {
+      if (taken.has(normaliseName(alias))) continue;
+      const id = `ssh:~config/${alias}` as TargetId;
+      known.push({ id, names: [alias] });
+      labels.set(id, alias);
+    }
+    return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
   };
   const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
     try {
@@ -1185,6 +1215,7 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
   const agent: TargetsForAgent = {
     get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
     bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
+    othersNamed: (id, userWords) => { try { return othersNamed(id, userWords); } catch { return ["another computer"]; } },
   };
 
   // ── The picker and the bubble's actions ──

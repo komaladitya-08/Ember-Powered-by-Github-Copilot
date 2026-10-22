@@ -864,7 +864,7 @@ export class AgentHost {
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
-            settings: this.o.settings, presenter: this.taskPresenter(spec.id, spec.goal, h.binding),
+            settings: this.o.settings, presenter: this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0),
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
@@ -1170,10 +1170,11 @@ export class AgentHost {
   }
 
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
-  private taskPresenter(id: string, goal: string, binding?: TargetBinding): Presenter {
+  private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false): Presenter {
     const title = titleOf(goal);
-    // Its bubbles say where it acts when that isn't this computer (§2.4); an announced command is spoken when replies are.
-    const where = binding ? whereWords(binding) : undefined;
+    // Its bubbles say where it acts when that isn't this computer (§2.4), and on this computer too when the user's words
+    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are.
+    const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
       task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}),

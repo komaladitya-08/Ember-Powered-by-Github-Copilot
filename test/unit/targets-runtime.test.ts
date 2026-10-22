@@ -364,6 +364,31 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     await expect(got.hands.perception.describe()).rejects.toThrow(/run_command/);
   });
 
+  it("show the commands card a target waits for, from the flow (§3.9.3; TG's consentPanel)", () => {
+    const r = rig({ settings: commandsOn("local", 0) });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    const card = (got.hands.commands as unknown as { consentPanel(): ConsentPanel | null }).consentPanel();
+    expect(card).toMatchObject({ feature: "commands", target: "local", title: "Let Ember run commands on this computer?", yes: "Turn on", no: "Not now" });
+    expect(card!.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("know the other computers the user's words name: a task's bubbles say where, and no command announces (wrong target)", async () => {
+    const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("local") } });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    const guard = got.hands.commands as unknown as { othersNamed(words: string): string[] };
+    // Not a place by §2.3's rule 3 (the task binds to the active computer), yet a computer the user named.
+    expect(r.t.agent.bind({ userWords: "build-01 delete build/" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    expect(guard.othersNamed("build-01 delete build/")).toEqual(["build-01"]);
+    expect(guard.othersNamed("build zero one: delete build/")).toEqual(["build-01"]);
+    expect(guard.othersNamed("delete build/ here")).toEqual([]);
+    expect(r.t.agent.othersNamed!("ssh:build-01", "delete build/ on this computer")).toEqual(["this computer"]);
+    expect(r.t.agent.othersNamed!("ssh:build-01", "on build-01 delete build/")).toEqual([]);
+    // A host of the user's ssh config Ember has no record of yet is another computer too.
+    expect(guard.othersNamed("build-02 delete build/")).toEqual(["build-02"]);
+  });
+
   it("give the runner Ember's own paths, names and pids (main's and its helpers', live)", () => {
     const r = rig();
     const o = r.runnerOpts();
