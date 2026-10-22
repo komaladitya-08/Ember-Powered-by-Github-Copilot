@@ -56,7 +56,7 @@ export interface WslDeps {
 export interface WslOptions { log: Logger; env: NodeJS.ProcessEnv; os: OS; ember: { winPaths: string[] }; jobHost: JobHostRef | null }
 
 /** The service as createWsl makes it: its runners are WSL runners (runner.ts's extension of CommandRunner). */
-export type WslServiceImpl = WslService & { runner(distro: string): WslRunner };
+export type WslServiceImpl = Omit<WslService, "runner"> & { runner(distro: string): WslRunner };
 
 /** WSL for Ember: null off Windows, or when this PC has no wsl.exe. */
 export function createWsl(o: { log: Logger; env: NodeJS.ProcessEnv; os: OS; ember: { winPaths: string[] }; jobHost: JobHostRef | null }): WslService | null {
