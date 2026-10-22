@@ -13,7 +13,6 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
-import readline from "node:readline";
 import type { Logger } from "../logger";
 
 export interface Bounds { x: number; y: number; width: number; height: number }
@@ -228,6 +227,62 @@ export interface SidecarLaunch {
 export const ID_BLOCK = 10_000_000;
 let idBlocks = 0;
 
+/**
+ * The longest line a helper may send (its largest legitimate answer, a big window's read, is far shorter): a helper in a
+ * WSL distro runs code Ember doesn't control, and one endless line would otherwise grow until Ember runs out of memory.
+ */
+export const MAX_LINE_BYTES = 8 * 1024 * 1024;
+/** The longest stderr line kept (only its start is ever logged). */
+const MAX_STDERR_LINE_BYTES = 64 * 1024;
+
+/**
+ * Splits a stream into lines (LF or CR LF) as readline does, but never holds more than `max` bytes of one: a line past
+ * that calls `tooLong` once and its bytes up to the next newline are dropped. The last line without a newline comes at
+ * the stream's end.
+ */
+export function boundedLines(input: NodeJS.ReadableStream, max: number, onLine: (line: string) => void, tooLong: () => void): void {
+  let parts: Buffer[] = [];
+  let size = 0;
+  let skipping = false;
+  const emit = (b: Buffer) => {
+    const s = b.toString("utf8");
+    onLine(s.endsWith("\r") ? s.slice(0, -1) : s);
+  };
+  input.on("data", (chunk: Buffer | string) => {
+    let b = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    for (;;) {
+      const nl = b.indexOf(10);
+      if (nl < 0) {
+        if (skipping) return;
+        if (size + b.length > max) {
+          skipping = true;
+          parts = [];
+          size = 0;
+          tooLong();
+          return;
+        }
+        parts.push(b);
+        size += b.length;
+        return;
+      }
+      const head = b.subarray(0, nl);
+      if (!skipping) {
+        if (size + head.length > max) tooLong();
+        else emit(parts.length ? Buffer.concat([...parts, head]) : head);
+      }
+      parts = [];
+      size = 0;
+      skipping = false;
+      b = b.subarray(nl + 1);
+    }
+  });
+  input.on("end", () => {
+    if (!skipping && size) emit(Buffer.concat(parts));
+    parts = [];
+    size = 0;
+  });
+}
+
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 /**
  * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
@@ -285,9 +340,15 @@ export class AtspiSidecar {
       });
     const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false };
     this.helper = h;
-    readline.createInterface({ input: child.stdout }).on("line", line => this.answer(h, line));
-    readline.createInterface({ input: child.stderr }).on("line", line => {
+    // A line past MAX_LINE_BYTES is no answer Ember can trust: that process is ended and a fresh one starts (fail closed).
+    boundedLines(child.stdout, MAX_LINE_BYTES, line => this.answer(h, line), () => {
+      this.log.warn("sidecar.line_too_long", { maxBytes: MAX_LINE_BYTES });
+      this.retire(h, "accessibility helper was restarted (it sent more than Ember reads in one answer)", "SIGKILL");
+    });
+    boundedLines(child.stderr, MAX_STDERR_LINE_BYTES, line => {
       if (!/dconf-WARNING|Gtk-WARNING/.test(line)) this.log.debug("sidecar.stderr", { line: line.slice(0, 300) });
+    }, () => {
+      // An endless stderr line is dropped up to its newline (only a line's start was ever logged).
     });
     child.on("exit", (code, signal) => {
       this.log.info("sidecar.exit", { code, signal });
