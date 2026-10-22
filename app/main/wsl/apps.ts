@@ -167,7 +167,8 @@ export function withWslApps(apps: AppCatalog, o: { wsl: () => WslService | null;
       if (err instanceof LnkError) throw new Error("Ember can't open that shortcut.", { cause: err });
       throw err;
     }
-    if (!link.target || link.runAsUser) throw new Error("Ember can't open that shortcut.");
+    // Elevated, or an MSI-advertised one (Windows Installer, not the target read here, decides what it starts): never.
+    if (!link.target || link.runAsUser || link.advertised) throw new Error("Ember can't open that shortcut.");
     const target = expandEnvironmentStrings(link.target, env);
     if (!isWslLauncher(target)) throw new Error("Ember can't open that shortcut: it doesn't start WSL's own launcher.");
     const argv = [target, ...splitWindowsArgs(link.arguments)];

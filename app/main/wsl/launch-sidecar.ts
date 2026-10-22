@@ -62,12 +62,31 @@ export function helperLaunch(o: { wslExe: string; distro: string; scriptLinuxPat
 /** A spawn as this module uses it (node's; faked in tests). */
 export type SpawnLike = (command: string, args: string[], options: SpawnOptionsWithoutStdio) => Pick<ChildProcessWithoutNullStreams, "stdin" | "stdout" | "stderr" | "on" | "kill">;
 
+/** Where a fixed script's input lines end (a line a Windows path, which has no line break, can never be). */
+const INPUT_END = "EMBER_INPUT_END";
+
 /**
- * A fixed script run by `/bin/sh -s` in a running distro, its text and `input` lines on stdin: stdout's text, or null
- * when it failed, timed out or wrote nothing.
+ * What goes to `/bin/sh -s`: the script, with its `input` lines as a quoted here-document on its stdin (literal text:
+ * never read as code, whatever they hold), then `exit`. Not as lines after the script: dash (Debian's and Ubuntu's
+ * /bin/sh) reads its input ahead, so a `read` in the script would find nothing and the shell would run the line as a
+ * command. `exit` ends the shell without waiting for the end of its input, which the job host holds open (its stdin
+ * closing ends the job). null when a line can't be passed that way.
+ */
+export function fixedScriptStdin(script: string, input: readonly string[] = []): string | null {
+  if (input.some(l => /[\r\n\0]/.test(l) || l === INPUT_END)) return null;
+  const body = input.length ? `${script} <<'${INPUT_END}'\n${input.join("\n")}\n${INPUT_END}` : script;
+  return `${body}\nexit\n`;
+}
+
+/**
+ * A fixed script run by `/bin/sh -s` in a running distro, its text and `input` lines on stdin (fixedScriptStdin):
+ * stdout's text, or null when it failed, timed out or wrote nothing. stdin stays open until the shell has finished.
  */
 export function runFixedScript(o: { wslExe: string; distro: string; script: string; input?: string[]; env: NodeJS.ProcessEnv; jobHost: JobHostRef | null; spawn?: SpawnLike; timeoutMs?: number }): Promise<string | null> {
-  const run = underJobHost(o.wslExe, ["-d", o.distro, "--exec", "/bin/sh", "-s"], helperEnv(o.env), o.jobHost);
+  // In the user's home, as §4.1's fixed scripts: never Ember's Windows folder translated (it may not be mounted).
+  const run = underJobHost(o.wslExe, ["-d", o.distro, "--cd", "~", "--exec", "/bin/sh", "-s"], helperEnv(o.env), o.jobHost);
+  const text = fixedScriptStdin(o.script, o.input);
+  if (text === null) return Promise.resolve(null);
   return new Promise(resolve => {
     let child: ReturnType<SpawnLike>;
     try {
@@ -82,6 +101,7 @@ export function runFixedScript(o: { wslExe: string; distro: string; script: stri
       if (done) return;
       done = true;
       clearTimeout(timer);
+      try { child.stdin.end(); } catch { /* already closed */ }
       resolve(v);
     };
     const timer = setTimeout(() => { try { child.kill(); } catch { /* already gone */ } finish(null); }, o.timeoutMs ?? SCRIPT_MS);
@@ -91,12 +111,15 @@ export function runFixedScript(o: { wslExe: string; distro: string; script: stri
     // "close", not "exit": every byte of stdout has been read by then.
     child.on("close", (code: number | null) => finish(code === 0 && out.length ? Buffer.concat(out).toString("utf8") : null));
     child.stdin.on("error", () => undefined);
-    child.stdin.end(`${o.script}\n${(o.input ?? []).map(l => `${l}\n`).join("")}`);
+    child.stdin.write(text);
   });
 }
 
-/** The fixed script translating the Windows path on the next line (never on argv, never a hard-coded /mnt/c). */
-export const WSLPATH_SCRIPT = "IFS= read -r p; wslpath -a -u \"$p\"";
+/**
+ * The fixed script translating the Windows path it is given as its one input line (never on argv, never a hard-coded
+ * /mnt/c). §4.3's `IFS= read -r p; wslpath -a -u "$p"`, reading the line from its here-document (fixedScriptStdin).
+ */
+export const WSLPATH_SCRIPT = "{ IFS= read -r p; wslpath -a -u \"$p\"; }";
 
 /** The script's path inside the distro: one absolute line of plain characters, else null (automount off, a failure). */
 export function parseLinuxPath(out: string | null): string | null {
@@ -143,6 +166,8 @@ export const DIAG_SCRIPT = [
   "command -v python3 >/dev/null 2>&1 && echo python3=1 || { echo python3=0; exit 0; }",
   "python3 -I -c 'import importlib.util as u,sys; sys.exit(0 if u.find_spec(\"pyatspi\") else 1)' >/dev/null 2>&1 && echo pyatspi=1 || echo pyatspi=0",
   "command -v gsettings >/dev/null 2>&1 && echo a11y=$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)",
+  // (A distro without gsettings is a finding, not a failed look.)
+  "exit 0",
 ].join("\n");
 
 /** What DIAG_SCRIPT found. */

@@ -9,7 +9,8 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CommandRunner, RunnerFacts, RunningCommand, RunSpec } from "../../app/main/commands/types";
 import {
-  A11Y_FIX_COMMAND, helperLaunch, helperScriptPath, parseDiag, parseHelperStatus, parseLinuxPath, runFixedScript, turnOnLinuxAccessibility, WSLPATH_SCRIPT,
+  A11Y_FIX_COMMAND, DIAG_SCRIPT, fixedScriptStdin, helperLaunch, helperScriptPath, parseDiag, parseHelperStatus, parseLinuxPath, runFixedScript, turnOnLinuxAccessibility,
+  WSLPATH_SCRIPT,
   type SpawnLike,
 } from "../../app/main/wsl/launch-sidecar";
 import { geditScene, harness, RDP_MSRDC, stacked, WSLG_MSRDC, type FrameSpec } from "./wsl-fakes";
@@ -414,14 +415,29 @@ describe("the helper's launch (§4.3)", () => {
     expect(bare.env).toEqual({ WSL_UTF8: "1", WSLENV: "EMBER_ATSPI_ID_BASE/u" });
   });
 
-  it("translates the script's path with wslpath, the path on stdin after the fixed script (never on argv)", async () => {
-    const runs: { command: string; args: string[]; stdin: string }[] = [];
+  it("translates the script's path with wslpath, the path on stdin in a quoted here-document of the fixed script (never on argv)", async () => {
+    const runs: { command: string; args: string[]; stdin: string; ended?: boolean }[] = [];
     const spawn = fakeSpawn(runs, "/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py\n", 0);
     const out = await runFixedScript({ wslExe: "C:\\WSL\\wsl.exe", distro: "Ubuntu", script: WSLPATH_SCRIPT, input: ["C:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py"], env: {}, jobHost, spawn });
     expect(parseLinuxPath(out)).toBe("/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py");
-    expect(runs[0].args).toEqual([jobHost.script, "--interactive", "--", "C:\\WSL\\wsl.exe", "-d", "Ubuntu", "--exec", "/bin/sh", "-s"]);
-    expect(runs[0].stdin).toBe("IFS= read -r p; wslpath -a -u \"$p\"\nC:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py\n");
+    expect(runs[0].args).toEqual([jobHost.script, "--interactive", "--", "C:\\WSL\\wsl.exe", "-d", "Ubuntu", "--cd", "~", "--exec", "/bin/sh", "-s"]);
+    // Not a line after the script: dash reads ahead, so `read` would get nothing and the path would run as a command.
+    expect(runs[0].stdin).toBe("{ IFS= read -r p; wslpath -a -u \"$p\"; } <<'EMBER_INPUT_END'\nC:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py\nEMBER_INPUT_END\nexit\n");
     expect(runs[0].args.join(" ")).not.toContain("ember_atspi");
+    // The job host's stdin is held open until the shell has finished (its end would end the job), then closed.
+    expect(runs[0].ended).toBe(true);
+  });
+
+  it("passes input lines only as literal text: a line break, a NUL or the here-document's end can't be given", async () => {
+    expect(fixedScriptStdin("echo hi")).toBe("echo hi\nexit\n");
+    for (const bad of ["C:\\a\nrm -rf ~", "C:\\a\r", "a\0b", "EMBER_INPUT_END"]) {
+      expect(fixedScriptStdin(WSLPATH_SCRIPT, [bad])).toBeNull();
+      const runs: { command: string; args: string[]; stdin: string }[] = [];
+      expect(await runFixedScript({ wslExe: "w", distro: "U", script: WSLPATH_SCRIPT, input: [bad], env: {}, jobHost: null, spawn: fakeSpawn(runs, "/x\n", 0) })).toBeNull();
+      expect(runs).toEqual([]);
+    }
+    // The doctor's look ends well where a distro has no gsettings (its last test fails there).
+    expect(DIAG_SCRIPT.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
   it("takes no path from a failure, an empty answer or one that isn't a plain absolute path", async () => {
@@ -463,12 +479,18 @@ describe("the helper's launch (§4.3)", () => {
 });
 
 /** A spawn that answers `out` with exit `code`, recording argv and what was written to stdin. */
-function fakeSpawn(runs: { command: string; args: string[]; stdin: string }[], out: string, code: number): SpawnLike {
+function fakeSpawn(runs: { command: string; args: string[]; stdin: string; ended?: boolean }[], out: string, code: number): SpawnLike {
   return (command, args) => {
-    const run = { command, args, stdin: "" };
+    const run: { command: string; args: string[]; stdin: string; ended?: boolean } = { command, args, stdin: "" };
     runs.push(run);
     const stdout = new EventEmitter(), stderr = new EventEmitter(), child = new EventEmitter();
-    const stdin = Object.assign(new EventEmitter(), { end: (s: string) => { run.stdin = s; setTimeout(() => { stdout.emit("data", Buffer.from(out)); child.emit("close", code); }, 0); } });
+    // The shell answers once it has its script (it ends on the script's own exit: stdin stays open until then).
+    let answered = false;
+    const answer = () => { if (!answered) { answered = true; setTimeout(() => { stdout.emit("data", Buffer.from(out)); child.emit("close", code); }, 0); } };
+    const stdin = Object.assign(new EventEmitter(), {
+      write: (s: string) => { run.stdin += s; if (s.endsWith("exit\n")) answer(); return true; },
+      end: (s?: string) => { run.ended = true; if (s) run.stdin += s; answer(); },
+    });
     return Object.assign(child, { stdin, stdout, stderr, kill: () => true }) as unknown as ReturnType<SpawnLike>;
   };
 }

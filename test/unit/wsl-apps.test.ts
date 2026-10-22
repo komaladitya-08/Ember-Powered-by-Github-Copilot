@@ -174,7 +174,10 @@ describe("withWslApps", () => {
     await expect(elevated.apps.launch(gedit)).rejects.toThrow("can't open that shortcut");
     const junk = setup({ files: { [gedit.file]: Buffer.from("not a shortcut") } });
     await expect(junk.apps.launch(gedit)).rejects.toThrow("can't open that shortcut");
-    for (const s of [changed, gone, other, elevated, junk]) expect(s.spawned).toEqual([]);
+    // An MSI-advertised shortcut: Windows Installer decides what it starts, not the target read here.
+    const advertised = setup({ files: { [gedit.file]: buildLnk({ target: WSLG, args: "-d Ubuntu -- gedit", advertised: true }) } });
+    await expect(advertised.apps.launch(gedit)).rejects.toThrow("can't open that shortcut");
+    for (const s of [changed, gone, other, elevated, junk, advertised]) expect(s.spawned).toEqual([]);
   });
 
   it("refuses with fresh facts: a root distro, WSL 1, or no WSLg", async () => {
