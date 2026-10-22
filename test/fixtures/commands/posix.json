@@ -9853,6 +9853,220 @@
   {
    "cmd": "unset FOO BAR",
    "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --access public",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --tolerate-republish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish",
+   "words": "publish this package to npm",
+   "verdict": "announce",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm publish --tag beta",
+   "words": "publish this package to npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag add my-pkg@1.2.0 beta",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "npm.registry"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "npm.unpublish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag list my-pkg",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm login",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn npm logout",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn npm info react",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm audit",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm whoami",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm frobnicate",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.npm-verb"
+   ]
+  },
+  {
+   "cmd": "yarn npm",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.npm-verb"
+   ]
+  },
+  {
+   "cmd": "yarn npm \"$sub\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "yarn workspace web npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "words": "publish this package to npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach --all --topological --jobs 4 npm publish --tolerate-republish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A run build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces foreach --include 'pkg-*' run deploy",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces run release",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces run test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces focus web",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces list",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn workspaces info",
+   "verdict": "run"
   }
  ]
 }

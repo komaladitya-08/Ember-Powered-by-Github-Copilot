@@ -2029,6 +2029,46 @@
   {
    "cmd": "[ -n \"$name\" ] && echo set",
    "verdict": "run"
+  },
+  {
+   "cmd": "yarn npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
+  },
+  {
+   "cmd": "yarn npm tag remove my-pkg beta",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "npm.unpublish"
+   ]
+  },
+  {
+   "cmd": "yarn npm login",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.npm"
+   ]
+  },
+  {
+   "cmd": "yarn workspaces foreach -A npm publish",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "yarn.publish"
+   ]
   }
  ]
 }

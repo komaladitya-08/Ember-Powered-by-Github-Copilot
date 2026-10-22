@@ -3196,6 +3196,72 @@ function languageInstall(h: H, specs: Arg[], widening: string[] = []): void {
   h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code).", { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
 }
 
+/** A package publish (`npm publish`, `yarn npm publish`): its tag, access and registry say how broad it is (§3.7). */
+function publishPackage(h: H, rest: Arg[], widening: string[], program: string): void {
+  const p = parseOpts(rest, { longValue: ["tag", "access", "registry", "otp", "provenance-file"] });
+  const w = [...widening];
+  for (const t of values(p, "tag")) w.push(`--tag=${t ?? ""}`);
+  for (const t of values(p, "access")) w.push(`--access=${t ?? ""}`);
+  if (values(p, "registry").length) w.push("--registry");
+  const target = p.operands[0];
+  h.e.add("publish", `${h.key}.publish`, `Publishes ${target?.v ?? "this package"} to the registry.`, { objects: [{ kind: "package", text: target?.v ?? "", abs: null }], widening: w, program });
+}
+
+/**
+ * `yarn npm <command>`: how Yarn 2 and later reach the npm registry (publish, tags, login). Its own commands are
+ * judged like npm's; one Ember doesn't know asks.
+ */
+function yarnNpm(h: H, rest: Arg[], widening: string[]): void {
+  const at = rest.findIndex(a => !isOption(a));
+  const sub = at < 0 ? undefined : rest[at].v;
+  const after = at < 0 ? [] : rest.slice(at + 1);
+  const what = after.find(a => !isOption(a))?.v;
+  switch (sub) {
+    case "publish": publishPackage(h, after, widening, "yarn npm publish"); return;
+    case "tag":
+      if (what === "add") { h.e.add("publish", "npm.registry", "Changes a package on the registry.", { program: "yarn npm tag add" }); return; }
+      if (what === "remove") { h.e.add("remote-delete", "npm.unpublish", "Removes a package's tag or owner from the registry.", { program: "yarn npm tag remove" }); return; }
+      if (what === "list") return;
+      break;
+    case "login": case "logout": h.e.add("secret", "secret.npm", SAYS.secrets); return;
+    case "info": case "audit": case "whoami": return;
+    default: break;
+  }
+  h.e.unclear("unclear.npm-verb", "Ember can't tell which yarn npm command this runs.");
+}
+
+/** Options of `yarn workspaces foreach` that take a value. */
+const FOREACH_VALUE = new Set(["--from", "-j", "--jobs", "--include", "--exclude"]);
+
+/**
+ * `yarn workspaces foreach [options] <command>` runs a yarn command in many workspaces (broader than one, so no
+ * request covers it); Yarn 1's `yarn workspaces run <script>` runs a script in each; `focus` installs. False: an
+ * ordinary workspaces command (list, info).
+ */
+function yarnWorkspaces(h: H, rest: Arg[]): boolean {
+  const sub = rest[0]?.v;
+  if (sub === undefined || (sub !== null && !["foreach", "run", "focus"].includes(sub))) return false;
+  if (sub === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return true; }
+  if (sub === "focus") { languageInstall(h, []); return true; }
+  h.e.markGlobalOptions();
+  let k = 1;
+  for (; sub === "foreach" && k < rest.length; k++) {
+    const v = rest[k].v;
+    if (v === null || !v.startsWith("-")) break;
+    if (FOREACH_VALUE.has(v)) k++;
+  }
+  const command = rest.slice(k);
+  if (command.length === 0) return true;
+  if (sub === "run") {
+    const name = command[0].v;
+    if (name === null) h.e.unclear("unclear.script", "It runs a script Ember can't name.");
+    else nameCheck(h, name);
+    return true;
+  }
+  NATIVE.yarn({ ...h, args: command });
+  return true;
+}
+
 reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const g = globals(h, h.key === "bun" || h.key === "corepack" ? "npm" : h.key);
   if (h.key !== "bun" && h.key !== "corepack") checkGlobals(h, h.key, g);
@@ -3213,16 +3279,8 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     return;
   }
   switch (verb) {
-    case "publish": {
-      const p = parseOpts(rest, { longValue: ["tag", "access", "registry", "otp", "provenance-file"] });
-      const w = [...widening];
-      for (const t of values(p, "tag")) w.push(`--tag=${t ?? ""}`);
-      for (const t of values(p, "access")) w.push(`--access=${t ?? ""}`);
-      if (values(p, "registry").length) w.push("--registry");
-      const target = p.operands[0];
-      h.e.add("publish", `${h.key}.publish`, `Publishes ${target?.v ?? "this package"} to the registry.`, { objects: [{ kind: "package", text: target?.v ?? "", abs: null }], widening: w, program: `${h.key} publish` });
-      return;
-    }
+    case "publish": publishPackage(h, rest, widening, `${h.key} publish`); return;
+    case "npm": if (h.key === "yarn") { yarnNpm(h, rest, widening); return; } break;
     case "deprecate": case "access": h.e.add("publish", "npm.registry", "Changes a package on the registry."); return;
     case "dist-tag": case "dist-tags": case "owner": case "author": case "team": case "org":
       if (/^(rm|remove|del|delete)$/.test(specs[0]?.v ?? "")) h.e.add("remote-delete", "npm.unpublish", "Removes a package's tag or owner from the registry.");
@@ -3252,6 +3310,7 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       return;
     case "cache": if (/^(clean|clear|rm|delete|prune)$/.test(specs[0]?.v ?? "")) h.e.add("destroy", "npm.cache", "Deletes the package manager's cache."); return;
     case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: specs.slice(1) }; NATIVE.yarn(inner); } return;
+    case "workspaces": if (h.key === "yarn" && yarnWorkspaces(h, rest)) return; break;
     case "exec-file": return;
     default: break;
   }
