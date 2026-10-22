@@ -635,7 +635,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (s === "stalled") {
       c.state = "stalled";
       bubble(`stalled:${hostId}`, {
-        title: `${hostId} isn't answering`, thought: `Its running commands stop in ${link.welcome.graceSeconds} s unless the link comes back. Nothing new is sent meanwhile.`,
+        // Stalled at 5 s of silence; the grace counts from the last frame, as the command tabs' countdown does.
+        title: `${hostId} isn't answering`, thought: `Its running commands stop in ${Math.max(0, link.welcome.graceSeconds - 5)} s unless the link comes back. Nothing new is sent meanwhile.`,
         actions: [{ id: `conn:${hostId}:disconnect`, label: "Disconnect" }], mood: "attention",
       });
     } else if (s === "ready") {

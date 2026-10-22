@@ -326,6 +326,49 @@ describe("RemoteRunner: stopping and losing the link (§3.13, §5.1.11)", () => 
   });
 });
 
+describe("RemoteRunner: the stalled link's countdown on a running command's tab (§8.5)", () => {
+  it("says the link isn't answering and counts down to the grace each second, and clears once the link is back", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(0);
+    const link = fakeLink();
+    link.answer("cmd.run", () => ({ status: "started", channel: 20, interactive: true }));
+    const runner = createRemoteRunner(link, { target: TARGET, label: "build-01", os: "linux", log: recordingLog(), facts: LINUX_FACTS, now: () => Date.now() });
+    runner.start(specOf());
+    await settle();
+    const seen: (string | null)[] = [];
+    const off = runner.onStatus(t => seen.push(t));
+    expect(runner.status()).toBeNull();
+    // The link has been silent 5 s: with a grace of 20 s its commands stop in 15 s.
+    link.setState("stalled");
+    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 15 s unless the link comes back.");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 14 s unless the link comes back.");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(seen.at(-1)).toBe("build-01 isn't answering. This command stops in 11 s unless the link comes back.");
+    link.setState("ready");
+    expect(runner.status()).toBeNull();
+    expect(seen.at(-1)).toBeNull();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(seen.at(-1)).toBeNull();
+    off();
+    runner.dispose();
+  });
+
+  it("reaches the tab the flow follows: the command window's note for the run (followStatus)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(0);
+    const link = fakeLink();
+    const runner = createRemoteRunner(link, { target: TARGET, label: "build-01", os: "linux", log: recordingLog(), facts: LINUX_FACTS, now: () => Date.now() });
+    // What flow.ts's followStatus needs of a runner: status() and onStatus().
+    expect(typeof (runner as { onStatus?: unknown }).onStatus).toBe("function");
+    const notes: (string | null)[] = [];
+    runner.onStatus(t => notes.push(t));
+    link.setState("stalled");
+    link.setState("lost");
+    expect(notes).toEqual(["build-01 isn't answering. This command stops in 15 s unless the link comes back.", null]);
+  });
+});
+
 describe("RemoteRunner: facts, paths and git", () => {
   it("takes the remote's facts only when they are for its own OS with an absolute home", async () => {
     const { link, runner } = setup();

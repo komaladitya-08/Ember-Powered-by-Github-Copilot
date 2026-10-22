@@ -677,7 +677,10 @@ describe("SSH targets", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);
     l.move("stalled");
-    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "build-01 isn't answering", actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }] }) });
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 isn't answering", thought: "Its running commands stop in 15 s unless the link comes back. Nothing new is sent meanwhile.",
+      actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }],
+    }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
     l.move("ready");
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
