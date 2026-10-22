@@ -66,16 +66,13 @@ describe("the Linux terminal vocabulary", () => {
     expect(TERMINAL_CLASSES.linux).toEqual([]);
   });
 
-  it("leaves the Windows and macOS rows to their own package: they match nothing yet", async () => {
+  it("leaves the Windows and macOS rows to their own words (vocabulary-win32 and vocabulary-darwin test each row)", async () => {
     const real = await vi.importActual<typeof import("../../app/main/hands/terminals")>("../../app/main/hands/terminals");
-    for (const os of ["win32", "darwin"] as const) {
-      expect(real.TERMINALS[os].size).toBe(0);
-      expect(real.TERMINAL_CLASSES[os]).toEqual([]);
-      expect(real.WRAPPERS[os]).toEqual({});
-      for (const re of [real.SHELLS, real.INTERPRETERS, real.SHELL_MODULES, real.SHELL_APP, real.SHELL_APP_ID, real.SHELL_APP_NAME, real.REFUSED, real.LAUNCHERS, real.TERMINAL_NAME]) {
-        for (const word of ["", "cmd", "bash", "terminal", "Terminal", "code", "sudo", "python3"]) expect(re[os].test(word), `${os} ${re[os]} ${word}`).toBe(false);
-      }
-    }
+    expect(real.TERMINALS.win32.has("cmd")).toBe(true);
+    expect(real.TERMINALS.darwin.has("iterm2")).toBe(true);
+    expect(real.TERMINAL_CLASSES.win32).toContain("ConsoleWindowClass");
+    expect(real.TERMINAL_CLASSES.darwin).toEqual([]);
+    for (const word of ["cmd", "iterm2", "windowsterminal"]) expect(real.TERMINALS.linux.has(word), word).toBe(false);
   });
 });
 

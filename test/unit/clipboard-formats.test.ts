@@ -38,10 +38,12 @@ describe("the Linux clipboard formats", () => {
 });
 
 describe("the Windows and macOS clipboard formats", () => {
-  it("stay MIME-only until their package has verified what Electron lists there (a lost rich format is safe, a crash is not)", () => {
+  it("stay MIME-only until CI has verified what Electron lists there (a lost rich format is safe, a crash is not)", () => {
     for (const os of ["win32", "darwin"] as const) {
       for (const t of SAMPLES) expect(CLIPBOARD_FORMATS[os].savable(t), `${os} ${t}`).toBe(savableFormat(t));
-      expect(CLIPBOARD_FORMATS[os].ownTextMarkers).toEqual([]);
     }
+    // What Ember writes beside its own paste text, so clipboard history and clipboard managers skip it (design §9.11).
+    expect(CLIPBOARD_FORMATS.win32.ownTextMarkers).toEqual(["ExcludeClipboardContentFromMonitorProcessing"]);
+    expect(CLIPBOARD_FORMATS.darwin.ownTextMarkers).toEqual(["org.nspasteboard.TransientType"]);
   });
 });

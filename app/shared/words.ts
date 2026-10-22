@@ -49,7 +49,8 @@ export const PLATFORM_WORDS: Readonly<Record<OS, PlatformWords>> = {
     fileDialogPathHint: "in a file dialog type the file's full path in the File name box",
     noScreen: "the accessibility helper isn't running", reinstall: "Reinstall Ember.",
     shellUnchecked: "Windows didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment",
-    overviewOpen: "Task View or the window switcher is open (it shows every window), so Ember looks away until it's closed",
+    // The accessibility host reports Start and Search as overviews too (they can show any window's preview).
+    overviewOpen: "Task View, the window switcher, Start or Search is open (they can show any window), so Ember looks away until it's closed",
     keyringMissing: "Windows couldn't protect the sign-in on this computer",
     micIndicator: "Windows shows a microphone icon in the taskbar while Ember listens.", permissionsNote: "",
   },
@@ -62,6 +63,7 @@ export const PLATFORM_WORDS: Readonly<Record<OS, PlatformWords>> = {
     overviewOpen: "Mission Control or the app switcher is open (it shows every window), so Ember looks away until it's closed",
     keyringMissing: "Keychain access was denied",
     micIndicator: "macOS shows an orange dot in the menu bar while Ember listens.",
-    permissionsNote: "macOS will ask you to allow Accessibility and Screen Recording for Ember.",
+    // Input Monitoring too: keyboard borrowing needs it until CI shows key-state polling doesn't (design Q10).
+    permissionsNote: "macOS will ask you to allow Accessibility, Screen Recording and Input Monitoring for Ember.",
   },
 };

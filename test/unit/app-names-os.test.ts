@@ -16,8 +16,9 @@ describe("friendlyApp", () => {
   it("drops a Windows program's .exe and leaves Linux's names out there", () => {
     useAppNames("win32");
     expect(friendlyApp("notepad.exe")).toBe("Notepad");
-    expect(friendlyApp("NOTEPAD.EXE")).toBe("NOTEPAD");
-    expect(friendlyApp("msedge")).toBe("Msedge");
+    expect(friendlyApp("NOTEPAD.EXE")).toBe("Notepad");
+    expect(friendlyApp("TOOL.EXE")).toBe("TOOL");
+    expect(friendlyApp("msedge")).toBe("Microsoft Edge");
     expect(friendlyApp("nautilus")).toBe("Nautilus");
     expect(friendlyApp("Word")).toBe("Word");
   });
@@ -29,10 +30,10 @@ describe("friendlyApp", () => {
     expect(friendlyApp("notepad.exe")).toBe("notepad.exe");
   });
 
-  it("keeps today's Linux table, and leaves the Windows and macOS tables to their own package", () => {
+  it("keeps today's Linux table, and gives Windows and macOS their own (apps-names-platforms tests them)", () => {
     expect(Object.keys(APP_NAMES.linux)).toHaveLength(22);
     expect(APP_NAMES.linux["soffice.bin"]).toBe("LibreOffice");
-    expect(APP_NAMES.win32).toEqual({});
-    expect(APP_NAMES.darwin).toEqual({});
+    expect(APP_NAMES.win32.winword).toBe("Word");
+    expect(APP_NAMES.darwin["com.apple.finder"]).toBe("Finder");
   });
 });

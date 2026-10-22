@@ -2,11 +2,19 @@
  * Names people know apps by, for questions, grants and settings (apps report a program or desktop id). The
  * familiar names differ per OS (Linux desktop ids, Windows program names, macOS bundle ids), so main and the settings
  * window say once at start-up which OS's table applies (useAppNames); until then it is Linux's, today's table.
+ * Windows reports programs ("winword", "msedge"), so its table names the common ones as people say them; macOS mostly
+ * reports the localized names people already know, so its table only names bundle ids that read badly capitalised.
  */
 
 import type { OS } from "./shortcuts";
 
-/** Familiar names for apps that report a program or desktop id instead, per OS (the Windows and macOS rows are filled by their own package). */
+/**
+ * A name table without Object's own keys, so a program called "constructor" or "toString" is never looked up as one
+ * (the Linux table is a plain object literal, as it always was).
+ */
+const table = (names: Record<string, string>): Readonly<Record<string, string>> => Object.freeze(Object.assign(Object.create(null) as Record<string, string>, names));
+
+/** Familiar names for apps that report a program or desktop id instead, per OS. */
 export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> = {
   linux: {
     "gnome-control-center": "Settings",
@@ -32,8 +40,81 @@ export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> =
     thunderbird: "Thunderbird",
     mousepad: "Mousepad",
   },
-  win32: {},
-  darwin: {},
+  win32: table({
+    winword: "Word",
+    excel: "Excel",
+    powerpnt: "PowerPoint",
+    onenote: "OneNote",
+    msaccess: "Access",
+    outlook: "Outlook",
+    olk: "Outlook",
+    hxoutlook: "Mail",
+    msedge: "Microsoft Edge",
+    chrome: "Google Chrome",
+    firefox: "Firefox",
+    thunderbird: "Thunderbird",
+    explorer: "File Explorer",
+    notepad: "Notepad",
+    "notepad++": "Notepad++",
+    wordpad: "WordPad",
+    mspaint: "Paint",
+    systemsettings: "Settings",
+    calculatorapp: "Calculator",
+    calculator: "Calculator",
+    "microsoft.photos": "Photos",
+    snippingtool: "Snipping Tool",
+    screensketch: "Snipping Tool",
+    time: "Clock",
+    "winstore.app": "Microsoft Store",
+    windowsterminal: "Terminal",
+    cmd: "Command Prompt",
+    conhost: "Console",
+    powershell: "Windows PowerShell",
+    pwsh: "PowerShell",
+    powershell_ise: "Windows PowerShell ISE",
+    code: "Visual Studio Code",
+    devenv: "Visual Studio",
+    "ms-teams": "Teams",
+    teams: "Teams",
+    taskmgr: "Task Manager",
+    regedit: "Registry Editor",
+    control: "Control Panel",
+    soffice: "LibreOffice",
+    "soffice.bin": "LibreOffice",
+    acrord32: "Adobe Acrobat Reader",
+    acrobat: "Adobe Acrobat",
+    searchhost: "Search",
+    searchapp: "Search",
+    startmenuexperiencehost: "Start",
+    credentialuibroker: "Windows Security",
+    consent: "User Account Control",
+    sechealthui: "Windows Security",
+    // Windows' frame host for packaged apps: never worth naming, the app inside it is what the user sees.
+    applicationframehost: "",
+  }),
+  darwin: table({
+    "com.apple.systempreferences": "System Settings",
+    "com.apple.finder": "Finder",
+    "com.apple.textedit": "TextEdit",
+    "com.apple.mobilesms": "Messages",
+    "com.apple.ical": "Calendar",
+    "com.apple.addressbook": "Contacts",
+    "com.apple.facetime": "FaceTime",
+    "com.apple.appstore": "App Store",
+    "com.apple.activitymonitor": "Activity Monitor",
+    "com.apple.keychainaccess": "Keychain Access",
+    "com.apple.scripteditor2": "Script Editor",
+    "com.apple.iwork.pages": "Pages",
+    "com.apple.iwork.numbers": "Numbers",
+    "com.apple.iwork.keynote": "Keynote",
+    "com.microsoft.word": "Microsoft Word",
+    "com.microsoft.excel": "Microsoft Excel",
+    "com.microsoft.powerpoint": "Microsoft PowerPoint",
+    "com.microsoft.outlook": "Microsoft Outlook",
+    "com.microsoft.vscode": "Visual Studio Code",
+    "com.google.chrome": "Google Chrome",
+    "org.mozilla.firefox": "Firefox",
+  }),
 };
 
 let appOs: OS = "linux";
