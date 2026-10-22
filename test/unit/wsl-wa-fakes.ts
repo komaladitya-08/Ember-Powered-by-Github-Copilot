@@ -91,6 +91,22 @@ export function fakeSpawn(answer: (call: SpawnCall) => void): { spawn: WslSpawn;
   return { spawn, calls };
 }
 
+/**
+ * wsl.exe's options Ember's own code never passes (§4.2): another user (`-u root`), and anything that changes WSL's
+ * state (terminate, shutdown, unregister, import, export, set-default and the other management options).
+ */
+const FORBIDDEN = /^(-u|--user|-t|--terminate|--shutdown|--unregister|--import|--import-in-place|--export|-s|--set-default|--set-version|--set-default-version|--install|--update|--mount|--unmount|--manage|--uninstall)$/;
+
+/** wsl.exe options among these calls that Ember must never pass (only wsl.exe's own, before `--exec`). */
+export function forbiddenOptions(calls: readonly SpawnCall[]): string[] {
+  const out: string[] = [];
+  for (const c of calls) {
+    const own = c.wsl.includes("--exec") ? c.wsl.slice(0, c.wsl.indexOf("--exec")) : c.wsl;
+    for (const a of own) if (FORBIDDEN.test(a)) out.push(a);
+  }
+  return out;
+}
+
 /** Answers after the current call stack (never through timers, so fake timers don't hold it). */
 export function soon(fn: () => void): void {
   void Promise.resolve().then(fn);

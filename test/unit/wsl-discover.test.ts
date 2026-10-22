@@ -17,7 +17,7 @@ import { LXSS_KEY } from "../../app/main/wsl/lxss";
 import { decodeLines } from "../../app/main/wsl/decode";
 import { fallbackSecretTracker, FACTS_SCRIPT } from "../../app/main/wsl/runner";
 import type { WslFacts } from "../../app/main/wsl/types";
-import { answerWith, fakeLog, FakeRegistry, fakeSpawn, flush, utf16, type SpawnCall } from "./wsl-wa-fakes";
+import { answerWith, fakeLog, FakeRegistry, fakeSpawn, flush, forbiddenOptions, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
 const EXE = "C:\\Program Files\\WSL\\wsl.exe";
 const INBOX = "C:\\Windows\\System32\\wsl.exe";
@@ -254,6 +254,7 @@ describe("WslService.facts", () => {
       wslVersion: "2.3.26.0",
     });
     expect(inDistro(calls)).toHaveLength(0);
+    expect(forbiddenOptions(calls)).toEqual([]);
     expect(calls.some(c => c.wsl[1] === "--verbose")).toBe(false);
     expect(HIDDEN_DISTRO.test("docker-desktop-data") && HIDDEN_DISTRO.test("Rancher-Desktop")).toBe(true);
   });
@@ -354,6 +355,9 @@ describe("WslService running set", () => {
     const { wsl, calls } = pc({ running: [] });
     expect(await wsl.runningNow()).toEqual(new Set());
     expect(await wsl.runningNow()).toEqual(new Set());
+    // The first read is discovery's own (it lists the running set too); each later one reads it again.
+    expect(calls.filter(c => c.wsl[1] === "--running").length).toBe(2);
+    expect(await wsl.runningNow()).toEqual(new Set());
     expect(calls.filter(c => c.wsl[1] === "--running").length).toBe(3);
     expect(inDistro(calls)).toHaveLength(0);
   });
@@ -388,6 +392,22 @@ describe("WslService.bootIds", () => {
     const { wsl, calls } = pc({ running: [] });
     expect(await wsl.bootIds()).toEqual([]);
     expect(inDistro(calls)).toHaveLength(0);
+  });
+});
+
+describe("what Ember never asks wsl.exe for (§4.2)", () => {
+  it("never switches users or changes WSL's state, through a whole session", async () => {
+    const { wsl, calls } = pc({ running: ["Ubuntu"] });
+    await wsl.facts();
+    await wsl.runningNow();
+    await wsl.defaultUid("Ubuntu");
+    await wsl.bootIds();
+    const runner = wsl.runner("Ubuntu");
+    await runner.inspect(["/etc"], "/home/ana");
+    await runner.gitFacts("/home/ana");
+    await wsl.doctorRows();
+    expect(calls.length).toBeGreaterThan(5);
+    expect(forbiddenOptions(calls)).toEqual([]);
   });
 });
 

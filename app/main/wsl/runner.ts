@@ -468,6 +468,8 @@ const KEEP_HEAD = 64 * 1024, KEEP_ALL = 4 * 1024 * 1024;
 const HOLD_MAX = 256 * 1024;
 /** The launcher's start marker (POSIX_PRELUDE's `printf "\033]777;ember-start\007"`). */
 export const START_MARKER = Buffer.from("\x1b]777;ember-start\x07", "latin1");
+/** How long after the last sweep a stopped run whose job host is somehow still there ends anyway. */
+const UNKILLABLE_MS = 2_000;
 /** The job host's exit code when it couldn't make or join its job (run/job-host.ts's JOB_FAILED). */
 const JOB_FAILED = 125;
 /** The most typed text kept per run (lines the user typed, cut from the model's text: L2). */
@@ -745,8 +747,10 @@ class Run {
       h.errBytes += chunk.length;
       return;
     }
-    if (h.outBytes < HOLD_MAX) h.out.push(chunk);
+    // Only the latest HOLD_MAX bytes are held: the marker is found even after unusual output before it.
+    h.out.push(chunk);
     h.outBytes += chunk.length;
+    while (h.outBytes > HOLD_MAX && h.out.length > 1) h.outBytes -= h.out.shift()!.length;
     const out = Buffer.concat(h.out);
     if (out.indexOf(START_MARKER) < 0) return;
     this.started = true;
@@ -858,6 +862,12 @@ class Run {
           this.stragglerNames = names;
           if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId, count: names.length });
           resolve();
+          // A job host that outlives TerminateProcess can't hold the run open: it ends as stopped all the same.
+          this.timers.push(setTimeout(() => {
+            if (this.exited) return;
+            this.d.log.error("wsl.run_unkillable", { distro: this.d.distro, runId });
+            this.end({ ended: ENDED[why] });
+          }, UNKILLABLE_MS));
         });
       }, LADDER_MS.last));
     });

@@ -16,7 +16,7 @@ import {
   parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
-import { fakeLog, fakeSpawn, flush, answerWith, utf16, type SpawnCall } from "./wsl-wa-fakes";
+import { fakeLog, fakeSpawn, flush, forbiddenOptions, answerWith, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
 const EXE = "C:\\Program Files\\WSL\\wsl.exe";
 const JOB: JobHostRef = { execPath: "C:\\Program Files\\Ember\\Ember.exe", script: "C:\\Program Files\\Ember\\resources\\app\\job-host.cjs" };
@@ -332,6 +332,16 @@ describe("WSL runner: starting a command", () => {
     expect((await run.done).error).toBe("Ember couldn't put the command in its job object, so it didn't run it");
   });
 
+  it("finds the start marker even after a lot of output before it", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(Buffer.alloc(300 * 1024, 0x2e));
+    w.runs[0].child.out(`${MARKER}ok\n`);
+    w.runs[0].child.exit(0);
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0 });
+  });
+
   it("an exit code after the marker is the command's own", async () => {
     const w = distro();
     const run = w.runner.start(spec());
@@ -386,6 +396,7 @@ describe("WSL runner: starting a command", () => {
       expect(p.child.stdinText().endsWith("\nexit\n")).toBe(true);
     }
     for (const c of w.calls) expect([...c.args, ...Object.values(c.options.env)].join(" ")).not.toContain("SECRET-COMMAND-TEXT");
+    expect(forbiddenOptions(w.calls)).toEqual([]);
     expect(w.sweeps[0].signal).toBe("0"); // a natural end only looks for what outlived the run
     expect(w.sweeps[0].call.child.stdinText()).toBe(`${SWEEP_SCRIPT}\nexit\n`);
   });
@@ -491,6 +502,20 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(child.killed).toBe(true);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await run.done).toMatchObject({ ended: "stopped-task" });
+  });
+
+  it("ends a stopped run even if its job host somehow outlives TerminateProcess", async () => {
+    const { w, run, child } = await started();
+    child.kill = () => true; // reports success, ends nothing
+    run.stop("user");
+    await vi.advanceTimersByTimeAsync(LADDER_MS.last + 1_999);
+    let ended = false;
+    void run.done.then(() => { ended = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ended).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await run.done).toMatchObject({ ended: "stopped-user", code: null });
+    expect(w.log.lines.some(l => l.msg === "wsl.run_unkillable")).toBe(true);
   });
 
   it("pipes: the first step is the in-distro sweep with INT, sent at once", async () => {

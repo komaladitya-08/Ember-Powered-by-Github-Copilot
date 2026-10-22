@@ -162,7 +162,12 @@ export function createWslWith(o: WslOptions, deps: WslDeps): WslServiceImpl | nu
 
   const runningNow = async (): Promise<Set<string>> => {
     if (disposed) return new Set();
-    const f = cache?.facts ?? (await facts());
+    if (!cache) {
+      // Discovery reads the running set itself: read now, so it isn't read twice.
+      const f = await facts();
+      return new Set(f.distros.filter(d => d.running).map(d => d.name));
+    }
+    const f = cache.facts;
     if (!runningInflight) {
       runningInflight = readRunning(exec, f.distros.map(d => d.name))
         .then(set => {
