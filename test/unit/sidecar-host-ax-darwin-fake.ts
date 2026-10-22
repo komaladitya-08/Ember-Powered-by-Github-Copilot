@@ -46,8 +46,12 @@ export interface ElSpec {
   visibleRows?: number[];
   /** A list's children that show (AXVisibleChildren). */
   visibleChildren?: number[];
-  /** A window's CGWindowID (_AXUIElementGetWindow); 0: the call fails. */
+  /** A window's CGWindowID (its window-list entry, and what _AXUIElementGetWindow answers unless `noWindowId`). */
   windowId?: number;
+  /** _AXUIElementGetWindow fails for this window (the provider must match it by frame or title). */
+  noWindowId?: boolean;
+  /** The window list's kCGWindowName for it ("" without Screen Recording). */
+  cgTitle?: string;
   /** What a test calls it, to find it. */
   id?: string;
   /** CFHash as hex (to make two elements collide). */
@@ -411,7 +415,7 @@ export class FakeAx implements AxApi {
   windowId(win: AxRef): number {
     const e = this.get(win);
     this.trip("windowId", e);
-    return e.spec.windowId ?? 0;
+    return e.spec.noWindowId ? 0 : e.spec.windowId ?? 0;
   }
 
   hash(el: AxRef): string {
@@ -441,7 +445,7 @@ export class FakeAx implements AxApi {
       for (const w of this.appEls.get(a.pid)!.children) {
         const s = w.spec;
         if (s.minimized || !s.frame || !s.windowId) continue;
-        out.push({ id: s.windowId, pid: a.pid, owner: a.owner, title: "", bounds: { ...s.frame }, layer: 0, alpha: 1 });
+        out.push({ id: s.windowId, pid: a.pid, owner: a.owner, title: s.cgTitle ?? "", bounds: { ...s.frame }, layer: 0, alpha: 1 });
       }
     }
     return [...this.extraWindows, ...out];
