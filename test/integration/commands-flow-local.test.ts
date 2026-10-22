@@ -169,8 +169,8 @@ function makeWorld(): World {
   }) as World & { service: typeof service };
 }
 
-/** One run_command call in a task whose user said `words`. */
-async function run(command: string, words: string, more: Partial<RunCommandArgs> = {}) {
+/** One run_command call in a task whose user said `words` (a task of its own unless `state` is an earlier call's). */
+async function run(command: string, words: string, more: Partial<RunCommandArgs> = {}, state?: CommandFlowContext["state"]) {
   const world = w as World & { service: CommandFlowContext["service"] };
   const abort = new AbortController();
   const presenter = {
@@ -184,7 +184,7 @@ async function run(command: string, words: string, more: Partial<RunCommandArgs>
       taint: () => { tainted = true; }, readFrom: () => [],
     },
     service: world.service, confirmer: world.confirmer, presenter, audit: e => world.audit.push(e as Record<string, unknown>), log: quiet,
-    signal: abort.signal, isOver: () => abort.signal.aborted, state: { cwd: world.work, downloaded: new Set(), running: false },
+    signal: abort.signal, isOver: () => abort.signal.aborted, state: state ?? { cwd: world.work, downloaded: new Set(), running: false },
     size: () => ({ cols: 100, rows: 30 }), emberPids: () => [process.pid],
   };
   const t0 = Date.now();
@@ -371,6 +371,19 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     await expect(readScriptText(fifo, w.work, { os: platform })).resolves.toBeNull();
     expect(Date.now() - started).toBeLessThan(2000);
     fs.rmSync(fifo);
+  }, 20_000);
+
+  it("asks before running a script this task padded past 64 KiB in an earlier command, and nothing is deleted on deny", async () => {
+    const state: CommandFlowContext["state"] = { cwd: w.work, downloaded: new Set(), running: false };
+    const made = await run("printf '%70000s\\n' ' ' > pad.sh && echo 'rm -rf build' >> pad.sh", "", {}, state);
+    expect(made.result.resultType).toBe("success");
+    expect(fs.statSync(path.join(w.work, "pad.sh")).size).toBeGreaterThan(65_536);
+    w.verdicts = () => "deny";
+    const { result } = await run("sh pad.sh", "", {}, state);
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContain("It runs pad.sh, which this task wrote or downloaded, and Ember can't read all of it first.");
+    expect(result).toMatchObject({ resultType: "denied" });
+    expect(fs.existsSync(path.join(w.work, "build", "out.o"))).toBe(true);
   }, 20_000);
 
   it("runs an ordinary `sh ok.sh` without asking", async () => {
