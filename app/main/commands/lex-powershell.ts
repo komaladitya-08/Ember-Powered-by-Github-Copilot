@@ -436,6 +436,8 @@ class Parser {
       if (c === "`") {
         const n = this.peek(1);
         if (n === "") { lit("`", false); this.i++; continue; }
+        // A backtick before a line break continues the line: it ends the word, like a space.
+        if (n === "\n" || (n === "\r" && this.peek(2) === "\n")) break;
         if (/[0abefnrtvu]/.test(n)) this.note("backtick-escape", "It uses a backtick escape Ember doesn't decode.");
         lit(n, true);
         quoted = true;

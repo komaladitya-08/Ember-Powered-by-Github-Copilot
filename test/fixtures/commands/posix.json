@@ -9400,6 +9400,31 @@
    "classes": [
     "unclear"
    ]
+  },
+  {
+   "cmd": "cd src; cat a.ts",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.folder"
+   ]
+  },
+  {
+   "cmd": "cd /nonexist; rm -rf *",
+   "verdict": "ask",
+   "classes": [
+    "destroy",
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "cd ~/.ssh; cat id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
   }
  ]
 }

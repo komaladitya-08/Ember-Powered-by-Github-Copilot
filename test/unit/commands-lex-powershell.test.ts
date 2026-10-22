@@ -42,6 +42,8 @@ describe("lexPowerShell: commands, values and statements", () => {
     ["$env:X = 'y'", "$env:X= expr('y')"],
     ["a; b\nc", "[a] ; [b] ; [c]"],
     ["Write-Host `\n hi", "[Write-Host hi]"],
+    ["Remove-Item`\n x", "[Remove-Item x]"],
+    ["Remove-Item`\r\n x", "[Remove-Item x]"],
     ["# comment\nls", "[ls]"],
     ["<# block #> ls", "[ls]"],
     ["Start-Process x &", "[Start-Process x] &"],

@@ -270,7 +270,13 @@ class Classifier {
       this.judge(posix.join("/home/~", text.slice(1) || "/"), use, sc.path, text, sc);
       return { kind: "other", text, abs: null };
     }
-    if (!isAbsolute(text, sc.path.flavour) && !text.startsWith("~") && !sc.cwd) return { kind: "other", text, abs: null };
+    if (!isAbsolute(text, sc.path.flavour) && !text.startsWith("~") && !sc.cwd) {
+      // The folder is unknown (after a cd that may have failed, or a distro's folder seen from Windows): the name is
+      // judged by itself (a secret or history file name, a git hook), and a command that uses it asks.
+      this.judge(sc.path.flavour === "win32" ? `?:\\?\\${text}` : posix.join("/?", text), use, sc.path, text, sc);
+      if (!sc.foreign && use !== "list" && use !== "cd") this.unclear("unclear.folder", "Ember can't tell which folder this command runs in.");
+      return { kind: "other", text, abs: null };
+    }
     if (a.glob) return this.useGlob(a, use, sc);
     const abs = resolveTargetPath(text, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     if (!sc.foreign) this.addProbe(abs);
@@ -991,6 +997,9 @@ class Engine extends Classifier {
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
+    // A program name with a line break, a tab or another control character in it names no program Ember can look up.
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is looked for here
+    if (/[\x00-\x1f\x7f]/.test(nameArg.v)) this.unclear("unclear.program", "It runs a program Ember can't name.");
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
@@ -1033,6 +1042,11 @@ class Engine extends Classifier {
       return;
     }
     if (sc.family === "powershell") {
+      // PowerShell's function:, alias: and variable: drives: writing one changes what a name runs.
+      if (/^(new|set|add|rename|copy|move|remove|clear)-/.test(key) && args.some(a => /^(function|alias|variable):/i.test(a.v ?? ""))) {
+        this.unclear("unclear.alias", "It changes what a name runs.");
+      }
+      if (/^(new|set|add|rename|copy|move|remove|clear)-/.test(key) && args.some(a => /^env:/i.test(a.v ?? ""))) this.envChanged = true;
       const ps = CMDLETS[key];
       if (ps) { ps(h); return; }
       if (/^[a-z]+-[a-z0-9]+$/.test(key) && !NATIVE[key]) { unknownCmdlet(h); return; }

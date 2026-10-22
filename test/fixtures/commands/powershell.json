@@ -5026,6 +5026,86 @@
    "missing": [
     "a.ps1"
    ]
+  },
+  {
+   "cmd": "Remove-Item`\n x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "Remove-Item`\r\n x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "New-Item -Path function: -Name ls -Value { rm x }",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "New-Item -Path alias: -Name ls -Value Remove-Item",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.alias"
+   ]
+  },
+  {
+   "cmd": "Set-Location C:\\Users\\ana\\.ssh; Get-Content id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
+  },
+  {
+   "cmd": "cd ~\\.ssh; cat id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
+  },
+  {
+   "cmd": "Set-Location src; Get-Content a.ts",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.folder"
+   ]
+  },
+  {
+   "cmd": "Set-Location build; Remove-Item * -Recurse",
+   "verdict": "ask",
+   "classes": [
+    "destroy",
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "Set-Location src; npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wsl cat .env",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
   }
  ]
 }
