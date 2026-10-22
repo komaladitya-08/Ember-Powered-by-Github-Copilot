@@ -1,6 +1,375 @@
 /**
- * The command window's page ("Ember commands", §8.5; owned by package UI). STUB from Step 0a: a placeholder that
- * shows the empty state and listens to nothing.
+ * The command window's page ("Ember commands", §3.9-§3.10, §8.5): the card on top (a question or an announcement)
+ * and a tab per run with its header, its command, its live terminal, its typing hint, its status line and Stop.
+ *
+ * The card's DOM is built only from CommandCard fields, as text nodes (never HTML), and rebuilt only when the question
+ * changes; whether its whole command is in view is measured from the card's own element. Output bytes go only into
+ * their run's xterm element (model.ts's reducer is the only path, and renderer-command.test.ts pins that no output
+ * can touch the card). Allow stays disabled until the card's arm time has passed and its whole command has been in view.
  */
 
-export {};
+import type { CommandCard } from "../../main/commands/types";
+import {
+  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
+  cardLines, countdownText, headerLine, tabLabel,
+} from "./copy";
+import { INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView, type WindowView } from "./model";
+import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
+import { createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
+
+declare global { interface Window { emberCommands: CommandsApi } }
+
+const api = window.emberCommands;
+const $ = (id: string) => document.getElementById(id)!;
+let model = INITIAL_MODEL;
+
+const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+
+/** A string with every character made visible, as text nodes and spans (never HTML); the legend lines it needs. */
+function visibleNodes(s: string): { nodes: Node[]; legend: string[] } {
+  const segs = visibleText(s);
+  const nodes: Node[] = [];
+  for (const seg of segs) {
+    if (seg.kind === "plain") { nodes.push(document.createTextNode(seg.text)); continue; }
+    nodes.push(el("span", `vt vt-${seg.kind}`, segmentLabel(seg)));
+    // A newline shows as its token and still ends the line, so a script reads as lines.
+    if (breaksLine(seg)) nodes.push(document.createTextNode("\n"));
+  }
+  const l = legendFor(segs);
+  return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : [])] };
+}
+
+/** A command block: the whole command, wrapping, scrolling when long (never cut). */
+function commandBlock(command: string, label: string): { block: HTMLPreElement; legend: string[] } {
+  const block = el("pre", "command");
+  block.tabIndex = 0;
+  block.setAttribute("aria-label", label);
+  const v = visibleNodes(command);
+  block.append(...v.nodes);
+  return { block, legend: v.legend };
+}
+
+// ───── The question card ─────
+interface AskEls {
+  key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
+  hint: HTMLElement; keys: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
+}
+let ask: AskEls | null = null;
+let armTimer: ReturnType<typeof setTimeout> | null = null;
+
+function buildAsk(card: CommandCard & { n: number }): AskEls {
+  const root = el("section", "card ask");
+  root.setAttribute("aria-labelledby", "ask-h");
+  root.append(el("p", "where", headerLine(card)));
+  const h = el("h1", "heading", ASK_HEADING);
+  h.id = "ask-h";
+  root.append(h);
+  const { block, legend } = commandBlock(card.command, "The command, every character shown");
+  root.append(block);
+  for (const line of legend) root.append(el("p", "legend", line));
+  const { lines, why } = cardLines(card);
+  if (lines.length) {
+    const ul = el("ul", "lines");
+    for (const line of lines) {
+      const li = el("li");
+      li.append(...visibleNodes(line).nodes);
+      ul.append(li);
+    }
+    root.append(ul);
+  }
+  if (why) {
+    const p = el("p", "why");
+    p.append(...visibleNodes(why).nodes);
+    root.append(p);
+  }
+  const hint = el("p", "hint");
+  hint.setAttribute("aria-live", "polite");
+  hint.hidden = true;
+  const row = el("div", "buttons");
+  const allow = el("button", "btn", ALLOW_LABEL);
+  allow.type = "button";
+  allow.disabled = true;
+  const deny = el("button", "btn quiet", NOT_NOW_LABEL);
+  deny.type = "button";
+  row.append(allow, deny);
+  const keys = el("p", "keys");
+  keys.hidden = true;
+  root.append(hint, row, keys);
+  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, card, sent: false };
+  allow.addEventListener("click", e => {
+    if (!e.isTrusted || ask !== els || els.sent) return;
+    const a = allowAnswer(els.card, model.card, Date.now());
+    if (!a) return;
+    els.sent = true;
+    allow.disabled = deny.disabled = true;
+    api.answer(a);
+  });
+  deny.addEventListener("click", e => {
+    if (!e.isTrusted || ask !== els || els.sent) return;
+    els.sent = true;
+    allow.disabled = deny.disabled = true;
+    api.answer({ n: card.n, answer: "deny", sha256: card.sha256 });
+  });
+  block.addEventListener("scroll", () => measureCard(), { passive: true });
+  cardResize.observe(block);
+  return els;
+}
+
+/** The card's own element, measured: nothing but it decides "seen" and "in view". */
+function measureCard(): void {
+  if (!ask) return;
+  const b = ask.block;
+  const r = b.getBoundingClientRect();
+  const metrics: CardMetrics = {
+    scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
+    top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
+    visible: document.visibilityState === "visible",
+  };
+  dispatch({ type: "card-metrics", n: ask.card.n, metrics });
+  paintAllow();
+}
+const cardResize = new ResizeObserver(() => measureCard());
+
+/** Allow, its hint and the key hint, from the model only. */
+function paintAllow(): void {
+  if (!ask) return;
+  const now = Date.now();
+  const on = allowEnabled(model.card, now);
+  if (!ask.sent) ask.allow.disabled = !on;
+  const hint = allowHint(model.card) ?? "";
+  if (ask.hint.textContent !== hint) ask.hint.textContent = hint;
+  ask.hint.hidden = !hint;
+  // The approve keys work only while the whole command is in view (R7): their hint shows only then.
+  const keys = on && model.card?.inView && model.view?.keyHint ? model.view.keyHint : "";
+  if (ask.keys.textContent !== keys) ask.keys.textContent = keys;
+  ask.keys.hidden = !keys;
+  if (armTimer) clearTimeout(armTimer);
+  armTimer = null;
+  if (model.card && !on) {
+    const wait = model.card.shownAt + model.card.armMs - now;
+    if (wait > 0) armTimer = setTimeout(paintAllow, wait + 5);
+  }
+}
+
+// ───── The announcement ─────
+interface AnnounceEls { key: string; root: HTMLElement; count: HTMLElement; endsAt: number }
+let announce: AnnounceEls | null = null;
+let countTimer: ReturnType<typeof setInterval> | null = null;
+
+function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
+  const root = el("section", "card announce");
+  root.setAttribute("aria-labelledby", "announce-h");
+  root.append(el("p", "where", headerLine(card)));
+  const h = el("h1", "heading", ANNOUNCE_HEADING);
+  h.id = "announce-h";
+  root.append(h);
+  const { block, legend } = commandBlock(card.command, "The command, every character shown");
+  root.append(block);
+  for (const line of legend) root.append(el("p", "legend", line));
+  const count = el("p", "count", countdownText(endsAt, Date.now()));
+  count.setAttribute("role", "timer");
+  const row = el("div", "buttons");
+  const stop = el("button", "btn quiet", STOP_LABEL);
+  stop.type = "button";
+  stop.addEventListener("click", e => {
+    if (!e.isTrusted) return;
+    stop.disabled = true;
+    api.stop(card.runId);
+  });
+  row.append(stop);
+  root.append(count, row);
+  return { key: `${card.runId}:${endsAt}`, root, count, endsAt };
+}
+
+function tickCountdown(): void {
+  if (!announce) return;
+  const t = countdownText(announce.endsAt, Date.now());
+  if (announce.count.textContent !== t) announce.count.textContent = t;
+}
+
+// ───── Tabs ─────
+interface TabEls {
+  seq: number; runId: string; command: string; tab: HTMLButtonElement; panel: HTMLElement; status: HTMLElement; typing: HTMLElement;
+  action: HTMLButtonElement; host: HTMLElement; term: RunTerminal; ended: boolean;
+}
+const tabEls = new Map<number, TabEls>();
+const OUTCOME_WORD: Record<TabView["outcome"], string> = { running: "Running: ", done: "Finished: ", failed: "Ended: ", stopped: "Stopped: " };
+
+function buildTab(t: TabView): TabEls {
+  const tab = el("button", "tab");
+  tab.type = "button";
+  tab.id = `tab-${t.seq}`;
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-controls", `panel-${t.seq}`);
+  tab.append(el("span", "sr"), el("span", "tab-label", visibleText(tabLabel(t.command)).map(segmentLabel).join("")));
+  tab.title = t.title;
+  tab.addEventListener("click", () => select(t.runId));
+  tab.addEventListener("keydown", tabKeys);
+
+  const panel = el("section", "panel");
+  panel.id = `panel-${t.seq}`;
+  panel.setAttribute("role", "tabpanel");
+  panel.setAttribute("aria-labelledby", tab.id);
+  panel.hidden = true;
+  const { block } = commandBlock(t.command, "The command");
+  block.classList.add("small");
+  const host = el("div", "term");
+  host.setAttribute("aria-roledescription", "terminal");
+  host.setAttribute("aria-label", "What the command shows");
+  const typing = el("p", "typing", t.typing);
+  const foot = el("div", "foot");
+  const status = el("p", "status", t.status);
+  status.setAttribute("role", "status");
+  const action = el("button", "btn quiet", t.ended ? CLOSE_LABEL : STOP_LABEL);
+  action.type = "button";
+  action.addEventListener("click", e => {
+    if (!e.isTrusted) return;
+    const cur = tabEls.get(t.seq);
+    if (!cur) return;
+    if (cur.ended) api.close(cur.runId);
+    else { action.disabled = true; api.stop(cur.runId); }
+  });
+  foot.append(status, action);
+  panel.append(el("p", "where", t.header), block, host, typing, foot);
+  const term = createRunTerminal({ cols: t.cols, rows: t.rows, interactive: t.interactive, onInput: data => api.input(t.runId, data) });
+  return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
+}
+
+/** The tab list's keys: ←/→ move between tabs, Home/End to the ends (WAI-ARIA tabs). */
+function tabKeys(e: KeyboardEvent): void {
+  const order = model.view?.tabs ?? [];
+  const at = order.findIndex(t => t.runId === model.selected);
+  if (at < 0) return;
+  const to = e.key === "ArrowRight" ? Math.min(order.length - 1, at + 1) : e.key === "ArrowLeft" ? Math.max(0, at - 1)
+    : e.key === "Home" ? 0 : e.key === "End" ? order.length - 1 : -1;
+  if (to < 0) return;
+  e.preventDefault();
+  select(order[to].runId);
+  tabEls.get(order[to].seq)?.tab.focus();
+}
+
+function select(runId: string): void {
+  dispatch({ type: "select", runId });
+  render();
+}
+
+// ───── Rendering from the model ─────
+function render(): void {
+  const v = model.view;
+  // The card area: the announcement (counting down) above the question.
+  const ann = v?.announce ?? null;
+  const annKey = ann ? `${ann.card.runId}:${ann.endsAt}` : "";
+  if ((announce?.key ?? "") !== annKey) {
+    announce?.root.remove();
+    announce = ann ? buildAnnounce(ann.card, ann.endsAt) : null;
+    if (announce) $("cards").prepend(announce.root);
+  }
+  if (announce && !countTimer) countTimer = setInterval(tickCountdown, 250);
+  if (!announce && countTimer) { clearInterval(countTimer); countTimer = null; }
+
+  const card = v?.card ?? null;
+  const askKey = card ? `${card.n}:${card.sha256}` : "";
+  if ((ask?.key ?? "") !== askKey) {
+    if (ask) { cardResize.unobserve(ask.block); ask.root.remove(); }
+    ask = card ? buildAsk(card) : null;
+    if (ask) {
+      $("cards").append(ask.root);
+      requestAnimationFrame(measureCard);
+    }
+  }
+  if (ask) paintAllow();
+  $("cards").hidden = !announce && !ask;
+
+  // The tabs, newest first.
+  const tabs = v?.tabs ?? [];
+  const seqs = new Set(tabs.map(t => t.seq));
+  for (const [seq, t] of tabEls) {
+    if (seqs.has(seq)) continue;
+    t.term.dispose();
+    t.tab.remove();
+    t.panel.remove();
+    tabEls.delete(seq);
+  }
+  const list = $("tabs");
+  tabs.forEach((t, i) => {
+    let e = tabEls.get(t.seq);
+    if (!e) {
+      e = buildTab(t);
+      tabEls.set(t.seq, e);
+    }
+    if (list.children[i] !== e.tab) list.insertBefore(e.tab, list.children[i] ?? null);
+    if (!e.panel.isConnected) $("panels").append(e.panel);
+    const on = t.runId === model.selected;
+    e.tab.setAttribute("aria-selected", String(on));
+    e.tab.tabIndex = on ? 0 : -1;
+    e.tab.dataset.status = t.outcome === "running" ? "running" : t.outcome;
+    const sr = e.tab.querySelector(".sr")!;
+    if (sr.textContent !== OUTCOME_WORD[t.outcome]) sr.textContent = OUTCOME_WORD[t.outcome];
+    if (e.status.textContent !== t.status) e.status.textContent = t.status;
+    if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
+    e.typing.hidden = !t.typing;
+    e.term.setInteractive(t.interactive);
+    if (e.ended !== t.ended) {
+      e.ended = t.ended;
+      e.action.textContent = t.ended ? CLOSE_LABEL : STOP_LABEL;
+      e.action.disabled = false;
+    }
+    e.action.setAttribute("aria-label", `${t.ended ? CLOSE_LABEL : STOP_LABEL}: ${tabLabel(t.command)}`);
+    const wasHidden = e.panel.hidden;
+    e.panel.hidden = !on;
+    if (on) {
+      e.term.open(e.host);
+      if (wasHidden) e.term.refresh();
+    }
+  });
+  list.hidden = tabs.length === 0;
+  $("empty").hidden = tabs.length > 0 || !!announce || !!ask;
+  reportSize();
+}
+
+/** Tells main what terminal size fits the window now, so new runs start at it. */
+let sizeSent = "";
+function reportSize(): void {
+  const host = [...tabEls.values()].find(t => !t.panel.hidden)?.host ?? $("measure");
+  const fit = fitTerminal(host);
+  if (!fit) return;
+  const key = `${fit.cols}x${fit.rows}`;
+  if (key === sizeSent) return;
+  sizeSent = key;
+  api.size(fit);
+}
+
+function apply(effects: Effect[]): void {
+  for (const e of effects) {
+    if (e.kind === "write") tabEls.get(e.seq)?.term.write(e.bytes);
+    else api.cardSeen(e.msg);
+  }
+}
+
+function dispatch(ev: PageEvent): void {
+  const r = reduce(model, ev);
+  model = r.model;
+  apply(r.effects);
+}
+
+function onState(view: WindowView): void {
+  dispatch({ type: "state", view, now: Date.now() });
+  render();
+}
+
+$("empty").textContent = EMPTY_TEXT;
+api.onState(onState);
+api.onOutput(msg => dispatch({ type: "output", msg }));
+window.addEventListener("resize", () => { measureCard(); reportSize(); });
+document.addEventListener("visibilitychange", () => measureCard());
+// Main may have sent the state before this page listened: take it whole, with each run's recent output.
+void api.pull().then(snap => {
+  if (!snap) return;
+  onState(snap.state);
+  for (const msg of snap.replay) dispatch({ type: "output", msg });
+});

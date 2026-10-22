@@ -50,6 +50,7 @@ interface Tab {
   card: CommandCard;
   run: RunningCommand;
   ended: boolean;
+  outcome: TabView["outcome"];
   status: string;
   note: string | null;
   size: { cols: number; rows: number };
@@ -167,7 +168,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     return {
       runId: t.card.runId, seq: t.seq, header: headerLine(t.card), command: t.card.command,
       status: t.note && !t.ended ? t.note : t.status, interactive, ended: t.ended, title: t.card.taskTitle,
-      typing: typingHint({ interactive, ended: t.ended }), cols: t.size.cols, rows: t.size.rows,
+      typing: typingHint({ interactive, ended: t.ended }), cols: t.size.cols, rows: t.size.rows, outcome: t.outcome,
     };
   }
 
@@ -407,7 +408,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       for (const old of tabs.filter(t => t.card.runId === c.runId)) dropTab(old);
       tabs = tabs.filter(t => t.card.runId !== c.runId);
       const t: Tab = {
-        seq: seqNext++, card: c, run, ended: false, status: RUNNING_STATUS, note: null, size: size ?? { ...DEFAULT_TERM_SIZE },
+        seq: seqNext++, card: c, run, ended: false, outcome: "running", status: RUNNING_STATUS, note: null, size: size ?? { ...DEFAULT_TERM_SIZE },
         kept: [], keptBytes: 0, start: 0, total: 0, pending: [], pendingAt: 0, pendingBytes: 0, flush: null, unsubscribe: () => undefined,
       };
       tabs.unshift(t);
@@ -423,6 +424,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
         if (t.ended || !tabs.includes(t)) return;
         flush(t);
         t.ended = true;
+        t.outcome = outcomeOf(exit);
         t.status = statusLine(exit ?? { code: null, signal: null, ended: "failed-to-start", ms: 0, error: "Ember lost track of it" }, { label: c.targetLabel, os: o.os });
         push();
       };
@@ -468,6 +470,14 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       if (w) safe("close", () => w.close());
     },
   };
+}
+
+/** A finished run's symbol: done (exit 0), stopped (by the user, its task or the kill switch), else failed. */
+export function outcomeOf(exit: RunExit | null): TabView["outcome"] {
+  if (!exit) return "failed";
+  if (exit.ended === "exit" && exit.code === 0) return "done";
+  if (exit.ended === "stopped-user" || exit.ended === "stopped-task" || exit.ended === "killswitch") return "stopped";
+  return "failed";
 }
 
 function concat(parts: readonly Uint8Array[], total: number): Uint8Array {

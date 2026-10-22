@@ -27,6 +27,8 @@ export interface TabView extends CommandTabView {
   /** The terminal's size for this run (fixed for the run). */
   cols: number;
   rows: number;
+  /** How it is going, for the tab's symbol (its words are the status line). */
+  outcome: "running" | "done" | "failed" | "stopped";
 }
 
 /** Everything the window draws, pushed whole on every change (the contract's state with richer tabs). */
