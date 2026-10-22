@@ -54,6 +54,9 @@ export interface ClassificationExtra extends Classification {
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
 const POLICY_KEY = /(^|\\)policies\\ember(\\|$)/i;
 
+/** A Windows path's drive ("C:"), when it has one. */
+const drive = (p: string | null | undefined): string | undefined => (p ? /^[A-Za-z]:/.exec(p)?.[0] : undefined);
+
 /** SendKeys as code (`[System.Windows.Forms.SendKeys]::SendWait(…)`, `$shell.SendKeys(…)`), not the word in a message. */
 const SENDKEYS = /sendkeys\s*\]|\.sendkeys\b/i;
 
@@ -852,6 +855,8 @@ class Engine extends Classifier {
       const known: Record<string, string | null | undefined> = {
         userprofile: win?.home ?? sc.home, temp: win?.temp, tmp: win?.temp, localappdata: win?.localAppData, appdata: win?.appData,
         systemroot: win?.systemRoot, windir: win?.systemRoot, cd: sc.cwd,
+        systemdrive: drive(win?.systemRoot), homedrive: drive(win?.home ?? sc.home), programdata: win ? `${drive(win.systemRoot)}\\ProgramData` : undefined,
+        programfiles: win ? `${drive(win.systemRoot)}\\Program Files` : undefined,
       };
       const val = known[n];
       if (val === undefined || val === null) unresolved = true;
@@ -872,12 +877,15 @@ class Engine extends Classifier {
     });
     // A leading @ only hides the echo.
     if (words[0]?.v?.startsWith("@")) words[0] = { ...words[0], v: words[0].v.slice(1) };
+    // A program word spelled with carets (`^d^e^l`) hides what it runs (§3.4.3).
+    const caret = c.words[0] !== undefined && c.words[0].raw.includes("^");
     if (words.length === 0) {
       this.newCommand("", [], sc, redirs, false, o.pipedFrom);
       this.redirects(redirs, sc);
       return;
     }
     this.simple({ words, redirs, stdin: o.stdinPipe ? "pipe" : c.redirs.some(r => r.op === "<") ? "file" : null, fetchBefore: this.pipe.fetch, background: false, pipedFrom: o.pipedFrom }, sc);
+    if (caret) this.unclear("unclear.cmd-caret", "It spells the program with ^ escapes.");
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -958,6 +966,10 @@ class Engine extends Classifier {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       scriptName(h, nameArg.v ?? "");
+    } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
+      // cmd looks in the current folder first, with each runnable extension when none is written.
+      const names = pn.ext ? [nameArg.v] : [nameArg.v, ...[".exe", ".com", ".bat", ".cmd"].map(e => nameArg.v + e)];
+      if (names.some(n => this.isDownloaded(lit(n), sc))) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     if (pn.interop) {
       this.windowsReach = true;
@@ -3429,6 +3441,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if ((verb === "start" || verb === "stop" || verb === "pause" || verb === "continue") && rest.length) { h.e.add("system", "service.change", "Starts, stops or changes a system service."); return; }
   if (/^(user|localgroup|group|accounts)$/.test(verb) && rest.length) { h.e.add("system", "system.users", "Changes users or groups."); if (rest.some(a => a.v === "*")) h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
+  if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
+  if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
   if (verb === "use" && rest.some(a => /\\\\/.test(a.v ?? "")) && rest.some(a => /^\/user:/i.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
@@ -3636,9 +3650,27 @@ reg(NATIVE, ["setenforce", "semanage", "auditctl", "aa-disable", "aa-complain", 
 reg(NATIVE, ["wmic"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
   if (a.includes("shadowcopy") && a.includes("delete")) { h.e.add("destroy", "system.backups", "Deletes backups and restore points."); return; }
+  // `wmic process where … delete` (or `call terminate`) stops processes: Ember's are refused.
+  if (a[0] === "process" && (a.includes("delete") || (a.includes("call") && a.includes("terminate")))) {
+    const where = h.args.map(x => x.v ?? "").join(" ");
+    const pid = /processid\s*=\s*'?(\d+)/i.exec(where)?.[1];
+    const name = /\bname\s*=\s*'?"?([^'"\s]+)/i.exec(where)?.[1];
+    if (pid && h.e.ctx.ember.pids.includes(Number(pid))) { h.e.refuseWith("ember.process", "safety"); return; }
+    if (name && (emberNamed(h, name) || emberNamed(h, name.replace(/\.exe$/i, "")))) { h.e.refuseWith("ember.process", "safety"); return; }
+    if (!pid && !name) { h.e.unclear("unclear.wmic", "Ember can't tell which programs this stops."); }
+    killPids(h, [pid ?? name ?? null]);
+    return;
+  }
   if (a.some(x => /^(call|delete|set|create)$/.test(x))) h.e.unclear("unclear.wmic", "Runs code Ember can't see.");
 });
-reg(NATIVE, ["mshta", "wscript", "cscript", "regsvr32", "regsvr", "installutil", "regasm", "regsvcs", "cmstp", "msdt", "pcalua", "scriptrunner", "syncappvpublishingserver", "odbcconf", "msxsl", "ieexec", "control", "presentationhost", "mavinject", "bash.exe-legacy"], h => {
+// mshta given a URL fetches an HTML application and runs it.
+reg(NATIVE, ["mshta"], h => {
+  if (h.args.some(a => a.v !== null && /^(https?|ftp):/i.test(a.v))) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
+  if (h.args.some(a => a.v !== null && /^(vbscript|javascript):/i.test(a.v) && SENDKEYS.test(a.v))) { h.e.refuseWith("ember.input", "input"); return; }
+  h.e.unclear("unclear.mshta", "Runs code Ember can't see.");
+  h.e.readArgs(h.args.filter(a => !(a.v ?? "").startsWith("/")), h.sc);
+});
+reg(NATIVE, ["wscript", "cscript", "regsvr32", "regsvr", "installutil", "regasm", "regsvcs", "cmstp", "msdt", "pcalua", "scriptrunner", "syncappvpublishingserver", "odbcconf", "msxsl", "ieexec", "control", "presentationhost", "mavinject"], h => {
   h.e.unclear(`unclear.${h.key}`, "Runs code Ember can't see.");
   h.e.readArgs(h.args.filter(a => !(a.v ?? "").startsWith("/")), h.sc);
 });
@@ -3832,6 +3864,8 @@ reg(NATIVE, ["cmd"], h => {
   const at = h.args.findIndex(a => a.v !== null && /^\/[ckr]$/i.test(a.v));
   if (at < 0) {
     if (h.args.some(a => /^\/[?]$/.test(a.v ?? ""))) return;
+    // cmd reading its commands from a pipe runs them (download-and-run after a fetch).
+    if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") { intoInterpreter(h); return; }
     h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
@@ -4317,8 +4351,15 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
   if (h.key === "pushd") { NATIVE.cd(h); return; }
   if (h.key === "popd") { h.e.cdTarget = null; return; }
   if (h.key === "sort" && sw.has("o")) { h.e.unclear("unclear.cmd-sort", "Ember can't tell where sort writes."); return; }
-  if (h.key === "more" && h.s.stdin === null && ops.length === 0) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
+  if (h.key === "more") { h.e.unclear("unclear.interactive", SAYS.interactive); h.e.readArgs(ops, h.sc); return; }
   if (h.key === "find" || h.key === "findstr") { h.e.readArgs(ops.slice(h.key === "find" ? 1 : 0), h.sc); return; }
+  // A listing reads no file (as ls and Get-ChildItem); one Ember can't name is unclear.
+  if (h.key === "dir" || h.key === "tree" || h.key === "attrib" || h.key === "where") {
+    for (const o of ops) if (o.v === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.key} lists.`);
+    if (h.key !== "where") objsOf(h, ops.filter(o => o.v !== null), "list");
+    h.e.listed.set(h.e.at, ops);
+    return;
+  }
   h.e.readArgs(ops, h.sc, { unresolvedUnclear: h.key === "type" });
 });
 reg(CMD_BUILTINS, ["cd", "chdir"], h => NATIVE.cd(h));
@@ -4355,7 +4396,14 @@ reg(CMD_BUILTINS, ["date", "time"], h => { if (!h.args.some(a => /^\/t$/i.test(a
 reg(CMD_BUILTINS, ["pause"], h => { h.e.unclear("unclear.interactive", SAYS.interactive); });
 reg(CMD_BUILTINS, ["call", "for", "if", "goto", "setlocal", "shift"], h => {
   h.e.unclear(`unclear.cmd-${h.key}`, SAYS.unclear);
-  if (h.key === "call" && h.args.length) h.e.unwrap(h, h.args, "call");
+  if (h.key === "call" && h.args.length) {
+    const script = h.args[0];
+    if (script.v !== null && !script.v.startsWith(":")) {
+      scriptName(h, script.v);
+      if (h.e.isDownloaded(script, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
+    h.e.unwrap(h, h.args, "call");
+  }
 });
 reg(CMD_BUILTINS, ["format"], h => { h.e.add("destroy", "disk.erase", "Erases or repartitions a disk."); });
 reg(CMD_BUILTINS, ["timeout"], () => undefined);

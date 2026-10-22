@@ -4283,7 +4283,10 @@
    "cmd": "wmic process where name='x' delete",
    "verdict": "ask",
    "classes": [
-    "unclear"
+    "system"
+   ],
+   "rules": [
+    "kill.process"
    ]
   },
   {

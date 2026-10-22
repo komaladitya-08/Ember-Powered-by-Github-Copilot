@@ -254,7 +254,7 @@ export const INTERACTIVE = new Set([
   "ncdu", "tig", "lazygit", "lazydocker", "k9s", "fzf", "dialog", "whiptail", "tmux", "screen", "byobu", "psql", "mysql", "mariadb", "sqlite3",
   "mongo", "mongosh", "redis-cli", "sqlplus", "bc", "dc", "telnet", "mosh", "gdb", "lldb", "pdb", "ipython", "bpython", "irb", "jshell",
   "ghci", "visudo", "vipw", "vigr", "crontab", "w3m", "lynx", "links", "elinks", "alpine", "mutt", "neomutt", "irssi", "weechat", "cmus",
-  "minicom", "picocom", "nmtui", "alsamixer", "cfdisk", "tty-clock", "sl", "aptitude", "debconf", "dpkg-reconfigure", "passwd",
+  "minicom", "picocom", "nmtui", "alsamixer", "cfdisk", "tty-clock", "sl", "aptitude", "debconf", "dpkg-reconfigure", "passwd", "choice",
 ]);
 
 /** GUI programs in command position (§3.4.7): unclear, "Open apps with open_app instead." */
