@@ -37,7 +37,7 @@ export interface RemoteRunningCommand extends RunningCommand {
 /** The remote's runner, with what the targets runtime does when the link's parts go. */
 export interface RemoteRunner extends CommandRunner {
   start(spec: RunSpec): RemoteRunningCommand;
-  /** Ends every run as "lost" and stops listening to the link. */
+  /** Tells the agent to stop every run still going, ends each as "lost" here, and stops listening to the link. */
   dispose(): void;
 }
 
@@ -296,6 +296,16 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.state === "starting") this.end(this.failed(error));
   }
 
+  /** The parts that own this run are going: the agent is told to stop it (if it can still hear), and it ends here as lost. */
+  abandon(): void {
+    if (this.state === "running" && !this.stopSent) {
+      const { link, o } = this.ctx;
+      this.stopSent = true;
+      askRemote(link, "cmd.stop", { runId: this.runId, why: "task" }, { label: o.label, whileStalled: true }).catch(() => undefined);
+    }
+    this.lose();
+  }
+
   /** The link went: the run is lost here (the remote ends it within its grace, L10). */
   lose(): void {
     this.end(this.base("lost"));
@@ -535,7 +545,7 @@ export function createRemoteRunner(link: RemoteLink, o: RemoteRunnerOptions): Re
     dispose(): void {
       offExit();
       offState();
-      for (const r of [...runs.values()]) r.lose();
+      for (const r of [...runs.values()]) r.abandon();
     },
   };
 }

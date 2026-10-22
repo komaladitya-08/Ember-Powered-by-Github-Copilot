@@ -107,20 +107,21 @@ export function remoteTargetParts(link: RemoteLink, o: {
     return asking;
   };
 
-  // The remote's own report of its desktop lowers access at once; a report of more is only taken from a request the
-  // PC makes itself (§7.2 item 7), so it is asked for.
+  // The remote's own report of its desktop lowers access at once; a report that would give Ember more (more access, or
+  // a screen no longer locked) is only taken from a request the PC makes itself (§7.2 item 7), so it is asked for.
   subscriptions.push(link.on("desktop.changed", d => {
     const checked = EV_SCHEMAS["desktop.changed"].safeParse(d);
     if (disposed || !checked.success) return;
     const next = checked.data;
-    if (lowerAccess(state.access, next.access)) {
+    const before = desktop().desktop;
+    const after = remoteDesktop({ welcome, state: next, combined: combinedAdmin(o.localAdmin(), remoteAdmin), label, login: o.login }).desktop;
+    if (lowerAccess(state.access, next.access) || lowerAccess(before, after)) {
       void refreshDesktop();
       return;
     }
-    const before = binding().desktop;
     state = next;
     // Steps given for a desktop that has gone can't go out any more.
-    if (binding().desktop === "none" && before !== "none") stamps.clear();
+    if (after === "none" && before !== "none") stamps.clear();
   }));
   // The remote's administrator changed its policy: gate 1 combines the new one (the PC's own still binds whatever it says).
   subscriptions.push(link.on("policy.changed", d => {

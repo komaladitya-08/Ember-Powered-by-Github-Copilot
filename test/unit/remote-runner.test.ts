@@ -235,6 +235,16 @@ describe("RemoteRunner: stopping and losing the link (§3.13, §5.1.11)", () => 
     expect(link.listening()).toBe(0);
   });
 
+  it("tells the agent to stop runs still going when its parts are dropped", async () => {
+    const { link, runner } = setup();
+    const spec = specOf();
+    const run = runner.start(spec);
+    await settle();
+    runner.dispose();
+    expect(link.of("cmd.stop")).toEqual([{ runId: spec.runId, why: "task" }]);
+    expect((await run.done).ended).toBe("lost");
+  });
+
   it("runs one run per id, and one run per channel", async () => {
     const { link, runner } = setup({ answer: () => ({ status: "started", channel: 5, interactive: true }) });
     const spec = specOf();

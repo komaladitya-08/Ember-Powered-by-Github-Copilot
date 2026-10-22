@@ -147,6 +147,19 @@ describe("remoteTargetParts (§5.5)", () => {
     expect((await parts.refreshDesktop()).desktop).toBe("screen");
   });
 
+  it("takes no unlocked screen from an event either: only from the PC's own request", async () => {
+    const { link, parts } = make();
+    const locked = { access: "screen" as const, session: { type: "x11" as const, locked: true, active: true }, notice: "shown" as const };
+    link.answer("desktop.state", () => locked);
+    link.emit("desktop.changed", locked);
+    expect(parts.binding().desktop).toBe("none");
+    link.emit("desktop.changed", { ...locked, session: { ...locked.session, locked: false } });
+    expect(parts.binding().desktop).toBe("none");
+    await settle();
+    expect(link.of("desktop.state")).toHaveLength(1);
+    expect(parts.binding().desktop).toBe("none");
+  });
+
   it("combines a changed remote policy into gate 1 and the binding", () => {
     const { link, parts } = make();
     expect(parts.policy.decide(click()).verdict).toBe("confirm");
