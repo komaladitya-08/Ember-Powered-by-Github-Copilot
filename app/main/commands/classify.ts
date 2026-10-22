@@ -590,9 +590,14 @@ export function unseenName(key: string, args: readonly Arg[]): boolean {
     case "unset":
     case "wait":
       return args.some(unres);
-    default:
-      // A declaration's operand: an assignment whose name is written out is fine whatever its value.
-      return DECLARERS.has(key) && args.some(a => unres(a) && !/^["']?[A-Za-z_][A-Za-z0-9_]*\+?=/.test(a.raw));
+    default: {
+      if (!DECLARERS.has(key)) return false;
+      // An array declaration reads a value as a compound assignment whose subscripts run (`declare -a a="$v"` with
+      // v='([$(…)]=1)'): any value Ember can't see counts. Otherwise an assignment whose name is written out is fine
+      // whatever its value.
+      const array = args.some(a => a.v !== null && /^-[A-Za-z]*[aA]/.test(a.v));
+      return args.some(a => unres(a) && (array || !/^["']?[A-Za-z_][A-Za-z0-9_]*\+?=/.test(a.raw)));
+    }
   }
 }
 

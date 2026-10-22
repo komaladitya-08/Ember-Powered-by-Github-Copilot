@@ -10067,6 +10067,127 @@
   {
    "cmd": "yarn workspaces info",
    "verdict": "run"
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; echo $(( $1 ))",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.arith-variable"
+   ]
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; echo $(( ${1} + 1 ))",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.arith-variable"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; set -- 1 2; echo \"${@:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; echo \"${1:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; echo \"${*:1:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; arr=(1 2); echo \"${arr[@]:x}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "set -- 'a[$(rm -rf build)]'; s=abc; echo \"${s:$1}\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "z='([$(rm -rf build)]=1)'; declare -a arr=\"$z\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "y='[$(rm -rf build)]=1'; local -a \"arr=($y)\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "z='([$(rm -rf build)]=1)'; typeset -A m=$z",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "echo $(( $# + 1 ))",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo $(( $? ))",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${@:2}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${@: -1}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo \"${1:-default}\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "declare greeting=\"hello $name\"",
+   "verdict": "run"
   }
  ]
 }
