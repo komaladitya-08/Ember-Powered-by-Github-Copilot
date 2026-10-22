@@ -520,6 +520,19 @@ describe("SSH targets", () => {
     expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
   });
 
+  it("lets a remote's newly read policy only tighten commands for the link, never loosen them", async () => {
+    const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") } });
+    const l = await connected(r);
+    const svc = () => { const g = r.t.agent.handsFor("ssh:build-01"); if (!g.ok) throw new Error(g.why); return g.hands.commands; };
+    expect(svc()!.mode()).toBe("on");
+    l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "ask" } });
+    expect(svc()!.mode()).toBe("ask");
+    l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "on" } });
+    expect(svc()!.mode()).toBe("ask");
+    l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "off" } });
+    expect(svc()).toBeNull();
+  });
+
   it("lets a remote only lower its desktop access, never raise it", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "text", notice: "shown" } }) });
     const l = await connected(r);

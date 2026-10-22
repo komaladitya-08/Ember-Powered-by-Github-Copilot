@@ -7,7 +7,7 @@
  */
 
 import { targetIdOf, type TargetId } from "../../shared/targets";
-import { adminSummary, combineAdmin, commandMode, type AdminSummary, type LoadedAdminPolicy } from "../admin";
+import { combineAdmin, commandMode, type AdminSummary, type LoadedAdminPolicy } from "../admin";
 import type { CommandMode, CommandService, CommandWindowPort } from "../commands/types";
 import type { Logger } from "../logger";
 import type { DesktopState } from "../remote/protocol";
@@ -44,8 +44,6 @@ export interface RemoteTarget {
   desktop(): DesktopAccess;
   /** Why the desktop is "none" or "text", in the agent's words (untrusted; for the bubble only, quoted by the UI). */
   desktopWhy(): string | undefined;
-  /** Both machines' policies combined now. */
-  combined(): AdminSummary;
   dispose(): void;
 }
 
@@ -72,8 +70,8 @@ export function createRemoteTarget(o: {
   const offs: (() => void)[] = [];
   const listen = (f: () => () => void) => { try { offs.push(f()); } catch (err) { o.log.warn("targets.remote_listen_failed", { err }); } };
   listen(() => o.link.on("policy.changed", s => {
-    // The remote's own policy, newly read there: combined with the PC's, it can only make things stricter.
-    remoteAdmin = s;
+    // The remote's own policy, newly read there: only ever stricter for this link (a looser one waits for a reconnect).
+    remoteAdmin = combineAdmin(remoteAdmin, s);
   }));
   listen(() => o.link.on("desktop.changed", d => {
     const was = desktop;
@@ -81,7 +79,6 @@ export function createRemoteTarget(o: {
     if (was.access !== "none" && desktop.access === "none" && d.session?.locked) o.onLocked?.();
   }));
   listen(() => o.link.on("console.stop", () => o.onConsoleStop?.()));
-  const combined = () => combineAdmin(adminSummary(o.admin()), remoteAdmin);
   // The PC's own mode for SSH (R5 with this PC's policy) and the remote's, the stricter wins (§3.8.1).
   const mode = (): CommandMode => stricterMode(commandMode(o.admin(), "ssh"), remoteAdmin.commands?.ssh ?? "off");
   const privileged = () => welcome.uid === 0 || welcome.facts.privileged === true;
@@ -104,7 +101,6 @@ export function createRemoteTarget(o: {
     id, hostId: o.host.id, link: o.link, parts, service,
     desktop: () => desktop.access,
     desktopWhy: () => desktop.why,
-    combined,
     dispose: () => {
       for (const off of offs.splice(0)) { try { off(); } catch { /* already gone with the link */ } }
       try { parts.dispose(); } catch (err) { o.log.warn("targets.remote_parts_dispose_failed", { err }); }
