@@ -4,7 +4,8 @@
  * dialog is a security window by its title and the Credential Backup wizard by its program, and systemDialogOpen sees
  * each (and is false again once they close); File Explorer's address box and the Run dialog's box carry the names
  * TYPING_REFUSED expects (read through Ember's own accessibility host, the names the policy is given: the address
- * band at rest, and the box that has the keyboard after Alt+D); and through a real Electron, a password
+ * band at rest, and the box that has the keyboard after Alt+D), and the window roles READ_ONLY_WINDOW tells the Run
+ * dialog from a folder window by; and through a real Electron, a password
  * manager's copy is recognised by CLIPBOARD_FORMATS.win32, an image copy saves without a GDI handle format, and the
  * text Ember pastes carries ExcludeClipboardContentFromMonitorProcessing as Windows itself lists it (the G5 check).
  * Each check prints what it saw, so a name that differs on a runner is in the log.
@@ -30,7 +31,7 @@ import { loadWin32System } from "../../app/main/platform/win32/system/ffi";
 import { win32SystemDialog, type SecurityVocabulary } from "../../app/main/platform/win32/system/system-dialog";
 import { hasBuiltInShell, isSecurityClass, isSecurityWindow, isTerminalApp } from "../../app/main/platform/win32/system/interim";
 import { TERMINAL_CLASSES } from "../../app/main/hands/terminals";
-import { OFFICE_APP, SECURITY_APP, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED } from "../../app/main/policy/vocabulary";
+import { OFFICE_APP, READ_ONLY_WINDOW, SECURITY_APP, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED } from "../../app/main/policy/vocabulary";
 import { CLIPBOARD_FORMATS } from "../../app/main/agent/clipboard-formats";
 import { normalizeLabel } from "../../app/main/policy/policy";
 import { friendlyApp, useAppNames } from "../../app/shared/apps";
@@ -233,6 +234,11 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
       console.log(`the Run dialog as Ember's host reads it: ${JSON.stringify(summary(nodes))}`);
       const boxes = nodes.filter(n => n.editable || n.role === "combo box");
       expect(boxes.some(n => runRule.field.test(n.name.trim())), JSON.stringify(summary(boxes))).toBe(true);
+      // READ_ONLY_WINDOW tells the Run dialog (Win32's dialog class) from a folder window by role: only a frame is judged as usual.
+      console.log(`window roles: File Explorer's folder ${JSON.stringify(win.role)}, the Run dialog ${JSON.stringify(run.role)}`);
+      const [runDialog] = READ_ONLY_WINDOW.win32;
+      expect(runDialog?.otherRole?.test(win.role), win.role).toBe(true);
+      expect(runDialog?.otherRole?.test(run.role), run.role).toBe(false);
       const runFrame = ws.clientWindows().find(w => w.pid === run.pid && w.title === "Run");
       if (runFrame) {
         input.activate(runFrame.id);

@@ -230,16 +230,23 @@ export interface ReadOnlyWindow {
   readonly app: RegExp;
   /** The window's title, tested on ActionRequest.window (trimmed). */
   readonly title: RegExp;
+  /**
+   * The roles (ActionRequest.windowId.role) of the other windows with that app and title: one known to have such a role
+   * isn't this window and is judged as usual. A request that doesn't carry the window's role is refused (fail closed).
+   */
+  readonly otherRole?: RegExp;
 }
 
 /**
  * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' main languages), whose OK
  * and Enter run whatever its box holds, the last command typed there included, so a click is as good as typing one.
- * A File Explorer folder named "Run" shows the same title and app: refused too (fail closed). None on Linux and macOS.
+ * A File Explorer folder named "Run" has the same title and program, but it is a frame (CabinetWClass) where the Run
+ * dialog is a dialog (Win32's dialog class, #32770, which the accessibility host reads as one): a folder window known
+ * to be a frame is judged as usual, and one whose role the request doesn't carry is refused too. None on Linux and macOS.
  */
 export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> = {
   linux: [],
-  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu }],
+  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu, otherRole: /^frame$/ }],
   darwin: [],
 };
 
