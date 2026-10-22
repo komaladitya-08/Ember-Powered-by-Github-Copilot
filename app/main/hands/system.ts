@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { OS } from "../../shared/shortcuts";
-import type { AppIdentity } from "../platform/types";
+import type { AppCatalog, AppIdentity } from "../platform/types";
 import {
   INTERPRETERS, LAUNCHERS, REFUSED, SHELLS, SHELL_APP, SHELL_APP_ID, SHELL_APP_NAME, SHELL_MODULES, TERMINALS, TERMINAL_CLASSES, TERMINAL_ID_WORDS, TERMINAL_NAME, WRAPPERS,
 } from "./terminals";
@@ -362,6 +362,25 @@ export function isTerminalApp(app: AppIdentity, os: OS = "linux"): boolean {
   if (v.terminalName.test(app.name) || named(app.name.trim().toLowerCase().replace(/\s+/g, "-"), v)) return true;
   const argv = argvOf(app);
   return argv.length > 0 && runsTerminal(argv, v);
+}
+
+/**
+ * Is the app whose windows report `name` (a window's app, as the policy is given it) a terminal or an app with a shell
+ * built in? By the name, as isTerminalApp takes it, and on macOS also by every installed app shown by that name (`apps`:
+ * the OS's catalogue; a bundle's file name, display name or bundle name, compared through appKey), judged with all the
+ * catalogue knows of it: its bundle id and executable. So Terminal, iTerm2, Warp, Ghostty or kitty shown under another
+ * name (a renamed bundle, a preview build's) is still known by com.apple.Terminal, dev.warp.Warp-Preview and the like.
+ * Never by an executable's name, which a window doesn't report (Warp's is "stable": Preview isn't Warp Preview's
+ * "preview"). An app outside the catalogue's folders is known by its name only. Elsewhere the name alone, exactly as
+ * before: a Windows window's app is its program, which the name check reads already, and Linux's is unchanged.
+ */
+export function isTerminalWindowApp(name: string, apps: Pick<AppCatalog, "list" | "isTerminalApp" | "appKey">, os: OS = "linux"): boolean {
+  if (apps.isTerminalApp({ id: name, name })) return true;
+  if (os !== "darwin") return false;
+  const key = apps.appKey(name.trim());
+  // The macOS catalogue's keywords are the bundle's display and bundle names (and an Apple app's generic name).
+  const shownAs = (a: DesktopApp) => [a.name, ...a.keywords].some(n => apps.appKey(n.trim()) === key);
+  return !!key && apps.list().some(a => shownAs(a) && apps.isTerminalApp(a));
 }
 
 /**
