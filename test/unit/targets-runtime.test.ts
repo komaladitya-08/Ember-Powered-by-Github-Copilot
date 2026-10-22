@@ -1070,6 +1070,32 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.t.agent.active).toBe("ssh:build-01");
   });
 
+  it("says why Bring Ember can't connect when the check before connecting refuses the host (never just a vanished offer)", async () => {
+    const r = rig({ notice, cursor: true });
+    r.conns.resolve.mockRejectedValueOnce(new ConnectError("Your organisation doesn't allow Ember to connect to build-01.", "not-allowed"));
+    r.ticks[0]();
+    await flush();
+    expect(r.t.bubbleAction("offer:1:bring")).toBe(true);
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "Can't connect to build-01", thought: "Your organisation doesn't allow Ember to connect to build-01.", mood: "error",
+    }) });
+    expect(r.conns.connect).not.toHaveBeenCalled();
+    // offer_connect's Connect for an alias of the user's ssh config says so too.
+    r.conns.resolve.mockRejectedValueOnce(new ConnectError("build-02's SSH settings throw host keys away (UserKnownHostsFile /dev/null).", "known-hosts"));
+    expect(r.t.agent.offerConnect("build-02", "connect to build-02 please")).toMatch(/Connect button for build-02/);
+    r.t.bubbleAction("offer:2:connect");
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-02", thought: expect.stringContaining("throw host keys away") }) });
+    // The user's own Not now on the card says nothing more.
+    const no = rig({ notice, cursor: true, consent: "no" });
+    no.ticks[0]();
+    await flush();
+    no.t.bubbleAction("offer:1:bring");
+    await flush(); await flush();
+    expect(no.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
+  });
+
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {
     const r = rig({ notice, cursor: true });
     r.ticks[0]();

@@ -757,10 +757,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (settings.get().targets.active === targetIdOf("ssh", hostId)) setActive(LOCAL_TARGET);
     refresh();
   }
-  /** A destination the user typed (settings' Add) or Ember saw them use: its record, then its card, then the link. */
-  async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }): Promise<ActResult> {
-    if (!sshAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember on other computers." };
-    if (!connections) return { ok: false, message: "Ember can't connect to other computers here." };
+  /**
+   * A destination the user typed (settings' Add) or Ember saw them use: its record, then its card, then the link.
+   * `bubble`: asked from a bubble's button (Bring Ember, offer_connect's Connect), where nothing else shows the answer,
+   * so a refusal before connect() (which bubbles its own) gets connect()'s failure bubble; Not now says nothing.
+   */
+  async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }, o: { bubble?: boolean } = {}): Promise<ActResult> {
+    const refused = (message: string): ActResult => {
+      const label = hostPart(raw.dest);
+      if (o.bubble) bubble(`fail:${label}`, { title: `Can't connect to ${label}`, thought: message, actions: [], mood: "error" }, 2 * INFO_MS);
+      return { ok: false, message };
+    };
+    if (!sshAllowed(admin())) return refused("Your organisation doesn't allow Ember on other computers.");
+    if (!connections) return refused("Ember can't connect to other computers here.");
     const existing = settings.get().targets.hosts.find(h => sameDest(h, raw.dest, raw.port));
     if (existing) return connect(existing.id, { interactive: true, activate: true });
     let resolved: HostRecord["resolved"];
@@ -769,7 +778,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       resolved = { user: r.user, hostname: r.hostname, port: r.port, jump: [...r.jump] };
     } catch (err) {
       if (!(err instanceof ConnectError)) log.warn("targets.resolve_failed", { err });
-      return { ok: false, message: err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up." };
+      return refused(err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up.");
     }
     const id = hostIdFor(hostPart(raw.dest), new Set(settings.get().targets.hosts.map(h => h.id)));
     const host: HostRecord = {
@@ -780,7 +789,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!(await askCard(card))) return { ok: false, message: "Not now." };
     try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
       log.warn("targets.host_save_failed", { err });
-      return { ok: false, message: "Ember couldn't save that computer." };
+      return refused("Ember couldn't save that computer.");
     }
     return connect(id, { interactive: true, activate: true });
   }
@@ -954,7 +963,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     void addAndConnect({
       dest: seenDest(s), ...(s.port ? { port: s.port } : {}), ...(Object.keys(extra).length ? { extra } : {}),
       ...(s.via && s.via !== "local" && WSL_SSH_PROVEN ? { via: s.via } : {}),
-    });
+    }, { bubble: true });
   };
   const dismissSeen = (s: SshSeen) => {
     const own = settings.own().targets;
@@ -1362,7 +1371,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           if (m[2] === "bring" && (!o.seen.via || o.seen.via === "local" || WSL_SSH_PROVEN)) bringSeen(o.seen);
           else if (m[2] === "never") dismissSeen(o.seen);
         } else if (o?.kind === "connect" && m[2] === "connect") {
-          void (o.hostId ? connect(o.hostId, { interactive: true, activate: true }) : addAndConnect({ dest: o.alias }));
+          void (o.hostId ? connect(o.hostId, { interactive: true, activate: true }) : addAndConnect({ dest: o.alias }, { bubble: true }));
         }
         return true;
       }
