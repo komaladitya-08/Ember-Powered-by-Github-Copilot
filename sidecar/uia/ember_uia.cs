@@ -882,21 +882,28 @@ namespace Ember.Uia
             catch (Exception) { partial = null; }
           }
           c.AnsweredPartially = partial != null;
+          // A read that timed out marks its process before the answer goes out, so a request sent right after the
+          // answer can't start another call into the same hung app.
+          if (c.Kind != MethodSpec.Act) MarkBusy(c);
         }
         if (partial != null) c.Deliver(c, partial, null);
         else c.Deliver(c, null, new BridgeError("busy", c.Kind == MethodSpec.Act ? Msg.LateAction : Msg.Late, c.Pid));
-        if (c.Pid <= 0) return;
-        // An action may be waiting on a modal dialog it opened, and the app still answers: then it isn't busy.
-        bool mark = c.Kind != MethodSpec.Act || (Hung != null && Hung(c));
-        if (!mark) return;
-        lock (c.Gate)
+        // An action may be waiting on a modal dialog it opened while the app still answers: then it isn't busy.
+        // Probing takes up to 300 ms, so it happens after the answer.
+        if (c.Kind == MethodSpec.Act && c.Pid > 0 && Hung != null && Hung(c))
         {
-          if (c.Finished || c.MarkedBusy) return;
-          c.MarkedBusy = true;
-          Mark(c.Pid);
+          lock (c.Gate) MarkBusy(c);
         }
       }
       catch (Exception) { /* an exception in a timer callback would end the process */ }
+    }
+
+    // Callers hold c.Gate.
+    private void MarkBusy(Call c)
+    {
+      if (c.Pid <= 0 || c.Finished || c.MarkedBusy) return;
+      c.MarkedBusy = true;
+      Mark(c.Pid);
     }
 
     private BridgeError Map(Exception e, Call c)
