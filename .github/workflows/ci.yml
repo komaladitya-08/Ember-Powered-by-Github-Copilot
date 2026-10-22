@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      packages:
+        description: "Upload the built RPM and AppImage as an artifact (about 340 MB, kept 3 days)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -161,14 +166,17 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
+      # The packages are about 340 MB, so they're kept only when asked for (Run workflow, "packages"): uploading them on
+      # every run filled the account's artifact storage, after which no artifact could be uploaded at all.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
           name: ember-packages
           path: |
             dist/package/*.rpm
             dist/package/*.AppImage
-          retention-days: 14
+          retention-days: 3
 
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
