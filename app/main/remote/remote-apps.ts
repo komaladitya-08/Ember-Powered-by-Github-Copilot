@@ -97,9 +97,10 @@ export function createRemoteApps(link: RemoteLink, o: RemoteAppsOptions): Remote
     const key = appKey(name.trim());
     if (!key) return false;
     if (terminal({ id: name, name })) return true;
-    // Every listed app shown by that name (its name, id, keywords or programs): a terminal's window says only its name.
-    return apps.some(a => terminal(a) && ([a.name, a.id, a.id.replace(/\.desktop$/i, ""), ...a.keywords].some(n => appKey(n.trim()) === key)
-      || programsOf(a, launchers).has(key)));
+    // Every listed app shown by that name (its name, id or programs; on a Mac also its keywords, which are the bundle's
+    // display names, as isTerminalWindowApp reads them): a terminal's window says only its name.
+    const shownAs = (a: DesktopApp) => [a.name, a.id, a.id.replace(/\.desktop$/i, ""), ...(os === "darwin" ? a.keywords : [])];
+    return apps.some(a => terminal(a) && (shownAs(a).some(n => appKey(n.trim()) === key) || programsOf(a, launchers).has(key)));
   };
 
   return {
