@@ -1,0 +1,541 @@
+/**
+ * A remote's commands as the command flow runs them (§5.5, §3.16): a CommandRunner over the agent's `cmd.*` ops. A run
+ * starts with `cmd.run` carrying the PC's stamp (what it decided, and the user's yes with its age); the remote's gate 2
+ * checks it again and either starts it on a bulk channel or refuses (`deny`) or wants the user's yes (`needs_confirm`,
+ * with its own card lines and rules: the run then ends `refused-remote` so the flow can ask once, §3.8.3 step 13).
+ * Output arrives on the run's channel as raw bytes, for the command window and for shaping on the PC; secret prompts
+ * are tracked here from those bytes (§3.11 step 2); the user's typing goes out with `cmd.input` and is kept only in
+ * memory for `typedLines()`, never logged. A run ends with the agent's `cmd.exit` once its last bytes are in, or "lost"
+ * when the link goes. Nothing a remote says ends up as an approval: `needsConfirm` and the remote's lines come only
+ * from its answer to the PC's own `cmd.run`, never from an event. Plain Node.
+ */
+
+import crypto from "node:crypto";
+import posix from "node:path/posix";
+import win32 from "node:path/win32";
+import { quoteUntrusted } from "../perception/elements";
+import { EV_SCHEMAS, OP_SCHEMAS, type EvMap, type OpResult } from "./protocol";
+import { askRemote, cleanRemote, RemoteError, RemoteStepError, unchecked } from "./remote-sidecar";
+import type { OS } from "../../shared/shortcuts";
+import type { TargetId } from "../../shared/targets";
+import type { CommandRunner, GitFacts, PathFact, RunExit, RunnerFacts, RunningCommand, RunSpec } from "../commands/types";
+import type { Logger } from "../logger";
+import type { RemoteLink } from "./types";
+
+/** CL's secret-prompt tracker (§3.11 step 2; commands/prompts.ts trackSecretPrompts), structurally. */
+export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+
+/** A run's end as the flow reads it, with the extra rule ids a remote's `needs_confirm` carried (the flow resends with them). */
+export type RemoteRunExit = RunExit & { rules?: string[] };
+
+/** A remote run: a RunningCommand whose secret spans (positions in everything it printed, decoded as UTF-8) are kept here. */
+export interface RemoteRunningCommand extends RunningCommand {
+  readonly done: Promise<RemoteRunExit>;
+  secretSpans(): { from: number; to: number }[];
+}
+
+/** The remote's runner, with what the targets runtime does when the link's parts go. */
+export interface RemoteRunner extends CommandRunner {
+  start(spec: RunSpec): RemoteRunningCommand;
+  /** Ends every run as "lost" and stops listening to the link. */
+  dispose(): void;
+}
+
+/** What createRemoteRunner needs. */
+export interface RemoteRunnerOptions {
+  target: TargetId;
+  label: string;
+  /** The remote's OS (its facts must say the same; its paths follow its rules). */
+  os: OS;
+  log: Logger;
+  /** The remote's facts as last known (welcome.facts at first): whether a run there gets a PTY before the agent says. */
+  facts: RunnerFacts;
+  /** CL's trackSecretPrompts (default: standInSecretTracker, the same rule). */
+  trackSecrets?: (o: { interactive: boolean }) => SecretTracker;
+  now?: () => number;
+  timers?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
+}
+
+/** cmd.input's limit per message: 4 KiB decoded (§5.4). */
+const INPUT_CHUNK = 4096;
+/** Typing held while the run is starting, at most. */
+const QUEUE_MAX = 64 * 1024;
+/** After cmd.exit, how long the run's last bytes may take to arrive (bulk travels behind ctl), plus the round trip. */
+const TAIL_MS = 2000;
+/** After a Stop, how long the agent has to say the run ended before the PC ends it itself, plus the round trip. */
+const STOP_WAIT_MS = 10_000;
+/** Lines of the user's typing kept at most, and the longest one (in memory only). */
+const MAX_TYPED_LINES = 1000;
+const MAX_TYPED_LINE = 4096;
+/** The remote's own card lines passed on with a needs_confirm, at most (the flow shows ten). */
+const SAYS_MAX = 10;
+
+/** §3.11 step 2: a line ending like this, with no newline after it, asks for a secret. */
+export const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
+/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a line is matched. */
+const TERMINAL_CODES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g; // eslint-disable-line no-control-regex -- terminal codes are what's removed
+
+/**
+ * §3.11 step 2's tracker, for use until CL's trackSecretPrompts is wired in its place (the same rule): a span opens where
+ * the output so far ends, without a newline, in a line matching SECRET_PROMPT, and closes at the first newline the
+ * program prints after the user's next Enter; on a run that can't take typing nothing closes it, so it runs to the end.
+ * Positions are characters (UTF-16 units) of the output as decoded.
+ */
+export function standInSecretTracker(o: { interactive: boolean }): SecretTracker {
+  const done: { from: number; to: number }[] = [];
+  let length = 0;
+  let line = "";
+  let open: number | null = null;
+  let entered = false;
+  return {
+    output(text) {
+      if (open !== null && entered) {
+        const nl = text.indexOf("\n");
+        if (nl >= 0) {
+          done.push({ from: open, to: length + nl });
+          open = null;
+          entered = false;
+        }
+      }
+      length += text.length;
+      const nl = text.lastIndexOf("\n");
+      line = nl >= 0 ? text.slice(nl + 1) : (line + text).slice(-512);
+      if (open === null && SECRET_PROMPT.test(line.replace(TERMINAL_CODES, "").replace(/\r/g, ""))) open = length;
+    },
+    enter() {
+      if (open !== null && o.interactive) entered = true;
+    },
+    spans() {
+      return open === null ? [...done] : [...done, { from: open, to: length }];
+    },
+  };
+}
+
+type StopWhy = "user" | "task" | "killswitch" | "timeout";
+/** How a run the PC stopped ended, by who stopped it. */
+const ENDED_BY: Readonly<Record<StopWhy, RunExit["ended"]>> = { user: "stopped-user", task: "stopped-task", killswitch: "killswitch", timeout: "timeout" };
+/** What cmd.stop says (the kill switch is the user's own Stop: the agent's ladder is the same). */
+const WIRE_WHY: Readonly<Record<StopWhy, "user" | "task" | "timeout">> = { user: "user", task: "task", killswitch: "user", timeout: "timeout" };
+const STOP_ENDINGS: ReadonlySet<RunExit["ended"]> = new Set(["stopped-user", "stopped-task", "killswitch", "timeout"]);
+
+/** sha256Hex(`${target}\0${shell}\0${cwd}\0${command}`): what the stamp binds a command to (§3.1). */
+export const commandHash = (target: TargetId, spec: Pick<RunSpec, "shell" | "cwd" | "command">) =>
+  crypto.createHash("sha256").update(`${target}\0${spec.shell}\0${spec.cwd}\0${spec.command}`, "utf8").digest("hex");
+
+/** What a run needs of its runner. */
+interface RunContext {
+  link: RemoteLink;
+  o: RemoteRunnerOptions;
+  now: () => number;
+  timers: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
+  pty: () => boolean;
+  /** Another live run already reads this channel. */
+  channelTaken(channel: number, run: RemoteRun): boolean;
+  ended(run: RemoteRun): void;
+}
+
+/** One run on the remote, from cmd.run to its end. */
+class RemoteRun implements RemoteRunningCommand {
+  readonly done: Promise<RemoteRunExit>;
+  private resolveDone!: (e: RemoteRunExit) => void;
+  private state: "starting" | "running" | "ended" = "starting";
+  /** As the agent answered (null: not yet). */
+  private answeredInteractive: boolean | null = null;
+  private readonly predicted: boolean;
+  channel: number | null = null;
+  private listeners = new Set<(chunk: Uint8Array) => void>();
+  private offBytes: (() => void) | null = null;
+  private decoder = new TextDecoder("utf-8");
+  private tracker: SecretTracker | null = null;
+  private received = 0;
+  private exitEvent: EvMap["cmd.exit"] | null = null;
+  private stopWhy: StopWhy | null = null;
+  private stopSent = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private queued: Uint8Array[] = [];
+  private queuedBytes = 0;
+  private readonly startedAt: number;
+  // The user's typing, as a terminal edits a line (L2): in memory only.
+  private typed: string[] = [];
+  private line = "";
+  private esc: "" | "esc" | "csi" | "ss3" | "osc" | "osc-esc" = "";
+  private lastWasCr = false;
+  private inputDecoder = new TextDecoder("utf-8");
+
+  constructor(readonly spec: RunSpec, private ctx: RunContext) {
+    this.done = new Promise(resolve => { this.resolveDone = resolve; });
+    this.startedAt = ctx.now();
+    this.predicted = ctx.pty();
+  }
+
+  get runId(): string { return this.spec.runId; }
+  get interactive(): boolean { return this.answeredInteractive ?? this.predicted; }
+  get ended(): boolean { return this.state === "ended"; }
+
+  /** Sends cmd.run (never throws: whatever goes wrong ends `done`). */
+  begin(): void {
+    const { link, o } = this.ctx;
+    const spec = this.spec;
+    if (spec.stamp.sha256 !== commandHash(o.target, spec) || spec.stamp.taskId !== spec.taskId) {
+      return this.end(this.failed("Ember lost track of this command, so it wasn't sent"));
+    }
+    if (link.state === "lost" || link.state === "closed") return this.lose();
+    const args = { epoch: link.epoch, spec };
+    if (!OP_SCHEMAS["cmd.run"].args.safeParse(args).success) return this.end(this.failed(`The command can't be sent to ${o.label} as it is`));
+    askRemote(link, "cmd.run", args, { label: o.label }).then(a => this.answered(a), (err: unknown) => this.notStarted(err));
+  }
+
+  private answered(a: OpResult<"cmd.run">): void {
+    const { link, o } = this.ctx;
+    if (this.state !== "starting") {
+      // Ended here (the link went, or the parts were dropped) while the agent started it: tell it to stop.
+      if (a.status === "started") void askRemote(link, "cmd.stop", { runId: this.runId, why: "task" }, { label: o.label, whileStalled: true }).catch(() => undefined);
+      return;
+    }
+    if (a.status !== "started") {
+      if (a.status === "deny") return this.end({ ...this.base("refused-remote"), error: cleanRemote(a.reason, 500) || `${o.label} refused it` });
+      // Gate 2 found more than the PC did (critique security-3): the flow asks once, with the remote's own lines.
+      const extra = (a.rules ?? []).filter(r => !this.spec.stamp.rules.includes(r));
+      const says = (a.says ?? []).map(s => cleanRemote(s, 500)).filter(Boolean).slice(0, SAYS_MAX);
+      return this.end({ ...this.base("refused-remote"), error: cleanRemote(a.reason, 500) || `${o.label}'s own check wants the user's yes first`, needsConfirm: true, remoteSays: says, rules: extra });
+    }
+    if (this.ctx.channelTaken(a.channel, this)) {
+      // Two runs on one channel would mix their output: this one is stopped there and ends here.
+      void askRemote(link, "cmd.stop", { runId: this.runId, why: "task" }, { label: o.label, whileStalled: true }).catch(() => undefined);
+      return this.end(this.failed(unchecked(o.label).replace(/\.$/, "")));
+    }
+    this.state = "running";
+    this.channel = a.channel;
+    this.answeredInteractive = a.interactive;
+    this.tracker = this.trackerFor(a.interactive);
+    this.offBytes = link.onBytes(a.channel, b => this.bytes(b));
+    if (this.state !== "running") return;
+    if (this.stopWhy) this.sendStop();
+    const queued = this.queued;
+    this.queued = [];
+    this.queuedBytes = 0;
+    if (a.interactive) for (const q of queued) this.send(q);
+    if (this.exitEvent) this.exited(this.exitEvent);
+  }
+
+  private notStarted(err: unknown): void {
+    if (this.state !== "starting") return;
+    const { link, o } = this.ctx;
+    if (link.state === "lost" || link.state === "closed") return this.lose();
+    if (err instanceof RemoteStepError) {
+      switch (err.code) {
+        case "deny": return this.end({ ...this.base("refused-remote"), error: cleanRemote(err.message, 500) || `${o.label} refused it` });
+        case "needs_confirm": return this.end({ ...this.base("refused-remote"), error: `${o.label}'s own check wants the user's yes first`, needsConfirm: true, remoteSays: [], rules: [] });
+        case "stopped": return this.end(this.failed("It was stopped before it started"));
+        default: return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));
+      }
+    }
+    if (err instanceof RemoteError && err.remoteCode === "link") return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));
+    const said = err instanceof Error ? cleanRemote(err.message, 300) : "";
+    this.end(this.failed(said ? `${o.label} couldn't start it: ${quoteUntrusted(said, 300)}` : `${o.label} couldn't start it`));
+  }
+
+  private trackerFor(interactive: boolean): SecretTracker {
+    try {
+      return (this.ctx.o.trackSecrets ?? standInSecretTracker)({ interactive });
+    } catch {
+      // A tracker that can't be made: the stand-in's rule keeps prompts out all the same.
+      return standInSecretTracker({ interactive });
+    }
+  }
+
+  private bytes(b: Uint8Array): void {
+    if (this.state !== "running") return;
+    this.received += b.length;
+    const text = this.decoder.decode(b, { stream: true });
+    if (text) this.track(text);
+    for (const fn of [...this.listeners]) {
+      try {
+        fn(b);
+      } catch (err) {
+        this.ctx.o.log.warn("remote.cmd_output_listener_failed", { runId: this.runId, err: err instanceof Error ? err.name : "error" });
+      }
+    }
+    if (this.exitEvent && this.received >= this.exitEvent.outBytes) this.finishExit();
+  }
+
+  private track(text: string): void {
+    try {
+      this.tracker?.output(text);
+    } catch {
+      // the tracker's failure leaves its spans as they are
+    }
+  }
+
+  /** The agent's word that the run ended: once its last bytes are in (or a moment later), the run ends here too. */
+  exited(d: EvMap["cmd.exit"]): void {
+    if (this.state === "ended") return;
+    this.exitEvent = d;
+    if (this.state === "starting") return; // ended before its answer came: taken up when it does
+    if (this.received >= d.outBytes) return this.finishExit();
+    this.clearTimer();
+    this.timer = this.later(() => this.finishExit(), TAIL_MS);
+  }
+
+  private finishExit(): void {
+    const d = this.exitEvent;
+    if (!d || this.state === "ended") return;
+    const e = d.exit;
+    const { label } = this.ctx.o;
+    // An event never carries a refusal or a question (those come only from the answer to cmd.run).
+    let ended: RunExit["ended"] = e.ended === "refused-remote" ? "failed-to-start" : e.ended;
+    // The kill switch's Stop goes out as the user's: the run ended as the kill switch ended it.
+    if (this.stopWhy && STOP_ENDINGS.has(ended)) ended = ENDED_BY[this.stopWhy];
+    const said = e.error ? cleanRemote(e.error, 300) : "";
+    const error = ended === "failed-to-start" ? (said ? `${label} said ${quoteUntrusted(said, 300)}` : `${label} couldn't start it`) : said || undefined;
+    this.end({ code: e.code, signal: e.signal, ended, ms: this.elapsed(), ...(error ? { error } : {}) });
+  }
+
+  /** Ends the run before anything was sent, saying why. */
+  refuse(error: string): void {
+    if (this.state === "starting") this.end(this.failed(error));
+  }
+
+  /** The link went: the run is lost here (the remote ends it within its grace, L10). */
+  lose(): void {
+    this.end(this.base("lost"));
+  }
+
+  private end(exit: RemoteRunExit): void {
+    if (this.state === "ended") return;
+    const wasRunning = this.state === "running";
+    this.state = "ended";
+    this.clearTimer();
+    if (wasRunning) {
+      const rest = this.decoder.decode();
+      if (rest) this.track(rest);
+    }
+    try {
+      this.offBytes?.();
+    } catch {
+      // already gone with the link
+    }
+    this.offBytes = null;
+    this.queued = [];
+    this.queuedBytes = 0;
+    this.listeners.clear();
+    this.ctx.ended(this);
+    this.resolveDone(exit);
+  }
+
+  onOutput(fn: (chunk: Uint8Array) => void): () => void {
+    if (this.state === "ended") return () => undefined;
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
+  }
+
+  input(bytes: Uint8Array): void {
+    if (this.state === "ended" || !bytes.length || !this.interactive) return;
+    if (this.state === "starting") {
+      if (this.queuedBytes + bytes.length > QUEUE_MAX) return;
+      this.queued.push(bytes.slice());
+      this.queuedBytes += bytes.length;
+    } else {
+      this.send(bytes);
+    }
+    this.noteTyping(this.inputDecoder.decode(bytes, { stream: true }));
+  }
+
+  /** The user's bytes to the run, 4 KiB a message, in order (the link keeps its requests in order). Never logged. */
+  private send(bytes: Uint8Array): void {
+    const { link, o } = this.ctx;
+    for (let at = 0; at < bytes.length; at += INPUT_CHUNK) {
+      const data = Buffer.from(bytes.subarray(at, at + INPUT_CHUNK)).toString("base64");
+      askRemote(link, "cmd.input", { runId: this.runId, data }, { label: o.label }).catch((err: unknown) => {
+        o.log.warn("remote.cmd_input_failed", { runId: this.runId, err: err instanceof Error ? err.name : "error" });
+      });
+    }
+  }
+
+  /** Line editing as a terminal does it, enough to know the lines typed (L2); terminal sequences aren't text. */
+  private noteTyping(text: string): void {
+    for (const ch of text) {
+      if (this.esc) {
+        if (this.esc === "esc") this.esc = ch === "[" ? "csi" : ch === "]" ? "osc" : ch === "O" ? "ss3" : "";
+        else if (this.esc === "csi") { if (ch >= "@" && ch <= "~") this.esc = ""; }
+        else if (this.esc === "ss3") this.esc = "";
+        else if (this.esc === "osc") { if (ch === "\x07") this.esc = ""; else if (ch === "\x1b") this.esc = "osc-esc"; }
+        else this.esc = "";
+        continue;
+      }
+      const cr = this.lastWasCr;
+      this.lastWasCr = ch === "\r";
+      if (ch === "\x1b") this.esc = "esc";
+      else if (ch === "\r" || ch === "\n") {
+        if (ch === "\n" && cr) continue; // \r\n is one Enter
+        if (this.line !== "") {
+          this.typed.push(this.line);
+          if (this.typed.length > MAX_TYPED_LINES) this.typed.shift();
+        }
+        this.line = "";
+        try {
+          this.tracker?.enter();
+        } catch {
+          // the tracker's failure leaves its spans as they are
+        }
+      } else if (ch === "\x7f" || ch === "\b") this.line = [...this.line].slice(0, -1).join("");
+      else if (ch === "\x15" || ch === "\x03") this.line = "";
+      else if (ch >= " " && this.line.length < MAX_TYPED_LINE) this.line += ch;
+    }
+  }
+
+  typedLines(): string[] {
+    return this.line !== "" ? [...this.typed, this.line] : [...this.typed];
+  }
+
+  forgetTyped(): void {
+    this.typed = [];
+    this.line = "";
+  }
+
+  secretSpans(): { from: number; to: number }[] {
+    try {
+      return this.tracker?.spans() ?? [];
+    } catch {
+      return []; // the tracker failed: nothing it marked can be named
+    }
+  }
+
+  stop(why: StopWhy): void {
+    if (this.state === "ended") return;
+    this.stopWhy ??= why;
+    // A run still starting is stopped as soon as the agent says it started (answered()).
+    if (this.state === "running") this.sendStop();
+  }
+
+  private sendStop(): void {
+    if (this.stopSent || !this.stopWhy) return;
+    this.stopSent = true;
+    const { link, o } = this.ctx;
+    const why = this.stopWhy;
+    askRemote(link, "cmd.stop", { runId: this.runId, why: WIRE_WHY[why] }, { label: o.label, whileStalled: true }).catch((err: unknown) => {
+      o.log.warn("remote.cmd_stop_failed", { runId: this.runId, err: err instanceof Error ? err.name : "error" });
+    });
+    // The agent says when it ended (its ladder takes 1.5 s); one that never does doesn't hold the run open here.
+    if (!this.timer) {
+      this.timer = this.later(() => {
+        this.timer = null;
+        if (this.state === "ended") return;
+        o.log.warn("remote.cmd_stop_unconfirmed", { runId: this.runId });
+        if (link.state !== "ready") return this.lose();
+        this.end({ ...this.base(ENDED_BY[why]), error: `${o.label} didn't say the command stopped` });
+      }, STOP_WAIT_MS);
+    }
+  }
+
+  private later(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+    const rtt = Number.isFinite(this.ctx.link.rttMs) && this.ctx.link.rttMs > 0 ? Math.min(this.ctx.link.rttMs, 60_000) : 0;
+    const t = this.ctx.timers.setTimeout(fn, ms + rtt);
+    (t as { unref?: () => void }).unref?.();
+    return t;
+  }
+
+  private clearTimer(): void {
+    if (this.timer) this.ctx.timers.clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private elapsed(): number {
+    return Math.max(0, Math.round(this.ctx.now() - this.startedAt));
+  }
+
+  private base(ended: RunExit["ended"]): RemoteRunExit {
+    return { code: null, signal: null, ended, ms: this.elapsed() };
+  }
+
+  private failed(error: string): RemoteRunExit {
+    return { ...this.base("failed-to-start"), error };
+  }
+}
+
+/** A remote's commands as a CommandRunner (§5.5). */
+export function createRemoteRunner(link: RemoteLink, o: RemoteRunnerOptions): RemoteRunner {
+  const now = o.now ?? (() => performance.now());
+  const timers = o.timers ?? { setTimeout, clearTimeout };
+  const runs = new Map<string, RemoteRun>();
+  let facts = o.facts;
+  const pathOf = o.os === "win32" ? win32 : posix;
+  const absolute = (p: string) => pathOf.isAbsolute(p);
+
+  const ctx: RunContext = {
+    link, o, now, timers,
+    // A PTY where the remote has `script` (§3.3): runs there take typing, until the agent says otherwise.
+    pty: () => facts.pty && facts.os !== "win32",
+    channelTaken: (channel, run) => [...runs.values()].some(r => r !== run && r.channel === channel),
+    ended: run => { if (runs.get(run.runId) === run) runs.delete(run.runId); },
+  };
+
+  const offExit = link.on("cmd.exit", d => {
+    const checked = EV_SCHEMAS["cmd.exit"].safeParse(d);
+    if (!checked.success) return o.log.warn("remote.cmd_exit_unchecked", {});
+    runs.get(checked.data.runId)?.exited(checked.data);
+  });
+  const offState = link.onState(s => {
+    if (s === "lost" || s === "closed") for (const r of [...runs.values()]) r.lose();
+  });
+
+  return {
+    target: o.target,
+
+    async facts(): Promise<RunnerFacts> {
+      const f = await askRemote(link, "cmd.facts", {}, { label: o.label });
+      if (f.os !== o.os || !absolute(f.home)) throw new RemoteError("unchecked", unchecked(o.label));
+      facts = f;
+      return f;
+    },
+
+    async inspect(paths: string[], cwd: string): Promise<PathFact[]> {
+      const none = (): PathFact[] => paths.map(() => ({ exists: null, real: null }));
+      if (!paths.length) return [];
+      if (paths.length > 64) return none();
+      try {
+        const r = await askRemote(link, "cmd.inspect", { paths, cwd }, { label: o.label });
+        if (r.paths.length !== paths.length) return none();
+        // A real path that isn't absolute on the remote can't be told: as unknown.
+        return r.paths.map(p => (p.real !== null && !absolute(p.real) ? { exists: p.exists, real: null } : p));
+      } catch {
+        return none();
+      }
+    },
+
+    async gitFacts(cwd: string): Promise<GitFacts | null> {
+      try {
+        return (await askRemote(link, "cmd.git", { cwd }, { label: o.label })).git;
+      } catch {
+        return null;
+      }
+    },
+
+    start(spec: RunSpec): RemoteRunningCommand {
+      const run = new RemoteRun(spec, ctx);
+      const live = runs.get(spec.runId);
+      if (live && !live.ended) {
+        // One id, one run: a second start of it is never sent.
+        run.refuse("A command with this run id is already running");
+        return run;
+      }
+      runs.set(spec.runId, run);
+      run.begin();
+      return run;
+    },
+
+    async stopAll(why: "killswitch" | "quit"): Promise<void> {
+      for (const r of [...runs.values()]) r.stop(why === "killswitch" ? "killswitch" : "task");
+    },
+
+    get running(): number {
+      return runs.size;
+    },
+
+    dispose(): void {
+      offExit();
+      offState();
+      for (const r of [...runs.values()]) r.lose();
+    },
+  };
+}
