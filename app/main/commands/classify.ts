@@ -100,6 +100,11 @@ interface Scope {
   windows: WindowsContext | null;
   /** A cmd or PowerShell scope reached from a WSL distro. */
   fromWsl: boolean;
+  /**
+   * Its paths are another system's (a distro's, reached from a Windows target; Windows', reached from a distro): the
+   * target can't check them, so none is probed and an overwrite of one always asks.
+   */
+  foreign?: boolean;
 }
 
 /** A redirection, family-neutral. */
@@ -248,11 +253,15 @@ class Classifier {
         this.add("publish", "upload.unc", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
       }
     }
-    if (sc.path.flavour === "posix" && (text === "~" || text.startsWith("~/")) && !sc.home) return { kind: "other", text, abs: null };
+    if (sc.path.flavour === "posix" && (text === "~" || text.startsWith("~/")) && !sc.home) {
+      // A home Ember doesn't know (a distro reached from Windows): judged as some user's home, never probed.
+      this.judge(posix.join("/home/~", text.slice(1) || "/"), use, sc.path, text, sc);
+      return { kind: "other", text, abs: null };
+    }
     if (!isAbsolute(text, sc.path.flavour) && !text.startsWith("~") && !sc.cwd) return { kind: "other", text, abs: null };
     if (a.glob) return this.useGlob(a, use, sc);
     const abs = resolveTargetPath(text, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
-    this.addProbe(abs);
+    if (!sc.foreign) this.addProbe(abs);
     this.judge(abs, use, sc.path, text, sc);
     const obj: Obj = { kind: "path", text, resolved: abs, abs };
     const real = this.ctx.real?.get(abs);
@@ -277,7 +286,7 @@ class Classifier {
     const pattern = a.pattern ?? text;
     const absPattern = resolveTargetPath(pattern, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const prefix = globPrefix(absPattern, sc.path);
-    this.addProbe(prefix);
+    if (!sc.foreign) this.addProbe(prefix);
     this.judge(prefix, use, sc.path, text, sc, true);
     const dotRule = sc.family === "posix";
     const re = globRegExp(absPattern, sc.path, dotRule);
@@ -347,8 +356,16 @@ class Classifier {
   isDownloaded(a: Arg, sc: Scope): boolean {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
+    const all = [...this.ctx.downloaded, ...this.downloads];
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    for (const d of [...this.ctx.downloaded, ...this.downloads]) if (isUnder(abs, d, sc.path)) return true;
+    if (all.some(d => isUnder(abs, d, sc.path))) return true;
+    // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
+    if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
+      const mount = this.ctx.wsl.mountRoot;
+      const env = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: mount });
+      const m = toMount(abs, mount);
+      return all.some(d => isUnder(m, d, env));
+    }
     return false;
   }
 }
@@ -518,7 +535,7 @@ class Engine extends Classifier {
       const p = lexPosix(text, shell === "zsh" ? "zsh" : shell === "bash" ? "bash" : "sh");
       this.noteUnclear(p.unclear);
       if (p.fatal) { this.fallbackScan(text, sc); return; }
-      this.posixList(p.list, child(sc, { family: "posix", shell }));
+      this.posixList(p.list, child(sc, { family: "posix", shell }, more(sc)));
       return;
     }
     if (family === "powershell") {
@@ -656,7 +673,9 @@ class Engine extends Classifier {
         if (val === null) unresolved = true;
         else { v += val; pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
       } else if (seg.t === "tilde") {
-        if (seg.user !== "" || !sc.home) unresolved = true;
+        if (seg.user !== "") unresolved = true;
+        // A home Ember doesn't know stays `~` (judged as some user's home, never probed: usePath).
+        else if (!sc.home) { v += "~"; pattern += "~"; }
         else { v += sc.home; pattern += sc.home.replace(/[*?[\]\\]/g, "\\$&"); }
       } else unresolved = true;
     }
@@ -1097,16 +1116,19 @@ class Engine extends Classifier {
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
-  nested(text: string, shell: ShellId, sc: Scope, wrapper: string, o: Partial<Scope> = {}): void {
+  nested(text: string, shell: ShellId, sc: Scope, wrapper: string, o: Partial<Scope> = {}, stdin: { fetch: boolean } | null = null): void {
     const savedAt = this.at;
     const savedProg = this.program;
     const savedPipe = this.pipe;
     const savedCd = this.cdTarget;
-    this.classifyText(text, shell, child(sc, { ...o, wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }));
+    const before = this.commands.length;
+    this.classifyText(text, shell, child(sc, { ...o, wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }, { pipedIn: stdin }));
     this.at = savedAt;
     this.program = savedProg;
     this.pipe = savedPipe;
     this.cdTarget = savedCd;
+    // What the wrapped text fetches comes out of the wrapper (`wsl curl … | sh`).
+    if (this.commands.slice(before).some(c => FETCHERS.has(c.program.toLowerCase()) || DECODERS.has(c.program.toLowerCase()))) this.pipe.fetch = true;
   }
 }
 
@@ -1273,6 +1295,7 @@ function launcher(h: H): void {
 
 /** Programs that run their arguments as a command: they are wrappers Ember doesn't know (an unknown program's operand). */
 const KNOWN_ORDINARY = new Set([
+  "wslpath", "wslinfo",
   "cat", "ls", "ll", "dir", "vdir", "grep", "egrep", "fgrep", "rg", "ag", "ack", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "diff",
   "cmp", "comm", "file", "stat", "du", "df", "tree", "jq", "yq", "xmllint", "md5sum", "sha1sum", "sha224sum", "sha256sum", "sha384sum",
   "sha512sum", "b2sum", "cksum", "sum", "od", "hexdump", "xxd", "strings", "column", "paste", "join", "nl", "fold", "fmt", "split", "csplit",
@@ -1316,7 +1339,10 @@ function generic(h: H): void {
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
-  const at = h.args.findIndex(a => a.v !== null && !a.v.startsWith("-") && runners().has((a.v.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(exe|com)$/, "")));
+  const at = h.args.findIndex(a => {
+    const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
+    return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
+  });
   if (at >= 0) {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
@@ -1886,7 +1912,7 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
       return;
     }
     if (!posixShell) { h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`); emberText(h, text.v); return; }
-    h.e.nested(text.v, posixShell === "bash" ? "bash" : posixShell === "zsh" ? "zsh" : "sh", h.sc, `${h.key} -c`);
+    h.e.nested(text.v, posixShell === "bash" ? "bash" : posixShell === "zsh" ? "zsh" : "sh", h.sc, `${h.key} -c`, {}, pipedInto(h));
     return;
   }
   const script = p.operands[0];
@@ -2052,6 +2078,10 @@ reg(NATIVE, ["env"], h => {
   const dir = values(p, "C", "chdir")[0];
   const cwd = dir === undefined ? h.sc.cwd : dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" });
   h.e.unwrap(h, rest, "env", { cwd });
+});
+// wslvar prints a Windows environment variable (or, with -s/-l, the system's or the user's shell folders).
+reg(NATIVE, ["wslvar"], h => {
+  for (const a of h.args) if (a.v === null || (!a.v.startsWith("-") && SECRET_VAR.test(a.v))) h.e.add("secret", "secret.env", SAYS.env);
 });
 reg(NATIVE, ["printenv"], h => {
   const names = h.args.filter(a => !isOption(a));
@@ -3772,7 +3802,7 @@ function wslTail(h: H, tail: Arg[], o: { exec: boolean; distro: string | null; c
   const cwd = o.cd === null ? (winCwd && /^[A-Za-z]:/.test(winCwd) ? toMount(winCwd, "/mnt") : h.sc.wsl ? h.sc.cwd : null) : o.cd === "~" ? null : o.cd.startsWith("/") ? o.cd : null;
   const windows = h.sc.windows ?? (h.sc.os === "win32" && h.sc.home ? windowsContextOf(h.sc.home) : null);
   const path = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: "/mnt", windows, ember: [] });
-  const inner: Partial<Scope> = { os: "linux", path, cwd, home: null, wsl: true, mountRoot: "/mnt", windows, fromWsl: false, family: "posix", shell: "sh" };
+  const inner: Partial<Scope> = { os: "linux", path, cwd, home: null, wsl: true, mountRoot: "/mnt", windows, fromWsl: false, family: "posix", shell: "sh", foreign: true };
   h.e.windowsReach = h.e.windowsReach || h.sc.wsl;
   if (tail.length === 0) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (o.exec) { h.e.payload(tail, child(h.sc, inner), "wsl"); return; }
@@ -3780,11 +3810,13 @@ function wslTail(h: H, tail: Arg[], o: { exec: boolean; distro: string | null; c
   if (tail.some(a => a.v === null || /[\s'"\\$`;&|<>(){}*?[\]~!#]/.test(a.v))) {
     h.e.unclear("unclear.wsl-join", "Ember can't tell exactly what the distro's shell would get.");
     const joined = tail.map(a => a.v ?? a.raw).join(" ");
-    h.e.nested(joined, "sh", h.sc, "wsl", inner);
+    h.e.nested(joined, "sh", h.sc, "wsl", inner, pipedInto(h));
     return;
   }
-  h.e.nested(tail.map(a => a.v).join(" "), "sh", h.sc, "wsl", inner);
+  h.e.nested(tail.map(a => a.v).join(" "), "sh", h.sc, "wsl", inner, pipedInto(h));
 }
+/** What a wrapper reading a pipe hands the text it runs: its stdin, and whether a fetch feeds it. */
+const pipedInto = (h: H): { fetch: boolean } | null => (h.s.stdin === "pipe" ? { fetch: h.s.fetchBefore } : null);
 reg(NATIVE, ["wsl", "wslg", "wslhost"], h => {
   let exec = false;
   let distro: string | null = null;
@@ -3858,7 +3890,7 @@ function windowsScope(h: H, family: "cmd" | "powershell"): Partial<Scope> | null
     } else cwd = posixCwd ? `\\\\wsl.localhost\\distro${posixCwd.replace(/\//g, "\\")}` : null;
   }
   h.e.windowsReach = true;
-  return { family, shell: family, os: "win32", path: { ...path, cwd }, cwd, home, wsl: false, mountRoot: null, windows: w, fromWsl: true };
+  return { family, shell: family, os: "win32", path: { ...path, cwd }, cwd, home, wsl: false, mountRoot: null, windows: w, fromWsl: true, foreign: true };
 }
 reg(NATIVE, ["cmd"], h => {
   const at = h.args.findIndex(a => a.v !== null && /^\/[ckr]$/i.test(a.v));

@@ -365,11 +365,19 @@ export function isEmberPath(p: string, env: PathEnv): boolean {
     // ~/.local/share/ember* (the secret list's last entry, refused first).
     if (underEntries(p, [env.home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")], EMBER_SHARE, env, caseless(p, env))) return true;
   }
+  // A distro whose home Ember doesn't know (reached from Windows): Ember's folders in any home.
+  if (env.flavour === "posix" && !env.home && ANY_HOME_EMBER.test(p)) return true;
   return false;
 }
 
+/** Ember's folders under a POSIX home, in any home (`/home/<user>/…`, `/root/…`). */
+const ANY_HOME_EMBER = /^\/(home\/[^/]+|root)\/(\.config\/ember|\.local\/state\/ember-remote|\.local\/share\/ember[^/]*)(\/|$)/;
+/** The folders above them, when the home isn't known: `/`, `/home`, a home, its `.config`, `.local` and `.local/state`. */
+const ANY_HOME_EMBER_ABOVE = /^\/((home(\/[^/]+(\/(\.config|\.local(\/(state|share))?))?)?|root(\/(\.config|\.local(\/(state|share))?))?)\/?)?$/;
+
 /** Whether `p` is an ancestor of one of Ember's own paths (deleting, moving or re-permissioning it reaches Ember's). */
 export function holdsEmberPath(p: string, env: PathEnv): boolean {
+  if (env.flavour === "posix" && !env.home && ANY_HOME_EMBER_ABOVE.test(p)) return true;
   return env.ember.some(e => isUnder(e, p, env) && !isUnder(p, e, env));
 }
 
