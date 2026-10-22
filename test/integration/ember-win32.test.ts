@@ -282,7 +282,13 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     }
   });
 
-  it.runIf(onWindows && !!packaged)("runs the packaged accessibility host as Ember.exe in node mode, and it answers a ping within 30 s", async () => {
+  it("runs the packaged accessibility host as Ember.exe in node mode, and it answers a ping within 30 s", async () => {
+    if (!packaged) {
+      // A required run names the staged app (CI stages first); a local run without one says so.
+      if (required) throw new Error("EMBER_WIN32_TEST=1 without EMBER_PACKAGED_APP: stage Ember first and name its folder (dist/package/Ember)");
+      console.log("not run: EMBER_PACKAGED_APP names no staged Ember (node scripts/package/stage.mjs makes dist/package/Ember)");
+      return;
+    }
     const exe = path.join(packaged, "Ember.exe");
     const host = path.join(packaged, "resources", "app", "dist", "app", "ax-sidecar.cjs");
     expect(fs.existsSync(exe), exe).toBe(true);
@@ -314,11 +320,5 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       child.stdin.end();
       setTimeout(() => { if (child.exitCode === null) child.kill(); }, 3_000).unref();
     }
-  });
-});
-
-describe.runIf(required && onWindows && !process.env.EMBER_PACKAGED_APP)("the packaged accessibility host", () => {
-  it("needs EMBER_PACKAGED_APP (the staged Ember folder) in a required run", () => {
-    throw new Error("EMBER_WIN32_TEST=1 without EMBER_PACKAGED_APP: stage Ember first and name its folder (dist/package/Ember)");
   });
 });

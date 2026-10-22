@@ -274,6 +274,11 @@ function runsTerminal(argv: string[], v: Vocabulary, depth = 0): boolean {
   const prog = word(argv[0]), args = argv.slice(1);
   if (v.refused.test(prog)) return true;
   if (prog === "env") return runsTerminal(envCommand(args, 0), v, depth + 1);
+  // Windows: "explorer.exe shell:AppsFolder\<AUMID>" starts that packaged app, judged by its id as flatpak's are
+  // (Microsoft.WindowsTerminal_8wekyb3d8bbwe!App is Windows Terminal, whatever the shortcut is called). Before the
+  // wrappers: as one, explorer.exe would hand the AUMID on as if it were a program's path.
+  const packaged = v.os === "win32" && prog === "explorer" ? /^shell:appsfolder\\(.+)$/i.exec(args[0] ?? "") : null;
+  if (packaged) return idIsTerminal(packaged[1], v) || idHasShell(packaged[1], v);
   const wrapper = v.wrappers[prog];
   if (wrapper) {
     if (wrapper.noCommand && args.some(a => wrapper.noCommand!.test(a))) return false;
