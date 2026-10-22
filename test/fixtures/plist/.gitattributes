@@ -1,0 +1,3 @@
+# Binary and UTF-16 property lists are compared byte for byte by the plist tests: never convert them.
+*.bplist binary
+*-utf16.plist binary

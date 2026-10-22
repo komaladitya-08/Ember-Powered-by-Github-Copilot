@@ -1,0 +1,19 @@
+{
+  "CFBundleExecutable": "Finder",
+  "CFBundleIdentifier": "com.apple.finder",
+  "CFBundleName": "Finder",
+  "CFBundlePackageType": "APPL",
+  "CFBundleURLTypes": [
+    {
+      "CFBundleURLName": "Finder",
+      "CFBundleURLSchemes": [
+        "file"
+      ]
+    }
+  ],
+  "EmptyArray": [],
+  "EmptyDict": {},
+  "EmptyString": "",
+  "LSApplicationCategoryType": "public.app-category.utilities",
+  "NSAppleScriptEnabled": true
+}

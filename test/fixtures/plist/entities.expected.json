@@ -1,0 +1,28 @@
+{
+  "CData": "a <b> & c and more",
+  "CFBundleName": "Fish & Chips <Deluxe> \"Pro\" '24 © ✓",
+  "Data": {
+    "$data": "AAEC/v8="
+  },
+  "Date": {
+    "$date": "2024-05-06T07:08:09Z"
+  },
+  "Empty": "",
+  "EmptyArray": [],
+  "EmptyDict": {},
+  "EmptyTagPair": "",
+  "Hex": 31,
+  "Negative": -42,
+  "Nested": [
+    true,
+    false,
+    {
+      "Deep": [
+        1,
+        2
+      ]
+    }
+  ],
+  "Real": 2.5,
+  "__proto__": "stays a key"
+}

@@ -1,0 +1,6 @@
+{
+  "CFBundleExecutable": "Helper",
+  "CFBundleIdentifier": "com.example.helper",
+  "CFBundleName": "Helper",
+  "LSUIElement": true
+}
