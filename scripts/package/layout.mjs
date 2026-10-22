@@ -76,11 +76,13 @@ export function layoutFor(platform, arch) {
       // koffi's import library and exports file are for linking against it, not for loading it.
       prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, ...tools],
       // The UI Automation bridge: compiled by Windows PowerShell 5.1 at run time, so it ships as source. The AT-SPI
-      // sidecar is the helper Ember runs inside WSL distros to read WSLg's Linux apps (SSH/WSL design §4.3).
+      // sidecar is the helper Ember runs inside WSL distros to read WSLg's Linux apps (SSH/WSL design §4.3). SSH's
+      // askpass helper is compiled the same way at first use, from resources\ssh (askpass-win.ts, §5.1.6).
       sidecarFiles: [
         { from: "sidecar/uia/ember_uia.ps1", to: "sidecar/uia/ember_uia.ps1" },
         { from: "sidecar/uia/ember_uia.cs", to: "sidecar/uia/ember_uia.cs" },
         { from: "sidecar/atspi/ember_atspi.py", to: "sidecar/atspi/ember_atspi.py" },
+        { from: "resources/ssh/ember_askpass.cs", to: "ssh/ember_askpass.cs" },
       ],
       // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
       launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],

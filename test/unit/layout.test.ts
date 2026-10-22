@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PLATFORM_FAMILIES, TARGETS, artifactNames, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
 import { archivePlan } from "../../scripts/package/archive.mjs";
+import { askpassSourceCandidates } from "../../app/main/remote/askpass-win";
 
 const lock = JSON.parse(fs.readFileSync(path.resolve("package-lock.json"), "utf8")) as { packages: Record<string, { dev?: boolean; os?: string[]; cpu?: string[]; libc?: string[] }> };
 /** The production packages in the lockfile (every platform's), as npm ls would print them under a root. */
@@ -56,8 +57,12 @@ describe("the Windows layout", () => {
         // Ember.exe gets Ember's version resource and that icon (exe-resources.mjs).
         exeResources: true,
       });
-      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs", "sidecar/atspi/ember_atspi.py"]);
-      expect(win.sidecarFiles.every(s => s.from === s.to)).toBe(true);
+      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs", "sidecar/atspi/ember_atspi.py", "ssh/ember_askpass.cs"]);
+      expect(win.sidecarFiles.filter(s => s.to.startsWith("sidecar/")).every(s => s.from === s.to)).toBe(true);
+      // SSH's askpass source lands where the packaged Ember compiles it from (askpass-win.ts's first candidate).
+      const askpass = win.sidecarFiles.find(s => s.to === "ssh/ember_askpass.cs")!;
+      expect(fs.existsSync(path.resolve(askpass.from))).toBe(true);
+      expect(path.win32.join("C:\\Ember\\resources", ...askpass.to.split("/"))).toBe(askpassSourceCandidates({ resourcesPath: "C:\\Ember\\resources", appDir: "C:\\Ember\\resources\\app\\dist\\app" })[0]);
       // The doctor for a console, beside Ember.exe (cmd.exe waits for it and keeps its exit code).
       expect(win.launchers).toEqual([{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }]);
     });
