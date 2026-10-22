@@ -1,9 +1,9 @@
 /**
  * The words the policy, the worker and the host match against, per OS: which windows are security prompts, which
  * apps are browsers, mail and office suites, which extra labels are risky, which boxes run what is typed into them,
- * how the user names the terminal, and what names a file. Pure data, keyed by OS, read through policy.ts and the
- * agent (one copy for every reader). The Linux rows are the expressions those files held before the port, moved
- * verbatim, and must not change (tests pin them).
+ * which windows Ember only reads, which apps run the programs they open, how the user names the terminal, and what
+ * names a file. Pure data, keyed by OS, read through policy.ts and the agent (one copy for every reader). The Linux rows
+ * are the expressions those files held before the port, moved verbatim, and must not change (tests pin them).
  *
  * The Windows and macOS rows (design §9.11) match what those systems report as a window's app: on Windows its
  * program's file name ("CredentialUIBroker", with or without ".exe"), on macOS the app's name in the user's language
