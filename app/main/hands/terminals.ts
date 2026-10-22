@@ -215,8 +215,7 @@ export const TERMINAL_CLASSES: Readonly<Record<OS, readonly string[]>> = {
 
 /**
  * Words that make a desktop or bundle id a terminal's however its app is named (GNOME's Console is org.gnome.Console).
- * Not on macOS, where com.apple.Console is the log viewer. hands/system.ts's idIsTerminal still tests "console" on every
- * OS: until it reads this row, the Mac's Console is refused as a terminal there too (a harmless refusal).
+ * Not on macOS, where com.apple.Console is the log viewer. hands/system.ts's idIsTerminal reads this OS's row.
  */
 export const TERMINAL_ID_WORDS: Readonly<Record<OS, readonly string[]>> = {
   linux: ["console"],
