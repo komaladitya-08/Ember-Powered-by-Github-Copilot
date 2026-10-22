@@ -50,6 +50,8 @@ export interface Question {
 
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */
 const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" ? panel.card.sha256 : panel.consent.sha256);
+/** A SHA-256 as sha256Hex writes it: a card whose hash isn't one (empty, cut short) can't be allowed (fail closed). */
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void }
 
@@ -148,7 +150,7 @@ export class Confirmer {
     const m = /^q(\d+):(.+)$/.exec(actionId);
     if (!m || !this.current || Number(m[1]) !== this.current.n) return false;
     if (!this.current.q.options.some(o => o.id === m[2])) return false;
-    if (this.now() - this.current.shownAt < (this.current.q.armMs ?? this.armMs) || this.blocked()) return false;
+    if (this.now() - this.current.shownAt < this.armOf(this.current.q) || this.blocked()) return false;
     if (!this.allowedFrom(this.current, m[2], via, proof)) return false;
     this.finish(this.current, m[2]);
     return true;
@@ -165,9 +167,22 @@ export class Confirmer {
     const panel = p.q.panel;
     if (!panel) return via !== "panel";
     if (!this.panelReady) return false;
-    if (via === "panel") return typeof proof?.sha256 === "string" && proof.sha256 === panelSha256(panel);
-    if (via === "key") return this.panelReady(p.n) === true;
-    return false;
+    if (via === "panel") {
+      const want = panelSha256(panel);
+      return typeof want === "string" && SHA256_HEX.test(want) && proof?.sha256 === want;
+    }
+    if (via !== "key") return false;
+    // A readiness check that fails can't say the whole card is in view (fail closed).
+    try {
+      return this.panelReady(p.n) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
+  private armOf(q: Question): number {
+    return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
   }
 
   /** A keyboard answer: the primary option ("Allow"), "deny" ("Not now") or "always". */

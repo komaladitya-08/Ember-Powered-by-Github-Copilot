@@ -269,7 +269,7 @@ export class AtspiSidecar {
     const live = this.helper;
     if (live && !live.done && live.child.exitCode === null && live.child.signalCode === null) return live;
     if (live) this.retire(live, "accessibility helper stopped");
-    if (this.launch?.mayStart && !this.launch.mayStart()) throw new Error("accessibility helper not running");
+    if (!this.mayStartNow()) throw new Error("accessibility helper not running");
     const block = ++idBlocks;
     this.blocks.add(block);
     const base = String(block * ID_BLOCK);
@@ -370,10 +370,22 @@ export class AtspiSidecar {
       this.reviving = false;
       if (this.stopped || this.helper) return;
       // (A launch that may not start now, a stopped WSL distro, isn't started by a revive either.)
-      if (this.launch?.mayStart && !this.launch.mayStart()) return;
+      if (!this.mayStartNow()) return;
       this.log.info("sidecar.revive", {});
       this.request("status").catch(() => undefined);
     }, 0);
+  }
+
+  /** SidecarLaunch.mayStart now (yes without one); a check that throws says no, so nothing starts (fail closed). */
+  private mayStartNow(): boolean {
+    const may = this.launch?.mayStart;
+    if (!may) return true;
+    try {
+      return may() === true;
+    } catch (err) {
+      this.log.warn("sidecar.may_start_failed", { err });
+      return false;
+    }
   }
 
   request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = 5000): Promise<T> {

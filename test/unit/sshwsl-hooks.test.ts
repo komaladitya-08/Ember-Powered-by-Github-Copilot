@@ -183,6 +183,37 @@ describe("the Confirmer's panel questions (§3.9.1, R7)", () => {
     await expect(q).resolves.toBe("once");
   });
 
+  it("keeps the default arm time when a question's own isn't a time", async () => {
+    for (const armMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      const { c, tick } = confirmer({ ready: () => true, armMs: 500 });
+      const q = c.ask(commandQuestion(undefined, { armMs }));
+      tick(100);
+      expect(c.answer("q1:once", "panel", { sha256: card.sha256 }), String(armMs)).toBe(false);
+      tick(400);
+      expect(c.answer("q1:once", "panel", { sha256: card.sha256 }), String(armMs)).toBe(true);
+      await expect(q).resolves.toBe("once");
+    }
+  });
+
+  it("can't allow a card whose hash isn't a SHA-256, whatever proof comes with it", async () => {
+    for (const bad of ["", "abc", card.sha256.toUpperCase(), `${card.sha256}0`]) {
+      const { c } = confirmer({ ready: () => false });
+      const q = c.ask(commandQuestion({ kind: "command", card: { ...card, sha256: bad } }));
+      expect(c.answer("q1:once", "panel", { sha256: bad }), JSON.stringify(bad)).toBe(false);
+      expect(c.answer("q1:once", "panel"), JSON.stringify(bad)).toBe(false);
+      c.cancelAll();
+      await expect(q).resolves.toBeNull();
+    }
+  });
+
+  it("refuses the approve key, without throwing, when the panel's readiness can't be told", async () => {
+    const { c } = confirmer({ ready: () => { throw new Error("window gone"); } });
+    const q = c.ask(commandQuestion());
+    expect(c.answerKey("primary")).toBe(false);
+    expect(c.answerKey("deny")).toBe(true);
+    await expect(q).resolves.toBe("deny");
+  });
+
   it("answers a question without a panel as before (bubble and keys), never from a panel window", async () => {
     const { c } = confirmer({ ready: () => true });
     const plain = { title: "May I?", prompt: "Click “Save”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "always", label: "Always in gedit" }, { id: "deny", label: "Not now" }] };
@@ -306,6 +337,18 @@ describe("the accessibility sidecar's launch gates and ids (§4.3)", () => {
     const s = fakeSidecar({ mayStart: () => may });
     await s.request("status");
     may = false;
+    await die(s);
+    expect(spawned()).toBe(1);
+    await expect(s.request("status")).rejects.toThrow("accessibility helper not running");
+    expect(spawned()).toBe(1);
+  });
+
+  it("counts a mayStart that throws as no, for a start and a revive alike (nothing thrown where no one catches it)", async () => {
+    let broken = false;
+    const s = fakeSidecar({ mayStart: () => { if (broken) throw new Error("wsl.exe gone"); return true; } });
+    await s.request("status");
+    broken = true;
+    // The revive runs on a timer: a throw there would be an uncaught error, which fails this run.
     await die(s);
     expect(spawned()).toBe(1);
     await expect(s.request("status")).rejects.toThrow("accessibility helper not running");
