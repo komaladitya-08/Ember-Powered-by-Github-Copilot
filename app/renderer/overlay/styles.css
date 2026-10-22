@@ -1,63 +1,91 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
-body { font: 13px/1.4 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; }
+body { font: var(--type-callout); color: var(--label); }
 /* Ember: a small canvas that moves with it (sized and placed by main.ts). */
 /* Never takes a click: the task cards' buttons and the bubble's are what the user clicks, even with Ember beside them. */
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+
+/* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen. It fades in
+   from just above and out in place (main.ts keeps its words until it has gone). */
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
-  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
-  background: rgba(26, 15, 11, 0.9); color: #fbeee3; border: 1px solid rgba(255, 154, 61, 0.45);
-  font-weight: 700; font-size: 12px; box-shadow: 0 0 18px rgba(255, 138, 42, 0.25);
+  display: inline-flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 16px 6px 13px; border-radius: var(--r-capsule);
+  border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);
+  color: var(--label); font: var(--type-headline); font-size: 13px; letter-spacing: -0.003em;
+  transition: opacity 200ms ease, display 200ms allow-discrete, translate 420ms var(--spring-snappy);
 }
-.status[hidden] { display: none; }
-.status i { width: 8px; height: 8px; border-radius: 50%; background: #ff9a3d; box-shadow: 0 0 8px #ff9a3d; animation: pulse 1.2s ease-in-out infinite; }
+@starting-style { .status { opacity: 0; translate: 0 -6px; } }
+.status[hidden] { display: none; opacity: 0; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
+
 /* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
 .tasks {
-  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 260px; z-index: 3;
+  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
-.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 154, 61, 0.6) transparent; }
-/* min-width 0 and wrapping anywhere: a long unbroken word wraps inside the 260 px card instead of stretching it off screen. */
+.tasks.scroll { overflow-y: auto; overscroll-behavior: contain; }
+/* Its scrollbar is drawn over whatever app is behind: the thumb sits in a dark track, so it reads on a white app too. */
+.tasks.scroll::-webkit-scrollbar-track { border: 2px solid transparent; border-radius: var(--r-capsule); background: rgba(20, 17, 18, 0.85) padding-box; }
+.tasks.scroll::-webkit-scrollbar-thumb { border-width: 4px; }
+/* A card is a notification: glass, the task's state as a symbol on the left, its words, then its buttons.
+   min-width 0 and wrapping anywhere: a long unbroken word wraps inside the card instead of stretching it off screen. */
 .task {
-  display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; background: rgba(26, 15, 11, 0.9); color: #fbeee3;
-  border: 1px solid rgba(255, 154, 61, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); min-width: 0;
+  position: relative; display: grid; gap: 1px; padding: 11px 14px 12px 44px; border-radius: var(--r-xl); color: var(--label);
+  border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth); min-width: 0;
+  transition: opacity 240ms ease;
 }
+/* A card that has just appeared fades in (opacity only: its buttons are measured where they stand). Cards moved
+   in the stack are not new, and don't blink. */
+@starting-style { .task[data-fresh] { opacity: 0; } }
 .task b, .task span { overflow-wrap: anywhere; }
-.task b { font-size: 13px; }
-.task span { color: rgba(251, 238, 227, 0.8); font-size: 12px; }
+.task b { font: var(--type-headline); letter-spacing: -0.006em; }
+.task span { color: var(--label-2); font: var(--type-callout); }
 .task span[hidden] { display: none; }
+/* The state's symbol (with the words beside it, and the state's word for screen readers; never colour alone):
+   a ring while it works, a question when it waits for you, a tick when done, a mark when it failed, a square
+   when stopped (shared/ember.css). */
+.task::before {
+  content: ""; position: absolute; left: 12px; top: 10px; width: 22px; height: 22px; background: var(--sym-tint);
+  -webkit-mask: var(--sym) center / 22px no-repeat;
+}
 /* The older ended cards folded into one line at the top of the stack, with Close all for the failures among them. */
-.task.more { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; }
+.task.more { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 44px; border-radius: var(--r-xl); }
+.task.more::before { top: 50%; margin-top: -11px; background: var(--gray); -webkit-mask: var(--sym-more) center / 22px no-repeat; }
 .more-text { flex: 1; min-width: 0; display: grid; }
+.more-text > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task.more .task-actions { flex: none; margin-top: 0; }
 .tasks > [hidden] { display: none; }
 /* Stop / Close: the overlay is click-through except over these (reported to the main process). */
-.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .task-actions[hidden] { display: none; }
+/* Small capsules (the floating layer's small controls, 24 px) with an edge of 3:1 or more (WCAG 1.4.11). */
 .task-actions button {
-  font: 600 12px/1 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif; padding: 6px 11px; border-radius: 7px; cursor: pointer;
-  background: transparent; color: #fbeee3; border: 1px solid rgba(255, 220, 190, 0.6);
+  font: 600 12px/16px var(--ember-font); min-height: 24px; padding: 4px 12px; border-radius: var(--r-capsule); cursor: pointer;
+  border: 0; background: rgba(255, 255, 255, 0.08); color: var(--label); box-shadow: inset 0 0 0 1px var(--control-edge);
+  transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
-.task-actions button:hover { border-color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
-.task-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.task[data-status="done"] { border-color: rgba(124, 207, 138, 0.6); }
-.task[data-status="failed"] { border-color: rgba(255, 107, 87, 0.7); }
-.task[data-status="waiting"] { border-color: rgba(183, 123, 255, 0.7); }
-.task[data-status="stopped"] { border-color: rgba(251, 238, 227, 0.3); }
+@media (hover: hover) { .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
+.task-actions button:active { transform: scale(0.97); }
+.task-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 @keyframes pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .status i { animation: none; } }
-html.calm .status i { animation: none; }
 
-/* The control Ember is working on. */
+/* The control Ember is working on: Apple's focus ring in Ember's colour, between two dark keylines so it reads on a
+   white app as on a dark one (3:1 either way). The ring stays still; its glow (a layer of its own) breathes by
+   opacity, so the pulse costs the compositor and never repaints. */
 .focus {
-  position: absolute; pointer-events: none; border-radius: 8px;
-  border: 2px solid rgba(255, 150, 70, 0.95);
-  box-shadow: 0 0 0 4px rgba(255, 122, 26, 0.25), 0 0 22px 6px rgba(255, 122, 26, 0.45);
-  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease, opacity 0.2s;
-  animation: focus-pulse 1.2s ease-in-out infinite;
+  position: absolute; pointer-events: none; border-radius: var(--r-md);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 1px rgba(20, 12, 4, 0.75), inset 0 0 0 1px rgba(20, 12, 4, 0.45), 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: left 0.3s var(--spring-smooth), top 0.3s var(--spring-smooth), width 0.3s var(--spring-smooth), height 0.3s var(--spring-smooth), opacity 0.2s;
 }
-.focus[hidden] { display: block; opacity: 0; animation: none; }
-@keyframes focus-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 122, 26, 0.18), 0 0 30px 10px rgba(255, 122, 26, 0.5); } }
-@media (prefers-reduced-motion: reduce) { .focus { animation: none; transition: none; } }
-html.calm .focus { animation: none; transition: none; }
+.focus::after {
+  content: ""; position: absolute; inset: -6px; border-radius: calc(var(--r-md) + 6px); pointer-events: none;
+  box-shadow: 0 0 22px 6px color-mix(in srgb, var(--glow) 50%, transparent);
+  animation: focus-glow 1.4s ease-in-out infinite;
+}
+.focus[hidden] { display: block; opacity: 0; }
+.focus[hidden]::after { animation: none; }
+@keyframes focus-glow { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
+html.calm .focus { transition: none; }
+html.calm .focus::after, html.calm .status i { animation: none; }

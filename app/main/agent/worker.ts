@@ -190,18 +190,30 @@ const ROW_ROLES = /^(list item|tree item|table cell)$/;
 const POPUP_ROLES = /^(menu|menu bar|combo box|popup menu|window|tool tip)$/;
 const isUnder = (p: { x: number; y: number }, b: Bounds) => p.x >= b.x && p.y >= b.y && p.x < b.x + b.width && p.y < b.y + b.height;
 
+/** A window that saves to a file, by its title: GTK gives every file dialog (Open, Insert Image, Attach) the same role. */
+const SAVE_TITLE = /^\s*(save|export)\b|\bsave (file|as|a copy|image)\b|\bfile to save\b/i;
+/** Windows that put a question to the user: there, the question's words may be spread over its labels. */
+const QUESTION_ROLE = /^(dialog|alert|alert dialog)$/;
+const RESTORE = /\b(restore|recover|reopen)\b/i;
+
 /**
  * A note for windows where taking the app's suggestion would act on something the user never named: an offer to
  * restore an earlier session or recover documents (it brings back old, unsaved text), and a Save dialog when the
  * user named no file (its suggested name and folder are the app's guess). `said`: what the user said for the task.
+ * Only a question window is read as a whole; elsewhere (Files' Trash with its Restore button, a document about
+ * restoring) one control must make the offer itself (Firefox's "Restore Session").
  */
 export function dialogNote(w: { name: string; role?: string }, nodes: readonly { name: string; text?: string }[], said = ""): string {
-  const words = [w.name, ...nodes.slice(0, 60).flatMap(n => [n.name, n.text ?? ""])].join(" \n ");
   const asked = (re: RegExp) => re.test(said);
-  if (/\b(restore|recover|reopen)\b/i.test(words) && /\b(session|unsaved|previous|last time|crash|documents?)\b/i.test(words) && !asked(/\b(restore|recover|reopen)\b/i)) {
+  const offer = (s: string, earlier: RegExp) => RESTORE.test(s) && earlier.test(s);
+  const top = nodes.slice(0, 60);
+  const offers = QUESTION_ROLE.test(w.role ?? "")
+    ? offer([w.name, ...top.flatMap(n => [n.name, n.text ?? ""])].join(" \n "), /\b(session|unsaved|previous|last time|crash|documents?)\b/i)
+    : [w.name, ...top.map(n => n.name)].some(s => offer(s, /\b(session|unsaved|previous|last time)\b/i));
+  if (offers && !asked(RESTORE)) {
     return "\nNote: this asks whether to restore an earlier session or recover unsaved documents. The user didn't ask for that: answer No (or Don't restore), and work on the file the task is about.";
   }
-  if ((w.role === "file chooser" || /^save( as)?\b|save file/i.test(w.name)) && !/[~/][\w.-]|\.\w{1,5}\b/.test(said)) {
+  if (SAVE_TITLE.test(w.name) && !/[~/][\w.-]|\.\w{1,5}\b/.test(said)) {
     return "\nNote: the user named no file. Don't accept this dialog's suggested name or folder: save to the file this task is about if you know it, or cancel and say in finish_task that you need to know where to save.";
   }
   return "";
@@ -219,9 +231,15 @@ export function dismissName(name: string): boolean {
   return DISMISS.test(name.replace(/[_….]+/g, "").replace(/\s+/g, " ").trim());
 }
 
-/** A search box or other field the user may click instead of the row Ember pointed at. */
-function fieldLike(n: { role: string; name: string }): boolean {
-  return FOCUS_IS_THE_STEP.test(n.role) || /search|find/i.test(n.name) || /search/i.test(n.role);
+/**
+ * A search box or other field the user may click instead of the row Ember pointed at: one to type in, or a combo box
+ * that searches (LibreOffice's "Find:"). Never a window, a page or a button because of the words in its name ("Find
+ * and Replace", "Research notes.odt"), nor the document being written.
+ */
+function fieldLike(n: { role: string; name: string; states: string[] }): boolean {
+  // A text editor's page (gedit, Mousepad: a multi-line "text") is the document, not a box to search in.
+  if (n.states.includes("multi line")) return false;
+  return /^(text|entry|password text|spin button)$/.test(n.role) || /search/i.test(n.role) || (n.role === "combo box" && /search|find/i.test(n.name));
 }
 
 /**
@@ -727,8 +745,6 @@ export class Worker {
   private place: DeskPlace | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
   private guideStep = 0;
-  /** The user left a guide step (Cancel, or the dialog closed without using what was pointed at). */
-  private guideLeft = false;
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
   private halt = new AbortController();
@@ -1042,16 +1058,13 @@ export class Worker {
       this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false.",
         z.object({ success: z.boolean(), summary: z.string().max(400) }),
         async a => {
-          // A cancelled guide step is never a successful finish (the model saw the dialog close and said they picked a font).
-          const success = a.success && !this.guideLeft;
-          const summary = this.guideLeft && a.success && !/\bcancel/i.test(a.summary)
-            ? `The user cancelled. ${a.summary}` : a.summary;
-          this.result = { success, summary };
+          // A cancelled guide step never gets here: it already ended the task (left() in waitForClick).
+          this.result = { success: a.success, summary: a.summary };
           this.ended.abort();
           this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
           setTimeout(() => { void this.session?.abort().catch(() => undefined); }, 50);
-          return done(success ? "Task closed. Stop now." : "Task closed (they didn't finish). Stop now.");
+          return done(a.success ? "Task closed. Stop now." : "Task closed (they didn't finish). Stop now.");
         }),
     ];
   }
@@ -1229,7 +1242,7 @@ export class Worker {
     const named = this.nameOf(id, node);
     const sameTarget = (e: { role: string; name: string } | null) => !!e && e.role === node.role && this.nameOf(id, e) === named;
     // Where it is, as each look finds it (LibreOffice reports places 25 px off until the pointer has been over its window).
-    let b = this.targetBox(id, node, null) ?? node.bounds;
+    let b = node.bounds;
     const pad = FOCUS_IS_THE_STEP.test(node.role) ? 12 : 4;
     const inside = (p: { x: number; y: number }, box = b, extra = pad) => p.x >= box.x - extra && p.y >= box.y - extra && p.x < box.x + box.width + extra && p.y < box.y + box.height + extra;
     const before = await this.sidecar.readElement(id).catch(() => null);
@@ -1255,16 +1268,18 @@ export class Worker {
     if (own(windowBefore)) windowBefore = null;
     const keyDown = () => { try { return this.d.activationKey?.() === true; } catch { return false; } };
     const opens = ACTS_ITSELF.test(node.role) || /menu item$/.test(node.role);
+    // Its dialog closing is the user leaving the step: a row or field in it, or anything there but a button that closes
+    // the dialog itself (OK or Save chosen with Enter from a field never had the keyboard, and the dialog is gone).
+    const leavesWithDialog = () => field || this.clickSelects(node) || (this.inDialog(node) && !ACTS_ITSELF.test(node.role));
     const usedIt = async (how: string) => {
-      this.guideLeft = false;
       await new Promise(r => setTimeout(r, 400)); // let the app react before the next look
       this.audit({ event: "action", task: this.spec.id, kind: "user_clicked", app: this.window.app, element: { role: node.role, name: named }, ok: true });
       return done(`${how} Call perceive_window to see what changed.`);
     };
     const left = (how: string) => {
-      this.guideLeft = true;
       // The user cancelled the guide: end it here, calmly, rather than let the model take more steps (its next
-      // switch_window showed "Switching windows" for seconds) and report the closed dialog as a failure.
+      // switch_window showed "Switching windows" for seconds) and report the closed dialog as a failure. Every tool
+      // after this is refused, so no finish_task can call the cancelled step a success (that they picked a font).
       if (!this.result) {
         this.result = { success: false, stopped: true, summary: "The guide was cancelled." };
         this.ended.abort();
@@ -1286,16 +1301,20 @@ export class Worker {
       if (p && down && !wasDown) {
         if (inside(p)) pressed = true;
         else {
-          for (const n of this.known.values()) {
-            if (n.id === id || !n.bounds || !inside(p, n.bounds, 4)) continue;
-            if (dismissName(n.name)) { other.kind = "dismiss"; other.name = n.name; break; }
-            if (fieldLike(n)) { other.kind = "field"; other.name = n.name; break; }
-          }
+          // Everything under the press but the window itself (its box is the whole window, its name the title):
+          // Cancel or Close if one is there, else the innermost field.
+          const hits = [...this.known.values()].filter(n => n.id !== id && n.depth > 0 && n.bounds && inside(p, n.bounds, 4));
+          const dismiss = hits.find(n => dismissName(n.name));
+          const box = dismiss ? undefined : hits.filter(fieldLike).sort((x, y) => y.depth - x.depth)[0];
+          if (dismiss) { other.kind = "dismiss"; other.name = dismiss.name; }
+          else if (box) { other.kind = "field"; other.name = box.name; }
         }
       }
       wasDown = down;
     };
     const watcher = setInterval(watchPointer, 15);
+    // The highlight is up (point_at put it there): it comes back when the named control does, after a look hid it.
+    let shown = true;
     try {
       while (Date.now() - t0 < timeoutMs) {
         if (this.isOver) return STOPPED();
@@ -1313,16 +1332,18 @@ export class Worker {
         keyWasDown = pressing;
         if (Date.now() - lastCheck > 500) {
           lastCheck = Date.now();
-          const now = await this.sidecar.readElement(id).catch(() => null);
+          let busy = false;
+          const now = await this.sidecar.readElement(id).catch((err: unknown) => { busy = isBusy(err); return null; });
           if (pressed) return await usedIt("The user clicked it.");
+          // The app didn't answer in time (a font list scrolling): it is busy, not gone, so nothing is known yet.
+          if (busy) { lastCheck = Date.now(); continue; }
           if (key(now) !== key(before)) {
             if (now && !now.offscreen) {
-              this.guideLeft = false;
               return done(`It changed: ${describeAfter(now)}. Call perceive_window for the next step.`);
             }
             this.fly(null);
             // A dialog's row or a field vanishing is the dialog closing, not the user choosing this row (Cancel).
-            if (this.clickSelects(node) || field || dismissName(named) || this.inDialog(node)) {
+            if (leavesWithDialog() || dismissName(named)) {
               return left(now
                 ? "Its dialog closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled."
                 : "The window closed without this being used (the user most likely pressed Cancel or closed it). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
@@ -1335,19 +1356,25 @@ export class Worker {
             if (next) {
               const moved = next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height;
               b = next;
-              if (moved) this.fly(b);
+              // Moved, or back where it was after a look hid it (the list scrolled back to it).
+              if (moved || !shown) { this.fly(b); shown = true; }
             } else {
               // The control's box is gone (dialog closed, 0×0 leftover): never leave an empty orange frame.
               this.fly(null);
-              if (field || this.clickSelects(node) || this.inDialog(node)) {
+              shown = false;
+              if (leavesWithDialog()) {
                 return left("The control disappeared (the user most likely pressed Cancel or closed the dialog). Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.");
               }
+              // OK or Save whose dialog closed by itself (Enter from a field): not a cancel, but this step is over.
+              if (this.inDialog(node)) return done("The window changed (the element is gone). Call perceive_window.");
             }
           } else if (now && now.role === node.role && !sameTarget(now)) {
             // This id is another row now (the list filtered): don't highlight the wrong one.
             this.fly(null);
+            shown = false;
           } else if (!now || now.offscreen || !usableBounds(now.bounds)) {
             this.fly(null);
+            shown = false;
           }
           if (now) {
             const r = reached(now);
@@ -1361,17 +1388,15 @@ export class Worker {
           if (w && !windowBefore && !wasReached) windowBefore = w;
           const another = !!w && !!windowBefore && !!w.title.trim() && (w.title !== windowBefore.title || w.app !== windowBefore.app);
           if (another && wasReached) {
-            this.guideLeft = false;
             return done(`Another window has the keyboard now (${q(w!.title, 80)}), right after the user reached the element pointed at: they most likely chose it with the keyboard. Call perceive_window to see where they are.`);
           }
           // A new window of the same app took the keyboard after Ember pointed at a menu item or a button that opens
           // things (Select Font… opened its dialog): that step is done, however it was chosen.
           if (another && opens && w!.pid != null && w!.pid === windowBefore!.pid) {
-            this.guideLeft = false;
             return done(`A new window of the app has the keyboard now (${q(w!.title, 80)}): the user chose the element pointed at, and it opened. Call perceive_window to see the new window.`);
           }
           // Cancel in a font dialog: AT-SPI may still report the Size field, but the document has the keyboard again.
-          if (another && !wasReached && (field || this.clickSelects(node) || this.inDialog(node))) {
+          if (another && !wasReached && leavesWithDialog()) {
             this.fly(null);
             return left(`The window changed (${q(w!.title, 80)} now has the keyboard). They cancelled or closed this step. Do not say they finished the goal. Call perceive_window, or finish_task with success false saying they cancelled.`);
           }
@@ -1387,21 +1412,14 @@ export class Worker {
   }
 
   /**
-   * Where to highlight element `id`: the live box when it is still the same named control, else another known
-   * control with that name, else the last read box. Never a different row that reused the id after a list scrolled.
+   * Where to highlight element `id`: the live box when it is still the same named control, else its last read box.
+   * Never a different row that reused the id after a list scrolled, nor another control with the same name (a
+   * second "Close Document", or one of several unnamed icon buttons) when the live read fails.
    */
   private targetBox(id: number, node: AxNode, live: ElementInfo | null): Bounds | null {
-    const name = this.nameOf(id, node);
-    const same = (role: string, nm: string) => role === node.role && nm === name;
-    if (live && !live.offscreen && same(live.role, this.nameOf(id, { role: live.role, name: live.name }))) {
+    if (live && !live.offscreen && live.role === node.role && this.nameOf(id, { role: live.role, name: live.name }) === this.nameOf(id, node)) {
       return usableBounds(live.bounds) ?? usableBounds(node.bounds);
     }
-    for (const n of this.known.values()) {
-      if (!same(n.role, this.nameOf(n.id, n))) continue;
-      const box = usableBounds(n.bounds);
-      if (box) return box;
-    }
-    if (live && live.role === node.role && !same(live.role, this.nameOf(id, { role: live.role, name: live.name }))) return null;
     return usableBounds(node.bounds);
   }
 

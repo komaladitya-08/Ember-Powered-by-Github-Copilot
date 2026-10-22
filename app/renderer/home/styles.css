@@ -1,200 +1,359 @@
+/* The settings window, in the manner of System Settings: a sidebar of sections (each with its coloured symbol tile),
+   grouped rows on a dark window, rounded-rectangle controls (a capsule only for the one Start button), headers above
+   each group and footnotes below it. Tokens and controls come from ../shared/ember.css. */
 :root {
-  --bg: #16100d;
-  --panel: #1f1713;
-  --line: #34271f;
-  --fg: #f6ece5;
-  --muted: #b3a197;
-  --ok: #7ccf8a;
-  --warn: #f2c14e;
-  --fail: #ff6b57;
-  --accent: #ff8a3d;
-  color-scheme: dark;
+  /* The window behind everything (the placeholder and label contrasts are measured against it). */
+  --bg: #121011;
+  --panel: var(--surface-1);
+  --line: var(--separator);
+  --fg: var(--label);
+  --muted: var(--label-2);
+  --ok: var(--green);
+  --warn: var(--yellow);
+  --fail: var(--red);
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--fg);
-  font: 14px/1.5 "Cantarell", "Atkinson Hyperlegible", system-ui, sans-serif;
-}
-.home { max-width: 680px; margin: 0 auto; padding: 22px 24px 32px; display: grid; gap: 22px; }
+body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body); letter-spacing: -0.006em; }
+.home { max-width: 700px; margin: 0 auto; padding: 30px 24px 48px; display: grid; gap: 30px; }
 /* A long name never widens the page past the window (grid items otherwise grow to their longest word). */
 .home > * { min-width: 0; }
-.hero { display: flex; align-items: center; gap: 16px; }
-#buddy { width: 132px; height: 132px; flex: none; border-radius: 18px; background: radial-gradient(circle at 50% 35%, #2b1d17, #120c0a 75%); }
-h1 { margin: 0; font-size: 34px; letter-spacing: -0.01em; }
-.hero-text p { margin: 2px 0 0; color: var(--muted); max-width: 46ch; }
-h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-.checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
-.checks li { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; padding: 11px 14px; }
-.checks li + li { border-top: 1px solid var(--line); }
-.pill { grid-row: span 2; align-self: start; margin-top: 2px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
-.pill.ok { color: #0f2914; background: var(--ok); }
-.pill.warn { color: #2b2006; background: var(--warn); }
-.pill.fail { color: #2b0b06; background: var(--fail); }
-.check-label { font-weight: 700; }
-.check-detail { color: var(--muted); overflow-wrap: anywhere; }
-.checks .check-fix { grid-column: 2; justify-self: start; margin-top: 6px; padding: 5px 12px; font-size: 13px; }
-.checks .check-fix:disabled { opacity: 0.5; cursor: default; }
-.facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
-.facts dt { color: var(--muted); }
-.facts dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: 13px; }
+section { display: grid; gap: 8px; }
+.stack { display: grid; gap: 8px; }
 
+/* ───── Hero: the character on its tile (the app icon's tile), the name, and what Ember is doing ───── */
+.hero { display: flex; align-items: center; gap: 22px; }
+#buddy {
+  width: 112px; height: 112px; flex: none; border-radius: var(--r-icon);
+  background:
+    radial-gradient(64px 64px at 50% 62%, color-mix(in srgb, var(--glow) 34%, transparent), color-mix(in srgb, var(--glow) 10%, transparent) 55%, transparent 85%),
+    linear-gradient(#3b3537, #231f21 55%, #141112);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 5px rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+h1 { margin: 0; font: var(--type-large-title); letter-spacing: -0.021em; text-wrap: balance; }
+.hero-text p { margin: 4px 0 0; color: var(--muted); max-width: 46ch; font: var(--type-body); font-size: 15px; letter-spacing: -0.009em; text-wrap: pretty; }
+
+/* Section titles above their groups; sub-headers in the secondary label, as System Settings' group headers. */
+h2 { margin: 0 0 4px 4px; font: var(--type-title-2); letter-spacing: -0.013em; color: var(--fg); }
+h3.sub { margin: 10px 0 0 4px; font: 600 12px/16px var(--ember-font); letter-spacing: 0.01em; color: var(--muted); }
+h3.sub:first-child { margin-top: 0; }
+h2[tabindex="-1"]:focus { outline: none; }
+
+/* ───── Groups: the rounded sections everything sits in ───── */
+.copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row {
+  background: var(--panel); border-radius: var(--r-lg); box-shadow: var(--group-edge);
+}
+.copilot { display: grid; gap: 12px; padding: 16px; }
+/* Rows: 48 px tall, divided by hairlines; an empty or hidden row takes no room. */
+.group { display: grid; padding: 0 16px; }
+.group > * { min-height: 48px; padding: 12px 0; margin: 0; }
+.group > * + * { border-top: 1px solid var(--line); }
+.group > [hidden], .group > .agent-actions:not(:has(> :not([hidden]))) { display: none; }
+.group > progress { min-height: 0; margin: 14px 0; padding: 0; border-top: 0; }
+.group > .agent-line, .group > .presence-line { display: flex; align-items: center; }
+.group > .consent { margin: 12px 0; }
+
+/* ───── Your Ember: the four characters ───── */
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 560px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 640px) and (max-width: 860px) { body:not(.first-run) .card span { display: none; } }
 .card {
-  all: unset; box-sizing: border-box; cursor: pointer; display: grid; justify-items: center; gap: 4px;
-  padding: 8px 8px 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
+  all: unset; box-sizing: border-box; cursor: pointer; position: relative; display: grid; justify-items: center; align-content: start; gap: 2px;
+  padding: 10px 10px 14px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge);
+  transition: background-color 180ms ease, box-shadow 180ms ease, transform 260ms var(--spring-snappy);
 }
-.card:hover { border-color: var(--accent); }
-.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.card[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 18px rgba(255, 138, 61, 0.2); }
+@media (hover: hover) { .card:hover { background: color-mix(in srgb, var(--surface-1), white 3%); } }
+.card:active { transform: scale(0.98); }
+.card:focus-visible { box-shadow: var(--group-edge), var(--focus-ring); }
+/* The chosen one: a ring and a check, as in Apple's pickers (not colour alone). */
+.card[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--accent); }
+.card[aria-checked="true"]:focus-visible { box-shadow: inset 0 0 0 2px var(--accent), var(--focus-ring); }
+.card::after {
+  content: ""; position: absolute; top: 9px; right: 9px; width: 20px; height: 20px;
+  background: var(--accent); opacity: 0; transform: scale(0.85);
+  -webkit-mask: var(--sym-done) center / contain no-repeat;
+  transition: opacity 160ms ease, transform var(--t-bouncy) var(--spring-bouncy);
+}
+.card[aria-checked="true"]::after { opacity: 1; transform: none; }
 .card canvas { width: 100%; aspect-ratio: 1; max-width: 120px; }
-.card b { font-size: 14px; }
-.card span { color: var(--muted); font-size: 12px; text-align: center; }
-.pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 12px; }
-.pick-row label { color: var(--muted); }
-.pick-row output { color: var(--fg); margin-left: 4px; }
-.pick-row input[type="range"] { flex: 1; min-width: 140px; accent-color: var(--accent); }
-.start { all: unset; cursor: pointer; padding: 9px 16px; border-radius: 9px; background: var(--accent); color: #1a0f0b; font-weight: 700; }
-.start:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.start[hidden] { display: none; }
-.hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
-kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); }
+.card b { font: var(--type-headline); letter-spacing: -0.006em; }
+.card span { color: var(--muted); font: var(--type-footnote); text-align: center; }
 
-.copilot { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.agent-line { margin: 0; display: flex; align-items: center; gap: 8px; }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot[data-phase="ready"] { background: var(--ok); }
-.dot[data-phase="starting"] { background: var(--warn); }
-.dot[data-phase="error"] { background: var(--fail); }
-.agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.btn { all: unset; cursor: pointer; padding: 8px 14px; border-radius: 9px; background: var(--accent); color: #1a0f0b; font-weight: 700; }
-/* The border is a control's only outline: at least 3:1 against the panel (WCAG 1.4.11). */
-.btn.quiet { background: transparent; color: var(--fg); border: 1px solid #8a776b; }
-.btn.small { padding: 4px 10px; font-size: 12px; font-weight: 600; }
-.btn:disabled { opacity: 0.5; cursor: default; }
-.btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.btn[hidden] { display: none; }
-.sign-in-msg { margin: 0; color: var(--fg); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.sign-in-msg.error { color: #ffb3a8; }
-.sign-in-msg code { font: 700 18px ui-monospace, monospace; letter-spacing: 0.08em; color: var(--accent); }
-.sign-in-msg[hidden] { display: none; }
-.models { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; align-items: center; }
-.models[hidden] { display: none; }
-.models label { color: var(--muted); }
-.models select { min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); font: inherit; }
-.usage { margin: 0; color: var(--muted); font-size: 13px; }
-.usage:empty { display: none; }
-.switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.switch-row input { width: 18px; height: 18px; accent-color: var(--accent); }
-.consent { padding: 10px 12px; border-radius: 10px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.35); }
-.consent p { margin: 0 0 10px; line-height: 1.45; }
-progress { width: 100%; accent-color: var(--accent); }
-progress[hidden] { display: none; }
+/* Size: a slider in its row (the filled part of the track follows the value: main.ts sets --fill). */
+.pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.pick-row label { color: var(--fg); min-width: 96px; }
+.pick-row output { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+.pick-row input[type="range"] {
+  flex: 1; min-width: 140px; height: 22px; margin: 0; background: transparent; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+}
+.pick-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: var(--r-capsule);
+  background: linear-gradient(to right, var(--accent) var(--fill, 32%), rgba(120, 120, 128, 0.42) var(--fill, 32%));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.pick-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+  transition: transform 200ms var(--spring-snappy);
+}
+.pick-row input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.1); }
+.pick-row input[type="range"]:focus-visible { outline: none; }
+.pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), var(--focus-ring); }
 
-.start:disabled { opacity: 0.45; cursor: default; }
-.managed { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(140, 170, 255, 0.08); border: 1px solid rgba(140, 170, 255, 0.35); }
-.managed.error { background: rgba(255, 107, 87, 0.1); border-color: rgba(255, 107, 87, 0.5); }
-.managed[hidden], .welcome[hidden] { display: none; }
-.welcome { padding: 14px 16px; border-radius: 12px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.4); }
-.terms { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; }
-.terms code, .hint code { font: 12px ui-monospace, monospace; }
-.locked { opacity: 0.55; }
-.activity { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 12px 14px; color: var(--muted); }
-.activity li { display: grid; grid-template-columns: max-content auto 1fr; gap: 10px; align-items: baseline; padding: 7px 14px; font-size: 13px; }
-.activity li + li { border-top: 1px solid var(--line); }
-.activity time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.activity .tag { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--line); color: var(--fg); }
-.activity .tag.ok { background: rgba(124, 207, 138, 0.2); color: var(--ok); }
-.activity .tag.ask { background: rgba(242, 193, 78, 0.18); color: var(--warn); }
-.activity .tag.no { background: rgba(255, 107, 87, 0.18); color: var(--fail); }
-.activity .what { overflow-wrap: anywhere; }
-.activity .why { display: block; color: var(--muted); font-size: 12px; }
-.login-row { margin-top: 12px; }
-
-.start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 154, 61, 0.08); border: 1px solid rgba(255, 154, 61, 0.4); }
+/* The first-run Start: agreement and the one prominent button (a large capsule). */
+.start-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 6px; padding: 16px; }
 .start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
 .start-row .hint { margin: 0; flex-basis: 100%; }
-h3.sub { margin: 4px 0 0; font-size: 13px; color: var(--fg); }
-.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.plain-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
+#agree-row { min-height: 28px; }
+.start {
+  all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  min-height: 36px; padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
+  font: 600 15px/20px var(--ember-font); letter-spacing: -0.009em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 4px 14px color-mix(in srgb, var(--glow) 26%, transparent);
+  transition: filter 160ms ease, transform 220ms var(--spring-snappy);
+}
+@media (hover: hover) { .start:hover { filter: brightness(1.08); } }
+.start:active { transform: scale(0.97); }
+.start:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
+.start[hidden] { display: none; }
+/* Unavailable until agreed: a grey capsule with a readable label, as Apple's disabled prominent buttons. */
+.start:disabled { cursor: default; filter: none; transform: none; background: rgba(120, 120, 128, 0.32); color: rgba(245, 240, 236, 0.6); box-shadow: none; }
+
+/* Footnotes: under their group, in the secondary label. */
+.hint { margin: 0 4px; color: var(--muted); font: var(--type-footnote); }
+.copilot .hint, .group .hint { margin: 0; }
+.terms code, .hint code { font: 12px var(--ember-mono); }
+
+/* ───── Copilot ───── */
+.agent-line { margin: 0; display: flex; align-items: center; gap: 10px; font-weight: 500; }
+/* A status light: one recipe for every status dot. */
+.dot { --dot: var(--gray); width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dot); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot) 24%, transparent); }
+.dot[data-phase="ready"] { --dot: var(--ok); }
+.dot[data-phase="starting"] { --dot: var(--warn); }
+.dot[data-phase="error"] { --dot: var(--fail); }
+.agent-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.agent-actions[hidden] { display: none; }
+.sign-in-msg { margin: 0; color: var(--fg); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sign-in-msg.error { color: var(--red-text); }
+.sign-in-msg code {
+  font: 700 20px/28px var(--ember-mono); letter-spacing: 0.1em; color: var(--accent);
+  padding: 2px 10px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.sign-in-msg[hidden] { display: none; }
+.sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
+.models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
+.models[hidden] { display: none; }
+.models label { color: var(--fg); }
+/* A pop-up button, sized to its choice and set at the row's end. */
+.models select {
+  justify-self: end; max-width: 100%; height: 28px; padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+}
+.models select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option { background: var(--surface-2); color: var(--fg); }
+.models-hint { grid-column: 1 / -1; margin: 0; }
+.usage { margin: 0; color: var(--muted); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.usage:empty { display: none; }
+
+/* ───── Switch rows: the words first, the switch at the row's end (a checkbox keeps its box in front) ───── */
+.switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.switch-row:has(> input[role="switch"]) { flex-direction: row-reverse; justify-content: space-between; }
+.switch-row > span { min-width: 0; }
+.locked { opacity: 0.5; }
+
+/* Callouts: the consent note, organisation notices, the welcome. Neutral: colour is kept for actions. */
+.consent { padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.consent p { margin: 0 0 12px; }
+progress { width: 100%; height: 4px; border: 0; border-radius: var(--r-capsule); overflow: hidden; background: rgba(120, 120, 128, 0.36); -webkit-appearance: none; appearance: none; }
+progress::-webkit-progress-bar { background: rgba(120, 120, 128, 0.36); }
+progress::-webkit-progress-value { background: var(--accent); border-radius: var(--r-capsule); }
+progress[hidden] { display: none; }
+.managed {
+  margin: 0; padding: 12px 14px 12px 16px; border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--blue) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 38%, transparent);
+}
+.managed.error { background: color-mix(in srgb, var(--red) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 45%, transparent); }
+.managed[hidden], .welcome[hidden] { display: none; }
+.welcome {
+  padding: 22px 22px 8px; border-radius: var(--r-xl); background: var(--panel);
+  box-shadow: var(--group-edge), 0 12px 32px rgba(0, 0, 0, 0.3);
+}
+.welcome h2 { margin: 0 0 16px; font: var(--type-title-3); letter-spacing: -0.018em; }
+/* Each promise with its symbol, as Apple's privacy screens do. */
+.terms { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 16px; color: var(--muted); }
+.terms li { position: relative; padding-left: 42px; min-height: 28px; text-wrap: pretty; }
+.terms li b { color: var(--fg); font-weight: 600; }
+.terms li::before {
+  content: ""; position: absolute; left: 0; top: 0; width: 28px; height: 28px; background: var(--accent);
+  -webkit-mask: var(--icon) center / 24px no-repeat;
+}
+.terms li[data-icon="eye"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E"); }
+.terms li[data-icon="send"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 3 10.5 13.5'/%3E%3Cpath d='M21 3l-6.5 18-4-7.5L3 9.5z'/%3E%3C/svg%3E"); }
+.terms li[data-icon="hand"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7.5 3v5.5c0 4.6-3.2 8.4-7.5 9.5-4.3-1.1-7.5-4.9-7.5-9.5V6z'/%3E%3Cpath d='m8.8 12 2.2 2.2 4.2-4.4'/%3E%3C/svg%3E"); }
+.terms li[data-icon="lock"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='10.5' width='15' height='10.5' rx='2.5'/%3E%3Cpath d='M8 10.5V7.5a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
+.terms li[data-icon="mic"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3Cpath d='M3.5 3.5l17 17'/%3E%3C/svg%3E"); }
+
+/* ───── Lists: each one a group of rows, Remove as a plain text button at the row's end ───── */
+.plain-list { list-style: none; margin: 0; padding: 0 16px; }
+.plain-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 8px 0; }
+.plain-list li + li { border-top: 1px solid var(--line); }
 .plain-list li.empty { color: var(--muted); justify-content: flex-start; }
 .plain-list li > span { min-width: 0; overflow-wrap: anywhere; }
 /* Grants under "ask before every action": shown (with the note above them), but plainly not in force. */
 .plain-list.off li > span:first-child { color: var(--muted); }
 .plain-list li > button, .plain-list li > .managed-tag { flex: none; }
-.add-row { display: flex; gap: 8px; }
-.add-row input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; background: var(--bg); color: var(--fg); border: 1px solid #8a776b; font: inherit; }
-.add-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* 5.2:1 on the page (the default grey is 4.1:1). */
-.add-row input::placeholder { color: #968379; opacity: 1; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.conversation { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 12px 14px; color: var(--muted); }
-.conversation li { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; padding: 8px 14px; }
-.conversation li + li { border-top: 1px solid var(--line); }
-.conversation .who { font-weight: 700; font-size: 12px; }
+/* Its words end at the row's trailing edge, where the switches and pop-ups end (its padding hangs past it). */
+.plain-list .btn.quiet { background: transparent; box-shadow: none; color: var(--red-text); font-weight: 500; padding: 3px 8px; margin-right: -8px; }
+@media (hover: hover) { .plain-list .btn.quiet:hover { background: rgba(255, 255, 255, 0.08); } }
+.plain-list .btn.quiet:focus-visible { box-shadow: var(--focus-ring); }
+.managed-tag { color: var(--muted); font: var(--type-footnote); }
+.add-row { display: flex; gap: 8px; margin-top: 4px; }
+/* A text field: filled, rounded, Apple's focus ring. */
+.add-row input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 11px; border-radius: var(--r-sm); border: 0;
+  background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+}
+.add-row input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+/* 6.1:1 on the window and 4.8:1 on the field (the default grey is about 4:1). */
+.add-row input::placeholder { color: #9a9592; opacity: 1; }
+.never-look-msg { margin: 0; }
+.never-look-msg:empty { display: none; }
+.presence-line { margin: 0; color: var(--fg); }
+
+/* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes ───── */
+.conversation { list-style: none; margin: 0; padding: 10px 0; max-height: 360px; overflow-y: auto; display: grid; gap: 2px; }
+.conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 4px 16px; color: var(--muted); }
+/* Who and when on one line, then the words on their own line (the zero-height ::before breaks the line). */
+.conversation li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 4px 14px; }
+.conversation li::before { content: ""; order: 1; flex-basis: 100%; }
+.conversation li.you { justify-content: flex-end; }
+.conversation .who { font: var(--type-caption); color: var(--muted); padding-left: 6px; }
 .conversation .ember .who { color: var(--accent); }
-.conversation .task .who { color: var(--ok); }
-.conversation .problem .who { color: var(--warn); }
-.conversation time { color: var(--muted); font-size: 12px; justify-self: end; }
-.conversation p { grid-column: 1 / -1; margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.activity li.day { display: block; padding: 8px 14px 4px; font-size: 12px; font-weight: 700; color: var(--muted); background: var(--bg); }
-h2[tabindex="-1"]:focus { outline: none; }
-.models-hint { grid-column: 1 / -1; margin: 0; }
+.conversation .task .who { color: var(--green-text); }
+.conversation .problem .who { color: var(--red-text); }
+.conversation time { color: var(--label-3); font: var(--type-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
+.conversation li.you time { padding-right: 6px; }
+.conversation p {
+  order: 2; max-width: 86%; margin: 3px 0 0; padding: 8px 13px;
+  border-radius: var(--r-xl) var(--r-xl) var(--r-xl) var(--r-xs); background: var(--surface-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.conversation li.you p { border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl); background: color-mix(in srgb, var(--accent) 26%, var(--surface-1)); color: #fff3e2; }
+.conversation li.task p, .conversation li.problem p { background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); }
+
+/* ───── What Ember did: time, a fixed-width state tag, the step ───── */
+.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
+.activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 14px 16px; color: var(--muted); }
+.activity li { display: grid; grid-template-columns: 4.6em 6.4em 1fr; gap: 10px; align-items: baseline; margin: 0 16px; padding: 9px 0; font: var(--type-callout); }
+.activity li + li:not(.day) { border-top: 1px solid var(--line); }
+.activity li.day {
+  display: block; margin: 0; padding: 10px 16px 4px; font: 600 12px/16px var(--ember-font); color: var(--muted);
+  position: sticky; top: 0; background: var(--panel); z-index: 1;
+}
+.activity time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.activity .tag { justify-self: start; max-width: 100%; padding: 1px 8px; border-radius: var(--r-capsule); font: 600 11px/17px var(--ember-font); background: rgba(120, 120, 128, 0.26); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.activity .tag.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green-text); }
+.activity .tag.ask { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--warn); }
+.activity .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
+.activity .what { overflow-wrap: anywhere; }
+.activity .why { display: block; color: var(--muted); font: var(--type-footnote); }
+
+/* ───── Setup check ───── */
+.checks { list-style: none; margin: 0; padding: 0 16px; }
+.checks li { display: grid; grid-template-columns: 52px 1fr; gap: 2px 12px; padding: 12px 0; }
+.checks li + li { border-top: 1px solid var(--line); }
+.pill {
+  grid-row: span 2; align-self: start; justify-self: stretch; margin-top: 1px; padding: 1px 6px; border-radius: var(--r-capsule);
+  font: 600 11px/17px var(--ember-font); text-align: center; letter-spacing: 0.01em;
+}
+.pill.ok { color: var(--green-text); background: color-mix(in srgb, var(--green) 16%, transparent); }
+.pill.warn { color: var(--warn); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
+.pill.fail { color: var(--red-text); background: color-mix(in srgb, var(--red) 18%, transparent); }
+.check-label { font-weight: 600; }
+.check-detail { color: var(--muted); overflow-wrap: anywhere; }
+.checks .check-fix { grid-column: 2; justify-self: start; margin-top: 8px; }
+.facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; font: 13px/20px var(--ember-mono); }
 
 /* ── First run: only the welcome, the character picker and Start ── */
 body.first-run .after-setup { display: none !important; }
 
-/* ── Section links: one compact row that stays at the top; in a narrow window it wraps and scrolls away ── */
+/* ── Section links. Narrow: one row of capsules that scrolls sideways and away with the page. ── */
 .jump {
-  margin: -10px -24px 0; padding: 8px 24px;
-  display: flex; flex-wrap: wrap; gap: 2px 0;
-  background: var(--bg); border-bottom: 1px solid var(--line);
+  display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: -16px -4px 0; padding: 4px;
 }
 .jump a {
-  flex: none; padding: 4px 8px; border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 13px;
-  border: 1px solid transparent;
+  flex: none; position: relative; padding: 5px 11px; border-radius: var(--r-capsule); color: var(--muted); text-decoration: none;
+  scroll-margin-inline: 4px; /* a focused link scrolls into the narrow row with room for its ring */
+  font: 500 13px/18px var(--ember-font);
 }
-.jump a:hover { color: var(--fg); background: var(--panel); }
-.jump a[aria-current="true"] { color: var(--fg); background: var(--panel); border-color: var(--line); }
-.jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: hover) { .jump a:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); } }
+/* The section you are in: a fill and semibold words (not colour alone). */
+.jump a[aria-current="true"] { color: var(--fg); font-weight: 600; background: rgba(255, 255, 255, 0.12); }
+.jump a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 h2, summary { scroll-margin-top: 16px; }
-/* Wide: the links stay at the top, and whatever scrolls into view (a section, or what has keyboard focus,
-   Shift+Tab included) stops below them, never under them (WCAG 2.4.11). main.ts keeps --jump-h their height. */
+/* Wide: a sidebar beside the content, as System Settings. It sits in its own column, so nothing scrolls under it and
+   whatever scrolls into view (a section, or what has keyboard focus) is never hidden by it (WCAG 2.4.11). */
 @media (min-width: 640px) {
-  .jump { position: sticky; top: 0; z-index: 2; }
-  html { scroll-padding-top: calc(var(--jump-h, 46px) + 10px); }
-  h2, summary { scroll-margin-top: 8px; }
+  body:not(.first-run) .home { max-width: none; margin: 0; padding: 30px 28px 48px 228px; grid-template-columns: minmax(0, 680px); }
+  body:not(.first-run) .home > .jump {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 2;
+    margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
+    background: #181517; box-shadow: inset -1px 0 0 var(--separator);
+  }
+  .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
+  /* Each section's symbol on its coloured tile. */
+  .jump a::before {
+    content: ""; flex: none; width: 22px; height: 22px; border-radius: var(--r-xs); background: var(--tile, var(--gray));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+  }
+  .jump a::after {
+    content: ""; position: absolute; left: 11px; width: 16px; height: 16px; background: #fff;
+    -webkit-mask: var(--icon) center / contain no-repeat;
+  }
+  .jump a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
 }
+html { scroll-padding-top: 16px; }
+.jump a[href="#pick-h"] { --tile: #ff9230; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.7 3.3 3 4.6 4.5 6.8 1.4 2 2 4.1 1.5 6.3-.8 3.3-3.4 5.4-6 5.4s-5.3-2-6-5.2c-.5-2.2.3-4.3 1.6-5.9.3 1.5 1 2.5 2.2 3-.4-3.9 1.1-7.5 2.2-10.4z'/%3E%3C/svg%3E"); }
+.jump a[href="#copilot-h"] { --tile: #6d7cff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.5 4.6 2.4 6.9 7 7.5-4.6.6-6.5 2.9-7 7.5-.5-4.6-2.4-6.9-7-7.5 4.6-.6 6.5-2.9 7-7.5zM19 15.5c.2 1.9 1 2.8 2.9 3-1.9.2-2.7 1.1-2.9 3-.2-1.9-1-2.8-2.9-3 1.9-.2 2.7-1.1 2.9-3z'/%3E%3C/svg%3E"); }
+.jump a[href="#conversation-h"] { --tile: #30d158; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5c5 0 9 3.3 9 7.5s-4 7.5-9 7.5c-.9 0-1.8-.1-2.6-.3L5 20.5l.9-3.6C4.1 15.5 3 13.4 3 11c0-4.2 4-7.5 9-7.5z'/%3E%3C/svg%3E"); }
+.jump a[href="#voice-h"] { --tile: #ff375f; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3' fill='black' stroke='none'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3C/svg%3E"); }
+.jump a[href="#privacy-h"] { --tile: #0091ff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l8 3.2v5.8c0 4.9-3.4 9-8 10-4.6-1-8-5.1-8-10V5.7z'/%3E%3C/svg%3E"); }
+.jump a[href="#access-h"] { --tile: #00b8c4; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='4.6' r='2.1'/%3E%3Cpath d='M4.2 7.6a1.1 1.1 0 0 1 1.3-.9l4.5.9h4l4.5-.9a1.1 1.1 0 1 1 .4 2.2l-4 .8V13l2 7a1.1 1.1 0 1 1-2.1.6L12.9 15h-1.8l-1.9 5.6a1.1 1.1 0 1 1-2.1-.6l2-7V9.7l-4-.8a1.1 1.1 0 0 1-.9-1.3z'/%3E%3C/svg%3E"); }
+.jump a[href="#activity-h"] { --tile: #a55eea; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E"); }
+.jump a[href="#checks-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14.7 3.3a5 5 0 0 0-5.9 6.5l-5.4 5.4a2 2 0 0 0 2.8 2.8l5.4-5.4a5 5 0 0 0 6.5-5.9l-2.9 2.9-2.4-.5-.5-2.4z'/%3E%3C/svg%3E"); }
+.jump a[href="#about-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 4.6a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8zm1.1 4.4h-2.2v6.6h2.2z'/%3E%3C/svg%3E"); }
 #agree { scroll-margin: 120px; }
 
-/* ── Folded sections (What Ember did, Setup check, About) ── */
+/* ── Folded sections (What Ember did, Setup check, About): a disclosure chevron in the gutter, titles in line ── */
+.fold { display: grid; }
 .fold > summary {
-  list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-radius: 6px;
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; margin-left: -18px; padding: 2px 4px 2px 0; border-radius: var(--r-sm);
 }
 .fold > summary::-webkit-details-marker { display: none; }
-/* Decoration only: the empty alt text keeps the arrow out of the section's spoken name. */
-.fold > summary::before { content: "▸" / ""; color: var(--muted); font-size: 12px; transition: transform 120ms ease; }
+/* Decoration only: the empty alt text keeps the chevron out of the section's spoken name. */
+.fold > summary::before {
+  content: "" / ""; flex: none; width: 14px; height: 14px; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
 .fold[open] > summary::before { transform: rotate(90deg); }
 .fold > summary h2 { margin: 0; }
-.fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.fold-note { color: var(--muted); font-size: 13px; }
-.fold-note.fail { color: var(--fail); }
+@media (hover: hover) { .fold > summary:hover::before { background: var(--fg); } }
+.fold > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.fold-note { color: var(--muted); font: var(--type-callout); margin-left: auto; }
+.fold-note.fail { color: var(--red-text); }
 .fold-note.warn { color: var(--warn); }
 .fold[open] > summary { margin-bottom: 10px; }
+.fold > .hint { margin-top: 10px; }
 
-/* ── Small things ── */
-.link { all: unset; cursor: pointer; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
-.link[hidden] { display: none; }
-.presence-line { margin: 0; color: var(--fg); }
-.never-look-msg { margin: 0; }
-.never-look-msg:empty { display: none; }
-.agent-actions[hidden] { display: none; }
-
-/* ── Calm mode: nothing slides or spins ── */
-html.calm *, html.calm *::before { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
-@media (prefers-reduced-motion: reduce) { .fold > summary::before { transition: none; } }
-.managed-tag { color: var(--muted); font-size: 12px; }
-.sign-in-msg .wait { flex-basis: 100%; }
+/* Increase contrast: the section you are in and the slider's empty track get edges of 3:1 or more. */
+@media (prefers-contrast: more) {
+  .jump a[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--control-edge); }
+  .jump a[aria-current="true"]:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+  .pick-row input[type="range"]::-webkit-slider-runnable-track { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}

@@ -3,8 +3,8 @@
  * the thought (its newest lines while it streams, then the whole of it from the
  * start), and the current step with its "why".
  *
- * It floats over any app, light or dark, so it always uses the same smoked-glass
- * look (dark and nearly opaque) instead of following a page theme.
+ * It floats over any app, light or dark, so it always uses the same dark glass
+ * (nearly opaque, lit at its edge) instead of following a page theme.
  *
  * It is drawn every frame, so it only touches the DOM when something changed and
  * only measures itself (a layout read) after its content changed.
@@ -158,61 +158,97 @@ function narrowerWidths(width: number, bounds: Size, avoid: readonly Rect[]): nu
 const STYLE_ID = "ember-bubble-style";
 
 export const BUBBLE_CSS = `
+/* What moves with Ember every frame: an empty, unstyled box (its layer is only as big as the bubble in it), so a move
+   restyles nothing but this box's transform. Moving the styled bubble itself re-resolved its glass, shadows and
+   springs every frame. The bubble's widths are therefore of the overlay (100vw), not of this box. */
+.eb-mount { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; will-change: transform; }
 .ember-bubble {
-  --eb-mood: #ff9a3d;
+  /* The state's colour: its dot, and the glow while Ember thinks. Actions use the app's one accent. The page's
+     tokens (shared/ember.css) when present, so Increase Contrast reaches the bubble; Apple's values otherwise. */
+  --eb-mood: var(--accent, #ff9230);
   position: absolute; left: 0; top: 0;
-  width: min(300px, calc(100% - 24px));
+  width: min(300px, calc(100vw - 24px));
   display: grid; gap: 6px;
-  padding: 10px 12px 11px;
-  border-radius: 12px;
-  /* Nearly opaque instead of a backdrop blur: with software compositing the blur cost ~10% of a core
-     while Ember animated beside it, and at this opacity it made no visible difference. */
-  background: rgba(26, 15, 11, 0.94);
-  border: 1px solid color-mix(in srgb, var(--eb-mood) 38%, transparent);
-  box-shadow: 0 0 22px color-mix(in srgb, var(--eb-mood) 22%, transparent), 0 10px 26px rgba(0, 0, 0, 0.35);
-  color: #fbeee3;
-  font: 13px/1.4 var(--ember-font, "Atkinson Hyperlegible", system-ui, sans-serif);
+  padding: 12px 14px 13px;
+  border-radius: var(--r-xl, 18px);
+  /* Glass without a backdrop blur: with software compositing the blur cost ~10% of a core while Ember animated
+     beside it, and it can't see other apps anyway. An opaque frost (a translucent body would leave the text of the
+     app behind readable through Ember's), a sheen, a rim lit from the top left over the body, an outer hairline
+     (crisp over white pages) and two soft shadows give it the material's depth. The shadows are kept tight (a
+     negative spread): everything they reach is redrawn on every frame the bubble moves. */
+  border: 1px solid transparent;
+  background: var(--glass,
+    linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985)) padding-box,
+    linear-gradient(160deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08) 35%, rgba(255, 255, 255, 0.05) 65%, rgba(255, 255, 255, 0.14)) border-box,
+    linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985)) border-box);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 12px 28px -8px rgba(0, 0, 0, 0.42);
+  color: var(--label, #f5f2ef);
+  font: 400 14px/20px var(--ember-font, "Inter", "Atkinson Hyperlegible", system-ui, sans-serif);
+  letter-spacing: -0.006em;
   pointer-events: none;
-  will-change: transform;
-  transition: opacity 160ms ease, visibility 0s, border-color 300ms ease, box-shadow 300ms ease;
+  /* Shown: it settles in on a spring from just below. The shadow changes with the mood at once (a box-shadow
+     transition would repaint the whole bubble every frame). */
+  transition: opacity 180ms ease, visibility 0s, translate 420ms var(--spring-snappy, ease-out);
 }
 /* Hidden is gone once it has faded: nothing in it takes a click or the keyboard. */
-.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; transition-delay: 0s, 160ms, 0s, 0s; }
-.ember-bubble[data-mood="listening"] { --eb-mood: #ffc45a; }
-.ember-bubble[data-mood="thinking"]  { --eb-mood: #ffd36b; }
-.ember-bubble[data-mood="acting"]    { --eb-mood: #ff9330; }
-.ember-bubble[data-mood="guiding"]   { --eb-mood: #ffb54d; }
-.ember-bubble[data-mood="attention"] { --eb-mood: #b77bff; }
-.ember-bubble[data-mood="error"]     { --eb-mood: #ff6a45; }
-.ember-bubble[data-mood="done"]      { --eb-mood: #ffe08a; }
+.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; translate: 0 4px; transition-delay: 0s, 180ms, 0s; transition-duration: 140ms, 0s, 140ms; }
+.ember-bubble[data-mood="listening"] { --eb-mood: var(--yellow, #ffd600); }
+.ember-bubble[data-mood="thinking"]  { --eb-mood: var(--accent-2, #ffb340); }
+.ember-bubble[data-mood="acting"]    { --eb-mood: var(--accent, #ff9230); }
+.ember-bubble[data-mood="guiding"]   { --eb-mood: var(--accent-2, #ffb340); }
+.ember-bubble[data-mood="attention"] { --eb-mood: var(--purple, #db34f2); }
+.ember-bubble[data-mood="error"]     { --eb-mood: var(--red, #ff4245); }
+.ember-bubble[data-mood="done"]      { --eb-mood: var(--green, #30d158); }
+/* While Ember thinks or listens, its own glow runs round the edge: embers, not an assistant's rainbow. It breathes three
+   times as the state begins, then holds still (the dot keeps pulsing): while it breathes, the compositor redraws the
+   whole bubble every frame, which with software compositing cost +60% of the display compositor's time for as long
+   as Ember thought. Only its opacity animates, so it never repaints. */
+.ember-bubble::before {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: conic-gradient(from 200deg, #ffb340, #ff9230 25%, #ff5a36 50%, #c2410c 72%, #ffb340);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity 400ms ease;
+}
+.ember-bubble:is([data-mood="thinking"], [data-mood="listening"]):not([data-hidden="true"])::before { opacity: 1; animation: eb-glow 1.6s ease-in-out 3; }
+/* And a warm bloom round it (set once, not animated). */
+.ember-bubble:is([data-mood="thinking"], [data-mood="listening"]) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 12px 28px -8px rgba(0, 0, 0, 0.42),
+    0 0 18px color-mix(in srgb, var(--glow, #ff8226) 30%, transparent);
+}
 /* A grid item is as wide as its longest word by default: one long unbroken word (an app's name on a
    button) would widen the bubble past its edge. */
 .ember-bubble > * { min-width: 0; }
 .eb-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+/* The state: a dot in its colour and a word in the secondary label (lighter tints where the user must act). A
+   finished answer needs no "Ready" beside Ember's name. */
 .eb-chip {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
-  font: 600 10.5px/1 var(--ember-mono, ui-monospace, monospace);
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--eb-mood);
+  font: 500 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  color: var(--label-2, rgba(245, 240, 236, 0.66));
 }
-.eb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eb-mood); box-shadow: 0 0 8px var(--eb-mood); }
+.ember-bubble[data-mood="idle"]:not([data-streaming="true"]) .eb-chip { display: none; }
+.ember-bubble[data-mood="attention"] .eb-chip { color: var(--purple-text, #eea2ff); }
+.ember-bubble[data-mood="error"] .eb-chip { color: var(--red-text, #ff7a71); }
+.eb-dot { position: relative; top: -0.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--eb-mood); box-shadow: 0 0 0 3px color-mix(in srgb, var(--eb-mood) 24%, transparent); }
 /* The dot pulses only while Ember is busy or waiting on you; a finished answer sits still. */
 .ember-bubble:is([data-streaming="true"], [data-mood="listening"], [data-mood="thinking"], [data-mood="acting"], [data-mood="guiding"], [data-mood="attention"]) .eb-dot {
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
-.eb-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Finished text reads from its start, upright and at full contrast: up to six lines. */
+.eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
-  margin: 0; max-height: calc(1.4em * 6); overflow: hidden;
+  margin: 0; max-height: calc(20px * 6); overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-start;
-  color: #fbeee3; white-space: pre-line; overflow-wrap: anywhere;
+  color: var(--label, #f5f2ef); white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
-/* Running commentary (thinking, working, listening) is quieter: italic, three lines. */
+/* Running commentary (thinking, working, listening) is quieter: the secondary label, three lines. */
 .ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
-  max-height: calc(1.4em * 3); color: rgba(251, 238, 227, 0.74); font-style: italic;
+  max-height: calc(20px * 3); color: var(--label-2, rgba(245, 240, 236, 0.66));
 }
 /* While text streams in, the newest lines show and the start slides away under a fade. */
-.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(1.4em * 3); justify-content: flex-end; }
+.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(20px * 3); justify-content: flex-end; }
 .ember-bubble[data-streaming="true"] .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
@@ -224,45 +260,67 @@ export const BUBBLE_CSS = `
 }
 /* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
 .ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(1.4em * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
 }
-/* "Read all": the whole answer, scrolling inside the bubble when it is longer still. */
-.ember-bubble[data-expanded="true"] .eb-thought {
-  max-height: calc(1.4em * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+/* A question gets room for its answers on one row ("Allow", "Always in …", "Not now"). */
+.ember-bubble[data-mood="attention"] { width: min(336px, calc(100vw - 24px)); }
+.ember-bubble[data-expanded="true"] { width: min(380px, calc(100vw - 24px)); }
+/* "Read all": the whole answer, scrolling inside the bubble when it is longer still. As specific as the overflow
+   fade above (which it must undo: a fade over the scroll box would hide the last line however far it scrolled). */
+.ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
+  max-height: calc(20px * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--eb-mood) 70%, transparent) transparent;
 }
-.ember-bubble[data-expanded="true"] { width: min(380px, calc(100% - 24px)); }
+/* Its scrollers' bars as on a Mac (a slim thumb, no track or arrows), with or without the page's tokens. */
+.ember-bubble ::-webkit-scrollbar { width: 12px; background: transparent; }
+.ember-bubble ::-webkit-scrollbar-thumb { min-height: 28px; border: 3px solid transparent; border-radius: var(--r-capsule, 999px); background: var(--scroll-thumb, rgba(255, 255, 255, 0.5)) padding-box; }
+.ember-bubble ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 /* The caret exists only while text arrives (an invisible one could wrap onto a blank line of its own). */
-.eb-thought span::after { content: ""; display: none; width: 0.5em; height: 0.9em; margin-left: 2px; vertical-align: -0.1em; background: var(--eb-mood); }
-.ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.8; animation: eb-blink 0.9s steps(2) infinite; }
-.eb-step { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 220, 190, 0.12); }
+.eb-thought span::after { content: ""; display: none; width: 2px; height: 1.05em; margin-left: 2px; border-radius: 1px; vertical-align: -0.15em; background: var(--eb-mood); }
+.ember-bubble[data-streaming="true"] .eb-thought span::after { display: inline-block; opacity: 0.9; animation: eb-blink 1s steps(2) infinite; }
+.eb-step { display: flex; gap: 7px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(255, 255, 255, 0.09)); font: 400 13px/18px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .eb-step[hidden] { display: none; }
-.eb-step-arrow { color: var(--eb-mood); font-weight: 700; }
+.eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
 /* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
-.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; color: rgba(251, 238, 227, 0.8); }
+.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
 .ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
-.eb-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; pointer-events: auto; }
+.eb-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
+/* Capsules (the floating layer's large controls, 28 px). The prominent one is the app's accent; the others carry
+   an edge of 3:1 or more (WCAG 1.4.11). */
 .eb-actions button {
-  font: 600 12px/1 var(--ember-font, system-ui, sans-serif); padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  font: 600 13px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: -0.003em;
+  min-height: 28px; padding: 6px 14px; border-radius: var(--r-capsule, 999px); cursor: pointer;
   max-width: 100%; overflow-wrap: anywhere;
-  border: 1px solid color-mix(in srgb, var(--eb-mood) 85%, transparent); background: transparent; color: #fbeee3;
+  border: 0; background: rgba(255, 255, 255, 0.08); color: var(--label, #f5f2ef);
+  box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42));
+  transition: background-color 140ms ease, filter 140ms ease, transform 220ms var(--spring-snappy, ease-out);
 }
-.eb-actions button.eb-primary { background: var(--eb-mood); border-color: var(--eb-mood); color: #1a0f0b; }
-.eb-actions button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.eb-actions button.eb-primary { background: var(--accent, #ff9230); color: var(--on-accent, #1d1204); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.3); }
+@media (hover: hover) {
+  .eb-actions button:hover { background: rgba(255, 255, 255, 0.14); }
+  .eb-actions button.eb-primary:hover { background: var(--accent, #ff9230); filter: brightness(1.08); }
+}
+.eb-actions button:active { transform: scale(0.97); }
+.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
+.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
 /* Read out by screen readers, never seen. */
 .eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }
 @keyframes eb-blink { 50% { opacity: 0; } }
+@keyframes eb-glow { 50% { opacity: 0.55; } }
 /* Nothing animates while the bubble is hidden (an endless animation keeps the compositor busy). */
-.ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after { animation: none !important; }
-/* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). */
-@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after { animation: none !important; } .ember-bubble { transition: none; } }
+.ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after, .ember-bubble[data-hidden="true"]::before { animation: none !important; }
+/* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). The glow stays, still. */
+@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after, .ember-bubble::before { animation: none !important; } .ember-bubble { transition: none; translate: none; } }
 html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !important; }
-html.calm .ember-bubble { transition: none; }
+html.calm .ember-bubble::before { animation: none !important; }
+html.calm .ember-bubble { transition: none; translate: none; }
+/* Increase contrast: the tokens firm up the body, rim and edges; the outline goes on the solid body. */
+@media (prefers-contrast: more) {
+  .ember-bubble { border-color: rgba(255, 255, 255, 0.5); background: var(--glass-fill, linear-gradient(#141112, #141112)) border-box; }
+}
 `;
 
 /**
@@ -297,6 +355,8 @@ interface Measured { box: Size; hot: Rect[]; over: boolean }
 
 export class ReasoningBubble {
   readonly root: HTMLDivElement;
+  /** The empty box the bubble sits in: the one element moved (by transform) as Ember moves. */
+  private readonly mount: HTMLDivElement;
   private readonly chipText: HTMLSpanElement;
   private readonly title: HTMLSpanElement;
   private readonly thoughtBox: HTMLParagraphElement;
@@ -354,7 +414,10 @@ export class ReasoningBubble {
     this.live.setAttribute("role", "status");
     this.live.setAttribute("aria-live", "polite");
     this.live.setAttribute("aria-atomic", "true");
-    host.append(this.root, this.live);
+    this.mount = document.createElement("div");
+    this.mount.className = "eb-mount";
+    this.mount.append(this.root);
+    host.append(this.mount, this.live);
     this.root.dataset.mood = this.mood;
     this.root.dataset.streaming = "false";
     this.chipText.textContent = chipLabel(this.mood, false);
@@ -465,16 +528,20 @@ export class ReasoningBubble {
    * over Ember itself, nor (if it can help it) over the `avoid` rects, narrowing
    * itself to fit beside them if that is what it takes. `hideFrom` (also in
    * `avoid`) are places it would rather hide than cover, such as the settings
-   * window the user works in: with no room beside them it hides until there is.
+   * window the user works in: with no room beside them it hides until there is. `prefer` are places it keeps off
+   * only when it can also keep off `avoid` (the control Ember works on): where it can't, they don't count.
    * Returns true when the bubble moved, changed size, or hid or showed for room.
    */
-  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = []): boolean {
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = [], prefer: readonly Rect[] = []): boolean {
     if (this.dirty) { this.dirty = false; this.sizes.clear(); }
     const own = this.sized(0);
     const heightAt = (w: number) => this.sized(w).box.height;
-    // Clear of everything; else (with places to hide from) at least clear of those; else the usual place.
-    const spot = avoid.length ? bubbleFit(anchor, own.box, bounds, size, avoid, heightAt)
-      ?? (hideFrom.length ? bubbleFit(anchor, own.box, bounds, size, hideFrom, heightAt) : undefined) : undefined;
+    const fit = (keepOff: readonly Rect[]) => bubbleFit(anchor, own.box, bounds, size, keepOff, heightAt);
+    // Clear of everything (the preferred places too, if it can be); else (with places to hide from) at least clear of
+    // those; else the usual place.
+    const spot = avoid.length || prefer.length
+      ? (prefer.length ? fit([...avoid, ...prefer]) : null) ?? (avoid.length ? fit(avoid) : null) ?? (hideFrom.length ? fit(hideFrom) : undefined)
+      : undefined;
     if (spot === null) {
       this.useWidth(0);
       return this.setCrowded(true);
@@ -492,7 +559,7 @@ export class ReasoningBubble {
     this.hot = m.hot;
     if (!resized && !shown && this.pos?.x === x && this.pos.y === y) return false;
     this.pos = { x, y };
-    this.root.style.transform = `translate(${x}px, ${y}px)`;
+    this.mount.style.transform = `translate(${x}px, ${y}px)`;
     return true;
   }
 

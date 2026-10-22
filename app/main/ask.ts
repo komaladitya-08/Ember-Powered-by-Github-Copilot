@@ -91,7 +91,7 @@ export class AskWindow {
       ...bounds,
       transparent: !opaque, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
       fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Ask Ember",
-      backgroundColor: opaque ? "#1a120e" : "#00000000",
+      backgroundColor: opaque ? "#242022" : "#00000000",
       webPreferences: {
         preload: path.join(appDir, "preload", "ask.cjs"),
         contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,

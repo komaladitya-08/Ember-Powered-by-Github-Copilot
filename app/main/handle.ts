@@ -29,7 +29,7 @@ export class HandleWindow {
       ...size,
       ...this.corner(size),
       transparent: !fallback,
-      backgroundColor: fallback ? "#1a120e" : "#00000000",
+      backgroundColor: fallback ? "#242022" : "#00000000",
       frame: false,
       hasShadow: false,
       resizable: false,

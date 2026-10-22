@@ -96,6 +96,8 @@ export async function changeSetting(name: SettingName, value: string): Promise<{
 
 export interface DesktopApp {
   id: string; name: string; file: string; keywords: string[]; exec?: string;
+  /** The GenericName key, lower case (e.g. "file manager"), when the file has one. It also leads `keywords`. */
+  generic?: string;
   /** The Categories key (e.g. "TerminalEmulator"), when the file has one. */
   categories?: string[];
   /** Terminal=true: the app runs inside a terminal window. */
@@ -108,7 +110,7 @@ const unescapeValue = (v: string) => v.replace(/\\([sntr\\])/g, (_, c: string) =
 /** A key file boolean as GLib reads it: "true" or "1" (GLib also takes a prefix of "true"). */
 const keyFileTrue = (v: string | undefined) => v !== undefined && /^(1|t|tr|tru|true)$/.test(v.trim());
 
-export function parseDesktopFile(text: string): { name: string; keywords: string[]; visible: boolean; exec?: string; categories?: string[]; terminal?: boolean } | null {
+export function parseDesktopFile(text: string): { name: string; keywords: string[]; visible: boolean; exec?: string; generic?: string; categories?: string[]; terminal?: boolean } | null {
   let section = "";
   const kv: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -124,6 +126,7 @@ export function parseDesktopFile(text: string): { name: string; keywords: string
   return {
     name: kv.Name, keywords: [kv.GenericName, ...(kv.Keywords ?? "").split(";")].filter(Boolean).map(s => s!.toLowerCase()), visible,
     ...(kv.Exec ? { exec: kv.Exec } : {}),
+    ...(kv.GenericName ? { generic: kv.GenericName.toLowerCase() } : {}),
     ...(categories.length ? { categories } : {}),
     ...(keyFileTrue(kv.Terminal) ? { terminal: true } : {}),
   };
@@ -331,7 +334,7 @@ export function listApps(env: NodeJS.ProcessEnv = process.env): DesktopApp[] {
       if (seen.has(id)) continue; // earlier dirs win, as in the XDG spec
       try {
         const parsed = parseDesktopFile(fs.readFileSync(path.join(dir, f), "utf8"));
-        if (parsed?.visible) seen.set(id, { id, name: parsed.name, file: path.join(dir, f), keywords: parsed.keywords, exec: parsed.exec, categories: parsed.categories, terminal: parsed.terminal });
+        if (parsed?.visible) seen.set(id, { id, name: parsed.name, file: path.join(dir, f), keywords: parsed.keywords, exec: parsed.exec, generic: parsed.generic, categories: parsed.categories, terminal: parsed.terminal });
       } catch { /* unreadable */ }
     }
   }
@@ -345,32 +348,56 @@ function appWords(text: string): string[] {
     .map(w => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
 }
 
+/** Text as one run of lower-case letters and digits, so "gthumb" meets "gThumb" and "LibreOffice" (which appWords split). */
+const compact = (text: string) => text.toLowerCase().replace(/\.desktop$/, "").replace(/[^a-z0-9]/g, "");
+/** Text as lower-case words, camelCase left whole: "PulseAudio Volume Control" → "pulseaudio volume control". */
+const lowerWords = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join(" ");
+
 /**
  * The installed app that best answers `query`. Exact names and ids win, then the app's GenericName
- * (its first keyword) and name words, then Categories and keywords. Ordinary keywords rank last: a
- * helper such as Bulk Rename lists "files" too, but its generic name is "Bulk Rename", so "open the
- * file manager" (or "Files") chooses Thunar instead of the first app in directory order.
+ * and name words, then words of its desktop id, then Categories and keywords. Ordinary keywords rank
+ * last: a helper such as Bulk Rename lists "files" too, but its generic name is "Bulk Rename", so
+ * "open the file manager" (or "Files") chooses Thunar instead of the first app in directory order.
+ * The tiers run from best to worst, so an app takes the best one it reaches: XFCE's settings dialogs
+ * all have "settings" in their ids, and "Settings" must still reach Settings Manager by its name.
  */
 export function findApp(apps: DesktopApp[], query: string): DesktopApp | null {
   const q = appWords(query).join(" ");
   if (!q) return null;
+  const cq = compact(query); // never empty: q has a letter or digit
+  const lq = lowerWords(query);
   const qw = q.split(" ");
   const allIn = (phrase: string) => { const w = phrase.split(" "); return qw.every(x => w.includes(x)); };
-  const score = (a: DesktopApp): number => {
+  const tier = (a: DesktopApp): number => {
     const name = appWords(a.name).join(" ");
     const id = appWords(a.id).join(" ");
-    if (name === q || id === q) return 100;
-    if (id.split(" ").includes(q)) return 75;
-    const primary = a.keywords[0] ? appWords(a.keywords[0]).join(" ") : "";
+    const cname = compact(a.name);
+    // A query typed in lower case isn't split like the app's camelCase name, so compare them run together too.
+    if (name === q || id === q || cname === cq || compact(a.id) === cq) return 100;
+    const primary = a.generic ? appWords(a.generic).join(" ") : "";
     if (primary === q) return 95;
     if (primary && allIn(primary)) return 90;
     if (name.startsWith(q + " ")) return 85;
-    if (name.includes(q)) return 80;
+    // Never across a space: run together, "Document Viewer" would contain "tv" and "Window Manager" "wm".
+    if (name.includes(q) || lowerWords(a.name).includes(lq)) return 80;
+    // The last part of a reverse-DNS id ("org.telegram.desktop") is often a common word, so it ranks no higher than an id word.
+    if (id.split(" ").includes(q) || compact(a.id.split(".").pop()!) === cq) return 75;
     const phrases = [...(a.categories ?? []), ...a.keywords].map(k => appWords(k).join(" ")).filter(Boolean);
     if (phrases.includes(q)) return 70;
     if (phrases.some(allIn)) return 65;
     if (phrases.some(p => p.includes(q))) return 50;
     return 0;
+  };
+  // Within a tier, the app whose own keywords name the query wins, whichever is listed first: "Settings"
+  // finds Settings Manager (Keywords …;settings;…) before Settings Editor, which XFCE 4.20's ids sort
+  // ahead of it. An app Ember won't start never wins a tie: Vim's GenericName is "Text Editor" too, and
+  // its Keywords=Text;editor must not take "editor" from Mousepad. Tiers are 5 apart, so these small
+  // steps (-2 to +1) never move an app into another tier.
+  const score = (a: DesktopApp): number => {
+    const t = tier(a);
+    if (!t) return 0;
+    if (isTerminalApp(a)) return t - 2;
+    return t + (a.keywords.some(k => appWords(k).join(" ") === q) ? 1 : 0);
   };
   let best: DesktopApp | null = null, bestScore = 0;
   for (const a of apps) {

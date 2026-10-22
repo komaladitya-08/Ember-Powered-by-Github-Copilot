@@ -1,0 +1,259 @@
+/*
+ * Ember's design system, shared by every window: the typeface, colour, type scale, shape, materials, symbols,
+ * motion and the standard controls. It follows Apple's Human Interface Guidelines (dark appearance, Liquid Glass)
+ * adapted to a Linux desktop: Inter stands in for SF Pro, and glass over other apps is an opaque frost with a lit
+ * rim, never a backdrop blur (with software compositing a blur costs a core, and it can't see other apps anyway).
+ * Each page links this file before its own styles.css. Pages use these tokens, not literals, so Increase Contrast
+ * and Reduce Transparency reach every surface.
+ */
+
+@font-face {
+  font-family: "Ember Sans";
+  src: url("../fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: block;
+}
+
+:root {
+  color-scheme: dark;
+  --ember-font: "Ember Sans", "Inter", -apple-system, "Cantarell", system-ui, sans-serif;
+  --ember-mono: ui-monospace, "SF Mono", "DejaVu Sans Mono", monospace;
+
+  /* Type: Apple's text styles at a Linux desktop's size (body 14 rather than 13), on a 4 px line grid. Hierarchy
+     comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). */
+  --type-large-title: 700 28px/34px var(--ember-font);
+  --type-title-2: 600 17px/22px var(--ember-font);
+  --type-title-3: 700 22px/28px var(--ember-font);
+  --type-headline: 600 14px/20px var(--ember-font);
+  --type-body: 400 14px/20px var(--ember-font);
+  --type-callout: 400 13px/18px var(--ember-font);
+  --type-footnote: 400 12px/16px var(--ember-font);
+  --type-caption: 500 11px/14px var(--ember-font);
+
+  /* Labels: Apple's label / secondary / tertiary on a warm off-white. */
+  --label: #f5f2ef;
+  --label-2: rgba(245, 240, 236, 0.66);
+  --label-3: rgba(245, 240, 236, 0.52);
+
+  /* Surfaces (opaque): the window, a grouped section on it, and a field or row inside that. */
+  --surface-0: #121011;
+  --surface-1: #1f1c1e;
+  --surface-2: #2b2729;
+  --separator: rgba(255, 255, 255, 0.085);
+  /* A grouped section's edge: a lit top and a faint outline (firm under Increase Contrast). */
+  --group-edge: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(255, 255, 255, 0.035);
+  /* A control's outline: 3:1 against every surface (WCAG 1.4.11). */
+  --control-edge: rgba(255, 255, 255, 0.4);
+  --fill: rgba(120, 120, 128, 0.26);
+  /* Scrollbar thumbs: 4.4:1 or more on every surface. */
+  --scroll-thumb: rgba(255, 255, 255, 0.45);
+
+  /* Apple's system colours, dark appearance (the 2025 palette). Ember's accent is system orange, kept for the one
+     prominent action and for status; text on it is dark (white on orange is 2.2:1). --accent-2 is its warmer light
+     (thinking, showing you); --glow the colour of Ember's own light. */
+  --accent: #ff9230;
+  --accent-2: #ffb340;
+  --glow: #ff8226;
+  --on-accent: #1d1204;
+  --green: #30d158;
+  --red: #ff4245;
+  --yellow: #ffd600;
+  --purple: #db34f2;
+  --blue: #0091ff;
+  --gray: #8e8e93;
+  /* System colours as small text on dark: lighter, 4.5:1 or more on every surface and on their own tints. */
+  --green-text: #5be37d;
+  --red-text: #ff7a71;
+  --purple-text: #eea2ff;
+
+  /* Shape: concentric radii (inner = outer − padding, never pinched), capsules for large and floating controls,
+     and Apple's icon corner as a share of the tile. */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-capsule: 999px;
+  --r-icon: 22.4%;
+
+  /* Materials. Glass for what floats over other apps: Apple's regular glass where nothing behind it can be sampled,
+     so an opaque frost (a translucent body would leave the app's text readable behind Ember's). Static layers,
+     rastered once: a sheen from above, the body, a rim lit from the top left over the body, and depth below.
+     Use: border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth). */
+  --glass-sheen: radial-gradient(140% 90% at 50% -30%, rgba(255, 255, 255, 0.075), transparent 60%);
+  --glass-fill: linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985));
+  --glass-edge: linear-gradient(160deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08) 35%, rgba(255, 255, 255, 0.05) 65%, rgba(255, 255, 255, 0.14));
+  --glass: var(--glass-sheen) padding-box, var(--glass-fill) padding-box, var(--glass-edge) border-box, var(--glass-fill) border-box;
+  --glass-spec: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  /* For glass drawn without a border (an inner rim instead). */
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.13), inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+  /* The outer hairline keeps the edge crisp over white documents; the two shadows give it lift. */
+  --glass-depth: 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 14px 34px rgba(0, 0, 0, 0.34);
+  /* Without transparency (no compositor, or the user asked for less of it). */
+  --glass-solid: #242022;
+
+  /* Symbols, one family (as SF Symbols' filled circles): masks, drawn in whatever colour the element is.
+     working: a ring with its arc lit (static: nothing spins); waiting: Ember asks you; then done, failed,
+     stopped, more; and the disclosure and pop-up chevrons. */
+  --sym-working: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='black' stroke-opacity='0.32' stroke-width='3'/%3E%3Cpath d='M12 3.5a8.5 8.5 0 0 1 8.5 8.5' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  --sym-waiting: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M9.3 9.2a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.2 1-1.2 1.8v.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.1' r='1.35' fill='black'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='12' cy='12' r='11' mask='url(%23m)'/%3E%3C/svg%3E");
+  --sym-done: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm5.2 7.3a1.2 1.2 0 0 0-1.7 0l-4.8 4.8-2.2-2.2a1.2 1.2 0 1 0-1.7 1.7l3 3a1.2 1.2 0 0 0 1.7 0l5.7-5.6a1.2 1.2 0 0 0 0-1.7z'/%3E%3C/svg%3E");
+  --sym-failed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm0 5a1.3 1.3 0 0 0-1.3 1.3v5.4a1.3 1.3 0 0 0 2.6 0V7.3A1.3 1.3 0 0 0 12 6zm0 9.6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E");
+  --sym-stopped: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zM9.5 8A1.5 1.5 0 0 0 8 9.5v5A1.5 1.5 0 0 0 9.5 16h5a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 14.5 8z'/%3E%3C/svg%3E");
+  --sym-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zM7.5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E");
+  --sym-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 5.5 6.5 6.5L9 18.5' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --sym-updown: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Motion: springs (SwiftUI's response / damping), as CSS linear() curves. */
+  --spring-snappy: linear(0, 0.046, 0.152, 0.284, 0.418, 0.542, 0.651, 0.741, 0.814, 0.871, 0.913, 0.945, 0.967, 0.982, 0.992, 0.999, 1.002, 1.004, 1.005, 1.005, 1.005, 1.004, 1.003, 1.003, 1);
+  --spring-smooth: linear(0, 0.068, 0.208, 0.363, 0.505, 0.625, 0.721, 0.795, 0.852, 0.893, 0.924, 0.946, 0.962, 0.974, 0.982, 0.987, 0.991, 0.994, 0.996, 0.997, 1);
+  --spring-bouncy: linear(0, 0.025, 0.088, 0.175, 0.276, 0.381, 0.485, 0.583, 0.673, 0.752, 0.82, 0.876, 0.923, 0.959, 0.987, 1.008, 1.022, 1.031, 1.036, 1.038, 1.038, 1.036, 1.033, 1.029, 1.025, 1.021, 1.017, 1.014, 1.01, 1.008, 1.005, 1.003, 1);
+  --t-snappy: 380ms;
+  --t-bouncy: 540ms;
+
+  /* Keyboard focus: Apple's ring, a band of the accent just outside the control (3:1 or more on every surface). */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+
+/* Increase contrast (the desktop's high-contrast preference): Apple's increased-contrast colours, firmer edges and
+   secondary text, solid glass with a contrasting border, a full-strength focus ring. */
+@media (prefers-contrast: more) {
+  :root {
+    --accent: #ffa056;
+    --red: #ff6165;
+    --purple: #ea8dff;
+    --green: #4ad968;
+    --green-text: #7ef09a;
+    --red-text: #ff9a93;
+    --purple-text: #f3c2ff;
+    --label-2: rgba(245, 240, 236, 0.84);
+    --label-3: rgba(245, 240, 236, 0.66);
+    --separator: rgba(255, 255, 255, 0.22);
+    --group-edge: 0 0 0 1px rgba(255, 255, 255, 0.3);
+    --control-edge: rgba(255, 255, 255, 0.66);
+    --scroll-thumb: rgba(255, 255, 255, 0.6);
+    --glass-fill: linear-gradient(#141112, #141112);
+    --glass-sheen: linear-gradient(transparent, transparent);
+    --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    --glass-edge: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));
+    --focus-ring: 0 0 0 3px var(--accent);
+  }
+}
+/* Reduce transparency: glass becomes a solid panel. */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass-fill: linear-gradient(var(--glass-solid), var(--glass-solid)); --glass-sheen: linear-gradient(transparent, transparent); }
+}
+
+/* Type: Inter's optical sizes, antialiased, no faux bold or italic (the UI sets no italics: only the upright face ships). */
+html {
+  font-family: var(--ember-font);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+}
+/* Scrollbars as on a Mac: a slim rounded thumb, no track, no arrows, in every scroller. (Chromium ignores these on an
+   element that sets scrollbar-width or scrollbar-color, and only these remove the arrows: so no scroller sets those.) */
+::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
+::-webkit-scrollbar-thumb { min-height: 28px; border: 3px solid transparent; border-radius: var(--r-capsule); background: var(--scroll-thumb) padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--scroll-thumb), white 25%); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+/* A key chord ("Ctrl+Alt+Y") never breaks across lines. */
+.chord { white-space: nowrap; }
+
+/* Read out by screen readers, never seen. */
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* A state symbol beside its words (never colour alone): set data-status, size it, and it draws in the state's colour. */
+[data-status] { --sym-tint: var(--accent); --sym: var(--sym-working); }
+[data-status="waiting"] { --sym-tint: var(--purple); --sym: var(--sym-waiting); }
+[data-status="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
+[data-status="failed"] { --sym-tint: var(--red); --sym: var(--sym-failed); }
+[data-status="stopped"] { --sym-tint: var(--gray); --sym: var(--sym-stopped); }
+
+/* ───── Push buttons: rounded rectangles in a window (capsules are for the one large action and for the floating
+   layer). Prominent (the accent) by default; .quiet is the bordered secondary button. ───── */
+.btn {
+  all: unset; box-sizing: border-box; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 28px; padding: 4px 13px; border-radius: var(--r-sm);
+  font: 600 13px/18px var(--ember-font); letter-spacing: -0.003em; text-align: center;
+  color: var(--on-accent); background: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: filter 160ms ease, background-color 160ms ease, transform 220ms var(--spring-snappy);
+}
+@media (hover: hover) { .btn:hover { filter: brightness(1.08); } }
+.btn:active { transform: scale(0.97); filter: brightness(0.94); }
+.btn.quiet {
+  color: var(--label); background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+}
+@media (hover: hover) { .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); filter: none; } }
+.btn.small { min-height: 24px; padding: 3px 10px; border-radius: var(--r-xs); font-size: 12px; line-height: 16px; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
+.btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.btn[hidden] { display: none; }
+
+/* A text link that is a button. */
+.link { all: unset; cursor: pointer; color: var(--accent); font-weight: 500; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+@media (hover: hover) { .link:hover { text-decoration-thickness: 2px; } }
+.link:focus-visible { border-radius: var(--r-xs); box-shadow: var(--focus-ring); }
+.link[hidden] { display: none; }
+
+/* ───── Switch (a checkbox with role="switch"): Apple's toggle. Off, its track is edged (3:1) so its extent and the
+   knob's side read without colour. ───── */
+input[type="checkbox"][role="switch"] {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: pointer;
+  position: relative; width: 36px; height: 21px; border-radius: var(--r-capsule);
+  background: rgba(120, 120, 128, 0.42);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+  transition: background-color 220ms ease, box-shadow 220ms ease;
+}
+input[type="checkbox"][role="switch"]::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+  transition: transform var(--t-snappy) var(--spring-snappy), width 200ms var(--spring-snappy);
+}
+input[type="checkbox"][role="switch"]:checked { background: var(--accent); box-shadow: none; }
+input[type="checkbox"][role="switch"]:checked::before { transform: translateX(15px); }
+/* Pressed, the knob stretches toward where it is going, as Apple's switch does. */
+input[type="checkbox"][role="switch"]:active::before { width: 21px; }
+input[type="checkbox"][role="switch"]:checked:active::before { transform: translateX(11px); }
+input[type="checkbox"][role="switch"]:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+input[type="checkbox"][role="switch"]:checked:focus-visible { box-shadow: var(--focus-ring); }
+input[type="checkbox"][role="switch"]:disabled { opacity: 0.4; cursor: default; }
+
+/* ───── Checkbox: a rounded square that fills with the accent ───── */
+input[type="checkbox"]:not([role="switch"]) {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: pointer;
+  position: relative; width: 20px; height: 20px; border-radius: var(--r-xs);
+  background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1.5px var(--control-edge);
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+input[type="checkbox"]:not([role="switch"]):checked { background: var(--accent); box-shadow: none; }
+/* The tick: two borders of a turned box. */
+input[type="checkbox"]:not([role="switch"])::after {
+  content: ""; position: absolute; left: 7px; top: 3px; width: 5px; height: 10px;
+  border: solid var(--on-accent); border-width: 0 2.25px 2.25px 0; transform: rotate(45deg) scale(0.85); opacity: 0;
+  transition: opacity 120ms ease, transform 260ms var(--spring-bouncy);
+}
+input[type="checkbox"]:not([role="switch"]):checked::after { opacity: 1; transform: rotate(45deg) scale(1); }
+input[type="checkbox"]:not([role="switch"]):focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--control-edge), var(--focus-ring); }
+input[type="checkbox"]:not([role="switch"]):checked:focus-visible { box-shadow: var(--focus-ring); }
+
+/* ───── Keys: keycaps ───── */
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0 5px; border-radius: var(--r-xs); text-align: center;
+  font: 600 11px/18px var(--ember-font); letter-spacing: 0.01em; color: var(--label);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
+  vertical-align: 1px;
+}
+
+/* Calm mode (Ember's own setting, html.calm) and the desktop's reduced motion: nothing springs or slides. */
+html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !important; animation: none !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}

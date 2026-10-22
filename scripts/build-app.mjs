@@ -78,3 +78,7 @@ for (const p of pages) {
     });
   }
 }
+// What every page shares: the design tokens and controls (renderer/shared/ember.css), and the typeface they set
+// (Inter, SIL OFL 1.1: its licence ships beside the fonts and in THIRD_PARTY_NOTICES).
+await cp(new URL("app/renderer/shared/", root), new URL("renderer/shared/", out), { recursive: true });
+await cp(new URL("assets/fonts/", root), new URL("renderer/fonts/", out), { recursive: true });

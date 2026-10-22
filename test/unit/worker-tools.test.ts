@@ -507,6 +507,23 @@ describe("windows where the app's suggestion isn't the user's (live retest: a re
     expect(dialogNote({ name: "Save As", role: "file chooser" }, [], "save it as ~/Ember/list.txt")).toBe("");
     expect(dialogNote({ name: "notes.txt - Mousepad", role: "frame" }, [{ name: "File" }], "")).toBe("");
   });
+
+  it("a file dialog that doesn't save, or a window that only mentions restoring, comes with no note (review: Open, Trash)", async () => {
+    const { dialogNote } = await import("../../app/main/agent/worker");
+    // GTK gives every file dialog the role "file chooser": an Open or Insert Image dialog isn't one to cancel.
+    expect(dialogNote({ name: "Open", role: "file chooser" }, [], "open my budget spreadsheet in LibreOffice")).toBe("");
+    expect(dialogNote({ name: "Insert Image", role: "file chooser" }, [], "add my vacation photo to the document")).toBe("");
+    // Files' Trash (a Restore button, Documents in the sidebar) and a document about restoring make no offer.
+    expect(dialogNote({ name: "Trash", role: "frame" }, [{ name: "Documents" }, { name: "Restore" }, { name: "report.pdf" }], "put report.pdf back from the trash")).toBe("");
+    expect(dialogNote({ name: "Untitled 1 - LibreOffice Writer", role: "frame" }, [{ name: "", text: "How to restore your documents from a backup" }], "make the title bold")).toBe("");
+    // A file named restore.sh in a Save dialog's folder doesn't hide the Save note.
+    expect(dialogNote({ name: "Save As", role: "file chooser" }, [{ name: "Documents" }, { name: "restore.sh" }], "save this")).toMatch(/named no file/);
+    // One control that makes the offer itself still does (Firefox's crash page).
+    expect(dialogNote({ name: "Mozilla Firefox", role: "frame" }, [{ name: "Restore Session" }], "look up the weather")).toMatch(/answer No/);
+    // Firefox's download dialog and Inkscape's Save dialog are titled after the file to save, not "Save".
+    expect(dialogNote({ name: "Enter name of file to save to…", role: "file chooser" }, [], "download the report")).toMatch(/named no file/);
+    expect(dialogNote({ name: "Select file to save to", role: "file chooser" }, [], "save my drawing")).toMatch(/named no file/);
+  });
 });
 
 describe("an Allow covers that step only, never typing or keys (live retest: a yes to Ctrl+End let Ember type and save)", () => {
@@ -613,6 +630,137 @@ describe("guide words and highlights (live retest: font chooser)", () => {
     setTimeout(() => { down = true; }, 100);
     expect((await waiting).textResultForLlm).toMatch(/search box/);
   });
+
+  it("OK chosen with Enter from a field (its dialog closes by itself), or an app too busy to answer, doesn't cancel the guide (review)", async () => {
+    // Enter in the Character dialog's field fires OK, which never had the keyboard: OK and its dialog are gone.
+    let enter = false, closed = false;
+    const ok = makeWorker({ name: "OK", parentRole: "dialog", mode: "guide", live: () => (closed ? null : {}), pointer: () => ({ x: 0, y: 0, mask: 0 }), activationKey: () => enter });
+    await ok.call("perceive_window", {});
+    const waiting = ok.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { enter = true; }, 100);
+    setTimeout(() => { closed = true; enter = false; }, 160);
+    expect((await waiting).textResultForLlm).toMatch(/^The window changed \(the element is gone\)/);
+    expect(resultOf(ok.w)).toBeNull();
+
+    // A row of a dialog's list while the app is too slow to answer a look (the list scrolling), then the user selects it.
+    let busy = false, chosen = false;
+    const row = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide", states: () => (chosen ? ["enabled", "selected"] : ["enabled"]),
+      live: () => { if (busy) throw new Error("the app is busy (it didn't answer in time); try again in a moment"); return {}; },
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+    });
+    await row.call("perceive_window", {});
+    const step = row.call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { busy = true; }, 100);
+    setTimeout(() => { busy = false; }, 1100);
+    setTimeout(() => { chosen = true; }, 1300);
+    expect((await step).textResultForLlm).toMatch(/^It changed: table cell "Monospace Bold"/);
+    expect(resultOf(row.w)).toBeNull();
+  }, 10_000);
+
+  it("a press on Close in “Find and Replace” is a cancel; a press elsewhere in a titled window, or on the page, is no search box (review)", async () => {
+    // The sidecar lists the window itself first: its title as its name, the whole window as its box.
+    const dialog: AxNode = { id: 9, parent: null, depth: 0, role: "dialog", name: "Find and Replace", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
+    const close: AxNode = { id: 2, parent: 9, depth: 2, role: "push button", name: "Close", states: ["enabled"], bounds: { x: 600, y: 560, width: 80, height: 28 } };
+    const find: AxNode = { id: 3, parent: 9, depth: 2, role: "combo box", name: "Find:", states: ["enabled"], bounds: { x: 120, y: 130, width: 400, height: 24 } };
+    const pressAt = (x: number, y: number) => {
+      let down = false;
+      setTimeout(() => { down = true; }, 100);
+      return () => ({ x, y, mask: down ? 256 : 0 });
+    };
+    const closing = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(620, 570) });
+    await closing.call("perceive_window", {});
+    expect((await closing.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user pressed .Close/);
+    expect(resultOf(closing.w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
+    // Its "Find:" box is the search box, by its own name.
+    const searching = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(200, 140) });
+    await searching.call("perceive_window", {});
+    expect((await searching.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked the search box \("Find:"\)/);
+
+    // Pointed at Bold in "Research notes.odt": a press on Italic, then one on the page, then one on Bold.
+    const frame: AxNode = { id: 9, parent: null, depth: 0, role: "frame", name: "Research notes.odt - LibreOffice Writer", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
+    const italic: AxNode = { id: 2, parent: 9, depth: 3, role: "toggle button", name: "Italic", states: ["enabled"], bounds: { x: 60, y: 10, width: 20, height: 20 } };
+    const page: AxNode = { id: 3, parent: 9, depth: 5, role: "document text", name: "", states: ["enabled", "editable"], bounds: { x: 100, y: 150, width: 600, height: 400 } };
+    const para: AxNode = { id: 4, parent: 3, depth: 6, role: "paragraph", name: "", states: ["enabled", "editable"], bounds: { x: 120, y: 200, width: 500, height: 20 } };
+    let t0 = 0;
+    const presses: [number, number, number][] = [[100, 70, 20], [400, 300, 205], [800, 20, 15]];
+    const pointer = () => {
+      const t = t0 ? Date.now() - t0 : 0;
+      const at = presses.find(([s]) => t > s && t < s + 60);
+      return at ? { x: at[1], y: at[2], mask: 256 } : { x: 0, y: 0, mask: 0 };
+    };
+    const writer = makeWorker({ mode: "guide", more: [frame, italic, page, para], pointer });
+    await writer.call("perceive_window", {});
+    t0 = Date.now();
+    expect((await writer.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
+    expect(Date.now() - t0).toBeGreaterThan(750);
+  }, 15_000);
+
+  it("with the app not answering, the highlight and the click stay on the control pointed at, never another of the same name (review)", async () => {
+    const second = { x: 10, y: 200, width: 40, height: 20 };
+    let t0 = 0;
+    // A press on the first "Close Document" (not the one pointed at), then one on the second.
+    const pointer = () => {
+      const t = t0 ? Date.now() - t0 : 0;
+      return t > 100 && t < 160 ? { x: 20, y: 15, mask: 256 } : t > 1000 && t < 1060 ? { x: 20, y: 205, mask: 256 } : { x: 0, y: 0, mask: 0 };
+    };
+    const { call, flown } = makeWorker({
+      name: "Close Document", mode: "guide", pointer,
+      more: [{ id: 2, parent: null, depth: 1, role: "push button", name: "Close Document", states: ["enabled"], bounds: second }],
+      live: () => { throw new Error("the app is busy (it didn't answer in time); try again in a moment"); },
+    });
+    await call("perceive_window", {});
+    await call("point_at", { id: 2, say: "Click Close Document" });
+    expect(flown.at(-1)).toEqual(second);
+    t0 = Date.now();
+    expect((await call("wait_for_click", { id: 2, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
+    expect(Date.now() - t0).toBeGreaterThan(900);
+  }, 10_000);
+
+  it("a highlight a look took down (the id read another row) comes back when the named row does (review)", async () => {
+    let swapped = false, chosen = false;
+    const box = { x: 10, y: 10, width: 40, height: 20 };
+    const { call, flown } = makeWorker({
+      role: "table cell", name: "Monospace Bold", parentRole: "table", mode: "guide", states: () => (chosen ? ["enabled", "selected"] : ["enabled"]),
+      live: () => (swapped ? { name: "Liberation Mono" } : {}),
+      pointer: () => ({ x: 0, y: 0, mask: 0 }),
+    });
+    await call("perceive_window", {});
+    await call("point_at", { id: 1, say: "Click Monospace Bold" });
+    const from = flown.length;
+    const waiting = call("wait_for_click", { id: 1, timeoutSeconds: 5 });
+    setTimeout(() => { swapped = true; }, 100);
+    setTimeout(() => { swapped = false; }, 1300);
+    setTimeout(() => { chosen = true; }, 1800);
+    expect((await waiting).textResultForLlm).toMatch(/^It changed/);
+    // Taken down while the id read another font, back on the named row, and cleared when the step ended.
+    const during = flown.slice(from);
+    expect(during[0]).toBeNull();
+    expect(during.at(-2)).toEqual(box);
+    expect(during.at(-1)).toBeNull();
+  }, 10_000);
+
+  it("a press in a text editor's page (gedit: a multi-line text) is no search box (review)", async () => {
+    const page: AxNode = { id: 2, parent: null, depth: 3, role: "text", name: "", states: ["enabled", "editable", "multi line"], bounds: { x: 0, y: 100, width: 800, height: 450 } };
+    let t0 = 0;
+    const pointer = () => {
+      const t = t0 ? Date.now() - t0 : 0;
+      return t > 100 && t < 160 ? { x: 300, y: 300, mask: 256 } : t > 600 && t < 660 ? { x: 20, y: 15, mask: 256 } : { x: 0, y: 0, mask: 0 };
+    };
+    const { call } = makeWorker({ name: "Save", mode: "guide", more: [page], pointer });
+    await call("perceive_window", {});
+    t0 = Date.now();
+    expect((await call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
+  }, 10_000);
+
+  it("OK whose dialog closed but still reads as a 0×0 box is no cancel, and no wait to the timeout (review)", async () => {
+    let closed = false;
+    const ok = makeWorker({ name: "OK", parentRole: "dialog", mode: "guide", live: () => (closed ? { bounds: { x: 0, y: 0, width: 0, height: 0 } } : {}), pointer: () => ({ x: 0, y: 0, mask: 0 }) });
+    await ok.call("perceive_window", {});
+    setTimeout(() => { closed = true; }, 100);
+    expect((await ok.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The window changed \(the element is gone\)/);
+    expect(resultOf(ok.w)).toBeNull();
+  }, 10_000);
 
   it("a finished click leaves no highlight (live retest: empty orange box after a save)", async () => {
     const { call, flown } = makeWorker();

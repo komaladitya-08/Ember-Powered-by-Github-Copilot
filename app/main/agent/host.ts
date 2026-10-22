@@ -26,8 +26,19 @@ import type { AtspiSidecar, Bounds } from "../perception/sidecar";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
 import type { AuditLog } from "../policy/audit";
 
-/** Did the user name the terminal (or a shell) as the way to do this? */
-const ASKS_TERMINAL = /\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\b[^.!?\n]{0,40}\b(?:terminal|shell|command[- ]line|command prompt|console)\b|\b(?:in|from|via|using|with|through)\s+(?:the\s+|a\s+)?(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
+/** A terminal named as a thing to work in: not GNOME Shell's extensions, nor an app that only has "console" in its name. */
+const TERMINAL = String.raw`(?:(?:gnome|kde|xfce)[- ])?(?:terminal|console(?![- ]companion))|command[- ]line|command prompt|shell(?![- ]extensions?\b)`
+  // Or one word saying which terminal or shell ("the Linux terminal", "a bash shell", "a new terminal"; not GNOME's Shell).
+  + String.raw`|(?!gnome\s)[\w.-]+\s+(?:terminal|shell(?![- ]extensions?\b))`;
+/**
+ * Did the user name the terminal (or a shell) as the way to do this: as what they open or use ("open the terminal",
+ * "use the command line"), or where it's done ("run it in a terminal")? Not a word about it ("the terminal font").
+ */
+const ASKS_TERMINAL = new RegExp(String.raw`\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\s+(?:up\s+)?(?:(?:a|an|the|my|your)\s+)?(?:new\s+)?(?:${TERMINAL})\b|\b(?:in|into|from|via|using|with|through|on)\s+(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "i");
+/** Or said not to use it ("in Files, not in the terminal", "without opening a terminal"). */
+const REFUSES_TERMINAL = new RegExp(String.raw`\b(?:not|never|without|instead\s+of|rather\s+than|don['’]?t)\s+(?:(?:use|using|open|opening)\s+)?(?:(?:in|into|from|via|using|with|through|on)\s+)?(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "gi");
+/** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
+const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
 const NAMES_TERMINAL = /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
 
 /** What workers need to see and act (absent when there is no desktop). */
@@ -387,6 +398,15 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /**
+   * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
+   * refused it: a later turn (the user answering how else) isn't held to them again.
+   */
+  private readonly terminalRefused = new Map<string, UserRequest>();
+  /** The request whose turn wrote the last problem line (rememberProblem). */
+  private problemTurn: UserRequest | null = null;
+  /** Main's hold is pinned ("Read all" opened the whole answer): no timer gives it back. */
+  private pinned = false;
   /** What the last "I can't reach Copilot" (or "I need Copilot first") notice said, until Ember is connected again. */
   private unreachable: string | null = null;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
@@ -409,7 +429,7 @@ export class AgentHost {
     const c = o.hands?.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.remember("problem", text) });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text) });
   }
 
   /**
@@ -460,7 +480,9 @@ export class AgentHost {
     this.presenter.letGo();
     if (this.mainHold) clearTimeout(this.mainHold);
     this.mainHold = null;
-    // Pinned ("Read all" opened the whole answer): main holds it until the user closes it or asks something.
+    // Pinned ("Read all" opened the whole answer): main holds it until the user closes it or asks something, or the
+    // answer goes another way (releasePin).
+    this.pinned = !!o.pin;
     if (o.pin) return;
     this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
     this.mainHold.unref?.();
@@ -475,6 +497,7 @@ export class AgentHost {
    */
   releaseBubble(showing: BubbleState | null = null): boolean {
     if (this.mainHold) { clearTimeout(this.mainHold); this.mainHold = null; }
+    this.pinned = false;
     if (this.owner.holder !== this.mainBubble) return true;
     this.owner.holder = null;
     const p = this.presenter;
@@ -486,6 +509,16 @@ export class AgentHost {
     // What main put back stays on screen (it isn't replaced at once by something else waiting).
     if (!(covered && covered !== p && showing !== null && covered.isShowing(showing) && covered.reshow())) this.owner.free();
     return this.owner.current !== this.mainBubble;
+  }
+
+  /**
+   * The expanded answer went without its Close button (main cleared it for settings, or a question replaced it): a pinned
+   * hold has nothing left to keep, and no timer would end it, so it ends now as Close ends it. Any other hold of main's
+   * ("Listening…") keeps its own time. `showing`: what is on screen now.
+   */
+  releasePin(showing: BubbleState | null): void {
+    if (this.pinned && this.owner.holder === this.mainBubble) this.releaseBubble(showing);
+    this.pinned = false;
   }
 
   getStatus(): AgentStatus {
@@ -548,6 +581,24 @@ export class AgentHost {
     if (this.transcript.length > 60) this.transcript.splice(0, this.transcript.length - 60);
     this.o.onTranscript?.(this.getTranscript());
     return entry;
+  }
+
+  /**
+   * One failure, one line: the conversation saying it again (a failed send's reconnect, a silent turn reconnected after
+   * it wasn't ended) restates the line before, in the words the bubble ends on. A new request writes its own line first,
+   * so each request still gets its own.
+   */
+  private rememberProblem(text: string): void {
+    const last = this.transcript.at(-1);
+    const said = text.slice(0, 4000);
+    // (Only the same request's: two requests sent together that both fail get a line each.)
+    if (last?.who === "problem" && this.problemTurn === this.turn && (last.text === said || Date.now() - Date.parse(last.t) < 3000)) {
+      this.transcript[this.transcript.length - 1] = { ...last, text: said };
+      this.o.onTranscript?.(this.getTranscript());
+      return;
+    }
+    this.problemTurn = this.turn;
+    this.remember("problem", text);
   }
 
   private setStatus(patch: Partial<AgentStatus>): void {
@@ -669,6 +720,7 @@ export class AgentHost {
         await this.forgetCurrent(RUNTIME_WAIT_MS);
         this.carried = [];
         this.transcript.length = 0;
+        this.terminalRefused.clear();
         this.o.onTranscript?.([]);
         this.o.onAccountChanged?.();
       }
@@ -693,9 +745,11 @@ export class AgentHost {
       // The runtime's default model only where nothing limits the models (it may be one the administrator didn't allow).
       const runtimeDefault = !choice.conductor
         && mayUseRuntimeDefault(listed, { provider: !!this.o.provider, allowed, conductor: admin?.models.conductor, worker: admin?.models.worker });
+      // Said by cause: the administrator's list, their pinned model with nothing listed, or models listed but none turned on.
       if (!choice.conductor && !runtimeDefault) {
         throw new Error(allowed ? "None of the models your administrator allows are available to this account."
-          : "Copilot lists no models for this account, and your administrator chose which model Ember uses, so Ember can't use Copilot's default one.");
+          : listed === 0 ? "Copilot lists no models for this account, and your administrator chose which model Ember uses, so Ember can't use Copilot's default one."
+          : "None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub.");
       }
       if (runtimeDefault) this.o.log.info("agent.runtime_default_model");
       this.models = models;
@@ -810,9 +864,19 @@ export class AgentHost {
           // it goes with this task.
           const r = this.turn;
           const said = this.userWordsOf(r);
-          // The method the user named is part of the task: never let a goal turn "in the terminal" into another app.
-          if (said.words && ASKS_TERMINAL.test(said.words) && !NAMES_TERMINAL.test(goal))
-            return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
+          // The method the user named is part of the task: never let a goal turn "in the terminal" into another app. Earlier
+          // words it was refused for in an earlier turn no longer count: what the user said since answers Ember's "how else?"
+          // ("yes, use Files instead"). In the turn that refused them they still do, and the user's own words always do.
+          if (r && said.words) {
+            const key = refusedKey;
+            const earlier = said.words.slice(0, said.words.length - r.words.length).split("\n").filter(l => l.trim());
+            const held = [...earlier.filter(l => { const by = this.terminalRefused.get(key(l)); return !by || by === r; }), r.words].join("\n");
+            if (ASKS_TERMINAL.test(held.replace(REFUSES_TERMINAL, " ")) && !NAMES_TERMINAL.test(goal)) {
+              for (const l of said.words.split("\n")) this.terminalRefused.set(key(l), r);
+              while (this.terminalRefused.size > 60) this.terminalRefused.delete(this.terminalRefused.keys().next().value!);
+              return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
+            }
+          }
           const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined });
           this.announced.add(t.id);
           return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
@@ -820,7 +884,10 @@ export class AgentHost {
         showMe: tasks ? async goal => {
           // Nothing is promised that can't be done: a window Ember can't read is one it can't point into.
           const target = this.turn?.target ?? undefined;
+          const stops = this.stops;
           const why = await this.cantGuide(target);
+          // Stop, or a restart or sign-out, came while the window was read: nothing starts (as the conductor refuses after Stop).
+          if (stops !== this.stops || gen !== this.gen) return "The user just stopped everything. Don't start anything now; say you've stopped.";
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const t = tasks.start(goal, { target, mode: "guide" });
           this.announced.add(t.id);
@@ -1076,6 +1143,8 @@ export class AgentHost {
     this.remember("you", text);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [] };
+    // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
+    for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
@@ -1123,6 +1192,7 @@ export class AgentHost {
     this.tasks?.takeReports();
     this.carried = [];
     this.transcript.length = 0;
+    this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     this.o.log.info("agent.conversation_forgotten");
   }

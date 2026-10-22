@@ -1752,6 +1752,16 @@ class Acting(unittest.TestCase):
         self.assertNotIn("offscreen", self.act_on(item, "read_element"))
         item.states.remove("showing")
         self.assertTrue(self.act_on(item, "read_element")["offscreen"])
+        # A state read that failed (the app too slow for that one call, then answering its role and name) says nothing
+        # of the menu: no states is "not known", not "closed".
+        open_item = Acc("menu item", "Select Font…")
+
+        def no_reply():
+            raise RuntimeError("GDBus.Error:org.freedesktop.DBus.Error.NoReply: Did not receive a reply")
+        open_item.getState = no_reply
+        info = self.act_on(open_item, "read_element")
+        self.assertEqual((info["role"], info["states"]), ("menu item", []))
+        self.assertNotIn("offscreen", info)
         # Other elements say nothing of it.
         self.assertNotIn("offscreen", self.act_on(Acc("push button", "Save", states=("visible", "enabled")), "read_element"))
 

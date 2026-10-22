@@ -88,8 +88,13 @@ window.addEventListener("pointerup", () => { sliding = false; });
 size.addEventListener("blur", () => { if (settings) showSize(settings.size); });
 function showSize(v: number): void {
   size.value = String(v);
+  sizeLabel(v);
+}
+/** The words beside the slider and the filled part of its track. */
+function sizeLabel(v: number): void {
   size.setAttribute("aria-valuetext", `${v} pixels`);
   $("size-out").textContent = `${v} px`;
+  size.style.setProperty("--fill", `${((v - Number(size.min)) / (Number(size.max) - Number(size.min))) * 100}%`);
 }
 
 let settings: Settings | null = null;
@@ -133,8 +138,7 @@ $("reduce-motion").addEventListener("change", e => { void window.ember.updateSet
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
-  size.setAttribute("aria-valuetext", `${v} pixels`);
-  $("size-out").textContent = `${v} px`;
+  sizeLabel(v);
   void window.ember.updateSettings({ size: v });
 });
 $("start").addEventListener("click", () => {
@@ -277,7 +281,7 @@ function renderAdmin(a: Status["admin"]): void {
 }
 
 // ───── What Ember did ─────
-const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 let shownActivity = "";
 async function refreshActivity(): Promise<void> {
   const entries = await window.ember.activity().catch(() => [] as ActivityEntry[]);
@@ -549,8 +553,7 @@ void window.ember.conversation().then(renderConversation);
 window.ember.onConversation(renderConversation);
 
 // ───── Section links ─────
-// The links stay at the top of a wide window, one row or two: scrolling keeps clear of their height (styles.css).
-new ResizeObserver(() => document.documentElement.style.setProperty("--jump-h", `${$("jump").offsetHeight}px`)).observe($("jump"));
+// A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.
 /** Shows a section (opening it if folded) and moves focus there. */
 function showSection(section: string): void {
   const h = document.getElementById(`${section}-h`);
@@ -575,12 +578,18 @@ $("jump").addEventListener("click", e => {
   e.preventDefault();
   showSection(sectionOf(a));
 });
+// In the narrow row, Tab can stop on a link the row shows only part of: Chromium leaves it there, ring cut off.
+$("jump").addEventListener("focusin", e => {
+  (e.target as Element).closest("a")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+});
 function markCurrent(section: string): void {
   for (const a of jumpLinks) {
     if (sectionOf(a) === section) a.setAttribute("aria-current", "true");
     else a.removeAttribute("aria-current");
   }
 }
+// The window opens at the top: the first section is the one you are in.
+markCurrent(sectionOf(jumpLinks[0]));
 // While scrolling: the link of the section at the top is marked.
 let scrollQueued = false;
 window.addEventListener("scroll", () => {
@@ -588,10 +597,14 @@ window.addEventListener("scroll", () => {
   scrollQueued = true;
   requestAnimationFrame(() => {
     scrollQueued = false;
+    // At the end of the page the last sections can't scroll up to the line: the last one in view is marked.
+    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
     let current = sectionOf(jumpLinks[0]);
     for (const a of jumpLinks) {
       const h = document.getElementById(`${sectionOf(a)}-h`);
-      if (h && !isHidden(h) && h.getBoundingClientRect().top < 140) current = sectionOf(a);
+      if (!h || isHidden(h)) continue;
+      const top = h.getBoundingClientRect().top;
+      if (top < 140 || (atEnd && top < innerHeight - 40)) current = sectionOf(a);
     }
     markCurrent(current);
   });

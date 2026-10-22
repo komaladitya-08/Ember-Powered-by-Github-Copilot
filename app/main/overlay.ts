@@ -11,7 +11,7 @@
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
 import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
-import { setInputShape } from "./xshape";
+import { setInputShape, closeInputShape } from "./xshape";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
@@ -78,6 +78,8 @@ export class OverlayManager {
     screen.off("display-removed", this.onRemoved);
     screen.off("display-metrics-changed", this.onMetrics);
     for (const id of [...this.overlays.keys()]) this.destroy(id);
+    // The X connection the input shapes went over goes with the windows (a new manager opens its own).
+    closeInputShape();
   }
 
   setHidden(on: boolean): void {
@@ -214,9 +216,10 @@ export class OverlayManager {
       if (o.clickThrough) {
         o.win.setIgnoreMouseEvents(false);
         o.clickThrough = false;
+        // setIgnoreMouseEvents(false) restores a full input region: put the holes back. Only then: the reports
+        // come every frame while Ember flies, and an already shaped window needs the one request above.
+        setInputShape(xid, rects, scale);
       }
-      // setIgnoreMouseEvents(false) restores a full input region: put the holes back.
-      setInputShape(xid, rects, scale);
       o.shaped = true;
       return;
     }

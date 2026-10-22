@@ -30,11 +30,12 @@ api.onMode(m => {
 control.addEventListener("click", () => (inControl ? api.handBack() : api.takeOver()));
 document.getElementById("hide")!.addEventListener("click", () => api.hide());
 
-/** Image pixels → desk pixels (the image is letterboxed by object-fit: contain). */
+/** Image pixels → desk pixels (the image is letterboxed by object-fit: contain, inside its 1px keyline). */
 function toDesk(e: MouseEvent): { x: number; y: number } {
   const r = img.getBoundingClientRect();
-  const scale = Math.min(r.width / deskSize.width, r.height / deskSize.height);
-  const ox = r.left + (r.width - deskSize.width * scale) / 2, oy = r.top + (r.height - deskSize.height * scale) / 2;
+  const left = r.left + img.clientLeft, top = r.top + img.clientTop, w = img.clientWidth, h = img.clientHeight;
+  const scale = Math.min(w / deskSize.width, h / deskSize.height);
+  const ox = left + (w - deskSize.width * scale) / 2, oy = top + (h - deskSize.height * scale) / 2;
   return { x: Math.round((e.clientX - ox) / scale), y: Math.round((e.clientY - oy) / scale) };
 }
 

@@ -1,20 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 128 128">
+  <!-- Ember's icon on Apple's grid: a 104 px continuous-corner tile (824/1024 of the canvas), lit from above,
+       a soft shadow under it. Warm graphite like the app's glass, a hearth glowing behind Cinder so the coal
+       reads as a silhouette at 16 px, and a rim that catches the light at the top left (the angle of the glass edge in ember.css). -->
   <defs>
-    <radialGradient id="body" cx="42%" cy="38%" r="70%">
-      <stop offset="0" stop-color="#5b463e"/><stop offset="0.6" stop-color="#2c201c"/><stop offset="1" stop-color="#171110"/>
+    <path id="tile" d="M49.44 12h29.12c13.11 0 19.66 0 24.66 2.55a23.4 23.4 0 0 1 10.23 10.23c2.55 5.01 2.55 11.56 2.55 24.66v29.12c0 13.11 0 19.66 -2.55 24.66a23.4 23.4 0 0 1 -10.23 10.23c-5.01 2.55 -11.56 2.55 -24.66 2.55h-29.12c-13.11 0 -19.66 0 -24.66 -2.55a23.4 23.4 0 0 1 -10.23 -10.23c-2.55 -5.01 -2.55 -11.56 -2.55 -24.66v-29.12c0 -13.11 0 -19.66 2.55 -24.66a23.4 23.4 0 0 1 10.23 -10.23c5.01 -2.55 11.56 -2.55 24.66 -2.55z"/>
+    <clipPath id="tile-clip"><use xlink:href="#tile"/></clipPath>
+    <clipPath id="body-clip"><circle cx="64" cy="70" r="26"/></clipPath>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.4"/></filter>
+    <linearGradient id="tile-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3537"/><stop offset="0.55" stop-color="#231f21"/><stop offset="1" stop-color="#141112"/>
+    </linearGradient>
+    <radialGradient id="hearth" cx="64" cy="72" r="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9230" stop-opacity="0.7"/><stop offset="0.42" stop-color="#ff6a1f" stop-opacity="0.32"/>
+      <stop offset="0.8" stop-color="#c2410c" stop-opacity="0.06"/><stop offset="1" stop-color="#c2410c" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="eye" cx="50%" cy="45%" r="60%">
-      <stop offset="0" stop-color="#fff7e0"/><stop offset="1" stop-color="#ffd27a"/>
+    <radialGradient id="sheen" cx="64" cy="0" r="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.2"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0.03"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.62" stop-color="#000000" stop-opacity="0"/><stop offset="1" stop-color="#000000" stop-opacity="0.28"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/><stop offset="0.35" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="0.65" stop-color="#ffffff" stop-opacity="0.05"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.2"/>
+    </linearGradient>
+    <radialGradient id="body" cx="55" cy="58" r="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b463e"/><stop offset="0.6" stop-color="#2c201c"/><stop offset="1" stop-color="#151010"/>
+    </radialGradient>
+    <linearGradient id="tuft" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff6a1f"/><stop offset="0.5" stop-color="#ff9230"/><stop offset="1" stop-color="#ffd36b"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.5" cy="0.4" r="0.6">
+      <stop offset="0" stop-color="#fffaf0"/><stop offset="0.7" stop-color="#ffe9b0"/><stop offset="1" stop-color="#ffc861"/>
+    </radialGradient>
+    <radialGradient id="mitten" cx="0.38" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ffd08a"/><stop offset="0.55" stop-color="#ff8a2a"/><stop offset="1" stop-color="#b8401a"/>
     </radialGradient>
   </defs>
-  <rect width="128" height="128" rx="28" fill="#1a120e"/>
-  <path d="M52 30c0-10 6-14 6-14s2 8 6 8 4-10 4-10 8 6 6 16z" fill="#ff8a2a"/>
-  <circle cx="64" cy="68" r="38" fill="url(#body)"/>
-  <path d="M46 58l10 14-8 10M80 60l-8 12 10 8M60 92l6-10" stroke="#ff8a2a" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.8"/>
-  <ellipse cx="51" cy="64" rx="7" ry="9" fill="url(#eye)"/>
-  <ellipse cx="77" cy="64" rx="7" ry="9" fill="url(#eye)"/>
-  <circle cx="52" cy="65" r="3" fill="#2a1208"/><circle cx="78" cy="65" r="3" fill="#2a1208"/>
-  <path d="M56 82q8 7 16 0" stroke="#ffb06a" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <circle cx="20" cy="84" r="9" fill="#ff9a3d" stroke="#4a160a" stroke-width="2"/>
-  <circle cx="108" cy="84" r="9" fill="#ff9a3d" stroke="#4a160a" stroke-width="2"/>
+
+  <!-- Shadow under the tile, then the tile and its light. -->
+  <use xlink:href="#tile" transform="translate(0 2.4)" fill="#000000" opacity="0.4" filter="url(#soft)"/>
+  <use xlink:href="#tile" fill="url(#tile-fill)"/>
+  <g clip-path="url(#tile-clip)">
+    <rect x="12" y="12" width="104" height="104" fill="url(#hearth)"/>
+    <rect x="12" y="12" width="104" height="104" fill="url(#floor)"/>
+    <rect x="12" y="12" width="104" height="60" fill="url(#sheen)"/>
+  </g>
+
+  <!-- Cinder, as the app draws it at rest: three flame tufts, a coal body with glowing cracks and a rim lit by
+       its own fire, ember eyes, a smile, and two mittens. -->
+  <ellipse cx="64" cy="100" rx="19" ry="3" fill="#000000" opacity="0.32"/>
+  <path d="M51.5 48q0-6 -2-10.5q4.5 3 6.5 10.5z" fill="url(#tuft)"/>
+  <path d="M59.5 47q0-9 5-16q4.5 7 4 16z" fill="url(#tuft)"/>
+  <path d="M70 48q2-7.5 6.5-10.5q-1.8 4.5 -2 10.5z" fill="url(#tuft)"/>
+  <circle cx="64" cy="70" r="26" fill="url(#body)"/>
+  <g clip-path="url(#body-clip)" fill="none" stroke="#ff8a2a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="0.85">
+    <path d="M38.4 65.5l4.6 1.6 2.4 4.4l-1.6 4.2M43 67.1l2.6-3.4"/>
+    <path d="M89.6 63.5l-4.4 2.8-1.2 4.6 2.2 3.8M85.2 66.3l-2.8-2.4"/>
+    <path d="M57.5 95.4l3.2-4.4 4.4-.6 2.8 2.6"/>
+  </g>
+  <path d="M84.73 56.02A25 25 0 0 1 75.35 92.28" fill="none" stroke="#ff9a3c" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
+  <ellipse cx="47.5" cy="79" rx="4.2" ry="2.4" fill="#ff6a3d" opacity="0.32"/>
+  <ellipse cx="80.5" cy="79" rx="4.2" ry="2.4" fill="#ff6a3d" opacity="0.32"/>
+  <ellipse cx="55" cy="68" rx="4.8" ry="6.2" fill="url(#eye)"/>
+  <ellipse cx="73" cy="68" rx="4.8" ry="6.2" fill="url(#eye)"/>
+  <circle cx="55.8" cy="69.2" r="2.3" fill="#2a1208"/><circle cx="73.8" cy="69.2" r="2.3" fill="#2a1208"/>
+  <circle cx="56.6" cy="68.2" r="0.8" fill="#ffffff"/><circle cx="74.6" cy="68.2" r="0.8" fill="#ffffff"/>
+  <path d="M58.8 80.5q5.2 4.4 10.4 0" fill="none" stroke="#ffb06a" stroke-width="2.3" stroke-linecap="round"/>
+  <g stroke="#4a160a" stroke-width="1.3" fill="url(#mitten)">
+    <ellipse cx="26.4" cy="79.6" rx="2.8" ry="4.2" transform="rotate(-35 26.4 79.6)"/>
+    <ellipse cx="30.5" cy="84" rx="7" ry="8"/>
+    <ellipse cx="101.6" cy="79.6" rx="2.8" ry="4.2" transform="rotate(35 101.6 79.6)"/>
+    <ellipse cx="97.5" cy="84" rx="7" ry="8"/>
+  </g>
+
+  <!-- The rim: a hairline inside the edge, brightest at the top left. -->
+  <path d="M49.14 12.5h29.72c12.83 0 19.24 0 24.14 2.5a22.9 22.9 0 0 1 10.01 10.01c2.5 4.9 2.5 11.31 2.5 24.14v29.72c0 12.83 0 19.24 -2.5 24.14a22.9 22.9 0 0 1 -10.01 10.01c-4.9 2.5 -11.31 2.5 -24.14 2.5h-29.72c-12.83 0 -19.24 0 -24.14 -2.5a22.9 22.9 0 0 1 -10.01 -10.01c-2.5 -4.9 -2.5 -11.31 -2.5 -24.14v-29.72c0 -12.83 0 -19.24 2.5 -24.14a22.9 22.9 0 0 1 10.01 -10.01c4.9 -2.5 11.31 -2.5 24.14 -2.5z" fill="none" stroke="url(#rim)" stroke-width="1"/>
 </svg>

@@ -177,8 +177,14 @@ describe("page styles that keep things readable and reachable", () => {
     return (x + 0.05) / (y + 0.05);
   };
 
-  it("keeps keyboard focus clear of the sticky section links", () => {
-    expect(home).toMatch(/@media \(min-width: 640px\) \{[^}]*\.jump \{ position: sticky[^}]*\}\s*html \{ scroll-padding-top: calc\(var\(--jump-h, 46px\) \+ 10px\); \}/);
+  it("keeps keyboard focus clear of the section links (WCAG 2.4.11)", () => {
+    // Wide: the links are a fixed sidebar and the content starts past it, so nothing scrolls under them.
+    const wide = home.slice(home.indexOf("@media (min-width: 640px) {"));
+    const sidebar = Number(/\.home > \.jump \{\s*position: fixed; left: 0; top: 0; bottom: 0; width: (\d+)px;/.exec(wide)![1]);
+    const inset = Number(/body:not\(\.first-run\) \.home \{[^}]*padding: \d+px \d+px \d+px (\d+)px;/.exec(wide)![1]);
+    expect(inset).toBeGreaterThan(sidebar);
+    // Narrow: one row that scrolls away with the page (never sticky).
+    expect(home.slice(0, home.indexOf("@media (min-width: 640px) {"))).not.toMatch(/\.jump \{[^}]*position: sticky/);
   });
 
   it("wraps long names instead of widening the window or a task card", () => {
@@ -192,7 +198,7 @@ describe("page styles that keep things readable and reachable", () => {
     const bg = /--bg: (#[0-9a-f]{6})/.exec(home)![1];
     const placeholder = /\.add-row input::placeholder \{ color: (#[0-9a-f]{6})/.exec(home)![1];
     expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
-    expect(home).toMatch(/\.fold > summary::before \{ content: "▸" \/ "";/);
+    expect(home).toMatch(/\.fold > summary::before \{\s*content: "" \/ "";/);
     for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);
   });
 });
