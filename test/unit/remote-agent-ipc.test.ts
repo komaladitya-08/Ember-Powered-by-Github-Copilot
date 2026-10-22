@@ -97,7 +97,7 @@ describe("watching the desktop while it is in use (§5.3.4 step 8, INT)", () => 
       const m = JSON.parse(l) as { t: string; id: number; op: string };
       if (m.t === "req") stdout.write(`${JSON.stringify({ t: "res", id: m.id, ok: true, v: m.op === "init" ? { access: "screen", notice: "shown" } : {} })}\n`);
     });
-    const session = { id: "2", type: "x11" as const, locked: false, active: true };
+    const session = { id: "2", type: "x11" as const, locked: false as const, active: true as const };
     let found: Awaited<ReturnType<ConstructorParameters<typeof DesktopController>[0]["discover"]>> = { access: "screen", session, env: { DISPLAY: ":0" } };
     let now = 0;
     const changed: unknown[] = [];

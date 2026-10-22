@@ -198,6 +198,13 @@ const COMMAND_SIZE = { cols: 120, rows: 32 };
 const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "finish_task"]);
 /** The answers a remote's gate 2 gives a step as errors (§5.3.7; the PC's remote sidecar and apps throw them with `code`). */
 const REMOTE_CODES = new Set(["needs_confirm", "changed", "stale", "stopped", "deny", "denied"]);
+/**
+ * A remote target's own error (SC's RemoteStepError or RemoteError, by name: the worker doesn't load the remote's code):
+ * its message is already Ember's sentence with the remote's words quoted in it (§7.2 item 4), so it is passed on as it
+ * is (without its last full stop), never quoted again. null for any other error.
+ */
+const remoteSaid = (err: unknown): string | null =>
+  err instanceof Error && (err.name === "RemoteStepError" || err.name === "RemoteError") && err.message ? err.message.replace(/\.$/, "") : null;
 const sha256Hex = (s: string) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
 /** A question with S0b's `where` badge (confirm.ts §3.9.1). */
 type WhereQuestion = Question & { where?: string };
@@ -1120,6 +1127,8 @@ export class Worker {
           const app = apps.find(apps.list(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
           if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          // Another computer's app list is that computer's words: its names are quoted as screen text is (§7.2 item 4).
+          const shownApp = this.d.target?.kind === "ssh" ? q(app.name, 100) : app.name;
           return this.system("open_app", app.name, async () => {
             if (this.isOver) throw new BorrowStopped();
             this.setPlace(null);
@@ -1136,9 +1145,9 @@ export class Worker {
               const wins = await this.perception.windows().catch(() => []);
               const w = wins.find(x => !before.has(key(x)) && (ours(x) || x.name.toLowerCase().includes(app.name.toLowerCase())))
                 ?? (i >= 8 ? wins.find(ours) : undefined);
-              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${app.name}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
+              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${shownApp}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
             }
-            return `Started ${app.name}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
+            return `Started ${shownApp}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
           }, app.name);
         }),
       ...this.commandTools(),
@@ -1930,6 +1939,9 @@ export class Worker {
       // A slow app may still carry out a request after Ember stopped waiting for it.
       if (/did not answer/.test(msg)) return fail("The app didn't answer in time, so it's unknown whether this happened. Call perceive_window to check before trying again.");
       if (isBusy(msg)) return fail(BUSY);
+      // The PC's own sentence about another computer (its words already quoted in it): passed on, not quoted again.
+      const said = this.d.target?.kind === "ssh" ? remoteSaid(err) : null;
+      if (said !== null) return fail(`${said}. Call perceive_window to see the window as it is now.`);
       // The helper's words can carry the app's own text: quoted, like everything from the screen.
       return fail(`It didn't work: ${q(msg, 300)}. Call perceive_window to see the window as it is now.`);
     } finally {
@@ -3204,10 +3216,15 @@ export class Worker {
       if (err instanceof UserTookOver) return this.deskTaken(kind);
       const msg = err instanceof Error ? err.message : String(err);
       this.audit({ event: "action", task: this.spec.id, kind, value, ok: false, error: msg });
-      // Another computer's own check refused it (gate 2, awaited: §2.6): its words, quoted, as a refusal.
-      const remote = this.remoteRefusal(err) ?? (this.d.target?.kind === "ssh"
-        ? denied(`Not allowed: ${this.targetName} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`) : null);
+      // Another computer's own check refused it (gate 2, awaited: §2.6): its words, quoted, as a refusal. The PC's own
+      // sentence about that computer (it didn't answer, the app went) is passed on as it is.
+      const remote = this.remoteRefusal(err);
       if (remote) return remote;
+      if (this.d.target?.kind === "ssh") {
+        const said = remoteSaid(err);
+        if (said !== null) return fail(`${said}.`);
+        return denied(`Not allowed: ${this.targetName} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`);
+      }
       return fail(msg);
     }
   }
@@ -3263,6 +3280,8 @@ export class Worker {
       case "stale": return fail(`${name} didn't answer in time, so this step wasn't done. Call perceive_window and try again, or finish the task saying so.`);
       case "stopped": return STOPPED();
       default: {
+        const said = remoteSaid(err);
+        if (said !== null) return denied(`Not allowed: ${said}. Don't try another way; tell the user in finish_task.`);
         const msg = err instanceof Error ? err.message : String(err);
         return denied(`Not allowed: ${name} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`);
       }
