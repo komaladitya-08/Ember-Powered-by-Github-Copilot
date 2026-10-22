@@ -8,10 +8,20 @@
  * new) is left as it is. A password manager's copy is never put back (holdsPassword).
  * Electron's clipboard is passed in, so this is tested without it.
  * Saving gives up after SAVE_TIMEOUT_MS (an owner that doesn't answer), and then nothing is pasted.
+ * Which formats are saved, what marks a password manager's copy, and what Ember writes beside its
+ * own text (so clipboard history and cloud sync skip it) are the OS's (./clipboard-formats.ts).
  */
 
-/** What was on the clipboard: one record of format → data per item; `look`: its formats and text then. */
-export interface ClipboardSnapshot { readonly items: ReadonlyArray<Readonly<Record<string, unknown>>>; readonly look?: string }
+import type { ClipboardFormats } from "../platform/types";
+import { CLIPBOARD_FORMATS } from "./clipboard-formats";
+
+export { savableFormat } from "./clipboard-formats";
+
+/**
+ * What was on the clipboard: one record of format → data per item; `look`: its formats and text then; `password`: a
+ * password manager marked it (said by the clipboard that saved it, by its OS's marker).
+ */
+export interface ClipboardSnapshot { readonly items: ReadonlyArray<Readonly<Record<string, unknown>>>; readonly look?: string; readonly password?: boolean }
 
 export interface PasteClipboard {
   /** Everything on the clipboard now, to put back later. */
@@ -46,17 +56,14 @@ export class ClipboardTimeout extends Error {
 /** Electron 44 lists formats other than the common ones as `electron application/osclipboard;format="<X target>"`. */
 const OS_FORMAT = /^electron application\/osclipboard;format="(.*)"$/;
 const targetOf = (type: string) => OS_FORMAT.exec(type)?.[1] ?? type;
-/**
- * Formats read: MIME types ("text/plain", "image/png", "x-special/gnome-copied-files", LibreOffice's own), however
- * Electron lists them, and password managers' "this is a password" marker (so clipboard history tools still skip the
- * password once it is back). Never raw X targets (PIXMAP, BITMAP, DRAWABLE…): reading one of those crashes Electron.
- */
-export const savableFormat = (type: string) => { const t = targetOf(type); return /^[\w.+-]+\/[\w.+-]+/.test(t) || t === "x-kde-passwordManagerHint"; };
+/** Is `type` (however Electron lists it) a password manager's "this is a password" marker on that OS? */
+const marksPassword = (formats: ClipboardFormats, type: string) => formats.passwordMarker(type) || formats.passwordMarker(targetOf(type));
 /**
  * Did a password manager put this on the clipboard (its "this is a password" marker)? Such a copy isn't put back:
  * the manager's clear timer may have fired while Ember's text was there, and nothing would clear the password again.
+ * A snapshot says so itself when its clipboard knew the OS's marker; otherwise its formats are judged by Linux's.
  */
-export const holdsPassword = (s: ClipboardSnapshot) => s.items.some(item => Object.keys(item).some(t => targetOf(t) === "x-kde-passwordManagerHint"));
+export const holdsPassword = (s: ClipboardSnapshot) => s.password ?? s.items.some(item => Object.keys(item).some(t => marksPassword(CLIPBOARD_FORMATS.linux, t)));
 /**
  * Pictures of what was copied: a spreadsheet offers several, slow to make for a big range; GTK offers one picture in
  * a dozen formats, icon ones among them (application/ico, text/ico), empty when the picture is too big for an icon.
@@ -75,8 +82,16 @@ function by<T>(p: Promise<T>, deadline: number): Promise<T> {
 /** A format's data as text (Electron gives a Blob), or null. */
 const textOf = async (v: unknown): Promise<string | null> => (typeof v === "string" ? v : typeof (v as Blob | null)?.text === "function" ? (v as Blob).text() : null);
 
-/** `electronClipboard(clipboard, ClipboardItem)` in main. */
-export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (data: Record<string, never>) => I, timeoutMs = SAVE_TIMEOUT_MS): PasteClipboard {
+/** What Ember writes in each of `ownTextMarkers`' formats beside its own text: only their presence counts. */
+const OWN_TEXT_MARK = "1";
+
+/**
+ * `electronClipboard(clipboard, ClipboardItem, undefined, sys.clipboardFormats)` in main. `formats`: which formats are
+ * saved and put back (Linux: MIME types and the KDE password marker, never raw X targets: reading one of those crashes
+ * Electron), what marks a password manager's copy, and what is written beside Ember's own text (none on Linux).
+ */
+export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (data: Record<string, never>) => I, timeoutMs = SAVE_TIMEOUT_MS,
+  formats: ClipboardFormats = CLIPBOARD_FORMATS.linux): PasteClipboard {
   /** What the clipboard offers now: each item's formats and text. */
   const look = async () => {
     const deadline = Date.now() + timeoutMs;
@@ -106,7 +121,7 @@ export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (da
       let comparable = true;
       for (const item of await by(cb.read(), deadline)) {
         // Read now, every format: the clipboard is about to hold Ember's text instead.
-        const types = item.types.filter(savableFormat);
+        const types = item.types.filter(t => formats.savable(t));
         const pictures = types.filter(t => PICTURE.test(targetOf(t)));
         const others = types.filter(t => !pictures.includes(t));
         const data: Record<string, unknown> = {};
@@ -128,19 +143,26 @@ export function electronClipboard<I>(cb: ElectronClipboardLike<I>, Item: new (da
         else for (const type of png ? [png] : pictures) await read(type, false);
         // A format that came empty isn't put back (an app pasting would take nothing from it); an item that came all
         // empty wasn't saved at all, so nothing is pasted.
-        for (const type of Object.keys(data)) if (isEmpty(data[type]) && targetOf(type) !== "x-kde-passwordManagerHint") delete data[type];
+        for (const type of Object.keys(data)) if (isEmpty(data[type]) && !marksPassword(formats, type)) delete data[type];
         if (types.length && !Object.keys(data).length) throw new Error("the app that owns the clipboard gave nothing for what it holds");
         if (Object.keys(data).length) items.push(data);
         comparable &&= !!text;
         looks.push([item.types, item.types.includes("text/plain") ? text : null]);
       }
-      return { items, ...(comparable ? { look: JSON.stringify(looks) } : {}) };
+      // Said only when it holds one (absent, holdsPassword judges the formats by Linux's marker, as before).
+      const password = items.some(data => Object.keys(data).some(t => marksPassword(formats, t)));
+      return { items, ...(comparable ? { look: JSON.stringify(looks) } : {}), ...(password ? { password } : {}) };
     },
     // A picture copied while Ember waited has the same formats as the one saved: that is saved again.
     unchanged: async snapshot => snapshot.look !== undefined && (await look()) === snapshot.look,
     async writeText(text) {
       wrote = null;
-      await cb.writeText(text);
+      // Marked as Ember's own where the OS has a way to (Windows' clipboard history and cloud sync, macOS's clipboard
+      // managers skip it); on Linux plain text, as always.
+      if (formats.ownTextMarkers.length) {
+        const data: Record<string, string> = { "text/plain": text, ...Object.fromEntries(formats.ownTextMarkers.map(m => [m, OWN_TEXT_MARK])) };
+        await cb.write([new Item(data as Record<string, never>)]);
+      } else await cb.writeText(text);
       const held = await plainText().catch(() => undefined);
       if (held !== undefined) wrote = { text, held };
     },
