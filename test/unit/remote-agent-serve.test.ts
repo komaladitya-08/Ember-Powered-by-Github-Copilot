@@ -174,15 +174,29 @@ describe("serve (§5.3, §5.4)", () => {
     expect(graceSeconds(null, adminSummary(NO_POLICY))).toBe(20);
   });
 
-  it("runs a command only through gate 2: asks for what its own check finds, starts it after the yes, audited first", async () => {
+  it("runs a command only through gate 2, judged by CL's classifier: an ordinary one starts, audited first", async () => {
     const t = server();
     await t.m.req("hello", helloArgs());
-    const first = res(await t.m.req("cmd.run", run("make")));
-    expect(first).toMatchObject({ ok: true, v: { status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["remote.unchecked"] } });
+    expect(res(await t.m.req("cmd.run", run("make")))).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
+    expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "make", approved: false });
+  });
+
+  it("asks for what its own check finds that the stamp doesn't cover, and starts it after the yes with those rules", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    const first = res(await t.m.req("cmd.run", run("rm -r build")));
+    expect(first).toMatchObject({ ok: true, v: { status: "needs_confirm", reason: GATE_WORDS.disagree } });
+    const rules = (first as { v: { rules: string[]; says: string[] } }).v.rules;
+    expect(rules.length).toBeGreaterThan(0);
+    expect((first as { v: { says: string[] } }).v.says.some(l => /build/.test(l))).toBe(true);
     expect(t.calls.some(c => c.startsWith("start"))).toBe(false);
-    const ok = res(await t.m.req("cmd.run", run("make", { yes: true, rules: ["remote.unchecked"] })));
+    const ok = res(await t.m.req("cmd.run", run("rm -r build", { yes: true, rules })));
     expect(ok).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
-    expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "make", approved: true });
+    expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "rm -r build", approved: true });
+    // Ember's own files are refused here too, whatever the stamp says (D4.5).
+    const own = server();
+    await own.m.req("hello", helloArgs());
+    expect(res(await own.m.req("cmd.run", run("pkill -f ember-remote", { yes: true, rules: ["anything"] })))).toMatchObject({ ok: true, v: { status: "deny" } });
   });
 
   it("doesn't start a command whose link went quiet while its paths were checked, and records no start", async () => {
@@ -242,13 +256,13 @@ describe("serve (§5.3, §5.4)", () => {
   it("refuses a command it can't record (write-ahead)", async () => {
     const t = server({ auditFails: true });
     await t.m.req("hello", helloArgs());
-    expect(res(await t.m.req("cmd.run", run("make", { yes: true, rules: ["remote.unchecked"] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.noAudit } });
+    expect(res(await t.m.req("cmd.run", run("make", { yes: true, rules: [] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.noAudit } });
   });
 
   it("follows this computer's commands mode: off refuses", async () => {
     const t = server({ policy: parseAdminPolicy('{"neverLook":["x"]}', "/etc/ember/policy.json") });
     await t.m.req("hello", helloArgs());
-    expect(res(await t.m.req("cmd.run", run("ls", { yes: true, rules: ["remote.unchecked"] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.commandsOff } });
+    expect(res(await t.m.req("cmd.run", run("ls", { yes: true, rules: [] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.commandsOff } });
   });
 
   it("fences: a command from before a stop is stopped, and Stop pulls every part", async () => {
@@ -257,8 +271,8 @@ describe("serve (§5.3, §5.4)", () => {
     const stop = res(await t.m.req("stop", { epoch: 6 }));
     expect(stop).toMatchObject({ ok: true, v: { late: [] } });
     expect(t.calls).toEqual(expect.arrayContaining(["stopAll killswitch true", "desktop stop"]));
-    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 5, yes: true, rules: ["remote.unchecked"] })))).toMatchObject({ ok: false, code: "stopped" });
-    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 6, yes: true, rules: ["remote.unchecked"] })))).toMatchObject({ ok: true, v: { status: "started" } });
+    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 5, yes: true, rules: [] })))).toMatchObject({ ok: false, code: "stopped" });
+    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 6, yes: true, rules: [] })))).toMatchObject({ ok: true, v: { status: "started" } });
     expect(t.audit.some(e => e.event === "stop" && e.source === "local")).toBe(true);
   });
 

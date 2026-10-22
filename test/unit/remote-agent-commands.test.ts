@@ -150,7 +150,7 @@ describe("a command on the remote", () => {
     const h = harness();
     h.runs.start(spec({ shell: "zsh" }), 7, facts(true));
     expect(h.spawned).toEqual([]);
-    expect(h.exits[0].exit).toMatchObject({ ended: "failed-to-start", error: "zsh isn't available here" });
+    expect(h.exits[0].exit).toMatchObject({ ended: "failed-to-start", error: "zsh isn't available here." });
   });
 
   it("passes the user's typing to the PTY only, and none once the run ended", () => {
