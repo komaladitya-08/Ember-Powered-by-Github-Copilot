@@ -131,6 +131,12 @@ export interface TargetsRuntime {
   doctorRows(): Promise<PlatformDoctorRow[]>;
   summaries(): TargetSummary[];
   dispose(): Promise<void>;
+  /**
+   * Ember's own processes now (D4.5): main's list and the runtime's helpers' (ssh, askpass, WSL helpers, the Copilot
+   * runtime), as this computer's commands are judged by; main hands it to the agent for commands in WSL, whose runner
+   * can't see this computer's processes itself.
+   */
+  emberPids(): number[];
 }
 
 /** The fields of Electron's MenuItemConstructorOptions the targets menu uses (main passes them through). */
@@ -180,6 +186,11 @@ export interface TargetsDeps {
   extraPath: () => string[];
   /** Ember's job host (Windows; null elsewhere). */
   jobHost: JobHostRef | null;
+  /**
+   * The keys that answer the question up now, as the command card's hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+   * only keys main actually holds; absent or null: the card shows no hint.
+   */
+  keyHint?: () => string | null;
 }
 
 /** The parts of ipcMain the runtime uses; every handler checks the sender itself. */

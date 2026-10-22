@@ -339,7 +339,9 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
   let disposed = false;
 
   // ── Windows of Ember's own (made only when something needs them; their channels are theirs) ──
-  const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint: () => null });
+  // The card's key hint: the keys main holds for the question up now (none when main doesn't say).
+  const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
+  const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint });
   const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os });
 
   // ── This computer's commands ──
@@ -1383,6 +1385,7 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       return rows;
     },
     summaries: () => { try { return summaries(); } catch { return []; } },
+    emberPids,
     dispose: async () => {
       if (disposed) return;
       disposed = true;

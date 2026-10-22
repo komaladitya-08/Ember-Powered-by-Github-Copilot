@@ -95,6 +95,7 @@ interface RigOptions {
   welcome?: Welcome;
   notice?: TargetsParts["notice"];
   commandWindowExtras?: boolean;
+  keyHint?: () => string | null;
   cursor?: boolean;
 }
 
@@ -190,11 +191,12 @@ function rig(o: RigOptions = {}) {
     privacy: { isSecurityWindow: () => false }, spawnDefaults: {}, which: () => null,
   } as unknown as SystemPlatform;
   let runnerOpts: Parameters<TargetsParts["localRunner"]>[0] | null = null;
+  let cwOpts: Parameters<TargetsParts["commandWindow"]>[0] | null = null;
   const wslMade = vi.fn((_o: Parameters<TargetsParts["wsl"]>[0]) => wsl as unknown as WslService);
   const parts: TargetsParts = {
     env: { APPIMAGE: "/home/ana/Ember.AppImage" }, home: "/home/ana", user: "ana",
     localRunner: ro => { runnerOpts = ro; return local; },
-    commandWindow: () => cw as unknown as CommandWindow,
+    commandWindow: co => { cwOpts = co; return cw as unknown as CommandWindow; },
     promptWindow: () => pw as unknown as PromptWindow,
     wsl: wslMade,
     connections: co => { Object.assign(connOpts, co); return conns as unknown as Connections; },
@@ -219,12 +221,14 @@ function rig(o: RigOptions = {}) {
     localHands: hands, showState, notify: vi.fn(), openSettings, ipc, isHome: s => s.id === 1,
     windows: { command: windowsMade, prompt: windowsMade }, fetch: vi.fn(), devEnv: () => undefined,
     elevated: o.elevated ?? (() => false), emberPids: () => [10, 11], extraPath: () => [], jobHost: null,
+    ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const t = buildTargets(deps, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade,
     runnerOpts: () => runnerOpts!,
+    cwOpts: () => cwOpts!,
     onAnswer: () => onAnswer, onConsent: () => onConsent,
     failConnect: (e: Error | null) => { connectFail = e; },
     holdConnect: () => { let release!: () => void; connectGate = new Promise(r => { release = r; }); return () => { connectGate = null; release(); }; },
@@ -399,6 +403,14 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(o.ember.pids()).toEqual([10, 11, 55]);
     expect(o.home).toBe("/home/ana");
     expect(o.elevated()).toBe(false);
+    // The same live list for main's agent (commands in WSL, whose runner can't see this computer's processes).
+    expect(r.t.emberPids()).toEqual([10, 11, 55]);
+  });
+
+  it("give the command card main's key hint, and none when main doesn't say or its hint fails", () => {
+    expect(rig({ keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" }).cwOpts().keyHint()).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    expect(rig().cwOpts().keyHint()).toBeNull();
+    expect(rig({ keyHint: () => { throw new Error("no keys"); } }).cwOpts().keyHint()).toBeNull();
   });
 });
 

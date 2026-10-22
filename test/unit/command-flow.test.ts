@@ -347,6 +347,18 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     expect(wsl.classified[0][2].ember.pids).toEqual([10, 4242]);
   });
 
+  it("starts a run at the size the command window says fits its tab", async () => {
+    makeJudge();
+    const h = harness();
+    (h.ctx.service.window as unknown as { termSize: () => unknown }).termSize = () => ({ cols: 132, rows: 41 });
+    await call(h);
+    expect(h.starts[0]).toMatchObject({ cols: 132, rows: 41 });
+    const odd = harness();
+    (odd.ctx.service.window as unknown as { termSize: () => unknown }).termSize = () => ({ cols: 0, rows: "x" });
+    await call(odd);
+    expect(odd.starts[0]).toMatchObject({ cols: 100, rows: 30 });
+  });
+
   it("offers only shells Ember knows, whatever the target reports", async () => {
     makeJudge();
     const h = harness({ facts: { shells: ["fish" as never, "bash"] } });

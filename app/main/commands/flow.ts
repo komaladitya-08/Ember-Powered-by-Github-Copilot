@@ -691,6 +691,22 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   }
 }
 
+/**
+ * The size the command window says fits a new run's tab (UI's termSize), so the program draws for the terminal it is
+ * shown in; null when the window doesn't say (the worker's own size then).
+ */
+function windowSize(w: CommandService["window"]): { cols: number; rows: number } | null {
+  const termSize = (w as CommandService["window"] & { termSize?: () => unknown }).termSize;
+  if (typeof termSize !== "function") return null;
+  try {
+    const got = termSize.call(w) as { cols?: unknown; rows?: unknown } | null;
+    const ok = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 1000;
+    return got && ok(got.cols) && ok(got.rows) ? { cols: got.cols, rows: got.rows } : null;
+  } catch {
+    return null; // a window that can't say: the worker's size
+  }
+}
+
 /** One started run and what it printed. */
 interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker; running: RunningCommand }
 
@@ -706,7 +722,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
 }): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
-  const { cols, rows } = ctx.size();
+  const { cols, rows } = windowSize(svc.window) ?? ctx.size();
   const spec: RunSpec = {
     runId: o.runId, taskId: o.stamp.taskId, shell: o.shell, command: o.command, cwd: o.cwd, timeoutMs: o.timeoutS * 1000, cols, rows,
     stamp: {
