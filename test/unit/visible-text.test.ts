@@ -28,6 +28,11 @@ describe("visibleText", () => {
     ["e\u001b[31m", [seg("e", "plain"), seg("\u27e8U+001B\u27e9", "control"), seg("[31m", "plain")]],
     ["a\rb", [seg("a", "plain"), seg("\u27e8U+000D\u27e9", "control"), seg("b", "plain")]],
     ["\ud800x", [seg("\u27e8U+D800\u27e9", "invisible"), seg("x", "plain")]],
+    // A line separator reads as a line break but is a word character to a shell.
+    ["rm x\u2028y", [seg("rm x", "plain"), seg("\u27e8U+2028\u27e9", "control"), seg("y", "plain")]],
+    // Variation selectors change the letter before them without showing; noncharacters can't be drawn.
+    ["a\ufe0fb\u{e0100}", [seg("a", "plain"), seg("\u27e8U+FE0F\u27e9", "invisible"), seg("b", "plain"), seg("\u27e8U+E0100\u27e9", "invisible")]],
+    ["x\ufdd0\u{1fffe}", [seg("x", "plain"), seg("\u27e8U+FDD0\u27e9", "invisible"), seg("\u27e8U+1FFFE\u27e9", "invisible")]],
   ])("shows %j", (s, want) => {
     expect(visibleText(s)).toEqual(want);
   });
@@ -44,6 +49,10 @@ describe("visibleText", () => {
   it("doesn't mark a token written in one script, or Latin with its accents", () => {
     expect(visibleText("\u043f\u0440\u0438\u0432\u0435\u0442 world")).toEqual([seg("\u043f\u0440\u0438\u0432\u0435\u0442 world", "plain")]);
     expect(visibleText("na\u00efve r\u00e9sum\u00e9 caf\u00e9")).toEqual([seg("na\u00efve r\u00e9sum\u00e9 caf\u00e9", "plain")]);
+  });
+
+  it("doesn't mark Latin beside Chinese, Japanese or Korean letters (how those languages name files)", () => {
+    expect(visibleText("cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt")).toEqual([seg("cat \u65e5\u672c\u8a9e\u306e\u30d5\u30a1\u30a4\u30eb.txt", "plain")]);
   });
 
   it("judges each token on its own", () => {

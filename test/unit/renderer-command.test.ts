@@ -255,7 +255,8 @@ describe("visibleText (critique security-10)", () => {
     expect(kinds("r\u200bm")).toEqual([["plain", "r"], ["invisible", "⟨ZWSP⟩"], ["plain", "m"]]);
     expect(kinds("a\tb")).toEqual([["plain", "a"], ["tab", "→"], ["plain", "b"]]);
     expect(kinds("a\u00a0b")).toEqual([["plain", "a"], ["nbsp", "⟨NBSP⟩"], ["plain", "b"]]);
-    expect(kinds("a\u2009b")).toEqual([["plain", "a"], ["invisible", "⟨U+2009⟩"], ["plain", "b"]]);
+    // An odd space is shown as one, in the same colour as a non-breaking space (CL's visibleText, which the pages use).
+    expect(kinds("a\u2009b")).toEqual([["plain", "a"], ["nbsp", "⟨U+2009⟩"], ["plain", "b"]]);
     expect(kinds("\x85\x7f\u2028")).toEqual([["control", "⟨U+0085⟩"], ["control", "⟨U+007F⟩"], ["control", "⟨U+2028⟩"]]);
     expect(kinds("x\u{e0041}\ufe0f\u2066\u2069\u200e\u061c")).toEqual([
       ["plain", "x"], ["invisible", "⟨U+E0041⟩"], ["invisible", "⟨U+FE0F⟩"], ["bidi", "⟨LRI⟩"], ["bidi", "⟨PDI⟩"], ["bidi", "⟨LRM⟩"], ["bidi", "⟨ALM⟩"],
@@ -285,8 +286,10 @@ describe("visibleText (critique security-10)", () => {
     expect(legendFor(visibleText("ls\u200b"))).toEqual({ tokens: true, mixed: false });
     expect(legendFor(visibleText("bu\u0456ld"))).toEqual({ tokens: false, mixed: true });
     expect(legendFor(visibleText("a\tb"))).toEqual({ tokens: false, mixed: false });
-    const nl = visibleText("a\nb").find(s => s.kind === "control")!;
-    expect(breaksLine(nl)).toBe(true);
+    // A newline is the command's own line break (a here-document spans lines): kept as itself, the page's pre-wrap
+    // block ends the line there; a segment that carries it as a control still ends its line.
+    expect(kinds("a\nb")).toEqual([["plain", "a\nb"]]);
+    expect(breaksLine({ kind: "control", text: "⟨U+000A⟩" })).toBe(true);
     expect(breaksLine({ kind: "control", text: "\n" })).toBe(true);
     expect(breaksLine({ kind: "control", text: "⟨U+000D⟩" })).toBe(false);
   });
