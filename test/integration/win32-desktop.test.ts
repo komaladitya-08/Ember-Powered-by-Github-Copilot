@@ -369,6 +369,21 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     expect(seen(e => e.event === "idle"), "the bench still busy after the calls").toBe(false);
     await waitFor(() => seen(e => e.event === "idle"), 6_000, "the bench to be idle again");
     await waitFor(() => x.activeWindow() === hwnd, 3_000, "the bench to be in front once it handles messages again");
+    // The other way round: the busy app is in front and another window is activated, so the busy thread's window
+    // is the one that loses the foreground. Only the time is asserted; whether it came to the front is the evidence
+    // for R6 (the attach that a refused SetForegroundWindow falls back to joins the busy thread's input queue).
+    const count = (kind: string) => events(log).filter(e => e.event === kind).length;
+    const busyBefore = count("busy");
+    const idleBefore = count("idle");
+    command("busy 3000");
+    await waitFor(() => count("busy") > busyBefore, 3_000, "the bench in front to be busy");
+    await sleep(200);
+    timed("activate() with the busy app in front", () => x.activate(other.hwnd));
+    timed("activeWindow() with the busy app in front", () => ws.activeWindow());
+    expect(count("idle"), "the bench still busy after the calls").toBe(idleBefore);
+    const front = await waitFor(() => x.activeWindow() === other.hwnd, 1_000, "the other bench to take the foreground").then(() => true, () => false);
+    console.log(`activation while the app in front was busy: ${front ? "came to the front within 1 s" : "not in front after 1 s"}`);
+    await waitFor(() => count("idle") > idleBefore, 6_000, "the bench to be idle again");
     other.proc.kill();
   }, 120_000);
 
