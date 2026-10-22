@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { APPROVAL_MAX_MS, gateCommand, gateStep, GATE_WORDS, sha256Hex, type CommandGateInput, type StepGateInput } from "../../app/remote/gate";
+import { describe, expect, it, vi } from "vitest";
+import { APPROVAL_MAX_MS, gateCommand, gateStep, GATE_WORDS, SCRIPT_MS, SCRIPTS_MS, sha256Hex, type CommandGateInput, type StepGateInput } from "../../app/remote/gate";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { newTaskWrites } from "../../app/main/commands/scripts";
 import { emberNamesRegExp } from "../../app/main/remote/protocol";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { isTerminalApp } from "../../app/main/hands/system";
@@ -144,6 +146,77 @@ describe("gate 2 for commands (§3.16)", () => {
     expect((await gateCommand(input({ spec: spec(), classify: c, inspect: async () => [{ exists: false, real: null }] }))).status).toBe("ok");
     expect((await gateCommand(input({ spec: spec(), classify: c, inspect: async () => [{ exists: null, real: null }] }))).status).toBe("needs_confirm");
     expect((await gateCommand(input({ spec: spec(), classify: c, inspect: async () => { throw new Error("no"); } }))).status).toBe("needs_confirm");
+  });
+});
+
+describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)", () => {
+  const P = "/home/deploy/proj";
+  /** CL's own classifier; `texts` serves readScript by path (missing: unreadable). */
+  const reading = (cmd: string, texts: Record<string, string>, o: Partial<CommandGateInput> = {}) => {
+    const reads: { path: string; cwd: string }[] = [];
+    return {
+      reads,
+      gate: () => gateCommand(input({
+        spec: spec({}, { command: cmd }), classify: classifyCommand,
+        readScript: async (path, cwd) => { reads.push({ path, cwd }); return texts[path] ?? null; },
+        inspect: async paths => paths.map((): PathFact => ({ exists: false, real: null })), ...o,
+      })),
+    };
+  };
+
+  it("asks for what a script does, which the PC's stamp never covers (it can't see this machine's files)", async () => {
+    const r = reading("sh t.sh", { [`${P}/t.sh`]: "rm -rf build\n" });
+    const g = await r.gate();
+    expect(g).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+    const v = g as { says: string[]; rules: string[] };
+    expect(v.says.some(l => /^In t\.sh: .*build/.test(l)), v.says.join(" | ")).toBe(true);
+    expect(r.reads).toEqual([{ path: `${P}/t.sh`, cwd: P }]);
+    // After the user's yes, the PC resends with those rules: it runs.
+    const yes = await gateCommand(input({
+      spec: spec({ verdict: "ask", rules: v.rules, approval: { ageMs: 500 } }, { command: "sh t.sh" }), classify: classifyCommand,
+      readScript: async () => "rm -rf build\n", inspect: async paths => paths.map((): PathFact => ({ exists: false, real: null })),
+    }));
+    expect(yes).toMatchObject({ status: "ok", approved: true });
+  });
+
+  it("refuses a script that touches Ember's own files here, and runs an ordinary one", async () => {
+    const own = reading("bash t.sh", { [`${P}/t.sh`]: "pkill -f ember-remote\n" }, { facts: facts({ ember: { paths: [], pids: [], names: emberNamesRegExp(["ember-remote"]) } }) });
+    expect((await own.gate()).status).toBe("deny");
+    expect((await reading("./t.sh", { [`${P}/t.sh`]: "#!/bin/sh\nmake test\n" }).gate()).status).toBe("ok");
+  });
+
+  it("keeps L8 for a script it can't read that the task didn't write, and without a reader", async () => {
+    expect((await reading("sh configure", {}).gate()).status).toBe("ok");
+    expect((await gateCommand(input({ spec: spec({}, { command: "sh t.sh" }), classify: classifyCommand }))).status).toBe("ok");
+  });
+
+  it("asks for a script of the task's own that it can't read in full, and judges the task's downloads", async () => {
+    const written = newTaskWrites();
+    written.paths.add(`${P}/t.sh`);
+    const own = reading("sh t.sh", {}, { task: { downloaded: new Set(), written } });
+    expect(await own.gate()).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
+    const dl = reading("sh x.sh", {}, { task: { downloaded: new Set([`${P}/x.sh`]), written: newTaskWrites() } });
+    expect(await dl.gate()).toMatchObject({ status: "needs_confirm", rules: expect.arrayContaining(["escape.run-downloaded"]) });
+  });
+
+  it("gives each read 2 s and all of them 3 s: a script left unread then counts as unreadable", async () => {
+    vi.useFakeTimers();
+    try {
+      const hang = () => new Promise<string | null>(() => undefined);
+      const plain = gateCommand(input({ spec: spec({}, { command: "sh a.sh; sh b.sh" }), classify: classifyCommand, readScript: hang, now: () => Date.now() }));
+      await vi.advanceTimersByTimeAsync(SCRIPT_MS);
+      await vi.advanceTimersByTimeAsync(SCRIPTS_MS - SCRIPT_MS);
+      expect((await plain).status).toBe("ok");
+      const written = newTaskWrites();
+      written.paths.add(`${P}/b.sh`);
+      const own = gateCommand(input({
+        spec: spec({}, { command: "sh a.sh; sh b.sh" }), classify: classifyCommand, readScript: hang, task: { downloaded: new Set(), written }, now: () => Date.now(),
+      }));
+      await vi.advanceTimersByTimeAsync(SCRIPTS_MS);
+      expect(await own).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

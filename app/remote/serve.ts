@@ -13,7 +13,8 @@
 import { KillSwitch } from "../main/agent/killswitch";
 import { adminSummary, combineAdmin, commandMode, type AdminSummary } from "../main/admin";
 import type { Logger } from "../main/logger";
-import type { GitFacts, PathFact, RunExit, RunnerFacts } from "../main/commands/types";
+import type { Classification, GitFacts, PathFact, RunExit, RunnerFacts } from "../main/commands/types";
+import { newTaskWrites, noteWrites, type TaskWrites } from "../main/commands/scripts";
 import { CAPS, PROTO, type ErrCode, type EvName, type Msg, type Op, type OpArgs, type OpResult, type Welcome } from "../main/remote/protocol";
 import type { Mux } from "../main/remote/types";
 import { serveRefusal, type PolicyWatch } from "./admin";
@@ -43,6 +44,8 @@ const EXIT_MAX_MS = 3000;
 export const RUN_START_MAX_MS = 10_000;
 /** Run ids whose cmd.stop came before they started, remembered at most (they never start). */
 const STOPPED_EARLY_MAX = 256;
+/** Tasks whose downloads and writes gate 2 remembers (the most recently used); an older task's commands start afresh. */
+export const TASKS_REMEMBERED = 64;
 /** Why the agent stopped, for its audit (§5.3.11). */
 export type StopSource = "local" | "link-lost" | "console" | "orphan" | "policy";
 
@@ -80,6 +83,8 @@ export interface ServeDeps {
   ember?: () => RunnerFacts["ember"];
   runs: RemoteRuns;
   inspect: (paths: string[], cwd: string) => Promise<PathFact[]>;
+  /** A shell script's text from this machine (gate 2 judges what it does, L8); absent: scripts aren't read. */
+  readScript?: (path: string, cwd: string) => Promise<string | null>;
   git: (cwd: string) => Promise<GitFacts | null>;
   classify: ClassifyCommand;
   audit: RemoteAudit;
@@ -118,6 +123,11 @@ export class Server {
   /** Runs the PC stopped before they started (still in gate 2, or their cmd.run not here yet): they never start. */
   private readonly stoppedEarly = new Set<string>();
   private facts: RunnerFacts | null = null;
+  /**
+   * What each task's commands downloaded and wrote here, by task id, the most recently used last: gate 2 judges a
+   * later command with them (running a download is escape; a script of the task's own that can't be read asks).
+   */
+  private readonly tasks = new Map<string, { downloaded: Set<string>; written: TaskWrites }>();
   private readonly handlers: Handlers;
 
   constructor(private d: ServeDeps) {
@@ -413,6 +423,7 @@ export class Server {
     const g = await gateCommand({
       spec: a.spec, epoch: a.epoch, agentEpoch: this.epoch, fresh: !!this.liveness?.fresh(), targetId: null,
       mode: commandMode(d.policy.current, "ssh"), facts, classify: d.classify, inspect: d.inspect,
+      ...(d.readScript ? { readScript: d.readScript } : {}), task: this.taskMemory(a.spec.taskId), now: d.now,
     });
     const { spec } = a;
     if (g.status !== "ok") {
@@ -434,7 +445,25 @@ export class Server {
     if (!written) return { status: "deny", reason: GATE_WORDS.noAudit };
     const channel = ++this.channel;
     const { interactive } = d.runs.start(spec, channel, facts);
+    this.noteTask(spec.taskId, g.cls);
     return { status: "started", channel, interactive };
+  }
+
+  /** A task's memory here (made on first use; the oldest task is forgotten past TASKS_REMEMBERED). */
+  private taskMemory(taskId: string): { downloaded: Set<string>; written: TaskWrites } {
+    let m = this.tasks.get(taskId);
+    if (m) this.tasks.delete(taskId);
+    else m = { downloaded: new Set(), written: newTaskWrites() };
+    this.tasks.set(taskId, m);
+    while (this.tasks.size > TASKS_REMEMBERED) this.tasks.delete(this.tasks.keys().next().value as string);
+    return m;
+  }
+
+  /** What a command that started may have downloaded and written, whatever its end (part of it may have run). */
+  private noteTask(taskId: string, cls: Classification): void {
+    const m = this.taskMemory(taskId);
+    for (const p of cls.downloads) m.downloaded.add(p);
+    noteWrites(m.written, cls);
   }
 
   /** A run ended: the PC hears it after the run's answer (cmd.run's "started" goes first), and the audit records it. */
