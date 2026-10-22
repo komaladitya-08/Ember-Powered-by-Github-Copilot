@@ -157,6 +157,7 @@ export const ERR_CODES = ["bad_request", "unknown_op", "not_ready", "denied", "n
 /** A string of at most `max` characters. */
 const str = (max: number) => z.string().max(max);
 /** A string with no control characters (names and paths shown to the user or passed to a program). */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what's refused here
 const plain = (max: number) => z.string().max(max).regex(/^[^\u0000-\u001f\u007f]*$/);
 /** A whole number from `min` to `max` (safe integers only). */
 const int = (min = 0, max = Number.MAX_SAFE_INTEGER) => z.number().int().min(min).max(max);

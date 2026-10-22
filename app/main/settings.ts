@@ -25,6 +25,7 @@ export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 const ConsentRecord = z.object({ version: z.number().int().min(0).default(0), at: z.string().nullable().default(null) }).default({ version: 0, at: null });
 
 /** No control characters (they could hide what a value says, or end a line in ssh's config). */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what's refused here
 const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/;
 /** §5.1.2's destination validator (validDest): an alias, user@host or user@host:port; never an option. */
 const DEST = /^(?!-)[A-Za-z0-9._%+@[\]:-]{1,255}$/;

@@ -1,0 +1,2 @@
+/* The prompt window's page: a placeholder from Step 0a (package UI styles it). */
+body { margin: 0; background: var(--surface-0); font: var(--type-body); color: var(--label); }
