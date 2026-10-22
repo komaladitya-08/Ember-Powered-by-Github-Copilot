@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
+import { OFFICE_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -1961,6 +1961,10 @@ export class PolicyEngine {
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
     // Not their menus or settings either: Paste puts the clipboard into the shell, a profile's command runs.
     if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't run commands, so it never acts in terminals or apps with a shell built in");
+    // Windows' Run dialog runs what its box holds on OK or Enter (READ_ONLY_WINDOW; none on Linux).
+    if (r.kind !== "read" && READ_ONLY_WINDOW[os].some(w => w.app.test(r.app.trim()) && w.title.test(r.window.trim()))) {
+      return never("Ember doesn't run programs, so it never acts in the Run dialog");
+    }
     if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog, os)) {
       return never("Ember doesn't run programs, so it never makes files executable or runs them");
     }
