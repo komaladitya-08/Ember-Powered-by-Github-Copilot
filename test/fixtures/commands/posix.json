@@ -7863,6 +7863,548 @@
    "classes": [
     "destroy"
    ]
+  },
+  {
+   "cmd": "xargs sh -c 'rm x'",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "xargs -I{} sh -c 'cat {}'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "find . -delete",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "npm --prefix /x run deploy",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "docker --config /x push img",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "kubectl --kubeconfig /x delete pod y",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ]
+  },
+  {
+   "cmd": "gh --repo o/r release delete v1",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ]
+  },
+  {
+   "cmd": "docker -H tcp://x ps",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "cp x .git/hooks/pre-commit",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "xdg-open x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ]
+  },
+  {
+   "cmd": "alias rm='rm -i'; rm x",
+   "verdict": "ask",
+   "classes": [
+    "unclear",
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "git -c alias.x=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config alias.x x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.sshCommand=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.sshCommand x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.pager=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.pager x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c pager.log=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config pager.log x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.editor=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.editor x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c sequence.editor=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config sequence.editor x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.hooksPath=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.hooksPath x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git config core.fsmonitor x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.askPass=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.askPass x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c core.gitProxy=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config core.gitProxy x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c diff.external=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config diff.external x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c diff.x.textconv=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config diff.x.textconv x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c diff.x.command=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config diff.x.command x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c merge.x.driver=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config merge.x.driver x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c filter.x.clean=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config filter.x.clean x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c filter.x.smudge=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config filter.x.smudge x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c filter.x.process=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config filter.x.process x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c credential.helper=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config credential.helper x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c credential.https://example.com.helper=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config credential.https://example.com.helper x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c x.sshCommand=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config x.sshCommand x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c protocol.ext.allow=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config protocol.ext.allow x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c uploadpack.packObjectsHook=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config uploadpack.packObjectsHook x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c gpg.program=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config gpg.program x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c gpg.ssh.program=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config gpg.ssh.program x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c remote.origin.receivepack=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config remote.origin.receivepack x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c remote.origin.uploadpack=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config remote.origin.uploadpack x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c include.path=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config include.path x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c includeIf.gitdir:~/w/.path=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config includeIf.gitdir:~/w/.path x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git -c mergetool.x.command=x status",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git config mergetool.x.command x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git --config-env=core.sshCommand=X fetch",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "git -c user.name=Ana commit -m x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git -c color.ui=always log",
+   "verdict": "run"
+  },
+  {
+   "cmd": "r''m -rf build",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "\\rm x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "\"r\"m x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "'rm' x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "r\\m x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }
