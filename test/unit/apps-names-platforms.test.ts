@@ -80,7 +80,7 @@ describe("friendly app names on macOS", () => {
 });
 
 describe("the Linux table", () => {
-  it("is today's, a plain object of 22 names (frozen copy)", () => {
+  it("is today's 22 names (frozen copy)", () => {
     expect({ ...APP_NAMES.linux }).toEqual({
       "gnome-control-center": "Settings", "org.gnome.settings": "Settings", "org.gnome.controlcenter": "Settings", nautilus: "Files", "org.gnome.nautilus": "Files",
       "gnome-terminal-server": "Terminal", "gnome-terminal": "Terminal", "org.gnome.terminal": "Terminal", gedit: "gedit", "org.gnome.gedit": "gedit",
@@ -90,5 +90,15 @@ describe("the Linux table", () => {
     });
     expect(friendlyApp("org.gnome.Nautilus")).toBe("Files");
     expect(friendlyApp("winword.exe")).toBe("winword.exe");
+  });
+
+  it("never looks a program or desktop id called like one of Object's keys up as one (only those bogus names change)", () => {
+    // A plain object answered "constructor" with Object's own function and "__proto__" with Object.prototype.
+    const cases: [string, string][] = [["constructor", "Constructor"], ["__proto__", "__proto__"], ["toString", "toString"],
+      ["org.example.constructor", "Constructor"], ["org.example.__proto__", "__proto__"]];
+    for (const [key, name] of cases) expect(friendlyApp(key), key).toBe(name);
+    expect(Object.getPrototypeOf(APP_NAMES.linux)).toBeNull();
+    expect(Object.isFrozen(APP_NAMES.linux)).toBe(true);
+    expect(friendlyApp("gnome-control-center")).toBe("Settings");
   });
 });

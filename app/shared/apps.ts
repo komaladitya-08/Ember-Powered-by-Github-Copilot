@@ -9,14 +9,15 @@
 import type { OS } from "./shortcuts";
 
 /**
- * A name table without Object's own keys, so a program called "constructor" or "toString" is never looked up as one
- * (the Linux table is a plain object literal, as it always was).
+ * A name table without Object's own keys, so a program called "constructor" or "__proto__" is never looked up as one
+ * (a plain object answers those with Object's function and prototype, not a name). Every OS's table is one, Linux's
+ * too: for its 22 names it answers as the plain object always did.
  */
 const table = (names: Record<string, string>): Readonly<Record<string, string>> => Object.freeze(Object.assign(Object.create(null) as Record<string, string>, names));
 
 /** Familiar names for apps that report a program or desktop id instead, per OS. */
 export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> = {
-  linux: {
+  linux: table({
     "gnome-control-center": "Settings",
     "org.gnome.settings": "Settings",
     "org.gnome.controlcenter": "Settings",
@@ -39,7 +40,7 @@ export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> =
     firefox: "Firefox",
     thunderbird: "Thunderbird",
     mousepad: "Mousepad",
-  },
+  }),
   win32: table({
     winword: "Word",
     excel: "Excel",
