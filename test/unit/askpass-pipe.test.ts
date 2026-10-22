@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { bindPipeApi, createAskpassPipe, PIPE_MODE, PIPE_OPEN_MODE, pipeName, pipeSddl, type PipeApi } from "../../app/main/remote/askpass-pipe";
 import { ASKPASS_EXE, COMPILE_SCRIPT, ensureAskpassHelper, powershellPath, type AskpassWinDeps } from "../../app/main/remote/askpass-win";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const SID = "S-1-5-21-1004336348-1177238915-682003330-1001";
 
@@ -27,7 +29,8 @@ function fakeApi() {
       });
     },
     write: (_h, data, done) => { cur?.written.push(data); setImmediate(() => done(true)); },
-    disconnect: () => { log.push("disconnect"); if (cur) cur.gone = true; },
+    // A synchronous handle runs one call at a time: a disconnect while a connect waits would hang the caller.
+    disconnect: () => { log.push(waiting ? "disconnect behind a waiting connect" : "disconnect"); if (cur) cur.gone = true; },
     poke: name => { log.push(`poke ${name}`); const w = waiting; waiting = null; cur = null; w?.(true); },
     close: () => { log.push("close"); },
   };
@@ -91,6 +94,34 @@ describe("the Windows askpass pipe (§5.1.6, L15)", () => {
     expect(aborted).toBe(true);
     expect(c.written).toEqual([]);
     await ch.close();
+  });
+
+  it("wakes a waiting connect before it lets go of the pipe, so no call waits behind it (synchronous handle)", async () => {
+    const { api, log, client } = fakeApi();
+    const ch = await createAskpassPipe({ api, handler: async () => "pw" });
+    client(`${JSON.stringify({ v: 1, nonce: ch.nonce, mode: "secret", prompt: "p" })}\n`);
+    await settle();
+    // Answered, disconnected between calls, and waiting for the next helper again.
+    expect(log.filter(l => l.startsWith("disconnect"))).toEqual(["disconnect"]);
+    log.length = 0;
+    await ch.close();
+    expect(log).toEqual([expect.stringMatching(/^poke /), "close"]);
+  });
+
+  it("leaves a read that ends after close alone: the handle is no longer its to disconnect", async () => {
+    const { api, log } = fakeApi();
+    let finishRead: ((d: Buffer | null) => void) | null = null;
+    let connected: ((ok: boolean) => void) | null = null;
+    const slow: PipeApi = { ...api, connect: (_h, done) => { connected = done; }, read: (_h, _m, done) => { finishRead = done; } };
+    const ch = await createAskpassPipe({ api: slow, handler: async () => null });
+    (connected as unknown as (ok: boolean) => void)(true);
+    await settle();
+    const closing = ch.close();
+    await settle();
+    (finishRead as unknown as (d: Buffer | null) => void)(null);
+    await closing;
+    expect(log.filter(l => l.startsWith("disconnect"))).toEqual([]);
+    expect(log.at(-1)).toBe("close");
   });
 
   it("fails closed without the user's SID", async () => {
@@ -191,6 +222,17 @@ describe("the compiled Windows helper (§5.1.6)", () => {
   it("reports a blocked compile or a missing source", async () => {
     expect(await ensureAskpassHelper(deps({ compileOk: false }).d)).toMatchObject({ error: "compile" });
     expect(await ensureAskpassHelper(deps({ files: new Map() }).d)).toEqual({ error: "source" });
+  });
+
+  it("ships a source the C# compiler can read: ASCII only, every line break in a literal escaped", () => {
+    const src = readFileSync(join(__dirname, "..", "..", "resources", "ssh", "ember_askpass.cs"), "utf8");
+    // U+2028 and U+2029 are line breaks to C#: inside a character literal they end it ("newline in constant").
+    expect([...src].filter(c => c.charCodeAt(0) > 0x7f)).toEqual([]);
+    expect(src).toContain("'\\u2028'");
+    expect(src).toMatch(/public static int Main\(string\[\] args\)/);
+    expect(src).toContain("EMBER_ASKPASS_PIPE");
+    // The prompt is data: nothing in the helper starts a process or reads its argument as anything else.
+    expect(src).not.toMatch(/Process\.Start|Assembly\.Load|Invoke\(/);
   });
 
   it("finds Windows PowerShell by absolute path", () => {

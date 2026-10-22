@@ -18,12 +18,13 @@ export const ASKPASS_RECORD = "ember-askpass.json";
 
 /**
  * The fixed script Windows PowerShell 5.1 reads from stdin (`-Command -`, one statement per line): refuse outside
- * FullLanguage, compile the source to a console program, say so.
+ * FullLanguage, compile the source to a console program, say so. The pipes assembly (System.Core) is referenced by
+ * its loaded path, as the UIA bridge references its own, so no name has to be resolved.
  */
 export const COMPILE_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { Write-Output 'EMBER-CLM'; exit 3 }",
-  "Add-Type -TypeDefinition ([IO.File]::ReadAllText($env:EMBER_ASKPASS_SRC)) -OutputAssembly $env:EMBER_ASKPASS_OUT -OutputType ConsoleApplication -ReferencedAssemblies System.Core",
+  "Add-Type -TypeDefinition ([IO.File]::ReadAllText($env:EMBER_ASKPASS_SRC)) -OutputAssembly $env:EMBER_ASKPASS_OUT -OutputType ConsoleApplication -ReferencedAssemblies ([System.IO.Pipes.NamedPipeClientStream].Assembly.Location)",
   "Write-Output 'EMBER-OK'",
   "exit 0",
   "",

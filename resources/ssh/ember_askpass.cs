@@ -1,4 +1,4 @@
-// Ember's askpass helper for Win32-OpenSSH (design §5.1.6, L15).
+// Ember's askpass helper for Win32-OpenSSH (design section 5.1.6, L15).
 //
 // ssh.exe (8.4 or newer, with SSH_ASKPASS_REQUIRE=force) starts this program with CreateProcess and its prompt as the
 // argument when it needs a password, a key's passphrase, a code or a new host key's acceptance. The prompt can be the
@@ -68,7 +68,7 @@ public static class EmberAskpass
         foreach (char c in s)
         {
             if (c == '"' || c == '\\') b.Append('\\').Append(c);
-            else if (c < 0x20 || c == 0x7f || c == ' ' || c == ' ') b.Append("\\u").Append(((int)c).ToString("x4"));
+            else if (c < 0x20 || c == 0x7f || c == '\u2028' || c == '\u2029') b.Append("\\u").Append(((int)c).ToString("x4"));
             else b.Append(c);
         }
         return b.Append('"').ToString();

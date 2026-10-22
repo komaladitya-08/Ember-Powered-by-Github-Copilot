@@ -3,8 +3,12 @@
  * koffi's CreateNamedPipeW with a protected DACL that admits only the user's own SID, PIPE_REJECT_REMOTE_CLIENTS (no
  * SMB client can reach it) and FILE_FLAG_FIRST_PIPE_INSTANCE (Ember made it, nobody squatted the name first), one
  * instance, one client at a time. Node's own pipe server can't set a DACL, so the calls are Win32's, made on koffi's
- * worker threads (ConnectNamedPipe and ReadFile block) so Electron's main thread never waits. Local IPC, not a
- * network listener. koffi loads lazily, only when a Windows PC makes a pipe; the messages are askpass-server.ts's.
+ * worker threads (ConnectNamedPipe and ReadFile block) so Electron's main thread never waits. The handle is
+ * synchronous, so Windows runs one call on it at a time: a DisconnectNamedPipe or CloseHandle made while a
+ * ConnectNamedPipe or ReadFile still waits would wait behind it. So the main thread disconnects only between calls,
+ * wakes a waiting ConnectNamedPipe by opening the pipe as a client before it closes, and closes on a worker thread.
+ * Local IPC, not a network listener. koffi loads lazily, only when a Windows PC makes a pipe; the messages are
+ * askpass-server.ts's.
  */
 
 import { createRequire } from "node:module";
@@ -46,10 +50,11 @@ export interface PipeApi {
   read(h: number, max: number, done: (data: Buffer | null) => void): void;
   /** WriteFile and FlushFileBuffers on a worker thread. */
   write(h: number, data: Buffer, done: (ok: boolean) => void): void;
-  /** DisconnectNamedPipe (ends the client's connection and any read waiting on it). */
+  /** DisconnectNamedPipe: only between calls (nothing waiting on the handle), so it never waits itself. */
   disconnect(h: number): void;
   /** Opens and closes the pipe as a client: wakes a ConnectNamedPipe still waiting, so the pipe can close. */
   poke(name: string): void;
+  /** CloseHandle on a worker thread (a read still waiting would hold it up; the main thread never waits for that). */
   close(h: number): void;
 }
 
@@ -148,7 +153,7 @@ export function bindPipeApi(koffi: Koffi, load: (name: string) => Pick<import("k
       const h = Number(fn.CreateFileW(wide(name), GENERIC_READ | GENERIC_WRITE, 0, null, OPEN_EXISTING, 0, null));
       if (h !== INVALID && h !== 0) fn.CloseHandle(h);
     },
-    close: h => { fn.CloseHandle(h); },
+    close: h => { fn.CloseHandle.async(h, () => undefined); },
   };
 }
 
@@ -194,6 +199,8 @@ export async function createAskpassPipe(o: { api: PipeApi; handler: AskpassHandl
       const end = () => {
         current = null;
         ac.abort();
+        // Closing: the handle is close()'s now (it may be closed already), so it isn't touched here.
+        if (closed) return idle();
         o.api.disconnect(h);
         next();
       };
@@ -230,9 +237,11 @@ export async function createAskpassPipe(o: { api: PipeApi; handler: AskpassHandl
       if (closed) return;
       closed = true;
       current?.abort();
-      o.api.disconnect(h);
+      // Wake a ConnectNamedPipe still waiting first: a DisconnectNamedPipe made now would wait behind it.
       o.api.poke(name);
-      await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([stopped, new Promise<void>(r => { timer = setTimeout(r, 2000); })]);
+      if (timer) clearTimeout(timer);
       o.api.close(h);
     },
   };
