@@ -314,8 +314,8 @@ running Ember: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/p
 `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime). CI builds both packages on
 `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
 fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user.
-It uploads the packages only when asked: **Actions › ci › Run workflow** with **packages** ticked (kept 3 days); at
-about 340 MB a run, uploading them every time filled the account's artifact storage.
+It uploads the packages only when asked (§13): **Actions › ci › Run workflow** with **packages** ticked (kept 3
+days); at about 340 MB a run, uploading them every time filled the account's artifact storage.
 Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a
 bundled package's licence isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only
 for the root check-up).
@@ -524,10 +524,10 @@ set EMBER_UIA_CACHE=%TEMP%\ember-uia
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File sidecar\uia\ember_uia.ps1 < NUL
 ```
 
-**When Windows won't run the helper.** A Group Policy execution policy (`HKLM` or `HKCU\SOFTWARE\Policies\Microsoft\
-Windows\PowerShell`) overrides `-ExecutionPolicy Bypass`. Ember never works around an administrator's policy: the
-setup check's **Screen reading** row and the check-up's **PowerShell** row say which case applies, and Ember keeps
-working with screenshots and the borrowed mouse.
+**When Windows won't run the helper.** A Group Policy execution policy, under
+`SOFTWARE\Policies\Microsoft\Windows\PowerShell` in `HKLM` or `HKCU`, overrides `-ExecutionPolicy Bypass`. Ember never
+works around an administrator's policy: the setup check's **Screen reading** row and the check-up's **PowerShell** row
+say which case applies, and Ember keeps working with screenshots and the borrowed mouse.
 
 | Case | What Ember does |
 |---|---|
@@ -561,7 +561,8 @@ For Windows it:
 - then sets the fuses in `Ember.exe`: no `--inspect`, no `NODE_OPTIONS`, and Node mode kept for the accessibility host;
 - adds `ember-doctor.cmd`: Ember.exe is a windowed program, which `cmd.exe` doesn't wait for, so the launcher runs
   `start "" /wait Ember.exe --doctor` and keeps its exit code;
-- bundles the speech models only with `--with-models` (otherwise Ember downloads them when “Hey Ember” is turned on);
+- bundles the speech models only with `--with-models` (otherwise Ember downloads them when “Hey Ember” is turned
+  on);
 - refuses to stage without `dist/app/ax-sidecar.cjs` and the helper's files (`--allow-missing-sidecar` is for a local
   try only).
 
@@ -795,8 +796,8 @@ M11, departure 6).
 
 Ember reads and operates Mac apps through the accessibility API (AX). Ember's main process uses AX only for its window
 system (the focused window, and bringing a window to the front), with a 0.25 s timeout, since those calls block the UI
-thread. Reading and acting on apps happens in the accessibility host (`app/sidecar-host/providers/
-ax-darwin*.ts`, koffi in the host's own process):
+thread. Reading and acting on apps happens in the accessibility host, through koffi in the host's own process
+(`app/sidecar-host/providers/ax-darwin*.ts`):
 
 - an app gets 0.8 s per call; one that misses it is busy for 5 s and its windows are listed as last seen, and the
   window list asks apps within a budget, so hung apps can't hold up a request;
@@ -830,8 +831,8 @@ npm run package:mac        # npm run build, then node scripts/package/stage.mjs 
   `io.github.komaladitya08.ember` (the permissions hang on it), `LSMinimumSystemVersion` 13.0, and the texts macOS
   shows when Ember asks for the microphone, to control System Events and to reach the local network. `LSUIElement` is
   unset: Ember has a Dock icon and an app menu, whose Quit goes through Ember's own question while a task runs;
-- sets the fuses in the Electron Framework binary (`node scripts/package/fuses.mjs "dist/package/Ember.app/Contents/
-  Frameworks/Electron Framework.framework/Electron Framework"` lists them);
+- sets the fuses in the Electron Framework binary inside the bundle, not in the small `Contents/MacOS/Ember` launcher
+  (`scripts/package/fuses.mjs` lists them, given that binary's path, as CI's packaged checks do);
 - signs the whole bundle ad hoc last and verifies it (`codesign --verify --deep --strict`): flipping the fuses voids
   Electron's signature, and Apple silicon kills code whose signature doesn't match. Every build is a new identity to
   macOS, which is why permissions must be given again after an update;
@@ -875,7 +876,8 @@ sudo install -o root -g wheel -m 644 policy.json "/Library/Application Support/E
 The check-up's **Organisation policy** row then says the policy is in force from that file.
 
 **Speech models for everyone**: Ember also looks in `/Library/Application Support/Ember/voice-models`, after the copy
-inside Ember.app, for the folder `node scripts/package/stage.mjs --with-models` puts in `Contents/Resources/voice-models`.
+inside Ember.app, for the folder `node scripts/package/stage.mjs --with-models` puts in
+`Contents/Resources/voice-models`.
 
 ### 11.8 Troubleshooting
 
@@ -906,22 +908,93 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |
 | Ember can't reach your organisation's AI service on the local network (macOS 15) | Allow Ember under **Privacy & Security › Local Network** |
 
+## 12. Working on the platform layer
+
+Everything that differs between Linux, Windows and macOS lives in `app/main/platform/`. `loadPlatform()` (`index.ts`)
+picks the backend by `process.platform` alone, never by `$DISPLAY`, and gives main one `Platform` object: the window
+system, input, overlay shaping, the accessibility helper's launch, system integration (`system`) and the desk (Linux
+only). `types.ts` is the contract. Outside `app/main/platform/`, the main process never tests `process.platform` or
+reads a native window handle: `test/unit/platform-boundary.test.ts` fails if it does.
+
+Every backend keeps the X11 conventions, so the code above it doesn't change:
+- **Units** are native: physical pixels on Linux and Windows (Windows: Per-Monitor-V2), points on macOS. Coordinates
+  can be negative on Windows and macOS (a monitor left of or above the primary one), so test a point with
+  `onScreen()`, never against 0. Only Ember's own windows use Electron's DIP, through `toDip`.
+- **Window ids** are one space per backend (the X window, the HWND, the CGWindowID), compared with `===`.
+- **App names**: WM_CLASS on Linux; on Windows the program's file name without `.exe` (`notepad`; `conhost` for a
+  console window; the hosted app's program for a UWP frame); on macOS the app's localized name. The accessibility
+  helper reports the same name, so the policy, never-look and grants match on both.
+- **Keys** are X keysym names ("Return", "Control_L"); mouse buttons are X's numbers and button-mask bits; key codes
+  are opaque per backend and never 0.
+
+Rules for code under `app/main/platform/` and `app/sidecar-host/`:
+- It loads under plain Node: no `electron` import. Electron's objects come in through structural types
+  (`ScreenLike`, `OwnWindowHandle`, `PlatformDeps.electron`).
+- Every module imports on every OS (the unit tests import them on Linux). koffi is loaded lazily, with
+  `createRequire(__filename)("koffi")` inside an `open…()` function that runs only on its own OS; each library is
+  bound once per module; every `koffi.load` is guarded, so a missing library gives null or a safe default. koffi's
+  type names are process-wide, so prefix them with the module's tag (`W32Ws_RECT`, `MacIn_CGPoint`). Win32's `BOOL`
+  is `int`; pointers come back as BigInt or null; never call `koffi.view()`.
+- Fail closed: a check that can't run refuses, returns null or sends no image (`systemDialogOpen()` is true when it
+  can't tell; no capture without Screen Recording; a policy Ember can't trust locks it down).
+- Each OS-keyed list lives in one place, with the Linux row frozen (tests pin it): `app/shared/shortcuts.ts`,
+  `app/shared/words.ts`, `app/shared/never-look.ts`, `app/main/policy/vocabulary.ts`, `app/main/hands/terminals.ts`,
+  `app/main/agent/clipboard-formats.ts` and `app/main/policy/remote-surface.ts`.
+- Test the logic on Linux with fakes (`test/unit/platform-*`, `win32-*`, `darwin-*`, `sidecar-host-*`), and what
+  needs the real OS in `test/integration` (§10.3, §11.3), skipped elsewhere and failing when its variable is 1.
+
+## 13. CI on Linux, Windows and macOS
+
+`.github/workflows/ci.yml` runs on pushes to `main`, on `v*` tags, on pull requests, and when started by hand.
+
+| Job | Runner | What it checks |
+|---|---|---|
+| `checks`, `el8`, `package`, `eval` | `ubuntu-24.04`, most in `rockylinux:8` | Linux, as in §5–§8 |
+| `windows` | `windows-2022` | Runner facts, unit tests, build, the bridge compiled and started as Ember starts it, the smoke test, the integration suites (§10.3), the zip and the packaged checks (§10.5), the check-up's rows (§10.9) |
+| `macos` | `macos-15` (Apple silicon) | Runner facts and the image's own grants, unit tests, build, the smoke test, the grants (§11.3), the integration suites, the bundle, zip and dmg with the packaged checks (§11.5), and the attribution and Input Monitoring checks through LaunchServices |
+| `macos-x64` | `macos-15-intel` | The Intel bundle: build, `darwin-desktop`, every Mach-O file x86_64, the packaged checks and the smoke test. Runs on pushes to the default branch, on tags, and when asked |
+
+To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run ci.yml --ref <branch> -f only=windows`.
+
+| Input | Default | What it does | Why it is off by default |
+|---|---|---|---|
+| `packages` | off | Uploads the packages as artifacts, kept 3 days: `ember-packages` (RPM and AppImage), `ember-windows` (the zip), `ember-macos` (zip and dmg), `ember-macos-x64` | They are 200–400 MB each, and uploading them on every run filled the account's artifact storage, after which no artifact could be uploaded at all |
+| `intel` | off | Also runs `macos-x64` | macOS minutes cost ten times Linux's on a private repository |
+| `only` | `all` | Runs only one platform's jobs: `linux` (the four Linux jobs), `windows` or `macos`. Pushes and pull requests always run them all | The same cost: after a fix for one OS, rerun only that OS |
+
+The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
+testable on this runner: <reason>", and PLAN.md §9 item 7 keeps it for a real machine.
+
 ## Repository layout
 
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
-sidecar/atspi       Python accessibility helper (reads app controls over AT-SPI)
+  platform/         everything that differs by OS (§12): types.ts (the contract), index.ts (loadPlatform), compose.ts
+                    (what the compositions share), which.ts, os.ts
+    linux/          adapters over the X11 modules (x11.ts, xshape.ts, hands/*, the desk), behaving as before
+    win32/          window system and input over user32, gdi32 and dwmapi (koffi); platform.ts composes Windows;
+                    system/: apps (with a .lnk reader), registry, admin policy, login item, setup checks, check-up rows
+    darwin/         window system and input over CoreGraphics, AX and CoreFoundation (koffi), desktopCapturer capture;
+                    platform.ts composes macOS; system/: apps (with a plist reader), policy, login item, permissions
+app/sidecar-host/   the Windows and macOS accessibility host (dist/app/ax-sidecar.cjs, Ember's binary in Node mode):
+                    protocol, ids, secrets, labels, roles, launch.ts; providers/uia.ts (the bridge's client),
+                    providers/ax-darwin*.ts (macOS AX), providers/fake.ts (tests)
+sidecar/atspi       Python accessibility helper (Linux: reads app controls over AT-SPI)
+sidecar/uia         UI Automation bridge (Windows): ember_uia.ps1 (the bootstrap), ember_uia.cs (C# 5), PROTOCOL.md
 app/voice           wake word, VAD and speech recognition (runs in a utility process)
 app/preload/        contextBridge APIs, one per window
 app/renderer/       window pages (home, overlay, handle, ask, mic, desk)
-app/shared/         IPC channel names and types
+app/shared/         IPC channel names and types; per-OS tables: shortcuts.ts, words.ts, never-look.ts, apps.ts
 packages/characters Ember's characters and the shared emotion rig
 packages/bubble     reasoning bubble
 packages/motion     follow spring and flight path
 demo/character-lab  interactive character prototype
-scripts/            build, RHEL 8 rebuild, binary checks, packaging (scripts/package)
-packaging/          RPM spec, launcher, menu entry, example admin policy
-test/unit           Vitest tests;  test/integration  real runtime / real AT-SPI;  test/smoke  launch test
-test/fixtures       GTK3 test bench and hostile windows, voice clips;  test/demo  recorded tours
+scripts/            build, RHEL 8 rebuild, binary checks, run-integration.mjs, packaging (scripts/package:
+                    layout.mjs per target, stage, archive, fuses, exe-resources, mac-bundle, tcc)
+packaging/          RPM spec, launcher, menu entry, example admin policy; windows/ember-doctor.cmd
+test/unit           Vitest tests;  test/smoke  launch test
+test/integration    real runtime, AT-SPI, and the Windows and macOS desktops
+test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_bench.ps1), the macOS bench
+                    (mac_bench.js), plist samples, voice clips;  test/demo  recorded tours
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```
