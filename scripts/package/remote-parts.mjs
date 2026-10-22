@@ -235,6 +235,48 @@ function koffiFiles(target, lock, cache) {
   return out;
 }
 
+/** The Node runtime policy's file: scripts/package/ holds it, and it goes beside the parts (SA's parts-cache.ts reads it there). */
+export const RUNTIME_FILE = "remote-runtime.json";
+
+/**
+ * Writes built parts into `out`, replacing what is there: every archive, remote-parts.json, and the runtime policy
+ * (`runtimeText`, remote-runtime.json) beside them, which a packaged Ember reads from resources/remote-parts.
+ * @param {string} out
+ * @param {{ archives: { file: string; bytes: Uint8Array }[]; json: unknown }} built
+ * @param {string} runtimeText
+ */
+export function writeParts(out, built, runtimeText) {
+  JSON.parse(runtimeText); // a policy that doesn't parse is never written
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.mkdirSync(out, { recursive: true });
+  for (const a of built.archives) fs.writeFileSync(path.join(out, a.file), a.bytes);
+  fs.writeFileSync(path.join(out, "remote-parts.json"), `${JSON.stringify(built.json, null, 2)}\n`);
+  fs.writeFileSync(path.join(out, RUNTIME_FILE), runtimeText);
+}
+
+/**
+ * Copies the parts from `src` (dist/remote-parts) to `dest` (a package's resources/remote-parts), as stage.mjs does:
+ * every archive remote-parts.json names, checked against its size and SHA-256 as the PC will check it before sending,
+ * then remote-parts.json and remote-runtime.json. Throws when anything is missing or differs (nothing half-staged is
+ * left to ship: the caller stops).
+ * @param {string} src
+ * @param {string} dest
+ */
+export function stageParts(src, dest) {
+  const json = JSON.parse(fs.readFileSync(path.join(src, "remote-parts.json"), "utf8"));
+  const runtime = path.join(src, RUNTIME_FILE);
+  if (!fs.existsSync(runtime)) throw new Error(`dist/remote-parts/${RUNTIME_FILE} is missing: run node scripts/package/remote-parts.mjs again`);
+  JSON.parse(fs.readFileSync(runtime, "utf8"));
+  fs.mkdirSync(dest, { recursive: true });
+  for (const t of Object.values(json.targets)) {
+    const bytes = fs.readFileSync(path.join(src, path.basename(t.file)));
+    if (bytes.length !== t.bytes || sha256(bytes) !== t.sha256) throw new Error(`dist/remote-parts/${t.file} doesn't match remote-parts.json: run node scripts/package/remote-parts.mjs again`);
+    fs.writeFileSync(path.join(dest, path.basename(t.file)), bytes);
+  }
+  fs.copyFileSync(path.join(src, "remote-parts.json"), path.join(dest, "remote-parts.json"));
+  fs.copyFileSync(runtime, path.join(dest, RUNTIME_FILE));
+}
+
 /** Builds every part into `out` (default dist/remote-parts), replacing what is there. */
 export function main(argv = process.argv.slice(2)) {
   const arg = name => {
@@ -263,10 +305,7 @@ export function main(argv = process.argv.slice(2)) {
     notices: t => noticesFor(t, zodLicense, koffiLicense),
     koffi,
   });
-  fs.rmSync(out, { recursive: true, force: true });
-  fs.mkdirSync(out, { recursive: true });
-  for (const a of built.archives) fs.writeFileSync(path.join(out, a.file), a.bytes);
-  fs.writeFileSync(path.join(out, "remote-parts.json"), `${JSON.stringify(built.json, null, 2)}\n`);
+  writeParts(out, built, read(`scripts/package/${RUNTIME_FILE}`).toString("utf8"));
   console.log(`remote parts ${built.partsId}: ${built.archives.map(a => `${a.target} ${(a.bytes.length / 1024).toFixed(0)} KiB`).join(", ")}`);
   return built;
 }

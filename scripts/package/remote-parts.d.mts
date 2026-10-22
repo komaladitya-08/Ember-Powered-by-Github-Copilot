@@ -56,5 +56,11 @@ export interface PartsInputs {
 }
 /** Every target's archive, the parts id and remote-parts.json's content (pure). */
 export function buildParts(i: PartsInputs): { partsId: string; archives: { target: PartsTarget; file: string; bytes: Buffer }[]; json: RemoteParts };
+/** remote-runtime.json: scripts/package/ holds it; it is written beside the parts and staged with them. */
+export const RUNTIME_FILE: "remote-runtime.json";
+/** Writes built parts into `out` (replacing it): the archives, remote-parts.json and the runtime policy's text. */
+export function writeParts(out: string, built: { archives: { file: string; bytes: Uint8Array }[]; json: unknown }, runtimeText: string): void;
+/** Copies the parts from `src` to `dest` (stage.mjs), each archive checked against remote-parts.json; throws on anything missing or different. */
+export function stageParts(src: string, dest: string): void;
 /** Builds every part into --out (default dist/remote-parts). */
 export function main(argv?: string[]): { partsId: string; archives: { target: PartsTarget; file: string; bytes: Buffer }[]; json: RemoteParts };
