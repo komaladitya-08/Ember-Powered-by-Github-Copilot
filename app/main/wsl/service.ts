@@ -188,11 +188,14 @@ export function createWslWith(o: WslOptions, deps: WslDeps): WslServiceImpl | nu
     return running.set.has(distro);
   };
 
-  /** The distro as discovery lists it; looked for once more (not too often) when it isn't in the cached facts. */
+  /**
+   * The distro as discovery lists it; looked for once more (not too often) when it isn't in the cached facts or they
+   * say its set-up is pending (the user may just have set it up, as Ember's message asked).
+   */
   const listed = async (distro: string) => {
     let f = await facts();
     let d = f.distros.find(x => x.name === distro);
-    if (!d && now() - lastUnknownLook > UNKNOWN_RETRY_MS) {
+    if ((!d || d.needsSetup) && now() - lastUnknownLook > UNKNOWN_RETRY_MS) {
       lastUnknownLook = now();
       f = await facts({ refresh: true });
       d = f.distros.find(x => x.name === distro);

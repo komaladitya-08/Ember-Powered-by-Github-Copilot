@@ -374,6 +374,25 @@ describe("WslService.defaultUid", () => {
   });
 });
 
+describe("a distro whose first-run set-up is pending", () => {
+  it("is never started, and is looked at again once the user may have set it up", async () => {
+    const reg = new FakeRegistry()
+      .key(LXSS_KEY, { DefaultDistribution: "{u}" })
+      .key(`${LXSS_KEY}\\{u}`, { DistributionName: "Ubuntu", Version: 2, State: 1 })
+      .key(`${LXSS_KEY}\\{n}`, { DistributionName: "Ubuntu-24.04", Version: 2, RunOOBE: 1, State: 1 });
+    const { wsl, calls, tick } = pc({ registry: reg });
+    const r = wsl.runner("Ubuntu-24.04");
+    await expect(r.facts()).rejects.toThrow("Set up Ubuntu-24.04 first: open it from the Start menu once");
+    expect(await r.runScript("true", { mayBoot: true })).toBeNull();
+    expect(inDistro(calls)).toHaveLength(0);
+    // The user opens it from the Start menu once: its set-up is done.
+    reg.key(`${LXSS_KEY}\\{n}`, { RunOOBE: 0 });
+    tick(5_001);
+    expect((await r.facts()).privileged).toBe(false);
+    expect(inDistro(calls).map(c => c.wsl[1])).toEqual(["Ubuntu-24.04"]);
+  });
+});
+
 describe("WslService.bootIds", () => {
   it("hashes the boot id of running WSL2 distros only, never starting one", async () => {
     const boot = "6f1d9e0c-3b2a-4c5d-8e7f-0a1b2c3d4e5f\n";
