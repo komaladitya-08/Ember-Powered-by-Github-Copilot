@@ -68,7 +68,8 @@ export function remoteTargetParts(link: RemoteLink, o: {
   let remoteAdmin: AdminSummary = welcome.remoteAdmin;
   let state: DesktopState = welcome.desktop;
   const elements = new ElementBook();
-  const stamps = new StampBook();
+  // A Stop moves the link's epoch on: stamps handed over before it are void (§5.1.11).
+  const stamps = new StampBook(undefined, () => link.epoch);
   const subscriptions: (() => void)[] = [];
   let disposed = false;
 
@@ -83,7 +84,10 @@ export function remoteTargetParts(link: RemoteLink, o: {
   const apps = createRemoteApps(link, { os, label, log, stamps, unavailable });
   const policy = createRemotePolicy({ ...sources, isTerminalApp: name => apps.terminalByName(name) });
   const neverLook = () => remoteNeverLook(sources);
-  const perception = createRemotePerception(link, { label, os, targetId: id, log, neverLook, desktop, elements });
+  // Pictures only once the remote has the never-look list in force here: it masks those windows before a pixel leaves
+  // (the PC can't mask what it never sees), so a list it hasn't confirmed means no picture (syncPolicy, below).
+  const neverLookSynced = (): Promise<boolean> => syncPolicy();
+  const perception = createRemotePerception(link, { label, os, targetId: id, log, neverLook, desktop, elements, neverLookSynced });
   const sidecar = createRemoteSidecar(link, { label, log, elements, stamps, unavailable });
   const runner = createRemoteRunner(link, { target: id, label, os, log, facts: welcome.facts });
   const system = remoteWorkerSystem(os, apps);
@@ -117,10 +121,7 @@ export function remoteTargetParts(link: RemoteLink, o: {
 
   // The remote's own report of its desktop lowers access at once; a report that would give Ember more (more access, or
   // a screen no longer locked) is only taken from a request the PC makes itself (§7.2 item 7), so it is asked for.
-  subscriptions.push(link.on("desktop.changed", d => {
-    const checked = EV_SCHEMAS["desktop.changed"].safeParse(d);
-    if (disposed || !checked.success) return;
-    const next = checked.data;
+  const reportedState = (next: DesktopState): void => {
     const before = desktop().desktop;
     const after = desktopWith(next);
     if (lowerAccess(state.access, next.access) || lowerAccess(before, after)) {
@@ -131,6 +132,22 @@ export function remoteTargetParts(link: RemoteLink, o: {
     reported++;
     // Steps given for a desktop that has gone can't go out any more.
     if (after === "none" && before !== "none") stamps.clear();
+  };
+  subscriptions.push(link.on("desktop.changed", d => {
+    const checked = EV_SCHEMAS["desktop.changed"].safeParse(d);
+    if (disposed || !checked.success) return;
+    reportedState(checked.data);
+  }));
+  // The notice on the remote's screen (its Stop) couldn't be shown, or shows again: the same as a report of the desktop
+  // with that notice (a notice that failed means no desktop, §2.5; one that shows again gives more only when asked).
+  subscriptions.push(link.on("notice", d => {
+    const checked = EV_SCHEMAS.notice.safeParse(d);
+    if (disposed || !checked.success) return;
+    reportedState({ ...state, notice: checked.data.state });
+  }));
+  // Someone at the remote pressed the notice's Stop: no step the user said yes to before it goes out after it.
+  subscriptions.push(link.on("console.stop", () => {
+    if (!disposed) stamps.clear();
   }));
   // The remote's administrator changed its policy: gate 1 combines the new one (the PC's own still binds whatever it says).
   subscriptions.push(link.on("policy.changed", d => {
@@ -138,34 +155,44 @@ export function remoteTargetParts(link: RemoteLink, o: {
     if (disposed || !checked.success) return;
     remoteAdmin = checked.data;
   }));
+  // The never-look list in force here goes to the remote too (its gate 2 adds its own administrator's): sent now,
+  // whenever it changes and when a stalled link answers again, so a window the user just hid isn't read or pictured
+  // there either (§5.4: hello.neverLook, policy.sync). `acked`: the list the remote confirmed it has.
+  let acked = "";
+  let syncing: { key: string; done: Promise<boolean> } | null = null;
+  const syncPolicy = (): Promise<boolean> => {
+    if (disposed || link.state !== "ready") return Promise.resolve(false);
+    const local = o.localAdmin();
+    const args = { neverLook: syncedNeverLook(o.settings, local), localAdmin: adminSummary(local) };
+    const key = JSON.stringify(args);
+    if (key === acked) return Promise.resolve(true);
+    if (syncing?.key === key) return syncing.done;
+    if (!OP_SCHEMAS["policy.sync"].args.safeParse(args).success) {
+      log.warn("remote.policy_sync_unchecked", {});
+      return Promise.resolve(false);
+    }
+    const done = askRemote(link, "policy.sync", args, { label }).then(() => {
+      acked = key;
+      return true;
+    }, (err: unknown) => {
+      log.warn("remote.policy_sync_failed", { err: err instanceof Error ? err.name : "error" });
+      return false;
+    }).finally(() => {
+      if (syncing?.done === done) syncing = null;
+    });
+    syncing = { key, done };
+    return done;
+  };
   subscriptions.push(link.onState(s => {
     if (s === "lost" || s === "closed") {
       stamps.clear();
       elements.clear();
+    } else if (s === "ready") {
+      void syncPolicy();
     }
   }));
-
-  // The never-look list in force here goes to the remote too (its gate 2 adds its own administrator's): sent now and
-  // whenever it changes, so a window the user just hid isn't read there either (§5.4: hello.neverLook, policy.sync).
-  let synced = "";
-  const syncPolicy = (): void => {
-    if (disposed || link.state !== "ready") return;
-    const local = o.localAdmin();
-    const args = { neverLook: syncedNeverLook(o.settings, local), localAdmin: adminSummary(local) };
-    const key = JSON.stringify(args);
-    if (key === synced) return;
-    if (!OP_SCHEMAS["policy.sync"].args.safeParse(args).success) {
-      log.warn("remote.policy_sync_unchecked", {});
-      return;
-    }
-    synced = key;
-    askRemote(link, "policy.sync", args, { label }).catch((err: unknown) => {
-      synced = "";
-      log.warn("remote.policy_sync_failed", { err: err instanceof Error ? err.name : "error" });
-    });
-  };
-  subscriptions.push(o.settings.onChange(() => syncPolicy()));
-  syncPolicy();
+  subscriptions.push(o.settings.onChange(() => { void syncPolicy(); }));
+  void syncPolicy();
   if (desktop().desktop !== "none") void apps.refresh();
 
   return {

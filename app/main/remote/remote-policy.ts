@@ -106,8 +106,9 @@ export const lowerAccess = (a: DesktopAccess, b: DesktopAccess) => ORDER.indexOf
 /**
  * The remote's desktop as Ember may use it: the agent's report (`welcome.desktop`, then `desktop.changed` and
  * `desktop.state`), lowered by what the PC knows itself: v1 uses only a Linux remote's desktop (L6, L23), never as
- * root (L17), never where either administrator said no (`ssh.desktop`) or a policy couldn't be read; screenshots only
- * while both administrators allow them, else text. Every word here is Ember's own; the remote's `why` is never used.
+ * root (L17), never where either administrator said no (`ssh.desktop`) or a policy couldn't be read, never in a
+ * session that isn't active or whose notice couldn't be shown (§2.5); screenshots only from an X11 session while both
+ * administrators allow them, else text. Every word here is Ember's own; the remote's `why` is never used.
  */
 export function remoteDesktop(o: {
   welcome: Pick<Welcome, "os" | "isWsl" | "uid">;
@@ -126,12 +127,16 @@ export function remoteDesktop(o: {
   if (c.error !== undefined) return none(`An administrator's policy couldn't be read, so Ember doesn't use ${label}'s desktop.`);
   if (c.features.ssh === false || c.ssh.desktop === false) return none(`An administrator turned off Ember's use of ${label}'s desktop.`);
   if (state.session?.locked) return none(`${label}'s screen is locked.`);
-  if (state.access === "none") return none(`${label} has no desktop session Ember can use for ${o.login}.`);
-  if (state.access === "screen" && c.features.screenImages !== false) return { desktop: "screen" };
-  if (state.access === "screen" || c.features.screenImages === false) {
+  // Only the login's own active session, and only while its notice (with its Stop) can show there (§2.5, §5.3.4,
+  // §5.3.9): whatever access the agent reports, the PC lowers it from these fields as well.
+  if (state.access === "none" || state.session?.active === false || state.notice === "failed") return none(`${label} has no desktop session Ember can use for ${o.login}.`);
+  // A Wayland session gives no screenshots (L5), whatever access the agent reports.
+  const wayland = state.session?.type === "wayland";
+  if (state.access === "screen" && !wayland && c.features.screenImages !== false) return { desktop: "screen" };
+  if (c.features.screenImages === false) {
     return { desktop: "text", why: `An administrator turned off screenshots, so Ember reads ${label}'s apps as text.`, noShot: "an administrator turned off screenshots" };
   }
-  if (state.session?.type === "wayland") {
+  if (wayland) {
     return { desktop: "text", why: `${label}'s desktop is a Wayland session: Ember reads its apps as text, without screenshots.`, noShot: `${label}'s Wayland session gives Ember no screenshots` };
   }
   return { desktop: "text", why: `Ember reads ${label}'s apps as text, without screenshots.`, noShot: `${label} gives Ember no screenshots` };

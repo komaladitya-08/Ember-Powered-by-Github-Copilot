@@ -37,6 +37,11 @@ export interface RemotePerceptionOptions {
   log: Logger;
   /** The never-look list in force for this remote (gate 1's). */
   neverLook: () => string[];
+  /**
+   * Has the remote confirmed the never-look list in force here (policy.sync)? It masks those windows before a pixel
+   * leaves, which the PC can't do afterwards: until it has, no picture is asked for.
+   */
+  neverLookSynced: () => Promise<boolean>;
   /** How much of the remote's desktop Ember uses now. */
   desktop: () => RemoteDesktop;
   /** The elements this link read (the sidecar's steps name only these). */
@@ -83,7 +88,19 @@ export function guardSeen(seen: Seen, list: string[], isPrivateWindow: (w: { app
     // A private window's title goes no further than this (not to the model, not to the logs).
     return { window: w && { ...w, name: "" }, x11Window: x && { ...x, title: "" }, nodes: [], blocked: true, busy: false, truncated: null, others: [], ms: seen.ms, axScale: 1 };
   }
-  return { ...seen, others: seen.others.filter(other => !isPrivate(w?.app ?? "", other.name)), nodes: withheld(seen.nodes) };
+  return { ...seen, others: seen.others.filter(other => !isPrivate(w?.app ?? "", other.name)), nodes: withheld(seen.nodes.map(plainStates)) };
+}
+
+/**
+ * A state as Ember lists it: a plain word or two ("focused", "multi line"), as every accessibility reader says them.
+ * The element lists print states bare, unquoted (this screen's come from AT-SPI's own names), so a remote's state
+ * that is anything else (`</screen>`, a sentence with a colon) is dropped here, never printed.
+ */
+const PLAIN_STATE = /^[a-z][a-z0-9 _-]{0,31}$/i;
+
+/** A remote's element with only the states Ember can print as they are. */
+function plainStates(n: AxNode): AxNode {
+  return n.states.every(st => PLAIN_STATE.test(st)) ? n : { ...n, states: n.states.filter(st => PLAIN_STATE.test(st)) };
 }
 
 /** The read's nodes with secret fields' contents withheld (Perception.withSecrets, without telling a reader: there is none here). */
@@ -195,7 +212,9 @@ export function createRemotePerception(link: RemoteLink, o: RemotePerceptionOpti
 
     async perceive(opts: { image: boolean; scope: "window" | "screen"; target?: WindowTarget }): Promise<Perceived> {
       const d = usable();
-      const image = opts.image && d.desktop === "screen";
+      // A picture only once the remote has the never-look list in force here (it masks those windows before sending).
+      const unsynced = opts.image && d.desktop === "screen" && !(await o.neverLookSynced().catch(() => false));
+      const image = opts.image && d.desktop === "screen" && !unsynced;
       const target = opts.target && { ...(opts.target.pid != null ? { pid: opts.target.pid } : {}), ...(opts.target.title ? { title: opts.target.title } : {}), ...(opts.target.path ? { path: opts.target.path } : {}) };
       const r = await askRemote(link, "perceive.perceive", { image, scope: opts.scope, ...(target ? { target } : {}) }, { label, extraMs: image ? IMAGE_EXTRA_MS : 0 });
       const seen = seenOf(r.seen, true);
@@ -208,7 +227,7 @@ export function createRemotePerception(link: RemoteLink, o: RemotePerceptionOpti
       }
       if (!image) {
         if (r.image) dropChannel(link, r.image.channel);
-        return noShot(d.noShot ?? `${label} gives Ember no screenshots`);
+        return noShot(unsynced ? `${label} hasn't confirmed which windows Ember must not look at` : d.noShot ?? `${label} gives Ember no screenshots`);
       }
       if (!r.image) return noShot(r.noShot !== undefined && noShots.has(r.noShot) ? r.noShot : `${label} didn't send one`);
       const bytes = await receiveImage(link, r.image, label, imageWaitMs(r.image, link.rttMs));

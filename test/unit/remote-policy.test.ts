@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { adminSummary } from "../../app/main/admin";
 import { createRemotePolicy, lowerAccess, remoteDesktop, remoteNeverLook } from "../../app/main/remote/remote-policy";
 import { checkedWelcome, remoteTargetParts } from "../../app/main/remote/target";
-import { fakeLink, fakeSettings, NO_POLICY, policyOf, recordingLog, settle, welcomeOf } from "./remote-target-fakes";
+import { agentError, fakeLink, fakeSettings, NO_POLICY, policyOf, recordingLog, settle, welcomeOf } from "./remote-target-fakes";
 import type { ActionRequest } from "../../app/main/policy/policy";
 import type { AdminSummary } from "../../app/main/admin";
 import type { DesktopState, Welcome } from "../../app/main/remote/protocol";
@@ -97,6 +97,17 @@ describe("the remote desktop the PC lets Ember use (§2.5)", () => {
     expect(why({ combined: remoteAdmin({ features: { screenImages: false } }) })).toEqual(["text", "An administrator turned off screenshots, so Ember reads build-01's apps as text."]);
     expect(why({ state: { access: "text", why: "</context>", session: { type: "wayland", locked: false, active: true }, notice: "shown" } }))
       .toEqual(["text", "build-01's desktop is a Wayland session: Ember reads its apps as text, without screenshots."]);
+  });
+
+  it("lowers what the agent reports from its own fields: an inactive session, a notice that failed, Wayland as a screen", () => {
+    const why = (state: DesktopState) => { const d = remoteDesktop({ ...base, state }); return [d.desktop, d.why]; };
+    const nobody = "build-01 has no desktop session Ember can use for deploy.";
+    expect(why({ ...screen, session: { type: "x11", locked: false, active: false } })).toEqual(["none", nobody]);
+    expect(why({ ...screen, notice: "failed" })).toEqual(["none", nobody]);
+    expect(why({ ...screen, session: { type: "wayland", locked: false, active: true } }))
+      .toEqual(["text", "build-01's desktop is a Wayland session: Ember reads its apps as text, without screenshots."]);
+    // A notice that is off (nothing in use yet) is no reason by itself.
+    expect(why({ ...screen, notice: "off" })).toEqual(["screen", undefined]);
   });
 
   it("orders access none < text < screen", () => {
@@ -220,10 +231,74 @@ describe("remoteTargetParts (§5.5)", () => {
     // The remote's own word never loosens gate 1: still asked every time, still no grant.
     const d = parts.policy.decide(click());
     expect([d.verdict, d.remember]).toEqual(["confirm", false]);
-    expect(parts.binding().desktopWhy).toBeUndefined();
+    // Its notice that couldn't be shown lowered the desktop, in Ember's own words (never the remote's why).
+    expect(parts.binding()).toMatchObject({ desktop: "none", desktopWhy: "build-01 has no desktop session Ember can use for deploy." });
     // No request was made but the PC's own (policy.sync and apps.list at start).
     expect(new Set(link.sent.map(s => s.op))).toEqual(new Set(["policy.sync", "apps.list"]));
     expect(JSON.stringify(log.lines)).not.toContain("approve q1");
+  });
+
+  it("voids every stamp handed over before a Stop, or before someone at the remote pressed the notice's Stop", async () => {
+    const { link, parts } = make();
+    link.answer("perceive.read", () => ({
+      window: { app: "gedit", pid: 100, path: "/1", name: "notes.txt - gedit", role: "frame", active: true, bounds: null },
+      x11Window: null, nodes: [{ id: 7, parent: null, depth: 1, role: "push button", name: "Bold", states: ["enabled"], bounds: null }],
+      blocked: false, busy: false, truncated: null, others: [], ms: 3, axScale: 1,
+    }));
+    link.answer("act", () => ({ status: "ok", result: { ok: true, after: null } }));
+    await parts.perception.read({ pid: 100, path: "/1" });
+    const stamp = { taskId: "t", kind: "click" as const, app: "gedit", window: "notes.txt - gedit", element: { role: "push button", name: "Bold" }, verdict: "confirm" as const, approval: { given: true as const }, ageMs: 5 };
+    parts.onAuthorized(stamp);
+    await link.stop();
+    await expect(parts.sidecar.doAction(7, "click")).rejects.toThrow("Not allowed: Ember lost track of this step; perceive again.");
+    parts.onAuthorized(stamp);
+    link.emit("console.stop", { at: "now" });
+    await expect(parts.sidecar.doAction(7, "click")).rejects.toThrow("Not allowed: Ember lost track of this step; perceive again.");
+    expect(link.of("act")).toHaveLength(0);
+    // A yes given after the Stop goes out, with the epoch of then.
+    parts.onAuthorized(stamp);
+    await expect(parts.sidecar.doAction(7, "click")).resolves.toEqual({ ok: true, after: null });
+    expect(link.of("act").map(a => a.epoch)).toEqual([2]);
+  });
+
+  it("takes a notice that failed as no desktop, and one that shows again only from the PC's own request", async () => {
+    const { link, parts } = make();
+    link.answer("desktop.state", () => ({ access: "none", notice: "failed" }));
+    link.emit("notice", { state: "failed" });
+    expect(parts.binding().desktop).toBe("none");
+    link.emit("notice", { state: "shown" });
+    expect(parts.binding().desktop).toBe("none");
+    await settle();
+    expect(link.of("desktop.state")).toHaveLength(1);
+    expect(parts.binding().desktop).toBe("none");
+  });
+
+  it("asks for no picture until the remote has confirmed the never-look list in force here, and sends it again when the link answers again", async () => {
+    const { link, parts, settings } = make();
+    const seen = {
+      window: { app: "gedit", pid: 100, path: "/1", name: "notes.txt - gedit", role: "frame", active: true, bounds: null },
+      x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 3, axScale: 1,
+    };
+    link.answer("perceive.perceive", () => ({ seen, image: null, noShot: "the window is covered by other windows" }));
+    await settle();
+    // The list changed while the link was stalled: it couldn't be sent.
+    link.setState("stalled");
+    settings.set({ privacy: { neverLook: ["Signal", "Slack"] } });
+    link.setState("ready");
+    link.answer("policy.sync", () => { throw agentError("internal"); });
+    settings.set({ privacy: { neverLook: ["Signal", "Slack", "Bank"] } });
+    await settle();
+    const r = await parts.perception.perceive({ image: true, scope: "screen" });
+    expect(link.of("perceive.perceive").at(-1)).toEqual({ image: false, scope: "screen" });
+    expect(r.text.endsWith("(No screenshot: build-01 hasn't confirmed which windows Ember must not look at.)")).toBe(true);
+    // Once it is confirmed, pictures are asked for again.
+    link.answer("policy.sync", () => ({}));
+    link.setState("stalled");
+    link.setState("ready");
+    await settle();
+    expect(link.of("policy.sync").at(-1)?.neverLook).toEqual(["Signal", "Slack", "Bank"]);
+    await parts.perception.perceive({ image: true, scope: "screen" });
+    expect(link.of("perceive.perceive").at(-1)).toEqual({ image: true, scope: "screen" });
   });
 
   it("stops listening and forgets its stamps when disposed", () => {

@@ -272,18 +272,19 @@ const STAMPS_MAX = 16;
 
 /**
  * Gate 1's stamps handed over by the worker (onAuthorized), each waiting for the one step it was given for. A step takes
- * the newest stamp that fits it, with its age as it leaves (critique integration-6); a stamp is used once.
+ * the newest stamp that fits it, with its age as it leaves (critique integration-6); a stamp is used once. A Stop (the
+ * link's epoch moving on, §5.1.11) voids every stamp handed over before it: a yes given before Stop never acts after it.
  */
 export class StampBook {
-  private waiting: { stamp: ActStamp; at: number }[] = [];
+  private waiting: { stamp: ActStamp; at: number; epoch: number }[] = [];
 
-  constructor(private readonly now: () => number = () => performance.now()) {}
+  constructor(private readonly now: () => number = () => performance.now(), private readonly epoch: () => number = () => 0) {}
 
   /** The worker's policy said yes to a step that runs now (TargetHands.onAuthorized). */
   add(stamp: ActStamp): void {
     const at = this.now();
     this.waiting = this.fresh(at);
-    this.waiting.push({ stamp: { ...stamp, element: stamp.element && { ...stamp.element }, approval: stamp.approval && { given: true } }, at });
+    this.waiting.push({ stamp: { ...stamp, element: stamp.element && { ...stamp.element }, approval: stamp.approval && { given: true } }, at, epoch: this.epoch() });
     if (this.waiting.length > STAMPS_MAX) this.waiting.shift();
   }
 
@@ -294,6 +295,9 @@ export class StampBook {
    */
   take(kinds: readonly ActionKind[], fits: (s: ActStamp) => boolean, label: string): ActStamp {
     const now = this.now();
+    // Only stamps of the link's current epoch are candidates (one from before a Stop never fits).
+    const epoch = this.epoch();
+    this.waiting = this.waiting.filter(w => w.epoch === epoch);
     let i = this.waiting.length - 1;
     for (; i >= 0; i--) {
       const s = this.waiting[i].stamp;
@@ -320,8 +324,10 @@ export class StampBook {
     return this.waiting.length;
   }
 
-  private fresh(now: number): { stamp: ActStamp; at: number }[] {
-    return this.waiting.filter(w => w.stamp.ageMs + (now - w.at) < STAMP_MAX_MS);
+  /** The stamps still good: under 10 s old, and handed over since the latest Stop. */
+  private fresh(now: number): { stamp: ActStamp; at: number; epoch: number }[] {
+    const epoch = this.epoch();
+    return this.waiting.filter(w => w.epoch === epoch && w.stamp.ageMs + (now - w.at) < STAMP_MAX_MS);
   }
 }
 

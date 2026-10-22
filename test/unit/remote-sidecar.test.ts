@@ -205,6 +205,18 @@ describe("RemoteSidecar's steps carry gate 1's fresh stamp (§5.5, critique inte
   });
 });
 
+describe("StampBook and Stop", () => {
+  it("takes no stamp handed over before the link's epoch moved on", () => {
+    let epoch = 1;
+    const book = new StampBook(() => 0, () => epoch);
+    book.add(stampOf());
+    epoch = 2;
+    expect(() => book.take(["click"], () => true, "build-01")).toThrow(LOST_TRACK);
+    book.add(stampOf());
+    expect(book.take(["click"], () => true, "build-01").kind).toBe("click");
+  });
+});
+
 describe("StampBook", () => {
   it("keeps the newest stamp that fits, drops ones that are too old, and holds at most 16", () => {
     let t = 0;
