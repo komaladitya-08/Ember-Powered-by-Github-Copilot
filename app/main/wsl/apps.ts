@@ -20,7 +20,7 @@ import type { Logger } from "../logger";
 import type { AppCatalog, AppIdentity } from "../platform/types";
 import { splitWindowsArgs } from "../platform/win32/system/argv";
 import { expandEnvironmentStrings, LnkError, parseShellLink } from "../platform/win32/system/lnk";
-import type { WslFacts, WslService } from "./types";
+import type { WslDistro, WslFacts, WslService } from "./types";
 
 /** A word after "--" that no shell reads as anything but itself (no quote, $, `, ;&|<>(){}*?[]~!#, or blank inside). */
 const TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
@@ -114,6 +114,26 @@ function linuxProgram(all: string[]): string | null {
   return (prog && LAUNCHERS.linux.test(prog) && script ? script : prog) || null;
 }
 
+/**
+ * Whether the distro's default user is root, as the distro itself reports it (WslDistro.defaultUid is only what was
+ * learned from inside it; the registry's hint never counts); null when it can't be told. A running distro is asked
+ * without starting anything (WslService.defaultUid); a stopped one is started to read its set-up, as opening its app
+ * would start it anyway (§4.8).
+ */
+export async function runsAsRoot(wsl: Pick<WslService, "defaultUid" | "runner">, d: Pick<WslDistro, "name" | "defaultUid" | "running">): Promise<boolean | null> {
+  if (d.defaultUid !== null) return d.defaultUid === 0;
+  try {
+    if (d.running) {
+      const uid = await wsl.defaultUid(d.name);
+      if (uid !== null) return uid === 0;
+    }
+    const f = await wsl.runner(d.name).facts();
+    return typeof f?.privileged === "boolean" ? f.privileged : null;
+  } catch {
+    return null; // couldn't read it (a timeout, no job host): not opened
+  }
+}
+
 type SpawnLike = (command: string, args: string[], options: SpawnOptions) => { on(event: "error", fn: (err: Error) => void): unknown; unref(): void };
 
 /** What withWslApps needs (main's are the defaults; tests pass their own). */
@@ -195,6 +215,11 @@ export function withWslApps(apps: AppCatalog, o: { wsl: () => WslService | null;
     const why = wslgRefusal(argv, fresh);
     if (why) throw new Error(/[.!?]$/.test(why) ? why : `Ember can't open that app: ${why}.`);
     const p = wslgLaunch(argv)!;
+    // Its default user as the distro itself says (L17, critique wsl-7): a uid not learned yet is asked for now.
+    const d = (p.distro ? fresh.distros.find(x => x.name.toLowerCase() === p.distro!.toLowerCase()) : fresh.distros.find(x => x.isDefault))!;
+    const root = await runsAsRoot(wsl, d);
+    if (root === null) throw new Error(`Ember couldn't tell which user ${d.name} runs apps as, so it didn't open that app.`);
+    if (root) throw new Error("Ember doesn't use Linux apps of a distro that runs as root.");
     if (linuxTerminal(app, p.argv) || apps.isTerminalApp({ id: app.id, name: app.name })) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
     const explorer = expandEnvironmentStrings("%SystemRoot%\\explorer.exe", env);
     if (!wpath.isAbsolute(explorer) || explorer.includes("%")) throw new Error("Ember couldn't find Windows' own folder, so it can't open apps.");
