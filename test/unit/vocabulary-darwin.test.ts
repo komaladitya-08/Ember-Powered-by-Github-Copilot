@@ -56,6 +56,9 @@ describe("the macOS terminals", () => {
     expect(TERMINAL_NAME.darwin.test("Console")).toBe(false);
     expect(TERMINAL_ID_WORDS.darwin).toEqual([]);
     expect(TERMINALS.darwin.has("console")).toBe(false);
+    expect(terminal(bundle("Console", "com.apple.Console"))).toBe(false);
+    expect(named("Console")).toBe(false);
+    expect(named("com.apple.Console")).toBe(false);
   });
 
   it("refuses shells and interpreters waiting for typed code, and an app wrapped in caffeinate or nohup", () => {

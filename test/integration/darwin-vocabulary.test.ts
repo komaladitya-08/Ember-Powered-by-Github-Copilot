@@ -96,11 +96,11 @@ describe.skipIf(!onMac && !required)("the macOS vocabularies against real window
       expect(TERMINAL_NAME.darwin.test(win.owner)).toBe(false);
       expect(TERMINALS.darwin.has(win.owner.toLowerCase())).toBe(false);
       expect(hasBuiltInShell({ id, name: win.owner }, M)).toBe(false);
+      expect(isTerminalApp({ id, name: win.owner }, M)).toBe(false);
       expect(isSecurityWindow({ app: win.owner, title: win.title }, M)).toBe(false);
       quit(app);
     }
-    // hands/system.ts's idIsTerminal still takes any "console" id word for a terminal on every OS (reported);
-    // the macOS row says it shouldn't.
+    // hands/system.ts's idIsTerminal reads this row: no id word makes a Mac app a terminal ("console" would take Console).
     expect(TERMINAL_ID_WORDS.darwin).toEqual([]);
     expect(isTerminalApp({ id: "com.apple.calculator", name: "Calculator" }, M)).toBe(false);
   }, 90_000);

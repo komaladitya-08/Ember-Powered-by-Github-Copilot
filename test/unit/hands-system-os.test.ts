@@ -1,8 +1,11 @@
-/** hands/system.ts's shared parts on every OS: the app environment, the value grammar and programsOf (design §4.15, §9.6). */
+/**
+ * hands/system.ts's shared parts on every OS: the app environment, the value grammar, programsOf, and the terminal id
+ * words each OS reads (design §4.15, §9.6, §9.11).
+ */
 
 import { describe, expect, it } from "vitest";
-import { appEnv, findApp, parseOnOff, parseScale, programsOf, type DesktopApp } from "../../app/main/hands/system";
-import { LAUNCHERS } from "../../app/main/hands/terminals";
+import { appEnv, findApp, isTerminalApp, parseOnOff, parseScale, programsOf, type DesktopApp } from "../../app/main/hands/system";
+import { LAUNCHERS, TERMINAL_ID_WORDS } from "../../app/main/hands/terminals";
 
 const app = (more: Partial<DesktopApp>): DesktopApp => ({ id: "x", name: "X", file: "", keywords: [], ...more });
 
@@ -77,5 +80,28 @@ describe("findApp", () => {
     const apps = [app({ id: "Accessories/Notepad", name: "Notepad", generic: "text editor", keywords: ["text editor"] }), app({ id: "Paint", name: "Paint" })];
     for (const os of ["linux", "win32", "darwin"] as const) expect(findApp(apps, "text editor", os)?.name, os).toBe("Notepad");
     expect(findApp(apps, "text editor")?.name).toBe("Notepad");
+  });
+});
+
+describe("a terminal by its id's words", () => {
+  it("takes \"console\" in an id for a terminal on Linux, as it always has, whatever the app is called", () => {
+    for (const id of ["org.gnome.Console", "org.example.console", "org.example.my-console", "org.example.console_app.desktop"]) {
+      expect(isTerminalApp({ id, name: "Logs" }), id).toBe(true);
+    }
+    expect(isTerminalApp({ id: "org.example.consoles", name: "Logs" })).toBe(false);
+    expect(TERMINAL_ID_WORDS.linux).toEqual(["console"]);
+  });
+
+  it("takes it on Windows too (a packaged app's id split at \".\", \"!\" and \"_\")", () => {
+    for (const id of ["Example.Console_8wekyb3d8bbwe!App", "Contoso.Admin-Console"]) expect(isTerminalApp({ id, name: "Logs" }, "win32"), id).toBe(true);
+    expect(isTerminalApp({ id: "Example.Notes_8wekyb3d8bbwe!App", name: "Logs" }, "win32")).toBe(false);
+  });
+
+  it("leaves the Mac's Console, its log viewer, alone: macOS has no such id word (Console.app is com.apple.Console)", () => {
+    expect(TERMINAL_ID_WORDS.darwin).toEqual([]);
+    for (const id of ["com.apple.Console", "com.example.my-console"]) expect(isTerminalApp({ id, name: "Console" }, "darwin"), id).toBe(false);
+    expect(isTerminalApp({ id: "com.apple.Console", name: "com.apple.Console" }, "darwin")).toBe(false);
+    // Terminal itself is still known by its id's words there.
+    expect(isTerminalApp({ id: "com.apple.Terminal", name: "Utility" }, "darwin")).toBe(true);
   });
 });

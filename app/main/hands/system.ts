@@ -13,7 +13,7 @@ import path from "node:path";
 import type { OS } from "../../shared/shortcuts";
 import type { AppIdentity } from "../platform/types";
 import {
-  INTERPRETERS, LAUNCHERS, REFUSED, SHELLS, SHELL_APP, SHELL_APP_ID, SHELL_APP_NAME, SHELL_MODULES, TERMINALS, TERMINAL_CLASSES, TERMINAL_NAME, WRAPPERS,
+  INTERPRETERS, LAUNCHERS, REFUSED, SHELLS, SHELL_APP, SHELL_APP_ID, SHELL_APP_NAME, SHELL_MODULES, TERMINALS, TERMINAL_CLASSES, TERMINAL_ID_WORDS, TERMINAL_NAME, WRAPPERS,
 } from "./terminals";
 
 const run = (cmd: string, args: string[]) => new Promise<string>((resolve, reject) => {
@@ -175,6 +175,8 @@ interface Vocabulary {
   shellAppId: RegExp;
   shellAppName: RegExp;
   terminalName: RegExp;
+  /** Id words that make an app a terminal however it is named (Linux and Windows "console"; none on macOS). */
+  terminalIdWords: readonly string[];
   wrappers: (typeof WRAPPERS)[OS];
   refused: RegExp;
 }
@@ -185,7 +187,8 @@ function vocabulary(os: OS): Vocabulary {
   if (!v) {
     v = {
       os, terminals: TERMINALS[os], shells: SHELLS[os], interpreters: INTERPRETERS[os], shellModules: SHELL_MODULES[os], shellApp: SHELL_APP[os],
-      shellAppId: SHELL_APP_ID[os], shellAppName: SHELL_APP_NAME[os], terminalName: TERMINAL_NAME[os], wrappers: WRAPPERS[os], refused: REFUSED[os],
+      shellAppId: SHELL_APP_ID[os], shellAppName: SHELL_APP_NAME[os], terminalName: TERMINAL_NAME[os], terminalIdWords: TERMINAL_ID_WORDS[os],
+      wrappers: WRAPPERS[os], refused: REFUSED[os],
     };
     vocabularies.set(os, v);
   }
@@ -315,7 +318,12 @@ function runsTerminal(argv: string[], v: Vocabulary, depth = 0): boolean {
 
 /** A desktop id's words. Off Linux also split at "!" and "_": a UWP app id (Microsoft.WindowsTerminal_8wekyb3d8bbwe!App). */
 const idWords = (id: string, v: Vocabulary) => id.toLowerCase().replace(/\.desktop$/, "").split(v.os === "linux" ? "." : /[.!_]/);
-const idIsTerminal = (id: string, v: Vocabulary) => idWords(id, v).some(p => named(p, v) || p === "console" || p.split(/[-_]/).some(w => named(w, v) || w === "console"));
+/**
+ * Does a word of this id (or a part of one, split at "-" and "_") name a terminal, or is it one of the OS's terminal id
+ * words (GNOME's Console is org.gnome.Console; on macOS com.apple.Console is the log viewer, so none there)?
+ */
+const idIsTerminal = (id: string, v: Vocabulary) => idWords(id, v).some(p => named(p, v) || v.terminalIdWords.includes(p)
+  || p.split(/[-_]/).some(w => named(w, v) || v.terminalIdWords.includes(w)));
 const idHasShell = (id: string, v: Vocabulary) => v.shellAppId.test(id.toLowerCase().replace(/\.desktop$/, "")) || idWords(id, v).some(w => shellApp(w, v));
 
 /** An app's launch command as words: the catalogue's own split (Windows, macOS) or the parsed Exec line (Linux). */
