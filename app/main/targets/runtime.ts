@@ -322,7 +322,9 @@ export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: 
     if (wsl) {
       rows.push(...await wsl.doctorRows());
       // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted).
-      rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir: o.appDir ?? null, env: process.env }));
+      // (main.cjs's folder, dist/app, when main doesn't say: the source tree's script beside it in a development copy.)
+      const appDir = o.appDir ?? (typeof __dirname === "string" ? __dirname : null);
+      rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
     }
   } catch {
     // WSL's rows are left out when it can't be asked (the doctor's other rows stand).
