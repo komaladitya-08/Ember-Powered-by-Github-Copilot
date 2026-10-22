@@ -102,6 +102,10 @@ describe("TarReader", () => {
     expect(read(one(file("top/seven", "7", { type: "7" }), file("top/old", "0", { type: "\0" }))).files).toEqual({ "top/seven": "7", "top/old": "0" });
   });
 
+  it("reads a regular entry whose name ends with a slash as a folder, as old tars wrote them", () => {
+    expect(read(one(file("top/", "", { type: "\0" }), file("top/sub/", ""), file("top/sub/a", "in it")))).toEqual({ files: { "top/sub/a": "in it" }, dirs: ["top", "top/sub"] });
+  });
+
   it("skips devices, FIFOs, global pax headers and volume labels, creating nothing for them", () => {
     const archive = one(
       paxEntry({ comment: "global" }, "g"),
@@ -234,7 +238,7 @@ describe("extractTar", () => {
   });
 
   it("refuses a file entry naming the destination itself", async () => {
-    await expect(extractTar(pieces(one(file("./", "x")), 512), tmp())).rejects.toThrow(/destination folder itself/);
+    await expect(extractTar(pieces(one(file(".", "x")), 512), tmp())).rejects.toThrow(/destination folder itself/);
   });
 
   it("extracts a .tar.bz2 end to end, and fails on a damaged one", async () => {
@@ -247,6 +251,27 @@ describe("extractTar", () => {
     const bad = path.join(tmp(), "bad.tar.bz2");
     fs.writeFileSync(bad, bzip2Compress(archive, { blockBytes: 20_000, crcXor: b => (b === 2 ? 1 : 0) }));
     await expect(extractTarBz2(bad, tmp(), { topFolder: "model", workers: 2 })).rejects.toThrow(/block's CRC doesn't match/);
+  });
+
+  // Windows can't delete (or download again to) an archive that is still open, so it must be closed by then.
+  it.skipIf(process.platform !== "linux")("has closed the archive when it returns or fails", async () => {
+    const opened = (file: string) => fs.readdirSync("/proc/self/fd").filter(fd => {
+      try {
+        return fs.readlinkSync(`/proc/self/fd/${fd}`) === file;
+      } catch {
+        return false; // the descriptor readdir itself used, closed by now
+      }
+    }).length;
+    const archive = one(dir("model/"), file("model/a.onnx", randomBytes(6, 50_000)));
+    const good = path.join(tmp(), "good.tar.bz2");
+    fs.writeFileSync(good, bzip2Compress(archive, { blockBytes: 20_000 }));
+    await extractTarBz2(good, tmp(), { topFolder: "model", workers: 0 });
+    expect(opened(good)).toBe(0);
+    // Damaged at the start of a file much longer than is read before the damage shows, so it is still open then.
+    const bad = path.join(tmp(), "bad.tar.bz2");
+    fs.writeFileSync(bad, Buffer.concat([bzip2Compress(archive, { blockBytes: 20_000, crcXor: b => (b === 0 ? 1 : 0) }), new Uint8Array(8 << 20)]));
+    await expect(extractTarBz2(bad, tmp(), { topFolder: "model", workers: 0 })).rejects.toThrow(/block's CRC doesn't match/);
+    expect(opened(bad)).toBe(0);
   });
 });
 

@@ -222,6 +222,11 @@ describe.skipIf(!tls)("createHttpsDownloader", () => {
     expect(hits["/stall"]).toBe(4);
   });
 
+  it("says when the whole download ran out of time, rather than calling it a stall", async () => {
+    const slow = createHttpsDownloader({ agent: { ca: tls?.cert, proxyEnv: {} }, stallMs: 5000, totalMs: 300, retryMs: 10 });
+    await expect(slow(`${base}/stall`, dest(), () => undefined)).rejects.toThrow("download failed: it took longer than 0.3 seconds");
+  });
+
   it("refuses a redirect away from https", async () => {
     await expect(download(`${base}/to-http`, dest(), () => undefined)).rejects.toThrow(/redirect went to http:/);
   });

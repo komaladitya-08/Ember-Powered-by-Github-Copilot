@@ -14,6 +14,7 @@ import https from "node:https";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import tls from "node:tls";
 import type { ModelPaths } from "./sherpa";
 import { extractTarBz2 } from "./untar";
 
@@ -87,19 +88,26 @@ export async function sha256File(file: string): Promise<string> {
 /** What fetchModel needs to know about a pinned download. */
 export type ModelDownload = Pick<ModelFile, "name" | "url" | "sha256" | "kind" | "target">;
 
+/** How long a rename on Windows keeps retrying while something holds the files (ms). */
+const RENAME_WAIT_MS = 15_000;
+
 /**
- * Renames, retrying briefly when the target is busy: on Windows an antivirus scanner or the search indexer
- * often holds a file that was just written for a moment, and the rename fails with EPERM or EBUSY meanwhile.
+ * Renames, retrying on Windows while the target is busy: an antivirus scanner or the search indexer often
+ * holds a file that was just written (a 100 MB model can take seconds to scan), and the rename fails with
+ * EPERM, EACCES or EBUSY meanwhile (graceful-fs, which npm uses, waits up to a minute for the same reason).
+ * Elsewhere those errors are real, so they fail at once.
  */
 async function moveIntoPlace(from: string, to: string): Promise<void> {
+  const until = Date.now() + RENAME_WAIT_MS;
   for (let attempt = 0; ; attempt++) {
     try {
       fs.renameSync(from, to);
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (attempt >= 10 || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw err;
-      await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
+      const busy = code === "EPERM" || code === "EACCES" || code === "EBUSY";
+      if (process.platform !== "win32" || !busy || Date.now() >= until) throw err;
+      await new Promise(resolve => setTimeout(resolve, Math.min(50 * (attempt + 1), 500)));
     }
   }
 }
@@ -180,25 +188,49 @@ export interface HttpsDownloaderOptions {
 }
 
 /**
+ * The certificate authorities curl trusted: the system's store, as well as Node's own list (with
+ * NODE_EXTRA_CA_CERTS). Without the system's, a network that inspects TLS with a certificate IT installed
+ * there would refuse the download where curl didn't. Undefined (Node's own list alone) on Node older than
+ * 22.15, or if the store can't be read.
+ */
+function curlTrust(): string[] | undefined {
+  try {
+    if (typeof tls.getCACertificates !== "function") return undefined;
+    return [...new Set([...tls.getCACertificates("default"), ...tls.getCACertificates("system")])];
+  } catch {
+    // The system's store couldn't be read: Node's own list still applies.
+    return undefined;
+  }
+}
+
+/**
  * A downloader on Node's https, for scripts and CI (the app passes its own, on Chromium's network stack).
  * It honours HTTPS_PROXY and NO_PROXY as curl did (Node 22.21+ and Electron's Node; older Node connects
- * directly), follows redirects (to https only), fails on an HTTP error, and retries a stalled or dropped
- * transfer three times.
+ * directly), trusts the system's certificate authorities as curl did, follows redirects (to https only),
+ * fails on an HTTP error, and retries a stalled or dropped transfer three times.
  */
 export function createHttpsDownloader(options: HttpsDownloaderOptions = {}): Downloader {
   const stallMs = options.stallMs ?? 30_000;
   const totalMs = options.totalMs ?? 20 * 60_000;
   const retryMs = options.retryMs ?? 1000;
+  let trust: string[] | undefined | null = null;
 
   /** One attempt: follows redirects and streams the body to `dest`, reporting bytes so far. */
   const attempt = async (url: string, dest: string, progress: (bytes: number) => void, deadline: number): Promise<void> => {
     const ac = new AbortController();
     let timer: NodeJS.Timeout | undefined;
+    // Whether the whole download's time ran out, rather than the transfer stalling.
+    let late = false;
     const alive = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => ac.abort(), Math.min(stallMs, Math.max(0, deadline - Date.now())));
+      const left = Math.max(0, deadline - Date.now());
+      timer = setTimeout(() => {
+        late = left < stallMs;
+        ac.abort();
+      }, Math.min(stallMs, left));
     };
-    const agent = new https.Agent({ proxyEnv: process.env, ...options.agent });
+    if (trust === null && !options.agent?.ca) trust = curlTrust();
+    const agent = new https.Agent({ proxyEnv: process.env, ca: trust ?? undefined, ...options.agent });
     alive();
     try {
       let at = new URL(url);
@@ -231,7 +263,8 @@ export function createHttpsDownloader(options: HttpsDownloaderOptions = {}): Dow
         return;
       }
     } catch (err) {
-      throw ac.signal.aborted ? new Error(`nothing arrived for ${stallMs / 1000} seconds (check the network or proxy)`) : err;
+      if (!ac.signal.aborted) throw err;
+      throw new Error(late ? `download failed: it took longer than ${totalMs / 1000} seconds` : `nothing arrived for ${stallMs / 1000} seconds (check the network or proxy)`, { cause: err });
     } finally {
       clearTimeout(timer);
       agent.destroy();

@@ -10,6 +10,7 @@
  * data or entries than the caps allow, and an archive that ends early.
  */
 
+import { once } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { bunzip2, type Bunzip2Stats } from "./bzip2";
@@ -305,7 +306,10 @@ export class TarReader {
     this.padding = (BLOCK - (size % BLOCK)) % BLOCK;
     this.left = size;
 
-    if (type === 0x30 || type === 0 || type === 0x37) {
+    const regular = type === 0x30 || type === 0 || type === 0x37;
+    // Old tars stored a folder as a regular entry whose name ends with "/". GNU tar and bsdtar make it a folder,
+    // and so does this, rather than a file with the folder's name that later entries couldn't go in.
+    if (regular && !name.endsWith("/")) {
       events.push({ kind: "file", path: safeEntryPath(name), size });
       if (size === 0) {
         events.push({ kind: "file-end" });
@@ -313,7 +317,7 @@ export class TarReader {
       } else this.mode = "data";
       return;
     }
-    if (type === 0x35) {
+    if (type === 0x35 || regular) {
       events.push({ kind: "directory", path: safeEntryPath(name) });
     } else if (type === 0x31 || type === 0x32) {
       const to = link ?? cstring(h, 157, 100);
@@ -428,6 +432,12 @@ export async function extractTarBz2(archive: string, dest: string, options: Extr
   try {
     return await extractTar(bunzip2(source, { workers: options.workers, stats: options.stats }), dest, options);
   } finally {
-    source.destroy();
+    // Only once the file is closed: on Windows the caller's delete of the archive (and the next download to
+    // the same name) can fail or linger while a handle to it is still open.
+    if (!source.closed) {
+      const closed = once(source, "close");
+      source.destroy();
+      await closed.catch(() => undefined);
+    }
   }
 }
