@@ -55,8 +55,7 @@ export function redactSecrets(text: string): string {
   for (const re of TOKEN_PATTERNS) out = out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
-  out = out.replace(KEY_VALUE, (m, keep: string, value: string) =>
-    value.startsWith("[secret") || SECRET_HIDDEN.includes(value) ? m : keep + SECRET_HIDDEN);
+  out = out.replace(KEY_VALUE, (m, keep: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;
 }
 
@@ -65,11 +64,18 @@ export function redactSecrets(text: string): string {
  * prose, `API_TOKEN=abc` isn't). PWD and OLDPWD are folders, not passwords.
  */
 const ASSIGNED_SECRET =
-  /(?:^|[\s"'])(?!(?:OLD)?PWD=)[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*=[^\s"',;]+/i;
+  /(?:^|[\s"'])(?!(?:OLD)?PWD=)[A-Za-z0-9_]*?(?:password|passwd|pwd|secret|token|api_?key|access_?key|private_?key|client_?secret)[A-Za-z0-9_]*=[^\s"',;]+/i;
+/**
+ * An option whose name ends in a secret word, with a value: `--password=x`, `--db-pass=x`, `--auth-token=x` (not
+ * `--max-tokens=100` or `--tokenizer=fast`).
+ */
+const OPTION_SECRET =
+  /(?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=[^\s"',;]+/i;
 
 /**
  * Whether a word of a command line holds a password or token (§3.5.4 "tokens on the command line"): one of step 4's
- * token patterns, an Authorization header, credentials in a URL, or a secret-named `NAME=value`.
+ * token patterns, an Authorization header, credentials in a URL, a secret-named `NAME=value`, or a secret-named option
+ * with its value (`--password=x`).
  */
 export function commandLineSecret(word: string): boolean {
   return WORD_PATTERNS.some(re => re.test(word));
@@ -78,4 +84,4 @@ export function commandLineSecret(word: string): boolean {
 /** The same patterns without the global flag (a global pattern's `test` keeps state between calls). */
 const WORD_PATTERNS: readonly RegExp[] = [...TOKEN_PATTERNS, ...VALUE_PATTERNS, URL_CREDENTIALS]
   .map(re => new RegExp(re.source, re.flags.replace("g", "")))
-  .concat(ASSIGNED_SECRET);
+  .concat(ASSIGNED_SECRET, OPTION_SECRET);

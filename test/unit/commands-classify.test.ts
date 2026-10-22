@@ -49,7 +49,7 @@ const PIECES = [
   "rm", " ", "-rf", "'", "\"", "`", "$(", ")", "${", "}", "{", "(", "|", "&", ";", "&&", "||", ">", ">>", "<", "<<", "EOF", "\n",
   "\\", "*", "?", "[", "]", "~", "#", "=", "!", "^", "%", "@", "git", "push", "cmd", "/c", "powershell", "-enc", "wsl", "--",
   "Remove-Item", "iex", "$x", "curl", "sh", "x", "a.txt", "C:\\", "/etc/", "..", ",", "--%", "@'", "'@", "\t", "\r", "\u0007",
-  "\u202e", "\u200b", "\u0430", "\uff1a", "ÿ", "\ud800",
+  "\u202e", "\u200b", "\u0430", "\uff1a", "\u00ff", "\ud800",
 ];
 
 /** Random text: half fragments of shell syntax, half arbitrary characters (lone surrogates and controls included). */

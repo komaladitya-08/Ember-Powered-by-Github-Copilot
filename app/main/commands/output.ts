@@ -120,9 +120,13 @@ function cutTyped(text: string, typed: string[]): string {
 export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string {
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
   const decoded = decode(raw).replace(/[\ue000\ue001]/g, "\ufffd");
-  const cut = cutSpans(decoded, o.secretSpans);
-  const plain = stripTerminal(cut).split(MARK_ANSWERED).join(SECRET_ANSWERED).split(MARK_UNANSWERED).join(SECRET_UNANSWERED);
-  return redactSecrets(cutTyped(plain, o.typed));
+  const plain = stripTerminal(cutSpans(decoded, o.secretSpans));
+  // Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
+  // for a key and its value.
+  return plain
+    .split(/([\ue000\ue001])/)
+    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(cutTyped(part, o.typed))))
+    .join("");
 }
 
 const utf8Length = (s: string): number => new TextEncoder().encode(s).length;
