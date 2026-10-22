@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP } from "./vocabulary";
+import { OFFICE_APP, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -1698,10 +1698,13 @@ const FIND_REPLACE = new RegExp(`^\\s*(${foldLabel(["find", "suchen", "recherche
 const opensDialog = (role: string, name: string) => (/^(menu item|check menu item|radio menu item)$/.test(role) && OPENS_DIALOG.test(name)
   && !ENDS_SESSION.test(foldLabel(name)) && !ENDS_SESSION.test(plainText(name))) || FIND_REPLACE.test(plainText(name));
 
-/** Is `r` text going into a box of `os`'s that runs what is typed there (TYPING_REFUSED: File Explorer's address box)? */
-function typingRefused(r: ActionRequest, os: OS): boolean {
+/**
+ * Is `r` text going into one of `rules`' boxes that run what is typed there (File Explorer's address box), when it is
+ * the text refused there? The policy reads its OS's TYPING_REFUSED (./vocabulary.ts).
+ */
+export function refusesTyping(rules: readonly TypingRefusal[], r: Pick<ActionRequest, "app" | "element" | "value">): boolean {
   const app = r.app.trim(), field = (r.element?.name ?? "").trim(), text = (r.value ?? "").trim();
-  return TYPING_REFUSED[os].some(t => t.app.test(app) && t.field.test(field) && (!t.text || t.text.test(text)));
+  return rules.some(t => t.app.test(app) && t.field.test(field) && (!t.text || t.text.test(text)));
 }
 
 export class PolicyEngine {
@@ -1965,7 +1968,7 @@ export class PolicyEngine {
       return never("this looks like a password or payment field");
     }
     // A box that runs what is typed into it (File Explorer's address box starts "cmd" with Enter): no program's name.
-    if ((r.kind === "text" || r.kind === "cursor_text") && r.element && typingRefused(r, os)) {
+    if ((r.kind === "text" || r.kind === "cursor_text") && r.element && refusesTyping(TYPING_REFUSED[os], r)) {
       return never("Ember doesn't run programs, so it never types a program's name where it would start");
     }
     if (r.kind === "keys") {
