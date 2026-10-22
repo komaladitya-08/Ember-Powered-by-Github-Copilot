@@ -710,6 +710,202 @@ Ember team) and **Keyboard shortcuts**.
 | Ember can't open an app by name | Store (MSIX) apps that have no Start menu shortcut, such as the new Teams, can't be opened by name yet |
 | Ember refuses to act in a window | A Remote Desktop or WSL window (§10.8) |
 
+## 11. macOS
+
+Ember runs on macOS 13 or later, on Apple silicon; Intel Macs and macOS 13 are best effort until they are tried on
+real machines. Everything here is checked on GitHub's `macos-15` runners, and the Intel build on `macos-15-intel`
+(§13); PLAN.md §9 item 7 lists what still needs a real Mac.
+
+### 11.1 Set up
+
+Install the Xcode command line tools (`xcode-select --install`, for git), Node 22 (22.12 or later, from nodejs.org or
+Homebrew's `node@22`) and then npm 11 (`npm install -g npm@11.6.2`), and optionally the GitHub CLI for signing in
+(`brew install gh`).
+
+```bash
+git clone https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot.git ember
+cd ember
+npm ci
+npm run dev:mac
+```
+
+### 11.2 Running Ember in development, and its permissions
+
+macOS gives a permission (Accessibility, Screen Recording, Input Monitoring…) to the app it holds responsible for a
+process, not to the process itself. Which app that is depends on how Ember was started:
+
+| Started with | macOS asks for, and lists | Notes |
+|---|---|---|
+| `npm run dev` in a terminal | The terminal app: Terminal, iTerm2, or Visual Studio Code for its built-in terminal | Every program that terminal starts shares the grants. Logs print in the terminal |
+| `npm run dev:mac` | "Electron" (`node_modules/electron/dist/Electron.app`) | Builds, then starts the development Electron through LaunchServices (`open -n -W … --args "$PWD"`), as Ember.app is started. Your shell's environment variables don't reach it; logs go to `~/Library/Application Support/ember/logs/ember.log` |
+| The packaged `Ember.app` | "Ember", by its bundle id `io.github.komaladitya08.ember` | Its ad hoc signature changes with every build, so after installing a new one, remove Ember from each list with **−** and add it again |
+
+Ember's accessibility host is Ember's own binary in Node mode, started by Ember, so it shares whatever Ember gets.
+`npm run doctor` judges the terminal it runs in. The setup check in the settings window shows each permission with an
+**Open System Settings** button, which first makes macOS list Ember in that pane (macOS lists an app only once it has
+asked).
+
+### 11.3 Integration suites
+
+Each suite skips off macOS. With its variable set to 1, it fails instead of skipping when something it needs is
+missing (another OS, the backends, a permission), printing which processes macOS may hold responsible, so CI learns
+which one needed the grant. The suites only read permissions and never ask for one: a prompt nobody answers would sit
+over every later test. As CI's `macos` job runs them:
+
+```bash
+npm run build
+EMBER_DARWIN_TEST=1 node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts
+EMBER_AX_TEST=1 node scripts/run-integration.mjs test/integration/ax-sidecar-darwin.test.ts
+EMBER_MACSYS_TEST=1 node scripts/run-integration.mjs test/integration/darwin-system.test.ts test/integration/darwin-vocabulary.test.ts
+node scripts/package/stage.mjs && node scripts/package/archive.mjs
+EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-integration.mjs test/integration/ember-darwin.test.ts
+```
+
+| Suite | Variable | What it drives |
+|---|---|---|
+| `darwin-desktop` | `EMBER_DARWIN_TEST` | The window system and input against the AppKit bench (`test/fixtures/mac_bench.js`, run by `osascript`) and TextEdit: the stack, activation from a process with no UI, typing read back over AX, Command+S. It also prints the permission answers, the input source, the cost of the borrow's polling, and whether a key another process holds shows without Input Monitoring |
+| `ax-sidecar-darwin` | `EMBER_AX_TEST` | The accessibility host with the AX provider, through Ember's own client, against the bench; the same keys from a second host process |
+| `darwin-system` | `EMBER_MACSYS_TEST` | System integration: the app list, TextEdit opened through LaunchServices, the VoiceOver probe, no admin policy, Dark Mode switched through System Events and back, a red window captured at one pixel per point |
+| `darwin-vocabulary` | `EMBER_MACSYS_TEST` | The vocabularies against real windows: Terminal, Console and Calculator, System Settings' privacy pages, an administrator prompt's owner, the clipboard's password markers |
+| `ember-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | Ember itself, built and started as a login start: it shows beside the user's app without taking its place, the ask box takes keys while TextEdit stays the active app, screenshots with the password field blacked out and the overlay left out, polling under 2 ms, the packaged host's answer |
+
+On your own Mac, run them from a terminal that has Accessibility, Screen Recording and Input Monitoring (the terminal
+is the responsible app). With `EMBER_MACSYS_TEST=1`, `darwin-system` switches Dark Mode and back (macOS first asks to
+let your terminal control System Events), and `darwin-vocabulary` raises a real administrator password prompt, which
+it closes itself. The suites open windows, type and use the clipboard: leave the Mac alone while they run.
+
+**How CI grants the permissions.** Permissions live in TCC databases that System Integrity Protection guards on a
+normal Mac. GitHub's macOS runners let a job write them (SIP is off there), so `scripts/package/tcc.mjs` does it:
+
+| Command | What it writes |
+|---|---|
+| `node scripts/package/tcc.mjs grant-paths --ancestors <binary>…` | Accessibility, Screen Recording and Input Monitoring (posting and listening to events) in the system database, and Apple Events to System Events in the user's database, for each binary and for the runner's own processes above this one: CI passes the development Electron, `node`, `/bin/bash` and `/bin/zsh` |
+| `node scripts/package/tcc.mjs approve-capture <binary>…` | macOS 15's screen-capture approval, so no alert waits for an answer before the first capture |
+| `node scripts/package/tcc.mjs grant-bundle dist/package/Ember.app` | The same rows for Ember.app, by its bundle id and with the bundle's real code requirement (an ad hoc signature's requirement is its own hash, so a row without one would describe no build) |
+| `node scripts/package/tcc.mjs show` | The rows now in both databases |
+
+On a Mac of your own, grant permissions in System Settings instead. The runner's processes already hold their grants,
+so a test in one of them proves nothing about what Ember.app gets. CI therefore runs the packaged check-up the way a
+user opens Ember, through LaunchServices (`open -n -W --stdout <file> -a dist/package/Ember.app --args --doctor`),
+twice: before Ember.app's own rows exist, when the **Accessibility** and **Accessibility helper** rows must fail, and
+after, when both must pass. It also records whether key-state polling works without Input Monitoring (PLAN.md §10
+M11, departure 6).
+
+### 11.4 The AX provider
+
+Ember reads and operates Mac apps through the accessibility API (AX). Ember's main process uses AX only for its window
+system (the focused window, and bringing a window to the front), with a 0.25 s timeout, since those calls block the UI
+thread. Reading and acting on apps happens in the accessibility host (`app/sidecar-host/providers/
+ax-darwin*.ts`, koffi in the host's own process):
+
+- an app gets 0.8 s per call; one that misses it is busy for 5 s and its windows are listed as last seen, and the
+  window list asks apps within a budget, so hung apps can't hold up a request;
+- Ember's own process is never asked anything, and the system's credential and consent prompts (SecurityAgent and the
+  like) are listed but never read; password fields and hidden elements give their facts, never their values;
+- elements are keyed `<pid>:h<CFHash>`, the same in every host process while the element lives, so a password field
+  stays known as one across host restarts (two elements of one answer with the same hash get index-path keys);
+- Chromium and Electron apps build their tree only when asked: the first read sets `AXManualAccessibility` once;
+- no action raises a window, so tier 1 works in the background.
+
+The host is a child of Ember, so when LaunchServices started Ember, macOS holds Ember.app responsible for the host
+too, and one grant covers both (CI's attribution check shows it).
+
+### 11.5 Packages
+
+```bash
+npm run package:mac        # npm run build, then node scripts/package/stage.mjs and node scripts/package/archive.mjs
+```
+
+| Output | What it is |
+|---|---|
+| `dist/package/Ember.app` | Electron.app, renamed; its executable is `Contents/MacOS/Ember`; the app, notices and licences are in `Contents/Resources`; signed ad hoc |
+| `dist/package/Ember-<v>-mac-<arch>.zip` | Made with `ditto`, which keeps the frameworks' links and the signature (`zip -r` breaks both) |
+| `dist/package/Ember-<v>-mac-<arch>.dmg` | Made with `hdiutil`: Ember.app beside a link to Applications |
+
+`stage.mjs` stages for the Mac it runs on (`scripts/package/layout.mjs` says what the bundle holds). For macOS it:
+- renames the executable to `Contents/MacOS/Ember` (`CFBundleExecutable` = `Ember`). Electron's `app.isPackaged` is
+  false for an executable named "electron", and an Ember that took itself for a development build would honour the
+  `EMBER_*` switches and `--inspect`. The helper apps keep Electron's names, which Electron looks for;
+- edits `Info.plist` (`scripts/package/mac-bundle.mjs`): the name "Ember", the bundle id
+  `io.github.komaladitya08.ember` (the permissions hang on it), `LSMinimumSystemVersion` 13.0, and the texts macOS
+  shows when Ember asks for the microphone, to control System Events and to reach the local network. `LSUIElement` is
+  unset: Ember has a Dock icon and an app menu, whose Quit goes through Ember's own question while a task runs;
+- sets the fuses in the Electron Framework binary (`node scripts/package/fuses.mjs "dist/package/Ember.app/Contents/
+  Frameworks/Electron Framework.framework/Electron Framework"` lists them);
+- signs the whole bundle ad hoc last and verifies it (`codesign --verify --deep --strict`): flipping the fuses voids
+  Electron's signature, and Apple silicon kills code whose signature doesn't match. Every build is a new identity to
+  macOS, which is why permissions must be given again after an update;
+- builds one architecture, the Mac's own: an Intel `Ember.app` is built on an Intel Mac (in CI, the `macos-x64` job on
+  `macos-15-intel`, which checks with `lipo -archs` that every Mach-O file in it runs on x86_64);
+- bundles the speech models only with `--with-models`.
+
+A Developer ID signature and notarisation are out of scope (no certificates; PLAN.md §9). README.md says what
+Gatekeeper does on first start.
+
+### 11.6 Where Ember keeps things
+
+| What | Where |
+|---|---|
+| Settings | `~/Library/Application Support/ember/settings.json` |
+| Conversation (Copilot session state), only while Ember runs | `~/Library/Application Support/ember/copilot/`, id in `agent.json` beside it |
+| GitHub token (encrypted with a key kept in your login Keychain) | `~/Library/Application Support/ember/github-token.bin` |
+| Logs | `~/Library/Application Support/ember/logs/ember.log` |
+| Audit log (the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
+| Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
+| **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
+
+A copy run from the dmg or from Downloads is moved by macOS to a temporary place before it starts (App Translocation),
+so its permissions and its login item don't stick: the setup check's **Applications folder** row offers **Move to
+Applications**.
+
+### 11.7 For administrators
+
+**The policy** is the same JSON as `/etc/ember/policy.json` (§5), in `/Library/Application Support/Ember/policy.json`.
+The folder must be a real folder, not a link, that belongs to root and only root can write; the file must be a file,
+not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
+else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads this file
+only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
+
+```bash
+sudo mkdir -p "/Library/Application Support/Ember"
+sudo chown root:wheel "/Library/Application Support/Ember" && sudo chmod 755 "/Library/Application Support/Ember"
+sudo install -o root -g wheel -m 644 policy.json "/Library/Application Support/Ember/policy.json"
+```
+
+The check-up's **Organisation policy** row then says the policy is in force from that file.
+
+**Speech models for everyone**: Ember also looks in `/Library/Application Support/Ember/voice-models`, after the copy
+inside Ember.app, for the folder `node scripts/package/stage.mjs --with-models` puts in `Contents/Resources/voice-models`.
+
+### 11.8 Troubleshooting
+
+Run the check-up through LaunchServices, so that macOS judges Ember's own permissions (README.md has the commands).
+Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's permissions instead, and
+`npm run doctor` in a checkout reports your terminal's. It exits 1 when Ember can't work.
+
+| Check-up row | When it warns or fails | What to do |
+|---|---|---|
+| Operating system | Older than macOS 13 | Update macOS |
+| Compositor | macOS's window functions didn't load | Reinstall Ember |
+| Accessibility helper | The helper didn't answer, or can't read apps | Allow Ember under Accessibility, then run the check-up again |
+| Mouse and keyboard | No Accessibility permission, or an app holds secure input | Allow Ember under Accessibility; see Secure input |
+| Accessibility | Not allowed | **System Settings › Privacy & Security › Accessibility**: switch Ember on (after an update: remove it with **−** and add it again) |
+| Screen Recording | Not allowed: no screenshots, and no other apps' window titles | **Privacy & Security › Screen Recording**: switch Ember on, then quit and reopen Ember. macOS asks again about once a month: choose **Allow** |
+| Input Monitoring | Not allowed: Ember won't use the keyboard for you | **Privacy & Security › Input Monitoring**: switch Ember on |
+| Microphone access | Off for Ember | **Privacy & Security › Microphone**: switch Ember on |
+| Secure input | An app (the row names it) has secure keyboard entry on, so Ember won't use the keyboard | Close the password field, or turn off Secure Keyboard Entry there (Terminal: **Terminal › Secure Keyboard Entry**) |
+| Location | Not in the Applications folder | Quit Ember, drag it into Applications and open it from there |
+| Root | Ember runs as root | Start it as yourself |
+| Copilot, Organisation policy, Microphone, Speech models, Speaking | As on Linux; Ember speaks with macOS's own voices | — |
+
+| Symptom | Fix |
+|---|---|
+| A permission is switched on but doesn't work | A new build is a new identity to macOS: remove Ember from the list with **−** and add it again |
+| Ember can't change Dark Mode | Allow Ember to control System Events: **Privacy & Security › Automation** |
+| Ember won't type, and says to switch to a keyboard layout | An input method (Japanese, Pinyin, Korean…) is selected, and it would compose from Ember's keys. Choose a keyboard layout; Ember can still fill fields directly |
+| **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |
+| Ember can't reach your organisation's AI service on the local network (macOS 15) | Allow Ember under **Privacy & Security › Local Network** |
+
 ## Repository layout
 
 ```
