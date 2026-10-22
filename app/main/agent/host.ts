@@ -193,6 +193,26 @@ function hostOf(url: string): string | null {
   try { return new URL(url).hostname.replace(/^\[|\]$/g, "") || null; } catch { return null; }
 }
 
+/**
+ * A command runner's status line ("Starting Ubuntu…": WA's WSL runner while a stopped distro boots, `status()` and
+ * `onStatus()`) given to `show` while it says something; nothing for a runner without one. Returns the unsubscribe.
+ */
+function followStatus(runner: unknown, show: (text: string) => void): () => void {
+  const r = runner as { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void } | null | undefined;
+  if (!r || typeof r.onStatus !== "function") return () => undefined;
+  const say = (text: string | null) => {
+    if (typeof text !== "string" || !text.trim()) return;
+    try { show(text.slice(0, 200)); } catch { /* a status is only a note */ }
+  };
+  try {
+    const off = r.onStatus(say);
+    say(typeof r.status === "function" ? r.status() : null);
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
+  }
+}
+
 /** show_me where Ember can't see this screen (no window system): today's words for a session without a desktop. */
 const NO_GUIDE = "Ember can't point at things in this session (no desktop access). Explain the steps in words instead.";
 
@@ -467,6 +487,8 @@ export class AgentHost {
   private readonly taskBindings = new Map<string, TargetBinding>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
   private readonly taskDesktop = new Map<string, () => boolean>();
+  /** Each running task's hold on its command runner's status line (followStatus), let go when it finishes. */
+  private readonly taskStatus = new Map<string, () => void>();
   /**
    * What the conversation's prompt promised when it was created (§3.15): kept for its resumes (the system message is
    * kept with it), and compared with now on every request.
@@ -837,6 +859,8 @@ export class AgentHost {
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
           this.taskDesktop.delete(task.id);
+          this.taskStatus.get(task.id)?.();
+          this.taskStatus.delete(task.id);
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
           this.taskPresenters.delete(task.id);
           const said = this.remember("task", text);
@@ -871,11 +895,16 @@ export class AgentHost {
           const h = got.hands;
           const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
           if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
+          const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0);
+          // "Starting Ubuntu…" while a stopped distro boots for the task's first command: that happens while its facts are
+          // read, before any run (or command window tab) exists, so the task's bubble says it.
+          this.taskStatus.get(spec.id)?.();
+          this.taskStatus.set(spec.id, followStatus(h.commands?.runner, text => presenter.progress(text)));
           return new Worker({
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
-            settings: this.o.settings, presenter: this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0),
+            settings: this.o.settings, presenter,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
