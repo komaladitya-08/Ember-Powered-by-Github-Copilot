@@ -117,6 +117,15 @@ describe("listing the Start Menu and packaged apps", () => {
     expect(apps.filter(a => a.name === "Notepad")).toHaveLength(1);
   });
 
+  it("finds apps with Windows' terminal words: a terminal never wins a tie against an app Ember will start", () => {
+    const t = setup();
+    t.lnk(`${USER}\\A Tool.lnk`, { target: "C:\\Windows\\System32\\cmd.exe" });
+    t.lnk(`${USER}\\B Tool.lnk`, { target: "C:\\Apps\\bconsole.exe" });
+    const apps = t.apps();
+    expect(apps.find(apps.list(), "tool")?.name).toBe("B Tool");
+    expect(apps.find(apps.list(), "a tool")?.name).toBe("A Tool");
+  });
+
   it("reads shallower shortcuts first, so a top-level shortcut wins over a nested one of the same name", () => {
     const t = setup();
     t.lnk(`${USER}\\A\\Tool.lnk`, { target: "C:\\Nested\\tool.exe" });

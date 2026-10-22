@@ -285,7 +285,8 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
       if (!cache || !fresh(cache)) cache = build();
       return cache.apps;
     },
-    find: (apps, query) => findApp(apps, query),
+    // Ranked with Windows' terminal words: a terminal never wins a tie against an app Ember will start.
+    find: (apps, query) => findApp(apps, query, "win32"),
     launch(app) {
       check(app);
       const windows = d.folders.windowsDirectory();
