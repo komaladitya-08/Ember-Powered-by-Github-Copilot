@@ -91,6 +91,18 @@ describe("File Explorer opening programs on Windows", () => {
     expect(engine().decide(command("Open with", "menu")).reason).toBe(COMMAND);
     expect(engine().decide(command("Open", "menu item", { kind: "cursor_click" })).reason).toBe(COMMAND);
     for (const keys of ["Return", "space"]) expect(engine().decide(enter("Run as administrator", keys, "menu item")).reason, keys).toBe(COMMAND);
+    // A script's Open with Command Prompt runs it in a console; Open with's submenu, opened with an arrow, lists the
+    // apps that would run it (a script's interpreter).
+    expect(engine().decide(command("Open with Command Prompt")).reason).toBe(COMMAND);
+    for (const keys of ["Right", "Left"]) expect(engine().decide(enter("Open with", keys, "menu")).reason, keys).toBe(COMMAND);
+    for (const keys of ["Down", "Up", "Escape"]) expect(engine().decide(enter("Open with", keys, "menu")).reason, keys).not.toBe(COMMAND);
+  });
+
+  it("matches a command as written, whatever characters its name holds", () => {
+    const rules = [{ app: /^contoso$/, item: /\.exe$/, commands: ["java(tm) platform se binary", "a.b"] }];
+    const at = (name: string) => opensProgram(rules, { kind: "click", app: "contoso", element: { role: "menu item", name } }, KEYS.win32);
+    expect(at("Java(TM) Platform SE binary")).toBe("command");
+    for (const name of ["javatm platform se binary", "axb", "a.b.c"]) expect(at(name), name).toBeNull();
   });
 
   it("uses Explorer's other commands as before", () => {

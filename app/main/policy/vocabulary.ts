@@ -273,7 +273,8 @@ const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|
 /**
  * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
  * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
- * PowerShell commands, in Windows' main languages. An item is known by the extension its name shows: where Explorer
+ * PowerShell commands, in Windows' main languages (and a script's Open with Command Prompt, which runs it in a console,
+ * in English). An item is known by the extension its name shows: where Explorer
  * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
  * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
  * item is judged as any other. None on Linux and macOS.
@@ -285,6 +286,7 @@ export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
     item: RUNS_WHEN_OPENED,
     commands: [
       "open", "open with", "run as administrator", "run as different user", "run as a different user", "run with powershell",
+      "open with command prompt",
       "öffnen", "öffnen mit", "als administrator ausführen", "als anderer benutzer ausführen", "mit powershell ausführen",
       "ouvrir", "ouvrir avec", "exécuter en tant qu'administrateur", "exécuter en tant qu'autre utilisateur", "exécuter avec powershell",
       "abrir", "abrir con", "abrir com", "ejecutar como administrador", "ejecutar como otro usuario", "ejecutar con powershell",

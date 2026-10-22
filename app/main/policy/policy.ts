@@ -1722,8 +1722,16 @@ const ITEM_VIEW_ROLES = /^(list|table)$/;
 const SPLITS_SELECTION = /^ctrl\+(up|down|left|right|home|end|prior|next|space)$/;
 /** In an open menu a plain letter picks the item with that access key (as riskOf's menu rule says). */
 const MENU_LETTER = /^(shift\+)?[a-z0-9]$/;
-/** A rule's commands as one expression on a folded label: the whole label, an access key ("(O)") or "…" ("...") after it. */
-const commandsOf = (rule: OpensPrograms) => new RegExp(`^\\s*(${foldLabel(rule.commands.join("|"))})\\s*(\\(\\w\\))?\\s*(\\.\\.\\.)?\\s*$`, "u");
+/** Arrow keys that open a submenu (Right; Left where menus run right to left): Open with's entries run the item. */
+const SUBMENU_KEY = /^(right|left)$/;
+/**
+ * A rule's commands as one expression on a folded label: the whole label (as written: an app's name may hold "(TM)"),
+ * an access key ("(O)") or "…" ("...") after it.
+ */
+const commandsOf = (rule: OpensPrograms) => {
+  const labels = rule.commands.map(c => foldLabel(c).replace(/[.*+?^$()|[\]{}\\]/g, "\\$&"));
+  return new RegExp(`^\\s*(${labels.join("|")})\\s*(\\(\\w\\))?\\s*(\\.\\.\\.)?\\s*$`, "u");
+};
 const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
 
 /**
@@ -1734,8 +1742,8 @@ const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
  * only the focused one it is judged by, so Enter where the selection may hold others (on the view itself, or after keys
  * selected several there: Ctrl+A, Shift and an arrow), and the keys that move the keyboard off the selection or add the
  * focused item to it (Ctrl and an arrow, Ctrl+Space). "command": a command that opens or runs whatever is selected
- * (Open, Run as administrator), clicked, pressed with Enter or Space, or picked in its menu by a letter (Open's "O"):
- * what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
+ * (Open, Run as administrator), clicked, pressed with Enter or Space, opened as a submenu with an arrow (Open with), or
+ * picked in its menu by a letter (Open's "O"): what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
  */
 export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects" | "afterSelectAll" | "afterSelecting">,
   kc: KeyConventions = KEYS.linux): "item" | "selection" | "command" | null {
@@ -1750,7 +1758,9 @@ export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequ
     return item && opens && rule.item.test(normalizeLabel(name).trim()) ? "item" : null;
   }
   if (/menu/.test(role) && MENU_LETTER.test(key)) return "command";
-  if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key))) return null;
+  // Clicked, pressed with Enter or Space, or (Open with's submenu) opened with an arrow, where its entries run the item
+  // with the app they name (a script with its interpreter).
+  if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key) || SUBMENU_KEY.test(key))) return null;
   let commands = commandExpressions.get(rule);
   if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
   return commands.test(plainText(name)) ? "command" : null;
