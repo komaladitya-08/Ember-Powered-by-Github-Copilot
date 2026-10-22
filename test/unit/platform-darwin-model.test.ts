@@ -194,6 +194,13 @@ describe("the system's credential and consent prompts (M17)", () => {
       "coreautha", "coreauthd", "universalAccessAuthWarn",
     ]);
   });
+
+  it("knows them, Keychain Access and Passwords by SECURITY_APP.darwin (any case, other languages, bundle ids), but not loginwindow or an app", () => {
+    for (const owner of ["SecurityAgent", "securityagent", "Keychain Access", "Schlüsselbundverwaltung", "com.apple.keychainaccess", "Passwords", "UserNotificationCenter"]) {
+      expect(SECURITY_OWNERS.has(owner), owner).toBe(true);
+    }
+    for (const owner of ["loginwindow", "com.apple.loginwindow", "TextEdit", "Finder", "Dock", "Ember", ""]) expect(SECURITY_OWNERS.has(owner), owner).toBe(false);
+  });
 });
 
 describe("secure keyboard entry from its two signals (M18)", () => {

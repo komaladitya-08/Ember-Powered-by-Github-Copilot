@@ -455,4 +455,17 @@ describe("the sidecar host on the macOS AX provider (the bench as AX describes i
     const listed = await call<{ windows: AxWindow[] }>("list_windows");
     expect(listed.windows.find(w => w.pid === BENCH)).toMatchObject({ busy: true, name: "Ember Bench (macOS)" });
   });
+
+  it("reports a credential prompt as a dialog and Mission Control as an overview in shell_overlays, and the desktop picture not", async () => {
+    const { fake, call } = hostOn();
+    // The desktop picture: the Dock's, below every window (the provider lists windows without desktop elements anyway).
+    const wallpaper = { id: 7, pid: 354, owner: "Dock", title: "Desktop Picture", bounds: at(0, 0, 1440, 900), layer: -2147483624, alpha: 1 };
+    fake.extraWindows = [wallpaper];
+    expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });
+    fake.extraWindows = [{ id: 34, pid: 88, owner: "SecurityAgent", title: "", bounds: at(500, 300, 440, 280), layer: 1000, alpha: 1 }, wallpaper];
+    expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "dialog", name: "", text: "", bounds: at(500, 300, 440, 280) }], complete: true });
+    fake.extraWindows = [{ id: 8, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 }, wallpaper];
+    expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "overview", name: "", text: "", bounds: null }], complete: true });
+    expect(fake.pidsAsked.has(88) || fake.pidsAsked.has(354)).toBe(false);
+  });
 });

@@ -11,6 +11,7 @@
 
 import type { Rect, StackedWindow, X11Window } from "../types";
 import { OVERLAY_TITLE } from "../../perception/windows";
+import { SECURITY_APP } from "../../policy/vocabulary";
 
 export { OVERLAY_TITLE };
 
@@ -62,11 +63,19 @@ export const SYSTEM_OWNERS: ReadonlySet<string> = new Set([
  * this computer using accessibility features" (universalAccessAuthWarn), privacy (TCC) prompts
  * (UserNotificationCenter), Gatekeeper (CoreServicesUIAgent), passkey and AutoFill sheets
  * (AuthenticationServicesAgent) and the screen saver's lock (ScreenSaverEngine). A screenshot or click while the
- * Accessibility prompt is up is the self-approval path to avoid. TODO(port): read SECURITY_APP.darwin from
- * policy/vocabulary.ts once that file exists, so perception, this list and the accessibility host's shell_overlays
- * can't drift (design §8.4).
+ * Accessibility prompt is up is the self-approval path to avoid.
+ *
+ * has() answers from SECURITY_APP.darwin (policy/vocabulary.ts), the one list the policy and the accessibility host's
+ * shell_overlays read too, so the three can't drift (design §8.4): any case, other languages and bundle ids, Keychain
+ * Access and the Passwords app included. Not loginwindow: it is a prompt only while it covers a display (the lock
+ * screen, which the session's lock state and the host's own check tell). Listing gives the names above, as
+ * CoreGraphics reports them.
  */
-export const SECURITY_OWNERS: ReadonlySet<string> = new Set([
+export const SECURITY_OWNERS: ReadonlySet<string> = new (class extends Set<string> {
+  has(owner: string): boolean {
+    return !/^(com\.apple\.)?loginwindow$/i.test(owner.trim()) && !!SECURITY_APP.darwin?.test(owner.trim());
+  }
+})([
   "SecurityAgent", "coreautha", "coreauthd", "universalAccessAuthWarn", "UserNotificationCenter", "CoreServicesUIAgent",
   "AuthenticationServicesAgent", "ScreenSaverEngine",
 ]);
