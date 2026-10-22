@@ -2205,9 +2205,19 @@ reg(NATIVE, ["let"], h => { h.e.unclear("unclear.arithmetic-command", "Its arith
 reg(NATIVE, ["hash"], h => { if (h.args.some(a => a.v !== null && /^-[A-Za-z]*p/.test(a.v))) h.e.unclear("unclear.hash", "It changes which program a name runs."); });
 
 reg(NATIVE, ["command"], h => {
-  if (h.args.some(a => a.v === "-p")) { h.e.unclear("unclear.command-p", "Ember can't tell which program this runs."); return; }
-  if (h.args.some(a => a.v === "-v" || a.v === "-V")) return;
-  h.e.unwrap(h, h.args[0]?.v === "--" ? h.args.slice(1) : h.args, "command");
+  // command [-pVv] [--] program [args]: only the options before the program are command's own; `command rm -v x`
+  // runs rm, while `command -v rm` only says where rm is.
+  let k = 0;
+  const own: string[] = [];
+  for (; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (v === "--") { k++; break; }
+    if (v === null || !/^-[A-Za-z]+$/.test(v)) break;
+    own.push(v);
+  }
+  if (own.some(o => o.includes("p"))) { h.e.unclear("unclear.command-p", "Ember can't tell which program this runs."); return; }
+  if (own.some(o => /[vV]/.test(o))) return;
+  h.e.unwrap(h, h.args.slice(k), "command");
 });
 reg(NATIVE, ["exec"], h => {
   const p = parseOpts(h.args, { shortValue: "a", stopAtOperand: true });

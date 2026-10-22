@@ -9460,6 +9460,44 @@
    "classes": [
     "secret"
    ]
+  },
+  {
+   "cmd": "command rm -v -rf build",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "command -- rm -rf build -V",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "command git push -v",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "git.push"
+   ]
+  },
+  {
+   "cmd": "command -V git",
+   "verdict": "run"
+  },
+  {
+   "cmd": "command make -p",
+   "verdict": "run"
   }
  ]
 }
