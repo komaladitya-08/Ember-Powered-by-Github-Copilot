@@ -6,7 +6,8 @@ import { runAskpass } from "../../app/askpass/main";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { BOOTSTRAP_SCRIPT } from "../../app/main/remote/bootstrap";
 import { createConnections, type ConnectionsInternals, type ExecResult } from "../../app/main/remote/connections";
-import { RemoteError, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
+import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
+import { acquireLock, type LockIo } from "../../app/remote/lock";
 import { checkIncoming, Deadline, escalationMs, runLinkCore, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
 import type { Msg } from "../../app/main/remote/protocol";
 import { ConnectError, type ConnectProgress, type HostRecord, type Mux, type PromptUi } from "../../app/main/remote/types";
@@ -712,5 +713,106 @@ describe("the link's pieces", () => {
     await expect(link.request("cmd.facts", {}, { timeoutMs: 10 })).rejects.toMatchObject({ code: "timeout" });
     await expect(link.request("cmd.git", { cwd: "x".repeat(10_000) })).rejects.toMatchObject({ code: "bad_request" });
     expect(posted.filter(m => m.t === "req")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The seams with the link's users (INT): SC reads a channel's bytes after the answer that names it, and SB's agent may
+// wait for this PC's previous agent before it answers hello.
+
+describe("the link as its users rely on it (INT)", () => {
+  /** A link over a port the test feeds as the worker would. */
+  const fedLink = () => {
+    let toMain: ((m: FromWorker) => void) | null = null;
+    const port: LinkPort = { post: () => undefined, onMessage: fn => { toMain = fn; return () => { toMain = null; }; }, onExit: () => () => undefined, terminate: async () => undefined };
+    const link = new WorkerLink(port, { id: "l", hostId: "h" });
+    const bytes = (channel: number, data: number[] | Uint8Array) => {
+      const b = data instanceof Uint8Array ? data : Uint8Array.from(data);
+      toMain?.({ t: "bytes", channel, bytes: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer });
+    };
+    const state = (s: "ready" | "stalled" | "lost" | "closed") => toMain?.({ t: "state", state: s });
+    return { link, bytes, state };
+  };
+
+  it("hands a channel's bytes that came first to its first listener, in order, before onBytes returns", () => {
+    const { link, bytes } = fedLink();
+    bytes(3, [1, 2]);
+    bytes(3, [3]);
+    bytes(4, [9]);
+    const got: number[] = [];
+    const off = link.onBytes(3, b => got.push(...b));
+    expect(got).toEqual([1, 2, 3]);
+    bytes(3, [4]);
+    expect(got).toEqual([1, 2, 3, 4]);
+    off();
+    // Channel 4's bytes stay held for its own listener.
+    const four: number[] = [];
+    link.onBytes(4, b => four.push(...b));
+    expect(four).toEqual([9]);
+  });
+
+  it("drops the bytes of a channel whose listeners all left, and never holds them again", () => {
+    const { link, bytes } = fedLink();
+    bytes(5, [1]);
+    // dropChannel's way: subscribe and leave at once.
+    link.onBytes(5, () => undefined)();
+    bytes(5, [2, 3]);
+    const late: number[] = [];
+    link.onBytes(5, b => late.push(...b));
+    expect(late).toEqual([]);
+  });
+
+  it("drops a channel past its bound, so its reader gets nothing and times out (fail closed)", () => {
+    const { link, bytes } = fedLink();
+    const chunk = new Uint8Array(1024 * 1024);
+    for (let i = 0; i < HELD_CHANNEL_BYTES / chunk.length; i++) bytes(6, chunk);
+    bytes(6, [1]);
+    let got = 0;
+    link.onBytes(6, b => { got += b.length; });
+    expect(got).toBe(0);
+    // Every channel's held bytes count towards one total too.
+    for (let ch = 10; ch < 10 + HELD_TOTAL_BYTES / HELD_CHANNEL_BYTES; ch++) for (let i = 0; i < HELD_CHANNEL_BYTES / chunk.length; i++) bytes(ch, chunk);
+    bytes(20, [7]);
+    let twenty = 0;
+    link.onBytes(20, b => { twenty += b.length; });
+    expect(twenty).toBe(0);
+  });
+
+  it("lets held bytes go when the link is lost", () => {
+    const { link, bytes, state } = fedLink();
+    bytes(7, [1, 2, 3]);
+    state("lost");
+    let got = 0;
+    link.onBytes(7, b => { got += b.length; });
+    expect(got).toBe(0);
+  });
+
+  it("waits for hello longer than the agent may wait for this PC's previous agent (a reconnect can't time out by design)", async () => {
+    // The agent's own lock (SB): this PC's previous agent never lets go; the new one waits, SIGTERMs, waits, SIGKILLs.
+    for (const grace of [3, 20, 120]) {
+      let clock = 0;
+      const io: LockIo = {
+        create: () => false, read: () => `4242 77 ${PC_ID}\n`, remove: () => undefined, startOf: () => "77",
+        kill: () => undefined, sleep: async ms => { clock += ms; }, now: () => clock,
+      };
+      await expect(acquireLock({ file: "/s/lock", me: { pid: 1, start: "1", pcId: PC_ID }, graceMs: grace * 1000, io, log: { debug() {}, info() {}, warn() {}, error() {}, child() { return this; }, file: "" } })).rejects.toThrow();
+      // 50 rounds of the full wait is the lock giving up altogether; one round is what a hello can meet.
+      const oneRound = clock / 50;
+      expect(helloTimeoutMs(grace)).toBeGreaterThanOrEqual(oneRound + 10_000);
+    }
+    expect(helloTimeoutMs(20)).toBeGreaterThan(25_000);
+  });
+
+  it("asks hello with that timeout (this PC's grace), not §5.4's plain 20 s", async () => {
+    const spy = vi.spyOn(WorkerLink.prototype, "request");
+    try {
+      const r = track(rig({ admin: { policy: AdminPolicySchema.parse({ ssh: { commandGraceSeconds: 60 } }), source: "/etc/ember/policy.json" } }));
+      await r.conns.connect(record(), { interactive: true });
+      const call = spy.mock.calls.find(c => c[0] === "hello");
+      expect(call?.[2]).toMatchObject({ timeoutMs: helloTimeoutMs(60) });
+      expect(helloTimeoutMs(60)).toBe(75_000);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
