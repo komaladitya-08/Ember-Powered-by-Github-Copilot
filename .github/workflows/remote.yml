@@ -296,13 +296,16 @@ jobs:
         with:
           distribution: Ubuntu-22.04
           wsl-version: 1
-          additional-packages: openssh-server util-linux python3
+          additional-packages: openssh-server util-linux python3 git
       - name: sshd in the distro on port 2222
         shell: wsl-bash {0}
         run: |
           ssh-keygen -A
           mkdir -p /run/sshd
           setsid /usr/sbin/sshd -p 2222 < /dev/null > /dev/null 2>&1 &
+      - name: What wsl.test.ts expects here (WSL1, setup-wsl's root default user, running for sshd)
+        run: |
+          printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=1" "EMBER_WSL_EXPECT_ROOT=1" >> "$GITHUB_ENV"
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
@@ -345,12 +348,19 @@ jobs:
           distribution: Ubuntu-22.04
           wsl-version: 2
           wsl-shell-user: ember
+          # systemd on: newer WSL then registers interop as WSLInterop-late (critique wsl-19a); WSL1's job has it off.
           wsl-conf: |
             [user]
             default=ember
-          additional-packages: util-linux python3
-      - name: The distro restarts so its default user (ember, not root) applies
+            [boot]
+            systemd=true
+          additional-packages: util-linux python3 git
+      - name: The distro restarts so its default user (ember, not root) and systemd apply; it stays stopped
         run: wsl.exe --terminate Ubuntu-22.04
+      - name: What wsl.test.ts expects here (WSL2, a non-root default user the registry doesn't know, stopped at start)
+        run: |
+          printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=2" "EMBER_WSL_EXPECT_ROOT=0" \
+            "EMBER_WSL_EXPECT_STOPPED=1" "EMBER_WSL_EXPECT_SYSTEMD=1" >> "$GITHUB_ENV"
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
