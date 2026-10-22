@@ -474,6 +474,29 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
   });
 
+  it("asks again when SA finds another machine before uploading anything, then connects afresh on a yes (once)", async () => {
+    const changed = () => new ConnectError("build-01 is a different computer than the one you allowed, so Ember asks again before it connects.", "machine-changed");
+    const r = rig({ settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
+    r.conns.connect.mockImplementationOnce(async () => { throw changed(); });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: true });
+    expect(r.cards.map(c => c.body[0])).toEqual([expect.stringMatching(/isn't the computer Ember connected to before/)]);
+    expect(r.conns.connect).toHaveBeenCalledTimes(2);
+    // The second try went without the old machine, and the new one is remembered.
+    expect(r.conns.connect.mock.calls[1][0].machineIdHash).toBeUndefined();
+    expect(r.settings.get().targets.hosts[0].machineIdHash).toBe("a".repeat(64));
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
+    // Not now: nothing changes; and the card is asked once per click, never in a loop.
+    const no = rig({ consent: "no", settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
+    no.failConnect(changed());
+    await expect(no.invoke(TARGETS_IPC.act, no.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: "Not now." });
+    expect(no.settings.get().targets.hosts[0].machineIdHash).toBe("b".repeat(64));
+    const twice = rig({ settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
+    twice.failConnect(changed());
+    await expect(twice.invoke(TARGETS_IPC.act, twice.home, { kind: "connect", hostId: "build-01" })).resolves.toMatchObject({ ok: false });
+    expect(twice.cards).toHaveLength(1);
+    expect(twice.conns.connect).toHaveBeenCalledTimes(2);
+  });
+
   it("makes this install's id at first use, once", () => {
     const r = rig();
     expect(r.settings.get().targets.pcId).toBe("");
@@ -710,6 +733,18 @@ describe("WSL targets", () => {
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
+  });
+
+  it("says in the active line which distro 'WSL' means when the default one is hidden (§2.3 rule 5)", async () => {
+    // Docker's distro was the default: WA leaves it out, so none listed is the default.
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ isDefault: false }), ubuntu({ name: "Debian", isDefault: false })]), settings: { ...wslOnSettings, ...commandsOn("wsl:Ubuntu") } });
+    await flush();
+    expect(r.t.agent.activeLine()).toBe("(Ember is set to work on this computer: apps. \"WSL\" means Ubuntu (WSL). Commands: off for this computer; on in Ubuntu (WSL); off in Debian (WSL).)");
+    const b = r.t.agent.bind({ userWords: "list my files in WSL" });
+    expect(b.ok && b.binding.id).toBe("wsl:Ubuntu");
+    const plain = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { ...wslOnSettings, ...commandsOn("wsl:Ubuntu") } });
+    await flush();
+    expect(plain.t.agent.activeLine()).not.toContain("\"WSL\" means");
   });
 
   it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {

@@ -587,8 +587,11 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
     }
     refresh();
   }
-  /** Connects a host the user chose (settings, an offer, the picker): its card first when needed, then the link. */
-  async function connect(hostId: string, o: { interactive: boolean; activate: boolean }): Promise<ActResult> {
+  /**
+   * Connects a host the user chose (settings, an offer, the picker): its card first when needed, then the link. `again`:
+   * the second try after the user said yes to a changed machine's card.
+   */
+  async function connect(hostId: string, o: { interactive: boolean; activate: boolean; again?: boolean }): Promise<ActResult> {
     if (!sshAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember on other computers." };
     if (!connections) return { ok: false, message: "Ember can't connect to other computers here." };
     const conn = connections;
@@ -654,6 +657,19 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
       return { ok: true };
     } catch (err) {
       if (abort.signal.aborted) return stopped("Cancelled.");
+      // SA found another computer under this name after its probe, before uploading anything (§7.4): the card again
+      // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
+      if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
+        const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
+        if (!(await askCard(card))) return stopped("Not now.");
+        const now = hostOf(hostId);
+        if (abort.signal.aborted || !now) return stopped("Cancelled.");
+        const { machineIdHash: _was, ...rest } = now;
+        try { saveHost({ ...rest, consent: consentGiven("ssh", parts.now()) }); } catch (e) { log.warn("targets.host_save_failed", { err: e }); return fail(`Ember couldn't connect to ${label}.`); }
+        c.state = "closed";
+        c.abort = null;
+        return connect(hostId, { ...o, again: true });
+      }
       if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
       log.warn("targets.connect_failed", { err });
       return fail(`Ember couldn't connect to ${label}.`);
@@ -1107,6 +1123,10 @@ export function buildTargets(deps: TargetsDeps, parts: TargetsParts): TargetsRun
         out.push(`Ember is set to work ${where}${conn}: ${e.can}.`);
       }
       if (others.length) out.push(`Also connected: ${others.map(o => o.label).join(", ")}.`);
+      // WSL's default distro is hidden (a tool's): "WSL" names the first visible one, and the line says which (§2.3 rule 5).
+      const def = defaultDistro(wslFacts);
+      const wslMeans = def && !def.isDefault ? live.find(x => x.kind === "wsl" && x.distro?.name === def.name) : undefined;
+      if (wslMeans) out.push(`"WSL" means ${wslMeans.label}.`);
       out.push(`Commands: ${live.map(commandsWords).join("; ")}.`);
       return `(${out.join(" ")})`;
     } catch (err) {
