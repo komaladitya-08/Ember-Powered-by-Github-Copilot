@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepLocal, sweepScript, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
+import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepArgs, sweepLocal, sweepScript, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
 
 const RUN = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
@@ -9,6 +9,15 @@ describe("the sweep script fed to a distro's or a remote's shell", () => {
   it("is §3.13's fixed text, run as sh -s -- <SIGNAL> <runId> with nothing on its argv", () => {
     expect(sweepScript).toBe('for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null && kill -$1 "${p#/proc/}" 2>/dev/null; done\n');
     expect(sweepScript).not.toContain(RUN);
+  });
+
+  it("gets the signal without SIG (dash refuses kill -SIGTERM) and only a run id as its two arguments", () => {
+    expect(sweepArgs("SIGINT", RUN)).toEqual(["INT", RUN]);
+    expect(sweepArgs("SIGTERM", RUN)).toEqual(["TERM", RUN]);
+    expect(sweepArgs("SIGKILL", RUN)).toEqual(["KILL", RUN]);
+    expect(() => sweepArgs("SIGSTOP", RUN)).toThrow();
+    expect(() => sweepArgs("SIGKILL", `${RUN}; rm -rf ~`)).toThrow();
+    expect(() => sweepArgs("SIGKILL", ".*")).toThrow();
   });
 });
 

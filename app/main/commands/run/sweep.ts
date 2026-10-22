@@ -11,13 +11,27 @@ import type { OS } from "../../../shared/shortcuts";
 
 /**
  * The in-distro / remote sweep (§3.13, critique wsl-18), fed on stdin to `/bin/sh -s -- <SIGNAL> <runId>` (never on an
- * argv): every process whose environment holds exactly `EMBER_RUN_ID=<runId>` gets `kill -<SIGNAL>`. The shell running
- * it must not carry that variable itself.
+ * argv; `sweepArgs` makes the two words: INT, TERM or KILL, without SIG): every process whose environment holds exactly
+ * `EMBER_RUN_ID=<runId>` gets `kill -<SIGNAL>`. The shell running it must not carry that variable itself.
  */
 export const sweepScript = 'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null && kill -$1 "${p#/proc/}" 2>/dev/null; done\n';
 
 /** A run id as RunSpec makes them: 16 lower-case hex digits. */
 export const RUN_ID = /^[0-9a-f]{16}$/;
+
+/** The signals the ladder's sweeps send. */
+const SWEEP_SIGNALS: ReadonlySet<string> = new Set(["SIGINT", "SIGTERM", "SIGKILL"]);
+
+/**
+ * sweepScript's two arguments (after `/bin/sh -s --`) for a ladder step: the signal without its SIG prefix (dash's
+ * `kill -SIGTERM` is "Illegal option -S", so the sweep would signal nothing) and the run id. Throws on anything else,
+ * so nothing but these two words can reach the script.
+ */
+export function sweepArgs(signal: NodeJS.Signals, runId: string): [string, string] {
+  if (!SWEEP_SIGNALS.has(signal)) throw new Error(`the sweep doesn't send ${String(signal)}`);
+  if (!RUN_ID.test(runId)) throw new Error("not a run id");
+  return [signal.slice(3), runId];
+}
 
 /** Whether a NUL-separated environment block (`/proc/<pid>/environ`) holds exactly `EMBER_RUN_ID=<runId>` as an entry. */
 export function environHasRun(environ: Uint8Array, runId: string): boolean {

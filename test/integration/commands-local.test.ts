@@ -12,7 +12,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -22,6 +22,7 @@ import type { OS } from "../../app/shared/shortcuts";
 import type { Logger } from "../../app/main/logger";
 import type { CommandRunner, RunExit, RunnerFacts, RunningCommand, RunSpec } from "../../app/main/commands/types";
 import { createLocalRunner, createRunner, isKeptRun, type KeptRun } from "../../app/main/commands/run/local";
+import { sweepArgs, sweepScript } from "../../app/main/commands/run/sweep";
 import { extraBinDirs } from "../../app/main/platform/darwin/system/index";
 import { loadWin32System } from "../../app/main/platform/win32/system/ffi";
 
@@ -311,6 +312,22 @@ describe.runIf(required && platform === "linux")("commands on Linux", () => {
     expect(Date.now() - t0).toBeLessThan(300);
     await expect(a.exit).resolves.toMatchObject({ ended: "killswitch" });
     await expect(b.exit).resolves.toMatchObject({ ended: "killswitch" });
+  });
+
+  it("ends a marked process with the in-distro sweep script fed to /bin/sh on stdin (WSL's and a remote's sweep)", async () => {
+    const runId = randomBytes(8).toString("hex");
+    const marked = spawn("sleep", ["1000"], { env: { PATH: process.env.PATH, EMBER_RUN_ID: runId }, stdio: "ignore", detached: true });
+    const other = spawn("sleep", ["1000"], { env: { PATH: process.env.PATH, EMBER_RUN_ID: `${runId}0` }, stdio: "ignore", detached: true });
+    try {
+      await waitFor("the marked sleep", () => carriers(runId).includes(marked.pid ?? -1), 2000);
+      const sh = spawn("/bin/sh", ["-s", "--", ...sweepArgs("SIGTERM", runId)], { env: { PATH: process.env.PATH }, stdio: ["pipe", "ignore", "ignore"] });
+      sh.stdin.end(sweepScript);
+      await new Promise(resolve => sh.on("exit", resolve));
+      await waitFor("the marked sleep to end", () => !alive(marked.pid ?? -1), 2000);
+      expect(alive(other.pid ?? -1)).toBe(true);
+    } finally {
+      for (const p of [marked, other]) p.kill("SIGKILL");
+    }
   });
 
   it("inspects real paths and reads git's push facts", async () => {
