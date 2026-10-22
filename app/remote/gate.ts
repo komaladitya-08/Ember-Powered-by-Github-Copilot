@@ -5,6 +5,11 @@
  * all (critique security-3): any finding of the remote's own classification whose class or rule the PC's stamp
  * doesn't name means the two machines disagree, so it asks, for a stamp of "run" and of "announce" alike. Ages are
  * measured on the PC (`ageMs`); no clock is compared across machines (critique integration-6). Pure over its inputs.
+ *
+ * A shell script the command runs is read here, on this machine's own filesystem, and judged with the same rules as
+ * on the PC (L8, the lead's ruling; app/main/commands/scripts.ts): the PC can't see this machine's files, so its stamp
+ * never covers what a script does, and any finding in one asks. A script this task wrote or downloaded here that
+ * can't be read in full asks too (the padding bypass), from the agent's own memory of the task's commands.
  */
 
 import { createHash } from "node:crypto";
@@ -14,6 +19,7 @@ import type { ActionKind, ActionRequest, Decision, TextMode } from "../main/poli
 import { normalizeLabel } from "../main/policy/policy";
 import { ALWAYS_ASK } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
+import { judgeScripts, type TaskWrites } from "../main/commands/scripts";
 import type { ClassifyCommand } from "./contracts";
 
 /** An approval older than this no longer counts (a question expires at 120 s anyway). */
@@ -25,6 +31,13 @@ const SAYS_MAX = 10;
 const LINE_MAX = 500;
 /** inspect() gets this long before every path counts as "couldn't tell". */
 export const INSPECT_MS = 5000;
+/**
+ * Reading the command's scripts (and inspecting their paths): one read or inspect at most SCRIPT_MS, all of them at
+ * most SCRIPTS_MS (the run must start within serve.ts's RUN_START_MAX_MS of its request); a script left unread then
+ * counts as unreadable.
+ */
+export const SCRIPT_MS = 2000;
+export const SCRIPTS_MS = 3000;
 
 /** The words gate 2 answers with (Ember's own, sentence case). */
 export const GATE_WORDS = {
@@ -66,7 +79,17 @@ export interface CommandGateInput {
   facts: RunnerFacts;
   classify: ClassifyCommand;
   inspect: (paths: string[], cwd: string) => Promise<PathFact[]>;
+  /** A shell script's text from this machine's filesystem (readScriptText); absent: no script is read (L8 as before). */
+  readScript?: (path: string, cwd: string) => Promise<string | null>;
+  /** What this task's earlier commands downloaded and wrote here (the agent's own memory); absent: nothing yet. */
+  task?: { downloaded: ReadonlySet<string>; written: TaskWrites };
+  now?: () => number;
 }
+
+/** The widening judgeScripts tags a script's findings with. */
+const IN_SCRIPT = "in-script";
+/** A finding's rule id as gate 2 asks for it and the stamp must name it: a script's findings have their own. */
+export const ruleOf = (f: Finding): string => (f.widening.includes(IN_SCRIPT) ? `${IN_SCRIPT}:${f.rule}` : f.rule);
 
 /** inspect() within INSPECT_MS, else every path "couldn't tell" (which counts as existing). */
 async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[], cwd: string): Promise<PathFact[]> {
@@ -88,8 +111,9 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * own classification with its own facts and real paths (a refusal denies; root asks without a yes); then every finding
  * the stamp doesn't cover asks, carrying this machine's card lines and rules. A finding is covered when the stamp
  * names its rule and its class (never for an always-ask class: secret, escape, unclear), or, after the user's yes, its
- * rule (the PC resends with the rules a needs_confirm
- * carried once the user said yes to them, §3.8.3 step 13). An approval older than 120 s counts as none.
+ * rule (the PC resends with the rules a needs_confirm carried once the user said yes to them, §3.8.3 step 13). A
+ * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
+ * id. An approval older than 120 s counts as none.
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const { spec } = i;
@@ -108,8 +132,9 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   if (stamp.verdict === "ask" && !approval) asks.push(GATE_WORDS.approvalMissing);
   if (i.mode === "ask" && !approval) asks.push(GATE_WORDS.adminAsks);
 
+  const downloaded = i.task?.downloaded ?? new Set<string>();
   const ctx: ClassifyContext = {
-    os: i.facts.os, home: i.facts.home, cwd: spec.cwd, ember: i.facts.ember, downloaded: new Set(),
+    os: i.facts.os, home: i.facts.home, cwd: spec.cwd, ember: i.facts.ember, downloaded,
     ...(i.facts.wsl ? { wsl: { mountRoot: i.facts.wsl.mountRoot, windows: i.facts.wsl.windows } } : {}),
   };
   let cls = i.classify(spec.command, spec.shell, ctx);
@@ -127,6 +152,12 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   });
   // The second pass judges the real paths too (§3.8.3 step 5); never a third.
   if ([...real].some(([p, r]) => p !== r)) cls = i.classify(spec.command, spec.shell, { ...ctx, real });
+  // The scripts it runs, read here (L8): their refusals refuse, their findings join (the stamp never covers them).
+  const read = i.readScript;
+  cls = await judgeScripts(cls, read ? { read: (p, cwd) => read(p, cwd), inspect: (paths, cwd) => inspectSoon(i.inspect, paths, cwd) } : null, i.classify, {
+    os: i.facts.os, home: i.facts.home, ember: i.facts.ember, wsl: i.facts.wsl, downloaded, written: i.task?.written ?? null, paths: byPath,
+    isOver: () => false, probeMs: SCRIPT_MS, budgetMs: SCRIPTS_MS, ...(i.now ? { now: i.now } : {}),
+  });
   if (cls.refuse) return { status: "deny", reason: line(cls.refuse.says) || GATE_WORDS.mismatch };
   if (i.facts.privileged && !approval) asks.push(GATE_WORDS.root);
 
@@ -134,10 +165,15 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const findings = cls.findings.filter(f => !(f.ifExists && byPath.get(f.ifExists)?.exists === false));
   // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
   // "run" or "announce" no PC should send) covers nothing of it.
-  const covered = (f: Finding) => stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls)));
+  // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that
+  // carried it, under its own rule id: the PC's rule for `rm -r build` (announced or approved) never covers the same
+  // rule inside the script it runs.
+  const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
+    ? approval !== null && stamp.rules.includes(ruleOf(f))
+    : stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
-    const rules = [...new Set(extra.map(f => f.rule))].slice(0, 64);
+    const rules = [...new Set(extra.map(ruleOf))].slice(0, 64);
     return {
       status: "needs_confirm",
       reason: extra.length ? GATE_WORDS.disagree : asks[0],

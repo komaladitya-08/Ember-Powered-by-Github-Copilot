@@ -215,6 +215,18 @@ describe.skipIf(!run)("Ember over SSH, end to end on this machine (INT)", { time
     expect(pcAsked().map(a => a.card?.command)).toEqual(["rm -rf ~/ember-e2e-nothing-here"]);
   });
 
+  it("reads a script there in its own check (the PC can't): a deleting script asks once more, and runs on the yes", async () => {
+    expect(sshRun(`mkdir -p "$HOME/${work}/b2" && printf 'rm -r b2\\n' > "$HOME/${work}/s.sh"`).code).toBe(0);
+    asked.length = 0;
+    const r = await runCommand(target, "sh s.sh");
+    expect(pcAsked()).toEqual([]);
+    const theirs = asked.filter(remoteAsk);
+    expect(theirs).toHaveLength(1);
+    expect(theirs[0].card!.says.some(l => /In s\.sh: .*b2/.test(l)), theirs[0].card!.says.join(" | ")).toBe(true);
+    expect(r.resultType).toBe("success");
+    expect(sshRun(`test -e "$HOME/${work}/b2" && echo there || echo gone`).stdout.trim()).toBe("gone");
+  });
+
   it("stops a running command there with the kill switch's Stop", async () => {
     asked.length = 0;
     const stop = new AbortController();

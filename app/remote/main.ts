@@ -22,6 +22,7 @@ import { createLogger, type Logger, type LogLevel } from "../main/logger";
 import { journalSink } from "../main/policy/audit";
 import { createMux } from "../main/remote/mux";
 import { emberNamesRegExp } from "../main/remote/protocol";
+import { readScriptText } from "../main/commands/run/inspect";
 import { createLocalRunner } from "../main/commands/run/local";
 import { loadRemotePolicy, PolicyWatch } from "./admin";
 import { createRemoteAudit, type AuditSource } from "./audit";
@@ -230,6 +231,8 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     ember,
     runs,
     inspect: (paths, cwd) => local.inspect(paths, cwd),
+    // Gate 2 reads a shell script on this machine as the PC does on its own (L8): a regular file of at most 64 KiB.
+    readScript: (p, cwd) => readScriptText(p, cwd, { os: o.agentOs }),
     git: cwd => local.gitFacts(cwd),
     classify: CONTRACTS.classifyCommand,
     audit,

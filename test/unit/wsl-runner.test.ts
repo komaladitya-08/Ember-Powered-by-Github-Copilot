@@ -10,11 +10,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
-import type { JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
+import type { CommandCard, CommandService, JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
+import { runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
   createWslRunner, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
-  parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
+  parseInspect, parseScriptRead, READ_SCRIPT, runnerFacts, SCRIPT_MARKER, SCRIPT_READ_BYTES, SCRIPT_READ_MS, scriptInput, SWEEP_SCRIPT, toWslPath,
+  windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
 import { fakeLog, fakeSpawn, flush, forbiddenOptions, answerWith, utf16, type SpawnCall } from "./wsl-wa-fakes";
@@ -239,7 +241,9 @@ function hereDoc(script: string): string[] {
 /** A distro behind a fake wsl.exe and job host. Runs (anything not a fixed script) are left for the test to drive. */
 function distro(o: {
   facts?: string; listed?: WslDistro | null; running?: boolean; jobHost?: JobHostRef | null; sweepNames?: Record<string, string[]>;
-  hang?: ("facts" | "boot" | "KILL" | "TERM")[]; inspect?: (lines: string[]) => string | null; git?: string;
+  hang?: ("facts" | "boot" | "KILL" | "TERM" | "read")[]; inspect?: (lines: string[]) => string | null; git?: string;
+  /** What READ_SCRIPT prints for a path (null: it fails with exit 3, as for a missing or non-regular file). */
+  read?: (path: string) => Buffer | string | null;
   /** What the service's cached running set says (default: the distro's real state). */
   cachedRunning?: boolean;
   /** runningNow() answers only once this settles. */
@@ -271,6 +275,11 @@ function distro(o: {
         } else if (script === "true\nexit\n") {
           boots.push(call);
           if (!o.hang?.includes("boot")) answerWith(call, { stdout: "" });
+        } else if (script.includes(READ_SCRIPT)) {
+          if (o.hang?.includes("read")) return;
+          const out = o.read ? o.read(hereDoc(script)[0]) : null;
+          if (out === null) answerWith(call, { code: 3 });
+          else answerWith(call, { stdout: Buffer.concat([SCRIPT_MARKER, Buffer.isBuffer(out) ? out : Buffer.from(out, "utf8")]) });
         } else if (script.includes("rev-parse")) {
           answerWith(call, { stdout: o.git ?? "branch=main\npush=\nupstream=origin/main\n" });
         } else {
@@ -740,6 +749,116 @@ describe("WSL runner: inspect and git facts", () => {
     const r = await w.runner.runScript("IFS= read -r p; wslpath -a -u \"$p\"", { lines: ["C:\\Program Files\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py"] });
     expect(r).toMatchObject({ code: 0 });
     expect(hereDoc(w.probes.at(-1)!.child.stdinText())).toEqual(["C:\\Program Files\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py"]);
+  });
+});
+
+describe("WSL runner: reading a script before it runs (L8, the lead's ruling)", () => {
+  it("sends the path as here-document data from /, joined to the command's folder but not normalised, and decodes the bytes", async () => {
+    const seen: string[] = [];
+    const w = distro({ read: p => { seen.push(p); return "rm -rf build\n"; } });
+    expect(await w.runner.readScript("/home/ana/t.sh", "/srv")).toBe("rm -rf build\n");
+    expect(await w.runner.readScript("sub/../t.sh", "/home/ana/proj/")).toBe("rm -rf build\n");
+    // The shell opens `sub/../t.sh` through sub's real folder: so does realpath in the distro.
+    expect(seen).toEqual(["/home/ana/t.sh", "/home/ana/proj/sub/../t.sh"]);
+    const call = w.probes.at(-1)!;
+    expect(call.wsl).toEqual(["-d", "Ubuntu", "--cd", "/", "--exec", "/bin/sh", "-s"]);
+    expect(call.child.stdinText()).toContain(READ_SCRIPT);
+    const sent = call.child.stdinText();
+    expect(sent.indexOf("/home/ana/proj/sub/../t.sh")).toBeGreaterThan(sent.indexOf("<<'EMBER_DATA_"));
+  });
+
+  it("reads only a regular file outside /dev, /proc and /sys, by its real path too, at most one byte over the cap", () => {
+    expect(READ_SCRIPT).toContain('[ -f "$p" ] || exit 3');
+    expect(READ_SCRIPT).toContain('for x in "$p" "$r"; do case "$x" in /dev|/dev/*|/proc|/proc/*|/sys|/sys/*) exit 3;; esac; done');
+    expect(READ_SCRIPT).toContain('case "$p" in /*) ;; *) exit 3;; esac');
+    // Read by the path as written (the kernel follows the links the shell will): `$(realpath …)` drops a name's trailing
+    // line breaks, so reading the resolved form of a link to `x<LF>` would read `x` (checked under dash and bash).
+    expect(READ_SCRIPT).toContain(`dd if="$p" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`);
+    expect(READ_SCRIPT).not.toMatch(/if="\$r"|-f "\$r"/);
+    expect(SCRIPT_READ_BYTES).toBe(65_537);
+    // The path never reaches the script's text: it is data only.
+    expect(READ_SCRIPT).not.toMatch(/\/home\//);
+  });
+
+  it("keeps a byte order mark, reads UTF-16 by its mark, and answers null past the cap or without the marker", () => {
+    const at = (b: Buffer) => parseScriptRead(Buffer.concat([Buffer.from("wsl: a warning\n"), SCRIPT_MARKER, b]));
+    expect(at(Buffer.from("\uFEFF#!/bin/sh\necho hi\n", "utf8"))).toBe("\uFEFF#!/bin/sh\necho hi\n");
+    expect(at(utf16("rm -rf build\n", true))).toBe("\uFEFFrm -rf build\n");
+    expect(at(Buffer.alloc(65_536, 0x61))).toHaveLength(65_536);
+    expect(at(Buffer.alloc(65_537, 0x61))).toBeNull();
+    expect(at(Buffer.alloc(0))).toBe("");
+    expect(parseScriptRead(Buffer.from("rm -rf build\n"))).toBeNull();
+  });
+
+  it("answers null when the file can't be read whole: missing or not a regular file, too big, or a path it can't send", async () => {
+    const w = distro({ read: p => (p === "/home/ana/big.sh" ? Buffer.alloc(65_537, 0x61) : null) });
+    expect(await w.runner.readScript("/home/ana/fifo.sh", "/home/ana")).toBeNull();
+    expect(await w.runner.readScript("big.sh", "/home/ana")).toBeNull();
+    const calls = w.calls.length;
+    expect(await w.runner.readScript("a\nb.sh", "/home/ana")).toBeNull();
+    expect(await w.runner.readScript("t.sh", "proj")).toBeNull();
+    expect(await w.runner.readScript("", "/home/ana")).toBeNull();
+    expect(await w.runner.readScript(`/${"x".repeat(4100)}`, "/")).toBeNull();
+    expect(w.calls).toHaveLength(calls);
+  });
+
+  it("never starts a stopped distro to read a script", async () => {
+    const w = distro({ running: false, read: () => "echo hi\n" });
+    const statuses: (string | null)[] = [];
+    w.runner.onStatus(t => void statuses.push(t));
+    expect(await w.runner.readScript("/home/ana/t.sh", "/home/ana")).toBeNull();
+    expect(w.calls).toHaveLength(0);
+    expect(statuses).toEqual([]);
+  });
+
+  it("is what the command flow reads: `sh t.sh` in a distro asks when t.sh deletes, and runs when it doesn't", async () => {
+    setCommandJudge(null);
+    const flowIn = (script: string) => {
+      const w = distro({ read: p => (p === "/home/ana/t.sh" ? script : null) });
+      const asked: CommandCard[] = [];
+      const service: CommandService = {
+        binding: { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", screenOs: "win32", shellOs: "linux", desktop: "screen" },
+        capability: () => ({ state: "on", askEvery: null }), shells: () => ["bash", "sh"], runner: w.runner,
+        window: { showCard: () => undefined, hideCard: () => undefined, cardReady: () => false, announce: async () => false, cancelAnnounce: () => undefined, attach: () => undefined },
+        consented: () => undefined, userAskEvery: () => false, mode: () => "on",
+      };
+      const ctx: CommandFlowContext = {
+        task: { id: "t1", title: "Build", commandWords: () => "", agreed: () => [], tainted: () => false, taint: () => undefined, readFrom: () => [] },
+        service,
+        confirmer: { ask: async (q: { panel?: { card: CommandCard } }) => { if (q.panel) asked.push(q.panel.card); return "deny"; } } as never,
+        presenter: { announce: () => undefined, endAnnouncement: () => undefined } as never,
+        audit: () => undefined, log: fakeLog(), signal: new AbortController().signal, isOver: () => false,
+        state: { cwd: null, downloaded: new Set(), running: false }, size: () => ({ cols: 100, rows: 30 }), emberPids: () => [],
+      };
+      return { w, asked, run: () => runCommandTool({ target: "Ubuntu", command: "sh t.sh", why: "to build" }, ctx) };
+    };
+    try {
+      const del = flowIn("rm -rf build\n");
+      expect((await del.run()).resultType).toBe("denied");
+      expect(del.asked[0].says.some(l => /^In t\.sh: .*build/.test(l)), del.asked[0].says.join(" | ")).toBe(true);
+      expect(del.w.runs).toHaveLength(0);
+      const ok = flowIn("echo building\n");
+      void ok.run();
+      await until(() => ok.w.runs.length === 1);
+      expect(ok.asked).toEqual([]);
+    } finally {
+      setCommandJudge(null);
+    }
+  });
+
+  it("gives up after 5 s", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = distro({ hang: ["read"] });
+      const got = w.runner.readScript("/home/ana/t.sh", "/home/ana");
+      await vi.advanceTimersByTimeAsync(SCRIPT_READ_MS - 1);
+      expect(w.probes.at(-1)!.child.killed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await got).toBeNull();
+      expect(w.probes.at(-1)!.child.killed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

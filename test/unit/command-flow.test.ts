@@ -12,6 +12,7 @@ import {
   scriptLanguage,
 } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
+import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
   Classification, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandService, DecideInput, GitFacts, PathFact, RunExit, RunnerFacts,
   RunningCommand, RunSpec,
@@ -375,6 +376,162 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
   });
 });
 
+describe("a script of the task's own that can't be read in full (L8's padding bypass)", () => {
+  /** CL's own judge on this computer; `texts` serves readScript by path (missing: unreadable, as past the cap). */
+  const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; real?: (p: string) => string; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    /** Paths the target says exist (a test adds what its earlier commands made). */
+    const existing = new Set<string>();
+    const h = harness({
+      binding: LOCAL, answers: o.answers ?? ["deny", "deny", "deny"], state: o.state ?? { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+      paths: p => ({ exists: existing.has(p) || (o.exists ? o.exists(p) : false), real: o.real ? o.real(p) : p }),
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads, existing });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+  const UNREAD = "It runs t.sh, which this task wrote or downloaded, and Ember can't read all of it first.";
+
+  it("asks before running a script an earlier command wrote when it can't be read in full, however it is run", async () => {
+    for (const run of ["sh t.sh", "bash t.sh", "./t.sh", "source t.sh", "env X=1 ./t.sh"]) {
+      const h = own();
+      // The padding: the script grows past the 64 KiB cap, then gets its payload; writing a new file is ordinary.
+      expect((await local(h, "printf '%70000s' > t.sh")).resultType, run).toBe("success");
+      expect((await local(h, "echo 'rm -rf ~' >> t.sh")).resultType, run).toBe("success");
+      expect([...h.ctx.state.written!.paths], run).toEqual(["/home/ana/proj/t.sh"]);
+      h.existing.add("/home/ana/proj/t.sh");
+      const r = await local(h, run);
+      expect(r.resultType, run).toBe("denied");
+      expect(h.starts, run).toHaveLength(2);
+      expect((h.asked.at(-1)!.panel as { card: CommandCard }).card.says, run).toContain(UNREAD);
+      expect(h0rules(h), run).toContain("unclear.script-unread");
+    }
+  });
+
+  it("keeps L8 for a script the task didn't write: a repository's large ./configure runs", async () => {
+    const h = own();
+    expect((await local(h, "./configure")).resultType).toBe("success");
+    expect((await local(h, "sh configure")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    // Writing elsewhere doesn't make it the task's own.
+    expect((await local(h, "echo hi > notes.txt")).resultType).toBe("success");
+    expect((await local(h, "./configure")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+
+  it("reads a script the task wrote that fits, and judges it as any other: ordinary runs, deleting asks", async () => {
+    const ok = own({ "/home/ana/proj/t.sh": "echo building\n" });
+    await local(ok, "printf 'echo building' > t.sh");
+    expect((await local(ok, "sh t.sh")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+    const bad = own({ "/home/ana/proj/t.sh": "rm -rf build\n" });
+    await local(bad, "printf 'rm -rf build' > t.sh");
+    expect((await local(bad, "sh t.sh")).resultType).toBe("denied");
+    expect(h0rules(bad)).not.toContain("unclear.script-unread");
+  });
+
+  it("counts what cp, mv, tee and sed -i wrote, and the folders an archive unpacked into", async () => {
+    const T = "/home/ana/proj/t.sh";
+    for (const [first, second, made] of [
+      ["cp /tmp/pad.sh t.sh", "sh t.sh", T], ["mv /tmp/pad.sh t.sh", "./t.sh", T], ["echo x | tee t.sh", "sh t.sh", T], ["sed -i 's/a/b/' t.sh", "sh t.sh", T],
+      ["tar -xzf deps.tgz -C /tmp/deps", "sh /tmp/deps/t.sh", "/tmp/deps/t.sh"], ["unzip a.zip -d /tmp/a", "sh /tmp/a/t.sh", "/tmp/a/t.sh"],
+      ["gunzip -k /tmp/data/t.sh.gz", "sh /tmp/data/t.sh", "/tmp/data/t.sh"],
+    ]) {
+      const h = own({}, { exists: p => p === "/tmp/pad.sh" });
+      expect((await local(h, first)).resultType, first).toBe("success");
+      h.existing.add(made);
+      expect((await local(h, second)).resultType, `${first}; ${second}`).toBe("denied");
+      expect(h0rules(h), `${first}; ${second}`).toContain("unclear.script-unread");
+    }
+    // An unpack into /tmp/deps leaves another folder's script alone.
+    const other = own({}, { exists: () => true });
+    await local(other, "tar -xzf deps.tgz -C /tmp/deps");
+    expect([...other.ctx.state.written!.paths].sort()).toEqual(["/home/ana/proj", "/tmp/deps"]);
+    expect((await local(other, "sh /srv/tools/big.sh")).resultType).toBe("success");
+  });
+
+  it("counts every script once a command wrote where Ember can't tell (a checkout), or ran code it couldn't see", async () => {
+    const h = own();
+    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect(h.ctx.state.written!.anywhere).toBe(true);
+    // Nothing there (PowerShell's `.\\t` names t.bat and t.cmd too): nothing to read, nothing to ask.
+    expect((await local(h, "sh missing.sh")).resultType).toBe("success");
+    h.existing.add("/home/ana/proj/configure");
+    expect((await local(h, "./configure")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+  });
+
+  it("never takes a program in a folder only root changes for the task's own after a checkout: `#!/usr/bin/python3` runs", async () => {
+    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: () => true });
+    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect(h.ctx.state.written!.anywhere).toBe(true);
+    expect((await local(h, "./x.py")).resultType).toBe("success");
+    expect(h.reads).toContain("/usr/bin/python3");
+    expect(h.asked).toEqual([]);
+    // /usr/local is the user's on many Macs: still the task's own once it wrote where Ember couldn't tell.
+    expect((await local(h, "./y")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+  });
+
+  it("rootOwned: /usr (not /usr/local), /bin, /lib…, and Windows' own folders, from WSL too", () => {
+    const posixEnv = comparePaths("linux", "/mnt");
+    for (const p of ["/usr/bin/python3", "/bin/sh", "/lib64/ld.so", "/System/Library/x", "/mnt/c/Windows/System32/x.exe", "/mnt/d/Program Files (x86)/x"]) expect(rootOwned(p, posixEnv), p).toBe(true);
+    for (const p of ["/usr/local/bin/i", "/opt/homebrew/bin/i", "/home/ana/usr/bin/x", "/mnt/c/Users/ana/x", "/usrx/bin"]) expect(rootOwned(p, posixEnv), p).toBe(false);
+    const winEnv = comparePaths("win32");
+    expect(rootOwned("C:\\Windows\\System32\\x.exe", winEnv)).toBe(true);
+    expect(rootOwned("c:\\program files\\Git\\bin\\sh.exe", winEnv)).toBe(true);
+    expect(rootOwned("C:\\Users\\ana\\x.ps1", winEnv)).toBe(false);
+  });
+
+  it("counts a script inside a folder this task downloaded, reached through a #! line", async () => {
+    const h = own({ "/home/ana/proj/t": "#!/home/ana/tools/i.sh\necho hi\n" }, {
+      state: { cwd: "/home/ana/proj", downloaded: new Set(["/home/ana/tools"]), running: false }, exists: () => true,
+    });
+    expect((await local(h, "./t")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    expect(h.reads).toEqual(["/home/ana/proj/t", "/home/ana/tools/i.sh"]);
+  });
+
+  it("remembers a write through a link where it lands: the script by its real name is the task's own", async () => {
+    // l → /home/ana/proj: `> l/t.sh` writes /home/ana/proj/t.sh.
+    const h = own({}, { real: p => p.replace(/^\/home\/ana\/proj\/l(?=\/|$)/, "/home/ana/proj") });
+    expect((await local(h, "printf '%70000s' > l/t.sh; echo 'rm -rf ~' >> l/t.sh")).resultType).toBe("success");
+    expect([...h.ctx.state.written!.paths].sort()).toEqual(["/home/ana/proj/l/t.sh", "/home/ana/proj/t.sh"]);
+    h.existing.add("/home/ana/proj/t.sh");
+    expect((await local(h, "sh t.sh")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    // And the other way round: written by its real name, run through the link.
+    const back = own({}, { real: p => p.replace(/^\/home\/ana\/proj\/l(?=\/|$)/, "/home/ana/proj") });
+    await local(back, "printf '%70000s' > t.sh");
+    back.existing.add("/home/ana/proj/l/t.sh");
+    expect((await local(back, "sh l/t.sh")).resultType).toBe("denied");
+    expect(h0rules(back)).toContain("unclear.script-unread");
+  });
+
+  it("remembers only what ran: a write the user said no to doesn't make the file the task's own", async () => {
+    const h = own({}, { exists: () => true, answers: ["deny"] });
+    expect((await local(h, "printf '%70000s' > t.sh")).resultType).toBe("denied");
+    expect(h.ctx.state.written).toBeUndefined();
+    expect((await local(h, "sh t.sh")).resultType).toBe("success");
+  });
+
+  it("asks when one script of a command writes another it runs, or the command line writes a script a script runs", async () => {
+    const pair = own({ "/home/ana/proj/a.sh": "printf '%70000s' > b.sh\n", "/home/ana/proj/b.sh": "echo old\n" });
+    expect((await local(pair, "sh a.sh && sh b.sh")).resultType).toBe("denied");
+    expect(h0rules(pair)).toContain("unclear.script-written");
+    const nested = own({ "/home/ana/proj/a.sh": "sh b.sh\n", "/home/ana/proj/b.sh": "echo old\n" });
+    expect((await local(nested, "echo 'rm -rf ~' > b.sh; sh a.sh")).resultType).toBe("denied");
+    expect(h0rules(nested)).toContain("unclear.script-written");
+    // A script that writes only its own output runs.
+    const fine = own({ "/home/ana/proj/a.sh": "echo built > out.txt\n", "/home/ana/proj/b.sh": "cat out.txt\n" });
+    expect((await local(fine, "sh a.sh && sh b.sh")).resultType).toBe("success");
+    // What a script wrote is the task's own afterwards.
+    expect([...fine.ctx.state.written!.paths]).toEqual(["/home/ana/proj/out.txt"]);
+  });
+});
+
 describe("the target echo check (§3.2)", () => {
   it("normalises names as §2.3 does: case, spacing, punctuation and spoken numbers", () => {
     expect(normalName("Build 01")).toBe("build01");
@@ -507,6 +664,50 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     const wsl = makeJudge();
     await call(harness({ binding: WSL }), { target: "Ubuntu" });
     expect(wsl.classified[0][2].ember.pids).toEqual([10, 4242]);
+  });
+
+  it("shows \"Starting Ubuntu…\" while the first command's facts boot the distro, before the run has a tab, then on the tab", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL, run: () => ({ hang: true }) });
+    const events: string[] = [];
+    const fns = new Set<(t: string | null) => void>();
+    let status: string | null = null;
+    const say = (t: string | null) => { status = t; for (const fn of [...fns]) fn(t); };
+    const runner = h.ctx.service.runner;
+    const facts = runner.facts.bind(runner);
+    Object.assign(runner, {
+      status: () => status,
+      onStatus: (fn: (t: string | null) => void) => { fns.add(fn); return () => { fns.delete(fn); }; },
+      // The facts boot the stopped distro: "Starting Ubuntu…" until they come.
+      facts: async () => { say("Starting Ubuntu…"); await tick(); await tick(); say(null); return facts(); },
+    });
+    const w = h.ctx.service.window as unknown as { pending: (task: string, t: string | null) => void; note: (id: string, t: string | null) => void; attach: (...x: unknown[]) => void };
+    w.pending = (task, t) => { events.push(`pending ${task} ${t}`); };
+    w.note = (id, t) => { events.push(`note ${id === h.starts[0]?.runId ? "run" : id} ${t}`); };
+    const attach = w.attach;
+    w.attach = (...x) => { events.push("attach"); attach(...x); };
+    const pending = call(h, { target: "Ubuntu" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    // The run's own boot (a distro stopped since its facts) shows on its tab.
+    say("Starting Ubuntu…");
+    say(null);
+    expect(events).toEqual(["pending t1 Starting Ubuntu…", "pending t1 null", "attach", "note run Starting Ubuntu…", "note run null"]);
+    h.runs[0].stop("user");
+    await pending;
+    expect(fns.size).toBe(0);
+  });
+
+  it("says nothing before the tab when the distro already runs, and works with a window that has no pending line", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL });
+    const events: string[] = [];
+    Object.assign(h.ctx.service.runner, { status: () => null, onStatus: () => () => undefined });
+    (h.ctx.service.window as unknown as { pending: (task: string, t: string | null) => void }).pending = (task, t) => { events.push(`${task} ${t}`); };
+    expect((await call(h, { target: "Ubuntu" })).resultType).toBe("success");
+    expect(events).toEqual([]);
+    const bare = harness({ binding: WSL });
+    Object.assign(bare.ctx.service.runner, { status: () => "Starting Ubuntu…", onStatus: () => () => undefined });
+    expect((await call(bare, { target: "Ubuntu" })).resultType).toBe("success");
   });
 
   it("shows the runner's status (\"Starting Ubuntu…\") on the run's tab until the run ends", async () => {

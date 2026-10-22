@@ -371,8 +371,10 @@ first click **Allow**.
 ### 4.5 Commands on build-01
 
 They follow §2. build-01's helper also checks each command with its own rules and its own administrator's policy;
-when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words). Both
-computers record the command in their audit logs.
+when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words). A shell
+script the command runs (`sh build.sh`, `./tools/gen.sh`) is read by that check on build-01, not by this computer, which
+can't see build-01's files: anything dangerous in the script asks this way, and so does a script this task wrote or
+downloaded there that can't be read in full. Both computers record the command in their audit logs.
 
 If the connection goes silent, the bubble says "build-01 isn't answering" — "Its running commands stop in 20 s unless
 the link comes back. Nothing new is sent meanwhile.", so a network blip doesn't kill a long build. The stop chord ends

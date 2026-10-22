@@ -26,21 +26,19 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
-import { classifyCommand, type ClassificationExtra, type ScriptRef } from "./classify";
+import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
-import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
-import posix from "node:path/posix";
-import win32 from "node:path/win32";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
+import { judgeScripts, newTaskWrites, noteWrites, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId, type Finding,
+  type RunSpec, type ShellId,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -65,10 +63,11 @@ export interface CommandFlowContext {
   signal: AbortSignal;
   isOver: () => boolean;
   /**
-   * The task's folder and downloads on this target (kept by the worker across calls). `outputTainted` (the flow's own):
-   * a command's output tainted the task, so the card says so in its own words (§3.8.4).
+   * The task's folder and downloads on this target (kept by the worker across calls). The flow's own: `outputTainted`
+   * (a command's output tainted the task, so the card says so in its own words, §3.8.4) and `written` (what the task's
+   * commands wrote, so a script of its own that can't be read in full asks: L8's padding bypass).
    */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean };
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -78,6 +77,7 @@ export interface CommandFlowContext {
 }
 
 export type { SecretTracker, ShapeOptions };
+export { scriptLanguage, type ScriptLanguage } from "./scripts";
 
 /** CL's pure functions the flow calls (§3.11's export block: exactly CL's signatures). */
 export interface CommandJudge {
@@ -287,141 +287,11 @@ async function factsOf(ctx: CommandFlowContext): Promise<RunnerFacts | null> {
   return facts;
 }
 
-/** How the flow reads a script's text (L8, the lead's ruling). */
-export type ScriptLanguage =
-  /** Classify the text in each of these shells (`sh` is dash on some systems and bash on others: both). */
-  | { kind: "shells"; shells: ShellId[] }
-  /** A shell whose language Ember can't read (fish, csh…): the command asks. */
-  | { kind: "unclear"; says: string }
-  /** The `#!` line names an interpreter by path that may itself be a script: read that next. */
-  | { kind: "follow"; path: string }
-  /** Not a shell script (a program, a Python or Node script): today's behaviour (L8) unchanged. */
-  | { kind: "none" };
-
-const BOTH_SH: ShellId[] = ["sh", "bash"];
-
-/**
- * How to read a script's text, given how the command runs it (ScriptRef.as). Run directly ("shebang"), the kernel
- * reads the `#!` line (`#!/usr/bin/env -S bash -e` names bash); a text file without one is run by the calling shell
- * (bash and zsh do that when exec says it isn't a program), and one with a NUL in its first line is a program.
- */
-export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguage {
-  switch (as) {
-    case "bash": case "zsh": return { kind: "shells", shells: [as] };
-    case "sh": return { kind: "shells", shells: BOTH_SH };
-    case "powershell": return { kind: "shells", shells: ["powershell"] };
-    case "cmd": return { kind: "shells", shells: ["cmd"] };
-    case "shebang": break;
-  }
-  if (!text.startsWith("#!")) {
-    const first = text.slice(0, 80).split("\n")[0];
-    return first.includes("\0") ? { kind: "none" } : { kind: "shells", shells: BOTH_SH };
-  }
-  const words = text.slice(2).split("\n")[0].trim().split(/[ \t]+/);
-  let prog = words[0] ?? "";
-  const baseOf = (w: string): string => (w.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.exe$/, "");
-  if (baseOf(prog) === "env") {
-    // env's options (-S splits the rest into words, -i, -u NAME) and NAME=value assignments come before the program.
-    let k = 1;
-    for (; k < words.length; k++) {
-      const w = words[k];
-      if (/^-[A-Za-z]*S./.test(w)) { words[k] = w.replace(/^-[A-Za-z]*S/, ""); break; }
-      if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") { k++; continue; }
-      if (!w.startsWith("-") && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) break;
-    }
-    prog = words[k] ?? "";
-  }
-  const name = baseOf(prog);
-  const posixShell = POSIX_SHELLS[name];
-  if (posixShell) return { kind: "shells", shells: posixShell === "sh" ? BOTH_SH : [posixShell] };
-  if (name === "pwsh" || name === "powershell") return { kind: "shells", shells: ["powershell"] };
-  if (OTHER_SHELLS.has(name)) return { kind: "unclear", says: `It runs a ${name} script, which Ember can't read.` };
-  // An interpreter by path (`#!/home/ana/i.sh`, `#!/usr/bin/env ./i.sh`) is followed: a script there runs this one; a
-  // program there isn't a script and stops. A bare name env looks up (python3) is an interpreter: L8 unchanged.
-  if (prog.includes("/")) return { kind: "follow", path: prog };
-  return { kind: "none" };
-}
-
-/** At most this many scripts are read for one command, nested ones included; at most this deep. More asks. */
-const MAX_SCRIPT_READS = 16;
-const MAX_SCRIPT_DEPTH = 4;
-
-/**
- * Reads each shell script the command runs and classifies its text as a nested command (L8, the lead's ruling): the
- * script's own refusal, findings and downloads join the command's, and so do those of the scripts it runs in turn.
- * Findings are tagged "in-script" (and say which script) so the user's words for the command never announce a
- * script: every dangerous script asks. A script runs in the command's folder, so its relative paths resolve there.
- * Each script's paths are inspected as the command's are (§3.8.3 step 5: an overwrite of a file that isn't there is
- * dropped, a symbolic link is judged by where it leads), and their facts join the decision's.
- * The runner may not read scripts (a remote or WSL runner today): then nothing is read and the command's own
- * classification stands, as the ruling allows; so does a script that can't be read, is too big or isn't a shell's.
- */
-async function judgeScripts(cls: Classification, runner: CommandRunner, j: CommandJudge, env: {
-  os: OS; home: string; ember: ClassifyContext["ember"]; wsl: RunnerFacts["wsl"]; downloaded: Set<string>; paths: Map<string, PathFact>;
-  /** The task was stopped (Stop, the kill switch): read no more. */
-  isOver: () => boolean;
-}): Promise<Classification> {
-  const refs = (cls as Partial<ClassificationExtra>).scripts ?? [];
+/** A runner's script reading (the CommandRunner extension of L8's ruling), as judgeScripts takes it; null without one. */
+function scriptIo(runner: CommandRunner): ScriptIo | null {
   const read = (runner as CommandRunner & { readScript?(path: string, cwd: string): Promise<string | null> }).readScript;
-  if (refs.length === 0 || typeof read !== "function") return cls;
-  const flavour = env.os === "win32" ? win32 : posix;
-  const extra: Finding[] = [];
-  const downloads: string[] = [];
-  let refuse = cls.refuse;
-  const unclear = (rule: string, says: string): void => {
-    if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening: ["in-script"], at: -1 });
-  };
-  const queue = refs.map(ref => ({ ref, depth: 1 }));
-  const seen = new Set<string>();
-  let reads = 0;
-  while (queue.length > 0 && !env.isOver()) {
-    const { ref, depth } = queue.shift()!;
-    const key = `${ref.as}\0${ref.path}\0${ref.cwd}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (depth > MAX_SCRIPT_DEPTH || ++reads > MAX_SCRIPT_READS) {
-      unclear("unclear.scripts", "It runs more scripts, or scripts deeper inside scripts, than Ember reads first.");
-      break;
-    }
-    const raw = await within(read.call(runner, ref.path, ref.cwd || flavour.dirname(ref.path)), PROBE_MS, null);
-    if (typeof raw !== "string" || raw === "") continue;
-    // PowerShell skips a byte order mark; a POSIX shell or cmd reads it as part of the first word (it stays, and asks).
-    const text = ref.as === "powershell" ? raw.replace(/^\uFEFF/, "") : raw;
-    const lang = scriptLanguage(ref.as, text);
-    if (lang.kind === "none") continue;
-    if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says); continue; }
-    if (lang.kind === "follow") {
-      // A relative interpreter is found from the folder the command runs in.
-      if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
-      const path = flavour.isAbsolute(lang.path) ? lang.path : flavour.join(ref.cwd, lang.path);
-      queue.push({ ref: { path, as: "shebang", cwd: ref.cwd }, depth: depth + 1 });
-      continue;
-    }
-    const name = flavour.basename(ref.path);
-    const sctx: ClassifyContext = {
-      os: env.os, home: env.home, cwd: ref.cwd, ember: env.ember, downloaded: env.downloaded,
-      ...(env.wsl ? { wsl: { mountRoot: env.wsl.mountRoot, windows: env.wsl.windows } } : {}),
-    };
-    for (const shell of lang.shells) {
-      let inner = j.classifyCommand(text, shell, sctx);
-      const wanted = [...new Set([...inner.probe, ...inner.findings.flatMap(f => (f.ifExists === undefined ? [] : [f.ifExists]))])].slice(0, 64);
-      const probe = wanted.filter(p => !env.paths.has(p));
-      const found = await inspect(runner, probe, ref.cwd || flavour.dirname(ref.path));
-      probe.forEach((p, i) => env.paths.set(p, found[i]));
-      const real = new Map<string, string>();
-      for (const p of wanted) { const r = env.paths.get(p)?.real ?? null; if (r !== null && r !== p) real.set(p, r); }
-      if (real.size) inner = j.classifyCommand(text, shell, { ...sctx, real });
-      refuse ??= inner.refuse;
-      for (const f of inner.findings) {
-        const says = `In ${name}: ${f.says}`;
-        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script"] });
-      }
-      downloads.push(...inner.downloads);
-      for (const next of (inner as Partial<ClassificationExtra>).scripts ?? []) queue.push({ ref: next, depth: depth + 1 });
-    }
-  }
-  if (!refuse && extra.length === 0 && downloads.length === 0) return cls;
-  return { ...cls, refuse, findings: [...cls.findings, ...extra], downloads: [...new Set([...cls.downloads, ...downloads])] };
+  if (typeof read !== "function") return null;
+  return { read: (path, cwd) => read.call(runner, path, cwd), inspect: (paths, cwd) => runner.inspect(paths, cwd) };
 }
 
 /** Each path's facts, all unknown when the target doesn't answer in time (§3.8.3 step 5). */
@@ -646,14 +516,17 @@ export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext)
   if (a.cwd !== undefined && /[\0\r\n]/.test(a.cwd)) return fail("The folder can't hold a NUL character or a line break.");
   if (ctx.state.running) return fail("This task's last command is still running: wait for its result.");
   ctx.state.running = true;
+  // "Starting Ubuntu…" while the facts boot a stopped distro, before the run has a tab (§3.8.3 step 3).
+  const endPending = followPending(ctx.service, ctx.task.id);
   try {
-    return await flow(a, ctx);
+    return await flow(a, ctx, endPending);
   } finally {
+    endPending();
     ctx.state.running = false;
   }
 }
 
-async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
+async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () => void): Promise<ToolResultObject> {
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
@@ -741,8 +614,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
 
   // Step 6b (L8, the lead's ruling): a shell script the command runs (`sh x.sh`, `./x.sh`, `cmd x.bat`, `powershell
   // -File x.ps1`) is read from the target and its text classified as a nested command, so a dangerous script asks and
-  // a refusal refuses. Unreadable, too big or not a shell script leaves today's behaviour.
-  cls = await judgeScripts(cls, svc.runner, j, { os: facts.os, home, ember, wsl: facts.wsl, downloaded: ctx.state.downloaded, paths, isOver: () => ctx.isOver() });
+  // a refusal refuses. Unreadable, too big or not a shell script leaves today's behaviour, unless the task itself wrote
+  // or downloaded it (the padding bypass): then it asks.
+  cls = await judgeScripts(cls, scriptIo(svc.runner), (text, sh, c) => j.classifyCommand(text, sh, c), {
+    os: facts.os, home, ember, wsl: facts.wsl, downloaded: ctx.state.downloaded, written: ctx.state.written ?? null, paths, isOver: () => ctx.isOver(),
+  });
   if (ctx.isOver()) return STOPPED();
 
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.
@@ -772,6 +648,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
+  // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
+  endPending();
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
@@ -1010,13 +888,54 @@ function followStatus(svc: CommandService, runId: string): () => void {
   }
 }
 
+/** The command window's line for a task whose command has no tab yet (UI's extension; absent: only the bubble says it). */
+export interface CommandWindowPending {
+  /** Shows `text` for task `taskId` until it is replaced or cleared with null. */
+  pending(taskId: string, text: string | null): void;
+}
+
 /**
- * Notes what a run that started may have downloaded, whatever its end (D4.3 f: running a file downloaded in this task
- * asks): a download cut short by a later part of the line failing, a Stop or the time limit can still leave the file
- * on disk, and a later `bash x.sh` must not count it as the user's own.
+ * The runner's status line ("Starting Ubuntu…": WA's WSL runner while the first command's facts boot a stopped distro)
+ * while the flow reads the target's facts and checks the command, before the run has a tab: shown through the command
+ * window's `pending` when it has one (the task's bubble says it too: host.ts); cleared when the checks end. Once the run
+ * has its tab, followStatus notes the status there. Returns the unsubscribe (safe to call more than once).
+ */
+function followPending(svc: CommandService, taskId: string): () => void {
+  const runner = svc.runner as CommandService["runner"] & { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void };
+  const window = svc.window as CommandService["window"] & Partial<CommandWindowPending>;
+  if (typeof runner.onStatus !== "function" || typeof window.pending !== "function") return () => undefined;
+  let shown = false;
+  const show = (text: string | null) => {
+    const t = typeof text === "string" && text ? text.slice(0, 200) : null;
+    if (t === null && !shown) return;
+    shown = t !== null;
+    try { window.pending!(taskId, t); } catch { /* a note is only a note */ }
+  };
+  let off: () => void = () => undefined;
+  try {
+    off = runner.onStatus(show);
+    show(runner.status?.() ?? null);
+  } catch {
+    // a runner that can't say: nothing is shown
+  }
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    try { off(); } catch { /* already gone */ }
+    show(null);
+  };
+}
+
+/**
+ * Notes what a run that started may have downloaded and written, whatever its end (D4.3 f: running a file downloaded
+ * in this task asks; L8's padding bypass: a script of the task's own that can't be read in full asks): a download or a
+ * write cut short by a later part of the line failing, a Stop or the time limit can still leave the file on disk, and
+ * a later `bash x.sh` must not count it as the user's own.
  */
 function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   for (const p of cls.downloads) ctx.state.downloaded.add(p);
+  noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 
 /** Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. */
