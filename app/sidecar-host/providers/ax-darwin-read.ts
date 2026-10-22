@@ -580,6 +580,13 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
   const visit = (ref: AxRef, parent: number, depth: number, path: number[], clip: Rect | null, ctx: RoleContext): void => {
     const first = nodes.length === 0 && parent < 0;
     if (!first && late()) { s.api.release(ref); return; }
+    if (!first && nodes.length >= o.maxNodes) {
+      // A sibling's subtree took the room left: what is after it waits for the next read.
+      cut.add("nodes");
+      stop = true;
+      s.api.release(ref);
+      return;
+    }
     let f: Facts;
     try {
       f = s.facts(ref);

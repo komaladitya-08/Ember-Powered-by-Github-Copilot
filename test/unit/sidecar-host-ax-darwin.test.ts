@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AX_ERROR } from "../../app/main/platform/darwin/ax";
 import { Host } from "../../app/sidecar-host/host";
 import type { RawNode, RawWindow } from "../../app/sidecar-host/provider";
 import { AxDarwinProvider, KEY_MODE, coversDisplay } from "../../app/sidecar-host/providers/ax-darwin";
@@ -126,6 +127,17 @@ describe("the macOS AX provider's window list", () => {
     expect(later.find(w => w.pid === 5500)).toMatchObject({ title: "Other" });
     expect(later.find(w => w.pid === 5500)!.busy).toBeUndefined();
     expect(later.find(w => w.pid === 5500)!.handle).toBeGreaterThan(0);
+  });
+
+  it("keeps nothing of an app that stops answering between its windows (no handle is left behind)", async () => {
+    const app: AppSpec = { pid: 5800, owner: "Two", windows: [
+      { role: "AXWindow", title: "One", frame: at(0, 0, 300, 300), windowId: 9201 },
+      { role: "AXWindow", title: "Two", frame: at(400, 0, 300, 300), windowId: 9202, failOn: { attrs: AX_ERROR.cannotComplete } },
+    ] };
+    const { fake, p, windows } = await started([app]);
+    expect(windows.map(w => [w.key, w.busy, w.handle])).toEqual([["9201", true, 0], ["9202", true, 0]]);
+    expect(p.live).toBe(0);
+    expect(fake.outstanding).toBe(0);
   });
 
   it("matches a window to its CGWindowID by frame, then title, when _AXUIElementGetWindow can't say", async () => {

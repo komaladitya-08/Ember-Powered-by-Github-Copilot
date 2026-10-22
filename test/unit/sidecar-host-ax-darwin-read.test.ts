@@ -101,6 +101,17 @@ describe("the AX provider's walk of a window", () => {
     expect(fake.outstanding).toBe(0);
   });
 
+  it("reads no more elements than it was asked for, however they nest, and says the read was cut", () => {
+    for (const maxNodes of [1, 5, 10, 17]) {
+      const fake = new FakeAx([benchApp()]);
+      const { r, done } = walkOf(fake, { maxNodes });
+      expect(r.nodes.length, `maxNodes ${maxNodes}`).toBeLessThanOrEqual(maxNodes);
+      expect(r.cut).toEqual(["nodes"]);
+      done();
+      expect(fake.outstanding).toBe(0);
+    }
+  });
+
   it("marks what a scroll area hides, or AXHidden hides, as offscreen and reads nothing inside it", () => {
     const fake = new FakeAx([app([window([
       { role: "AXScrollArea", frame: at(0, 0, 400, 300), children: [{ role: "AXGroup", frame: at(0, 0, 400, 3000), children: [

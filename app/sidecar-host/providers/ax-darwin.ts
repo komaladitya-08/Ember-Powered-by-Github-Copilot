@@ -259,7 +259,9 @@ export class AxDarwinProvider implements AxProvider {
         out.push(w);
       }
     } catch (err) {
+      // The app stopped answering partway: none of what it gave is kept (its windows are listed as last seen).
       for (; i < wins.length; i++) api.release(wins[i]!);
+      this.release(out.map(w => w.handle));
       throw err;
     }
     for (const e of list) if (isAppWindow(e) && !matched.has(e.id)) out.push(listedOnly(e));
