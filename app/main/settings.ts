@@ -25,8 +25,7 @@ export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 const ConsentRecord = z.object({ version: z.number().int().min(0).default(0), at: z.string().nullable().default(null) }).default({ version: 0, at: null });
 
 /** No control characters (they could hide what a value says, or end a line in ssh's config). */
-// eslint-disable-next-line no-control-regex -- control characters are exactly what's refused here
-const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/;
+const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/; // eslint-disable-line no-control-regex -- control characters are exactly what's refused here
 /** §5.1.2's destination validator (validDest): an alias, user@host or user@host:port; never an option. */
 const DEST = /^(?!-)[A-Za-z0-9._%+@[\]:-]{1,255}$/;
 /** §5.1.2's jump hop validator (validHop): stricter, no "%" (ssh expands it in a ProxyCommand) and no brackets. */
@@ -70,8 +69,9 @@ const TargetCommands = z.object({
   consent: ConsentRecord,
 });
 
-/** Destinations whose ssh offer the user dismissed ("Don't offer again"). */
+/** Destinations whose ssh offer the user dismissed ("Don't offer again"): at most this many. */
 const DISMISSED_MAX = 200;
+const dismissedOffer = z.string().min(1).max(255).regex(NO_CONTROL);
 
 export const SettingsSchema = z.object({
   version: z.literal(1).default(1),
@@ -118,7 +118,7 @@ export const SettingsSchema = z.object({
     active: z.custom<TargetId>(isTargetId).default("local"),
     /** Offer to come along when the user runs ssh themselves (§2.7). */
     offerSsh: z.boolean().default(true),
-    dismissedOffers: z.array(z.string().min(1).max(255).regex(NO_CONTROL)).max(DISMISSED_MAX).default([]),
+    dismissedOffers: z.array(dismissedOffer).max(DISMISSED_MAX).default([]),
     /** Each id once. */
     hosts: z.array(HostRecordSchema).max(100).refine(h => new Set(h.map(x => x.id)).size === h.length, "host ids must be unique").default([]),
     /** WSL turned on (after its card). */
@@ -159,7 +159,7 @@ function repairObject(key: keyof Shape, v: Record<string, unknown>): unknown {
       ids.add(r.data.id);
       return true;
     }).slice(0, 100) : undefined;
-    const dismissed = Array.isArray(v.dismissedOffers) ? v.dismissedOffers.filter(x => z.string().min(1).max(255).regex(NO_CONTROL).safeParse(x).success).slice(0, DISMISSED_MAX) : undefined;
+    const dismissed = Array.isArray(v.dismissedOffers) ? v.dismissedOffers.filter(x => dismissedOffer.safeParse(x).success).slice(0, DISMISSED_MAX) : undefined;
     v = { ...v, ...(hosts ? { hosts } : {}), ...(dismissed ? { dismissedOffers: dismissed } : {}) };
   }
   // Other objects: keep each sub-field that is valid on its own.
