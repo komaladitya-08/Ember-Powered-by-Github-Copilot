@@ -26,7 +26,8 @@ function setup(apps: AppSpec[] = [benchApp(), emberApp()], o: { open?: boolean }
   const notes: [string, Record<string, unknown> | undefined][] = [];
   let slept = 0;
   const p = new AxDarwinProvider({
-    open: () => (o.open === false ? null : fake), openError: () => new Error("koffi is missing"), owner: EMBER,
+    // `self`: the pretend apps' pids may be this test process's own.
+    open: () => (o.open === false ? null : fake), openError: () => new Error("koffi is missing"), owner: EMBER, self: 0,
     note: (e, f) => notes.push([e, f]), now: fake.now, sleep: async ms => { slept += ms; },
   });
   return { fake, p, notes, slept: () => slept };
@@ -86,6 +87,15 @@ describe("the macOS AX provider's window list", () => {
     await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
     expect(await p.elementsAt(950, 120, EMBER)).toEqual([]);
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
+  it("never asks its own process anything either", async () => {
+    const fake = new FakeAx([benchApp()]);
+    const p = new AxDarwinProvider({ open: () => fake, owner: EMBER, self: BENCH, now: fake.now });
+    await p.start();
+    expect((await p.topWindows()).find(w => w.pid === BENCH)).toMatchObject({ handle: 0, key: "9001", app: "osascript" });
+    expect(await p.elementsAt(380, 670, BENCH)).toEqual([]);
+    expect(fake.pidsAsked.has(BENCH)).toBe(false);
   });
 
   it("lists the system's credential prompts, the lock screen and Mission Control without asking them anything, for shell_overlays", async () => {

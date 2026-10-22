@@ -69,6 +69,8 @@ export interface AxDarwinOptions {
   openError?: () => unknown;
   /** Ember's own process (see ownerPid in provider.ts): no AX element is ever made for it. */
   owner?: number;
+  /** This process (default process.pid): never asked either (tests give their pretend apps' pids room). */
+  self?: number;
   note?: Note;
   now?: () => number;
   /** Waits (tests pass one that doesn't). */
@@ -127,7 +129,7 @@ export class AxDarwinProvider implements AxProvider {
     this.note = o.note ?? (() => undefined);
     this.busy = new BusyApps(o.now ?? Date.now);
     this.sleep = o.sleep ?? sleeper;
-    this.skip = new Set([o.owner, process.pid].filter((p): p is number => p !== undefined && Number.isSafeInteger(p) && p > 0));
+    this.skip = new Set([o.owner, o.self ?? process.pid].filter((p): p is number => p !== undefined && Number.isSafeInteger(p) && p > 0));
   }
 
   /** Handles given out and not given back (tests). */
