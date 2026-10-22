@@ -3108,8 +3108,9 @@ class InsideWsl(unittest.TestCase):
                    None: {"apps": [["notes.txt - gedit"]]}}
         looked, chosen = [], []
 
-        def look(spec):
+        def look(spec, timeout):
             looked.append(spec)
+            self.assertLessEqual(timeout, e.PROBE_TIMEOUT_S)
             return answers.get(spec["session"])
 
         def choose(c):
@@ -3131,15 +3132,35 @@ class InsideWsl(unittest.TestCase):
                          {"bus": "x11", "score": 3, "restart": True, "scores": [["env", 0], ["proc", 2], ["x11", 3]]})
         self.assertEqual(len(chosen), 1)
 
+    def test_find_bus_looks_stay_within_its_budget(self):
+        # Every look gets what is left of the budget (3 s at most): eight slow candidates never make Ember wait past it.
+        clock = [100.0]
+        given = []
+
+        def look(spec, timeout):
+            given.append(timeout)
+            clock[0] += timeout  # each look takes all the time it is given
+            return None
+        cands = [{"source": "proc", "session": "unix:path=/b%d" % i, "a11y": None} for i in range(8)]
+        saved = e.time.monotonic
+        e.time.monotonic = lambda: clock[0]
+        try:
+            out = e.rank(cands, ["x"], look, budget=7.0)
+        finally:
+            e.time.monotonic = saved
+        self.assertEqual(given, [3.0, 3.0, 1.0])
+        self.assertEqual(len(out), 3)
+        self.assertLessEqual(clock[0] - 100.0, 7.0)
+
     def test_find_bus_says_none_when_no_candidate_shows_the_windows(self):
         e.FIND_BUS = True
         e.BUS.update(source=None, session=None, a11y=None, chosen=False)
         cands = [{"source": "env", "session": "unix:path=/a", "a11y": None}]
-        out = e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=lambda s: {"apps": [["Other"]]}, choose=lambda c: self.fail("chosen"))
+        out = e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=lambda s, t: {"apps": [["Other"]]}, choose=lambda c: self.fail("chosen"))
         self.assertEqual(out, {"bus": "none", "candidates": 1, "scores": [["env", 0]]})
         self.assertEqual(e.BUS["source"], "none")
         # A look that failed or timed out scores nothing.
-        self.assertEqual(e.find_bus({"titles": ["x"]}, candidates=cands, look=lambda s: None, choose=lambda c: self.fail("chosen"))["bus"], "none")
+        self.assertEqual(e.find_bus({"titles": ["x"]}, candidates=cands, look=lambda s, t: None, choose=lambda c: self.fail("chosen"))["bus"], "none")
         # Every request but ping, status and find_bus says so.
         self.assertEqual(e.handle('{"id": 1, "method": "list_windows"}')["error"]["message"], "no session bus")
         self.assertIn("result", e.handle('{"id": 2, "method": "ping"}'))

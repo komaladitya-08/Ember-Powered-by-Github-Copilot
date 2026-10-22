@@ -4791,13 +4791,15 @@ def score(found, titles):
 
 
 def rank(candidates, titles, look=probe, budget=FIND_TOTAL_S):
-    """Each candidate with its score and the accessibility bus its look found, in order, until the time is up."""
+    """Each candidate with its score and the accessibility bus its look found, in order, until the time is up: each look
+    gets what is left of `budget` (PROBE_TIMEOUT_S at most), so the whole stays within it."""
     out = []
     until = time.monotonic() + budget
     for c in candidates:
-        if time.monotonic() > until:
+        left = until - time.monotonic()
+        if left < 0.25:
             break
-        found = look({"kind": "bus", "session": c["session"], "a11y": c["a11y"]})
+        found = look({"kind": "bus", "session": c["session"], "a11y": c["a11y"]}, min(PROBE_TIMEOUT_S, left))
         a11y = bus_address(found.get("a11y")) if isinstance(found, dict) else None
         out.append((score(found, titles), dict(c, a11y=a11y or c["a11y"])))
     return out
@@ -4833,8 +4835,10 @@ def find_bus(params, candidates=None, look=probe, choose=choose_bus):
     a bus is in use it can't be changed in this process: when another fits better now, `restart` says to start over."""
     titles = [normalize_title(t) for t in (params.get("titles") or [])[:MAX_TITLES] if isinstance(t, str)]
     titles = [t for t in titles if t]
+    began = time.monotonic()
     cands = bus_candidates() if candidates is None else candidates
-    ranked = rank(cands, titles, look)
+    # The X root window's look (in bus_candidates) counts against the same budget: Ember waits 15 s for the answer.
+    ranked = rank(cands, titles, look, FIND_TOTAL_S - (time.monotonic() - began))
     best = best_of(ranked)
     # What each candidate scored, by where it was found (for the doctor and the wslg-probe job; no addresses).
     scores = [[c["source"], n] for n, c in ranked]
