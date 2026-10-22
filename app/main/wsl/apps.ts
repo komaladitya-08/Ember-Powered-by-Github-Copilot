@@ -24,13 +24,27 @@ import type { WslFacts, WslService } from "./types";
 
 /** A word after "--" that no shell reads as anything but itself (no quote, $, `, ;&|<>(){}*?[]~!#, or blank inside). */
 const TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
+/** A shell variable assignment (NAME=value): before the command's first word, the shell sets it and runs what follows. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The words the distro's shell runs as the command (pure): `argv` without its leading NAME=value assignments, which
+ * the shell reads as variables for the command, not as its program ("GDK_BACKEND=x11 gnome-terminal" runs
+ * gnome-terminal). Empty when there are only assignments.
+ */
+export function commandWords(argv: readonly string[]): string[] {
+  let i = 0;
+  while (i < argv.length && ASSIGNMENT.test(argv[i])) i++;
+  return argv.slice(i);
+}
 /** wslg.exe's program name. */
 const WSLG = /^wslg(?:\.exe)?$/i;
 
 /**
  * What a wslg.exe command line runs, read strictly (pure): only `wslg.exe [-d|--distribution <name>] [--cd <dir>|~] --
- * <argv…>` with a non-empty argv of plain tokens. -u/--user, -e/--exec, --system, --shell-type, any other option, a
- * missing "--" and any token with shell syntax give null ("Ember can't tell exactly what this shortcut runs"). The
+ * <argv…>` with a non-empty argv of plain tokens that runs a command (not only NAME=value assignments). -u/--user,
+ * -e/--exec, --system, --shell-type, any other option, a missing "--" and any token with shell syntax give null ("Ember
+ * can't tell exactly what this shortcut runs"). The
  * older shape (wslg.exe ~ -d D <cmd>) is not accepted until the wslg-probe job has recorded it. `argv[0]` is wslg.exe.
  */
 export function wslgLaunch(argv: string[]): { distro: string | null; cwd: string | null; argv: string[] } | null {
@@ -54,7 +68,7 @@ export function wslgLaunch(argv: string[]): { distro: string | null; cwd: string
   }
   if (argv[i] !== "--") return null;
   const rest = argv.slice(i + 1);
-  if (!rest.length || !rest.every(t => typeof t === "string" && TOKEN.test(t))) return null;
+  if (!rest.length || !rest.every(t => typeof t === "string" && TOKEN.test(t)) || !commandWords(rest).length) return null;
   return { distro, cwd, argv: rest };
 }
 
@@ -84,13 +98,17 @@ export function wslgRefusal(argv: string[], facts: WslFacts | null): string | nu
   return null;
 }
 
-/** Is the Linux command a terminal, a shell or an app with one built in (the Linux vocabulary, wrappers followed)? */
+/**
+ * Is the Linux command a terminal, a shell or an app with one built in (the Linux vocabulary, wrappers followed)? Judged
+ * as the distro's shell runs it (its leading assignments skipped), and as written too (an extra refusal only).
+ */
 function linuxTerminal(app: Pick<DesktopApp, "id" | "name">, argv: string[]): boolean {
-  return isTerminalApp({ id: app.id, name: app.name, argv }, "linux");
+  return isTerminalApp({ id: app.id, name: app.name, argv: commandWords(argv) }, "linux") || isTerminalApp({ id: app.id, name: app.name, argv }, "linux");
 }
 
 /** The Linux program a window of this command reports (§4.5's app: an interpreter's script, else the program). */
-function linuxProgram(argv: string[]): string | null {
+function linuxProgram(all: string[]): string | null {
+  const argv = commandWords(all);
   const prog = (argv[0] ?? "").slice((argv[0] ?? "").lastIndexOf("/") + 1).toLowerCase();
   const script = argv[1] && !argv[1].startsWith("-") ? argv[1].slice(argv[1].lastIndexOf("/") + 1).toLowerCase() : "";
   return (prog && LAUNCHERS.linux.test(prog) && script ? script : prog) || null;

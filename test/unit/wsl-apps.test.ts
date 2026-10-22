@@ -141,6 +141,25 @@ describe("withWslApps", () => {
     }
   });
 
+  it("judges the command the distro's shell runs: leading NAME=value words are assignments, not the program", async () => {
+    const { apps } = setup();
+    for (const args of ["-d Ubuntu -- GDK_BACKEND=x11 gnome-terminal", "-d Ubuntu -- X=1 bash", "-d Ubuntu -- A=b B=c xterm", "-d Ubuntu -- LANG=C.UTF-8 konsole"]) {
+      expect(apps.isTerminalApp(shortcut("Foo (Ubuntu)", args)), args).toBe(true);
+    }
+    // Assignments before an ordinary app change nothing about it.
+    expect(apps.isTerminalApp(shortcut("gedit (Ubuntu)", "-d Ubuntu -- GDK_BACKEND=x11 gedit"))).toBe(false);
+    expect(apps.programsOf(shortcut("gedit (Ubuntu)", "-d Ubuntu -- GDK_BACKEND=x11 gedit"))).toEqual(new Set(["wsl:ubuntu:gedit"]));
+    // Only assignments: the shell runs nothing Ember can name.
+    expect(wslgLaunch([WSLG, "-d", "Ubuntu", "--", "A=1", "B=2"])).toBeNull();
+    // And at launch, from the file.
+    const foo = shortcut("Foo (Ubuntu)", "-d Ubuntu -- gedit");
+    for (const args of ["-d Ubuntu --cd \"~\" -- GDK_BACKEND=x11 gnome-terminal", "-d Ubuntu -- X=1 bash"]) {
+      const s = setup({ files: { [foo.file]: lnk(args) } });
+      await expect(s.apps.launch(foo), args).rejects.toThrow("Ember doesn't run terminals");
+      expect(s.spawned).toEqual([]);
+    }
+  });
+
   it("refuses a shortcut it can't read exactly, or whose distro it knows can't be used", async () => {
     const { apps } = setup({ facts: facts([distro("Ubuntu", { isDefault: true, defaultUid: 0 })]) });
     expect(apps.isTerminalApp(shortcut("x", "-u root -- gedit"))).toBe(true);
