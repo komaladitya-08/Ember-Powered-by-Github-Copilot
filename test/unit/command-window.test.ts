@@ -5,9 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
-import { MAX_TABS, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
@@ -69,12 +70,16 @@ const log: Logger = {
   file: "",
 };
 
-const SHA = "a".repeat(64);
-const card = (over: Partial<CommandCard> = {}): CommandCard => ({
-  runId: "0123456789abcdef", target: "ssh:build-01", targetLabel: "build-01", login: "deploy", shell: "bash", cwd: "/home/deploy/src/app",
-  command: "rm -r build", sha256: SHA, taskId: "t1", taskTitle: "Clean the build", mode: "ask", says: ["Deletes build and everything in it."],
-  unasked: true, armMs: 600, ...over,
-});
+/** A card whose sha256 is the hash of its own target, shell, folder and command (unless a test sets another). */
+const card = (over: Partial<CommandCard> = {}): CommandCard => {
+  const c: CommandCard = {
+    runId: "0123456789abcdef", target: "ssh:build-01", targetLabel: "build-01", login: "deploy", shell: "bash", cwd: "/home/deploy/src/app",
+    command: "rm -r build", sha256: "", taskId: "t1", taskTitle: "Clean the build", mode: "ask", says: ["Deletes build and everything in it."],
+    unasked: true, armMs: 600, ...over,
+  };
+  return { ...c, sha256: over.sha256 ?? cardSha256(c) };
+};
+const SHA = card().sha256;
 
 class FakeRun implements RunningCommand {
   inputs: Uint8Array[] = [];
@@ -231,7 +236,7 @@ describe("cardReady (the approve chord's guard, R7)", () => {
     const { ctl, seen, win } = setup();
     ctl.showCard(3, card());
     seen(3);
-    ctl.showCard(4, card({ sha256: "b".repeat(64) }));
+    ctl.showCard(4, card({ command: "rm -r dist" }));
     expect(ctl.cardReady(3)).toBe(false);
     expect(ctl.cardReady(4)).toBe(false);
     seen(4);
@@ -294,7 +299,7 @@ describe("one card at a time", () => {
   it("shows the newest question and drops the old one's state", () => {
     const { ctl, page } = setup();
     ctl.showCard(1, card());
-    ctl.showCard(2, card({ command: "git push --force", sha256: "c".repeat(64) }));
+    ctl.showCard(2, card({ command: "git push --force" }));
     expect(page().last().card).toMatchObject({ n: 2, command: "git push --force" });
     ctl.hideCard(1);
     expect(page().last().card?.n).toBe(2);
@@ -312,6 +317,32 @@ describe("one card at a time", () => {
     expect(validCard(card())).toBe(true);
     expect(validCard({ ...card(), runId: "0123" })).toBe(false);
     expect(validCard({ ...card(), command: "" })).toBe(false);
+  });
+
+  it("never shows a card whose hash isn't of the very target, shell, folder and command it shows (R-cmd-1)", async () => {
+    const { ctl, windows } = setup();
+    const good = card();
+    // The hash of what an approval binds to, exactly as the design writes it.
+    expect(good.sha256).toBe(createHash("sha256").update("ssh:build-01\0bash\0/home/deploy/src/app\0rm -r build", "utf8").digest("hex"));
+    for (const changed of [{ command: "rm -r /" }, { cwd: "/" }, { shell: "sh" as const }, { target: "local" as const }, { command: "rm -r build " }]) {
+      const forged = { ...good, ...changed };
+      expect(validCard(forged), JSON.stringify(changed)).toBe(false);
+      ctl.showCard(1, forged);
+    }
+    expect(windows).toHaveLength(0);
+    expect(ctl.cardReady(1)).toBe(false);
+    await expect(ctl.announce({ ...good, command: "rm -r /" }, 4000, new AbortController().signal)).resolves.toBe(false);
+  });
+
+  it("shows the same question again as it was: its arm time and what the page saw stay", () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    ctl.showCard(1, card());
+    seen(1);
+    vi.advanceTimersByTime(1000);
+    ctl.showCard(1, card());
+    expect(ctl.cardReady(1)).toBe(true);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
   });
 
   it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {
@@ -539,6 +570,31 @@ describe("a run's tab", () => {
     expect(page().last().tabs[0].status).toBe("Starting Ubuntu…");
     ctl.note(run.runId, null);
     expect(page().last().tabs[0].status).toBe("Running…");
+  });
+
+  it("stops a run it can't show rather than let it run unseen (R1): a malformed card, no window, or after dispose", () => {
+    const bad = setup();
+    const r1 = new FakeRun("0123456789abcdef");
+    bad.ctl.attach({ ...card(), command: "rm -r /" }, r1);
+    expect(r1.stops).toEqual(["task"]);
+    expect(bad.windows).toHaveLength(0);
+
+    const none = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    const r2 = new FakeRun("0123456789abcdef");
+    none.attach(card(), r2);
+    expect(r2.stops).toEqual(["task"]);
+
+    const gone = setup();
+    gone.ctl.dispose();
+    const r3 = new FakeRun("0123456789abcdef");
+    gone.ctl.attach(card(), r3);
+    expect(r3.stops).toEqual(["task"]);
+    expect(logs.filter(l => l.msg === "commands.run_unshown").map(l => (l.fields as { why: string }).why)).toEqual(["card", "window", "disposed"]);
+
+    const ok = setup();
+    const r4 = new FakeRun("0123456789abcdef");
+    ok.ctl.attach(card({ mode: "run" }), r4);
+    expect(r4.stops).toEqual([]);
   });
 
   it("names how a run ended for its tab's symbol", () => {

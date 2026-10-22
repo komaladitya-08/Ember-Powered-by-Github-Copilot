@@ -9,6 +9,7 @@
  * needs it (a card, an announcement, a run, or the user opening it), so with commands off nothing new appears.
  */
 
+import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../shared/commands";
 import type { OS } from "../../shared/shortcuts";
 import type { Logger } from "../logger";
@@ -81,14 +82,24 @@ const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{6
 const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const str = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
 
-/** A card the window can show: every field of the right type and size (a malformed card is never shown, so it can't be allowed). */
+/** What an approval binds to (§3.9.1, R-cmd-1): sha256Hex(`${target}\0${shell}\0${cwd}\0${command}`). */
+export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command">): string {
+  return createHash("sha256").update(`${c.target}\0${c.shell}\0${c.cwd}\0${c.command}`, "utf8").digest("hex");
+}
+
+/**
+ * A card the window can show: every field of the right type and size, and its sha256 the hash of exactly the target,
+ * shell, folder and command it shows (so the hash an Allow carries back is of what the user saw). A malformed card is
+ * never shown, so it can't be allowed.
+ */
 export function validCard(c: unknown): c is CommandCard {
   if (!isObj(c)) return false;
   return isRunId(c.runId) && str(c.target, 200) && str(c.targetLabel, 200) && (c.login === undefined || str(c.login, 255))
     && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string) && str(c.cwd, 4096) && str(c.command, 64 * 1024)
     && (c.command as string).length > 0 && isSha(c.sha256) && str(c.taskId, 200) && str(c.taskTitle, 1000)
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
-    && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0;
+    && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0
+    && cardSha256(c as unknown as CommandCard) === c.sha256;
 }
 
 /** Text typed into a run, as bytes in pieces of at most `piece` bytes, never splitting a character. */
@@ -383,6 +394,9 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     showCard(n, c) {
       if (disposed) return;
       if (!isN(n) || !validCard(c)) { note("error", "commands.card_refused", { n }); return; }
+      // The same question shown again: it comes back up as it was (its arm time and what the page saw stay; the page
+      // keeps its own state for the same card, so it wouldn't report "seen" again).
+      if (card && card.n === n && card.card.sha256 === c.sha256) { reveal(); push(); return; }
       // One card at a time: a new question replaces the one shown (its "seen" doesn't carry over).
       card = { n, card: c, shownAt: Date.now() };
       view = null;
@@ -426,7 +440,16 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     },
 
     attach(c, run) {
-      if (disposed || !validCard(c) || !run || typeof run.onOutput !== "function") return;
+      if (!run || typeof run.onOutput !== "function") return;
+      // R1: a command runs only where the user can watch and stop it. One this window can't show (a malformed card, no
+      // window, the window gone at quit) is stopped at once rather than left running unseen.
+      const unseen = (why: string) => {
+        note("error", "commands.run_unshown", { why });
+        safe("stop-unshown", () => run.stop("task"));
+      };
+      if (disposed) { unseen("disposed"); return; }
+      if (!validCard(c)) { unseen("card"); return; }
+      if (!ensure()) { unseen("window"); return; }
       // The same run shown again (a retry after the remote asked): its old tab goes.
       for (const old of tabs.filter(t => t.card.runId === c.runId)) dropTab(old);
       tabs = tabs.filter(t => t.card.runId !== c.runId);
