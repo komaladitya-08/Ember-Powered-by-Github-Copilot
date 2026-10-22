@@ -896,8 +896,9 @@ class Run {
   private end(e: Partial<RunExit> & { ended: RunExit["ended"] }): void {
     if (this.ended) return;
     this.ended = true;
-    // Nothing more is looked for unless the ladder's last sweep or a natural end's look is under way (they say).
-    if (!this.ladder && e.ended !== "exit") this.setStragglers([]);
+    // Nothing more is looked for unless a natural end's look is under way (it says). A ladder has said by now when it
+    // ended the run; one cut short (wsl.exe failed meanwhile) loses its timers below, so it would never say.
+    if (this.ladder || e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
     const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };

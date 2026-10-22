@@ -569,6 +569,18 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 2)).toBe(true);
   });
 
+  it("settles what the run left running when wsl.exe fails while the ladder climbs (nothing is left waiting)", async () => {
+    const { run, child } = await started();
+    run.stop("user");
+    await vi.advanceTimersByTimeAsync(LADDER_MS.term);
+    child.emit("error", new Error("EPIPE"));
+    expect(await run.done).toMatchObject({ ended: "failed-to-start" });
+    let names: string[] | null = null;
+    void run.stragglers.then(n => { names = n; });
+    await vi.advanceTimersByTimeAsync(LADDER_MS.last + 1000);
+    expect(names).toEqual([]);
+  });
+
   it("terminates the job host anyway when the KILL sweep hangs", async () => {
     const { run, child } = await started({ hang: ["KILL"] });
     run.stop("task");
