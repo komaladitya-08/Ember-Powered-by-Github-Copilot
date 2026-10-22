@@ -76,6 +76,10 @@ describe("the apps' open windows", () => {
     expect(frontWindowOf(LIST, 600)?.id).toBe(104);
     expect(frontWindowOf(LIST, 999)).toBeNull();
     expect(frontWindowOf(LIST)?.id).toBe(101); // the overlay and the menu aren't normal windows
+    // Without a pid, a system process's normal window (Control Center, the Dock…) isn't anyone's front window.
+    const withSystem = [w(700, 77, "Control Center", "", 0, 0, 400, 300), ...LIST];
+    expect(frontWindowOf(withSystem)?.id).toBe(101);
+    expect(frontWindowOf(withSystem, 77)?.id).toBe(700);
   });
   it("finds Ember's own front window, never its click-through overlay", () => {
     expect(ownFrontWindow(LIST, OWN)).toBeNull();

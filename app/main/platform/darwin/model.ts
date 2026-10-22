@@ -122,9 +122,12 @@ export function clientWindowsOf(frontToBack: readonly CGWindowEntry[]): (X11Wind
     .map(e => ({ ...windowInfo(e), wmClassName: e.owner }));
 }
 
-/** The frontmost app window (of `pid` when given), or null. */
+/**
+ * The frontmost app window of `pid`; without a pid (AX couldn't name the frontmost app), the frontmost one of any app
+ * but the system's own processes, as clientWindowsOf() lists them. null when there is none.
+ */
 export function frontWindowOf(frontToBack: readonly CGWindowEntry[], pid?: number): CGWindowEntry | null {
-  return frontToBack.find(e => isAppWindow(e) && (pid === undefined || e.pid === pid)) ?? null;
+  return frontToBack.find(e => isAppWindow(e) && (pid === undefined ? !SYSTEM_OWNERS.has(e.owner) : e.pid === pid)) ?? null;
 }
 
 /**
