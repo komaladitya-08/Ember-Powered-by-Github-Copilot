@@ -18,6 +18,8 @@ import { pointToDip, rectToDip } from "./units";
 /** The Windows window system: WindowSystem plus activate(), which X11 code got from XInput. */
 export interface Win32WindowSystem extends WindowSystem {
   readonly kind: "win32";
+  /** GDI capture answers synchronously. */
+  capture(x: number, y: number, width: number, height: number): X11Image | null;
   /**
    * Brings a top-level window to the front with the keyboard (the documented order, no Alt tap; the same operation as
    * the input backend's activate). Best effort: check activeWindow() after it.

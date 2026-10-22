@@ -43,6 +43,11 @@ export function keysymOfName(name: string): number {
   return /^[A-Za-z0-9]$/.test(name) ? name.charCodeAt(0) : 0;
 }
 
+/** Every name keysymOfName knows besides single letters and digits (for tests against X's own table). */
+export function keysymNames(): string[] {
+  return [...Object.keys(NAMED_KEYSYMS), ...Object.keys(CHARACTER_NAMES)];
+}
+
 /** The virtual key a key press uses: its code, whether it is an extended key, and whether it needs Shift. */
 export interface VirtualKey { vk: number; extended: boolean; shift: boolean }
 
