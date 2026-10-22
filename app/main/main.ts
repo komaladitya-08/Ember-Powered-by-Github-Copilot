@@ -192,7 +192,7 @@ async function runDoctor(): Promise<void> {
   let auth: DoctorProbes["auth"] = null;
   if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
   else {
-    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), ghOptions()).catch(() => null);
+    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), process.env, ghOptions()).catch(() => null);
     // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
     const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
     if (t && !ignored) auth = { kind: "github", source: t.source };
@@ -879,7 +879,7 @@ function start(): void {
   /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
-    const found = await resolveToken(tokens, ghOptions()).catch(() => null);
+    const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
     currentToken = found?.token ?? null;
     await agent?.start(currentToken, found?.source);
     return { found: !!found, source: found?.source ?? null };
@@ -904,7 +904,7 @@ function start(): void {
       say({ state: "waiting", message: "In a terminal, run “gh auth login”. Ember will notice within a few seconds and connect; no restart needed." });
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
-        const found = await resolveToken(tokens, ghOptions()).catch(() => null);
+        const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
         if (ac.signal.aborted) return;
         if (found && found.token !== before) {
           currentToken = found.token;
@@ -1417,7 +1417,7 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
-      const found = provider ? null : await resolveToken(tokens, ghOptions());
+      const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       currentToken = found?.token ?? null;
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
