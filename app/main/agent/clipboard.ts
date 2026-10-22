@@ -13,7 +13,7 @@
  */
 
 import type { ClipboardFormats } from "../platform/types";
-import { CLIPBOARD_FORMATS } from "./clipboard-formats";
+import { CLIPBOARD_FORMATS, targetOf } from "./clipboard-formats";
 
 export { savableFormat } from "./clipboard-formats";
 
@@ -53,9 +53,6 @@ export class ClipboardTimeout extends Error {
   }
 }
 
-/** Electron 44 lists formats other than the common ones as `electron application/osclipboard;format="<X target>"`. */
-const OS_FORMAT = /^electron application\/osclipboard;format="(.*)"$/;
-const targetOf = (type: string) => OS_FORMAT.exec(type)?.[1] ?? type;
 /** Is `type` (however Electron lists it) a password manager's "this is a password" marker on that OS? */
 const marksPassword = (formats: ClipboardFormats, type: string) => formats.passwordMarker(type) || formats.passwordMarker(targetOf(type));
 /**
