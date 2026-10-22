@@ -105,6 +105,13 @@ describe("electronCapture", () => {
     expect(await electronCapture({ desktopCapturer: dc, screen: screenOf([left]) })({ x: 0, y: 0, width: 10, height: 10 })).toBeNull();
   });
 
+  it("gives no picture for a bitmap longer than its size says (it would be read with the wrong stride)", async () => {
+    // A Retina-sized bitmap behind a point-sized getSize(), or padded rows: never a sheared picture.
+    const long: NativeImageLike = { ...thumb(2880, 1800), getSize: () => ({ width: 1440, height: 900 }) };
+    const dc = capturer([{ id: "screen:1:0", name: "A", display_id: "1", thumbnail: long }]);
+    expect(await electronCapture({ desktopCapturer: dc, screen: screenOf([left]) })({ x: 0, y: 0, width: 10, height: 10 })).toBeNull();
+  });
+
   it("gives no picture when desktopCapturer rejects", async () => {
     const l = log();
     const dc = capturer(() => Promise.reject(new Error("denied")));

@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CACHE_MS, appRoots, bundleApp, darwinApps, type BundleFs } from "../../app/main/platform/darwin/system/apps";
-import type { DesktopApp } from "../../app/main/hands/system";
+import { findApp, type DesktopApp } from "../../app/main/hands/system";
 import { fakeRun, tool } from "./darwin-system-fakes";
 
 const FIXTURES = path.join(__dirname, "../fixtures/plist");
@@ -115,6 +115,19 @@ describe("the macOS app catalogue", () => {
     expect(c.find(list, "TextEdit")?.name).toBe("TextEdit");
     expect(c.find(list, "text editor")?.name).toBe("TextEdit");
     expect(c.find(list, "file manager")?.name).toBe("Finder");
+  });
+
+  it("breaks ties with the macOS terminal vocabulary, not Linux's", () => {
+    // Linux's vocabulary takes any app named "Console" for a terminal; a Mac log viewer may well be called that.
+    const tied: DesktopApp[] = [
+      { id: "com.example.logwatch", name: "Console", file: "/Applications/Console.app", keywords: ["log viewer"] },
+      { id: "com.example.logs", name: "Log Reader", file: "/Applications/Log Reader.app", keywords: ["log viewer"] },
+    ];
+    const c = catalogue();
+    expect(findApp(tied, "log viewer", "linux")?.name).toBe("Log Reader");
+    expect(c.find(tied, "log viewer")).toBe(findApp(tied, "log viewer", "darwin"));
+    // Whatever V decides about Console.app, find agrees with the terminal check launch() refuses by.
+    expect(c.find(tied, "log viewer")?.name).toBe(c.isTerminalApp(tied[0]!) ? "Log Reader" : "Console");
   });
 
   it("compares window app names in lower case", () => {

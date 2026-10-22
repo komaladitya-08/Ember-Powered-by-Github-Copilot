@@ -138,6 +138,10 @@ describe("darwinFixes", () => {
     e.desktopCapturer.getSources.mockRejectedValueOnce(new Error("denied"));
     await darwinFixes(d).apply("open-screen-recording-settings");
     expect(e.shell.openExternal).toHaveBeenCalledWith(PANES.screenRecording);
+    const thrown = deps();
+    thrown.e.desktopCapturer.getSources.mockImplementationOnce(() => { throw new Error("not ready"); });
+    await darwinFixes(thrown.d).apply("open-screen-recording-settings");
+    expect(thrown.e.shell.openExternal).toHaveBeenCalledWith(PANES.screenRecording);
   });
 
   it("requests Input Monitoring through port/darwin once, then opens its pane", async () => {
@@ -152,6 +156,17 @@ describe("darwinFixes", () => {
     const bare = deps({ ws: null });
     await darwinFixes(bare.d).apply("open-input-monitoring-settings");
     expect(bare.e.shell.openExternal).toHaveBeenCalledWith(PANES.inputMonitoring);
+  });
+
+  it("asks for Input Monitoring once the window system has opened, if the button was pressed before", async () => {
+    const request = vi.fn();
+    let ws: WindowSystem | undefined = undefined; // opens below, after the first press
+    const { d } = deps();
+    const f = darwinFixes({ ...d, windows: () => ws });
+    await f.apply("open-input-monitoring-settings");
+    ws = fakeDarwinWindows({ inputMonitoring: false, requestInputMonitoring: request });
+    await f.apply("open-input-monitoring-settings");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("asks for the microphone while macOS hasn't asked yet, and opens its pane after a refusal", async () => {
@@ -182,6 +197,24 @@ describe("darwinFixes", () => {
     ]);
     expect(BUNDLE_ID).toBe("io.github.komaladitya08.ember");
     expect(e.systemPreferences.isTrustedAccessibilityClient).toHaveBeenCalledWith(true);
+  });
+
+  it("puts Ember back on each list after a reset: the next Screen Recording and Input Monitoring buttons ask again", async () => {
+    const request = vi.fn();
+    const { run } = fakeRun([{ match: tool("/usr/bin/tccutil", "reset"), result: { code: 0 } }]);
+    const { d, e } = deps({ run, ws: fakeDarwinWindows({ inputMonitoring: false, requestInputMonitoring: request }) });
+    const f = darwinFixes(d);
+    await f.apply("open-screen-recording-settings");
+    await f.apply("open-input-monitoring-settings");
+    await f.apply("open-accessibility-settings");
+    await f.apply("reset-permissions");
+    await f.apply("open-screen-recording-settings");
+    await f.apply("open-input-monitoring-settings");
+    await f.apply("open-accessibility-settings");
+    expect(e.desktopCapturer.getSources).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(2);
+    // Accessibility's prompt: once before the reset, once by the reset itself, not again by the button after it.
+    expect(vi.mocked(e.systemPreferences.isTrustedAccessibilityClient).mock.calls.filter(c => c[0] === true)).toHaveLength(2);
   });
 
   it("says what to do by hand when tccutil fails", async () => {

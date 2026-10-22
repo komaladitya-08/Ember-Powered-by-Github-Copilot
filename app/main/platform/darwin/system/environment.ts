@@ -97,15 +97,19 @@ export function darwinFixes(d: DarwinEnvDeps): SystemPlatform["fixes"] {
             // pane opens after at most GRAB_WAIT_MS whatever the grab does.
             let timer: ReturnType<typeof setTimeout> | undefined;
             await Promise.race([
-              d.desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } }).catch(() => []),
+              // Called inside then(), so a getSources that throws instead of rejecting still opens the pane.
+              Promise.resolve().then(() => d.desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })).catch(() => []),
               new Promise(resolve => { timer = setTimeout(resolve, GRAB_WAIT_MS); }),
             ]);
             clearTimeout(timer);
           }
           return open(PANES.screenRecording);
-        case "open-input-monitoring-settings":
-          once(fix, () => darwinExtras(d.windows())?.requestInputMonitoring?.());
+        case "open-input-monitoring-settings": {
+          // Counted as asked only once there is a window system to ask through (it opens at app ready).
+          const ws = darwinExtras(d.windows());
+          if (ws?.requestInputMonitoring) once(fix, () => ws.requestInputMonitoring!());
           return open(PANES.inputMonitoring);
+        }
         case "open-microphone-settings": {
           let status: string | undefined;
           try {
@@ -126,8 +130,10 @@ export function darwinFixes(d: DarwinEnvDeps): SystemPlatform["fixes"] {
             const r = await run("/usr/bin/tccutil", ["reset", service, BUNDLE_ID], { timeout: 10_000 });
             if (r.code !== 0) throw new Error("macOS didn't reset Ember's permissions. Remove Ember from each list in System Settings › Privacy & Security instead.");
           }
+          // The reset took Ember off every list: each "Open System Settings" puts it back on its own the next time.
+          asked.clear();
           // Asks for Accessibility again at once, so Ember is back in the list for the user to switch on.
-          d.systemPreferences.isTrustedAccessibilityClient?.(true);
+          once("open-accessibility-settings", () => d.systemPreferences.isTrustedAccessibilityClient?.(true));
           return;
         }
         case "move-to-applications": {

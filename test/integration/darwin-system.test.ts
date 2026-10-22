@@ -6,7 +6,8 @@
  * desktopCapturer capture of a pure red window comes back at one pixel per point in BGRA (THUMBNAIL_ORDER), through
  * electronCapture itself and through the macOS platform's window system, with Screen Recording granted. Skipped off
  * macOS; with EMBER_MACSYS_TEST=1 every check runs and fails instead of skipping when a facility is missing (off
- * macOS, no Electron binary, a missing grant), printing what was missing so CI learns which client TCC wanted.
+ * macOS, no Electron binary, a missing grant), printing what was missing so CI learns which client TCC wanted. Without it, the Electron checks skip on a Mac where
+ * Electron isn't installed or the app that started the run has no Screen Recording grant.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -95,6 +96,9 @@ app.whenReady().then(async () => {
 });
 `;
 
+/** The Electron binary the electron package installed (its main export is the path). */
+const electronBinary = () => createRequire(import.meta.url)("electron") as unknown as string;
+
 /** Builds CHILD into .cache/test (so it loads koffi from the repository's node_modules) and runs it under Electron. */
 async function runChild(): Promise<ChildReport> {
   const dir = path.join(root, ".cache", "test", "darwin-system-electron");
@@ -104,10 +108,10 @@ async function runChild(): Promise<ChildReport> {
     bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "koffi"], outfile: path.join(dir, "main.cjs"), logLevel: "silent",
   });
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-darwin-system-test", main: "main.cjs" }));
-  const electron = createRequire(import.meta.url)("electron") as unknown as string;
-  if (!fs.existsSync(electron)) throw new Error(`no Electron binary at ${electron} (npx install-electron)`);
+  const electron = electronBinary();
   return new Promise<ChildReport>((resolve, reject) => {
-    const child = spawn(electron, [dir], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0" } });
+    // ELECTRON_RUN_AS_NODE from the caller would start a plain Node instead of the app.
+    const child = spawn(electron, [dir], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0", ELECTRON_RUN_AS_NODE: undefined } });
     let stdout = "", stderr = "";
     child.stdout.on("data", d => { stdout += d; });
     child.stderr.on("data", d => { stderr += d; });
@@ -222,19 +226,37 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
   }, 40_000);
 
   describe("inside Electron", () => {
-    let report: ChildReport;
+    let report: ChildReport | null = null;
+    let missing = "";
 
     beforeAll(async () => {
+      const electron = electronBinary();
+      if (!fs.existsSync(electron)) {
+        missing = `no Electron binary at ${electron} (npx install-electron)`;
+        if (required) throw new Error(missing);
+        return;
+      }
       report = await runChild();
       console.log(`Electron child: ${JSON.stringify(report)}`);
+      // On a developer's Mac the grant belongs to whichever app started the run (Terminal, an editor): skip without it.
+      if (report.screenAccess !== "granted") missing = `Screen Recording is ${report.screenAccess} for the app that started this run`;
     }, 90_000);
 
-    it("has Screen Recording under the CI grants", () => {
+    /** The Electron child's report, or a skip (only without EMBER_MACSYS_TEST=1) when Electron or the grant is missing. */
+    const reportOrSkip = (ctx: { skip: (note?: string) => never }): ChildReport => {
+      if (missing && !required) ctx.skip(missing);
+      if (!report) throw new Error(missing || "the Electron child didn't run");
+      return report;
+    };
+
+    it("has Screen Recording under the CI grants", ctx => {
+      const report = reportOrSkip(ctx);
       expect(report.screenAccess).toBe("granted");
       expect(report.mac?.screen).toBe("granted");
     });
 
-    it("captures the red window through desktopCapturer at one pixel per point, in BGRA", () => {
+    it("captures the red window through desktopCapturer at one pixel per point, in BGRA", ctx => {
+      const report = reportOrSkip(ctx);
       const c = report.direct;
       expect(c, "electronCapture's image").not.toBeNull();
       expect({ width: c!.width, height: c!.height, bytes: c!.bytes }).toEqual({ width: 40, height: 30, bytes: 40 * 30 * 4 });
@@ -246,7 +268,8 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
       expect(a).toBe(255);
     });
 
-    it("captures the same through the macOS platform's window system", () => {
+    it("captures the same through the macOS platform's window system", ctx => {
+      const report = reportOrSkip(ctx);
       expect(report.platformError).toBeUndefined();
       const c = report.platform;
       expect(c, "WindowSystem.capture's image").not.toBeNull();

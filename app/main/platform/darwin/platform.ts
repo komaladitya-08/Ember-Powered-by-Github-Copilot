@@ -10,6 +10,7 @@
 
 import path from "node:path";
 import type { Platform, PlatformDeps, WindowSystem } from "../types";
+import type { Logger } from "../../logger";
 import { hoverShaper, hostEnv } from "../compose";
 import { hostLaunch } from "../../../sidecar-host/launch";
 import { openDarwinInput, openDarwinWindows, darwinInputError, darwinWindowsError } from "./index";
@@ -17,7 +18,7 @@ import { electronCapture } from "./electron-capture";
 import { darwinSystem, type DarwinSystemSeams } from "./system";
 
 /** Seams for the tests: the backends' openers (default port/darwin's), and the system modules' seams. */
-export interface DarwinPlatformSeams extends Omit<DarwinSystemSeams, "windows"> {
+export interface DarwinPlatformSeams extends Omit<DarwinSystemSeams, "windows" | "log"> {
   openWindows?: typeof openDarwinWindows;
   openInput?: typeof openDarwinInput;
 }
@@ -28,7 +29,9 @@ export function darwinPlatform(deps: PlatformDeps, seams: DarwinPlatformSeams = 
   const { screen, desktopCapturer, systemPreferences, browserWindow } = deps.electron;
   // What openWindows returned, for the permission reads, fixes and doctor rows (undefined until it ran).
   let ws: WindowSystem | null | undefined;
-  const system = darwinSystem(deps, { ...systemSeams, windows: () => ws });
+  // Ember's logger, from openWindows (main has none to give before ready): the system modules log through it.
+  let logger: Logger | null = null;
+  const system = darwinSystem(deps, { ...systemSeams, windows: () => ws, log: () => logger });
   const screenAccess = () => systemPreferences.getMediaAccessStatus?.("screen") === "granted";
   // Ember's key panel (the ask box) has the keyboard while the user's app stays active: focus reads report it.
   const focusedOwnWindow = () => browserWindow.getFocusedWindow();
@@ -37,6 +40,7 @@ export function darwinPlatform(deps: PlatformDeps, seams: DarwinPlatformSeams = 
     os: "darwin",
     system,
     openWindows(log) {
+      logger = log;
       ws = openWs({ screen, screenAccess, capture: electronCapture({ desktopCapturer, screen, log }), focusedOwnWindow, log });
       if (!ws) log.error("platform.windows_unavailable", { err: darwinWindowsError });
       return ws;

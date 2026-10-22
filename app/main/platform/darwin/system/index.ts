@@ -11,6 +11,7 @@
 import os from "node:os";
 import path from "node:path";
 import type { PlatformDeps, SystemPlatform, WindowSystem } from "../../types";
+import type { Logger } from "../../../logger";
 import { PLATFORM_WORDS } from "../../../../shared/words";
 import { KEYS, SHORTCUTS } from "../../../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS } from "../../../../shared/never-look";
@@ -42,6 +43,8 @@ export const GH_CACHE_MS = 60_000;
 export interface DarwinSystemSeams {
   /** The window system darwinPlatform opened (undefined before openWindows ran, null when it couldn't). */
   windows?: () => WindowSystem | null | undefined;
+  /** Ember's logger, once darwinPlatform has been handed it (openWindows, after ready); null before. */
+  log?: () => Logger | null;
   run?: Run;
   home?: () => string;
   now?: () => number;
@@ -80,7 +83,11 @@ export function darwinSystem(deps: PlatformDeps, seams: DarwinSystemSeams = {}):
       },
       renameRetries: 0,
     },
-    apps: darwinApps({ env: deps.env, run, home, now }),
+    apps: darwinApps({
+      env: deps.env, run, home, now,
+      // `open -a` answers after launch() has returned: its failure is only logged (the worker sees no window appear).
+      onLaunchError: err => seams.log?.()?.warn("platform.app_launch_failed", err),
+    }),
     settings: darwinSettings({ run }),
     adminPolicy: darwinAdminPolicy(),
     autostart: darwinAutostart(app),

@@ -193,7 +193,9 @@ export function darwinApps(d: DarwinAppsDeps = {}): AppCatalog {
       return [...cache!.apps];
     },
 
-    find: findApp,
+    // findApp's tie-break demotes terminals by the vocabulary it is given (Linux's by default): the Mac's here, the
+    // same one launch() refuses by.
+    find: (apps: DesktopApp[], query: string) => findApp(apps, query, "darwin"),
 
     launch(app: DesktopApp) {
       if (isTerminalApp(app, "darwin")) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");

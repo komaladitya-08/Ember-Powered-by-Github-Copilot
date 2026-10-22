@@ -107,9 +107,12 @@ class XmlCursor {
     if (end < 0) this.fail("unterminated tag");
     const inner = this.s.slice(this.i + 1, end);
     this.i = end + 1;
-    const m = /^(\/?)\s*([A-Za-z][\w.-]*)[^]*?(\/?)\s*$/.exec(inner);
+    // Only the name is matched by a pattern (anchored, linear); an empty element's "/" is read off the end. A pattern
+    // that also spans the rest backtracks quadratically on a long run of spaces inside one tag, and the catalogue
+    // reads these files, which any app can write, on Electron's main thread.
+    const m = /^(\/?)\s*([A-Za-z][\w.-]*)/.exec(inner);
     if (!m) this.fail(`bad tag <${inner.slice(0, 20)}>`);
-    return { name: m[2]!, closing: m[1] === "/", empty: m[3] === "/" };
+    return { name: m[2]!, closing: m[1] === "/", empty: inner.trimEnd().endsWith("/") };
   }
 
   /** Is the next tag (after skipMisc) the closing tag `name`? Doesn't consume it. */

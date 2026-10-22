@@ -105,7 +105,9 @@ export function electronCapture(o: ElectronCaptureOptions): DarwinCapture {
       }
       const size = source.thumbnail.getSize();
       const px = source.thumbnail.toBitmap();
-      if (size.width <= 0 || size.height <= 0 || px.length < size.width * size.height * 4) {
+      // Exactly width × height × 4: a longer buffer (padded rows, or a bitmap at another scale than getSize reports)
+      // would be read with the wrong stride and give a sheared picture, so it counts as a failure too.
+      if (size.width <= 0 || size.height <= 0 || px.length !== size.width * size.height * 4) {
         o.log?.warn("capture.bad_bitmap", { display: d.id, width: size.width, height: size.height, bytes: px.length });
         return null;
       }

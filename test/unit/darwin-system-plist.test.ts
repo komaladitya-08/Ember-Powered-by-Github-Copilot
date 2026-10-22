@@ -149,5 +149,14 @@ describe("parsePlist", () => {
         expect(() => parsePlist(Buffer.from(text)), text).toThrow(/not a property list/);
       }
     });
+
+    it("reads a tag padded with a long run of spaces in linear time (the catalogue parses on the main thread)", () => {
+      const pad = " ".repeat(200_000);
+      const started = Date.now();
+      expect(parsePlist(Buffer.from(`<plist${pad}version="1.0"><dict${pad}><key${pad}>a</key${pad}><true${pad}/></dict></plist>`))).toEqual({ a: true });
+      expect(() => parsePlist(Buffer.from(`<plist><dict><key${pad}x></key></dict></plist>`))).toThrow(/not a property list/);
+      // Quadratic backtracking takes minutes here; linear parsing a few milliseconds.
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
   });
 });

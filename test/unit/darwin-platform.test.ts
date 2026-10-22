@@ -8,12 +8,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { darwinPlatform } from "../../app/main/platform/darwin/platform";
 import type { DarwinWindowsDeps } from "../../app/main/platform/darwin/windows";
 import type { DarwinInputDeps } from "../../app/main/platform/darwin/input";
 import type { ElectronParts, OwnWindowHandle, WindowSystem } from "../../app/main/platform/types";
-import { fakeDeps, fakeElectron, fakeRun } from "./darwin-system-fakes";
+import { fakeDeps, fakeElectron, fakeRun, tool } from "./darwin-system-fakes";
 
 const requireCjs = createRequire(import.meta.url);
 const koffi = requireCjs("koffi") as typeof import("koffi");
@@ -103,6 +105,27 @@ describe("darwinPlatform", () => {
     expect(p.system.environment({ windows: undefined }).mac?.accessibility).toBe(true); // before it opened: Electron's answer
     p.openWindows(log());
     expect(p.system.environment({ windows: undefined }).mac?.accessibility).toBe(false);
+  });
+
+  it("logs an app launch that failed after it returned, through the logger openWindows was given", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-launch-"));
+    try {
+      const bundle = path.join(dir, "Thing.app");
+      fs.mkdirSync(bundle);
+      const run = fakeRun([{ match: tool("/usr/bin/open"), result: { code: 1, stderr: "LSOpenURLsWithRole() failed\n" } }]).run;
+      const p = darwinPlatform(fakeDeps(fakeElectron().electron), { run, every: () => {}, openWindows: () => fakeWs() as never });
+      const app = { id: "com.example.thing", name: "Thing", file: bundle, keywords: [] };
+      p.system.apps.launch(app); // before ready: no logger yet, nothing to log through (and nothing thrown)
+      await new Promise(r => setTimeout(r, 0));
+      const l = log();
+      p.openWindows(l);
+      p.system.apps.launch(app);
+      await new Promise(r => setTimeout(r, 0));
+      expect(l.warn).toHaveBeenCalledTimes(1);
+      expect(l.warn).toHaveBeenCalledWith("platform.app_launch_failed", { code: 1, stderr: "LSOpenURLsWithRole() failed" });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("has no X11 pieces: no re-reported shortcuts, keyboard hold, X clipboard or desk", () => {
