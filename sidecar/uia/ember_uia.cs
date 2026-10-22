@@ -2253,6 +2253,11 @@ namespace Ember.Uia
       internal IntPtr Hwnd;
       internal int Pid;
       internal JObj Rect;
+      // Win32 facts, gathered while the processes are read (no app can delay them).
+      internal string Program;
+      internal int Hosted;
+      internal IntPtr Owner;
+      internal bool Topmost;
     }
 
     private sealed class Group
@@ -2309,8 +2314,10 @@ namespace Ember.Uia
           }
         });
       }
-      batch.Wait(c, 20);
+      // Meanwhile the Win32 facts, so that what is left after the wait is only putting the answer together.
       Dictionary<int, string> programs = new Dictionary<int, string>();
+      foreach (Listed w in listed) Learn(w, programs);
+      batch.Wait(c, 20);
       List<object> windows = new List<object>();
       int z2 = 0;
       foreach (Listed w in listed)
@@ -2335,7 +2342,7 @@ namespace Ember.Uia
         {
           entry = new JObj().Add("name", Win.Title(w.Hwnd)).Add("className", Win.ClassName(w.Hwnd)).Add("bounds", w.Rect);
         }
-        AddWindowFacts(entry, w, foreground, programs, z2++);
+        AddWindowFacts(entry, w, foreground, z2++);
         if (busy) entry.Add("busy", true);
         windows.Add(entry);
       }
@@ -2373,34 +2380,40 @@ namespace Ember.Uia
       return found;
     }
 
-    private static void AddWindowFacts(JObj entry, Listed w, IntPtr foreground, Dictionary<int, string> programs, int z)
+    private static string ProgramOf(int pid, Dictionary<int, string> programs)
+    {
+      string program;
+      if (!programs.TryGetValue(pid, out program))
+      {
+        program = Win.Program(pid);
+        programs[pid] = program;
+      }
+      return program;
+    }
+
+    private static void Learn(Listed w, Dictionary<int, string> programs)
+    {
+      w.Program = ProgramOf(w.Pid, programs);
+      if (string.Equals(w.Program, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase))
+      {
+        w.Hosted = Win.Hosted(w.Hwnd, w.Pid);
+        if (w.Hosted > 0)
+        {
+          string app = ProgramOf(w.Hosted, programs);
+          if (app.Length > 0) w.Program = app;
+        }
+      }
+      w.Owner = Win.Owner(w.Hwnd);
+      w.Topmost = Win.Topmost(w.Hwnd);
+    }
+
+    private static void AddWindowFacts(JObj entry, Listed w, IntPtr foreground, int z)
     {
       entry.Add("hwnd", Win.Number(w.Hwnd));
       entry.Add("pid", w.Pid);
-      string program;
-      if (!programs.TryGetValue(w.Pid, out program))
-      {
-        program = Win.Program(w.Pid);
-        programs[w.Pid] = program;
-      }
-      if (string.Equals(program, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase))
-      {
-        int hosted = Win.Hosted(w.Hwnd, w.Pid);
-        if (hosted > 0)
-        {
-          string app;
-          if (!programs.TryGetValue(hosted, out app))
-          {
-            app = Win.Program(hosted);
-            programs[hosted] = app;
-          }
-          entry.Add("hostedPid", hosted);
-          if (app.Length > 0) program = app;
-        }
-      }
-      entry.Add("processName", program);
-      IntPtr owner = Win.Owner(w.Hwnd);
-      if (owner != IntPtr.Zero) entry.Add("owner", Win.Number(owner));
+      if (w.Hosted > 0) entry.Add("hostedPid", w.Hosted);
+      entry.Add("processName", w.Program);
+      if (w.Owner != IntPtr.Zero) entry.Add("owner", Win.Number(w.Owner));
       JObj patterns = entry.Get("patterns") as JObj;
       JObj window = patterns != null ? patterns.Get("window") as JObj : null;
       if (window != null)
@@ -2408,7 +2421,7 @@ namespace Ember.Uia
         if (window.Has("modal")) entry.Add("isModal", window.Get("modal"));
         if (window.Has("state")) entry.Add("windowState", window.Get("state"));
       }
-      entry.Add("isTopmost", Win.Topmost(w.Hwnd));
+      entry.Add("isTopmost", w.Topmost);
       entry.Add("focused", w.Hwnd == foreground);
       entry.Add("z", z);
     }
