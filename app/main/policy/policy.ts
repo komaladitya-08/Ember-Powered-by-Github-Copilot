@@ -503,7 +503,7 @@ function perOS<T>(make: (os: OS) => T): (os: OS) => T {
   };
 }
 /** Whole words or phrases (regular-expression source), or null for none. */
-const wordsOf = (list: readonly string[], flags = "") => (list.length ? new RegExp(`\\b(${list.join("|")})\\b`, flags) : null);
+const wordsOf = (list: readonly string[]) => (list.length ? new RegExp(`\\b(${list.join("|")})\\b`) : null);
 /** RISKY_EXTRA[os] (the OS's own words for what can't be undone), as one expression. */
 const riskyExtra = perOS(os => wordsOf(RISKY_EXTRA[os]));
 /** Is this label risky (RISKY, the languages' lists, a disk's formatting, and on `os` its own words: RISKY_EXTRA)? */
