@@ -60,6 +60,8 @@ describe("Windows setup checks", () => {
   it("warn about running as administrator and about mixed display scaling", () => {
     expect(check(win({ elevated: true }), "elevated")).toMatchObject({ status: "warn", detail: expect.stringMatching(/running as administrator: start it normally/) });
     expect(check(win(), "elevated")).toBeUndefined();
+    // A token that couldn't be read isn't called elevated here (the targets runtime counts it as elevated: commands ask).
+    expect(check(win({ elevated: null }), "elevated")).toBeUndefined();
     expect(check(win({ dpiMixed: true }), "display-scaling")).toMatchObject({ status: "warn", detail: expect.stringMatching(/mixed display scaling/) });
     expect(check(win(), "display-scaling")).toBeUndefined();
   });

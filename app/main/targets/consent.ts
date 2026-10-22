@@ -1,0 +1,153 @@
+/**
+ * The first-use consent cards (§8.4) and their records (§7.4): WSL once, SSH per host, commands per target. Each card's
+ * text is built here for the PC's OS (the stop chord named as that OS's shortcut, substituted before the text is
+ * hashed, so each OS's card is its own text: critique integration-22), and the yes must carry back the SHA-256 of
+ * exactly that text. A card's record keeps the version the user said yes to; bumping FEATURE_CONSENT_VERSION asks that
+ * card again and nothing else. Plain Node.
+ */
+
+import { createHash } from "node:crypto";
+import { FEATURE_CONSENT_VERSION, type ConsentPanel } from "../../shared/consent";
+import { SHORTCUTS, type OS } from "../../shared/shortcuts";
+import type { TargetId } from "../../shared/targets";
+import type { HostRecord } from "../remote/types";
+
+/** sha256Hex of a card's title and body, as ConsentPanel.sha256 says. */
+export function consentSha256(c: { title: string; body: readonly string[] }): string {
+  return createHash("sha256").update(`${c.title}\n${c.body.join("\n")}`, "utf8").digest("hex");
+}
+
+/** A card with its hash. */
+function panel(o: Omit<ConsentPanel, "sha256">): ConsentPanel {
+  return { ...o, sha256: consentSha256(o) };
+}
+
+/** The PC's stop chord as the cards name it ("Ctrl+Alt+X"). */
+const stopLabel = (os: OS) => SHORTCUTS[os].stop.label;
+
+/** The WSL card (§8.4.1). `target` is the distro "WSL" names (or "local" when none is installed yet). */
+export function wslConsent(o: { target: TargetId; targetLabel: string }): ConsentPanel {
+  return panel({
+    feature: "wsl", target: o.target, targetLabel: o.targetLabel,
+    title: "Use Ember with WSL?",
+    body: [
+      "Ember will start a small helper inside each WSL distro that has a Linux app open, so it can read and use those apps the way it reads your other windows. It runs only while a Linux app is open, and never starts a distro on its own.",
+      "When you ask something, what Ember read goes to GitHub Copilot, as it does for your other windows.",
+      "Ember can also run commands in WSL if you turn commands on for it. Commands in WSL can reach your Windows files and programs.",
+    ],
+    yes: "Turn on", no: "Not now",
+  });
+}
+
+/** What the commands card says about the target besides its common text (§8.4.3 line 4). */
+export interface CommandsCardFacts {
+  kind: "local" | "wsl" | "ssh";
+  /** Commands run as root or an elevated administrator there (D4.6). */
+  privileged: boolean;
+  /** The target is a Windows PC (local Windows: PowerShell on pipes). */
+  windows: boolean;
+  /** A Podman distro. */
+  podman: boolean;
+}
+
+/** The commands card for one target (§8.4.3). */
+export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: string; facts: CommandsCardFacts }): ConsentPanel {
+  const here = o.target === "local" ? "this computer" : o.targetLabel;
+  const extra: string[] = [];
+  if (o.facts.kind === "wsl") extra.push("Commands in WSL can also reach your Windows files and programs.");
+  if (o.facts.privileged) extra.push("Commands here run as the administrator, so Ember asks before every one.");
+  if (o.facts.windows) extra.push("Commands here run in Windows PowerShell and can't ask you for answers or passwords.");
+  if (o.facts.podman) extra.push("Podman uses this distro, so Ember asks before every command here.");
+  return panel({
+    feature: "commands", target: o.target, targetLabel: o.targetLabel,
+    title: `Let Ember run commands on ${here}?`,
+    body: [
+      "Ember runs commands in its own command window, where you can watch them and stop them. It never types into your own terminal windows.",
+      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
+      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      ...extra,
+      `${stopLabel(o.os)} stops everything at once. What a command already changed stays changed.`,
+    ],
+    yes: "Turn on", no: "Not now",
+  });
+}
+
+/** What the SSH card knows before connecting (the resolution of `ssh -G`, the carried options, the policy's limits). */
+export interface SshCardFacts {
+  label: string;
+  resolved: HostRecord["resolved"];
+  extra?: HostRecord["extra"];
+  /** A distro's label when ssh runs inside it (L22). */
+  viaLabel?: string;
+  /** The PC's administrator turned off remote desktops (`ssh.desktop: false`): commands only. */
+  desktopOff: boolean;
+  /** How long a command survives a silent link (s): the PC's `ssh.commandGraceSeconds`, else 20. */
+  graceSeconds: number;
+  /** The machine Ember connected to before isn't the one it reached now (§7.4: asked again). */
+  machineChanged?: boolean;
+}
+
+/** "the key ~/.ssh/a and the settings file ~/.ssh/b" from the carried options, or "". */
+function carriedWords(extra: HostRecord["extra"] | undefined): string {
+  const keys = extra?.identityFiles ?? [];
+  const parts: string[] = [];
+  if (keys.length === 1) parts.push(`the key ${keys[0]}`);
+  else if (keys.length > 1) parts.push(`the keys ${keys.slice(0, -1).join(", ")} and ${keys[keys.length - 1]}`);
+  if (extra?.configFile) parts.push(`the settings file ${extra.configFile}`);
+  return parts.join(" and ");
+}
+
+/** The SSH card for one host (§8.4.2), before the first connection (or a changed resolution or machine). */
+export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts }): ConsentPanel {
+  const f = o.facts;
+  const r = f.resolved;
+  const through = r.jump.length ? `, through ${r.jump.join(", ")}` : "";
+  const body: string[] = [];
+  if (f.machineChanged) body.push(`${f.label} isn't the computer Ember connected to before under this name. Connect only if you know why it changed.`);
+  body.push(`Ember will connect to ${f.label} as ${r.user} (${r.user}@${r.hostname}, port ${r.port}${through}) with your own SSH settings and keys.`);
+  const carried = carriedWords(f.extra);
+  if (carried) body.push(`It uses ${carried}, as your own ssh did.`);
+  if (f.viaLabel) body.push(`It connects from ${f.viaLabel}, with ${f.viaLabel.replace(/ \(WSL\)$/, "")}'s SSH keys.`);
+  body.push(
+    `It copies a small helper there: about 31 MB, unpacked to about 125 MB in ~/.local/share/ember-remote. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
+    `Your voice and your GitHub sign-in stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
+    f.desktopOff
+      ? `Your organisation lets Ember only run commands on ${f.label}.`
+      : `On ${f.label}'s screen it reads and uses apps only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.`,
+    `${f.label} keeps its own record of what Ember does there.`,
+  );
+  return panel({ feature: "ssh", target: o.target, targetLabel: f.label, title: `Bring Ember to ${f.label}?`, body, yes: "Connect", no: "Not now" });
+}
+
+/** A consent record (settings): the card's version the user said yes to, and when. */
+export interface ConsentRecord { version: number; at: string | null }
+
+/** The record a yes to `feature`'s current card leaves. */
+export function consentGiven(feature: keyof typeof FEATURE_CONSENT_VERSION, now: Date): ConsentRecord {
+  return { version: FEATURE_CONSENT_VERSION[feature], at: now.toISOString() };
+}
+
+/** Whether a record covers `feature`'s current card. */
+export function consentCurrent(feature: keyof typeof FEATURE_CONSENT_VERSION, r: ConsentRecord | undefined): boolean {
+  return !!r && r.version >= FEATURE_CONSENT_VERSION[feature];
+}
+
+/**
+ * Whether a host's SSH card must be shown (again) before connecting: never accepted at the current version, or `ssh -G`
+ * now resolves it to another user, hostname or port than when the user said yes (§7.4).
+ */
+export function sshNeedsConsent(host: HostRecord, now: HostRecord["resolved"]): boolean {
+  if (!consentCurrent("ssh", host.consent)) return true;
+  const was = host.resolved;
+  return was.user !== now.user || was.hostname.toLowerCase() !== now.hostname.toLowerCase() || was.port !== now.port;
+}
+
+/** Whether the machine reached is another than the one the user consented to (a stored hash that differs). */
+export function machineChanged(host: HostRecord, machineIdHash: string): boolean {
+  return !!host.machineIdHash && host.machineIdHash !== machineIdHash;
+}
+
+/** The answer to a consent card counts as yes only with the hash of exactly what was shown. */
+export function consentYes(card: ConsentPanel, a: { ok: boolean; sha256?: string } | null | undefined): boolean {
+  return !!a && a.ok === true && typeof a.sha256 === "string" && a.sha256 === card.sha256;
+}

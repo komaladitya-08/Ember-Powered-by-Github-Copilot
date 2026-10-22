@@ -23,11 +23,10 @@ import {
 } from "../../app/main/remote/protocol";
 import { ConnectError, type HostRecord } from "../../app/main/remote/types";
 import type { CommandMode, RunSpec, RunnerFacts } from "../../app/main/commands/types";
-import type { ActStamp, PerceptionPort, SidecarPort } from "../../app/main/perception/ports";
+import type { ActStamp } from "../../app/main/perception/ports";
 import type { Seen } from "../../app/main/perception";
-import type { Hands } from "../../app/main/agent/host";
-import type { TargetsDeps } from "../../app/main/targets/types";
-import type { SystemPlatform } from "../../app/main/platform/types";
+import type { TargetsDeps, TargetsRuntime } from "../../app/main/targets/types";
+import type { PlatformDoctorRow, SystemPlatform } from "../../app/main/platform/types";
 import type { ActionRequest } from "../../app/main/policy/policy";
 import type { AtspiSidecar } from "../../app/main/perception/sidecar";
 import { createTargets, targetDoctorRows } from "../../app/main/targets/runtime";
@@ -567,55 +566,18 @@ describe("the fixed launcher texts (§3.3)", () => {
 
 // ─────────────── The stubs keep today's behaviour ───────────────
 
-const hands: Hands = {
-  perception: {} as PerceptionPort, sidecar: {} as SidecarPort, policy: {} as Hands["policy"], audit: {} as Hands["audit"],
-  confirmer: {} as Hands["confirmer"], flyTo: () => undefined, currentWindow: () => null,
-};
 const sys = { os: "linux" } as SystemPlatform;
-const deps = (localHands: Hands | null) => ({ os: "linux", sys, localHands } as unknown as TargetsDeps);
 
-describe("the targets runtime stub (local only)", () => {
-  it("gives today's local hands, with no commands, local grant keys and unchanged lease keys", () => {
-    const t = createTargets(deps(hands));
-    const got = t.agent.handsFor("local");
-    if (!got.ok) throw new Error(got.why);
-    for (const k of Object.keys(hands) as (keyof Hands)[]) expect(got.hands[k]).toBe(hands[k]);
-    expect(got.hands.commands).toBeNull();
-    expect(got.hands.system).toBe(sys);
-    expect(got.hands.binding).toEqual({ id: "local", kind: "local", label: "This computer", screenOs: "linux", shellOs: "linux", desktop: "screen" });
-    expect(got.hands.grantKey("GEdit")).toBe("gedit");
-    expect(got.hands.leaseKey("100:notes")).toBe("100:notes");
-    expect(got.hands.onAuthorized).toBeUndefined();
-  });
-
-  it("promises nothing new: caps off, no active line, no menu, no question panels, nothing to stop", async () => {
-    const t = createTargets(deps(hands));
-    expect(t.agent.active).toBe("local");
-    expect(t.agent.caps()).toEqual({ commands: false, targets: false });
-    expect(t.agent.activeLine()).toBe("");
-    expect(t.agent.describeScreen("local")).toBeNull();
-    expect(t.wsl).toBeNull();
-    expect(t.menuItems()).toEqual([]);
-    expect(t.bubbleAction("ui:cmdstop:0123456789abcdef")).toBe(false);
-    expect(t.quickContext()).toBeNull();
-    expect(t.panelReady(1)).toBe(false);
-    expect(t.questionWords({ title: "May I?", prompt: "x", options: [] } as unknown as Parameters<typeof t.questionWords>[0])).toBeNull();
-    expect(t.busy()).toEqual({ commands: 0, connections: 0 });
-    expect(t.summaries()).toEqual([{ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps", active: true }]);
-    await expect(t.stopAll()).resolves.toBeUndefined();
-    await expect(t.doctorRows()).resolves.toEqual([]);
-    await expect(targetDoctorRows({ os: "linux", sys, admin: () => loaded(null), resourcesPath: "/opt/ember/resources", packaged: true })).resolves.toEqual([]);
-  });
-
-  it("binds every task here, and refuses other computers and a computer the user didn't name", () => {
-    const t = createTargets(deps(hands));
-    const bound = t.agent.bind({ userWords: "open gedit" });
-    expect(bound.ok && bound.binding.id).toBe("local");
-    expect(t.agent.bind({ userWords: "on this computer", choice: "This computer" }).ok).toBe(true);
-    expect(t.agent.bind({ userWords: "open gedit", choice: "build-01" })).toEqual({ ok: false, why: "The user didn't name that computer. Use the one they chose, or ask them." });
-    expect(t.agent.handsFor("ssh:build-01").ok).toBe(false);
-    expect(t.agent.handsFor("wsl:Ubuntu").ok).toBe(false);
-    expect(createTargets(deps(null)).agent.handsFor("local").ok).toBe(false);
+// TG replaced the local-only runtime stub with the real runtime (same exported signatures). Its behaviour with nothing
+// set up (today's hands, caps off, no line, no menu, no badge, nothing started) is pinned with fakes for every factory
+// in targets-runtime.test.ts; building it here would read this machine's environment and run the doctor's probes.
+describe("the targets runtime's entry points", () => {
+  it("keep S0a's exported signatures", () => {
+    const make: (deps: TargetsDeps) => TargetsRuntime = createTargets;
+    const rows: (o: { os: "linux" | "win32" | "darwin"; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean }) => Promise<PlatformDoctorRow[]> = targetDoctorRows;
+    expect(make).toBeTypeOf("function");
+    expect(make.length).toBe(1);
+    expect(rows.length).toBe(1);
   });
 });
 
