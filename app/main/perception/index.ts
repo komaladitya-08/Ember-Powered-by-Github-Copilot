@@ -1,26 +1,35 @@
 /**
  * Perception: what is on the user's screen, as text (always) and as an image
  * (for workers, on request). Text comes from the accessibility tree via the
- * sidecar; images come straight from X11 with Ember hidden and private
- * windows and secret fields blacked out. Every position handed out is in
- * physical X pixels, also for HiDPI apps that report logical ones (see windows.ts).
+ * sidecar; images come straight from the window system (X11 on Linux) with Ember
+ * hidden and private windows and secret fields blacked out. Every position handed
+ * out is in the window system's native units (physical pixels on Linux and Windows,
+ * points on macOS), also for HiDPI apps that report logical ones (see windows.ts).
+ * Plain Node: the window system, the OS's words and its security-window vocabulary
+ * come in through PerceptionOptions, and each defaults to today's Linux behaviour.
  */
 
 import { friendlyApp } from "../../shared/apps";
-import { isSecurityWindow } from "../policy/policy";
+import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
+import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
-import type { StackedWindow, X11, X11Window } from "../x11";
+import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
 
+/** What Perception is given (main.ts, and the desk's own Perception in desk/place.ts). */
 export interface PerceptionOptions {
   sidecar: AtspiSidecar;
-  x11: X11 | null;
+  /**
+   * The window system: X11 on Linux (or the desk's remote X11), the Windows or macOS backend elsewhere; null without
+   * one. The field keeps its old name so the desk and the tests keep compiling.
+   */
+  x11: PerceptionWindows | null;
   neverLook: () => string[];
-  /** Full screen in physical pixels (all displays). */
+  /** Full screen in native units (all displays): physical pixels on Linux and Windows, points on macOS. */
   screenBounds: () => Bounds;
   hideOverlay?: () => Promise<() => void>;
   log: Logger;
@@ -29,6 +38,10 @@ export interface PerceptionOptions {
    * (handle, desk view, ask box) hide what lies under them; the click-through overlay doesn't.
    */
   ownPid?: number;
+  /** The OS's words for why there is no screenshot (default: Linux's, today's text). */
+  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
+  /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
+  isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
 }
 
 /**
@@ -85,8 +98,14 @@ export class Perception {
   private hidden: { count: number; restore: Promise<() => void> } | null = null;
   /** Scale per app (by pid): it rarely changes, and finding it takes a walk over the X window tree. */
   private scales = new Map<string, { k: number; until: number }>();
+  /** This OS's security-window check (one argument only: a second one would pick another OS's vocabulary). */
+  private readonly isSecurity: PrivacyVocabulary["isSecurityWindow"];
+  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
 
-  constructor(private o: PerceptionOptions) {}
+  constructor(private o: PerceptionOptions) {
+    this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
+    this.words = o.words ?? PLATFORM_WORDS.linux;
+  }
 
   /** The focused window's accessibility tree (empty when blocked or unreadable). */
   async focused(stack?: StackedWindow[] | null): Promise<Seen> {
@@ -104,7 +123,7 @@ export class Perception {
 
   /** On the never-look list, or a password or authentication prompt (polkit, keyring…): Ember looks away (M8.3). */
   private isPrivate(app: string, title: string, list: string[]): boolean {
-    return isNeverLook({ app, name: title }, list) || isSecurityWindow({ app, title });
+    return isNeverLook({ app, name: title }, list) || this.isSecurity({ app, title });
   }
 
   /**
@@ -317,10 +336,11 @@ export class Perception {
     const list = this.o.neverLook().filter(i => i.trim());
     const out = wins.filter(w => w.pid !== this.ownPid
       && !isNeverLook({ app: w.wmClass, name: w.title }, list)
-      && !isSecurityWindow({ app: w.wmClass, title: w.title })
+      && !this.isSecurity({ app: w.wmClass, title: w.title })
       // Each part of WM_CLASS on its own as well: some programs are known by one exact name ("firewall-config"),
-      // which accessibility gives and the two parts joined don't match.
-      && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && isSecurityWindow({ app: part })))
+      // which accessibility gives and the two parts joined don't match. On Windows wmClassName is the window class
+      // ("Credential Dialog Xaml Host").
+      && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && this.isSecurity({ app: part })))
       .map(w => {
         // The class part of WM_CLASS ("VirtualBox Manager"); the last word of both, where only they are known.
         const cls = w.wmClassName ?? w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
@@ -416,12 +436,15 @@ export class Perception {
     if (!x11) return noShot("screenshots aren't available on this display");
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
-    if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
+    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next).
+    if (this.platformDialog()) return noShot("a system dialog is open, so Ember looks away until it's done");
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
-    if (shell.unchecked) return noShot("GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment");
+    if (shell.unchecked) return noShot(this.words.shellUnchecked);
     if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
-    if (shell.overview) return noShot("the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed");
+    if (shell.overview) return noShot(this.words.overviewOpen);
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
     // A window: blacked out wherever other windows lie on top of it (the stacking order says which).
@@ -539,9 +562,26 @@ export class Perception {
     }
   }
 
-  /** Is a GNOME Shell system dialog (a polkit or keyring password prompt, most likely) on screen, or may one be? */
+  /**
+   * Is a system dialog (a password prompt, most likely) on screen, or may one be? GNOME Shell's (polkit, keyring), or
+   * the one the window system reports on Windows and macOS.
+   */
   async systemDialogOpen(): Promise<boolean> {
-    return (await this.shellOverlays()).dialog;
+    return (await this.shellOverlays()).dialog || this.platformDialog();
+  }
+
+  /**
+   * The window system's own answer (Windows: the secure desktop or a credential prompt; macOS: SecurityAgent or secure
+   * keyboard entry). False where it has none (Linux, the desk) or there is no window system; true when the check
+   * throws (fail closed).
+   */
+  private platformDialog(): boolean {
+    try {
+      return this.o.x11?.systemDialogOpen?.() ?? false;
+    } catch (err) {
+      this.o.log.warn("perception.system_dialog_check_failed", { err });
+      return true;
+    }
   }
 
   /** Hides Ember for a capture. Concurrent captures share one hide; the last one to finish shows Ember again. */
@@ -576,8 +616,8 @@ export class Perception {
     const privatePids = new Set(list.length && stack ? stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid) : []);
     return windows.flatMap(w => {
       const m = stack && w.bounds ? matchFrame(w, stack) : null;
-      if (isNeverLook(w, list) || isSecurityWindow(w) || (w.pid != null && privatePids.has(w.pid))
-        || (m && (isNeverLook({ app: m.window.wmClass, name: m.window.title }, list) || isSecurityWindow({ app: m.window.wmClass, title: m.window.title })))) return [];
+      if (isNeverLook(w, list) || this.isSecurity(w) || (w.pid != null && privatePids.has(w.pid))
+        || (m && (isNeverLook({ app: m.window.wmClass, name: m.window.title }, list) || this.isSecurity({ app: m.window.wmClass, title: m.window.title })))) return [];
       const k = w.bounds && stack ? this.frameScale(w, stack, m) : 1;
       return [k !== 1 ? { ...w, bounds: scaleBounds(w.bounds!, k) } : w];
     });

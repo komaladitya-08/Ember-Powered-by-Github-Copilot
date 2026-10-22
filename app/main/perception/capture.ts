@@ -1,17 +1,23 @@
 /**
- * Screenshots for the model: captured straight from X11 (fast, includes
- * composited windows), with Ember's overlay hidden, never-look windows blacked
- * out, downscaled to at most 1280 px on its longer side (JPEG), and a record
- * of how image pixels map back to screen pixels.
+ * Screenshots for the model: captured straight from the window system (X11's
+ * XGetImage on Linux: fast, includes composited windows; GDI on Windows;
+ * desktopCapturer on macOS, which answers asynchronously), with Ember's overlay
+ * hidden, never-look windows blacked out, downscaled to at most 1280 px on its
+ * longer side (JPEG), and a record of how image pixels map back to screen units.
+ * Ember shows again the moment the pixels are in, and a synchronous capture
+ * stays synchronous (no extra wait on Linux).
  */
 
 import { createRequire } from "node:module";
 import type Sharp from "sharp";
-import type { X11 } from "../x11";
+import type { PerceptionWindows, X11Image } from "../platform/types";
 import type { Bounds } from "./sidecar";
 
 export interface Capture {
-  /** What was captured, in screen (physical) pixels: the requested rectangle, clipped to the screen. */
+  /**
+   * What was captured, in screen units (physical pixels on Linux and Windows, points on macOS): the requested
+   * rectangle, clipped to the screen. It may start left of or above (0, 0) on Windows and macOS.
+   */
   rect: Bounds;
   /** Encoded image. */
   data: Buffer;
@@ -65,18 +71,24 @@ export function maskRect(rgba: Buffer, width: number, height: number, r: Bounds)
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) rgba[(y * width + x) * 4 + 3] = 255;
 }
 
-export async function captureRect(x11: X11, rect: Bounds, opts: CaptureOptions = {}): Promise<Capture | null> {
+/**
+ * Captures `rect` (screen units) with Ember hidden, blacks out the masks and encodes it; null when nothing could be
+ * captured or `maskAfter` can't tell what to black out (fail closed).
+ */
+export async function captureRect(x11: Pick<PerceptionWindows, "capture">, rect: Bounds, opts: CaptureOptions = {}): Promise<Capture | null> {
   const show = opts.hideOverlay ? await opts.hideOverlay() : null;
-  let img;
+  let img: X11Image | null;
   try {
-    img = x11.capture(Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height));
+    const r = x11.capture(Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height));
+    // An asynchronous capture (macOS) keeps Ember hidden until its pixels are in; a synchronous one isn't awaited.
+    img = isPromiseLike(r) ? await r : r;
   } finally {
     show?.();
   }
   if (!img) return null;
   const after = opts.maskAfter ? await opts.maskAfter() : [];
   if (after === null) return null;
-  // x11.capture clips the rectangle to the screen: image pixel (0,0) is screen pixel (img.x, img.y).
+  // capture() clips the rectangle to the screen: image pixel (0,0) is screen pixel (img.x, img.y), negative or not.
   const origin: Bounds = { x: img.x, y: img.y, width: img.width, height: img.height };
   const rgba = bgraToRgba(img.bgra);
   for (const m of [...opts.mask ?? [], ...after]) {
@@ -93,6 +105,11 @@ export async function captureRect(x11: X11, rect: Bounds, opts: CaptureOptions =
   const format = opts.format ?? "jpeg";
   const data = format === "png" ? await pipeline.png().toBuffer() : await pipeline.jpeg({ quality: 78 }).toBuffer();
   return { rect: origin, data, mimeType: format === "png" ? "image/png" : "image/jpeg", width, height, scale };
+}
+
+/** Is this capture's answer still to come? (Duck-typed: X11's synchronous image is a plain object without `then`.) */
+function isPromiseLike<T>(v: T | PromiseLike<T>): v is PromiseLike<T> {
+  return typeof (v as { then?: unknown } | null)?.then === "function";
 }
 
 /** Screen point for an image point in a capture. */
