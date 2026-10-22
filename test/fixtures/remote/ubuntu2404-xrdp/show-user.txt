@@ -1,0 +1,2 @@
+Display=c1
+Sessions=c1 7

@@ -1,0 +1,8 @@
+Id=7
+User=1000
+Remote=yes
+Type=tty
+Class=user
+Active=yes
+State=active
+LockedHint=no

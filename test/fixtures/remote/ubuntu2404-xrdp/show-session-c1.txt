@@ -1,0 +1,8 @@
+Id=c1
+User=1000
+Remote=yes
+Type=x11
+Class=user
+Active=yes
+State=active
+LockedHint=no

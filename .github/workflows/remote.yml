@@ -142,7 +142,8 @@ jobs:
       - name: System packages (sshd, Xvfb, a session bus, AT-SPI, GTK 3 for the test window)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q openssh-server xvfb xauth dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0
+          sudo apt-get install -y -q openssh-server xvfb xauth dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0 \
+            dconf-gsettings-backend dconf-service
       - name: Two sshds of the test's own (127.0.0.1:2222, and 2223 as a jump host) with the runner's new key
         run: |
           set -euo pipefail
@@ -170,11 +171,15 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
+      - name: The remote agent's parts (dist/remote-parts), as the suites install them
+        run: node scripts/package/remote-parts.mjs
       - name: Transport (ssh -G, batch and interactive connects, host keys, ProxyJump, ControlMaster) and the agent
         run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+          # The runner has passwordless sudo: remote-ssh writes /etc/ember/policy.json for its policy cases.
+          EMBER_SSH_TEST_SUDO: "1"
       - name: The remote desktop child against Xvfb (discovery inputs injected; logind isn't available on runners)
         run: >-
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"
@@ -212,14 +217,18 @@ jobs:
           docker cp ~/.ssh/id_ed25519.pub el8:/home/deploy/.ssh/authorized_keys
           docker exec el8 sh -c 'chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys'
           docker exec el8 ssh-keygen -A
+          # No systemd in the container removes /run/nologin, and pam_nologin refuses every login while it exists.
+          docker exec el8 rm -f /run/nologin /etc/nologin
           docker exec el8 /usr/sbin/sshd -p 2222
           host="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' el8)"
-          for i in $(seq 1 20); do ssh-keyscan -p 2222 "$host" >> ~/.ssh/known_hosts 2>/dev/null && break; sleep 1; done
+          for _ in $(seq 1 20); do ssh-keyscan -p 2222 "$host" >> ~/.ssh/known_hosts 2>/dev/null && break; sleep 1; done
           ssh -o BatchMode=yes -p 2222 "deploy@$host" true
           printf '%s\n' "EMBER_SSH_TEST_HOST=$host" "EMBER_SSH_TEST_PORT=2222" "EMBER_SSH_TEST_USER=deploy" >> "$GITHUB_ENV"
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
+      - name: The remote agent's parts (dist/remote-parts), as the suite installs them
+        run: node scripts/package/remote-parts.mjs
       - name: The real bootstrap on glibc 2.28 (install, serve, commands, headless desktop "none", a racing install)
         run: node scripts/run-integration.mjs --allow-missing test/integration/remote-el8.test.ts
         env:
@@ -243,7 +252,8 @@ jobs:
       - name: System packages (mutter, AT-SPI, GTK 3, sshd)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q mutter dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0 openssh-server
+          sudo apt-get install -y -q mutter dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0 openssh-server \
+            dconf-gsettings-backend dconf-service
       - name: sshd on 127.0.0.1:2222 with the runner's new key
         run: |
           set -euo pipefail
@@ -264,9 +274,10 @@ jobs:
       - run: npm run build
       - name: Reading and a tier-1 action in a Wayland session (until green, Wayland remotes stay commands only)
         run: |
+          XDG_RUNTIME_DIR="$(mktemp -d /tmp/ewl.XXXXXX)" && chmod 700 "$XDG_RUNTIME_DIR" && export XDG_RUNTIME_DIR
           dbus-run-session -- bash -c '
-            mutter --headless --wayland --no-x11 --virtual-monitor 1280x1024 & sleep 3
-            node scripts/run-integration.mjs --allow-missing test/integration/remote-wayland.test.ts'
+            mutter --headless --wayland --no-x11 --virtual-monitor 1280x1024 --wayland-display ember-wl & sleep 3
+            WAYLAND_DISPLAY=ember-wl node scripts/run-integration.mjs --allow-missing test/integration/remote-wayland.test.ts'
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -457,6 +468,8 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
+      - name: The remote agent's parts (dist/remote-parts), as the suite installs them
+        run: node scripts/package/remote-parts.mjs
       - name: Commands on macOS (zsh, BSD script's exit status, the ps -E sweep, Homebrew on PATH)
         run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
         env:

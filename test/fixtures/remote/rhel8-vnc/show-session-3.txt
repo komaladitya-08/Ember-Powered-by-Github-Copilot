@@ -1,0 +1,9 @@
+Id=3
+User=1000
+Display=:1
+Remote=no
+Type=x11
+Class=user
+Active=yes
+State=active
+LockedHint=no

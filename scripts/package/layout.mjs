@@ -14,6 +14,12 @@ export const TARGETS = ["linux-x64", "win32-x64", "win32-arm64", "darwin-arm64",
  */
 export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-"];
 
+/**
+ * The remote agent's parts for SSH targets (scripts/package/remote-parts.mjs): dist/remote-parts/ is staged as this
+ * folder under every target's resources folder (stage.mjs), where the PC finds the archive it sends a remote.
+ */
+export const REMOTE_PARTS_DIR = "remote-parts";
+
 /** Packages never bundled: tslib is only @emnapi's, and @emnapi is only sharp's wasm fallback's. */
 const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 
