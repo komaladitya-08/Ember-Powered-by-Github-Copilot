@@ -620,8 +620,10 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
     let value: AxValue | undefined;
     const provisional = nodeOf(f, undefined, []);
     const role = axRole({ ...provisional, handle: 0, key: "", parent, depth }, ctx);
+    // What doesn't show is dropped by the host with all it holds: its value and actions aren't asked for.
+    const off = !first && clippedOut(f, clip);
     try {
-      if (readsValue(f) && !late()) {
+      if (!off && readsValue(f) && !late()) {
         const before = s.calls;
         value = s.value(ref, f);
         trips += s.calls - before;
@@ -633,7 +635,6 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
       if (err instanceof ProviderError && err.code === "denied") throw err;
       return;
     }
-    const off = !first && clippedOut(f, clip);
     const index = nodes.length;
     const node = nodeOf(f, value, []);
     if (off) node.offscreen = true;
@@ -684,7 +685,7 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
     }
     // Its actions, where the host lists them and the budget allows; else what its role implies.
     let names: string[] | null = null;
-    if (readsActions(role) && trips < MAX_TRIPS && !late()) {
+    if (!off && readsActions(role) && trips < MAX_TRIPS && !late()) {
       try {
         names = s.actions(ref);
         nodes[index].trips = ++trips;
