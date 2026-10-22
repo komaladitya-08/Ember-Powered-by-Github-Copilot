@@ -113,7 +113,10 @@ export function createCommandWindowPort(o: { create: () => BrowserWindowLike; ip
 
 /** createCommandWindowPort with its extras typed: the same object (the targets runtime may call this name instead). */
 export function createCommandWindowController(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS; keyHint: () => string | null }): CommandWindowController {
-  const log = o.log;
+  /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
+  const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
+    try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
+  };
   let win: BrowserWindowLike | null = null;
   let disposed = false;
   let rev = 0;
@@ -132,7 +135,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     return !!w && !!sender && typeof sender.id === "number" && sender.id === w.webContents.id;
   };
   const safe = (what: string, f: () => void) => {
-    try { f(); } catch (err) { log.warn("commands.window_call_failed", { what, err }); }
+    try { f(); } catch (err) { note("warn", "commands.window_call_failed", { what, err }); }
   };
 
   function ensure(): BrowserWindowLike | null {
@@ -141,11 +144,12 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     if (w0) return w0;
     let w: BrowserWindowLike;
     try { w = o.create(); } catch (err) {
-      log.error("commands.window_failed", { err });
+      note("error", "commands.window_failed", { err });
       win = null;
       return null;
     }
     win = w;
+    wire();
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
@@ -286,82 +290,88 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
   }
 
   // ───── Messages from the page (each from this window's own page only, every field checked) ─────
-  const refused = (channel: string) => log.warn("commands.ipc_refused", { channel });
+  // Wired when the window is first made: no window, no handlers (commands off, nothing new anywhere).
+  let wired = false;
+  function wire(): void {
+    if (wired) return;
+    wired = true;
+    const refused = (channel: string) => note("warn", "commands.ipc_refused", { channel });
 
-  o.ipc.handle(COMMANDS_IPC.state, e => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.state); return null; }
-    return snapshot();
-  });
+    o.ipc.handle(COMMANDS_IPC.state, e => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.state); return null; }
+      return snapshot();
+    });
 
-  o.ipc.on(COMMANDS_IPC.answer, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.answer); return; }
-    if (!isObj(raw) || !isN(raw.n) || (raw.answer !== "once" && raw.answer !== "deny") || !isSha(raw.sha256)) return;
-    // Only the card on screen, with its own hash; Allow only once it was armed and its whole command was seen.
-    if (!card || card.n !== raw.n || card.card.sha256 !== raw.sha256) return;
-    if (raw.answer === "once") {
-      const armed = Date.now() >= card.shownAt + card.card.armMs;
-      const seen = view?.n === card.n && view.seen;
-      if (!armed || !seen) { log.warn("commands.allow_too_early", { n: card.n, armed, seen }); return; }
-    }
-    const a: AnswerMsg = { n: raw.n, answer: raw.answer, sha256: raw.sha256 };
-    for (const fn of [...answerFns]) safe("answer", () => fn(a));
-  });
+    o.ipc.on(COMMANDS_IPC.answer, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.answer); return; }
+      if (!isObj(raw) || !isN(raw.n) || (raw.answer !== "once" && raw.answer !== "deny") || !isSha(raw.sha256)) return;
+      // Only the card on screen, with its own hash; Allow only once it was armed and its whole command was seen.
+      if (!card || card.n !== raw.n || card.card.sha256 !== raw.sha256) return;
+      if (raw.answer === "once") {
+        const armed = Date.now() >= card.shownAt + card.card.armMs;
+        const seen = view?.n === card.n && view.seen;
+        if (!armed || !seen) { note("warn", "commands.allow_too_early", { n: card.n, armed, seen }); return; }
+      }
+      const a: AnswerMsg = { n: raw.n, answer: raw.answer, sha256: raw.sha256 };
+      for (const fn of [...answerFns]) safe("answer", () => fn(a));
+    });
 
-  o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.cardSeen); return; }
-    if (!isObj(raw) || !isN(raw.n) || typeof raw.inView !== "boolean" || typeof raw.seen !== "boolean") return;
-    if (!card || card.n !== raw.n) return;
-    // "Seen" sticks for a card (the page can't take it back), and "in view" needs it.
-    const seen = raw.seen || (view?.n === raw.n && view.seen);
-    view = { n: raw.n, seen, inView: raw.inView && seen };
-  });
+    o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.cardSeen); return; }
+      if (!isObj(raw) || !isN(raw.n) || typeof raw.inView !== "boolean" || typeof raw.seen !== "boolean") return;
+      if (!card || card.n !== raw.n) return;
+      // "Seen" sticks for a card (the page can't take it back), and "in view" needs it.
+      const seen = raw.seen || (view?.n === raw.n && view.seen);
+      view = { n: raw.n, seen, inView: raw.inView && seen };
+    });
 
-  o.ipc.on(COMMANDS_IPC.stop, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.stop); return; }
-    const runId = isObj(raw) ? raw.runId : raw;
-    if (!isRunId(runId)) return;
-    const a = queue.find(x => x.card.runId === runId);
-    if (a) { settleAnnouncement(a, false); return; }
-    const t = tabs.find(x => x.card.runId === runId && !x.ended);
-    if (t) safe("stop", () => t.run.stop("user"));
-  });
+    o.ipc.on(COMMANDS_IPC.stop, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.stop); return; }
+      const runId = isObj(raw) ? raw.runId : raw;
+      if (!isRunId(runId)) return;
+      const a = queue.find(x => x.card.runId === runId);
+      if (a) { settleAnnouncement(a, false); return; }
+      const t = tabs.find(x => x.card.runId === runId && !x.ended);
+      if (t) safe("stop", () => t.run.stop("user"));
+    });
 
-  o.ipc.on(COMMANDS_IPC.input, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.input); return; }
-    if (!isObj(raw) || !isRunId(raw.runId) || typeof raw.data !== "string" || !raw.data) return;
-    // Never logged: only that typing was refused, without a byte of it.
-    if (raw.data.length > INPUT_MAX_CHARS) { log.warn("commands.input_too_long", { chars: raw.data.length }); return; }
-    const t = tabs.find(x => x.card.runId === raw.runId);
-    if (!t || t.ended || t.run.interactive !== true) return;
-    for (const piece of typedPieces(raw.data)) safe("input", () => t.run.input(piece));
-  });
+    o.ipc.on(COMMANDS_IPC.input, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.input); return; }
+      if (!isObj(raw) || !isRunId(raw.runId) || typeof raw.data !== "string" || !raw.data) return;
+      // Never logged: only that typing was refused, without a byte of it.
+      if (raw.data.length > INPUT_MAX_CHARS) { note("warn", "commands.input_too_long", { chars: raw.data.length }); return; }
+      const t = tabs.find(x => x.card.runId === raw.runId);
+      if (!t || t.ended || t.run.interactive !== true) return;
+      for (const piece of typedPieces(raw.data)) safe("input", () => t.run.input(piece));
+    });
 
-  o.ipc.on(COMMANDS_IPC.close, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.close); return; }
-    const runId = isObj(raw) ? raw.runId : raw;
-    if (!isRunId(runId)) return;
-    const t = tabs.find(x => x.card.runId === runId && x.ended);
-    if (!t) return;
-    dropTab(t);
-    tabs = tabs.filter(x => x !== t);
-    push();
-    settle();
-  });
+    o.ipc.on(COMMANDS_IPC.close, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.close); return; }
+      const runId = isObj(raw) ? raw.runId : raw;
+      if (!isRunId(runId)) return;
+      const t = tabs.find(x => x.card.runId === runId && x.ended);
+      if (!t) return;
+      dropTab(t);
+      tabs = tabs.filter(x => x !== t);
+      push();
+      settle();
+    });
 
-  o.ipc.on(COMMANDS_EXTRA_IPC.size, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(COMMANDS_EXTRA_IPC.size); return; }
-    if (!isObj(raw)) return;
-    const { cols, rows } = raw;
-    if (Number.isInteger(cols) && Number.isInteger(rows) && (cols as number) >= 20 && (cols as number) <= 500 && (rows as number) >= 5 && (rows as number) <= 200) {
-      size = { cols: cols as number, rows: rows as number };
-    }
-  });
+    o.ipc.on(COMMANDS_EXTRA_IPC.size, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_EXTRA_IPC.size); return; }
+      if (!isObj(raw)) return;
+      const { cols, rows } = raw;
+      if (Number.isInteger(cols) && Number.isInteger(rows) && (cols as number) >= 20 && (cols as number) <= 500 && (rows as number) >= 5 && (rows as number) <= 200) {
+        size = { cols: cols as number, rows: rows as number };
+      }
+    });
+  }
 
   // ───── The port ─────
   return {
     showCard(n, c) {
       if (disposed) return;
-      if (!isN(n) || !validCard(c)) { log.error("commands.card_refused", { n }); return; }
+      if (!isN(n) || !validCard(c)) { note("error", "commands.card_refused", { n }); return; }
       // One card at a time: a new question replaces the one shown (its "seen" doesn't carry over).
       card = { n, card: c, shownAt: Date.now() };
       view = null;
@@ -421,7 +431,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
         dropTab(oldest);
         tabs = tabs.filter(x => x !== oldest);
       }
-      try { t.unsubscribe = run.onOutput(chunk => onOutput(t, chunk)); } catch (err) { log.warn("commands.output_unavailable", { err }); }
+      try { t.unsubscribe = run.onOutput(chunk => onOutput(t, chunk)); } catch (err) { note("warn", "commands.output_unavailable", { err }); }
       const finish = (exit: RunExit | null) => {
         if (t.ended || !tabs.includes(t)) return;
         flush(t);

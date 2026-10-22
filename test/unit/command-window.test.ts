@@ -166,8 +166,11 @@ describe("the command window's sender checks", () => {
     expect(run.inputs).toEqual([]);
   });
 
-  it("registers one invoke handler (the page's pull) and listens on its own channels only", () => {
-    const { ipc } = setup();
+  it("registers one invoke handler (the page's pull) and listens on its own channels only, once a window exists", () => {
+    const { ipc, ctl } = setup();
+    expect(ipc.handles.size + ipc.ons.size).toBe(0);
+    ctl.show();
+    ctl.show();
     expect([...ipc.handles.keys()]).toEqual([COMMANDS_IPC.state]);
     for (const ch of ipc.ons.keys()) expect(ch).toMatch(/^commands:/);
   });

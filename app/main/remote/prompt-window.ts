@@ -90,7 +90,10 @@ export function createPromptWindow(o: { create: () => BrowserWindowLike; ipc: Ip
 
 /** createPromptWindow with its extras typed: the same object (the targets runtime may call this name instead). */
 export function createPromptWindowController(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS }): PromptWindowController {
-  const log = o.log;
+  /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
+  const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
+    try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
+  };
   let win: BrowserWindowLike | null = null;
   let disposed = false;
   /** The card on screen is queue[0]. */
@@ -103,7 +106,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     return !!w && !!sender && typeof sender.id === "number" && sender.id === w.webContents.id;
   };
   const safe = (what: string, f: () => void) => {
-    try { f(); } catch (err) { log.warn("prompt.window_call_failed", { what, err }); }
+    try { f(); } catch (err) { note("warn", "prompt.window_call_failed", { what, err }); }
   };
 
   function ensure(): BrowserWindowLike | null {
@@ -112,10 +115,11 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     if (w0) return w0;
     let w: BrowserWindowLike;
     try { w = o.create(); } catch (err) {
-      log.error("prompt.window_failed", { err });
+      note("error", "prompt.window_failed", { err });
       return null;
     }
     win = w;
+    wire();
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
@@ -167,60 +171,66 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
   }
 
   // ───── Messages from the page (each from this window's own page only, every field checked) ─────
-  const refused = (channel: string) => log.warn("prompt.ipc_refused", { channel });
+  // Wired when the window is first made: no window, no handlers (commands off, nothing new anywhere).
+  let wired = false;
+  function wire(): void {
+    if (wired) return;
+    wired = true;
+    const refused = (channel: string) => note("warn", "prompt.ipc_refused", { channel });
 
-  o.ipc.handle(PROMPT_IPC.show, e => {
-    if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }
-    return queue[0]?.card ?? null;
-  });
+    o.ipc.handle(PROMPT_IPC.show, e => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.show); return null; }
+      return queue[0]?.card ?? null;
+    });
 
-  o.ipc.on(PROMPT_IPC.answer, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.answer); return; }
-    const head = queue[0];
-    if (!head || !isObj(raw) || raw.id !== head.card.id || typeof raw.ok !== "boolean") return;
-    const card = head.card;
-    const id = card.id;
-    if (card.kind === "consent" || card.kind === "consent-direct") {
-      // The yes counts only with the hash of the text that was shown; anything else is a no.
-      const yes = raw.ok && raw.sha256 === card.consent.sha256;
-      if (raw.ok && !yes) log.warn("prompt.consent_hash_mismatch", { feature: card.consent.feature });
-      if (card.kind === "consent") {
-        const a: ConsentAnswer = { n: card.n, answer: yes ? "once" : "deny", sha256: card.consent.sha256 };
-        finish(head, { id, ok: yes });
-        for (const fn of [...consentFns]) safe("consent", () => fn(a));
-      } else {
-        finish(head, yes ? { id, ok: true, sha256: card.consent.sha256 } : { id, ok: false });
+    o.ipc.on(PROMPT_IPC.answer, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.answer); return; }
+      const head = queue[0];
+      if (!head || !isObj(raw) || raw.id !== head.card.id || typeof raw.ok !== "boolean") return;
+      const card = head.card;
+      const id = card.id;
+      if (card.kind === "consent" || card.kind === "consent-direct") {
+        // The yes counts only with the hash of the text that was shown; anything else is a no.
+        const yes = raw.ok && raw.sha256 === card.consent.sha256;
+        if (raw.ok && !yes) note("warn", "prompt.consent_hash_mismatch", { feature: card.consent.feature });
+        if (card.kind === "consent") {
+          const a: ConsentAnswer = { n: card.n, answer: yes ? "once" : "deny", sha256: card.consent.sha256 };
+          finish(head, { id, ok: yes });
+          for (const fn of [...consentFns]) safe("consent", () => fn(a));
+        } else {
+          finish(head, yes ? { id, ok: true, sha256: card.consent.sha256 } : { id, ok: false });
+        }
+        return;
       }
-      return;
-    }
-    if (card.kind === "secret") {
-      // One line of at most 1 KiB, no NUL: anything else can't be handed to ssh, so it is a cancel (never logged).
-      const v = raw.value;
-      const good = raw.ok && typeof v === "string" && v.length > 0 && v.length <= SECRET_MAX && !/[\0\r\n]/.test(v);
-      finish(head, good ? { id, ok: true, value: v as string } : { id, ok: false });
-      return;
-    }
-    // A host key is trusted only by its own button; a changed key and a touch card can only be closed.
-    finish(head, { id, ok: card.kind === "host-key" && raw.ok });
-  });
+      if (card.kind === "secret") {
+        // One line of at most 1 KiB, no NUL: anything else can't be handed to ssh, so it is a cancel (never logged).
+        const v = raw.value;
+        const good = raw.ok && typeof v === "string" && v.length > 0 && v.length <= SECRET_MAX && !/[\0\r\n]/.test(v);
+        finish(head, good ? { id, ok: true, value: v as string } : { id, ok: false });
+        return;
+      }
+      // A host key is trusted only by its own button; a changed key and a touch card can only be closed.
+      finish(head, { id, ok: card.kind === "host-key" && raw.ok });
+    });
 
-  o.ipc.on(PROMPT_IPC.cancel, (e, raw) => {
-    if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.cancel); return; }
-    const head = queue[0];
-    if (!head || !isObj(raw) || raw.id !== head.card.id) return;
-    if (head.card.kind === "consent") {
-      const a: ConsentAnswer = { n: head.card.n, answer: "deny", sha256: head.card.consent.sha256 };
+    o.ipc.on(PROMPT_IPC.cancel, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(PROMPT_IPC.cancel); return; }
+      const head = queue[0];
+      if (!head || !isObj(raw) || raw.id !== head.card.id) return;
+      if (head.card.kind === "consent") {
+        const a: ConsentAnswer = { n: head.card.n, answer: "deny", sha256: head.card.consent.sha256 };
+        finish(head, { id: head.card.id, ok: false });
+        for (const fn of [...consentFns]) safe("consent", () => fn(a));
+        return;
+      }
       finish(head, { id: head.card.id, ok: false });
-      for (const fn of [...consentFns]) safe("consent", () => fn(a));
-      return;
-    }
-    finish(head, { id: head.card.id, ok: false });
-  });
+    });
+  }
 
   return {
     ask(card) {
       if (disposed || !validPromptCard(card) || card.kind === "consent" || queue.some(e => e.card.id === card.id)) {
-        log.warn("prompt.card_refused", { kind: (card as { kind?: unknown })?.kind });
+        note("warn", "prompt.card_refused", { kind: (card as { kind?: unknown })?.kind });
         return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false });
       }
       return new Promise<PromptAnswer>(resolve => enqueue({ card, resolve }));
@@ -233,7 +243,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
 
     showConsent(n, c) {
       if (disposed) return;
-      if (!Number.isSafeInteger(n) || n < 0 || !validConsent(c)) { log.error("prompt.consent_refused", { n }); return; }
+      if (!Number.isSafeInteger(n) || n < 0 || !validConsent(c)) { note("error", "prompt.consent_refused", { n }); return; }
       const existing = queue.find(x => x.card.kind === "consent" && x.card.n === n);
       // Asked again (the bubble's "Read it"): the same card comes back up.
       if (existing) { if (queue[0] === existing) reveal(); return; }

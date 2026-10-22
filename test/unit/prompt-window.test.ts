@@ -119,9 +119,10 @@ describe("the prompt window's queue", () => {
     expect(ctl.consentReady(1)).toBe(false);
   });
 
-  it("makes no window until a card needs one", () => {
-    const { ctl, windows } = setup();
+  it("makes no window, and listens to nothing, until a card needs one", () => {
+    const { ipc, ctl, windows } = setup();
     expect(windows).toHaveLength(0);
+    expect(ipc.ons.size + ipc.handles.size).toBe(0);
     expect(ctl.consentReady(1)).toBe(false);
     ctl.show();
     expect(windows).toHaveLength(0);
