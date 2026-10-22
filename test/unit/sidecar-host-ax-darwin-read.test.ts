@@ -57,6 +57,27 @@ describe("the AX provider's walk of a window", () => {
     done();
   });
 
+  it("takes a text field whose subrole couldn't be read for a secure one, reading nothing of its value (fail closed)", () => {
+    const fake = new FakeAx([benchApp()]);
+    fake.el("password").spec.slots = { AXSubrole: AX_ERROR.failure };
+    fake.el("name").spec.slots = { AXSubrole: AX_ERROR.failure };
+    fake.el("save").spec.slots = { AXSubrole: AX_ERROR.failure };
+    const { r, done } = walkOf(fake);
+    for (const id of ["password", "name"]) {
+      expect(fake.callsAbout(id).map(c => c.op), id).toEqual(["attrs"]);
+      expect(r.nodes.find(n => n.ref !== undefined && uidOf(fake, n.ref) === fake.el(id).uid)!.node).toMatchObject({ password: true });
+    }
+    expect(JSON.stringify(r.nodes.map(n => n.node))).not.toContain("hunter2");
+    // A subrole that is simply absent (NoValue) says nothing of the kind, and a button is no text field either way.
+    expect(byName(r, "Save").node.password).toBeUndefined();
+    done();
+    const absent = new FakeAx([benchApp()]);
+    absent.el("name").spec.value = "Ada";
+    const again = walkOf(absent);
+    expect(again.r.nodes.find(n => n.node.platformRole === "AXTextField" && n.node.name === "Name")!.node).toMatchObject({ value: "Ada" });
+    again.done();
+  });
+
   it("names a label by its text, a field by its label (without a round trip), and keeps a field's text cut to 2000 characters", () => {
     const fake = new FakeAx([benchApp()]);
     fake.el("name").spec.value = "x".repeat(2500);
@@ -82,6 +103,20 @@ describe("the AX provider's walk of a window", () => {
     expect(fake.callsAbout("far").map(c => c.op)).toEqual(["attrs"]);
     // The text area spent its three round trips (batch, length, value): its label isn't read.
     expect(r.nodes.find(n => n.node.platformRole === "AXTextArea")!.node.labelledBy).toBeUndefined();
+    done();
+    expect(fake.outstanding).toBe(0);
+  });
+
+  it("never names a field after a secure field's value, should an app make one its label", () => {
+    const fake = new FakeAx([app([window([
+      { role: "AXGroup", hidden: true, frame: at(0, 0, 100, 30), children: [
+        { role: "AXTextField", subrole: "AXSecureTextField", id: "secret", value: "hunter2", frame: at(0, 0, 100, 30) },
+      ] },
+      { role: "AXTextField", id: "card", titleElement: "secret", value: "", frame: at(110, 0, 200, 30) },
+    ])])]);
+    const { r, done } = walkOf(fake);
+    expect(r.nodes.find(n => n.node.platformRole === "AXTextField" && !n.node.offscreen)!.node.labelledBy).toBeUndefined();
+    expect(JSON.stringify(r.nodes.map(n => n.node))).not.toContain("hunter2");
     done();
     expect(fake.outstanding).toBe(0);
   });
@@ -225,6 +260,13 @@ describe("the AX provider's walk of a window", () => {
     expect(save.focusable).toBeUndefined();
     expect(r.nodes.some(n => n.node.name === "Remember me")).toBe(false);
     done();
+    expect(fake.outstanding).toBe(0);
+  });
+
+  it("gives every reference back when the permission goes partway through a walk", () => {
+    const fake = new FakeAx([benchApp()]);
+    fake.el("volume").spec.fail = AX_ERROR.apiDisabled;
+    expect(() => walkOf(fake)).toThrow(NEEDS_PERMISSION);
     expect(fake.outstanding).toBe(0);
   });
 
@@ -378,10 +420,13 @@ describe("doing things to an element", () => {
     expect(down.el("volume").spec.value).toBe(30);
   });
 
-  it("refuses to set a secure field's text without asking the app anything", () => {
-    const { fake, error } = perform("password", "setValue", "x");
-    expect(error).toMatchObject({ code: "denied" });
-    expect(fake.done).toEqual([]);
+  it("refuses to set a secure field's text or number without asking the app anything", () => {
+    for (const [op, value] of [["setValue", "x"], ["setRange", 3]] as const) {
+      const { fake, error } = perform("password", op, value);
+      expect(error, op).toMatchObject({ code: "denied" });
+      expect(fake.done, op).toEqual([]);
+      expect(fake.callsAbout("password").map(c => c.op), op).toEqual(["attrs"]);
+    }
   });
 
   it("says unsupported for UI Automation's legacy action, and for what the element can't do", () => {

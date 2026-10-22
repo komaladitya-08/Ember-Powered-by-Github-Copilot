@@ -118,6 +118,12 @@ const BATCH_UNSUPPORTED: ReadonlySet<number> = new Set([
   AX_ERROR.notImplemented, AX_ERROR.illegalArgument, AX_ERROR.failure, AX_ERROR.attributeUnsupported,
   AX_ERROR.parameterizedAttributeUnsupported,
 ]);
+/**
+ * Errors that end a one-by-one read at once, as the whole call's answer: after a CannotComplete every further call to
+ * that app would wait out the messaging timeout too (25 of them: 20 s), and a gone element or a disabled API answers
+ * every attribute alike.
+ */
+const ENDS_READ: ReadonlySet<number> = new Set([AX_ERROR.cannotComplete, AX_ERROR.invalidUIElement, AX_ERROR.apiDisabled]);
 
 /** The koffi prototypes of the AX calls port/darwin's ax.ts doesn't bind (CFIndex is long; Boolean out is one byte). */
 export const AX_EXTRA_PROTOTYPES = {
@@ -228,6 +234,11 @@ export function makeAxApi(p: AxApiParts): AxApi {
     }
     return made;
   };
+  /** Gives back every element reference in a converted value (arrays included). */
+  const releaseRefs = (v: AxValue | AxError): void => {
+    if (typeof v === "bigint") cf.release(v);
+    else if (Array.isArray(v)) v.forEach(releaseRefs);
+  };
   const one = (el: Ref, name: string, max: number): AxValue | AxError => {
     const { error, value } = ax.copy(el, name);
     return error !== AX_ERROR.success ? axError(error) : take(value, max);
@@ -255,7 +266,17 @@ export function makeAxApi(p: AxApiParts): AxApi {
       if (error !== AX_ERROR.success) {
         cf.release(out[0]);
         if (!BATCH_UNSUPPORTED.has(error)) return axError(error);
-        return new Map(names.map(n => [n, one(el, n, max)])); // the app can't batch: one by one
+        // The app can't batch: one by one, stopping at the first answer that ends the read (ENDS_READ).
+        const each = new Map<string, AxValue | AxError>();
+        for (const n of names) {
+          const v = one(el, n, max);
+          if (isAxError(v) && ENDS_READ.has(v.axError)) {
+            for (const got of each.values()) releaseRefs(got);
+            return v;
+          }
+          each.set(n, v);
+        }
+        return each;
       }
       const values = out[0];
       try {

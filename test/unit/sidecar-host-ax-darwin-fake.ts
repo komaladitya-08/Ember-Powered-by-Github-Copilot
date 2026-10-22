@@ -384,7 +384,7 @@ export class FakeAx implements AxApi {
     const apps = pid === undefined
       ? [...this.appEls.values()].filter(a => a.children.some(w => !w.spec.minimized && inside(w.spec.frame, x, y))).slice(0, 1)
       : [this.appEls.get(pid)].filter((a): a is El => !!a);
-    this.calls.push({ op: "at", uid: 0, pid: pid ?? apps[0]?.pid ?? 0 });
+    this.calls.push({ op: "at", uid: 0, pid: pid ?? apps[0]?.pid ?? 0, ...(pid === undefined ? { name: "system-wide" } : {}) });
     for (const app of apps) {
       if (this.apps.find(a => a.pid === app.pid)?.hung) return axError(AX_ERROR.cannotComplete);
       for (const w of app.children) {

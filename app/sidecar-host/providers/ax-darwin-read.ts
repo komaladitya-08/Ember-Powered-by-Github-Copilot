@@ -103,6 +103,11 @@ export type Note = (event: string, fields?: Record<string, unknown>) => void;
 export interface Facts {
   role: string;
   subrole: string;
+  /**
+   * AXSubrole couldn't be read (its slot failed, rather than being absent): a text field's may be a secure field's, so
+   * it is taken as one (isSecure).
+   */
+  subroleUnknown?: boolean;
   title: string;
   description: string;
   help: string;
@@ -153,15 +158,26 @@ export function releaseValue(api: Pick<AxApi, "release">, v: AxValue | AxError |
   else if (Array.isArray(v)) for (const x of v) releaseValue(api, x);
 }
 
-/** Is this a secure text field (whose value is never read, set or reported)? */
-export const isSecure = (f: Pick<Facts, "role" | "subrole">): boolean => f.subrole === "AXSecureTextField" || f.role === "AXSecureTextField";
+/**
+ * Is this a secure text field (whose value is never read, set or reported)? A text field whose subrole couldn't be
+ * read counts as one: fail closed.
+ */
+export const isSecure = (f: Pick<Facts, "role" | "subrole" | "subroleUnknown">): boolean =>
+  f.subrole === "AXSecureTextField" || f.role === "AXSecureTextField" || (f.subroleUnknown === true && f.role === "AXTextField");
+
+/**
+ * Did an AXSubrole slot fail rather than say "absent" (NoValue, AttributeUnsupported, kCFNull)? Then whether it is a
+ * secure field can't be told (see Facts.subroleUnknown).
+ */
+export const unreadSubrole = (v: AxValue | AxError | undefined): boolean =>
+  v !== undefined && typeof v !== "string" && !(isAxError(v) && errorCode(v.axError) !== "failed");
 
 /** A toggle: a check box, a disclosure triangle, or a button that says it toggles or switches. */
 const isToggle = (f: Pick<Facts, "role" | "subrole">): boolean =>
   f.role === "AXCheckBox" || f.role === "AXDisclosureTriangle" || (f.role === "AXButton" && (f.subrole === "AXToggle" || f.subrole === "AXSwitch"));
 
 /** Does a walk read this element's AXValue? Only for value roles, never for a secure field. */
-export const readsValue = (f: Pick<Facts, "role" | "subrole">): boolean => VALUE_ROLES.has(f.role) && !isSecure(f);
+export const readsValue = (f: Pick<Facts, "role" | "subrole" | "subroleUnknown">): boolean => VALUE_ROLES.has(f.role) && !isSecure(f);
 
 /** The rectangle of AXPosition and AXSize, or null when either is missing. */
 function frameOf(pos: AxValue | AxError | undefined, size: AxValue | AxError | undefined): Rect | null {
@@ -190,6 +206,7 @@ export function factsOf(api: Pick<AxApi, "release">, m: ReadonlyMap<string, AxVa
   const f: Facts = {
     role: str(get("AXRole")),
     subrole: str(get("AXSubrole")),
+    ...(unreadSubrole(get("AXSubrole")) ? { subroleUnknown: true } : {}),
     title: str(get("AXTitle")),
     description: str(get("AXDescription")),
     help: str(get("AXHelp")),
@@ -650,10 +667,16 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
             kids = kids.slice(0, want - 1);
           }
           const inner = clipInside(f, clip, depth);
-          kids.forEach((k, i) => {
-            if (stop) s.api.release(k);
-            else visit(k, index, depth + 1, [...path, i], inner, ctxInside);
-          });
+          for (let i = 0; i < kids.length; i++) {
+            if (stop) { s.api.release(kids[i]!); continue; }
+            try {
+              visit(kids[i]!, index, depth + 1, [...path, i], inner, ctxInside);
+            } catch (err) {
+              // Refused partway (the permission went): the children not visited yet go back too.
+              for (const rest of kids.slice(i + 1)) s.api.release(rest);
+              throw err;
+            }
+          }
         }
       }
     }
@@ -711,11 +734,15 @@ function resolveLabels(s: AxSession, nodes: Walked[], titles: Map<number, AxRef>
   titles.clear();
 }
 
-/** What a label element says (its AXTitle, else its AXValue), or "" when it can't be read. */
+/**
+ * What a label element says (its AXTitle, else its AXValue), or "" when it can't be read. Its role comes in the same
+ * round trip: should an app name a secure field as another's label, that field's value is never reported.
+ */
 function labelOf(s: AxSession, label: AxRef): string {
   try {
-    const m = s.batch(label, ["AXTitle", "AXValue"]);
-    const said = str(m.get("AXTitle")) || str(m.get("AXValue"));
+    const m = s.batch(label, ["AXRole", "AXSubrole", "AXTitle", "AXValue"]);
+    const secure = isSecure({ role: str(m.get("AXRole")), subrole: str(m.get("AXSubrole")), subroleUnknown: unreadSubrole(m.get("AXSubrole")) });
+    const said = str(m.get("AXTitle")) || (secure ? "" : str(m.get("AXValue")));
     for (const v of m.values()) releaseValue(s.api, v);
     return said;
   } catch {
@@ -786,9 +813,9 @@ export function glance(s: AxSession, el: AxRef, names: readonly string[] = NODE_
 export function textOf(s: AxSession, el: AxRef, maxChars: number): TextInfo {
   // The role first, on its own: nothing of a secure field's contents (its length, its selection) is asked for.
   const kind = s.batch(el, ["AXRole", "AXSubrole"]);
-  const role = str(kind.get("AXRole")), subrole = str(kind.get("AXSubrole"));
+  const role = str(kind.get("AXRole")), subrole = str(kind.get("AXSubrole")), subroleUnknown = unreadSubrole(kind.get("AXSubrole"));
   for (const v of kind.values()) releaseValue(s.api, v);
-  if (isSecure({ role, subrole })) return { secret: true };
+  if (isSecure({ role, subrole, subroleUnknown })) return { secret: true };
   const m = s.batch(el, ["AXNumberOfCharacters", "AXSelectedText", "AXSelectedTextRange"]);
   const chars = num(m.get("AXNumberOfCharacters"));
   const selected = m.get("AXSelectedText"), range = m.get("AXSelectedTextRange");
@@ -871,6 +898,8 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
       s.set(el, "AXValue", String(value ?? ""), "set its text");
       return;
     case "setRange": {
+      // A secure field's value is never written, whatever the request says it holds (nor read, as stepping would).
+      if (isSecure(f)) throw new ProviderError("denied", "a password field's value isn't set");
       const target = Number(value);
       if (!Number.isFinite(target)) throw new ProviderError("failed", "not a number");
       if (s.settable(el, "AXValue")) { s.set(el, "AXValue", target, "set its value"); return; }

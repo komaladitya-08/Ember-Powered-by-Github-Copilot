@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AX_ERROR } from "../../app/main/platform/darwin/ax";
 import { Host } from "../../app/sidecar-host/host";
 import type { RawNode, RawWindow } from "../../app/sidecar-host/provider";
-import { AxDarwinProvider, KEY_MODE, coversDisplay } from "../../app/sidecar-host/providers/ax-darwin";
+import { AxDarwinProvider, KEY_MODE, answerKeys, coversDisplay } from "../../app/sidecar-host/providers/ax-darwin";
 import { NEEDS_PERMISSION } from "../../app/sidecar-host/providers/ax-darwin-read";
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import { windowRole } from "../../app/sidecar-host/windows";
@@ -205,6 +205,19 @@ describe("the macOS AX provider's keys", () => {
     expect((await p.element(save.handle))!.key).toBe("4300:p9001/10:AXButton");
   });
 
+  it("keys every element by its index path in the \"path\" mode, the hash only where the path isn't known (R4's fallback)", () => {
+    const items = [
+      { ref: 1n, pid: 4300, path: [], windowId: 9001, role: "AXWindow" },
+      { ref: 2n, pid: 4300, path: [3, 0], windowId: 9001, role: "AXTextField" },
+      { ref: 3n, pid: 4300, path: null, windowId: 9001, role: "AXButton" },
+    ];
+    const hash = (ref: bigint) => `f${ref}`;
+    expect(answerKeys(items, hash, "path")).toEqual({ keys: ["4300:p9001/:AXWindow", "4300:p9001/3.0:AXTextField", "4300:hf3"], collisions: 0 });
+    expect(answerKeys(items, hash, "hash")).toEqual({ keys: ["4300:hf1", "4300:hf2", "4300:hf3"], collisions: 0 });
+    const same = () => "abc";
+    expect(answerKeys(items, same, "hash")).toEqual({ keys: ["4300:p9001/:AXWindow", "4300:p9001/3.0:AXTextField", "4300:habc:2"], collisions: 3 });
+  });
+
   it("reads a 200-row list's children by range with no two keys alike", async () => {
     const { fake, p, windows } = await started();
     const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
@@ -229,12 +242,14 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     expect(chain[0]!.native).toBe(9001);
   });
 
-  it("never hit-tests system-wide where Ember's own window is at the point (AX would ask Ember)", async () => {
+  it("never hit-tests system-wide, and not at all where Ember's own window is at the point (AX would ask Ember)", async () => {
     const { fake, p } = await started();
     expect(await p.elementsAt(950, 120)).toEqual([]);
     expect(fake.calls.filter(c => c.op === "at")).toEqual([]);
     const chain = await p.elementsAt(380, 670);
     expect(chain[chain.length - 1]!.name).toBe("Save");
+    // Without a pid, the app whose window is drawn there is asked, app-scoped.
+    expect(fake.calls.filter(c => c.op === "at")).toEqual([{ op: "at", uid: 0, pid: BENCH }]);
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
   });
 
@@ -269,12 +284,14 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     const popup = snap.nodes.find(n => n.platformRole === "AXPopUpButton")!;
     expect(await p.children(popup.handle, 50)).toEqual([]);
     const el = fake.el("theme");
-    theme.children = [{ role: "AXMenu", frame: at(210, 266, 160, 66), children: ["Light", "Dark", "System"].map((t, i) => ({ role: "AXMenuItem", title: t, frame: at(210, 266 + i * 22, 160, 22), actions: ["AXPress", "AXPick"] })) }];
+    // The menu is drawn in a window of its own: an item past the bottom of the pop-up's window (y 700) still shows.
+    const tops = [266, 288, 702];
+    theme.children = [{ role: "AXMenu", frame: at(210, 266, 160, 458), children: ["Light", "Dark", "System"].map((t, i) => ({ role: "AXMenuItem", title: t, frame: at(210, tops[i]!, 160, 22), actions: ["AXPress", "AXPick"] })) }];
     el.children = new FakeAx([{ ...app, windows: [{ role: "AXWindow", children: [theme] }] }]).appOf(BENCH)!.children[0]!.children[0]!.children;
     for (const c of el.children) c.parent = el;
     const items = await p.children(popup.handle, 50);
-    expect(items.map(i => [i.platformRole, i.name, i.actions])).toEqual([
-      ["AXMenuItem", "Light", ["invoke", "select"]], ["AXMenuItem", "Dark", ["invoke", "select"]], ["AXMenuItem", "System", ["invoke", "select"]],
+    expect(items.map(i => [i.platformRole, i.name, i.actions, !!i.offscreen])).toEqual([
+      ["AXMenuItem", "Light", ["invoke", "select"], false], ["AXMenuItem", "Dark", ["invoke", "select"], false], ["AXMenuItem", "System", ["invoke", "select"], false],
     ]);
   });
 

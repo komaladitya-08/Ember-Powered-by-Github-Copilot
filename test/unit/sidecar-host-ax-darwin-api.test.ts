@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeCF, type Ref } from "../../app/main/platform/darwin/cf";
-import { AX_ERROR, AX_VALUE, makeAX } from "../../app/main/platform/darwin/ax";
+import { AX_ERROR, AX_VALUE, makeAX, type AXRaw } from "../../app/main/platform/darwin/ax";
 import type { CGRaw } from "../../app/main/platform/darwin/cg";
 import {
   AX_TIMEOUT_S, NO_VALUE, axApiError, isAxError, makeAxApi, openAxApi, type AxExtraRaw,
@@ -13,13 +13,13 @@ const NULL_TYPE = 50;
  * makeAxApi over port/darwin's pretend CoreFoundation and AX (platform-darwin-fakes.ts), with kCFNull added and the
  * extra AX calls pretended here: a batch answers from `slots`, a range from `items`.
  */
-function setup(o: { batchError?: number; slots?: Record<string, () => Ref | undefined> } = {}) {
+function setup(o: { batchError?: number; slots?: Record<string, () => Ref | undefined>; copy?: AXRaw["AXUIElementCopyAttributeValue"] } = {}) {
   const base = fakeAX();
   const { f } = base;
   const nil = f.make({ t: "string", v: "<null>" });
   const raw = { ...f.raw, CFGetTypeID: (ref: Ref) => (ref === nil ? NULL_TYPE : f.raw.CFGetTypeID(ref)) };
   const cf = makeCF(raw);
-  const ax = makeAX(base.ax.raw, cf);
+  const ax = makeAX(o.copy ? { ...base.ax.raw, AXUIElementCopyAttributeValue: o.copy } : base.ax.raw, cf);
   const str = (ref: Ref) => (f.get(ref) as { v: string }).v;
   const made: Record<string, Ref> = {};
   const seen: { attributes?: Ref; batch?: Ref; param?: Ref; result?: Ref } = {};
@@ -124,6 +124,25 @@ describe("the AX API's batched read", () => {
     const m = api.attrs(window, ["AXTitle", "AXRole"]) as Map<string, unknown>;
     expect(m.get("AXTitle")).toBe("notes.txt");
     expect(m.get("AXRole")).toEqual({ axError: AX_ERROR.attributeUnsupported });
+  });
+
+  it("stops reading one by one at the first attribute an app doesn't answer, giving back what it read (never 25 timeouts in a row)", () => {
+    for (const stop of [AX_ERROR.cannotComplete, AX_ERROR.invalidUIElement, AX_ERROR.apiDisabled]) {
+      const asked: string[] = [];
+      let label: Ref | undefined;
+      const { api, f, el } = setup({
+        batchError: AX_ERROR.notImplemented,
+        copy: (_el, attr, out) => {
+          const name = (f.get(attr) as { v: string }).v;
+          asked.push(name);
+          if (name === "AXTitleUIElement") { out[0] = label = f.make({ t: "element", v: "label" }); return 0; }
+          return stop;
+        },
+      });
+      expect(api.attrs(el, ["AXTitleUIElement", "AXRole", "AXTitle", "AXEnabled"])).toEqual({ axError: stop });
+      expect(asked).toEqual(["AXTitleUIElement", "AXRole"]);
+      expect(f.counts.get(label!) ?? 0).toBe(0);
+    }
   });
 });
 

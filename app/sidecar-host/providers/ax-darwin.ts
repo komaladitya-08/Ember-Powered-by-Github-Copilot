@@ -77,6 +77,39 @@ export interface AxDarwinOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** One element of an answer, for its key (see answerKeys). */
+export interface KeyItem {
+  ref: AxRef;
+  pid: number;
+  /** Child indices from its window, where known. */
+  path: number[] | null;
+  /** Its window's CGWindowID (0: unknown). */
+  windowId: number;
+  role: string;
+}
+
+/**
+ * The keys of one answer's elements in `mode` (KEY_MODE): "hash" gives `<pid>:h<CFHash>`, and to the elements whose
+ * hash another one of the answer has too their index-path key (or, where the path isn't known, the hash and their
+ * place in the answer), counted in `collisions`; "path" gives every element its index-path key
+ * (`<pid>:p<CGWindowID>/<child indices>:<AX role>`), the hash key only where the path isn't known.
+ */
+export function answerKeys(items: readonly KeyItem[], hash: (ref: AxRef) => string, mode: "hash" | "path" = KEY_MODE): { keys: string[]; collisions: number } {
+  const pathKey = (i: KeyItem) => (i.path ? `${i.pid}:p${i.windowId}/${i.path.join(".")}:${i.role}` : null);
+  const hashes = items.map(i => `${i.pid}:h${hash(i.ref)}`);
+  if (mode === "path") return { keys: items.map((i, k) => pathKey(i) ?? hashes[k]!), collisions: 0 };
+  const count = new Map<string, number>();
+  for (const k of hashes) count.set(k, (count.get(k) ?? 0) + 1);
+  let collisions = 0;
+  const keys = items.map((i, k) => {
+    const key = hashes[k]!;
+    if (count.get(key)! < 2) return key;
+    collisions++;
+    return pathKey(i) ?? `${key}:${k}`;
+  });
+  return { keys, collisions };
+}
+
 /** Does a window cover one of the displays (all of it, within a point)? */
 export function coversDisplay(b: Rect, displays: readonly Rect[]): boolean {
   return displays.some(d => b.x <= d.x + COVER_SLACK && b.y <= d.y + COVER_SLACK
@@ -320,7 +353,9 @@ export class AxDarwinProvider implements AxProvider {
     const api = this.ready();
     let target = pid;
     if (target === undefined) {
-      // Hit-tested system-wide, AX asks whichever app owns the point: never when that is Ember (its overlay included).
+      // No app named: the one whose window is drawn at the point, never Ember (its overlay included). It is asked
+      // app-scoped too, so a click-through window of Ember's the window list and AX see differently can't route the
+      // request to Ember.
       const top = api.onScreenWindows().find(e => isVisible(e) && contains(e.bounds, x, y));
       if (!top) return [];
       target = top.pid;
@@ -328,7 +363,7 @@ export class AxDarwinProvider implements AxProvider {
     if (this.skip.has(target)) return [];
     const s = this.session(api, target);
     s.calls++;
-    const hit = api.at(x, y, pid);
+    const hit = api.at(x, y, target);
     if (isAxError(hit)) {
       if (hit.axError === AX_ERROR.cannotComplete || hit.axError === AX_ERROR.apiDisabled) s.raise(hit.axError, "hit-test");
       return []; // nothing there AX can name
@@ -440,7 +475,13 @@ export class AxDarwinProvider implements AxProvider {
     if (held.role === "AXPopUpButton") {
       // A pop-up's options are its menu's items, which exist only while it is open (closed, it has none to give).
       const first = s.children(held.ref, ["AXChildren"], 1).kids;
-      const role = first[0] ? s.attr(first[0], "AXRole") : undefined;
+      let role: unknown;
+      try {
+        role = first[0] ? s.attr(first[0], "AXRole") : undefined;
+      } catch (err) {
+        for (const k of first) api.release(k);
+        throw err;
+      }
       if (role !== "AXMenu") {
         for (const k of first) api.release(k);
         return [];
@@ -455,7 +496,8 @@ export class AxDarwinProvider implements AxProvider {
     } finally {
       if (menu) api.release(menu);
     }
-    const clip = clipInside({ role: held.role, frame: held.frame }, held.clip, held.depth);
+    // An open menu is drawn in a window of its own, over the pop-up's window: that window doesn't clip its items.
+    const clip = menu ? null : clipInside({ role: held.role, frame: held.frame }, held.clip, held.depth);
     const read: { ref: AxRef; node: NodeBody; facts: Facts; index: number }[] = [];
     for (let index = 0; index < kids.length; index++) {
       const k = kids[index]!;
@@ -554,25 +596,11 @@ export class AxDarwinProvider implements AxProvider {
     return n;
   }
 
-  /**
-   * The keys of one answer's elements (see KEY_MODE): hash keys, with index-path keys (or, where the path isn't known,
-   * the hash and the element's place in the answer) for the elements whose hash another one of the answer has too.
-   */
-  private keysFor(api: AxApi, items: { ref: AxRef; pid: number; path: number[] | null; windowId: number; role: string }[]): string[] {
-    const pathKey = (i: (typeof items)[number]) => (i.path ? `${i.pid}:p${i.windowId}/${i.path.join(".")}:${i.role}` : null);
-    const hashes = items.map(i => `${i.pid}:h${api.hash(i.ref)}`);
-    if (KEY_MODE === "path") return items.map((i, k) => pathKey(i) ?? hashes[k]!);
-    const count = new Map<string, number>();
-    for (const k of hashes) count.set(k, (count.get(k) ?? 0) + 1);
-    let collisions = 0;
-    const out = items.map((i, k) => {
-      const key = hashes[k]!;
-      if (count.get(key)! < 2) return key;
-      collisions++;
-      return pathKey(i) ?? `${key}:${k}`;
-    });
+  /** The keys of one answer's elements (answerKeys in KEY_MODE), a collision noted in the log. */
+  private keysFor(api: AxApi, items: KeyItem[]): string[] {
+    const { keys, collisions } = answerKeys(items, ref => api.hash(ref));
     if (collisions) this.note("ax.key_collision", { count: collisions });
-    return out;
+    return keys;
   }
 
   /**
