@@ -24,6 +24,14 @@ export function missingDefaults(list: readonly string[], os: OS = "linux"): stri
 export { friendlyApp } from "../../shared/apps";
 import { friendlyApp } from "../../shared/apps";
 
+/**
+ * What main said when a request to it failed, in its own words: Electron puts "Error invoking remote method
+ * '<channel>': Error: " before every message an IPC handler throws, which the user must never read.
+ */
+export function ipcErrorText(err: unknown): string {
+  return err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (?:[A-Za-z]*Error: )?/, "") : String(err);
+}
+
 /** Token counts that read naturally: "312", "1.2k", "48k". */
 export function tokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
