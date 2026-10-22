@@ -30,7 +30,10 @@ import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
 import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
 import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
-import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, type CommandWindow, type PromptWindow, type TargetsParts } from "../../app/main/targets/runtime";
+import {
+  WSL_OFF_ROW, buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, wslSwitchOn,
+  type CommandWindow, type PromptWindow, type TargetsParts,
+} from "../../app/main/targets/runtime";
 import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
 import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
@@ -416,6 +419,21 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(guard.othersNamed("build-02 delete build/")).toEqual(["build-02"]);
   });
 
+  it("know the places the user names that look like a computer Ember doesn't know (the lead's ruling)", () => {
+    const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("local") } });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    const guard = got.hands.commands as unknown as { placesNamed(words: string): string[] };
+    expect(r.t.agent.bind({ userWords: "delete build/ on prod-db" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    expect(guard.placesNamed("delete build/ on prod-db")).toEqual(["prod-db"]);
+    // Ember's own records and the user's ssh config hosts are known computers, not unknown places.
+    expect(guard.placesNamed("delete build/ on build-01")).toEqual([]);
+    expect(guard.placesNamed("delete build/ on build-02")).toEqual([]);
+    expect(guard.placesNamed("delete build/ on the desktop")).toEqual([]);
+    // The task's bubbles say it acts on this computer.
+    expect(r.t.agent.othersNamed!("local", "delete build/ on prod-db")).toEqual(["prod-db"]);
+  });
+
   it("give the runner Ember's own paths, names and pids (main's and its helpers', live)", () => {
     const r = rig();
     const o = r.runnerOpts();
@@ -628,7 +646,7 @@ describe("SSH targets", () => {
     expect(r.t.agent.describeTargets()).toContain("apps on its screen");
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.t.agent.describeTargets()).toContain("no desktop session");
-    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's screen locked, so I stopped working there." }) });
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's screen locked, so I stopped working on its screen." }) });
   });
 
   it("on a stall, says so and offers Disconnect; on loss, works here again and offers Reconnect", async () => {
@@ -1090,7 +1108,7 @@ describe("the doctor's rows (§8.8)", () => {
     const off = rig({ admin: policy({ features: { ssh: false }, commands: { local: "off" } }) });
     expect(await off.t.doctorRows()).toEqual([]);
     const win = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
-    expect((await win.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl"]);
+    expect((await win.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-helper"]);
     const mac = rig({ settings: withHosts([hostRecord("mini")]), welcome: welcome({ os: "darwin", tccLimited: true }) });
     await connected(mac, "mini");
     expect((await mac.t.doctorRows()).map(x => x.id)).toContain("remote-tcc:mini");
@@ -1214,7 +1232,13 @@ describe("the remote and WSL seams (INT)", () => {
     expect(r.runnerOpts().ember.pids()).toEqual([10, 11, 55, 4242]);
     await r.t.stopAll();
     expect(r.parts.wslHelpers.stop).toHaveBeenCalledTimes(1);
-    expect((await r.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-a11y:Ubuntu"]);
+    // The user's WSL switch is off: nothing is looked at inside the distros, and the row says so.
+    expect((await r.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-helper"]);
+    expect((await r.t.doctorRows()).at(-1)).toEqual(WSL_OFF_ROW);
+    expect(r.parts.wslHelpers.doctorRows).not.toHaveBeenCalled();
+    const on = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings });
+    (on.parts.wslHelpers.doctorRows as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "wsl-a11y:Ubuntu", status: "warn", label: "Accessibility in Ubuntu", detail: "off" }]);
+    expect((await on.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-a11y:Ubuntu"]);
     // No WSL here (Linux): no helper rows asked for.
     const linux = rig();
     await linux.t.doctorRows();
@@ -1239,16 +1263,33 @@ describe("the remote and WSL seams (INT)", () => {
     l.emit("console.stop", { at: SINCE });
     expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "Someone at build-01 pressed Stop." }) });
+    // A lock stops only the tasks that used its desktop; the others are main's to judge (the host's cancelTasksOn).
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
     l.move("stalled");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
     l.move("lost");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(3);
+    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01"]);
     await connected(r);
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(4);
+    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01"]);
     expect(r.stopTasksOn.mock.calls.every(c => c[0] === "ssh:build-01")).toBe(true);
+  });
+
+  it("stops the tasks using a remote's desktop when its session goes inactive, as for a lock (§5.3.4 step 8)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "screen", notice: "shown" } }) });
+    const l = await connected(r);
+    // The agent reports an inactive session with access none and no session of its own.
+    l.emit("desktop.changed", { access: "none", notice: "off" });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's desktop session isn't active any more, so I stopped working on its screen." }) });
+    // Nothing more to take away: said once.
+    l.emit("desktop.changed", { access: "none", notice: "off" });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
   });
 
   it("asks for a remote's desktop before each task: its reads and steps wait for the answer, and access comes back after a lock", async () => {
@@ -1295,5 +1336,44 @@ describe("the remote and WSL seams (INT)", () => {
     await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: true, message: "Restart your Linux apps." });
     const spec = r.wslRunners.get("Ubuntu")!.start.mock.calls[0][0] as { command: string; stamp: { verdict: string } };
     expect(spec.command).toBe(A11Y_FIX_COMMAND);
+  });
+
+  it("refuses the wsl-a11y fix where the administrator turned WSL, or commands in WSL, off", async () => {
+    const turnedOff = "Your organisation has turned this off.";
+    const running = async (r: ReturnType<typeof rig>) => {
+      await flush();
+      if (r.wsl) (r.wsl as { runningNow: () => Promise<Set<string>> }).runningNow = async () => new Set(["Ubuntu"]);
+    };
+    for (const admin of [
+      policy({ features: { wsl: false }, commands: { wsl: "on" } }), policy({ commands: { wsl: "off" } }),
+      // R5: a policy that doesn't mention commands turns them off.
+      policy({}),
+    ]) {
+      const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin });
+      await running(r);
+      await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: false, message: turnedOff });
+      expect(r.wslRunners.get("Ubuntu")?.start ?? vi.fn()).not.toHaveBeenCalled();
+    }
+    const allowed = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin: policy({ commands: { wsl: "ask" } }) });
+    await running(allowed);
+    allowed.wsl.runner("Ubuntu").start.mockImplementation(() => ({ done: Promise.resolve({ ended: "exit", code: 0, signal: null, ms: 5 }) }));
+    await expect(allowed.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: true, message: "Restart your Linux apps." });
+  });
+});
+
+describe("wslSwitchOn (the doctor's reading of the user's WSL switch)", () => {
+  const file = (targets: unknown, more: Record<string, unknown> = {}) => JSON.stringify({ ...more, targets });
+  const wsl = (on: boolean, version: number) => ({ wsl: { on, consent: { version, at: SINCE } } });
+
+  it("is on only with the switch on and its card accepted at the current version", () => {
+    expect(wslSwitchOn(file(wsl(true, 1)))).toBe(true);
+    expect(wslSwitchOn(file(wsl(true, 0)))).toBe(false);
+    expect(wslSwitchOn(file(wsl(false, 1)))).toBe(false);
+  });
+
+  it("reads a file with a slip or a few bad values as Ember would, and counts anything else as off", () => {
+    expect(wslSwitchOn(`${file(wsl(true, 1))}`.replace(/}$/, ",}"))).toBe(true);
+    expect(wslSwitchOn(file(wsl(true, 1), { size: "huge" }))).toBe(true);
+    for (const text of [null, "", "not json", "[]", "null", "{}", file({ wsl: "on" })]) expect(wslSwitchOn(text)).toBe(false);
   });
 });

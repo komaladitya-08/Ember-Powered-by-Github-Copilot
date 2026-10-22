@@ -115,7 +115,7 @@ function harness(o: {
   paths?: (p: string) => PathFact; git?: GitFacts | null; run?: (spec: RunSpec, n: number) => Parameters<typeof scriptedRun>[1];
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
-  othersNamed?: (words: string) => string[];
+  othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -156,6 +156,7 @@ function harness(o: {
     mode: () => o.mode ?? "on",
     ...(o.consent !== undefined ? { consentPanel: () => o.consent ?? null } : {}),
     ...(o.othersNamed ? { othersNamed: o.othersNamed } : {}),
+    ...(o.placesNamed ? { placesNamed: o.placesNamed } : {}),
   };
   const abort = o.abort ?? new AbortController();
   let isTainted = false;
@@ -591,6 +592,72 @@ describe("the wrong-target guard (D4.4, DOC's review)", () => {
     await call(h, { target: "this computer", command: "rm -r build" });
     expect(h.announced).toEqual([]);
     expect((h.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You also named build-01, but this runs on this computer.");
+  });
+});
+
+describe("a place that looks like a computer Ember doesn't know (the lead's ruling)", () => {
+  const pushes = () => makeJudge({ decide: () => decision({ verdict: "announce", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."], requested: { intent: "destroy", announce: "Deleting build, as you asked." }, armMs: 0 }) });
+  const unknown = (words: string) => (/prod-db/.test(words) ? ["prod-db"] : []);
+
+  it("asks, never announces, and the card says first that the named place isn't where it runs", async () => {
+    pushes();
+    const h = harness({ binding: LOCAL, words: "delete build/ on prod-db", othersNamed: () => [], placesNamed: unknown, answers: ["once"] });
+    await call(h, { target: "this computer", command: "rm -r build" });
+    expect(h.announced).toEqual([]);
+    expect(h.windowAnnounce).toEqual([]);
+    const q = h.asked[0] as { where?: string; prompt: string; armMs: number; panel: { card: CommandCard } };
+    expect(q.panel.card.says[0]).toBe("You named prod-db, but this runs on this computer.");
+    expect(q.panel.card.mode).toBe("ask");
+    expect(q.where).toBe("on this computer");
+    expect(q.armMs).toBeGreaterThanOrEqual(1500);
+    const decided = h.audit.find(e => e.phase === "decided");
+    expect(decided).toMatchObject({ verdict: "ask", rules: ["rm.recursive", "unknown-place"], reason: "It asks first: the user's words name a computer Ember doesn't know." });
+    expect(decided?.requested).toBeUndefined();
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("looks with the target's own names when no targets runtime gives a guard", async () => {
+    pushes();
+    const local = harness({ binding: LOCAL, words: "delete build/ on prod-db", answers: ["deny"] });
+    await call(local, { target: "this computer", command: "rm -r build" });
+    expect(local.announced).toEqual([]);
+    expect((local.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You named prod-db, but this runs on this computer.");
+    // The bound computer's own name is no other place: it announces.
+    const remote = harness({ binding: REMOTE, words: "delete build/ on build-01", answers: [] });
+    await call(remote, { command: "rm -r build" });
+    expect(remote.announced).toHaveLength(1);
+    expect(remote.asked).toEqual([]);
+  });
+
+  it("puts the unknown place first when a known computer is named too, each once", async () => {
+    pushes();
+    const h = harness({ binding: WSL, words: "on prod-db or build-01 delete build/", othersNamed: () => ["build-01"], placesNamed: () => ["prod-db", "build-01"], answers: ["deny"] });
+    await call(h, { target: "Ubuntu", command: "rm -r build" });
+    expect((h.asked[0].panel as { card: CommandCard }).card.says.slice(0, 3)).toEqual([
+      "You named prod-db, but this runs in Ubuntu (WSL).", "You also named build-01, but this runs in Ubuntu (WSL).", "Deletes build and everything in it.",
+    ]);
+    expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ rules: ["rm.recursive", "wrong-target", "unknown-place"] });
+  });
+
+  it("announces as before for everyday places, and asks when the guard can't tell", async () => {
+    pushes();
+    for (const words of ["delete build/ on the desktop", "delete build/ in my home folder", "fix line 12 in main.ts and delete build/"]) {
+      const h = harness({ binding: LOCAL, words });
+      await call(h, { target: "this computer", command: "rm -r build" });
+      expect(h.announced).toHaveLength(1);
+      expect(h.asked).toEqual([]);
+    }
+    const broken = harness({ binding: LOCAL, words: "delete build/", placesNamed: () => { throw new Error("no registry"); }, answers: ["deny"] });
+    await call(broken, { target: "this computer", command: "rm -r build" });
+    expect(broken.announced).toEqual([]);
+    expect((broken.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You named another computer, but this runs on this computer.");
+  });
+
+  it("leaves ordinary commands alone: they run anywhere", async () => {
+    makeJudge();
+    const h = harness({ binding: LOCAL, words: "list the files on prod-db", placesNamed: unknown });
+    expect((await call(h, { target: "this computer", command: "ls" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
   });
 });
 

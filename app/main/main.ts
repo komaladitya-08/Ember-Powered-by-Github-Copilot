@@ -50,10 +50,11 @@ import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
-import type { FixId, HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
+import type { HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 import { extraBinDirs } from "./platform/darwin/system";
 import { deskProcesses } from "./desk/desk";
-import { createTargets, targetDoctorRows } from "./targets/runtime";
+import { createTargets, targetDoctorRows, wslSwitchOn, type TargetsRuntimeExtra } from "./targets/runtime";
+import { afterTargetFix, applySetupFix, targetChecksSource, withTargetChecks } from "./targets/setup-check";
 import type { IpcLike, MenuItemLike, TargetsRuntime } from "./targets/types";
 import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
@@ -190,6 +191,15 @@ async function doctorHelper(): Promise<HelperStatus | null | undefined> {
   }
 }
 
+/** The user's settings file as it is on disk (the doctor only reads it), or null. */
+function settingsText(): string | null {
+  try {
+    return fs.readFileSync(path.join(userData, "settings.json"), "utf8");
+  } catch {
+    return null; // none yet: defaults, WSL off
+  }
+}
+
 async function runDoctor(): Promise<void> {
   await app.whenReady();
   const ws = wsState = platform.openWindows(log);
@@ -220,7 +230,7 @@ async function runDoctor(): Promise<void> {
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
     runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
     // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
-    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged }))],
+    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
   process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
@@ -346,10 +356,14 @@ function start(): void {
     desk: !!platform.desk && platform.desk.available().ok,
     autostartNote: sys.autostart.note(),
   });
-  ipcMain.handle(IPC.getStatus, guard((): Status => ({
+  // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
+  // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
+  const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
+  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(), await targetChecks(fresh));
+  ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
     appVersion: app.getVersion(),
     settings: settings.get(),
-    environment: readEnvironment(),
+    environment: await environmentNow(),
     logFile: log.file,
     settingsNotice,
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
@@ -375,12 +389,14 @@ function start(): void {
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     return settings.update(ownNeverLook(patch), { soon: sizeOnly });
   }));
-  // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch).
+  // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
+  // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
   ipcMain.handle(IPC.applyFix, guard(async (fix: string) => {
-    if (!sys.fixes.ids.includes(fix as FixId)) throw new Error(`unknown fix: ${fix}`);
-    await sys.fixes.apply(fix as FixId);
-    log.info("fix.applied", { fix });
-    return readEnvironment();
+    const t = targets;
+    const done = await applySetupFix(fix, { osFixes: sys.fixes.ids, applyOs: id => sys.fixes.apply(id), applyTarget: t ? id => t.applyFix(id) : null });
+    log.info("fix.applied", { fix: done ? "wsl-a11y" : fix });
+    const env = await environmentNow(true);
+    return done ? afterTargetFix(env, done.target, done.message) : env;
   }));
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
@@ -707,7 +723,7 @@ function start(): void {
   });
   let agent: AgentHost | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
-  let targets: TargetsRuntime | null = null;
+  let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
@@ -1482,8 +1498,9 @@ function start(): void {
       jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
       // The command card's key hint: only the keys Ember holds for the question up now.
       keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
-      // A computer whose connection went, whose screen locked or where someone pressed Stop: its tasks stop here too.
-      stopTasksOn: target => { agent?.cancelTasksOn(target); },
+      // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or
+      // session went inactive: those that used its desktop.
+      stopTasksOn: (target, only) => { agent?.cancelTasksOn(target, only); },
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });

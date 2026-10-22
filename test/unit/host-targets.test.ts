@@ -221,6 +221,59 @@ describe("stopping the tasks on one computer (INT: §5.3.9, §5.1.11)", () => {
   });
 });
 
+describe("a lock or an inactive session on a remote (§5.3.4 step 8, the lead's ruling on its scope)", () => {
+  it("stops only the running tasks there that used its desktop: commands-only ones and queued ones go on", async () => {
+    const { t } = fakeTargets();
+    const flags: { used: boolean }[] = [];
+    const handsFor = t.handsFor;
+    t.handsFor = id => {
+      const got = handsFor(id);
+      if (!got.ok || id !== "ssh:build-01") return got;
+      const flag = { used: false };
+      flags.push(flag);
+      return { ok: true, hands: { ...got.hands, usedDesktop: () => flag.used } as TargetHands };
+    };
+    const { host, specs, tool, real } = await started({ hands: hands(), targets: t });
+    // The host's own makeWorker registers each task's hands (the worker itself is a stand-in that runs until stopped).
+    const d = (host.tasks as any).d;
+    const stand = d.makeWorker as (spec: TaskSpec, progress: (t: string) => void) => Worker;
+    const byGoal = new Map<string, { used: boolean } | undefined>();
+    d.makeWorker = (spec: TaskSpec, progress: (t: string) => void) => {
+      real.call(host, spec, progress);
+      byGoal.set(spec.goal, flags.at(-1));
+      return stand(spec, progress);
+    };
+    for (const goal of ["check the disk space", "read the editor", "count the logs"]) {
+      await host.ask(`on build-01, ${goal}`);
+      await tool("start_task")({ goal });
+    }
+    // Two run at once; the third waits.
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    byGoal.get("read the editor")!.used = true;
+    const [commandsOnly, reader, waiting] = host.tasks!.list();
+    expect(waiting.status).toBe("queued");
+    expect(host.cancelTasksOn("ssh:build-01", "desktop")).toBe(1);
+    await vi.waitFor(() => expect(host.tasks!.get(reader.id)!.status).toBe("cancelled"));
+    expect(host.tasks!.get(commandsOnly.id)!.status).toBe("running");
+    // The one that waited starts in the slot the reader left.
+    await vi.waitFor(() => expect(host.tasks!.get(waiting.id)!.status).toBe("running"));
+    // A Stop at the remote, a lost link or Disconnect still stops everything there.
+    expect(host.cancelTasksOn("ssh:build-01")).toBe(2);
+    await vi.waitFor(() => expect(host.tasks!.get(commandsOnly.id)!.status).toBe("cancelled"));
+    await host.stop();
+  });
+
+  it("counts a running task that can't say whether it used the desktop as one that did (fail closed)", async () => {
+    const { t } = fakeTargets();
+    const { host, specs, tool } = await started({ hands: hands(), targets: t });
+    await host.ask("on build-01, check the disk space");
+    await tool("start_task")({ goal: "check the disk space" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(host.cancelTasksOn("ssh:build-01", "desktop")).toBe(1);
+    await host.stop();
+  });
+});
+
 describe("the window a task starts in (§2.6, G14)", () => {
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
 

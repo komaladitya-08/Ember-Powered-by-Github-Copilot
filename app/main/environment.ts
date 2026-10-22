@@ -73,13 +73,16 @@ export interface EnvInputs {
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
+/** A fix the targets runtime applies (§8.8): toolkit accessibility turned on in a running WSL distro. */
+export type TargetFixId = `wsl-a11y:${string}`;
+
 export interface Check {
   id: string;
   label: string;
   status: CheckStatus;
   detail: string;
-  /** A fix Ember can apply itself (shown as a button). */
-  fix?: FixId;
+  /** A fix Ember can apply itself (shown as a button): this OS's own, or one of the targets runtime's. */
+  fix?: FixId | TargetFixId;
 }
 
 export interface EnvReport {

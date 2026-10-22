@@ -32,7 +32,11 @@ const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0\u200b-\u200
 /** Space characters other than the plain space: shown, so two look-alike commands can't differ invisibly. */
 const ODD_SPACE = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/u;
 
-/** Scripts a letter can belong to, checked in order; CJK scripts count as one, as they mix in ordinary text. */
+/**
+ * Scripts a letter can belong to, checked in order; Chinese, Japanese and Korean count as one script, as they mix in
+ * ordinary text. A token wholly in one of them (digits and punctuation aside) is never marked; Latin beside any of them,
+ * CJK included, is (§3.9.1: in every token, letters from a script other than its main one).
+ */
 const SCRIPTS: readonly [string, RegExp][] = [
   ["Latin", /\p{Script=Latin}/u],
   ["Cyrillic", /\p{Script=Cyrillic}/u],
@@ -95,9 +99,6 @@ export function visibleText(s: string): VisibleSegment[] {
     for (const [sc, n] of counts) {
       if (n > bestN || (n === bestN && sc === "Latin")) { best = sc; bestN = n; }
     }
-    // Latin beside Chinese, Japanese or Korean letters is how those languages name files (UTS #39's "highly
-    // restrictive" mixes), and no Latin letter looks like one of theirs: nothing to mark.
-    if ([...counts.keys()].every(sc => sc === "Latin" || sc === "CJK")) best = null;
     for (let k = start; k < end; k++) main[k] = best;
   };
   for (let k = 0; k <= chars.length; k++) {

@@ -100,6 +100,40 @@ function unparsable(text: string, shell: ShellId): boolean {
   return p.fatal || p.unclear.length > 0;
 }
 
+describe("Ember's own refusals say what the command would do to Ember's files (D4.5, the lead's ruling)", () => {
+  const READ = "Ember won't run this: it would read Ember's own safety settings, records or programs.";
+  const CHANGE = "Ember won't run this: it would change Ember's own safety settings, records or programs.";
+  const INPUT = "Ember won't run this: it could press keys or click in Ember's own windows.";
+  const says = (text: string, shell: ShellId = "bash", where: "linux" | "win32" = "linux") => classifyCommand(text, shell, contextOf(where)).refuse?.says;
+
+  it("says \"would read\" for a command that only reads them", () => {
+    expect(says("cat ~/.config/ember/settings.json")).toBe(READ);
+    expect(says("ls -la ~/.config/ember")).toBe(READ);
+    expect(says("grep -r token ~/.config/ember")).toBe(READ);
+    expect(says("cat ~/.config/emb*/settings.json")).toBe(READ);
+    expect(says("cp ~/.config/ember/settings.json /tmp/s.json")).toBe(READ);
+    expect(says("Get-Content C:\\Users\\ana\\AppData\\Local\\ember\\settings.json", "powershell", "win32")).toBe(READ);
+    expect(says("Get-ItemProperty HKLM:\\SOFTWARE\\Policies\\Ember", "powershell", "win32")).toBe(READ);
+    expect(says("reg query HKLM\\SOFTWARE\\Policies\\Ember", "powershell", "win32")).toBe(READ);
+  });
+
+  it("says \"would change\" for one that writes, deletes or moves them, or reads and also changes them", () => {
+    expect(says("rm -rf ~/.config/ember")).toBe(CHANGE);
+    expect(says("echo x > ~/.config/ember/settings.json")).toBe(CHANGE);
+    expect(says("cp /tmp/s.json ~/.config/ember/settings.json")).toBe(CHANGE);
+    expect(says("cat ~/.config/ember/a.json > ~/.config/ember/b.json")).toBe(CHANGE);
+    expect(says("Remove-Item C:\\Users\\ana\\AppData\\Local\\ember\\settings.json", "powershell", "win32")).toBe(CHANGE);
+    expect(says("Set-ItemProperty HKLM:\\SOFTWARE\\Policies\\Ember -Name x -Value 1", "powershell", "win32")).toBe(CHANGE);
+    expect(says("reg add HKLM\\SOFTWARE\\Policies\\Ember /v x /d 1", "powershell", "win32")).toBe(CHANGE);
+  });
+
+  it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
+    expect(says("xdotool key y")).toBe(INPUT);
+    expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);
+    expect(says("xdotool key y; cat ~/.config/ember/settings.json")).toBe(INPUT);
+  });
+});
+
 describe("the classifier on random text", () => {
   const shells: [ShellId, "linux" | "win32" | "wsl"][] = [["bash", "linux"], ["zsh", "linux"], ["sh", "wsl"], ["powershell", "win32"], ["cmd", "win32"]];
   for (const [shell, where] of shells) {

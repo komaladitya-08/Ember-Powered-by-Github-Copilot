@@ -17,9 +17,13 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   invisible characters made visible, and is answered with **Allow** or **Not now** (never "Always", never by voice).
 - **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
   ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
-  name. Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask.
-- **What Ember never runs**: commands that would change Ember's own safety settings, records or programs, or press
-  keys and click in Ember's windows.
+  name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
+  Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If
+  your words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on
+  prod-db"), nothing in that task runs on an announcement: every dangerous command asks, and the card says first where
+  it runs ("You named prod-db, but this runs on this computer.").
+- **What Ember never runs**: commands that would read or change Ember's own safety settings, records or programs
+  ("Ember won't run this: it would read …" or "… change …"), or press keys and click in Ember's windows.
 - **Command output** goes to Copilot as untrusted data, at most 200 lines, with what you typed cut out, output after a
   password prompt withheld, and recognised passwords, keys and tokens hidden. Output that reads like instructions to
   Ember makes every further command in that task ask.
@@ -31,14 +35,19 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
   anything, then copies a small helper there (about 31 MB) that runs only while it is connected and leaves no service
   or autostart behind. It works there on commands, and on the apps of that computer's screen when you are the person
-  logged in at it, asking before every step and showing a notice with **Stop** there. Your voice, Copilot and your
-  GitHub sign-in stay on this computer. **Remove Ember from build-01** removes the helper again.
+  logged in at it, asking before every step and showing a notice with **Stop** there. When that screen locks or its
+  session goes inactive, the tasks using the screen stop; a task only running commands there goes on (a **Stop** at
+  that computer, a lost connection, **Disconnect** and the stop chord stop everything there). Your voice, Copilot and
+  your GitHub sign-in stay on this computer. **Remove Ember from build-01** removes the helper again.
 - **Settings**: new **Computers** and **Commands** sections (per-computer switches, **Ask me before every command**,
   **Offer to bring Ember along when I connect with ssh**). The handle menu gains **Work on** (with more than one
   computer), **Bring Ember to a computer…** and **Disconnect build-01**; the handle, task cards and questions say where
   Ember works.
-- **Check-up**: new rows for the SSH client, the command window's terminal (`script`), PowerShell, WSL and each
-  distro's Linux apps and accessibility, the helper for other computers, and a connected Mac's protected folders.
+- **Check-up** (`ember doctor` and the settings window's setup check): new rows for the SSH client, the command
+  window's terminal (`script`), PowerShell, WSL and each running distro's Linux apps and accessibility (with a button
+  in the setup check that turns accessibility on there, refused when your organisation has turned WSL or commands in
+  WSL off), the helper for other computers, and a connected Mac's protected folders. With WSL off in Ember's settings,
+  the check-up doesn't look inside your distros.
 
 ### For administrators
 
@@ -105,7 +114,8 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks
   before the forms it recognises (`nohup`, `setsid`, `&`, `sudo`, `docker run -d`…), but not before a program that
   detaches by itself. Over SSH, a command survives a silent connection for up to 20 seconds (an administrator can
-  set 3 to 120).
+  set 3 to 120). If Ember itself crashes, a command on Linux or macOS (or in WSL) runs on until it writes output or
+  ends (newer `script` versions don't end it); on Windows it ends with Ember.
 - Another always-on-top window could cover the command card; the approve keys work only while the card shows the
   whole command.
 - The account on a remote computer (and root there) can see and change Ember's helper; nothing from it can approve

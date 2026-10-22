@@ -72,7 +72,10 @@ export const signInAgain = (host: string): BubbleWords => ({ title: `${host} nee
 
 export const stoppedFromRemote = (host: string): BubbleWords => ({ title: `Stopped on ${host}`, text: `Someone at ${host} pressed Stop.`, actions: [] });
 
-export const screenLocked = (host: string): BubbleWords => ({ title: `Stopped on ${host}`, text: `${host}'s screen locked, so I stopped working there.`, actions: [] });
+/** Only the tasks using its desktop stop (§5.3.4 step 8); tasks running only commands there go on. */
+export const screenLocked = (host: string): BubbleWords => ({ title: `Stopped on ${host}`, text: `${host}'s screen locked, so I stopped working on its screen.`, actions: [] });
+
+export const sessionInactive = (host: string): BubbleWords => ({ title: `Stopped on ${host}`, text: `${host}'s desktop session isn't active any more, so I stopped working on its screen.`, actions: [] });
 
 export const backHere = (host: string): BubbleWords => ({ title: "Back on this computer", text: `${host} isn't connected any more, so I'll work here.`, actions: [] });
 

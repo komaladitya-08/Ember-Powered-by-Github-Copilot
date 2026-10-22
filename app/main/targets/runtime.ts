@@ -42,6 +42,7 @@ import { emberNamesRegExp } from "../remote/protocol";
 import { sshDestination, userSshProcesses } from "../remote/notice-ssh";
 import { remoteTargetParts, type RemoteTargetExtras } from "../remote/target";
 import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink, type SshSeen } from "../remote/types";
+import { SettingsSchema, lenientJson, repairSettings } from "../settings";
 import { wslAwareSystem } from "../wsl/privacy";
 import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
 import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
@@ -60,7 +61,7 @@ import {
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
-import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, targetsNamed, type NamedTarget } from "./resolve";
+import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placesNamed, targetsNamed, type NamedTarget } from "./resolve";
 import type { MenuItemLike, TargetBinding, TargetHands, TargetsDeps, TargetsForAgent, TargetsRuntime } from "./types";
 import { createWslService, isToolDistro } from "./wsl-service";
 
@@ -289,10 +290,12 @@ export function productionParts(deps: TargetsDeps): TargetsParts {
 /** What main hands the runtime beyond TargetsDeps (an extension of the contract; optional, so tests may leave it out). */
 export interface TargetsDepsExtra {
   /**
-   * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, its screen locked,
-   * or its connection dropped or closed (§5.3.4, §5.3.9, §5.1.11); the runtime's bubble says which.
+   * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, or its connection
+   * dropped or closed (§5.3.9, §5.1.11); with `only: "desktop"`, only the running tasks that used its desktop: its screen
+   * locked or its session went inactive (§5.3.4 step 8), and a task running only commands there goes on. The runtime's
+   * bubble says which.
    */
-  stopTasksOn?(target: TargetId): void;
+  stopTasksOn?(target: TargetId, only?: "desktop"): void;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -310,8 +313,32 @@ export function createTargets(deps: TargetsDeps & TargetsDepsExtra): TargetsRunt
   return buildTargets(deps, productionParts(deps));
 }
 
-/** The doctor's and setup check's target rows (§8.8): the SSH client, the commands terminal, the remote parts, WSL's. */
-export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean; appDir?: string }): Promise<PlatformDoctorRow[]> {
+/**
+ * The row that stands for every distro's helper rows while the user's WSL switch is off: Ember doesn't look inside a
+ * distro then (its read-only check script doesn't run there).
+ */
+export const WSL_OFF_ROW: PlatformDoctorRow = { id: "wsl-helper", status: "ok", label: "Linux apps in WSL", detail: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" };
+
+/**
+ * Whether the user's WSL switch is on (with its card accepted) in the settings file's text, read without writing
+ * anything (the doctor runs apart from Ember): a file that is missing or can't be read counts as off; one with a few bad
+ * values is read as Ember would repair it.
+ */
+export function wslSwitchOn(settingsText: string | null): boolean {
+  if (!settingsText) return false;
+  let json: unknown;
+  try { json = JSON.parse(settingsText); } catch { json = lenientJson(settingsText); }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const parsed = SettingsSchema.safeParse(json);
+  const s = parsed.success ? parsed.data : repairSettings(json as Record<string, unknown>);
+  return s.targets.wsl.on && consentCurrent("wsl", s.targets.wsl.consent);
+}
+
+/**
+ * The doctor's and setup check's target rows (§8.8): the SSH client, the commands terminal, the remote parts, WSL's.
+ * `wslOn`: the user's WSL switch (wslSwitchOn); the check script runs inside running distros only when it is true.
+ */
+export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean; appDir?: string; wslOn?: boolean }): Promise<PlatformDoctorRow[]> {
   const rows = await doctorRowsWith(o, realDoctorProbes({ os: o.os, sys: o.sys, resourcesPath: o.resourcesPath, env: process.env }));
   if (o.os !== "win32" || !wslAllowed(o.admin())) return rows;
   // The doctor runs apart from Ember: its own short-lived view of WSL (nothing is started; it is let go at once).
@@ -321,10 +348,12 @@ export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: 
     wsl = createWsl({ log: quiet, env: process.env, os: o.os, ember: { winPaths: [] }, jobHost: null });
     if (wsl) {
       rows.push(...await wsl.doctorRows());
-      // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted).
+      // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted),
+      // only while the user's WSL switch is on.
       // (main.cjs's folder, dist/app, when main doesn't say: the source tree's script beside it in a development copy.)
       const appDir = o.appDir ?? (typeof __dirname === "string" ? __dirname : null);
-      rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
+      if (o.wslOn !== true) rows.push(WSL_OFF_ROW);
+      else rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
     }
   } catch {
     // WSL's rows are left out when it can't be asked (the doctor's other rows stand).
@@ -540,9 +569,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!c) { c = { state: "closed", link: null, target: null, abort: null, offs: [], activate: false }; conns.set(hostId, c); }
     return c;
   };
-  /** The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on. */
-  const stopTasks = (hostId: string) => {
-    try { deps.stopTasksOn?.(targetIdOf("ssh", hostId)); } catch (err) { log.warn("targets.stop_tasks_failed", { err }); }
+  /** The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on; `only`: those on its desktop. */
+  const stopTasks = (hostId: string, only?: "desktop") => {
+    try {
+      if (only) deps.stopTasksOn?.(targetIdOf("ssh", hostId), only);
+      else deps.stopTasksOn?.(targetIdOf("ssh", hostId));
+    } catch (err) {
+      log.warn("targets.stop_tasks_failed", { err });
+    }
   };
   const dropTarget = (c: Conn) => {
     for (const off of c.offs.splice(0)) { try { off(); } catch { /* the link is gone */ } }
@@ -566,10 +600,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     try {
       target = createRemoteTarget({
         host, link, log: log.child(`ssh-${hostId}`), settings, admin, window: commandWindow, makeParts: parts.remoteParts,
-        onLocked: () => {
-          // A screen that locks mid-task stops that computer's tasks (§5.3.4 step 8); the next task asks for it again.
-          stopTasks(hostId);
-          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, { title: `Stopped on ${host.id}`, thought: `${host.id}'s screen locked, so I stopped working there.`, actions: [], mood: "attention" }, INFO_MS);
+        onDesktopLost: locked => {
+          // A screen that locks or a session that goes inactive mid-task stops the tasks using that desktop (§5.3.4 step
+          // 8); tasks running only commands there go on (their window is on this PC). The next task asks for it again.
+          stopTasks(hostId, "desktop");
+          const why = locked ? `${host.id}'s screen locked` : `${host.id}'s desktop session isn't active any more`;
+          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, { title: `Stopped on ${host.id}`, thought: `${why}, so I stopped working on its screen.`, actions: [], mood: "attention" }, INFO_MS);
           refresh();
         },
         onConsoleStop: () => {
@@ -1051,6 +1087,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         return e ? commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
       },
       othersNamed: words => othersNamed(id, words),
+      placesNamed: words => unknownPlaces(words),
     });
   };
   const refuse = (why: string) => ({ ok: false as const, why });
@@ -1104,7 +1141,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * target Ember knows, connected or not, and the hosts of the user's ssh config it has no record of yet; this computer
    * as "this computer".
    */
-  const othersNamed = (bound: TargetId, words: string): string[] => {
+  const knownNamed = (): { known: NamedTarget[]; labels: Map<string, string> } => {
     rebuild();
     const known: NamedTarget[] = entries.map(e => ({ id: e.id, names: e.names }));
     const labels = new Map<string, string>(entries.map(e => [e.id, e.id === LOCAL_TARGET ? "this computer" : e.label]));
@@ -1117,8 +1154,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       known.push({ id, names: [alias] });
       labels.set(id, alias);
     }
+    return { known, labels };
+  };
+  const othersNamed = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
     return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
   };
+  /**
+   * The places the user's words name that look like a computer but are neither a target Ember knows nor a host of the
+   * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
+   */
+  const unknownPlaces = (words: string): string[] => placesNamed(words, knownNamed().known);
   const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
     try {
       rebuild();
@@ -1266,7 +1312,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const agent: TargetsForAgent = {
     get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
     bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
-    othersNamed: (id, userWords) => { try { return othersNamed(id, userWords); } catch { return ["another computer"]; } },
+    // A place that looks like a computer Ember doesn't know counts too: the task's bubbles say where it acts.
+    othersNamed: (id, userWords) => { try { return [...othersNamed(id, userWords), ...unknownPlaces(userWords)]; } catch { return ["another computer"]; } },
   };
 
   // ── The picker and the bubble's actions ──
@@ -1433,8 +1480,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const rows = await doctorRowsWith({ os: deps.os, admin, packaged: deps.packaged }, parts.doctor).catch(() => [] as PlatformDoctorRow[]);
       if (wsl) {
         try { rows.push(...await wsl.doctorRows()); } catch (err) { log.warn("targets.wsl_doctor_failed", { err }); }
-        // Each running distro's Linux apps and their accessibility (wsl-helper:<d>, wsl-a11y:<d>, §8.8).
-        try { rows.push(...await parts.wslHelpers.doctorRows()); } catch (err) { log.warn("targets.wsl_helper_doctor_failed", { err }); }
+        // Each running distro's Linux apps and their accessibility (wsl-helper:<d>, wsl-a11y:<d>, §8.8): the check
+        // script runs inside them only while the user's WSL switch is on.
+        if (!wslOn()) rows.push(WSL_OFF_ROW);
+        else try { rows.push(...await parts.wslHelpers.doctorRows()); } catch (err) { log.warn("targets.wsl_helper_doctor_failed", { err }); }
       }
       for (const [hostId, c] of conns) if (c.target?.link.welcome.tccLimited) rows.push(remoteTccRow(hostId));
       return rows;
@@ -1445,6 +1494,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const m = /^wsl-a11y:(.+)$/.exec(typeof id === "string" ? id : "");
       if (!m || !DISTRO_NAME.test(m[1])) return { ok: false, message: "Ember doesn't know that fix." };
       const name = m[1];
+      // The fix is a command in the distro: never where the administrator turned WSL, or commands in WSL, off.
+      if (!wslAllowed(admin()) || commandMode(admin(), "wsl") === "off") return { ok: false, message: "Your organisation has turned this off." };
       if (!wsl || !wslOn()) return { ok: false, message: "WSL isn't turned on for Ember. Turn it on in Ember's settings (Computers)." };
       const d = distroOf(name);
       if (!d || d.needsSetup || isToolDistro(d)) return { ok: false, message: `Ember doesn't use Linux apps in ${name}.` };

@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, targetOfChoice, targetsNamed, type NamedTarget,
+  NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placesNamed, targetOfChoice, targetsNamed,
+  type NamedTarget,
 } from "../../app/main/targets/resolve";
 
 const local: NamedTarget = { id: "local", names: ["This computer"] };
@@ -163,5 +164,59 @@ describe("otherTargetsNamed (D4.4's wrong-target guard)", () => {
     expect(otherTargetsNamed("delete build/ on pi", [local, pi], "local")).toEqual(["ssh:pi"]);
     expect(otherTargetsNamed("delete build/ on pip", [local, pi], "local")).toEqual([]);
     expect(otherTargetsNamed("delete build/", [local, { id: "ssh:x", names: ["-"] }], "local")).toEqual([]);
+  });
+});
+
+describe("placesNamed (the lead's ruling: a computer Ember doesn't know, named as a place)", () => {
+  it("finds a place word before a name with a dot, a hyphen or a digit, or an ssh-style user@host", () => {
+    expect(placesNamed("delete build/ on prod-db", all)).toEqual(["prod-db"]);
+    expect(placesNamed("restart nginx at deploy@10.0.0.5", all)).toEqual(["deploy@10.0.0.5"]);
+    expect(placesNamed("copy the logs onto web.example.com, then tidy up", all)).toEqual(["web.example.com"]);
+    expect(placesNamed("delete build/ on the build-box", all)).toEqual(["build-box"]);
+    expect(placesNamed("on prod-db's desktop delete build/", all)).toEqual(["prod-db"]);
+    expect(placesNamed("in 10.0.0.5 delete build/", all)).toEqual(["10.0.0.5"]);
+    expect(placesNamed("push it into deploy@prod-db:/srv/app", all)).toEqual(["deploy@prod-db:/srv/app"]);
+    expect(placesNamed("delete build/ on (prod2).", all)).toEqual(["prod2"]);
+    expect(placesNamed("on prod-db and on Prod-DB, delete build/", all)).toEqual(["prod-db"]);
+  });
+
+  it("finds the same computer in the other ways a request names one", () => {
+    // Rule 3's other place words, and "from" and "ssh".
+    for (const w of ["via", "over", "inside", "from"]) expect(placesNamed(`delete build/ ${w} prod-db`, all)).toEqual(["prod-db"]);
+    expect(placesNamed("ssh prod-db and delete build/", all)).toEqual(["prod-db"]);
+    expect(placesNamed("ssh to prod-db, then delete build/", all)).toEqual(["prod-db"]);
+    // A word for a computer between the place word and the name.
+    expect(placesNamed("delete build/ on the server prod-db", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on host 10.0.0.5", all)).toEqual(["10.0.0.5"]);
+    // The request's first word before ":" or "," (rule 3), as for a computer Ember knows.
+    expect(placesNamed("prod-db: delete build/", all)).toEqual(["prod-db"]);
+    expect(placesNamed("deploy@prod-db, delete build/", all)).toEqual(["deploy@prod-db"]);
+    // A port or a folder after the host, other dashes, other quotes.
+    expect(placesNamed("delete build/ on prod-db:22", all)).toEqual(["prod-db:22"]);
+    expect(placesNamed("delete build/ at 10.0.0.5:2222", all)).toEqual(["10.0.0.5:2222"]);
+    expect(placesNamed("delete build/ on prod‐db", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on `prod-db`", all)).toEqual(["prod-db"]);
+    expect(placesNamed("delete build/ on «prod-db»", all)).toEqual(["prod-db"]);
+    // Known ones stay left out in every form.
+    expect(placesNamed("build-01: delete build/", all)).toEqual([]);
+    expect(placesNamed("delete build/ on the server build-01:22", all)).toEqual([]);
+  });
+
+  it("leaves out every name a known target answers to, the bound one's included", () => {
+    expect(placesNamed("delete build/ on build-01", all)).toEqual([]);
+    expect(placesNamed("delete build/ on build-01.example.com", all)).toEqual([]);
+    expect(placesNamed("delete build/ at ana@build-01", all)).toEqual([]);
+    expect(placesNamed("in Ubuntu-22.04 delete build/", [...all, { id: "wsl:Ubuntu-22.04", names: ["Ubuntu-22.04"] }])).toEqual([]);
+  });
+
+  it.each([
+    "delete build/ on the desktop", "delete the old files in my home folder", "fix the typo on line 12", "delete build/ here",
+    "fix the bug in main.ts and delete build/", "write it into notes.md", "delete build/ in 5 minutes", "remind me at 5pm",
+    "delete the cache in v1.2", "click the button in the top-right corner", "open it in read-only mode", "delete build/ on 2 files",
+    "delete everything in src/app", "delete build/ in ~/proj", "run it on Linux", "delete build/", "",
+    "delete the lines from 10-20", "on 2026-10-22, delete build/", "delete files over 10MB", "at 17:30, delete build/",
+    "regenerate my ssh keys", "Note: delete build/", "copy it from main.ts", "on the server, delete build/",
+  ])("names no computer in %j", words => {
+    expect(placesNamed(words, all)).toEqual([]);
   });
 });

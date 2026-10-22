@@ -131,6 +131,11 @@ export interface FlowExtras {
   consentPanel(): ConsentPanel | null;
   /** The labels of the other known computers the user's own words name (D4.4's wrong-target guard). */
   othersNamed(words: string): string[];
+  /**
+   * The places the user's own words name that look like a computer Ember doesn't know ("on prod-db"). Without it the
+   * flow looks with the target's own names only.
+   */
+  placesNamed?(words: string): string[];
 }
 
 /**
@@ -138,6 +143,7 @@ export interface FlowExtras {
  * slots and facts stay its own), plus the flow's extras. A card that can't be built is none (nothing is turned on).
  */
 export function withFlowExtras(svc: CommandService, extras: FlowExtras): CommandService & FlowExtras {
+  const places = extras.placesNamed;
   return {
     get binding() { return svc.binding; },
     capability: () => svc.capability(),
@@ -152,6 +158,7 @@ export function withFlowExtras(svc: CommandService, extras: FlowExtras): Command
     },
     // A guard that fails throws on: the flow then counts another computer as named (it asks).
     othersNamed: words => extras.othersNamed(words),
+    ...(places ? { placesNamed: (words: string) => places.call(extras, words) } : {}),
   };
 }
 

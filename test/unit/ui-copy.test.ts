@@ -582,7 +582,8 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     expect(all(bubbleCopy.lost("build-01"))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
     expect(all(bubbleCopy.signInAgain("build-01"))).toEqual(["build-01 needs you to sign in again", "Reconnect to sign in.", "Reconnect"]);
     expect(all(bubbleCopy.stoppedFromRemote("build-01"))).toEqual(["Stopped on build-01", "Someone at build-01 pressed Stop."]);
-    expect(all(bubbleCopy.screenLocked("build-01"))).toEqual(["Stopped on build-01", "build-01's screen locked, so I stopped working there."]);
+    expect(all(bubbleCopy.screenLocked("build-01"))).toEqual(["Stopped on build-01", "build-01's screen locked, so I stopped working on its screen."]);
+    expect(all(bubbleCopy.sessionInactive("build-01"))).toEqual(["Stopped on build-01", "build-01's desktop session isn't active any more, so I stopped working on its screen."]);
     expect(all(bubbleCopy.backHere("build-01"))).toEqual(["Back on this computer", "build-01 isn't connected any more, so I'll work here."]);
   });
 

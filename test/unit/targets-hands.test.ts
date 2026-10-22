@@ -89,21 +89,51 @@ describe("this screen's hands (local and WSL)", () => {
 
 describe("a remote's hands", () => {
   const onAuthorized = vi.fn();
+  const remotePerception = { read: vi.fn(async () => "seen"), windows: vi.fn(async () => []), perceive: vi.fn(async () => "picture") };
+  const remoteSidecar = { doAction: vi.fn(async () => true), readElement: vi.fn(async () => null), scaleOf: vi.fn(() => 1), stop: vi.fn() };
+  const launch = vi.fn(async () => undefined);
   const parts = {
-    perception: { tag: "remote-perception" }, sidecar: { tag: "remote-sidecar" }, policy: { tag: "remote-policy" }, system: { os: "linux" },
+    perception: remotePerception, sidecar: remoteSidecar, policy: { tag: "remote-policy" },
+    system: { os: "linux", keys: { tag: "keys" }, apps: { list: () => [], launch } },
     binding: () => ({ id: "ssh:build-01", kind: "ssh", label: "build-01", login: "deploy", screenOs: "linux", shellOs: "linux", desktop: "text" }),
     onAuthorized,
   } as unknown as RemoteTargetParts;
 
-  it("use the remote's perception, sidecar, gate 1 and system with main's audit and Confirmer", () => {
+  it("use the remote's perception, sidecar, gate 1 and system with main's audit and Confirmer", async () => {
     const h = remoteHands({ hostId: "build-01", parts, base: { audit: hands.audit, confirmer: hands.confirmer }, commands });
-    expect(h.perception).toBe(parts.perception);
-    expect(h.sidecar).toBe(parts.sidecar);
+    await expect(h.perception.read({} as never)).resolves.toBe("seen");
+    expect(remotePerception.read).toHaveBeenCalled();
+    await expect(h.sidecar.doAction(3, "click")).resolves.toBe(true);
+    expect(remoteSidecar.doAction).toHaveBeenCalledWith(3, "click");
+    await h.system.apps.launch({ id: "gedit.desktop", name: "Text Editor" } as never);
+    expect(launch).toHaveBeenCalledWith({ id: "gedit.desktop", name: "Text Editor" });
+    expect(h.system.os).toBe("linux");
+    expect(h.system.keys).toBe(parts.system.keys);
     expect(h.policy).toBe(parts.policy);
-    expect(h.system).toBe(parts.system);
     expect(h.audit).toBe(hands.audit);
     expect(h.confirmer).toBe(hands.confirmer);
     expect(h.binding.desktop).toBe("text");
+  });
+
+  it("tell whether their own task used the remote's desktop: a read, a picture, a step or an app opened (§5.3.4 step 8)", async () => {
+    const make = () => remoteHands({ hostId: "build-01", parts, base: { audit: hands.audit, confirmer: hands.confirmer }, commands });
+    const reads = make(), pictures = make(), steps = make(), opens = make(), commandsOnly = make();
+    expect(reads.usedDesktop()).toBe(false);
+    await reads.perception.windows();
+    expect(reads.usedDesktop()).toBe(true);
+    await pictures.perception.perceive({} as never);
+    expect(pictures.usedDesktop()).toBe(true);
+    steps.sidecar.scaleOf(1);
+    steps.sidecar.stop();
+    expect(steps.usedDesktop()).toBe(false);
+    await steps.sidecar.readElement(1);
+    expect(steps.usedDesktop()).toBe(true);
+    await opens.system.apps.launch({ id: "gedit.desktop", name: "Text Editor" } as never);
+    expect(opens.usedDesktop()).toBe(true);
+    // Commands and listing the apps aren't the desktop; and each task's hands speak only for that task.
+    expect(commandsOnly.commands).toBe(commands);
+    commandsOnly.system.apps.list();
+    expect(commandsOnly.usedDesktop()).toBe(false);
   });
 
   it("key grants and leases by the target, never fly, never start from a window, and borrow nothing (L4)", () => {

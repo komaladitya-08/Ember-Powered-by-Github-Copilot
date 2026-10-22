@@ -1,6 +1,6 @@
 /** IPC channel names and payload types shared by main, preload and renderers. */
 
-import type { EnvReport, FixId } from "../main/environment";
+import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
@@ -82,8 +82,8 @@ export interface StatusPlatform {
   permissionsNote: string;
   /** Ember listens to the speakers to tell its own voice apart (Linux only): false drops that sentence from the consent. */
   speakerRejection: boolean;
-  /** The button text of each setup-check fix this OS offers ("Turn on", "Open System Settings"). */
-  fixLabels: Partial<Record<FixId, string>>;
+  /** The button text of each setup-check fix this OS offers ("Turn on", "Open System Settings"); others say "Turn on". */
+  fixLabels: Partial<Record<FixId | TargetFixId, string>>;
   /** Ember's desk is offered here. */
   desk: boolean;
   /** A note under "Start Ember when I log in" (macOS waiting for approval, Windows turned off in Task Manager), or null. */

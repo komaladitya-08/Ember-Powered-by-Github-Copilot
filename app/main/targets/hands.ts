@@ -118,20 +118,65 @@ export function waitingSidecar(s: SidecarPort, ready: () => Promise<unknown>): S
 }
 
 /**
+ * Hands that know whether their task has used a remote's desktop (§5.3.4 step 8, the lead's ruling on its scope): a
+ * screen that locks or a session that goes inactive there stops only such tasks; one running only commands goes on.
+ */
+export interface DesktopUse {
+  /** The task read, pictured, stepped or opened an app on the remote's desktop (running a command isn't a use). */
+  usedDesktop(): boolean;
+}
+
+/** A perception port that calls `use` before every read (screenshots included). */
+function usingPerception(p: PerceptionPort, use: () => void): PerceptionPort {
+  return {
+    focused: (...a) => { use(); return p.focused(...a); },
+    read: (...a) => { use(); return p.read(...a); },
+    atPoint: (...a) => { use(); return p.atPoint(...a); },
+    quickContext: () => { use(); return p.quickContext(); },
+    describe: () => { use(); return p.describe(); },
+    perceive: (...a) => { use(); return p.perceive(...a); },
+    systemDialogOpen: () => { use(); return p.systemDialogOpen(); },
+    windows: () => { use(); return p.windows(); },
+  };
+}
+
+/** A sidecar port that calls `use` before every read and action; scaleOf and stop aren't uses. */
+function usingSidecar(s: SidecarPort, use: () => void): SidecarPort {
+  return {
+    readElement: (...a) => { use(); return s.readElement(...a); },
+    canDo: (...a) => { use(); return s.canDo(...a); },
+    doAction: (...a) => { use(); return s.doAction(...a); },
+    setText: (...a) => { use(); return s.setText(...a); },
+    setValue: (...a) => { use(); return s.setValue(...a); },
+    selectOption: (...a) => { use(); return s.selectOption(...a); },
+    listOptions: (...a) => { use(); return s.listOptions(...a); },
+    scaleOf: id => s.scaleOf(id),
+    stop: () => s.stop(),
+  };
+}
+
+/**
  * Hands on a remote (§2.6's SSH column): its perception, sidecar and gate 1; main's audit and Confirmer (the remote keeps
  * its own audit too); no flight, no window of the remote person's as a start, no borrowed mouse, clipboard or desk (L4);
  * grants and leases keyed by the target. `ready`: the remote's desktop as the PC asked for it before this task
  * (desktop.state, §5.3.4 step 8, which starts the desktop helper and its notice there): reads and steps wait for it.
+ * Each call made for one task's hands tells whether that task has used the desktop (DesktopUse).
  */
-export function remoteHands(o: { hostId: string; parts: RemoteTargetParts; base: Pick<HandsBase, "audit" | "confirmer">; commands: CommandService | null; ready?: () => Promise<unknown> }): TargetHands {
+export function remoteHands(o: { hostId: string; parts: RemoteTargetParts; base: Pick<HandsBase, "audit" | "confirmer">; commands: CommandService | null; ready?: () => Promise<unknown> }): TargetHands & DesktopUse {
   const id = targetIdOf("ssh", o.hostId);
   const ready = o.ready;
+  let used = false;
+  const use = () => { used = true; };
+  const system = o.parts.system;
   return {
-    perception: ready ? waitingPerception(o.parts.perception, ready) : o.parts.perception,
-    sidecar: ready ? waitingSidecar(o.parts.sidecar, ready) : o.parts.sidecar,
+    perception: usingPerception(ready ? waitingPerception(o.parts.perception, ready) : o.parts.perception, use),
+    sidecar: usingSidecar(ready ? waitingSidecar(o.parts.sidecar, ready) : o.parts.sidecar, use),
     policy: o.parts.policy, audit: o.base.audit, confirmer: o.base.confirmer,
     flyTo: () => undefined, currentWindow: () => null,
-    binding: o.parts.binding(), system: o.parts.system, commands: o.commands,
+    binding: o.parts.binding(), commands: o.commands,
+    // Opening an app there is a step on its desktop too.
+    system: { ...system, apps: { ...system.apps, launch: app => { use(); return system.apps.launch(app); } } },
+    usedDesktop: () => used,
     grantKey: app => `${id}:${app.toLowerCase()}`,
     leaseKey: k => `${id}|${k}`,
     onAuthorized: stamp => o.parts.onAuthorized(stamp),
