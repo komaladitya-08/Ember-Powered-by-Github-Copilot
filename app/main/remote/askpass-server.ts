@@ -92,7 +92,9 @@ export function promptCard(req: AskpassRequest, ctx: PromptContext): PromptCard 
   if (req.mode === "notify" || /Confirm user presence|touch your (security )?key|Touch (the )?(security )?key/i.test(p)) {
     return { id: ctx.id, kind: "touch", host: ctx.host };
   }
-  if (/Enter passphrase for/i.test(p)) {
+  // ssh's own prompt for a key starts the text; a server's keyboard-interactive prompt that only says the same words
+  // (ssh 8.4+ puts "(user@host) " before it) is the server asking, never "Unlock your SSH key".
+  if (/^Enter passphrase for key '/.test(p)) {
     return { id: ctx.id, kind: "secret", secret: "passphrase", host: ctx.host, prompt: p };
   }
   const who = /^\s*\(?([A-Za-z0-9._-]{1,64})@([A-Za-z0-9._:[\]-]{1,255})(?:'s|\))\s/.exec(p);

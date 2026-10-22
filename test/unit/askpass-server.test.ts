@@ -53,6 +53,8 @@ describe("the prompt cards for ssh's prompts (§5.1.6, §8.6)", () => {
     expect(promptCard({ prompt: "(deploy@build-01) Verification code: ", mode: "secret" }, ctx)).toMatchObject({ secret: "code" });
     expect(promptCard({ prompt: "Enter your one-time password", mode: "secret" }, ctx)).toMatchObject({ secret: "code" });
     expect(promptCard({ prompt: "Favourite colour? ", mode: "secret" }, ctx)).toMatchObject({ secret: "other" });
+    // A server asking in the words of ssh's own passphrase prompt is still the server asking, under its own name.
+    expect(promptCard({ prompt: "(deploy@build-01) Enter passphrase for key '/home/ana/.ssh/id_ed25519': ", mode: "secret" }, ctx)).toMatchObject({ secret: "other", login: "deploy" });
   });
 
   it("shows a security key's touch as a notice", () => {
