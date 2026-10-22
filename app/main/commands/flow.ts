@@ -7,10 +7,10 @@
  * once more (§3.16). What comes back is the shaped, untrusted output; output that reads like instructions taints the
  * task, so every later command asks (§3.11 step 7). Every step is audited (§3.12); the command's text reaches no log.
  *
- * The classifier, the decision and the shaping are CL's pure functions, reached through CommandJudge: without one
- * nothing runs (fail closed). The flow also holds CL's answer to a few invariants of its own (a task without the
- * user's own words never announces; taint, carried text, "ask every" and root always ask), so a looser decision can
- * never run a command the design says must ask.
+ * The classifier, the decision and the shaping are CL's pure functions (classify, decide, output, redact, prompts,
+ * taint, paths), reached through CommandJudge so the tests can pass their own. The flow also holds CL's answer to a few
+ * invariants of its own (a task without the user's own words never announces; taint, carried text, "ask every" and
+ * root always ask), so a looser decision can never run a command the design says must ask.
  */
 
 import crypto from "node:crypto";
@@ -25,6 +25,13 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
+import { classifyCommand } from "./classify";
+import { LINES, decideCommand } from "./decide";
+import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { resolveTargetPath } from "./paths";
+import { trackSecretPrompts, type SecretTracker } from "./prompts";
+import { redactSecrets } from "./redact";
+import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
@@ -53,8 +60,11 @@ export interface CommandFlowContext {
   /** The task's own stop: the run stops with it. */
   signal: AbortSignal;
   isOver: () => boolean;
-  /** The task's folder and downloads on this target (kept by the worker across calls). */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean };
+  /**
+   * The task's folder and downloads on this target (kept by the worker across calls). `outputTainted` (the flow's own):
+   * a command's output tainted the task, so the card says so in its own words (§3.8.4).
+   */
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -63,17 +73,7 @@ export interface CommandFlowContext {
   onDeclined?: () => void;
 }
 
-/** CL's ShapeOptions (§3.11): what shaping needs besides the raw bytes. */
-export interface ShapeOptions {
-  target: TargetId; label: string; shell: ShellId; exit: RunExit;
-  /** Lines the user typed into the run (L2): cut out wherever they appear. */
-  typed: string[];
-  /** Characters of output after which a secret prompt started (from the run's tracker), with their ends. */
-  secretSpans: { from: number; to: number }[];
-}
-
-/** CL's secret-prompt tracker (§3.11 step 2). */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+export type { SecretTracker, ShapeOptions };
 
 /** CL's pure functions the flow calls (§3.11's export block: exactly CL's signatures). */
 export interface CommandJudge {
@@ -84,20 +84,27 @@ export interface CommandJudge {
   trackSecretPrompts(o: { interactive: boolean }): SecretTracker;
   outputTaint(text: string): string | null;
   resolveTargetPath(p: string, o: { os: OS; home: string; cwd: string }): string;
+  /**
+   * CL's steps 1-4 of shaping (terminal codes, secret spans, typed lines, redaction) without the cut to size: what the
+   * output-taint check reads, so nothing hides in the part the model's copy leaves out (CL's review). Optional for
+   * judges a test makes; the flow then checks its own cleaned copy.
+   */
+  cleanOutput?(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string;
 }
 
-/**
- * CL's functions, once CL is merged: `{ classifyCommand, decideCommand, shapeOutput, redactSecrets, trackSecretPrompts,
- * outputTaint, resolveTargetPath }` from ./classify, ./decide, ./output, ./redact, ./prompts, ./taint and ./paths.
- * Until then (and in a build without them) nothing runs.
- */
-const DEFAULT_JUDGE: CommandJudge | null = null;
-let judge: CommandJudge | null = DEFAULT_JUDGE;
+/** CL's own functions: what every command is judged by unless a test passes its own judge. */
+export const CL_JUDGE: CommandJudge = Object.freeze({
+  classifyCommand, decideCommand, shapeOutput, redactSecrets, trackSecretPrompts, outputTaint, resolveTargetPath, cleanOutput,
+});
+let judge: CommandJudge = CL_JUDGE;
 
-/** Hands the flow CL's functions (tests pass their own); null: the default. */
+/** Hands the flow a judge (tests pass their own); null: CL's own again. */
 export function setCommandJudge(j: CommandJudge | null): void {
-  judge = j ?? DEFAULT_JUDGE;
+  judge = j ?? CL_JUDGE;
 }
+
+/** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
+export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
 
 /** A command service that can show its first-use commands card (§8.4.3; built by the targets runtime). */
 export interface CommandConsentSource {
@@ -130,7 +137,6 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
-const NOT_JUDGED = "Ember can't check commands here, so it won't run them. Don't try another way; tell the user in finish_task.";
 const SAID_NO = "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
@@ -460,10 +466,6 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const target = binding.id;
   const audit = (e: Record<string, unknown>) => ctx.audit({ event: "command", task, target, ...e });
   const j = judge;
-  if (!j) {
-    ctx.log.warn("commands.no_judge", { task });
-    return denied(NOT_JUDGED);
-  }
 
   // Step 2: the target's commands now; the first-use card when they wait for it.
   let cap = svc.capability();
@@ -542,7 +544,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const mode = svc.mode();
   const userAskEvery = svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
-  const d = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
+  const held = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
+  // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
+  const d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
@@ -628,7 +632,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
-        const answer = await askCard([...d.says, `${binding.label}'s own check also found:`, ...theirs], "remote",
+        // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
+        const own = [`${binding.label}'s own check also found:`, ...theirs];
+        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
+        const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
+        const answer = await askCard(lines, "remote",
           `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
         if (answer === "stopped") return STOPPED();
         if (answer === "no") return denied(SAID_NO);
@@ -743,12 +751,16 @@ function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o:
   // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
   const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
   const kept = out.kept([...tracker.spans(), ...theirs]);
-  const shaped = j.shapeOutput(new TextEncoder().encode(kept.text), { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
+  const raw = new TextEncoder().encode(kept.text);
+  const shaped = j.shapeOutput(raw, { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
   const task = ctx.task.id;
   const target = ctx.service.binding.id;
-  // What it printed is checked whole (before shaping cuts the middle), and as the model gets it.
-  const taint = j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
+  // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
+  // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
+  const clean = j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  const taint = (clean !== null ? j.outputTaint(clean) : null) ?? j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
   if (taint) {
+    ctx.state.outputTainted = true;
     ctx.task.taint(taint);
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }
