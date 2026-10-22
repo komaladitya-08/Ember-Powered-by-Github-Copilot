@@ -48,6 +48,11 @@ Windows, and blacks them out of its screenshots, because it can't tell what runs
 
 To check this computer, open a Command Prompt or PowerShell in the `Ember` folder and run `.\ember-doctor.cmd`.
 
+To update, quit Ember and replace the `Ember` folder with the new one, in the same place; your settings stay in
+`%LOCALAPPDATA%\ember`. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, and delete
+the `Ember` folder, `Ember.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember`
+(its settings, logs and sign-in).
+
 ## Install on macOS
 
 1. Get `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac). `npm run package:mac` builds them
@@ -62,8 +67,8 @@ To check this computer, open a Command Prompt or PowerShell in the `Ember` folde
    - If macOS says Ember "is damaged", clear the download mark and open it again:
      `xattr -dr com.apple.quarantine /Applications/Ember.app`.
 
-Ember needs these permissions. Its setup check says which are missing and opens the right pane of **System Settings
-› Privacy & Security** for each:
+Ember needs these permissions. For the first four, its setup check says which are missing and opens the right pane
+of **System Settings › Privacy & Security**:
 
 | Permission | Why |
 |---|---|
@@ -76,6 +81,11 @@ Ember needs these permissions. Its setup check says which are missing and opens 
 
 macOS ties each permission to the exact copy of Ember. After you install a new build, Ember can show as switched on
 without the permission working: remove Ember from each list with **−** and add it again.
+
+To update, quit Ember, drag the new Ember.app into Applications over the old one, and give the permissions again as
+above. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, remove it from each Privacy &
+Security list with **−**, and delete Ember.app from Applications and `~/Library/Application Support/ember` (its
+settings, logs and sign-in).
 
 To check this Mac, run Ember's check-up through `open`, so that macOS judges Ember's own permissions (run from
 Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's instead):

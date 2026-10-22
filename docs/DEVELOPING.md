@@ -411,8 +411,9 @@ On Linux (Windows: §10.9, macOS: §11.8):
 
 ## 10. Windows
 
-Ember runs on Windows 10 22H2 and Windows 11, x64 (Windows on Arm is best effort). Everything here is checked on
-GitHub's `windows-2022` runners (§13); PLAN.md §9 item 7 lists what still needs a real Windows 10 or 11 machine.
+Ember runs on Windows 10 22H2 and Windows 11, x64 (Windows on Arm is best effort). §13 says what CI checks on
+GitHub's `windows-2022` runners; PLAN.md §9 item 7 lists what still needs a real Windows 10 or 11 machine (a
+`RemoteSigned` policy and **Unblock it** among them) and the CI runs still owed.
 
 ### 10.1 Set up
 
@@ -679,7 +680,8 @@ or a whole remote desktop, is just "msrdc" or "mstsc": its terminal, security-wi
 in, and one grant would cover every Linux app. Until WSL support can identify the app inside, Ember refuses every
 action in these windows ("Ember can't tell what's inside a remote window…") and blacks them out of every screenshot.
 Reading their titles is unchanged. Other remote viewers (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't
-covered yet. The rule is `app/main/policy/remote-surface.ts`; Linux and macOS are unaffected.
+covered yet. The rule is `app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no Windows CI run
+has included it yet); Linux and macOS are unaffected.
 
 ### 10.9 Troubleshooting
 
@@ -688,6 +690,7 @@ Ember can't work.
 
 | Check-up row | When it warns or fails | What to do |
 |---|---|---|
+| Platform | Not x64 or Arm (fails) | Use a 64-bit Windows |
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Compositor, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
@@ -715,8 +718,9 @@ Ember team) and **Keyboard shortcuts**.
 ## 11. macOS
 
 Ember runs on macOS 13 or later, on Apple silicon; Intel Macs and macOS 13 are best effort until they are tried on
-real machines. Everything here is checked on GitHub's `macos-15` runners, and the Intel build on `macos-15-intel`
-(§13); PLAN.md §9 item 7 lists what still needs a real Mac.
+real machines. §13 says what CI checks on GitHub's `macos-15` runners, and on `macos-15-intel` for the Intel build;
+PLAN.md §9 item 7 lists what still needs a real Mac (a fresh install from the dmg and a new build's permissions
+among them).
 
 ### 11.1 Set up
 
@@ -730,6 +734,10 @@ cd ember
 npm ci
 npm run dev:mac
 ```
+
+Lint, typecheck, unit tests, the build and staging need no permissions and no logged-in desktop. The smoke test,
+the integration suites and the check-up's permission rows need a logged-in desktop session and the permissions in
+§11.2.
 
 ### 11.2 Running Ember in development, and its permissions
 
@@ -923,7 +931,7 @@ Every backend keeps the X11 conventions, so the code above it doesn't change:
   `onScreen()`, never against 0. Only Ember's own windows use Electron's DIP, through `toDip`.
 - **Window ids** are one space per backend (the X window, the HWND, the CGWindowID), compared with `===`.
 - **App names**: WM_CLASS on Linux; on Windows the program's file name without `.exe` (`notepad`; `conhost` for a
-  console window; the hosted app's program for a UWP frame); on macOS the app's localized name. The accessibility
+  console window; the hosted app's program for a UWP frame); on macOS the app's localised name. The accessibility
   helper reports the same name, so the policy, never-look and grants match on both.
 - **Keys** are X keysym names ("Return", "Control_L"); mouse buttons are X's numbers and button-mask bits; key codes
   are opaque per backend and never 0.
@@ -931,11 +939,12 @@ Every backend keeps the X11 conventions, so the code above it doesn't change:
 Rules for code under `app/main/platform/` and `app/sidecar-host/`:
 - It loads under plain Node: no `electron` import. Electron's objects come in through structural types
   (`ScreenLike`, `OwnWindowHandle`, `PlatformDeps.electron`).
-- Every module imports on every OS (the unit tests import them on Linux). koffi is loaded lazily, with
-  `createRequire(__filename)("koffi")` inside an `open…()` function that runs only on its own OS; each library is
-  bound once per module; every `koffi.load` is guarded, so a missing library gives null or a safe default. koffi's
-  type names are process-wide, so prefix them with the module's tag (`W32Ws_RECT`, `MacIn_CGPoint`). Win32's `BOOL`
-  is `int`; pointers come back as BigInt or null; never call `koffi.view()`.
+- Every module imports on every OS (the unit tests import them on Linux). koffi is loaded lazily, through
+  `createRequire(__filename)` inside a factory (`loadWin32()`, `openCoreGraphics()`…) that runs only on its own OS;
+  each library is bound once per module; every `koffi.load` is guarded, so a missing library gives null or a safe
+  default. koffi's type names are process-wide: pass structures as Buffers (`void *`), as the Windows backend does, or
+  give a named type an `Ember` prefix and define it once (`EmberWin32Point`; `EmberCGPoint` through `namedStruct()`).
+  Win32's `BOOL` is `int`; pointers come back as BigInt or null; never call `koffi.view()`.
 - Fail closed: a check that can't run refuses, returns null or sends no image (`systemDialogOpen()` is true when it
   can't tell; no capture without Screen Recording; a policy Ember can't trust locks it down).
 - Each OS-keyed list lives in one place, with the Linux row frozen (tests pin it): `app/shared/shortcuts.ts`,
@@ -960,7 +969,7 @@ To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run
 | Input | Default | What it does | Why |
 |---|---|---|---|
 | `packages` | off | Uploads the packages as artifacts, kept 3 days: `ember-packages` (RPM and AppImage), `ember-windows` (the zip), `ember-macos` (zip and dmg), `ember-macos-x64` | They are 200–400 MB each, and uploading them on every run filled the account's artifact storage, after which no artifact could be uploaded at all |
-| `intel` | off | Also runs `macos-x64` | macOS minutes cost ten times Linux's on a private repository, so the Intel job runs only on the default branch and tags unless asked |
+| `intel` | off | Also runs `macos-x64` (with `only` set to `all` or `macos`) | macOS minutes cost ten times Linux's on a private repository, so the Intel job runs only on the default branch and tags unless asked |
 | `only` | `all` | Runs only one platform's jobs: `linux` (the four Linux jobs), `windows` or `macos`. Pushes and pull requests always run them all | The same cost: after a fix for one OS, rerun only that OS |
 
 The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
