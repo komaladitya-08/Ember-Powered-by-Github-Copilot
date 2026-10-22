@@ -12,7 +12,7 @@
  */
 
 import { spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
-import { JOB_FAILED, JOB_FAILED_PREFIX, loadJobApi, type JobApi, type JobHandle } from "./win32-job";
+import { JOB_FAILED, JOB_FAILED_PREFIX, jobApiError, loadJobApi, type JobApi, type JobHandle } from "./win32-job";
 
 export { JOB_FAILED };
 
@@ -62,12 +62,14 @@ export function runJobHost(argv: readonly string[], deps: JobHostDeps): void {
   const parsed = parseJobHostArgs(argv);
   if (!parsed) return fail("bad arguments");
   let api: JobApi | null;
+  let why = "";
   try {
     api = deps.job();
-  } catch {
+  } catch (err) {
     api = null;
+    why = err instanceof Error ? ` (${err.message})` : "";
   }
-  if (!api) return fail("job objects aren't available here");
+  if (!api) return fail(`job objects aren't available here${why}`);
   let job: JobHandle;
   try {
     job = api.createKillOnCloseJob();
@@ -113,7 +115,11 @@ export function runJobHost(argv: readonly string[], deps: JobHostDeps): void {
 /** The job host as a program. */
 export function main(): void {
   runJobHost(process.argv.slice(2), {
-    job: loadJobApi,
+    job: () => {
+      const api = loadJobApi();
+      if (!api) throw jobApiError instanceof Error ? jobApiError : new Error("kernel32 couldn't be loaded");
+      return api;
+    },
     spawn: (program, args, options) => nodeSpawn(program, args, options),
     stdin: process.stdin,
     stderr: process.stderr,

@@ -147,6 +147,10 @@ describe("the job host", () => {
       expect(h.spawned).toEqual([]);
     }
     expect(JOB_FAILED).toBe(125);
+    const unloadable = host(null);
+    unloadable.deps.job = () => { throw new Error("Failed to load shared library"); };
+    runJobHost(["--batch", "--", PS], unloadable.deps);
+    expect(unloadable.stderr()).toBe("job: job objects aren't available here (Failed to load shared library)\n");
   });
 
   it("exits 125 with job: when the program can't start, or its arguments aren't its own", () => {

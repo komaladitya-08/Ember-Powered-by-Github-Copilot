@@ -105,14 +105,13 @@ let loaded: JobApi | null | undefined;
 /** Why the last loadJobApi() gave null. */
 export let jobApiError: unknown = null;
 
-/** The job calls, or null off Windows or when koffi or kernel32 can't be loaded. koffi is required here, lazily. */
+/**
+ * The job calls, or null when koffi or kernel32 can't be loaded (anywhere but 64-bit Windows: only Windows runs the job
+ * host, so no OS test is made here; D1 keeps those to app/main/platform). koffi is required here, lazily.
+ */
 export function loadJobApi(): JobApi | null {
   if (loaded !== undefined) return loaded;
   loaded = null;
-  if (process.platform !== "win32") {
-    jobApiError = new Error("not Windows");
-    return null;
-  }
   try {
     const koffi = createRequire(__filename)("koffi") as typeof import("koffi");
     loaded = bindJobApi(koffi, name => koffi.load(name));
