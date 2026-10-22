@@ -76,3 +76,6 @@ export declare function npmInvocation(
   host: { platform: string; execPath: string; npmExecPath?: string },
   args: string[],
 ): { file: string; args: string[]; shell: boolean };
+
+/** The folder under each target's resources folder that holds the remote agent's parts (dist/remote-parts). */
+export const REMOTE_PARTS_DIR: string;

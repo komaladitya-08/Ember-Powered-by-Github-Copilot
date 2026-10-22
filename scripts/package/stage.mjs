@@ -18,9 +18,13 @@
 // accessibility host (dist/app/ax-sidecar.cjs) and the UIA bridge (sidecar/uia), an Ember that can't read apps, for a
 // local try only: CI never passes it.
 // Speech models ship beside the Linux app (an RPM sub-package); on Windows and macOS only with --with-models.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--with-models]   (after npm run build)
+// The remote agent's parts (dist/remote-parts, from remote-parts.mjs) go to resources/remote-parts; without them no
+// SSH target can be set up, so staging stops unless --allow-missing-remote-parts.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models]
+//   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,12 +32,12 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { layoutFor, npmInvocation, prodPackageDirs, selectPackages } from "./layout.mjs";
+import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--with-models"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -182,6 +186,24 @@ for (const p of layout.prune) fs.rmSync(path.join(appDir, "node_modules", p), { 
 for (const s of sidecars) {
   fs.mkdirSync(path.dirname(path.join(resources, s.to)), { recursive: true });
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
+}
+
+// 3b. The remote agent's parts (design §5.2.2): every archive remote-parts.json names, checked against its size and
+//     SHA-256 as the PC will check it before sending, then remote-parts.json itself.
+const partsSrc = path.join(root, "dist/remote-parts");
+if (fs.existsSync(path.join(partsSrc, "remote-parts.json"))) {
+  const partsDest = path.join(resources, REMOTE_PARTS_DIR);
+  fs.mkdirSync(partsDest, { recursive: true });
+  for (const t of Object.values(JSON.parse(fs.readFileSync(path.join(partsSrc, "remote-parts.json"), "utf8")).targets)) {
+    const bytes = fs.readFileSync(path.join(partsSrc, path.basename(t.file)));
+    if (bytes.length !== t.bytes || createHash("sha256").update(bytes).digest("hex") !== t.sha256) throw new Error(`dist/remote-parts/${t.file} doesn't match remote-parts.json: run node scripts/package/remote-parts.mjs again`);
+    fs.writeFileSync(path.join(partsDest, path.basename(t.file)), bytes);
+  }
+  fs.copyFileSync(path.join(partsSrc, "remote-parts.json"), path.join(partsDest, "remote-parts.json"));
+} else if (flags.includes("--allow-missing-remote-parts")) {
+  console.warn("warning: dist/remote-parts isn't staged (--allow-missing-remote-parts): this package can't work on computers reached over SSH");
+} else {
+  throw new Error("dist/remote-parts/remote-parts.json is missing: run node scripts/package/remote-parts.mjs after npm run build (--allow-missing-remote-parts stages without SSH)");
 }
 
 // 4. Speech models (optional): only when every model is in place and verified (its marker holds the SHA-256 it's
