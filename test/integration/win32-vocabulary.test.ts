@@ -3,7 +3,8 @@
  * its window class, whatever it hosts; Notepad is no terminal, shell app or security window; the stored-credentials
  * dialog is a security window by its title and the Credential Backup wizard by its program, and systemDialogOpen sees
  * each (and is false again once they close); File Explorer's address box and the Run dialog's box carry the names
- * TYPING_REFUSED expects (read with UI Automation, as the bridge reads them); and through a real Electron, a password
+ * TYPING_REFUSED expects (read through Ember's own accessibility host, the names the policy is given: the address
+ * band at rest, and the box that has the keyboard after Alt+D); and through a real Electron, a password
  * manager's copy is recognised by CLIPBOARD_FORMATS.win32, an image copy saves without a GDI handle format, and the
  * text Ember pastes carries ExcludeClipboardContentFromMonitorProcessing as Windows itself lists it (the G5 check).
  * Each check prints what it saw, so a name that differs on a runner is in the log.
@@ -13,11 +14,17 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { buildSync } from "esbuild";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Rect, ScreenLike } from "../../app/main/platform/types";
-import { openWin32Windows, win32Error, type Win32WindowSystem } from "../../app/main/platform/win32";
+import type { Logger } from "../../app/main/logger";
+import { AtspiSidecar, type AxNode } from "../../app/main/perception/sidecar";
+import { hostLaunch } from "../../app/sidecar-host/launch";
+import { openWin32Input, openWin32Windows, win32Error, type Win32WindowSystem } from "../../app/main/platform/win32";
 import { loadWin32 } from "../../app/main/platform/win32/ffi";
 import { loadWin32System } from "../../app/main/platform/win32/system/ffi";
 import { win32SystemDialog, type SecurityVocabulary } from "../../app/main/platform/win32/system/system-dialog";
@@ -59,6 +66,41 @@ async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, wh
     await sleep(100);
   }
 }
+
+/** Polls an asynchronous `fn` until it gives something truthy, or fails after `ms` saying what was awaited. */
+async function waitForAsync<T>(fn: () => Promise<T | null | undefined | false>, ms: number, what: string): Promise<T> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    await sleep(200);
+  }
+}
+
+const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+
+/**
+ * Ember's accessibility host, built from source and started as Ember starts it (hostLaunch, the UI Automation bridge
+ * with a cache of its own), once its bridge has started: what it names an element is what the policy is given.
+ */
+async function startHost(): Promise<AtspiSidecar> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-vocab-host-"));
+  const host = path.join(dir, "ax-sidecar.cjs");
+  buildSync({ entryPoints: [path.join(root, "app", "sidecar-host", "main.ts")], bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "koffi", "sharp"], outfile: host, logLevel: "silent" });
+  const launch = hostLaunch({ execPath: process.execPath, host, uiaScript: path.join(root, "sidecar", "uia", "ember_uia.ps1"), uiaCache: path.join(dir, "uia-cache"), env: process.env, platform: "win32", packaged: false });
+  const s = new AtspiSidecar("unused.py", quiet, "unused-python", process.env, { ...launch, firstRequestMs: 90_000 });
+  await waitForAsync(async () => {
+    const st = await s.status().catch(() => null);
+    if (st?.toolkitAccessibility === false) throw new Error(`the bridge didn't start: ${String(st.detail)}`);
+    return st?.toolkitAccessibility === true;
+  }, 120_000, "the accessibility host and its bridge");
+  return s;
+}
+
+/** What a read holds, for the log: every named or editable element with its role and whether it has the keyboard. */
+const summary = (nodes: AxNode[]) => nodes.filter(n => n.name || n.editable).slice(0, 80)
+  .map(n => `${n.role} "${n.name}"${n.editable ? " editable" : ""}${n.states.includes("focused") ? " focused" : ""}`);
 
 describe.skipIf(!onWindows && !required)("the Windows vocabularies against real windows", () => {
   let ws: Win32WindowSystem;
@@ -147,56 +189,63 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
     }
   }, 60_000);
 
-  it("finds File Explorer's address box and the Run dialog's box under the names TYPING_REFUSED refuses programs in", () => {
-    // Read with UI Automation, as the bridge reads names: the address edit (AutomationId 41477) and the address band's
-    // controls of a File Explorer window, and the Run dialog's combo box (Shell.Application.FileRun opens it in explorer.exe).
-    const out = ps(`
-      Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-      $A = [System.Windows.Automation.AutomationElement]
-      $T = [System.Windows.Automation.TreeScope]
-      function Where-Is($property, $value) { New-Object System.Windows.Automation.PropertyCondition($property, $value) }
-      function Find-Top($class, $name) {
-        $A::RootElement.FindAll($T::Children, (Where-Is ($A::ClassNameProperty) $class)) | Where-Object { $_.Current.Name -like $name } | Select-Object -First 1
-      }
-      function Close-Window($w) { try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch { } }
-      $shell = New-Object -ComObject Shell.Application
-      $shell.Open('C:\\Windows')
-      $win = $null
-      for ($i = 0; $i -lt 100 -and -not $win; $i++) { Start-Sleep -Milliseconds 150; $win = Find-Top 'CabinetWClass' '*Windows*' }
-      $address = @(); $band = @()
-      if ($win) {
-        $address = @($win.FindAll($T::Descendants, (Where-Is ($A::AutomationIdProperty) '41477')) | ForEach-Object { $_.Current.Name })
-        $root = $win.FindFirst($T::Descendants, (Where-Is ($A::NameProperty) 'Address Band Root'))
-        if ($root) { $band = @($root.FindAll($T::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) }
-        Close-Window $win
-      }
-      $shell.FileRun()
-      $run = $null
-      for ($i = 0; $i -lt 100 -and -not $run; $i++) { Start-Sleep -Milliseconds 150; $run = Find-Top '#32770' 'Run' }
-      $box = @(); $program = ''
-      if ($run) {
-        $combo = Where-Is ($A::ControlTypeProperty) ([System.Windows.Automation.ControlType]::ComboBox)
-        $box = @($run.FindAll($T::Descendants, $combo) | ForEach-Object { $_.Current.Name })
-        $program = (Get-Process -Id $run.Current.ProcessId).ProcessName
-        Close-Window $run
-      }
-      [pscustomobject]@{ explorer = [bool]$win; address = $address; band = $band; run = [bool]$run; box = $box; program = $program } | ConvertTo-Json -Compress -Depth 3
-    `, 90_000);
-    console.log(`File Explorer and Run: ${out}`);
-    const seen = JSON.parse(out.split(/\r?\n/).pop() ?? "{}") as { explorer: boolean; address: string[] | string; band: string[] | string; run: boolean; box: string[] | string; program: string };
-    const list = (v: string[] | string | null | undefined) => (Array.isArray(v) ? v : v ? [v] : []);
+  it("finds File Explorer's address box and the Run dialog's box, named as Ember's host names them, under the names TYPING_REFUSED refuses programs in", async () => {
     const [addressRule, runRule] = TYPING_REFUSED.win32;
-    expect(seen.explorer, "a File Explorer window on C:\\Windows").toBe(true);
-    const address = list(seen.address);
-    // The edit the user (and Ember) types into, whenever UI Automation lists it; and the address band, which always shows.
-    for (const name of address) expect(addressRule.field.test(name.trim()), name).toBe(true);
-    expect(list(seen.band).some(name => addressRule.field.test(name.trim())), `one of ${JSON.stringify(seen.band)}`).toBe(true);
     expect(addressRule.app.test("explorer")).toBe(true);
-    expect(seen.run, "the Run dialog").toBe(true);
-    expect(seen.program.toLowerCase()).toBe("explorer");
-    expect(runRule.app.test(seen.program)).toBe(true);
-    expect(list(seen.box).some(name => runRule.field.test(name.trim())), `one of ${JSON.stringify(seen.box)}`).toBe(true);
-  }, 120_000);
+    expect(runRule.app.test("explorer")).toBe(true);
+    const host = await startHost();
+    const input = openWin32Input();
+    if (!input) throw new Error(`Windows input didn't open: ${String(win32Error)}`);
+    const own = { ownPid: process.pid };
+    const press = (...names: string[]) => {
+      const keys = names.map(n => input.keysymOf(n));
+      for (const k of keys) input.keysym(k, true);
+      for (const k of [...keys].reverse()) input.keysym(k, false);
+    };
+    let explorerFrame = 0;
+    try {
+      // File Explorer on C:\Windows, read as Ember reads a window.
+      ps(`(New-Object -ComObject Shell.Application).Open('C:\\Windows')`);
+      const win = await waitForAsync(async () => (await host.listWindows(own)).windows.find(w => /^explorer$/i.test(w.app) && /\bWindows\b/.test(w.name) && !!w.path), 20_000, "a File Explorer window on C:\\Windows");
+      const read = () => host.readWindow({ pid: win.pid!, path: win.path, ...own });
+      // Its address band reads "Address: C:\Windows" once Explorer has built it.
+      const band = await waitForAsync(async () => (await read()).nodes.find(n => addressRule.field.test(n.name.trim())), 15_000, "the address band")
+        .catch(async (err: Error) => { throw new Error(`${err.message}: ${JSON.stringify(summary((await read()).nodes))}`, { cause: err }); });
+      console.log(`File Explorer's address band: ${band.role} "${band.name}"`);
+      // The box the user types into: Alt+D puts the keyboard in it.
+      const frame = await waitFor(() => ws.clientWindows().find(w => w.pid === win.pid && /\bWindows\b/.test(w.title)), 5_000, "File Explorer's frame");
+      explorerFrame = frame.id;
+      input.activate(frame.id);
+      await waitFor(() => ws.activeWindow()?.id === frame.id, 5_000, "File Explorer in front");
+      press("Alt_L", "d");
+      const box = await waitForAsync(async () => (await read()).nodes.find(n => n.editable && n.states.includes("focused")), 5_000, "the address box with the keyboard")
+        .catch(async (err: Error) => { throw new Error(`${err.message}: ${JSON.stringify(summary((await read()).nodes))}`, { cause: err }); });
+      console.log(`File Explorer's address box with the keyboard: ${box.role} "${box.name}"`);
+      expect(addressRule.field.test(box.name.trim()), box.name).toBe(true);
+      press("Escape");
+
+      // The Run dialog (Shell.Application.FileRun opens it in explorer.exe), read the same way.
+      ps(`(New-Object -ComObject Shell.Application).FileRun()`);
+      const run = await waitForAsync(async () => (await host.listWindows(own)).windows.find(w => /^explorer$/i.test(w.app) && w.name === "Run" && !!w.path), 15_000, "the Run dialog");
+      const readRun = () => host.readWindow({ pid: run.pid!, path: run.path, ...own });
+      const nodes = await waitForAsync(async () => { const r = await readRun(); return r.nodes.some(n => n.editable || n.role === "combo box") ? r.nodes : null; }, 10_000, "the Run dialog's box")
+        .catch(async (err: Error) => { throw new Error(`${err.message}: ${JSON.stringify(summary((await readRun()).nodes))}`, { cause: err }); });
+      console.log(`the Run dialog as Ember's host reads it: ${JSON.stringify(summary(nodes))}`);
+      const boxes = nodes.filter(n => n.editable || n.role === "combo box");
+      expect(boxes.some(n => runRule.field.test(n.name.trim())), JSON.stringify(summary(boxes))).toBe(true);
+      const runFrame = ws.clientWindows().find(w => w.pid === run.pid && w.title === "Run");
+      if (runFrame) {
+        input.activate(runFrame.id);
+        await sleep(300);
+        if (ws.activeWindow()?.id === runFrame.id) press("Escape");
+      }
+    } finally {
+      host.stop();
+      if (explorerFrame) ps(`(New-Object -ComObject Shell.Application).Windows() | Where-Object { $_.HWND -eq ${explorerFrame} } | ForEach-Object { $_.Quit() }`);
+      input.releaseAll();
+      input.close();
+    }
+  }, 180_000);
 
   describe("the clipboard, through a real Electron", () => {
     const OWN = "ExcludeClipboardContentFromMonitorProcessing";

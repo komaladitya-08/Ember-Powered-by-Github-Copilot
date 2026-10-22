@@ -74,6 +74,8 @@ export function layoutFor(platform, arch) {
         { from: "sidecar/uia/ember_uia.ps1", to: "sidecar/uia/ember_uia.ps1" },
         { from: "sidecar/uia/ember_uia.cs", to: "sidecar/uia/ember_uia.cs" },
       ],
+      // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
+      launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],
       requiredDist: [...COMMON_DIST, "ax-sidecar.cjs"],
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],

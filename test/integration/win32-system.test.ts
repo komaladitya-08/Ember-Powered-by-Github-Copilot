@@ -9,7 +9,7 @@
  * PowerShell; and systemDialogOpen is false at rest.
  *
  * Skipped off Windows; with EMBER_WINSYS_TEST=1 it fails instead of skipping when Windows, koffi, Electron or Windows
- * PowerShell is missing. What this runner can't show (windows-2022 is Windows Server, elevated, UAC off, one screen)
+ * PowerShell is missing. What this runner can't show (windows-2022 is Windows Server, elevated with its shell, one screen)
  * is printed as "not testable on this runner: <reason>" from the facts CI exports (EMBER_CI_ELEVATED, EMBER_CI_LUA,
  * EMBER_CI_SERVER), never passed vacuously.
  */
@@ -141,7 +141,7 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
     expect(links.length).toBeGreaterThan(0);
     const list = path.join(tmp, "links.txt");
     fs.writeFileSync(list, links.map(l => l.file).join("\n"), "utf8");
-    const shell = JSON.parse(ps(`$s = New-Object -ComObject WScript.Shell; $o = @(Get-Content -Encoding UTF8 -LiteralPath '${list}' | ForEach-Object { $l = $s.CreateShortcut($_); [pscustomobject]@{ file = $_; target = $l.TargetPath; args = $l.Arguments } }); ConvertTo-Json -Compress -InputObject $o`)) as { file: string; target: string; args: string }[];
+    const shell = JSON.parse(ps(`$s = New-Object -ComObject WScript.Shell; $o = @(Get-Content -Encoding UTF8 -LiteralPath '${list}' | ForEach-Object { $l = $s.CreateShortcut($_); [pscustomobject]@{ file = [string]$_; target = $l.TargetPath; args = $l.Arguments } }); ConvertTo-Json -Compress -InputObject $o`)) as { file: string; target: string; args: string }[];
     const mismatched: string[] = [], unread: string[] = [];
     for (const s of shell) {
       const mine = links.find(l => l.file === s.file)?.link ?? null;
@@ -185,7 +185,7 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
     console.log(`Notepad opened: pid ${opened.pid}, "${opened.title}"`);
     try { process.kill(opened.pid!); } catch { /* already closed */ }
     ws.close();
-    if (ciFlag("EMBER_CI_ELEVATED") === true || ciFlag("EMBER_CI_LUA") === false) notTestable("an app opened while Ember is elevated starts non-elevated", "the runner runs elevated with UAC off, so Explorer is elevated too");
+    if (ciFlag("EMBER_CI_ELEVATED") === true || ciFlag("EMBER_CI_LUA") === false) notTestable("an app opened while Ember is elevated starts non-elevated", "the runner runs elevated and so does its shell (explorer.exe), so what Explorer starts is elevated too");
   }, 60_000);
 
   it("gives an app opened through a shortcut Explorer's environment, never Ember's tokens or EMBER_* variables", async () => {
@@ -259,23 +259,37 @@ app.setAppUserModelId(aumid);
 app.whenReady().then(() => {
   const { win32Autostart, loginItem } = require(bundle);
   const o = { app, packaged: false, execPath: process.execPath, appPath };
-  const changed = win32Autostart(o).sync(mode === "on");
   const item = loginItem(o);
+  // "read" only asks, as Ember does at start (the settings window's note); "on" and "off" sync as Ember does.
+  const changed = mode === "read" ? null : win32Autostart(o).sync(mode === "on");
   fs.writeFileSync(out, JSON.stringify({ changed, settings: app.getLoginItemSettings({ path: item.path, args: item.args }) }));
   app.exit(0);
 });`);
-    const run = (mode: "on" | "off") => new Promise<{ changed: boolean; settings: { openAtLogin: boolean } }>((resolve, reject) => {
+    /** Each Electron start in order, with how it ended: a crash (an exit code like 0xC0000005) is evidence, kept. */
+    const steps: string[] = [];
+    const once = (mode: "on" | "off" | "read") => new Promise<{ changed: boolean | null; settings: { openAtLogin: boolean } }>((resolve, reject) => {
       const out = path.join(tmp, `autostart-${mode}-${Date.now()}.json`);
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE; // Electron itself, not Node
       const child = spawn(electronExe, [main, mode, out, bundle, appPath, AUMID], { stdio: "inherit", env });
-      const timer = setTimeout(() => { child.kill(); reject(new Error("Electron didn't finish within 60 s")); }, 60_000);
+      const timer = setTimeout(() => { child.kill(); reject(new Error(`Electron (${mode}) didn't finish within 60 s`)); }, 60_000);
       child.on("exit", code => {
         clearTimeout(timer);
-        if (code !== 0 || !fs.existsSync(out)) reject(new Error(`Electron exited with ${code}`));
+        steps.push(`${mode}: exit ${code === null ? "signal" : `0x${(code >>> 0).toString(16)}`}`);
+        if (code !== 0 || !fs.existsSync(out)) reject(new Error(`Electron (${mode}) exited with 0x${((code ?? 0) >>> 0).toString(16)}`));
         else resolve(JSON.parse(fs.readFileSync(out, "utf8")));
       });
     });
+    /** A start that crashed is tried once more after 3 s, so the log tells a crash at start-up from one in the call. */
+    const run = async (mode: "on" | "off" | "read") => {
+      try {
+        return await once(mode);
+      } catch (err) {
+        await sleep(3_000);
+        const again = await once(mode).then(r => `then worked: ${JSON.stringify(r)}`, (e: Error) => `then failed again: ${e.message}`);
+        throw new Error(`${(err as Error).message}, ${again}; steps: ${steps.join(", ")}`, { cause: err });
+      }
+    };
     const runValue = () => readString(api, HKEY.CURRENT_USER, RUN_KEY, AUMID);
     try {
       expect(await run("on")).toEqual({ changed: true, settings: expect.objectContaining({ openAtLogin: true }) });
@@ -285,14 +299,19 @@ app.whenReady().then(() => {
       console.log(`Run\\${AUMID} = ${value.ok ? value.value : "?"}`);
       if (value.ok) {
         expect(value.value.toLowerCase()).toContain(electronExe.toLowerCase());
-        expect(value.value).toContain(item.args.join(" "));
+        // Electron quotes an argument with a space itself: the app folder appears once, quoted once.
+        expect(value.value).toContain(item.args.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(" "));
+        expect(value.value).not.toContain('\\"');
       }
+      // A new Ember asks first (the settings window's note): it reads the value another Ember wrote.
+      expect(await run("read")).toEqual({ changed: null, settings: expect.objectContaining({ openAtLogin: true }) });
       expect((await run("on")).changed).toBe(false); // in step: not written again
       expect(await run("off")).toEqual({ changed: true, settings: expect.objectContaining({ openAtLogin: false }) });
       expect(runValue()).toMatchObject({ ok: false, error: "not-found" });
       expect((await run("off")).changed).toBe(false);
     } finally {
-      if (runValue().ok) await run("off").catch(() => undefined);
+      console.log(`autostart steps: ${steps.join(", ")}`);
+      if (runValue().ok) await once("off").catch(() => undefined);
     }
   }, 300_000);
 

@@ -36,6 +36,8 @@ export interface Layout {
   prune: string[];
   /** Sidecar files: `from` relative to the repository, `to` relative to resourcesDir. */
   sidecarFiles: { from: string; to: string }[];
+  /** Scripts beside the executable (Windows: ember-doctor.cmd): `from` relative to the repository, `to` to the app folder. */
+  launchers?: { from: string; to: string }[];
   /** Built files the target needs, relative to dist/app ("x/" means a non-empty folder). */
   requiredDist: string[];
   /** The subset of requiredDist that --allow-missing-sidecar tolerates (built by a later phase of the port). */

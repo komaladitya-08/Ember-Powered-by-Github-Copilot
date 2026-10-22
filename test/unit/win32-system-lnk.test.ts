@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { expandEnvironmentStrings, LnkError, parseShellLink } from "../../app/main/platform/win32/system/lnk";
+import { buildLnk } from "./win32-system-fakes";
 
 const FIXTURES: Record<string, string> = {
   linkinfo: [
@@ -126,6 +127,15 @@ describe("parseShellLink", () => {
     expect(link.target).toBe("%windir%\\system32\\cmd.exe");
     expect(link.arguments).toBe("/k vsdevcmd.bat");
     expect(expandEnvironmentStrings(link.target!, { WinDir: "C:\\Windows" })).toBe("C:\\Windows\\system32\\cmd.exe");
+  });
+
+  it("reads a target written in quotes as the path inside them, as Windows does (Anaconda's shortcuts)", () => {
+    const quoted = parseShellLink(buildLnk({ envTarget: "\"%windir%\\System32\\cmd.exe\"", args: "/K C:\\Miniconda\\Scripts\\activate.bat" }));
+    expect(quoted.target).toBe("%windir%\\System32\\cmd.exe");
+    expect(quoted.arguments).toBe("/K C:\\Miniconda\\Scripts\\activate.bat");
+    expect(parseShellLink(buildLnk({ target: "\"C:\\Tools\\a b.exe\"" })).target).toBe("C:\\Tools\\a b.exe");
+    // One pair around the whole path only.
+    expect(parseShellLink(buildLnk({ target: "C:\\x\\\"odd\".exe" })).target).toBe("C:\\x\\\"odd\".exe");
   });
 
   it("marks an advertised (MSI) shortcut and reads its AppUserModelId from the property store", () => {

@@ -251,9 +251,9 @@ jobs:
         shell: bash
     steps:
       - name: Runner facts (Windows edition and build, elevation, UAC, screens, PowerShell), exported for the integration suites
-        # windows-2022 is Windows Server 2022, run as an administrator with UAC effectively off, one 1024x768 screen at
-        # 100 % and no Store apps. The suites read EMBER_CI_ELEVATED, EMBER_CI_LUA and EMBER_CI_SERVER and record
-        # "not testable on this runner" for what needs a client Windows, a normal user or UAC, instead of passing it.
+        # windows-2022 is Windows Server 2022 21H2, run elevated (its shell, explorer.exe, too) with EnableLUA 1, one
+        # 1024x768 screen at 100 % and no Store apps. The suites read EMBER_CI_ELEVATED, EMBER_CI_LUA and EMBER_CI_SERVER
+        # and record "not testable on this runner" for what needs a client Windows or a normal user, instead of passing it.
         shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
         run: |
           $ErrorActionPreference = "Stop"
@@ -343,10 +343,13 @@ jobs:
           EMBER_UIA_TEST: "1"
           EMBER_WINSYS_TEST: "1"
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
+        # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
+        if: ${{ !cancelled() }}
         run: |
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
+        if: ${{ !cancelled() }}
         run: |
           app=dist/package/Ember
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
@@ -364,6 +367,7 @@ jobs:
           test -f "$app/resources/app/dist/app/ax-sidecar.cjs"
           test -f "$app/resources/sidecar/uia/ember_uia.ps1" && test -f "$app/resources/sidecar/uia/ember_uia.cs"
       - name: "Ember.exe as Windows sees it: Ember's name, version and publisher, and unsigned rather than tampered with"
+        if: ${{ !cancelled() }}
         # Task Manager (and its Startup apps page), the privacy settings, the volume mixer and firewall prompts show
         # these strings. stage.mjs leaves out Electron's certificate table, which the changes void: NotSigned, never
         # HashMismatch.
@@ -382,9 +386,54 @@ jobs:
           "Authenticode: $($signature.Status)"
           if ([string]$signature.Status -ne "NotSigned") { throw "Ember.exe's signature is $($signature.Status), should be NotSigned (no certificate table)" }
       - name: The packaged Ember starts, shows its window and holds all its shortcuts
+        if: ${{ !cancelled() }}
         # Server 2022 has neither PowerToys nor Game Bar, so nothing else holds Ember's chords: one reported taken means
         # Electron couldn't register it (with Ember's Windows chords, that Super isn't the Windows key to RegisterHotKey).
         run: node test/smoke/launch.mjs --exe dist/package/Ember/Ember.exe --forbid shortcut.unavailable
+      - name: "Ember's check-up from the packaged Ember.exe: its helper reads apps, its input works, its Copilot runtime is there"
+        if: ${{ !cancelled() }}
+        # The report decides, not the exit code: on this runner Ember runs as administrator (a warning row) and isn't
+        # signed in to GitHub (a warning row). "Copilot" failing would mean the runtime is missing from the package.
+        timeout-minutes: 5
+        run: |
+          report="$RUNNER_TEMP/doctor.txt"
+          status=0
+          dist/package/Ember/Ember.exe --doctor > "$report" 2> "$RUNNER_TEMP/doctor.err" || status=$?
+          cat "$report"
+          echo "exit status $status"
+          if [ "$EMBER_CI_ELEVATED" = 1 ]; then admin=warn; else admin=ok; fi
+          node scripts/package/doctor-rows.mjs "$report" "Compositor=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
+          # ember-doctor.cmd, what a user runs in a console: cmd.exe waits for Ember.exe and keeps its exit code. (Its
+          # report goes to the console cmd.exe has, which this runner's pipes aren't: only the line count is shown.)
+          launcher=dist/package/Ember/ember-doctor.cmd
+          test -f "$launcher"
+          cmdstatus=0
+          cmd //d //c "$(cygpath -w "$launcher")" > "$RUNNER_TEMP/doctor-cmd.txt" 2>&1 || cmdstatus=$?
+          echo "ember-doctor.cmd: exit status $cmdstatus, $(grep -c '' "$RUNNER_TEMP/doctor-cmd.txt") lines of output"
+          test "$cmdstatus" = "$status"
+          # Both 0 proves little (a launcher that never ran Ember.exe gives 0 too): with an organisation policy that
+          # isn't JSON the check-up fails (exit 1), and ember-doctor.cmd must give 1 as well. HKLM needs an administrator.
+          if [ "$EMBER_CI_ELEVATED" = 1 ]; then
+            key='HKLM\SOFTWARE\Policies\Ember'
+            trap 'MSYS_NO_PATHCONV=1 reg delete "$key" /f /reg:64 > /dev/null 2>&1 || true' EXIT
+            MSYS_NO_PATHCONV=1 reg add "$key" /v PolicyJson /t REG_SZ /d "{" /f /reg:64 > /dev/null
+            failing=0
+            dist/package/Ember/Ember.exe --doctor > "$RUNNER_TEMP/doctor-locked.txt" 2>&1 || failing=$?
+            node scripts/package/doctor-rows.mjs "$RUNNER_TEMP/doctor-locked.txt" "Organisation policy=fail"
+            cmdfailing=0
+            cmd //d //c "$(cygpath -w "$launcher")" > /dev/null 2>&1 || cmdfailing=$?
+            echo "with a policy that isn't JSON: Ember.exe --doctor exit status $failing, ember-doctor.cmd exit status $cmdfailing"
+            test "$failing" = 1
+            test "$cmdfailing" = 1
+          else
+            echo "not testable on this runner: ember-doctor.cmd keeping a failing exit code: writing HKLM's policy needs an administrator"
+          fi
+      - name: "Ember-level checks: Ember's composition and Perception against the bench, its overlay out of screenshots, the packaged host"
+        if: ${{ !cancelled() }}
+        run: node scripts/run-integration.mjs test/integration/ember-win32.test.ts
+        env:
+          EMBER_WIN32_TEST: "1"
+          EMBER_PACKAGED_APP: dist/package/Ember
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages

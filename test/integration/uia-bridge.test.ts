@@ -403,12 +403,14 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
   });
 
   it("selects Banana in the Fruit list through SelectionItemPattern, and the bench is told", async () => {
-    // The list box proxy sends the app LBN_SELCHANGE, as a click would: the app's own selection event runs.
+    // .NET's list box proxy selects with LB_SETCURSEL alone; the bridge then sends LBN_SELCHANGE, as a click would, so
+    // the app's own selection event runs.
     const fruit = control(nodes, "List", "Fruit");
     const banana = nodes.find(n => n.parent === nodes.indexOf(fruit) && n.name === "Banana");
     expect(banana, "the Banana item").toBeTruthy();
     expect(await ui().call("perform", { handle: banana!.h, op: "select" })).toEqual({ ok: true });
-    await waitFor("the bench's select event for Banana", () => logged(main().log, { event: "select", control: "Fruit", value: "Banana" }), 3000);
+    await waitFor("the bench's select event for Banana", () => logged(main().log, { event: "select", control: "Fruit", value: "Banana" }), 3000)
+      .catch((err: Error) => { throw new Error(`${err.message}; the list ${JSON.stringify(fruit)}; the bridge said: ${ui().stderr.slice(-1000)}`); });
     expect((await ui().call<RawNode>("element", { handle: banana!.h })).patterns.selectionItem?.selected).toBe(true);
     // For the host's choice of action, recorded rather than asserted: the list box proxy's SetFocus on an item of a
     // single-selection list selects it with LB_SETCURSEL alone, which doesn't tell the app (no LBN_SELCHANGE).

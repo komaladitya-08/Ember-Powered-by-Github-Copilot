@@ -212,6 +212,25 @@ export const TYPING_REFUSED: Readonly<Record<OS, readonly TypingRefusal[]>> = {
   darwin: [],
 };
 
+/** A window in which every action but reading is refused. */
+export interface ReadOnlyWindow {
+  /** The app, tested on ActionRequest.app (trimmed). */
+  readonly app: RegExp;
+  /** The window's title, tested on ActionRequest.window (trimmed). */
+  readonly title: RegExp;
+}
+
+/**
+ * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' main languages), whose OK
+ * and Enter run whatever its box holds, the last command typed there included, so a click is as good as typing one.
+ * A File Explorer folder named "Run" shows the same title and app: refused too (fail closed). None on Linux and macOS.
+ */
+export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> = {
+  linux: [],
+  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu }],
+  darwin: [],
+};
+
 /**
  * Does the user's request name a file (a path or a name with an extension), for the worker's note on a Save dialog's
  * suggestion (worker.ts dialogNote)? Windows also knows drive and network paths ("C:\…", "\\server\…").

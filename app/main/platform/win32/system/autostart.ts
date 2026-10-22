@@ -4,19 +4,17 @@
  * before ready, and no `name` is ever passed: Electron's getLoginItemSettings takes no name on Windows and computes
  * openAtLogin from the value named after the AUMID, so a value named anything else would read as "off" for ever,
  * and sync(true) would rewrite it on every settings change while sync(false) never deleted it (finding W1). The
- * same `path` and `args` are passed when reading and writing. Electron joins `args` with spaces, so a path with a
- * space is quoted here. The OS is touched only when it isn't already in step (main calls sync on every change).
+ * same `path` and `args` are passed when reading and writing. Electron quotes each argument that has a space itself
+ * (the runner's Run value showed a pre-quoted path quoted again, with escaped quotes), so paths go in unquoted. The
+ * OS is touched only when it isn't already in step (main calls sync on every change).
  */
 
 import type { AppLike, Autostart } from "../../types";
 import { AUMID } from "./identity";
 
-/** A path as one argument when Electron joins `args` with spaces. */
-export const quoteArg = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
-
 /** What Ember registers: its own program, plus the app folder in development (where execPath is electron.exe). */
 export function loginItem(o: { packaged: boolean; execPath: string; appPath: string }): { path: string; args: string[] } {
-  return { path: o.execPath, args: o.packaged ? ["--autostart"] : [quoteArg(o.appPath), "--autostart"] };
+  return { path: o.execPath, args: o.packaged ? ["--autostart"] : [o.appPath, "--autostart"] };
 }
 
 export const TURNED_OFF_NOTE = "Turned off in Task Manager's Startup apps: turn Ember on there to start it when you sign in.";

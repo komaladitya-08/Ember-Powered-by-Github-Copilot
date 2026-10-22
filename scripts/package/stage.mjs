@@ -112,6 +112,8 @@ for (const [from, to] of layout.renames) renameRetrying(path.join(app, from), pa
 for (const f of layout.remove) fs.rmSync(path.join(app, f), { force: true });
 // Electron's licences go inside the app folder (on Linux and Windows they already are).
 for (const f of layout.electronNotices) fs.copyFileSync(path.join(electronDist, f), path.join(app, layout.noticesDir, f));
+// Windows: ember-doctor.cmd beside Ember.exe.
+for (const f of layout.launchers ?? []) fs.copyFileSync(path.join(root, f.from), path.join(app, f.to));
 // Windows: Ember.exe's own version resource and icon (Task Manager and its Startup apps page, the privacy settings,
 // the volume mixer and firewall prompts show them), without Electron's certificate table, which any change voids
 // (exe-resources.mjs). Before the fuses, so they are flipped and checked in the bytes that ship. The .ico also
