@@ -9113,6 +9113,293 @@
    "downloaded": [
     "/home/ana/proj/r"
    ]
+  },
+  {
+   "cmd": "git log --output=/home/ana/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "git diff --output=x.diff",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "redirect.overwrite"
+   ]
+  },
+  {
+   "cmd": "git diff --output=x.diff",
+   "verdict": "run",
+   "missing": [
+    "x.diff"
+   ]
+  },
+  {
+   "cmd": "git format-patch -o ~/.config/fish/conf.d HEAD~1",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "git format-patch -o patches HEAD~1",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git fetch --upload-pack='touch x' origin",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.git-receive-pack"
+   ]
+  },
+  {
+   "cmd": "git pull --upload-pack='touch x' origin",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.git-receive-pack"
+   ]
+  },
+  {
+   "cmd": "git ls-remote --upload-pack='touch x' origin",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.git-receive-pack"
+   ]
+  },
+  {
+   "cmd": "git clone ext::'sh -c touch% x' a",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.git-ext"
+   ]
+  },
+  {
+   "cmd": "sort -o ~/.bashrc x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "sort -o out.txt x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "redirect.overwrite"
+   ]
+  },
+  {
+   "cmd": "sort -o out.txt x",
+   "verdict": "run",
+   "missing": [
+    "out.txt"
+   ]
+  },
+  {
+   "cmd": "sort --compress-program=rm x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "uniq x ~/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "uniq x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "xxd -r x ~/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "iconv -o ~/.bashrc x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "patch ~/.bashrc < x.diff",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "patch -p1 < x.diff",
+   "verdict": "run"
+  },
+  {
+   "cmd": "zip -T -TT 'rm x' a.zip f",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.zip-command"
+   ]
+  },
+  {
+   "cmd": "wget --use-askpass='rm x' https://x.example/",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "openssl req -engine x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "sqlite3 x.db 'drop table t'",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "db.change"
+   ]
+  },
+  {
+   "cmd": "sqlite3 x.db '.shell rm y'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "sqlite3 x.db 'select * from t'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "psql -c 'drop table t'",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "db.change"
+   ]
+  },
+  {
+   "cmd": "psql -c '\\! rm x'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "psql -c \"copy t to program 'rm x'\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "psql -c 'select count(*) from t'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "psql -f reset_db.sql",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "mysql -e 'drop database x'",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "db.change"
+   ]
+  },
+  {
+   "cmd": "mysql -e 'show tables'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "redis-cli flushall",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "db.change"
+   ]
+  },
+  {
+   "cmd": "redis-cli get k",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mongosh --eval 'db.dropDatabase()'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
   }
  ]
 }

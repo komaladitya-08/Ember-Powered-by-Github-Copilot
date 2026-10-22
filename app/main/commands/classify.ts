@@ -1487,8 +1487,68 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
 });
 reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h => {
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-  if (h.key === "mysql" || h.key === "mariadb") interactive(h);
+  if (h.key === "mysql" || h.key === "mariadb") { interactive(h); databaseText(h, inlineSql(h, ["e"], ["execute"])); }
+  if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
+});
+
+/** Statements that change or delete what a database holds (D4.3 a: destroying data). */
+const SQL_WRITE = /\b(drop|delete|truncate|update|alter|insert|replace|merge|upsert|grant|revoke|create|rename|vacuum|reindex|attach|detach|flushall|flushdb|dropdatabase|deletemany|deleteone|remove|load\s+data)\b|\binto\s+(out|dump)file\b/i;
+/** Client commands that run programs, write or read files, or load code (psql's `\!`, sqlite's `.shell`, COPY … PROGRAM). */
+const SQL_ESCAPE = /(^|[\s;])(\\(!|(o|g|gx|w|copy|i|ir|include|setenv|lo_export|lo_import|s)\b)|\.(shell|system|output|once|import|load|read|save|backup|restore|excel|open|cd|log|dump)\b|system\s)|\bprogram\s+'|\bcopy\b[^;]*\b(to|from)\b/i;
+
+/** The SQL (or client commands) given on a database client's command line. */
+function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
+  const out: (string | null)[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (v === null) continue;
+    for (const s of short) {
+      if (v === `-${s}`) out.push(h.args[k + 1]?.v ?? null);
+      else if (v.startsWith(`-${s}`) && v.length > 2 && !v.startsWith("--")) out.push(v.slice(2));
+    }
+    for (const l of long) {
+      if (v === `--${l}`) out.push(h.args[k + 1]?.v ?? null);
+      else if (v.startsWith(`--${l}=`)) out.push(v.slice(l.length + 3));
+    }
+  }
+  return out;
+}
+
+/** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
+function databaseText(h: H, texts: (string | null)[]): void {
+  for (const t of texts) {
+    if (t === null) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); continue; }
+    if (SQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", "It runs database client commands that can run programs or write files.");
+    if (SQL_WRITE.test(t)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
+  }
+}
+
+reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhouse-client", "mongo", "mongosh", "redis-cli", "sqlplus"], h => {
+  if (INTERACTIVE.has(h.key)) interactive(h);
+  const k = h.key;
+  if (k === "psql") databaseText(h, inlineSql(h, ["c"], ["command"]));
+  else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
+  else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
+  else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
+  else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
+    const ops = h.args.filter(a => !isOption(a));
+    databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    if (ops[0]) h.e.readArgs([ops[0]], h.sc);
+    return;
+  } else if (k === "mongo" || k === "mongosh") {
+    if (inlineSql(h, [], ["eval"]).length) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+  } else if (k === "redis-cli") {
+    const p = opts(h, { shortValue: "hpsanuirdc", longValue: ["user", "pass", "tls", "cacert", "cert", "key", "rdb", "functions-rdb", "eval"] });
+    if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+    if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+    const cmd = (p.operands[0]?.v ?? "").toLowerCase();
+    if (cmd && !/^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/.test(cmd)) {
+      h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
+    }
+    if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(p.operands[1]?.v ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
+  }
+  for (const f of [...inlineSql(h, ["f"], ["file"]), ...inlineSql(h, ["i"], ["input-file"])]) if (f) { h.e.usePath(lit(f), "read", h.sc); nameCheck(h, f); }
 });
 
 // a: rm and friends (§3.5.1).
@@ -1776,7 +1836,7 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
 
 reg(NATIVE, ["zip"], h => {
   const p = opts(h, { shortValue: "bnPtTZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
-  if (has(p, "TT", "unzip-command")) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
+  if (has(p, "unzip-command") || h.args.some(a => /^(-TT|--unzip-command|--tt)/.test(a.v ?? ""))) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
   const [arc, ...inputs] = p.operands;
   if (arc) {
     const obj = h.e.usePath(arc, "write", h.sc);
@@ -2342,6 +2402,8 @@ reg(NATIVE, ["git"], h => {
   if (!verbArg) return;
   const verb = verbArg.v;
   if (verb === null) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs."); return; }
+  // An `ext::` remote runs the command it names.
+  if (h.args.some(a => /^ext::/i.test(a.v ?? ""))) h.e.unclear("unclear.git-ext", "It runs a program named in a git address.");
   const rest = h.args.slice(g.verbAt + 1);
   const gh: H = { ...h, sc, args: rest };
   const fn = GIT[verb];
@@ -2392,6 +2454,31 @@ git(["push"], (h, widen) => {
   if (del || refDel.length) h.e.add("remote-delete", "git.push.delete", `Deletes ${del ? joinList(refs.map(r => r.v ?? r.raw)) || "branches" : joinList(refDel.map(r => (r.v ?? "").slice(1)))} on ${remoteText}.`, { objects, widening, program: "git push" });
   if (mirror) h.e.add("remote-delete", "git.push.mirror", `Deletes or overwrites everything on ${remoteText} to match this copy.`, { objects, widening, program: "git push" });
   if (prune) h.e.add("remote-delete", "git.push.prune", `Deletes branches on ${remoteText} that aren't here.`, { objects, widening, program: "git push" });
+});
+
+// fetch, pull and ls-remote run --upload-pack's program (on this computer for a local or ext:: remote).
+git(["fetch", "pull", "ls-remote"], h => {
+  if (h.args.some(a => /^--(upload-pack|exec)(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.git-receive-pack", "It runs a program Ember can't see.");
+  h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+});
+// diff, log and friends write their output to a file with --output; format-patch writes into -o's folder.
+git(["diff", "log", "show", "format-patch", "range-diff", "whatchanged", "diff-tree", "diff-files", "diff-index", "shortlog"], h => {
+  for (let k = 0; k < h.args.length; k++) {
+    const v = h.args[k].v ?? "";
+    const out = /^--output=(.*)$/.exec(v)?.[1] ?? (v === "--output" ? h.args[k + 1]?.v ?? null : undefined);
+    if (out !== undefined) {
+      if (out === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); continue; }
+      const obj = h.e.usePath(lit(out), "write", h.sc);
+      if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
+    }
+    const dir = /^--output-directory=(.*)$/.exec(v)?.[1] ?? ((v === "-o" || v === "--output-directory") && h.key === "git" ? h.args[k + 1]?.v : undefined);
+    if (dir) {
+      const abs = resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" });
+      h.e.usePath(lit(dir), "list", h.sc);
+      h.e.judgeInside(abs, "write", h.sc, dir);
+    }
+  }
+  h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
 });
 
 git(["clean"], h => {
@@ -3312,6 +3399,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "post-data", "post-file", "body-data", "body-file").length || /^(POST|PUT|PATCH|DELETE)$/.test(method)) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }], program: "wget" });
   if (values(p, "e", "execute").length) h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see.");
+  if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
   if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
   const dir = values(p, "P", "directory-prefix")[0] ?? null;
   const out = values(p, "O", "output-document")[0];
@@ -3327,7 +3415,8 @@ reg(NATIVE, ["wget", "wget2"], h => {
       h.e.download(dir ? `${dir}/${name}` : name, h.sc);
     }
   }
-  for (const f of values(p, "o", "output-file", "a", "append-output", "save-cookies")) if (f) h.e.usePath(lit(f), "write", h.sc);
+  for (const f of values(p, "a", "append-output")) if (f) h.e.append(lit(f), h.sc, "redirect.append");
+  for (const f of values(p, "o", "output-file", "save-cookies")) if (f) overwrites(h, lit(f));
 });
 reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   const ops = h.args.filter(a => !isOption(a)).map(a => a.v ?? "");
@@ -3496,7 +3585,55 @@ reg(NATIVE, ["openssl"], h => {
   const sub = h.args[0]?.v ?? "";
   if (/^(pkcs12|pkcs8|rsa|ec|genrsa|genpkey|req|ca)$/.test(sub) && h.args.some(a => /^-(passin|passout|export|nodes|noenc|text)$/.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (h.args.some(a => /^-pass(in|out)$/.test(a.v ?? "")) && h.args.some(a => /^pass:/.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-  for (const k of h.args.keys()) { const v = h.args[k].v; if (v && /^-(in|out|key|inkey|signkey|certfile|CAfile)$/.test(v)) { const f = h.args[k + 1]; if (f) h.e.usePath(f, v === "-out" ? "write" : "read", h.sc); } }
+  if (h.args.some(a => /^-(engine|provider|provider-path|keygen_engine)$/.test(a.v ?? ""))) h.e.unclear("unclear.openssl-engine", "It loads a program library Ember can't see.");
+  for (const k of h.args.keys()) { const v = h.args[k].v; if (v && /^-(in|out|key|inkey|signkey|certfile|CAfile)$/.test(v)) { const f = h.args[k + 1]; if (f) { if (v === "-out") overwrites(h, f); else h.e.usePath(f, "read", h.sc); } } }
+});
+
+/** A file a program writes in place of what was there (`sort -o`, `uniq in out`, `xxd in out`): an overwrite (§3.4.6). */
+function overwrites(h: H, f: Arg, rule = "redirect.overwrite"): void {
+  if (f.v !== null && (NULL_SINKS.has(f.v.toLowerCase()) || f.v === "-")) return;
+  const obj = h.e.usePath(f, "write", h.sc);
+  if (obj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name."); return; }
+  h.e.add("destroy", rule, `Overwrites ${obj.text} if it exists.`, obj.kind === "glob" ? { objects: [obj] } : { objects: [obj], ifExists: obj.abs });
+}
+
+// Text tools that also write a file: sort -o, uniq's second operand, xxd's second operand, iconv -o, patch's file.
+reg(NATIVE, ["sort", "gsort"], h => {
+  const p = opts(h, { shortValue: "ktoSTy", longValue: ["key", "field-separator", "output", "buffer-size", "temporary-directory", "parallel", "files0-from", "batch-size", "compress-program", "random-source", "sort"] });
+  if (values(p, "compress-program").length || h.args.some(a => /^--compress-prog/.test(a.v ?? ""))) h.e.unclear("unclear.sort-program", "It runs a program Ember can't see.");
+  for (const o of values(p, "o", "output")) overwrites(h, o === null ? { v: null, raw: "?", glob: false } : lit(o));
+  for (const f of values(p, "files0-from")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
+});
+reg(NATIVE, ["uniq", "guniq"], h => {
+  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars", "group", "all-repeated"] });
+  const [input, output] = p.operands;
+  if (input) h.e.readArgs([input], h.sc, { unresolvedUnclear: true });
+  if (output) overwrites(h, output);
+});
+reg(NATIVE, ["xxd"], h => {
+  const p = opts(h, { shortValue: "cglosn", longValue: ["cols", "groupsize", "len", "seek", "name"] });
+  const [input, output] = p.operands;
+  if (input) h.e.readArgs([input], h.sc, { unresolvedUnclear: true });
+  if (output) overwrites(h, output);
+});
+reg(NATIVE, ["iconv"], h => {
+  const p = opts(h, { shortValue: "fto", longValue: ["from-code", "to-code", "output"] });
+  for (const o of values(p, "o", "output")) overwrites(h, o === null ? { v: null, raw: "?", glob: false } : lit(o));
+  h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
+});
+reg(NATIVE, ["patch", "gpatch"], h => {
+  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "merge"] });
+  let sc = h.sc;
+  const dir = values(p, "d", "directory")[0];
+  if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
+  const ph: H = { ...h, sc };
+  for (const f of values(p, "i", "input")) if (f) h.e.usePath(lit(f), "read", sc);
+  for (const f of values(p, "o", "output", "r", "reject-file")) overwrites(ph, f === null ? { v: null, raw: "?", glob: false } : lit(f));
+  const [file, patchFile] = p.operands;
+  // The file it changes: an edit inside the user's work, judged by §3.6's rules like `sed -i`.
+  if (file) h.e.usePath(file, "write", sc);
+  if (patchFile) h.e.usePath(patchFile, "read", sc);
 });
 reg(NATIVE, ["certutil"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
