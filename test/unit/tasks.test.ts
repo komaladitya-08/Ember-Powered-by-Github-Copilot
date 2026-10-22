@@ -190,7 +190,8 @@ describe("apps", () => {
     expect(findApp(apps, "files")?.id).toBe("thunar");
     expect(findApp(apps, "bulk rename")?.id).toBe("thunar-bulk-rename");
   });
-  it("reaches an app's name and GenericName even when other apps' ids hold the query (live: XFCE settings dialogs)", () => {
+  // Linux only: the .desktop catalogue (XDG_DATA_DIRS is a ":" list, which a Windows path breaks) is Linux's.
+  it.skipIf(process.platform !== "linux")("reaches an app's name and GenericName even when other apps' ids hold the query (live: XFCE settings dialogs)", () => {
     // The real XFCE 4.20 files, cut to the keys findApp reads, read back through listApps as on the desk.
     const files: Record<string, string> = {
       "org.xfce.mousepad": "Name=Mousepad\nGenericName=Text Editor\nCategories=Utility;TextEditor;GTK;",

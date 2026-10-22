@@ -97,13 +97,16 @@ describe("settings keep what the user set (review fixes)", () => {
     const s = new SettingsStore(file);
     s.load();
     s.update({ size: 70 });
-    fs.chmodSync(path.dirname(file), 0o500);
+    // A folder that can't be written to. Windows ignores a folder's read-only flag, but won't replace a read-only file.
+    const windows = process.platform === "win32";
+    const locked = windows ? file : path.dirname(file);
+    fs.chmodSync(locked, windows ? 0o444 : 0o500);
     try {
       if (process.getuid?.() === 0) return; // root can write anyway
       expect(() => s.update({ size: 90 })).toThrow();
       expect(s.get().size).toBe(70);
     } finally {
-      fs.chmodSync(path.dirname(file), 0o700);
+      fs.chmodSync(locked, windows ? 0o666 : 0o700);
     }
   });
 

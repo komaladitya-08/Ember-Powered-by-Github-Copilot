@@ -3,7 +3,7 @@
  * environment, that a dying display or helper can't take Ember with it, that
  * stale displays are reused, that a failed start leaves nothing behind and
  * that desks left by a killed Ember are cleared away. Skipped where the desk
- * can't run.
+ * can't run: everywhere but Linux (the desk is Linux-only), and without Xvfb.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -22,7 +22,8 @@ const available = DeskManager.available().ok && libX11 && process.platform === "
 const until = async (cond: () => boolean, ms = 5000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 25)); return cond(); };
 const environ = (pid: number) => { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } };
 
-describe("removeTree", () => {
+// The desk is Linux-only, and so is this: removeTree finds mounts in /proc/self/mountinfo, as POSIX paths.
+describe.skipIf(process.platform !== "linux")("removeTree", () => {
   it("removes a desk folder but never reaches into a mount inside it, and never throws", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-tree-"));
     const mount = path.join(dir, "runtime", "gvfs");
@@ -51,7 +52,8 @@ describe("removeTree", () => {
   });
 });
 
-describe("reapDesks", () => {
+// Linux only: desk processes are found through /proc, and the stand-ins are true, sleep and setsid.
+describe.skipIf(process.platform !== "linux")("reapDesks", () => {
   it("clears away desks whose Ember is gone, by their mark, and leaves a running Ember's desks alone", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-reap-"));
     const gone = spawnSync("true").pid!; // a process that has exited: its id names no Ember

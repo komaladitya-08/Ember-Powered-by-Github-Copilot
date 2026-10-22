@@ -12,7 +12,11 @@ import { inspectEnvironment } from "../../app/main/environment";
 const labels = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/secret-labels.json"), "utf8")) as { secret: string[]; plain: string[] };
 /** Options chosen in secret drop-downs, and whether they are what the user put in them (the sidecar's self-test reads the same table). */
 const chosen = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/chosen-options.json"), "utf8")) as { secret: [string, string][]; plain: [string, string][] };
-const python = ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0);
+/**
+ * A Python for the AT-SPI sidecar's own lists, on Linux only: the sidecar is Linux's, and elsewhere a bare python3 may
+ * be a stand-in (Windows's Store alias, macOS's prompt to install the developer tools).
+ */
+const python = process.platform === "linux" ? ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0) : undefined;
 
 const node = (id: number, role: string, name: string, bounds: AxNode["bounds"], extra: Partial<AxNode> = {}): AxNode => ({
   id, parent: 0, depth: 1, role, name, states: ["enabled", "sensitive", "showing", "visible"], bounds, ...extra,
