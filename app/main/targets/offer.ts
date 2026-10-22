@@ -4,9 +4,9 @@
  * only while SSH is allowed and the user's offer switch is on, only when the window the user is in is a terminal whose
  * title just changed, and at most once every 10 s; on Windows the process query (a PowerShell start) runs only for
  * a title that looks like an SSH session and only while SSH is in use or the user hasn't turned the first offer away;
- * ssh inside WSL is read only with WSL on and only in running distros. Each destination is offered once per run, never
- * one the user dismissed or Ember is already connected to, and never while a question is up. Ember never opens a
- * connection here: the offer's button does, after the SSH card.
+ * ssh inside WSL is read only with WSL on and only in distros running at that moment (never starting one). Each
+ * destination is offered once per run, never one the user dismissed or Ember is already connected to, and never while
+ * a question is up. Ember never opens a connection here: the offer's button does, after the SSH card.
  */
 
 import type { OS } from "../../shared/shortcuts";
@@ -49,7 +49,10 @@ export interface NoticerDeps {
   isTerminal(app: string): boolean;
   /** Windows: the process query may run (a host record exists, or the user hasn't dismissed an offer yet). */
   cimAllowed(): boolean;
-  /** WSL on: its wsl.exe and the running visible distros to read too; null otherwise. */
+  /**
+   * WSL on: its wsl.exe and the visible distros Ember works in, to read too; null otherwise. The process read reads
+   * only those of them that run at that moment (the running set read again, uncached) and never starts a stopped one.
+   */
   wsl(): { exe: string; distros: string[] } | null;
   /** The user said "Don't offer again" for this destination. */
   dismissed(s: SshSeen): boolean;
