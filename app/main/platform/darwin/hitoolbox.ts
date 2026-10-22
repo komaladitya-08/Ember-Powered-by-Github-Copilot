@@ -192,13 +192,16 @@ function bind(): HIRaw | null {
     if (!libs.length) throw new Error("none of Carbon, HIToolbox and CoreServices could be loaded");
     const fns: Record<string, unknown> = {};
     const missing: string[] = [];
+    // Each name from the first library that exports it, in HITOOLBOX_PATHS' order.
     for (const [name, prototype] of Object.entries({ ...HITOOLBOX_PROTOTYPES, UCKeyTranslate: UC_KEY_TRANSLATE_PROTOTYPE })) {
-      const fn = libs.map(lib => bindOptional(lib, prototype)).find(Boolean);
+      let fn: unknown;
+      for (const lib of libs) if ((fn = bindOptional(lib, prototype))) break;
       if (fn) fns[name] = fn;
       else missing.push(name);
     }
     const constant = (name: string): Ref | null => {
-      const value = libs.map(lib => globalPointer(koffi, lib, name)).find(Boolean) ?? null;
+      let value: Ref | null = null;
+      for (const lib of libs) if ((value = globalPointer(koffi, lib, name))) break;
       if (!value) missing.push(name);
       return value;
     };
