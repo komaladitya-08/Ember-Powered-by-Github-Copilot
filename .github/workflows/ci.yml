@@ -3,11 +3,17 @@ name: ci
 on:
   push:
     branches: [main]
+    # Release tags get every check, the Intel Mac job's included.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
       packages:
         description: "Upload the built packages as artifacts (RPM and AppImage, Windows zip, macOS zip and dmg; 200-400 MB each, kept 3 days)"
+        type: boolean
+        default: false
+      intel:
+        description: "Also build and check Ember on an Intel Mac (otherwise only on the default branch and tags: macOS minutes cost ten times Linux's)"
         type: boolean
         default: false
 
@@ -234,6 +240,38 @@ jobs:
         # Git Bash with -eo pipefail: any failing command fails the step (pwsh would check only the last one).
         shell: bash
     steps:
+      - name: Runner facts (Windows edition and build, elevation, UAC, screens, PowerShell), exported for the integration suites
+        # windows-2022 is Windows Server 2022, run as an administrator with UAC effectively off, one 1024x768 screen at
+        # 100 % and no Store apps. The suites read EMBER_CI_ELEVATED, EMBER_CI_LUA and EMBER_CI_SERVER and record
+        # "not testable on this runner" for what needs a client Windows, a normal user or UAC, instead of passing it.
+        shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $os = Get-CimInstance Win32_OperatingSystem
+          $nt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          "Windows: $($os.Caption) $($nt.DisplayVersion) build $($os.BuildNumber).$($nt.UBR), product type $($os.ProductType) (1 is a client); $([Environment]::OSVersion.VersionString)"
+          $groups = whoami /groups | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "whoami /groups failed" }
+          # The mandatory label: S-1-16-8192 medium, 12288 high (elevated), 16384 system.
+          $level = [regex]::Match($groups, "S-1-16-(\d+)").Groups[1].Value
+          if (-not $level) { throw "whoami /groups shows no integrity level" }
+          $elevated = if ([int]$level -ge 12288) { 1 } else { 0 }
+          "Integrity level: S-1-16-$level (elevated: $elevated)"
+          $lua = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -ErrorAction SilentlyContinue).EnableLUA
+          if ($null -eq $lua) { "EnableLUA: absent (UAC on, the default)"; $lua = 1 } else { "EnableLUA: $lua" }
+          $server = if ($os.ProductType -ne 1) { 1 } else { 0 }
+          Add-Type -AssemblyName System.Windows.Forms
+          foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+            $b = $screen.Bounds
+            "Screen $($screen.DeviceName): $($b.Width)x$($b.Height) at $($b.X),$($b.Y)$(if ($screen.Primary) { ' (primary)' })"
+          }
+          "Applied DPI: $((Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -ErrorAction SilentlyContinue).AppliedDPI) (96 is 100 %)"
+          "Windows PowerShell $($PSVersionTable.PSVersion), language mode $($ExecutionContext.SessionState.LanguageMode); execution policies:"
+          Get-ExecutionPolicy -List | Format-Table -AutoSize | Out-String
+          # Appended without a byte-order mark (Out-File -Encoding utf8 writes one in Windows PowerShell 5.1).
+          $facts = "EMBER_CI_ELEVATED=$elevated`nEMBER_CI_LUA=$([int]$lua)`nEMBER_CI_SERVER=$server`n"
+          [IO.File]::AppendAllText($env:GITHUB_ENV, $facts)
+          $facts
       - name: Keep LF line endings in the checkout (as .gitattributes says)
         run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -247,28 +285,40 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: The UI Automation bridge compiles with Windows PowerShell 5.1's C# 5 compiler, as Ember runs it
-        if: hashFiles('sidecar/uia/ember_uia.cs') != ''
-        # Windows PowerShell 5.1 (powershell.exe), not pwsh: its Add-Type compiles C# 5 with .NET Framework's csc.
-        shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
+      - name: The UI Automation bridge compiles and starts as Ember starts it, and stops when its input closes
+        # Ember's accessibility host runs this command line: Windows PowerShell 5.1 (not pwsh), whose Add-Type compiles
+        # ember_uia.cs with .NET Framework's C# 5 compiler into EMBER_UIA_CACHE, the assemblies loaded as the bootstrap
+        # loads them. Run twice: compiled, then loaded from the cache. With stdin closed it must print its ready line
+        # and exit 0.
+        timeout-minutes: 5
         run: |
-          $ErrorActionPreference = "Stop"
-          if ($PSVersionTable.PSVersion.Major -ne 5) { throw "this must be Windows PowerShell 5.1, not $($PSVersionTable.PSVersion)" }
-          Add-Type -Path sidecar/uia/ember_uia.cs -ReferencedAssemblies UIAutomationClient,UIAutomationTypes,WindowsBase,System.Web.Extensions
-          "compiled sidecar/uia/ember_uia.cs with PowerShell $($PSVersionTable.PSVersion)"
+          powershell="$(cygpath -W)/System32/WindowsPowerShell/v1.0/powershell.exe"
+          script="$(cygpath -w "$PWD/sidecar/uia/ember_uia.ps1")"
+          cache="$(cygpath -u "$RUNNER_TEMP")/uia"
+          EMBER_UIA_CACHE="$(cygpath -w "$cache")"
+          export EMBER_UIA_CACHE
+          for pass in compiled cached; do
+            started=$(date +%s%3N)
+            if ! out=$("$powershell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$script" < /dev/null); then
+              printf '%s\n' "$out"
+              echo "the bridge failed ($pass)"
+              exit 1
+            fi
+            # The first line must be the ready line, {"ready":true,...}; a fatal line means it couldn't start.
+            node -e 'const [line, pass] = process.argv.slice(1); let j; try { j = JSON.parse(line); } catch {} if (j?.ready !== true) { console.error("no ready line (" + pass + "): " + line); process.exit(1); } console.log(pass + ": " + line)' "$(printf '%s\n' "$out" | head -n 1)" "$pass"
+            if ! ls "$cache"/ember_uia-*.dll > /dev/null 2>&1; then echo "nothing was compiled into $EMBER_UIA_CACHE"; exit 1; fi
+            echo "$pass: started, answered and exited in $(( $(date +%s%3N) - started )) ms"
+          done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
       - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host)
-        # TODO(port): drop --allow-missing once the win32, uia and host packages have added these files.
-        run: node scripts/run-integration.mjs --allow-missing test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts test/integration/ax-sidecar.test.ts
+        run: node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts test/integration/ax-sidecar.test.ts
         env:
           EMBER_WIN32_TEST: "1"
           EMBER_UIA_TEST: "1"
-      - name: Stage Ember and zip it
-        # TODO(port): drop --allow-missing-sidecar once dist/app/ax-sidecar.cjs (host package) and sidecar/uia (uia
-        # package) exist; without the flag stage.mjs refuses to stage an Ember that can't read apps.
+      - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         run: |
-          node scripts/package/stage.mjs --allow-missing-sidecar
+          node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
         run: |
@@ -285,10 +335,30 @@ jobs:
           test -s "$app/THIRD_PARTY_NOTICES" && test -f "$app/LICENSES.chromium.html" && test -f "$app/LICENSE"
           test -f "$app/resources/ember.ico" && test ! -e "$app/resources/default_app.asar"
           test ! -e "$app/resources/app/dist/app/desk-agent.cjs"
-          if [ -f dist/app/ax-sidecar.cjs ]; then test -f "$app/resources/app/dist/app/ax-sidecar.cjs"; fi
-          if [ -f sidecar/uia/ember_uia.cs ]; then test -f "$app/resources/sidecar/uia/ember_uia.ps1" && test -f "$app/resources/sidecar/uia/ember_uia.cs"; fi
-      - name: The packaged Ember starts and shows its window
-        run: node test/smoke/launch.mjs --exe dist/package/Ember/Ember.exe
+          test -f "$app/resources/app/dist/app/ax-sidecar.cjs"
+          test -f "$app/resources/sidecar/uia/ember_uia.ps1" && test -f "$app/resources/sidecar/uia/ember_uia.cs"
+      - name: "Ember.exe as Windows sees it: Ember's name, version and publisher, and unsigned rather than tampered with"
+        # Task Manager (and its Startup apps page), the privacy settings, the volume mixer and firewall prompts show
+        # these strings. stage.mjs leaves out Electron's certificate table, which the changes void: NotSigned, never
+        # HashMismatch.
+        shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Get-Item dist/package/Ember/Ember.exe
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $v = $exe.VersionInfo
+          $v | Format-List FileDescription, ProductName, CompanyName, OriginalFilename, InternalName, FileVersion, ProductVersion, LegalCopyright | Out-String
+          $want = [ordered]@{ FileDescription = "Ember"; ProductName = "Ember"; CompanyName = $pkg.author; OriginalFilename = "Ember.exe"; InternalName = "Ember.exe"; FileVersion = $pkg.version; ProductVersion = $pkg.version }
+          foreach ($key in $want.Keys) { if ($v.$key -ne $want[$key]) { throw "Ember.exe's $key is '$($v.$key)', should be '$($want[$key])'" } }
+          $fixed = "$($v.FileMajorPart).$($v.FileMinorPart).$($v.FileBuildPart)"
+          if ($fixed -ne ($pkg.version -replace '[-+].*$', '')) { throw "Ember.exe's file version number is $fixed, should be $($pkg.version)" }
+          $signature = Get-AuthenticodeSignature $exe.FullName
+          "Authenticode: $($signature.Status)"
+          if ([string]$signature.Status -ne "NotSigned") { throw "Ember.exe's signature is $($signature.Status), should be NotSigned (no certificate table)" }
+      - name: The packaged Ember starts, shows its window and holds all its shortcuts
+        # Server 2022 has neither PowerToys nor Game Bar, so nothing else holds Ember's chords: one reported taken means
+        # Electron couldn't register it (with Ember's Windows chords, that Super isn't the Windows key to RegisterHotKey).
+        run: node test/smoke/launch.mjs --exe dist/package/Ember/Ember.exe --forbid shortcut.unavailable
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
@@ -307,6 +377,18 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Runner facts (macOS version, architecture, SIP, screens, the TCC grants the image already has)
+        run: |
+          sw_vers
+          echo "architecture: $(uname -m)"
+          csrutil status || true
+          system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Resolution|Main Display' || true
+          services="'kTCCServiceAccessibility','kTCCServiceScreenCapture','kTCCServicePostEvent','kTCCServiceListenEvent','kTCCServiceAppleEvents'"
+          query="SELECT service, client, client_type, auth_value, indirect_object_identifier FROM access WHERE service IN ($services) ORDER BY service, client;"
+          echo "The image's grants, system database:"
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "$query" || echo "(unreadable)"
+          echo "The image's grants, user database:"
+          sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "$query" || echo "(unreadable)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -320,54 +402,26 @@ jobs:
       - run: npm run build
       - name: Launch smoke test (development build)
         run: npm run test:smoke
-      - name: Grant Accessibility and Screen Recording to every process that may be TCC's responsible one
-        # The runner's TCC database is writable with sudo (SIP covers only /System). Which process macOS holds
-        # responsible for a CI job isn't certain, so every candidate is granted; the tests print
-        # AXIsProcessTrusted() and fail loudly without it.
+      - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
+        # Which process macOS holds responsible for a CI job isn't certain, so every candidate is granted (scripts/
+        # package/tcc.mjs): Accessibility, Screen Recording, Input Monitoring (posting and listening to events) and
+        # Apple Events to System Events, for the development Electron, node, the shells and the runner's own
+        # processes. Not Ember.app: its grant comes after the first attribution check below. macOS 15 puts up an alert
+        # before an unapproved binary captures the screen, which nobody answers here. The tests print
+        # AXIsProcessTrusted() and fail loudly without the grant.
         run: |
-          db="/Library/Application Support/com.apple.TCC/TCC.db"
-          node_bin=$(command -v node)
-          clients=(
-            "$GITHUB_WORKSPACE/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
-            "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Ember"
-            "$node_bin" "$(realpath "$node_bin")" /bin/bash /bin/zsh
-          )
-          # The runner's own processes, from this shell up to launchd.
-          pid=$$
-          while [ "${pid:-1}" -gt 1 ]; do
-            comm=$(ps -o comm= -p "$pid" || true)
-            case "$comm" in /*) clients+=("$comm") ;; esac
-            pid=$(ps -o ppid= -p "$pid" | tr -d ' ' || true)
-          done
-          now=$(date +%s)
-          printf '%s\n' "${clients[@]}" | sort -u | while IFS= read -r client; do
-            for service in kTCCServiceAccessibility kTCCServiceScreenCapture; do
-              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) VALUES('$service','$client',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$now);"
-            done
-            echo "granted Accessibility and Screen Recording: $client"
-          done
-          # TCC may know an app bundle by its bundle id (client_type 0) rather than its executable's path: the
-          # development Electron.app and the packaged Ember.app.
-          for client in com.github.Electron io.github.komaladitya08.ember; do
-            for service in kTCCServiceAccessibility kTCCServiceScreenCapture; do
-              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) VALUES('$service','$client',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$now);"
-            done
-            echo "granted Accessibility and Screen Recording: $client (bundle id)"
-          done
-          sudo launchctl stop com.apple.tccd || true
-          sleep 2
-          sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE service IN ('kTCCServiceAccessibility', 'kTCCServiceScreenCapture');"
+          electron="$GITHUB_WORKSPACE/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          node scripts/package/tcc.mjs grant-paths --ancestors "$electron" "$(command -v node)" /bin/bash /bin/zsh
+          node scripts/package/tcc.mjs approve-capture "$electron" "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Ember" "$(command -v node)"
+          node scripts/package/tcc.mjs show
       - name: Desktop integration tests (window system and input, accessibility host)
-        # TODO(port): drop --allow-missing once the darwin and host packages have added these files.
-        run: node scripts/run-integration.mjs --allow-missing test/integration/darwin-desktop.test.ts test/integration/ax-sidecar.test.ts
+        run: node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts test/integration/ax-sidecar.test.ts
         env:
           EMBER_DARWIN_TEST: "1"
           EMBER_AX_TEST: "1"
       - name: Stage Ember.app (signed ad hoc), zip it and make the disk image
-        # TODO(port): drop --allow-missing-sidecar once dist/app/ax-sidecar.cjs (host package) exists; without the
-        # flag stage.mjs refuses to stage an Ember that can't read apps.
         run: |
-          node scripts/package/stage.mjs --allow-missing-sidecar
+          node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
         run: |
@@ -389,15 +443,114 @@ jobs:
           test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES" && test -f "$app/Contents/Resources/LICENSES.chromium.html" && test -f "$app/Contents/Resources/LICENSE"
           test -f "$app/Contents/Resources/ember.icns" && test ! -e "$app/Contents/Resources/default_app.asar"
           test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
-          if [ -f dist/app/ax-sidecar.cjs ]; then test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"; fi
+          test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
       - name: The packaged Ember.app starts and shows its window
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
+      - name: "Attribution, before Ember.app's grant: opened as users open it, Ember can't read apps (nothing is borrowed from the runner's granted processes)"
+        # Started through LaunchServices, Ember.app is its own responsible process to TCC, as when a user opens it; the
+        # tests above ran under the runner's processes, whose grants prove nothing about Ember's.
+        # TODO(port): drop --allow-missing-rows once the macOS doctor has its "Accessibility" and "Accessibility helper"
+        # rows (MS and I); until then a missing row is a warning, and a report with no rows still fails.
+        timeout-minutes: 5
+        run: |
+          report="$RUNNER_TEMP/doctor-before.txt"
+          : > "$report"
+          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor
+          node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
+      - name: Grant Ember.app by its bundle id, with its real code requirement
+        run: |
+          node scripts/package/tcc.mjs grant-bundle dist/package/Ember.app
+          node scripts/package/tcc.mjs show
+      - name: "Attribution, after: the grant reaches Ember and the accessibility helper it starts"
+        # TODO(port): drop --allow-missing-rows once the macOS doctor has its "Accessibility" and "Accessibility helper"
+        # rows (MS and I).
+        timeout-minutes: 5
+        run: |
+          report="$RUNNER_TEMP/doctor-after.txt"
+          : > "$report"
+          open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor
+          node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
           name: ember-macos
+          path: |
+            dist/package/*.zip
+            dist/package/*.dmg
+          retention-days: 3
+
+  macos-x64:
+    name: macOS on Intel (build, app bundle, smoke, window system and input)
+    # macos-15 above is Apple silicon only, and stage.mjs stages for the machine it runs on, so the x64 Ember.app is
+    # built here. macOS minutes cost ten times Linux's: this runs on the default branch, on tags, and when asked.
+    if: >-
+      (github.event_name == 'push' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')))
+      || (github.event_name == 'workflow_dispatch' && inputs.intel)
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Runner facts (macOS version, architecture)
+        run: |
+          sw_vers
+          echo "architecture: $(uname -m)"
+          test "$(uname -m)" = x86_64
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
+        run: |
+          electron="$GITHUB_WORKSPACE/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          node scripts/package/tcc.mjs grant-paths --ancestors "$electron" "$(command -v node)" /bin/bash /bin/zsh
+          node scripts/package/tcc.mjs approve-capture "$electron" "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Ember" "$(command -v node)"
+          node scripts/package/tcc.mjs show
+      - name: Window system and input on Intel (the accessibility host is checked on Apple silicon)
+        run: node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts
+        env:
+          EMBER_DARWIN_TEST: "1"
+      - name: Stage Ember.app for x64 (signed ad hoc), zip it and make the disk image
+        run: |
+          node scripts/package/stage.mjs
+          node scripts/package/archive.mjs
+      - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused"
+        run: |
+          app=dist/package/Ember.app
+          exe="$app/Contents/MacOS/Ember"
+          export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
+          # Every Mach-O file in the bundle (Electron, its helpers and frameworks, koffi, sharp, the Copilot runtime).
+          find "$app" -type f -print0 | while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              archs=$(lipo -archs "$f")
+              case " $archs " in *" x86_64 "*) ;; *) echo "$f: $archs (no x86_64)"; exit 1 ;; esac
+            fi
+          done
+          node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
+          ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
+          if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
+          if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
+          test "$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" = Ember
+          test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
+      - name: The packaged Ember.app starts and shows its window on Intel
+        run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.packages
+        continue-on-error: true
+        with:
+          name: ember-macos-x64
           path: |
             dist/package/*.zip
             dist/package/*.dmg

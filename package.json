@@ -13,6 +13,7 @@
   "scripts": {
     "build": "node scripts/build-app.mjs",
     "dev": "node scripts/build-app.mjs && electron .",
+    "dev:mac": "node scripts/build-app.mjs && open -n -W node_modules/electron/dist/Electron.app --args \"$PWD\"",
     "start": "electron .",
     "build:lab": "node scripts/build-demo.mjs character-lab",
     "typecheck": "tsc --noEmit",

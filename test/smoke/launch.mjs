@@ -5,8 +5,10 @@
 // packaged binary instead: dist/package/Ember/Ember.exe, dist/package/Ember.app/Contents/MacOS/Ember,
 // /opt/ember/ember. It fails at once on "app.start_failed" or an early exit, waits up to 30 s for the window on Linux
 // and 60 s on Windows and macOS (a cold start there includes antivirus scans; EMBER_SMOKE_TIMEOUT_MS overrides both),
-// and cleanup never fails the test.
-// usage: node test/smoke/launch.mjs [--exe <path>]
+// and cleanup never fails the test. --forbid <event> (repeatable) fails the run when the first instance logged that
+// event by the time the second launch has handed over: CI's Windows job forbids "shortcut.unavailable", since the
+// runner has nothing else holding Ember's shortcuts (it proves Electron registers Super as the Windows key).
+// usage: node test/smoke/launch.mjs [--exe <path>] [--forbid <event>]...
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,8 +17,11 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const argv = process.argv.slice(2);
+const USAGE = "usage: node test/smoke/launch.mjs [--exe <path>] [--forbid <event>]...";
 const exeArg = argv.includes("--exe") ? argv[argv.indexOf("--exe") + 1] : process.env.EMBER_SMOKE_EXE;
-if (argv.includes("--exe") && !exeArg) { console.error("usage: node test/smoke/launch.mjs [--exe <path>]"); process.exit(2); }
+if (argv.includes("--exe") && !exeArg) { console.error(USAGE); process.exit(2); }
+const forbidden = argv.flatMap((a, i) => (a === "--forbid" ? [argv[i + 1]] : []));
+if (forbidden.some(e => !e || e.startsWith("--"))) { console.error(USAGE); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // A packaged Ember loads its own resources/app; Electron in development is given the repository.
 const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(import.meta.url)("electron"), [root]];
@@ -29,6 +34,8 @@ const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform
 function launch(name) {
   const child = spawn(command, [...appArgs, ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
   const events = [];
+  /** The log lines of forbidden events, as the app wrote them. */
+  const forbiddenLines = [];
   const said = { stdout: "", stderr: "" };
   let failed = null;
   let buf = "";
@@ -42,6 +49,7 @@ function launch(name) {
         const msg = JSON.parse(line).msg;
         events.push(msg);
         if (msg === "app.start_failed") failed ??= line.trim();
+        if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
     }
   });
@@ -50,7 +58,7 @@ function launch(name) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, said, failed: () => failed };
+  return { name, child, events, forbiddenLines, said, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -107,6 +115,11 @@ try {
   if (!second.events.includes("instance.handover")) throw new Error("second instance did not hand over");
   await waitFor(first, () => first.events.includes("instance.second"), 10_000, "first instance to receive second-instance");
   console.log("ok   second launch handed over and the first instance focused its window");
+  // Checked once the first instance has finished starting (it answered the second launch).
+  if (forbidden.length) {
+    if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
+    console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
+  }
   ok = true;
 } catch (err) {
   console.error(`FAIL ${err.message}`);
