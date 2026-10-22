@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Host } from "../../app/sidecar-host/host";
 import { FakeProvider, benchDesktop, type FakeWindowSpec } from "../../app/sidecar-host/providers/fake";
 import { UnsupportedProvider, isPackaged, openProvider, providerKind } from "../../app/sidecar-host/providers";
+import { AxDarwinProvider } from "../../app/sidecar-host/providers/ax-darwin";
 import { BUSY, asciiJson, encodeResult, pyFloat } from "../../app/sidecar-host/protocol";
 import type { AxNode, AxWindow, ReadWindowResult } from "../../app/main/perception/sidecar";
 
@@ -104,15 +105,18 @@ describe("choosing the provider", () => {
     expect(isPackaged("/home/dev/ember/dist/app/ax-sidecar.cjs")).toBe(false);
   });
 
-  it("says plainly that macOS isn't read yet (every request but ping, and status says why)", async () => {
-    const p = openProvider({}, "darwin", "/x/dist/app/ax-sidecar.cjs");
+  it("reads macOS with the AX provider, which binds nothing until it starts; elsewhere every request but ping says why not", async () => {
+    const mac = openProvider({}, "darwin", "/x/dist/app/ax-sidecar.cjs");
+    expect(mac).toBeInstanceOf(AxDarwinProvider);
+    expect([mac.kind, mac.vocabulary, mac.generation, mac.health()]).toEqual(["ax", "ax", 1, { ok: null }]);
+    const p = openProvider({}, "linux", "/x/dist/app/ax-sidecar.cjs");
     expect(p).toBeInstanceOf(UnsupportedProvider);
     const host = new Host(p, { settleMs: 0 });
     const msg = JSON.parse((await host.handle('{"jsonrpc":"2.0","id":1,"method":"read_window","params":{}}'))!);
-    expect(msg.error.message).toMatch(/macOS accessibility provider/);
+    expect(msg.error.message).toMatch(/doesn't run on linux/);
     expect(JSON.parse((await host.handle('{"jsonrpc":"2.0","id":2,"method":"ping"}'))!).result.version).toBe(3);
     const status = JSON.parse((await host.handle('{"jsonrpc":"2.0","id":3,"method":"status","params":{}}'))!).result;
-    expect(status).toMatchObject({ version: 3, toolkitAccessibility: false, apps: 0, detail: expect.stringMatching(/macOS accessibility provider/) });
+    expect(status).toMatchObject({ version: 3, toolkitAccessibility: false, apps: 0, detail: expect.stringMatching(/doesn't run on linux/) });
   });
 });
 

@@ -9,7 +9,8 @@
  * The role sets mirror ember_atspi.py's (keep them in step): the host applies the same rules to them.
  */
 
-import type { RawNode } from "./provider";
+import type { RawNode, RawWindow } from "./provider";
+import { SECURITY_OWNERS } from "../main/platform/darwin/model";
 
 /** Containers that only group or decorate: not listed unless named (their children are). */
 export const SKIP_ROLES = new Set(["filler", "panel", "section", "redundant object", "glass pane", "layered pane", "root pane",
@@ -189,6 +190,7 @@ export function axRole(n: RawNode, ctx: RoleContext): string {
     case "AXRadioButton": return ctx.parentRole === "page tab list" ? "page tab" : "radio button";
     case "AXPopUpButton": case "AXComboBox": return "combo box";
     case "AXTextField": return sub === "AXSecureTextField" || n.password ? "password text" : "entry";
+    case "AXSecureTextField": return "password text";
     case "AXSearchField": return "entry";
     case "AXTextArea":
       if (n.password) return "password text";
@@ -206,7 +208,8 @@ export function axRole(n: RawNode, ctx: RoleContext): string {
     case "AXCell": return "table cell";
     case "AXMenuBar": return "menu bar";
     case "AXMenuBarItem": case "AXMenu": return "menu";
-    case "AXMenuItem": return "menu item";
+    // One with a check mark (AXMenuItemMarkChar) is a check menu item, as UI Automation's toggled items are.
+    case "AXMenuItem": return n.toggle !== undefined ? "check menu item" : "menu item";
     case "AXTabGroup": return "page tab list";
     case "AXSlider": return "slider";
     case "AXIncrementor": case "AXStepper": return "spin button";
@@ -219,10 +222,25 @@ export function axRole(n: RawNode, ctx: RoleContext): string {
     case "AXToolbar": return "tool bar";
     case "AXHelpTag": return "tool tip";
     case "AXGroup": return ctx.inWeb ? "section" : "panel";
-    case "AXLayoutArea": case "AXDrawer": case "AXBrowser": case "AXRadioGroup": return "panel";
+    case "AXLayoutArea": case "AXDrawer": case "AXBrowser": case "AXRadioGroup": case "AXPopover": return "panel";
     case "AXDateField": case "AXTimeField": return "entry";
     default: return "unknown";
   }
+}
+
+/**
+ * What a top-level window of the macOS AX provider is, of what the system draws over every window (shell_overlays):
+ * "dialog" for the system's credential and consent prompts (SECURITY_OWNERS, the list port/darwin's systemDialogOpen
+ * reads too, so the two can't drift; and loginwindow, which the provider lists only while it covers a display: the
+ * lock screen), "overview" for Mission Control and Launchpad (Dock windows, which the provider lists only above the
+ * normal window layer and covering a display), null for an ordinary window. The provider lists these windows from the
+ * window server's list alone and never asks them anything over AX. windows.ts's overlayRole is UI Automation's.
+ */
+export function axOverlayRole(w: Pick<RawWindow, "app">): "dialog" | "overview" | null {
+  const app = w.app ?? "";
+  if (SECURITY_OWNERS.has(app) || app === "loginwindow") return "dialog";
+  if (app === "Dock") return "overview";
+  return null;
 }
 
 /** An element's role in AT-SPI's words, by its provider's vocabulary. */

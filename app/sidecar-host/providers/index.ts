@@ -1,13 +1,15 @@
 /**
- * Which provider the sidecar host runs on: Windows' UI Automation bridge, macOS AX (not yet: an "unsupported" provider
- * that says so for every request), or the in-memory fake desktop for tests. The fake is chosen only with
- * EMBER_AX_PROVIDER=fake, and only in development: a packaged host (its bundle inside Ember's resources) never honours
- * it, so a stray variable can't make an installed Ember read a made-up desktop.
+ * Which provider the sidecar host runs on: Windows' UI Automation bridge, macOS AX (in-process, through koffi), or the
+ * in-memory fake desktop for tests; elsewhere an "unsupported" provider that says why for every request. The fake is
+ * chosen only with EMBER_AX_PROVIDER=fake, and only in development: a packaged host (its bundle inside Ember's
+ * resources) never honours it, so a stray variable can't make an installed Ember read a made-up desktop.
  */
 
 import path from "node:path";
 import type { AxProvider, ProviderHealth } from "../provider";
 import { ProviderError, ownerPid } from "../provider";
+import { AxDarwinProvider } from "./ax-darwin";
+import { axApiError, openAxApi } from "./ax-darwin-api";
 import { fakeFromEnv } from "./fake";
 import { UiaProvider, uiaScript } from "./uia";
 
@@ -25,7 +27,7 @@ export function providerKind(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, 
   return "none";
 }
 
-/** A provider for a platform the host can't read yet: every request but ping says why. */
+/** A provider for a platform the host doesn't read: every request but ping says why. */
 export class UnsupportedProvider implements AxProvider {
   readonly generation = 1;
 
@@ -48,15 +50,25 @@ export class UnsupportedProvider implements AxProvider {
   stop(): void {}
 }
 
+/** A note for Ember's log (it logs the host's stderr at debug level): events and counts, never screen text. */
+function stderrNote(event: string, fields: Record<string, unknown> = {}): void {
+  try {
+    process.stderr.write(JSON.stringify({ event, ...fields }) + "\n");
+  } catch {
+    // stderr is gone: nobody is left to tell.
+  }
+}
+
 /**
  * The provider for this process (`file`: the host's own script, which says whether it is packaged; `owner`: Ember's
- * own process, never read: its windows are listed from Win32 facts alone).
+ * own process, never read: its windows are listed from the window system's facts alone). The macOS provider binds
+ * nothing until its first start, so choosing it is free on any OS (off macOS its start says why it can't run).
  */
 export function openProvider(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, file = typeof __filename === "string" ? __filename : "", owner = ownerPid(env, process.ppid)): AxProvider {
   switch (providerKind(env, platform, isPackaged(file))) {
     case "fake": return fakeFromEnv(env);
     case "uia": return new UiaProvider({ script: uiaScript(env, file), env, skipPids: owner === undefined ? [] : [owner] });
-    case "ax": return new UnsupportedProvider("ax", "the macOS accessibility provider isn't part of this build yet");
+    case "ax": return new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner, note: stderrNote });
     default: return new UnsupportedProvider("uia", `the accessibility host doesn't run on ${platform}: Ember reads apps there with its AT-SPI sidecar`);
   }
 }
