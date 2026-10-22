@@ -112,9 +112,25 @@ export function comparePaths(os: ClassifyContext["os"], mountRoot: string | null
   return pathEnv({ flavour: os === "win32" ? "win32" : "posix", os, home: null, cwd: null, mountRoot });
 }
 
-/** Whether `path` is one of the task's own: written by an earlier command (or under a folder it wrote), or downloaded. */
+/**
+ * Folders only root or an administrator can change (not /usr/local, which Homebrew gives the user): a write Ember
+ * couldn't place never reaches them unless the shell is root, and then every command asks anyway (D4.6). So `#!/usr/bin/python3`
+ * (a program too big to read) isn't taken for the task's own after a checkout.
+ */
+export function rootOwned(p: string, env: PathEnv): boolean {
+  if (env.flavour === "win32") return /^[a-z]:\\(windows|program files|program files \(x86\))(\\|$)/i.test(p);
+  if (/^\/usr\/local(\/|$)/i.test(p)) return false;
+  if (/^\/(usr|bin|sbin|lib|lib32|lib64|libx32|libexec|System)(\/|$)/i.test(p)) return true;
+  const m = env.mountRoot;
+  return m !== null && p.toLowerCase().startsWith(`${m.toLowerCase()}/`) && /^\/[a-z]\/(windows|program files|program files \(x86\))(\/|$)/i.test(p.slice(m.length));
+}
+
+/**
+ * Whether `path` is one of the task's own: written by an earlier command (or under a folder it wrote), or downloaded;
+ * or, once the task wrote where Ember couldn't tell, anywhere outside the folders only root changes.
+ */
 export function taskWrote(path: string, written: TaskWrites | null, downloaded: ReadonlySet<string>, env: PathEnv): boolean {
-  if (written?.anywhere) return true;
+  if (written?.anywhere && !rootOwned(path, env)) return true;
   for (const w of written?.paths ?? []) if (isUnder(path, w, env)) return true;
   for (const d of downloaded) if (isUnder(path, d, env)) return true;
   return false;

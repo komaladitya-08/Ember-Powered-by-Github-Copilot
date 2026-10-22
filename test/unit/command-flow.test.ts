@@ -12,6 +12,7 @@ import {
   scriptLanguage,
 } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
+import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
   Classification, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandService, DecideInput, GitFacts, PathFact, RunExit, RunnerFacts,
   RunningCommand, RunSpec,
@@ -460,6 +461,28 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     h.existing.add("/home/ana/proj/configure");
     expect((await local(h, "./configure")).resultType).toBe("denied");
     expect(h0rules(h)).toContain("unclear.script-unread");
+  });
+
+  it("never takes a program in a folder only root changes for the task's own after a checkout: `#!/usr/bin/python3` runs", async () => {
+    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: () => true });
+    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect(h.ctx.state.written!.anywhere).toBe(true);
+    expect((await local(h, "./x.py")).resultType).toBe("success");
+    expect(h.reads).toContain("/usr/bin/python3");
+    expect(h.asked).toEqual([]);
+    // /usr/local is the user's on many Macs: still the task's own once it wrote where Ember couldn't tell.
+    expect((await local(h, "./y")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+  });
+
+  it("rootOwned: /usr (not /usr/local), /bin, /lib…, and Windows' own folders, from WSL too", () => {
+    const posixEnv = comparePaths("linux", "/mnt");
+    for (const p of ["/usr/bin/python3", "/bin/sh", "/lib64/ld.so", "/System/Library/x", "/mnt/c/Windows/System32/x.exe", "/mnt/d/Program Files (x86)/x"]) expect(rootOwned(p, posixEnv), p).toBe(true);
+    for (const p of ["/usr/local/bin/i", "/opt/homebrew/bin/i", "/home/ana/usr/bin/x", "/mnt/c/Users/ana/x", "/usrx/bin"]) expect(rootOwned(p, posixEnv), p).toBe(false);
+    const winEnv = comparePaths("win32");
+    expect(rootOwned("C:\\Windows\\System32\\x.exe", winEnv)).toBe(true);
+    expect(rootOwned("c:\\program files\\Git\\bin\\sh.exe", winEnv)).toBe(true);
+    expect(rootOwned("C:\\Users\\ana\\x.ps1", winEnv)).toBe(false);
   });
 
   it("counts a script inside a folder this task downloaded, reached through a #! line", async () => {
