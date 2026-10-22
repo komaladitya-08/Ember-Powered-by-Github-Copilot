@@ -2613,6 +2613,26 @@
    "downloaded": [
     "C:\\Users\\ana\\proj\\x.exe"
    ]
+  },
+  {
+   "cmd": "set GITHUB",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.env"
+   ]
+  },
+  {
+   "cmd": "set GH",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.env"
+   ]
   }
  ]
 }

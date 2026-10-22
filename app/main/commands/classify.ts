@@ -157,6 +157,10 @@ class Classifier {
   /** What a listing (Get-ChildItem, Get-Item) hands down its pipeline: the folders or files it names, by command. */
   listed = new Map<number, Arg[]>();
   private probeFull = false;
+  /** Commands (by index) with options before their verb: no intent row covers them (§3.7: "broader than named"). */
+  private globalOpts = new Set<number>();
+  /** The text sets an environment or shell variable somewhere: it may point a later command elsewhere (GH_REPO=…). */
+  envChanged = false;
 
   constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
 
@@ -172,6 +176,7 @@ class Classifier {
       return out;
     });
     const widening = [...(o.widening ?? [])];
+    if (this.globalOpts.has(this.at) && !widening.includes("global-option")) widening.push("global-option");
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
     if (o.ifExists !== undefined) f.ifExists = o.ifExists;
@@ -180,6 +185,11 @@ class Classifier {
 
   unclear(rule: string, says: string = SAYS.unclear): void {
     this.add("unclear", rule, says);
+  }
+
+  /** The current command has options before its verb (`npm --registry … publish`, `p4 -p … submit`). */
+  markGlobalOptions(): void {
+    if (this.at >= 0) this.globalOpts.add(this.at);
   }
 
   refuseWith(rule: string, kind: "safety" | "input"): void {
@@ -476,6 +486,9 @@ class Engine extends Classifier {
       cwd: this.ctx.cwd,
       windowsReach: this.windowsReach,
     };
+    // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
+    // row covers a finding of such a text.
+    if (this.envChanged) for (const f of this.findings) if (!f.widening.includes("env")) f.widening.push("env");
     const cd = this.topCd;
     if (cd && cd.abs && this.commands.length === 1 && cd.at === 0 && this.findings.length === 0 && !this.refuse && this.commands[0].redirects.length === 0) {
       out.cdOnly = cd.abs;
@@ -699,6 +712,7 @@ class Engine extends Classifier {
 
   /** Assignments before a command or alone (§3.4.1): ones that change how commands are found or run are unclear. */
   private assignments(list: { name: string; value: Arg }[], sc: Scope): void {
+    if (list.length) this.envChanged = true;
     for (const a of list) {
       if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
@@ -714,6 +728,7 @@ class Engine extends Classifier {
   private psStatements(sts: PsStatement[], sc: Scope): void {
     sts.forEach((st, si) => {
       if (st.assign) {
+        this.envChanged = true;
         const env = /^env:(.+)$/i.exec(st.assign);
         if (env && (RISKY_ASSIGNMENTS.has(env[1].toUpperCase()) || RISKY_ASSIGNMENTS.has(env[1]) || RISKY_ASSIGNMENT_PREFIX.test(env[1].toUpperCase()))) {
           this.newCommand("", [], sc, [], false);
@@ -1176,6 +1191,8 @@ interface Globals { verbAt: number; opts: { name: string; value: string | null }
 function globals(h: H, prog: string, args: Arg[] = h.args): Globals {
   const g: GlobalGrammar | undefined = GLOBAL_OPTIONS[prog];
   const out: Globals = { verbAt: args.length, opts: [], unknown: null };
+  // Whatever the options before the verb are, the command is broader than a plain one (§3.7).
+  if (args.length && args[0].v !== null && args[0].v.startsWith("-") && args[0].v !== "-" && args[0].v !== "--") h.e.markGlobalOptions();
   for (let k = 0; k < args.length; k++) {
     const v = args[k].v;
     if (v === null) { out.verbAt = k; return out; }
@@ -2065,6 +2082,7 @@ reg(NATIVE, ["env"], h => {
     assigns.push({ name: v.slice(0, v.indexOf("=")), value: lit(v.slice(v.indexOf("=") + 1)) });
     k++;
   }
+  if (assigns.length || has(p, "u", "unset", "i") || h.args.some(a => a.v === "-")) h.e.envChanged = true;
   for (const a of assigns) {
     if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
@@ -2091,6 +2109,7 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   const names = p.operands;
   if (names.length === 0 && (h.key === "export" || h.key === "declare" || h.key === "typeset" || has(p, "p", "x"))) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (has(p, "p") && names.some(n => n.v === null || SECRET_VAR.test(n.v))) h.e.add("secret", "secret.env", SAYS.env);
+  if (names.length && !has(p, "p")) h.e.envChanged = true;
   for (const n of names) {
     const name = (n.v ?? n.raw).split("=")[0];
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
@@ -2306,6 +2325,8 @@ git(["push"], (h, widen) => {
     const known = ["-o", "-f", "-d", "-u", "-n", "-v", "-q", "-4", "-6"].includes(o.name) || /^--(all|branches|mirror|tags|follow-tags|no-follow-tags|prune|delete|force|force-with-lease|no-force-with-lease|force-if-includes|no-force-if-includes|set-upstream|dry-run|verbose|quiet|progress|no-progress|no-verify|verify|atomic|no-atomic|porcelain|thin|no-thin|ipv4|ipv6|signed|no-signed|push-option|repo|receive-pack|exec|recurse-submodules|no-recurse-submodules)$/.test(o.name);
     if (!known) widening.push(`?${o.name}`);
   }
+  if (remote?.v && (URL_LIKE.test(remote.v) || SCP_LIKE.test(remote.v) || remote.v.includes("/"))) widening.push("url-remote");
+  if (remote && remote.v === null) widening.push("?remote");
   const refDel = refs.filter(r => (r.v ?? "").startsWith(":"));
   const refForce = refs.filter(r => (r.v ?? "").startsWith("+"));
   if (refDel.length) widening.push(":ref");
@@ -2320,7 +2341,6 @@ git(["push"], (h, widen) => {
   if (del || refDel.length) h.e.add("remote-delete", "git.push.delete", `Deletes ${del ? joinList(refs.map(r => r.v ?? r.raw)) || "branches" : joinList(refDel.map(r => (r.v ?? "").slice(1)))} on ${remoteText}.`, { objects, widening, program: "git push" });
   if (mirror) h.e.add("remote-delete", "git.push.mirror", `Deletes or overwrites everything on ${remoteText} to match this copy.`, { objects, widening, program: "git push" });
   if (prune) h.e.add("remote-delete", "git.push.prune", `Deletes branches on ${remoteText} that aren't here.`, { objects, widening, program: "git push" });
-  if (remote?.v && (URL_LIKE.test(remote.v) || SCP_LIKE.test(remote.v) || remote.v.includes("/"))) widening.push("url-remote");
 });
 
 git(["clean"], h => {
@@ -2356,7 +2376,10 @@ git(["checkout"], h => {
   else if (p.operands.length >= 2) paths = p.operands.slice(1);
   if (paths.length) {
     const objs = objsOf(h, paths, "write");
-    h.e.add("destroy", "git.checkout.paths", `Throws away changes to ${listOf(objs)}.`, { objects: objs, program: "git checkout" });
+    // `git checkout <commit> -- <paths>` puts an older version in place: broader than discarding the changes.
+    const before = dd >= 0 ? h.args.slice(0, dd).filter(a => !isOption(a)) : p.operands.length >= 2 ? p.operands.slice(0, 1) : [];
+    const widening = before.some(a => a.v !== "HEAD") ? ["--source"] : [];
+    h.e.add("destroy", "git.checkout.paths", `Throws away changes to ${listOf(objs)}.`, { objects: objs, program: "git checkout", widening });
     return;
   }
   if (p.operands.length === 1 && B === undefined && values(p, "b").length === 0 && !has(p, "orphan")) {
@@ -3562,7 +3585,7 @@ function emberNamed(h: H, name: string): boolean {
   const re = new RegExp(h.e.ctx.ember.names.source, h.e.ctx.ember.names.flags.replace(/[gy]/g, ""));
   return re.test(name) || /^(ember|ember-remote|ember\.exe|electron|electron\.exe)$/i.test(name);
 }
-function killPids(h: H, pids: (string | null)[]): void {
+function killPids(h: H, pids: (string | null)[], widening: string[] = []): void {
   const objs: Obj[] = [];
   let own = true;
   for (const p of pids) {
@@ -3575,7 +3598,7 @@ function killPids(h: H, pids: (string | null)[]): void {
     own = false;
     objs.push({ kind: "process", text: p, abs: null });
   }
-  if (!own || objs.length) h.e.add("system", "kill.process", `Stops programs that are running (${joinList(objs.map(o => o.text)) || "?"}).`, { objects: objs, program: h.prog });
+  if (!own || objs.length) h.e.add("system", "kill.process", `Stops programs that are running (${joinList(objs.map(o => o.text)) || "?"}).`, { objects: objs, program: h.prog, widening });
 }
 reg(NATIVE, ["kill"], h => {
   if (h.args.some(a => a.v === "-l" || a.v === "-L" || a.v === "--list")) return;
@@ -3612,7 +3635,9 @@ reg(NATIVE, ["pkill", "killall", "pgrep-kill", "xkill", "fuser", "tskill", "skil
       if (candidates.some(c => re!.test(c))) { h.e.refuseWith("ember.process", "safety"); return; }
     } else if (emberNamed(h, n) || /[*?[]/.test(n) && globRegExp(n, { ...h.sc.path, flavour: "posix" }, false).test("ember")) { h.e.refuseWith("ember.process", "safety"); return; }
   }
-  killPids(h, names.length ? names : ["?"]);
+  // Matching whole command lines, other users', groups, sessions or terminals reaches more than the names say.
+  const widening = p.opts.map(o => o.name).filter(n => /^(-[fuUgGPtsr]|--(full|euid|uid|pgroup|group|parent|terminal|session|ns|nslist|regexp|user|older-than|younger-than))$/.test(n));
+  killPids(h, names.length ? names : ["?"], widening);
 });
 reg(NATIVE, ["taskkill"], h => {
   const pids: (string | null)[] = [];
@@ -4391,6 +4416,8 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
 });
 reg(CMD_BUILTINS, ["cd", "chdir"], h => NATIVE.cd(h));
 reg(CMD_BUILTINS, ["echo", "echo."], h => { textProgram(h); });
+/** Windows' own variables, whose prefix listing (`set PATH`) shows nothing secret. */
+const CMD_SET_PLAIN = /^(path|pathext|computername|username|userdomain|userprofile|os|processor_architecture|processor_identifier|number_of_processors|temp|tmp|homedrive|homepath|appdata|localappdata|programfiles|programdata|systemroot|systemdrive|windir|comspec|prompt|psmodulepath|public|cd|date|time|errorlevel)$/i;
 reg(CMD_BUILTINS, ["set"], h => {
   const { sw, ops } = cmdSwitches(h);
   if (sw.has("p")) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
@@ -4399,7 +4426,10 @@ reg(CMD_BUILTINS, ["set"], h => {
   const text = ops.map(o => o.v ?? o.raw).join(" ");
   const eq = text.indexOf("=");
   const name = eq >= 0 ? text.slice(0, eq) : text;
-  if (eq < 0) { if (SECRET_VAR.test(name) || name.length <= 2) h.e.add("secret", "secret.env", SAYS.env); return; }
+  // `set NAME` lists every variable whose name starts with NAME (`set GITHUB` shows GITHUB_TOKEN): only Windows' own
+  // well-known names are ordinary.
+  if (eq < 0) { if (!CMD_SET_PLAIN.test(name.trim())) h.e.add("secret", "secret.env", SAYS.env); return; }
+  h.e.envChanged = true;
   if (RISKY_ASSIGNMENTS.has(name.toUpperCase()) || RISKY_ASSIGNMENTS.has(name) || /^(pathext|comspec)$/i.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   if (commandLineSecret(text)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });

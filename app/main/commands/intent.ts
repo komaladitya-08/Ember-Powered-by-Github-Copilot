@@ -12,7 +12,7 @@
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
 import { ALWAYS_ASK } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList } from "./words";
-import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, type PathEnv } from "./paths";
+import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
 type OS = ClassifyContext["os"];
@@ -124,8 +124,8 @@ function normPath(p: string): string {
 }
 const lastSegment = (p: string): string => normPath(p).split(/[\\/]/).pop() ?? "";
 
-/** Where the user's words name a path: the index of the token that names it (by path or last segment), or -1. */
-function pathToken(obj: CommandObject, w: Words): number {
+/** Where the user's words name a path, loosely (for "You didn't ask for this" only): by path or last segment, or -1. */
+function pathTokenLoose(obj: CommandObject, w: Words): number {
   const text = normPath(obj.text);
   const last = lastSegment(obj.text);
   return w.tokens.findIndex(t => {
@@ -133,6 +133,37 @@ function pathToken(obj: CommandObject, w: Words): number {
     return n === text || (obj.kind !== "glob" && (n === last || lastSegment(t) === text || (lastSegment(t) === last && last !== "")));
   });
 }
+
+/**
+ * Where the user's words name exactly this path (§3.7), or -1: written the same; a path in the words (it holds a
+ * separator or starts with `~`) that resolves to the same place; or a bare name equal to its last segment, for an
+ * operand inside the task's folder reached without `..` ("delete build" names `build` and `src/build`, never
+ * `../build`, `~/build` or another folder's `build`).
+ */
+function pathToken(obj: CommandObject, w: Words, ctx: Ctx): number {
+  const text = normPath(obj.text);
+  const last = lastSegment(obj.text);
+  const env = envOf(ctx);
+  return w.tokens.findIndex(t => {
+    const n = normPath(t);
+    if (n === text) return true;
+    if (obj.kind === "glob" || !obj.resolved) return false;
+    const bare = n.replace(/[\\/]+$/, "");
+    if (/[\\/]/.test(bare) || bare.startsWith("~")) {
+      if (!ctx.cwd) return false;
+      const abs = resolveTargetPath(bare, { os: ctx.os, home: ctx.home, cwd: ctx.cwd });
+      return abs.toLowerCase() === obj.resolved.toLowerCase();
+    }
+    if (n !== last || last === "" || !ctx.cwd) return false;
+    return isUnder(obj.resolved, ctx.cwd, env) && !/(^|[\\/])\.\.([\\/]|$)/.test(obj.text);
+  });
+}
+
+/** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
+const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
+
+/** Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb. */
+const ALWAYS_BROADER = new Set(["real-path", "env", "global-option"]);
 
 /** Recursion words near the operand the user named (§3.7 delete.paths). */
 const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs", "tree", "recursively", "everything", "all"];
@@ -236,17 +267,17 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     for (const f of fs) for (const o of f.objects) if (o.text !== "HEAD" && !nameNamed(o.text, w.raw) && !w.tokens.includes(o.text.toLowerCase())) return null;
     return { intent: "git.reset.hard", announce: "Throwing away uncommitted changes, as you asked." };
   },
-  "git.discard": (fs, w) => {
+  "git.discard": (fs, w, ctx) => {
     if (!hasVerb(w.list, ["discard", "revert", "undo", "restore"]) && !hasWord(w.list, ["throw away"])) return null;
     const objs = fs.flatMap(f => f.objects);
     if (objs.length === 0 || fs.some(f => f.widening.some(x => x === "--source" || x === "real-path"))) return null;
-    for (const o of objs) if (!o.resolved || pathToken(o, w) < 0) return null;
+    for (const o of objs) if (!o.resolved || pathToken(o, w, ctx) < 0) return null;
     return { intent: "git.discard", announce: `Discarding changes to ${joinList(objs.map(o => o.text))}, as you asked.` };
   },
-  "git.clean": (fs, w) => {
+  "git.clean": (fs, w, ctx) => {
     if (!hasVerb(w.list, ["clean"]) || !(hasWord(w.list, ["untracked"]) || /\bgit clean\b/i.test(w.raw))) return null;
     if (fs.some(f => f.widening.some(x => x === "-x" || x === "-X")) && !hasWord(w.list, ["ignored"])) return null;
-    if (fs.some(f => f.objects.some(o => !o.resolved || pathToken(o, w) < 0))) return null;
+    if (fs.some(f => f.objects.some(o => !o.resolved || pathToken(o, w, ctx) < 0))) return null;
     return { intent: "git.clean", announce: "Deleting untracked files, as you asked." };
   },
   "git.stash.drop": (fs, w) => {
@@ -268,7 +299,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         if (!o.resolved || (o.kind !== "path" && o.kind !== "glob")) return null;
         if (["/", "~", ".", "..", "*", "\\"].includes(o.text) || /^[A-Za-z]:\\?$/.test(o.text)) return null;
         if (isBroadPath(o.resolved, env)) return null;
-        const idx = o.kind === "glob" ? w.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, w);
+        const idx = o.kind === "glob" ? w.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, w, ctx);
         if (idx < 0) return null;
         const inside = isUnder(o.resolved, ctx.cwd, env) || (ctx.home !== "" && isUnder(o.resolved, ctx.home, env));
         if (!inside && !w.tokens.some(t => normPath(t) === normPath(o.resolved!) || (isAbsoluteText(o.text, ctx.os) && normPath(t) === normPath(o.text)))) return null;
@@ -285,7 +316,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     for (const f of fs) {
       if (f.widening.includes("real-path")) return null;
       const o = f.objects.find(x => x.kind === "path");
-      if (!o || !o.resolved || pathToken(o, w) < 0) return null;
+      if (!o || !o.resolved || pathToken(o, w, ctx) < 0) return null;
       if (homeDotFile(o.resolved, env)) return null;
       texts.push(o.text);
     }
@@ -317,6 +348,8 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !(hasVerb(w.list, ["delete"]) && hasWord(w.list, ["branch"]))) return null;
     const nums = [...new Set(fs.flatMap(f => f.objects.filter(o => o.kind === "other").map(o => o.text.replace(/^#/, ""))))];
     if (nums.some(n => !w.list.includes(n.toLowerCase()))) return null;
+    // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered.
+    if (nums.length === 0 && w.list.some(x => /^\d+$/.test(x))) return null;
     return { intent: "gh.pr.merge", announce: `Merging pull request ${nums.length ? joinList(nums) : ""}, as you asked.`.replace("request ,", "request,") };
   },
   "pkg.publish": (fs, w) => {
@@ -342,13 +375,13 @@ const ROWS: Readonly<Record<string, RowFn>> = {
       const img = f.objects.find(o => o.kind === "image")?.text;
       if (!img || img === "the image") return null;
       const name = img.replace(/(:[^/:]+)?(@sha256:[0-9a-f]+)?$/i, "");
-      const short = name.split("/").pop() ?? name;
-      if (!(w.tokens.includes(name.toLowerCase()) || nameNamed(short, w.raw))) return null;
+      // A registry or namespace in front (`evil/app`) is a different image than the `app` the user named.
+      if (!(w.tokens.includes(name.toLowerCase()) || (!name.includes("/") && nameNamed(name, w.raw)))) return null;
       images.push(img);
     }
     return { intent: "docker.push", announce: `Pushing the image ${joinList(images)}, as you asked.` };
   },
-  "pkg.install": (fs, w) => {
+  "pkg.install": (fs, w, ctx) => {
     if (!hasVerb(w.list, ROW_VERBS["pkg.install"])) return null;
     const pkgs: string[] = [];
     for (const f of fs) {
@@ -356,7 +389,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
       const objs = f.objects;
       if (objs.length === 0 && !hasWord(w.list, ["dependencies", "deps", "requirements", "packages", "modules"])) return null;
       for (const o of objs) {
-        if (o.kind === "path") { if (!w.tokens.some(t => normPath(t) === normPath(o.text) || lastSegment(t) === lastSegment(o.text))) return null; pkgs.push(o.text); continue; }
+        if (o.kind === "path") { if (pathToken(o, w, ctx) < 0) return null; pkgs.push(o.text); continue; }
         if (o.kind !== "package" || !(nameNamed(o.text, w.raw) || w.tokens.includes(o.text.toLowerCase()))) return null;
         pkgs.push(o.text);
       }
@@ -378,7 +411,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     const ing = { start: "Starting", stop: "Stopping", restart: "Restarting", reload: "Reloading", enable: "Enabling", disable: "Disabling", mask: "Masking", unmask: "Unmasking" }[verb.replace(/^(try-|force-)/, "").replace(/-or-restart$/, "")] ?? "Restarting";
     return { intent: "service.restart", announce: `${ing} ${joinList(units)}, as you asked.` };
   },
-  "upload.host": (fs, w) => {
+  "upload.host": (fs, w, ctx) => {
     if (!hasVerb(w.list, ROW_VERBS["upload.host"])) return null;
     let host = "";
     const files: string[] = [];
@@ -387,7 +420,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
       if (!h || !nameNamed(h.text, w.raw)) return null;
       host = h.text;
       for (const o of f.objects.filter(x => x.kind === "path")) {
-        if (!w.tokens.some(t => normPath(t) === normPath(o.text) || lastSegment(t) === lastSegment(o.text))) return null;
+        if (pathToken(o, w, ctx) < 0) return null;
         files.push(o.text);
       }
     }
@@ -398,7 +431,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (!hasVerb(w.list, ROW_VERBS["kill.process"])) return null;
     const names: string[] = [];
     for (const f of fs) {
-      if (f.objects.length === 0) return null;
+      if (f.objects.length === 0 || f.widening.length) return null;
       for (const o of f.objects) {
         if (!o.text || o.text === "?" || !(w.list.includes(o.text.toLowerCase()) || nameNamed(o.text, w.raw))) return null;
         names.push(o.text);
@@ -444,6 +477,8 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   const F = cls.findings;
   if (F.length === 0) return null;
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
+  if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
+  if (NEGATION.test(userWords.normalize("NFKC"))) return null;
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);
@@ -473,7 +508,7 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   const w: Words = { raw: userWords.normalize("NFKC"), list: userWordList(userWords), tokens: userTokens(userWords) };
   return findings.some(f => {
     const row = rowOf(f, findings);
-    const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathToken(o, w) >= 0)));
+    const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
