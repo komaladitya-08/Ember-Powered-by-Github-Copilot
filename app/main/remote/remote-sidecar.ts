@@ -64,7 +64,7 @@ export const unchecked = (label: string) => `${label} answered in a way Ember ca
 /** C0 and C1 controls (a remote's text is one plain line wherever Ember puts it). */
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]+/g; // eslint-disable-line no-control-regex -- control characters are what's removed
 /** Bidirectional overrides and isolates, which can make a line read otherwise than it is. */
-const BIDI = /[‪-‮⁦-⁩]/g;
+const BIDI = /[\u202a-\u202e\u2066-\u2069]/g;
 
 /** A remote's string as one plain line of at most `max` characters (controls become spaces, bidi overrides go). */
 export function cleanRemote(s: string, max = 500): string {

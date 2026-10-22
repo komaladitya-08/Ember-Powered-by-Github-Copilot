@@ -180,7 +180,7 @@ describe("RemoteSidecar's steps carry gate 1's fresh stamp (§5.5, critique inte
     expect([changed.code, changed.message]).toEqual(["changed", "It changed: perceive again."]);
     const confirm = await tryWith({ status: "needs_confirm", reason: "Click Allow on the PC" }) as RemoteStepError;
     expect([confirm.code, confirm.message]).toEqual(["needs_confirm", "build-01 refused this step (it wanted a confirmation Ember couldn't give). Don't try another way."]);
-    const deny = await tryWith({ status: "deny", reason: "This computer's administrator‮ doesn't let Ember act in apps.\n" }) as RemoteStepError;
+    const deny = await tryWith({ status: "deny", reason: "This computer's administrator\u202e doesn't let Ember act in apps.\n" }) as RemoteStepError;
     expect([deny.code, deny.message]).toEqual(["deny", "This computer's administrator doesn't let Ember act in apps."]);
     expect((await tryWith({ status: "stale" }) as RemoteStepError).code).toBe("stale");
     expect((await tryWith({ status: "stopped" }) as RemoteStepError).code).toBe("stopped");
@@ -237,7 +237,7 @@ describe("askRemote and remote text", () => {
   });
 
   it("makes a remote's text one plain line", () => {
-    expect(cleanRemote("a\u0000b\r\nc\u001b[31m⁦d⁩", 100)).toBe("a b c [31md");
+    expect(cleanRemote("a\u0000b\r\nc\u001b[31m\u2066d\u2069", 100)).toBe("a b c [31md");
     expect(cleanRemote("x".repeat(10), 4)).toBe("xxxx…");
   });
 });
