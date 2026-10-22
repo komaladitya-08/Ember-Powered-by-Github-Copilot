@@ -275,6 +275,17 @@ describe("typing into Windows' command boxes", () => {
     for (const field of ["Address: Documents", "Adresse", "Dirección", "アドレス"]) expect(refusesTyping(rules, into(field, "cmd")), field).toBe(true);
   });
 
+  it("refuses a command line there too: the box passes what follows the program to it", () => {
+    for (const value of ["cmd /k whoami", "powershell -NoExit -Command Get-Process", "wt -d .", "%ComSpec% /c dir", "notepad C:\\x\\notes.txt",
+      "C:\\Windows\\System32\\cmd.exe /k dir", "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -c x", "C:\\Windows\\System32\\cmd /k dir",
+      "%windir%\\System32\\WindowsPowerShell\\v1.0\\powershell -c x", "\\\\server\\share\\setup.msi /quiet", "C:\\x\\run.bat now"]) {
+      expect(refusesTyping(rules, into("Address", value)), value).toBe(true);
+    }
+    for (const value of ["C:\\Users\\ada\\My Documents", "\\\\server\\share\\Q3 reports", "%USERPROFILE%\\Pictures\\Summer 2026", "C:\\Program Files (x86)"]) {
+      expect(refusesTyping(rules, into("Address", value)), value).toBe(false);
+    }
+  });
+
   it("lets a folder's path through, and leaves other apps' address fields alone", () => {
     for (const value of ["C:\\Users\\ada\\Documents", "D:\\", "C:", "\\\\server\\share\\reports", "%USERPROFILE%\\Downloads", "C:\\Program Files\\Git"]) {
       expect(refusesTyping(rules, into("Address", value)), value).toBe(false);

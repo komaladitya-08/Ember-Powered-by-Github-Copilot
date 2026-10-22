@@ -185,10 +185,12 @@ export interface TypingRefusal {
  * a file Windows runs or opens a script with, a terminal by its path with or without ".exe" (Explorer finds the
  * program as the Run box does), or a URI scheme other than a drive letter ("shell:AppsFolder\…" starts an app,
  * "ms-msdt:" a troubleshooter). A folder's path ("C:\Users\ada", "\\server\share", "%USERPROFILE%\Documents") goes.
+ * Each of these may lead a command line too ("cmd /k …", "C:\Windows\System32\cmd.exe /k …"): the box hands what
+ * follows the program to it as arguments, as the Run box does, so the first word counts, and a word's end does too.
  */
-const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?$`
-  + String.raw`|\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|msc|msi|msp|lnk|pif|scr|cpl|hta|reg|url|appref-ms|application|jar|py|pyw)"?$`
-  + String.raw`|[\\/](${[...TERMINALS.win32].map(literal).join("|")})"?$`
+const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?(\s|$)`
+  + String.raw`|\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|msc|msi|msp|lnk|pif|scr|cpl|hta|reg|url|appref-ms|application|jar|py|pyw)"?(\s|$)`
+  + String.raw`|[\\/](${[...TERMINALS.win32].map(literal).join("|")})"?(\s|$)`
   + String.raw`|^"?[a-z][\w+.-]+:`, "i");
 
 /** File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' main languages. */
