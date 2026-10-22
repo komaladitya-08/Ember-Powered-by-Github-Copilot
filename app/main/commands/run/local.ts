@@ -9,6 +9,12 @@
  * password-like prompt (L2). Stop, the kill switch and timeouts run kill.ts's ladder. A POSIX run whose output ends
  * without the launcher's start marker failed to start, with its stderr as the reason.
  *
+ * After an Ember crash (L10's residual): a Windows run ends with its job; a POSIX run's processes go on until they write
+ * to their closed output (script(1) then dies of SIGPIPE and its PTY hangs up the session; a pipe run's shell gets
+ * SIGPIPE) or end by themselves. util-linux 2.32's script ends the session at stdin's EOF, but newer ones (checked with
+ * 2.39) only pass the EOF on, so a quiet `sleep 100` outlives Ember. No watchdog rides in the launcher: its text is fixed
+ * and shared with WSL and remote runs, and a watchdog would itself carry the run's marker.
+ *
  * Plain Node, no Electron: the remote agent runs the same code (createRunner with `remote: true`). koffi is never
  * loaded here (the job host loads it, on Windows only). Paths follow the target's rules (node:path/posix or /win32).
  */
