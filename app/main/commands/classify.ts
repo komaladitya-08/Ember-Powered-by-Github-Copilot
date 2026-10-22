@@ -41,6 +41,8 @@ type OS = ClassifyContext["os"];
 export const MAX_COMMAND_CHARS = 8000;
 /** At most this many paths are probed (§3.6); more → unclear. */
 export const MAX_PROBE = 64;
+/** At most this many scripts are read and classified per command (L8, the lead's ruling). */
+export const MAX_SCRIPTS = 8;
 
 /**
  * What classifyCommand returns beyond the contract (an extension in CL's own files; decide.ts reads it, everyone else
@@ -51,6 +53,21 @@ export interface ClassificationExtra extends Classification {
   cwd: string;
   /** A WSL command touching the drive mounts, a Windows-form path or a Windows program (§3.8.2's Windows line). */
   windowsReach: boolean;
+  /**
+   * Shell scripts this command runs by path (`sh x.sh`, `./x.sh`, `source x.sh`, `powershell -File x.ps1`, `cmd
+   * x.bat`): the flow reads each one and classifies its text as a nested command (L8, the lead's ruling), so a
+   * dangerous script asks and a refusal refuses. Interpreter scripts (node, python…) are not here: they run like a
+   * build (L8 unchanged).
+   */
+  scripts: ScriptRef[];
+}
+
+/** A shell script to read and classify (ClassificationExtra.scripts). */
+export interface ScriptRef {
+  /** Its path, resolved on the target (absolute). */
+  path: string;
+  /** How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (the `#!` line names the shell). */
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -159,6 +176,7 @@ class Classifier {
   needsGit = false;
   programs: string[] = [];
   windowsReach = false;
+  scripts: ScriptRef[] = [];
   simpleCount = 0;
   /** The command being classified (index into commands), -1 before the first. */
   at = -1;
@@ -389,6 +407,20 @@ class Classifier {
     }
   }
 
+  /**
+   * Records a shell script this command runs by path, so the flow reads its text and classifies it (L8, the lead's
+   * ruling). Only a resolvable path on the target's own filesystem, not one this task downloaded (already escape),
+   * not a foreign scope's (another system Ember can't read), and only the first few (MAX_SCRIPTS).
+   */
+  recordScript(a: Arg, as: ScriptRef["as"], sc: Scope): void {
+    if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || a.glob || sc.foreign) return;
+    if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
+    if (this.isDownloaded(a, sc)) return;
+    const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    if (this.scripts.length >= MAX_SCRIPTS || this.scripts.some(r => r.path === abs && r.as === as)) return;
+    this.scripts.push({ path: abs, as });
+  }
+
   /** Records a file this command downloads (§3.4.7), resolved against the scope's folder. */
   download(p: string | null, sc: Scope): void {
     if (!p || !sc.cwd) return;
@@ -419,7 +451,7 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
   return {
     shell, family: SHELL_FAMILY[shell] ?? "posix",
     findings: [{ cls: "unclear", rule: "internal", says: SAYS.unclear, program: "", objects: [], widening: [], at: -1 }],
-    refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], cwd, windowsReach: false,
+    refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], cwd, windowsReach: false, scripts: [],
   };
 }
 
@@ -610,6 +642,7 @@ class Engine extends Classifier {
       commands: this.commands,
       cwd: this.ctx.cwd,
       windowsReach: this.windowsReach,
+      scripts: this.scripts,
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
     // row covers a finding of such a text.
@@ -1124,6 +1157,8 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      else if (sc.family === "powershell" && /\.ps1$/i.test(pn.base)) this.recordScript(nameArg, "powershell", sc);
+      else if (sc.family === "posix" && pn.ext !== ".bat" && pn.ext !== ".cmd") this.recordScript(nameArg, "shebang", sc);
       scriptName(h, nameArg.v ?? "");
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
@@ -1139,6 +1174,7 @@ class Engine extends Classifier {
     if (pn.ext === ".bat" || pn.ext === ".cmd") {
       // A batch file runs under cmd, which re-reads its arguments (critique wsl-3).
       if (!pn.isPath) scriptName(h, nameArg.v ?? "");
+      if (!this.isDownloaded(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
       if (args.some(a => a.v === null || /[&|<>^%!]/.test(a.v))) this.unclear("unclear.batch-args", "cmd would read its arguments as commands.");
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
@@ -2160,7 +2196,7 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   }
   const script = p.operands[0];
   if (script && !has(p, "s")) {
-    runScript(h, script);
+    runScript(h, script, posixShell === "zsh" ? "zsh" : posixShell ? "sh" : undefined);
     if (!posixShell) h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`);
     return;
   }
@@ -2183,7 +2219,7 @@ function intoInterpreter(h: H): void {
 }
 
 /** A script given to an interpreter or shell: judged by name, refused if Ember's, escape if downloaded in this task. */
-function runScript(h: H, script: Arg): void {
+function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   if (script.v === null) {
     if (script.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     else h.e.unclear("unclear.script", "It runs a script Ember can't name.");
@@ -2192,6 +2228,7 @@ function runScript(h: H, script: Arg): void {
   if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
   h.e.usePath(script, "exec", h.sc);
   if (h.e.isDownloaded(script, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 
@@ -2280,7 +2317,7 @@ reg(NATIVE, ["source", "."], h => {
     else h.e.unclear("unclear.source", "It runs a script Ember can't name.");
     return;
   }
-  runScript(h, script);
+  runScript(h, script, h.sc.shell === "zsh" ? "zsh" : "sh");
 });
 
 reg(NATIVE, ["eval"], h => {
@@ -4363,7 +4400,7 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
     h.e.unclear("unclear.powershell-option", "Ember can't tell what PowerShell would run.");
     return;
   }
-  if (file) { runScript(h, file); return; }
+  if (file) { runScript(h, file, "powershell"); return; }
   if (text === null) { h.e.unclear("unclear.shell-text", "It runs PowerShell text Ember can't see."); return; }
   if (text === undefined || interactiveShell) {
     if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") { intoInterpreter(h); return; }

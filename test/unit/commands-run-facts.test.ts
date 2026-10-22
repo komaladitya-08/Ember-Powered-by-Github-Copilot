@@ -3,7 +3,7 @@ import posix from "node:path/posix";
 import win32 from "node:path/win32";
 import type { RunnerFacts } from "../../app/main/commands/types";
 import { localFactsWith, powershellPath, type FactProbes } from "../../app/main/commands/run/facts";
-import { inspectPaths, MAX_INSPECT, type InspectFs } from "../../app/main/commands/run/inspect";
+import { inspectPaths, MAX_INSPECT, MAX_SCRIPT_BYTES, readScriptText, type InspectFs, type ScriptFile } from "../../app/main/commands/run/inspect";
 import { findGit, GIT_ARGV, GIT_FACTS_MS, readGitFacts, type GitRun } from "../../app/main/commands/run/git-facts";
 
 const ember: RunnerFacts["ember"] = { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ };
@@ -194,6 +194,55 @@ describe("inspectPaths", () => {
     const got = await inspectPaths(paths, "\\\\fileserver\\work", { os: "win32", fs: spy });
     expect(got).toEqual(paths.map(() => ({ exists: null, real: null })));
     expect(touched).toEqual([]);
+  });
+});
+
+// ─────────────── readScriptText (L8, the lead's ruling) ───────────────
+
+/** A fake open() that serves `files` (path → bytes), with a size and whether each is a regular file. */
+function openFs(files: Record<string, { bytes: Uint8Array; dir?: boolean }>): Pick<InspectFs, "open"> {
+  return {
+    open: async p => {
+      const hit = files[p];
+      if (!hit) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      const f: ScriptFile = {
+        stat: async () => ({ size: hit.bytes.length, isFile: () => !hit.dir }),
+        read: async n => hit.bytes.subarray(0, n),
+        close: async () => undefined,
+      };
+      return f;
+    },
+  };
+}
+const bytesOf = (s: string) => new TextEncoder().encode(s);
+
+describe("readScriptText", () => {
+  it("reads a regular file's text, relative paths joined to cwd, on the target's rules", async () => {
+    const fs = openFs({ "/home/ana/proj/t.sh": { bytes: bytesOf("rm -rf build\n") } }) as InspectFs;
+    await expect(readScriptText("t.sh", "/home/ana/proj", { os: "linux", fs })).resolves.toBe("rm -rf build\n");
+    await expect(readScriptText("/home/ana/proj/t.sh", "/elsewhere", { os: "linux", fs })).resolves.toBe("rm -rf build\n");
+    const wfs = openFs({ "C:\\Users\\ana\\build.bat": { bytes: bytesOf("del /q *") } }) as InspectFs;
+    await expect(readScriptText("build.bat", "C:\\Users\\ana", { os: "win32", fs: wfs })).resolves.toBe("del /q *");
+  });
+
+  it("stops at the cap, and reads nothing that isn't a regular file, is missing, or reaches another host", async () => {
+    const big = openFs({ "/x/huge.sh": { bytes: new Uint8Array(MAX_SCRIPT_BYTES + 1) } }) as InspectFs;
+    await expect(readScriptText("/x/huge.sh", "/", { os: "linux", fs: big })).resolves.toBeNull();
+    const dir = openFs({ "/x": { bytes: new Uint8Array(0), dir: true } }) as InspectFs;
+    await expect(readScriptText("/x", "/", { os: "linux", fs: dir })).resolves.toBeNull();
+    const empty = openFs({}) as InspectFs;
+    await expect(readScriptText("/missing.sh", "/", { os: "linux", fs: empty })).resolves.toBeNull();
+    await expect(readScriptText("x\0y", "/", { os: "linux", fs: empty })).resolves.toBeNull();
+    // A UNC or device path is never opened (as inspect avoids): a lookup there reaches another host.
+    await expect(readScriptText("\\\\server\\share\\x.bat", "C:\\", { os: "win32", fs: empty })).resolves.toBeNull();
+    // Only up to the cap is read from a file at the limit.
+    const atCap = openFs({ "/x/s.sh": { bytes: bytesOf("echo " + "a".repeat(MAX_SCRIPT_BYTES)) } }) as InspectFs;
+    const text = await readScriptText("/x/s.sh", "/", { os: "linux", fs: atCap });
+    expect(text).toBeNull(); // over the cap once "echo " is added
+  });
+
+  it("returns null when the filesystem can't open a file (no readScript capability)", async () => {
+    await expect(readScriptText("/x", "/", { os: "linux", fs: { lstat: async () => ({ isSymbolicLink: () => false }), realpath: async p => p, readlink: async () => "" } })).resolves.toBeNull();
   });
 });
 

@@ -116,6 +116,7 @@ function harness(o: {
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
+  readScript?: (path: string, cwd: string) => Promise<string | null>;
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -135,6 +136,7 @@ function harness(o: {
     target: binding.id,
     facts: async () => facts,
     inspect: o.inspect ?? (async (paths: string[]) => paths.map(p => o.paths?.(p) ?? { exists: true, real: p })),
+    ...(o.readScript ? { readScript: o.readScript } : {}),
     gitFacts: async () => o.git ?? null,
     start: (spec: RunSpec) => { starts.push(spec); const r = scriptedRun(spec, o.run?.(spec, starts.length) ?? {}); runs.push(r); return r; },
     stopAll: async () => undefined,
@@ -211,6 +213,69 @@ describe("CL's own judge (the default)", () => {
     expect(r.textResultForLlm).not.toContain("Ignore previous");
     expect(h.tainted).toEqual(["output.ignore-instructions"]);
     expect(r.textResultForLlm).toContain("(The output contained text that looks like instructions; it was not followed.");
+  });
+});
+
+describe("reading a shell script before it runs (L8, the lead's ruling)", () => {
+  const WRITTEN = { exists: true, real: "" } as const;
+  /** CL's own judge, a local target, the script's text served by readScript (null: unreadable). */
+  const scriptHarness = (script: string | null, words = "") => {
+    setCommandJudge(null);
+    return harness({
+      binding: LOCAL, words, answers: ["deny"],
+      paths: p => ({ exists: true, real: p }),
+      readScript: async () => script,
+      run: () => ({ output: ["done\n"] }),
+    });
+  };
+  void WRITTEN;
+
+  it("asks when `sh t.sh` runs a script that deletes, and shows the script's finding on the card", async () => {
+    const h = scriptHarness("rm -rf build\n");
+    const r = await call(h, { target: "this computer", command: "sh t.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(h.starts).toEqual([]);
+    const card = h.asked[0].panel as { card: CommandCard };
+    expect(card.card.says.some(l => /delete|remove/i.test(l))).toBe(true);
+    expect(h.audit.filter(e => e.phase === "decided").at(-1)?.verdict).toBe("ask");
+  });
+
+  it("refuses when the script would touch Ember's own files, without asking", async () => {
+    const h = scriptHarness("cat /home/ana/.config/ember/settings.json\n");
+    const r = await call(h, { target: "this computer", command: "bash build.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Not allowed: Ember won't run this/);
+    expect(h.asked).toEqual([]);
+    expect(h.starts).toEqual([]);
+  });
+
+  it("asks a script that reads a secret, even one the user asked to run (the script's findings never announce)", async () => {
+    const h = scriptHarness("cat ~/.ssh/id_rsa\n", "run build.sh");
+    const r = await call(h, { target: "this computer", command: "sh build.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect(h.announced).toEqual([]);
+  });
+
+  it("runs an ordinary script without asking", async () => {
+    const h = scriptHarness("echo building\nmake build\n");
+    const r = await call(h, { target: "this computer", command: "sh ok.sh" });
+    expect(r.resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("leaves today's behaviour when the script can't be read, isn't a shell script, or the runner can't read one", async () => {
+    // Unreadable (readScript null): the command runs (the command line itself is ordinary).
+    const unreadable = scriptHarness(null);
+    expect((await call(unreadable, { target: "this computer", command: "sh t.sh" })).resultType).toBe("success");
+    // Not a shell script: a direct `./x` whose #! names no shell is not classified.
+    const notShell = scriptHarness("\x7fELF binary\n");
+    expect((await call(notShell, { target: "this computer", command: "./x" })).resultType).toBe("success");
+    // A runner with no readScript (a remote/WSL runner today): nothing is read.
+    setCommandJudge(null);
+    const noCap = harness({ binding: LOCAL, paths: p => ({ exists: true, real: p }), run: () => ({ output: ["done\n"] }) });
+    expect((await call(noCap, { target: "this computer", command: "sh t.sh" })).resultType).toBe("success");
   });
 });
 

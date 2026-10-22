@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { ShellId } from "../../app/main/commands/types";
-import { classifyCommand, MAX_COMMAND_CHARS, mayBecomeWords, unseenName } from "../../app/main/commands/classify";
+import { classifyCommand, MAX_COMMAND_CHARS, mayBecomeWords, unseenName, type ClassificationExtra } from "../../app/main/commands/classify";
 import { lexPosix } from "../../app/main/commands/lex-posix";
 import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
@@ -172,6 +172,40 @@ describe("variable names Ember can't see (name-taking built-ins, D4.3 g)", () =>
     expect(unseenName("read", [lit("-r"), lit("-p"), unres("$msg"), lit("line")])).toBe(true);
     expect(unseenName("export", [unres("NODE_ENV=\"$mode\"")])).toBe(false);
     expect(unseenName("declare", [unres("\"greeting=hello $name\"")])).toBe(false);
+  });
+});
+
+describe("shell scripts to read (L8, the lead's ruling)", () => {
+  const scripts = (cmd: string, shell: "bash" | "zsh" | "sh" | "powershell" | "cmd", ctx: "linux" | "win32") =>
+    (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts;
+
+  it("records the shell scripts a command runs by path, with how to read each", () => {
+    expect(scripts("sh t.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/t.sh", as: "sh" }]);
+    expect(scripts("bash ./scripts/deploy.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/scripts/deploy.sh", as: "sh" }]);
+    expect(scripts("zsh x.zsh", "zsh", "linux")).toEqual([{ path: "/home/ana/proj/x.zsh", as: "zsh" }]);
+    expect(scripts("dash x.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/x.sh", as: "sh" }]);
+    expect(scripts("source env.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/env.sh", as: "sh" }]);
+    expect(scripts(". ./env.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/env.sh", as: "sh" }]);
+    expect(scripts("./deploy.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/deploy.sh", as: "shebang" }]);
+    expect(scripts("powershell -File deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
+    expect(scripts(".\\deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
+    expect(scripts("& .\\deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
+    expect(scripts("cmd /c build.bat", "cmd", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\build.bat", as: "cmd" }]);
+    expect(scripts("build.bat", "cmd", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\build.bat", as: "cmd" }]);
+  });
+
+  it("records no script for an interpreter, a downloaded file, `sh -c`, or stdin", () => {
+    expect(scripts("node app.js", "bash", "linux")).toEqual([]);
+    expect(scripts("python x.py", "bash", "linux")).toEqual([]);
+    expect(scripts("deno run main.ts", "bash", "linux")).toEqual([]);
+    expect(scripts("sh -c 'echo hi'", "bash", "linux")).toEqual([]);
+    expect(scripts("sh", "bash", "linux")).toEqual([]);
+    // A bare `deploy.ps1` (no .\) does not run the local file in PowerShell.
+    expect(scripts("deploy.ps1", "powershell", "win32")).toEqual([]);
+    // A file this task downloaded is already escape.run-downloaded, not read.
+    const dl = classifyCommand("sh get.sh", "bash", contextOf("linux", ["/home/ana/proj/get.sh"])) as ClassificationExtra;
+    expect(dl.scripts).toEqual([]);
+    expect(dl.findings.map(f => f.rule)).toContain("escape.run-downloaded");
   });
 });
 

@@ -338,4 +338,24 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.cards[0].says[0]).toBe("Commands here run as root (the administrator), so each one asks first.");
     expect(result.resultType).toBe("denied");
   }, 20_000);
+
+  it("reads a shell script before running it (L8): `sh t.sh` that deletes asks, and nothing is deleted on deny", async () => {
+    w.verdicts = () => "deny";
+    fs.writeFileSync(path.join(w.work, "t.sh"), "#!/bin/sh\nrm -rf build\n");
+    const { result } = await run("sh t.sh", "");
+    expect(w.announced).toEqual([]);
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says.join("\n")).toMatch(/delete|remove/i);
+    expect(result).toMatchObject({ resultType: "denied" });
+    expect(fs.existsSync(path.join(w.work, "build", "out.o"))).toBe(true);
+  }, 20_000);
+
+  it("runs an ordinary `sh ok.sh` without asking", async () => {
+    fs.writeFileSync(path.join(w.work, "ok.sh"), "#!/bin/sh\necho hello from the script\n");
+    const { result } = await run("sh ok.sh", "");
+    expect(w.cards).toEqual([]);
+    expect(w.announced).toEqual([]);
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toContain("hello from the script");
+  }, 20_000);
 });

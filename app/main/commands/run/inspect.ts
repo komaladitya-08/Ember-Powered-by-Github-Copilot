@@ -27,12 +27,31 @@ export interface InspectFs {
   /** The real path with the OS's own semantics; rejects when it can't be resolved. */
   realpath(p: string): Promise<string>;
   readlink(p: string): Promise<string>;
+  /** Opens a file for reading its first bytes (readScript); rejects when it can't be opened. Absent: no script read. */
+  open?(p: string): Promise<ScriptFile>;
+}
+
+/** A file open for reading a script's start (readScript). */
+export interface ScriptFile {
+  /** Its byte length and whether it is a regular file. */
+  stat(): Promise<{ size: number; isFile(): boolean }>;
+  /** Reads up to `n` bytes from the start into a buffer. */
+  read(n: number): Promise<Uint8Array>;
+  close(): Promise<void>;
 }
 
 const NODE_FS: InspectFs = {
   lstat: p => fs.promises.lstat(p),
   realpath: p => fs.promises.realpath(p),
   readlink: p => fs.promises.readlink(p),
+  open: async p => {
+    const fh = await fs.promises.open(p, "r");
+    return {
+      stat: async () => fh.stat(),
+      read: async n => { const buf = Buffer.alloc(n); const { bytesRead } = await fh.read(buf, 0, n, 0); return buf.subarray(0, bytesRead); },
+      close: () => fh.close(),
+    };
+  },
 };
 
 /** lstat's "not there" answers; anything else (EACCES, EIO) means "couldn't tell". */
@@ -97,5 +116,40 @@ export async function inspectPaths(paths: readonly string[], cwd: string, o: { o
     return await Promise.all(paths.map((p, i) => (i < MAX_INSPECT ? one(p).catch(() => unknown) : Promise.resolve(unknown))));
   } catch {
     return paths.map(() => unknown);
+  }
+}
+
+/** At most this many bytes of a script are read and classified (L8, the lead's ruling: a 64 KiB cap). */
+export const MAX_SCRIPT_BYTES = 64 * 1024;
+
+/**
+ * The text of a shell script Ember is about to run, so the classifier can judge what it does (L8, the lead's ruling):
+ * the target's own filesystem, a regular file no larger than `maxBytes`, decoded as UTF-8. Never throws; null when the
+ * path can't be read, is too big, isn't a regular file, or reaches another host (a UNC or device path on Windows).
+ * Paths follow the target's rules; a relative one is joined to `cwd`.
+ */
+export async function readScriptText(path: string, cwd: string, o: { os: OS; maxBytes?: number; fs?: InspectFs }): Promise<string | null> {
+  const P = o.os === "win32" ? win32 : posix;
+  const files = o.fs ?? NODE_FS;
+  const maxBytes = o.maxBytes ?? MAX_SCRIPT_BYTES;
+  if (typeof path !== "string" || path === "" || path.includes("\0")) return null;
+  let abs: string;
+  if (P.isAbsolute(path)) abs = P.normalize(path);
+  else if (P.isAbsolute(cwd)) abs = P.join(cwd, path);
+  else return null;
+  // A UNC or device path would open a connection to another host before the user was asked (as inspect avoids).
+  if (o.os === "win32" && /^[\\/]{2}/.test(abs)) return null;
+  if (!files.open) return null;
+  let fh: ScriptFile | null = null;
+  try {
+    fh = await files.open(abs);
+    const st = await fh.stat();
+    if (!st.isFile() || st.size > maxBytes) return null;
+    const bytes = await fh.read(Math.min(st.size, maxBytes));
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return null; // missing, unreadable, or not a file: today's behaviour (L8) unchanged
+  } finally {
+    if (fh) await fh.close().catch(() => undefined);
   }
 }

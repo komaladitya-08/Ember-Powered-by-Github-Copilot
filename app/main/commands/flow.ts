@@ -26,10 +26,12 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
-import { classifyCommand } from "./classify";
+import { classifyCommand, type ClassificationExtra, type ScriptRef } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
+import posix from "node:path/posix";
+import win32 from "node:path/win32";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
 import { outputTaint } from "./taint";
@@ -37,7 +39,7 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId,
+  type RunSpec, type ShellId, type Finding,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -282,6 +284,64 @@ async function factsOf(ctx: CommandFlowContext): Promise<RunnerFacts | null> {
   const facts = await within(runner.facts().then(f => f as RunnerFacts | null), FACTS_MS, null);
   if (facts) factsCache.set(ctx.state, { runner, facts });
   return facts;
+}
+
+/** The shell a script's `#!` line names (L8): a POSIX shell, PowerShell, or null (not a shell script → L8 unchanged). */
+function shebangShell(text: string): ShellId | null {
+  const m = /^#![ \t]*(\S+)(?:[ \t]+(\S+))?/.exec(text);
+  if (!m) return null;
+  // `#!/usr/bin/env bash` names the shell in the second word; otherwise the interpreter's basename.
+  const prog = (/\/env$/.test(m[1]) || m[1] === "env" ? m[2] ?? "" : m[1]).split(/[\\/]/).pop() ?? "";
+  const name = prog.toLowerCase().replace(/\.exe$/, "");
+  if (name === "bash" || name === "zsh") return name;
+  if (name === "sh" || name === "dash" || name === "ash" || name === "ksh") return "sh";
+  if (name === "pwsh" || name === "powershell") return "powershell";
+  return null;
+}
+
+/** How to read a script's text, given the way the command runs it (ScriptRef.as) and its `#!` line for a direct run. */
+function scriptShell(as: ScriptRef["as"], text: string): ShellId | null {
+  switch (as) {
+    case "bash": return "bash";
+    case "zsh": return "zsh";
+    case "sh": return "sh";
+    case "powershell": return "powershell";
+    case "cmd": return "cmd";
+    case "shebang": return shebangShell(text);
+  }
+}
+
+/**
+ * Reads each shell script the command runs and classifies its text as a nested command (L8, the lead's ruling): the
+ * script's own refusal and findings join the command's, the findings tagged "in-script" so the user's words for the
+ * command never announce the script (every dangerous script asks). The runner may not read scripts (a remote or WSL
+ * runner today): then nothing is read and the command's own classification stands, as the ruling allows.
+ */
+async function judgeScripts(cls: Classification, runner: CommandRunner, j: CommandJudge, env: {
+  os: OS; home: string; ember: RunnerFacts["ember"]; wsl: RunnerFacts["wsl"]; downloaded: Set<string>;
+}): Promise<Classification> {
+  const refs = (cls as Partial<ClassificationExtra>).scripts ?? [];
+  const read = (runner as CommandRunner & { readScript?(path: string, cwd: string): Promise<string | null> }).readScript;
+  if (refs.length === 0 || typeof read !== "function") return cls;
+  const flavour = env.os === "win32" ? win32 : posix;
+  const extra: Finding[] = [];
+  let refuse = cls.refuse;
+  for (const ref of refs) {
+    const text = await read.call(runner, ref.path, flavour.dirname(ref.path)).catch(() => null);
+    if (text === null || text === "") continue;
+    const shell = scriptShell(ref.as, text);
+    if (shell === null) continue; // not a shell script: today's behaviour (L8) unchanged
+    const dir = flavour.dirname(ref.path);
+    const sctx: ClassifyContext = {
+      os: env.os, home: env.home, cwd: dir, ember: env.ember, downloaded: env.downloaded,
+      ...(env.wsl ? { wsl: { mountRoot: env.wsl.mountRoot, windows: env.wsl.windows } } : {}),
+    };
+    const inner = j.classifyCommand(text, shell, sctx);
+    refuse ??= inner.refuse;
+    for (const f of inner.findings) extra.push({ ...f, widening: [...f.widening, "in-script"] });
+  }
+  if (!refuse && extra.length === 0) return cls;
+  return { ...cls, refuse, findings: [...cls.findings, ...extra] };
 }
 
 /** Each path's facts, all unknown when the target doesn't answer in time (§3.8.3 step 5). */
@@ -597,6 +657,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
 
   // Step 6: the branch facts a push's announcement needs.
   const git: GitFacts | null = cls.needsGit ? await within(svc.runner.gitFacts(cwd), PROBE_MS, null) : null;
+  if (ctx.isOver()) return STOPPED();
+
+  // Step 6b (L8, the lead's ruling): a shell script the command runs (`sh x.sh`, `./x.sh`, `cmd x.bat`, `powershell
+  // -File x.ps1`) is read from the target and its text classified as a nested command, so a dangerous script asks and
+  // a refusal refuses. Unreadable, too big or not a shell script leaves today's behaviour.
+  cls = await judgeScripts(cls, svc.runner, j, { os: facts.os, home: facts.home, ember: facts.ember, wsl: facts.wsl, downloaded: ctx.state.downloaded });
   if (ctx.isOver()) return STOPPED();
 
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.

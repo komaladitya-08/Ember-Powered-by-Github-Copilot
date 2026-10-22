@@ -162,8 +162,11 @@ function pathToken(obj: CommandObject, w: Words, ctx: Ctx): number {
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
-/** Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb. */
-const ALWAYS_BROADER = new Set(["real-path", "env", "global-option"]);
+/**
+ * Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb, and
+ * a finding that came from inside a script Ember read (the user's words name the command, never the script's text).
+ */
+const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script"]);
 
 /** Recursion words near the operand the user named (§3.7 delete.paths). */
 const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs", "tree", "recursively", "everything", "all"];
