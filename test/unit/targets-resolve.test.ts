@@ -5,7 +5,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, targetOfChoice, targetsNamed, type NamedTarget } from "../../app/main/targets/resolve";
+import {
+  NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, targetOfChoice, targetsNamed, type NamedTarget,
+} from "../../app/main/targets/resolve";
 
 const local: NamedTarget = { id: "local", names: ["This computer"] };
 const build: NamedTarget = { id: "ssh:build-01", names: ["build-01", "build-01.example.com"] };
@@ -136,5 +138,30 @@ describe("bindTarget (§2.3)", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.why).toMatch(/offer_connect/);
     expect(bind("open the logs please", "build-02")).toEqual({ ok: false, why: NOT_NAMED });
+  });
+});
+
+describe("otherTargetsNamed (D4.4's wrong-target guard)", () => {
+  it("finds every other computer the words name anywhere, place word or not", () => {
+    expect(otherTargetsNamed("build-01 delete build/", all, "local")).toEqual(["ssh:build-01"]);
+    expect(otherTargetsNamed("delete build/ then tell build zero one", all, "local")).toEqual(["ssh:build-01"]);
+    expect(otherTargetsNamed("copy it from ubuntu to debian", all, "local")).toEqual(["wsl:Ubuntu", "wsl:Debian"]);
+    expect(otherTargetsNamed("on build-01 delete build/", all, "ssh:build-01")).toEqual([]);
+  });
+
+  it("names this computer by its fixed words, but not by a bare \"here\"", () => {
+    expect(otherTargetsNamed("delete build/ on this computer", all, "ssh:build-01")).toEqual(["local"]);
+    expect(otherTargetsNamed("delete build/ locally", all, "ssh:build-01")).toEqual(["local"]);
+    expect(otherTargetsNamed("delete build/ here", all, "ssh:build-01")).toEqual([]);
+    expect(otherTargetsNamed("delete build/ on this computer", all, "local")).toEqual([]);
+  });
+
+  it("keeps word boundaries, and counts names too short to bind (they bind to the active computer instead)", () => {
+    expect(otherTargetsNamed("rebuild01 delete build/", all, "local")).toEqual([]);
+    const pi: NamedTarget = { id: "ssh:pi", names: ["pi"] };
+    expect(bindTarget({ userWords: "delete build/ on pi", targets: [local, pi], active: "local", os: "linux" })).toEqual({ ok: true, id: "local" });
+    expect(otherTargetsNamed("delete build/ on pi", [local, pi], "local")).toEqual(["ssh:pi"]);
+    expect(otherTargetsNamed("delete build/ on pip", [local, pi], "local")).toEqual([]);
+    expect(otherTargetsNamed("delete build/", [local, { id: "ssh:x", names: ["-"] }], "local")).toEqual([]);
   });
 });

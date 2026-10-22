@@ -474,6 +474,15 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
         t.outcome = outcomeOf(exit);
         t.status = statusLine(exit ?? { code: null, signal: null, ended: "failed-to-start", ms: 0, error: "Ember lost track of it" }, { label: c.targetLabel, os: o.os });
         push();
+        // What the run left running carrying its marker, once its runner has looked (§3.13): named on the status line.
+        const left = exit ? stragglersOf(run) : null;
+        if (left && exit) {
+          void left.then(names => {
+            if (!names.length || disposed || !tabs.includes(t)) return;
+            t.status = statusLine({ ...exit, stragglers: names }, { label: c.targetLabel, os: o.os });
+            push();
+          });
+        }
       };
       Promise.resolve(run.done).then(finish, () => finish(null));
       reveal();
@@ -517,6 +526,19 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       if (w) safe("close", () => w.close());
     },
   };
+}
+
+/**
+ * The names a run says it left running (RUN's and WA's runs: `stragglers`, a promise settled after their last sweep or
+ * the look a run that ended by itself gets), as plain strings; null for a run that doesn't say (a remote's).
+ */
+export function stragglersOf(run: RunningCommand): Promise<string[]> | null {
+  const s = (run as RunningCommand & { stragglers?: unknown }).stragglers;
+  if (!s || typeof (s as PromiseLike<unknown>).then !== "function") return null;
+  return Promise.resolve(s as PromiseLike<unknown>).then(
+    v => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string" && n !== "").slice(0, 64) : []),
+    () => [],
+  );
 }
 
 /** A finished run's symbol: done (exit 0), stopped (by the user, its task or the kill switch), else failed. */

@@ -9,6 +9,12 @@
  * password-like prompt (L2). Stop, the kill switch and timeouts run kill.ts's ladder. A POSIX run whose output ends
  * without the launcher's start marker failed to start, with its stderr as the reason.
  *
+ * After an Ember crash (L10's residual): a Windows run ends with its job; a POSIX run's processes go on until they write
+ * to their closed output (script(1) then dies of SIGPIPE and its PTY hangs up the session; a pipe run's shell gets
+ * SIGPIPE) or end by themselves. util-linux 2.32's script ends the session at stdin's EOF, but newer ones (checked with
+ * 2.39) only pass the EOF on, so a quiet `sleep 100` outlives Ember. No watchdog rides in the launcher: its text is fixed
+ * and shared with WSL and remote runs, and a watchdog would itself carry the run's marker.
+ *
  * Plain Node, no Electron: the remote agent runs the same code (createRunner with `remote: true`). koffi is never
  * loaded here (the job host loads it, on Windows only). Paths follow the target's rules (node:path/posix or /win32).
  */
@@ -25,6 +31,7 @@ import { commandEnv, mergeEnv } from "./env";
 import { localFacts, SAFE_POSIX_PATH } from "./facts";
 import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths } from "./inspect";
+import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "./shells";
 import { linesKept, RUN_ID, sweepLocal } from "./sweep";
@@ -64,6 +71,14 @@ const WSL_CWD_BAD = /[\0-\x1f\x7f"\\]/; // eslint-disable-line no-control-regex 
 const DISTRO_NAME = /^[A-Za-z0-9._-]+$/;
 /** An absolute Windows path Ember can hand to CreateProcess as a program. */
 const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
+
+/** What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). */
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM"];
+/**
+ * §3.3.1's non-interactive defaults as a WSL pipe run carries them into the distro (WSLENV takes a variable's value
+ * from Windows' side, so the values are fixed here): a program that wants an answer fails at once instead of waiting.
+ */
+export const WSL_PIPE_DEFAULTS: Readonly<Record<string, string>> = { GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" };
 
 /** A UTF-16 surrogate without its pair: it can't be encoded as UTF-8, and Node would hand the shell U+FFFD in its place. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -121,8 +136,10 @@ export function launchArgv(
         EMBER_RUN_ID: spec.runId,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),
         TERM: pty ? "xterm-256color" : "dumb",
+        // A pipe run can't take typing: §3.3.1's non-interactive defaults, fixed values, cross into the distro too.
+        ...(pty ? {} : WSL_PIPE_DEFAULTS),
         // Replaces the user's WSLENV: only these cross into the distro (X11 and the rest of Windows' don't).
-        WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u",
+        WSLENV: [...WSLENV_RUN, ...(pty ? [] : Object.keys(WSL_PIPE_DEFAULTS))].map(n => `${n}/u`).join(":"),
       },
     };
   }
@@ -161,8 +178,8 @@ export function launchArgv(
   };
 }
 
-/** The secret tracker (§3.11; CL's `commands/prompts.ts` exports the same shape with trackSecretPrompts). */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+/** CL's secret tracker (§3.11 step 2; `commands/prompts.ts`), fed the run's output decoded as a stream. */
+export type { SecretTracker };
 
 /** What a run kept for shaping (§3.10, §3.11). */
 export interface KeptOutput {
@@ -349,7 +366,7 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
     inspect: (paths, cwd) => inspectPaths(paths, cwd, { os: o.os }),
     gitFacts: cwd => readGitFacts(cwd, gitRunner({ os: o.os, env: o.env, extraPath: o.extraPath })),
     isDir: p => fs.promises.stat(p).then(s => s.isDirectory(), () => false),
-    tracker: standInSecretTracker,
+    tracker: trackSecretPrompts,
   };
 }
 
@@ -820,44 +837,7 @@ class OutputKeep {
   }
 }
 
-/** §3.11 step 2's prompt pattern: the output so far ends, without a newline, in a line asking for a secret. */
-const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
-/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a line is matched or a reason is shown. */
+/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a failed start's reason is shown. */
 const TERMINAL_CODES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g; // eslint-disable-line no-control-regex -- terminal codes are what's removed
 /** Control characters other than tab and newline. */
 const OTHER_CONTROLS = /[\0-\x08\x0b-\x1f\x7f]/g; // eslint-disable-line no-control-regex -- control characters are what's removed
-
-/**
- * A stand-in for CL's trackSecretPrompts (§3.11 step 2) until package CL merges: a span opens where the output so far
- * ends, without a newline, in a line matching SECRET_PROMPT, and closes at the first newline the program prints after
- * the user's next Enter; on a run that can't take typing nothing closes it, so it runs to the end of the output.
- */
-function standInSecretTracker(o: { interactive: boolean }): SecretTracker {
-  const done: { from: number; to: number }[] = [];
-  let length = 0;
-  let line = "";
-  let open: number | null = null;
-  let entered = false;
-  return {
-    output(text) {
-      if (open !== null && entered) {
-        const nl = text.indexOf("\n");
-        if (nl >= 0) {
-          done.push({ from: open, to: length + nl });
-          open = null;
-          entered = false;
-        }
-      }
-      length += text.length;
-      const nl = text.lastIndexOf("\n");
-      line = nl >= 0 ? text.slice(nl + 1) : (line + text).slice(-512);
-      if (open === null && SECRET_PROMPT.test(line.replace(TERMINAL_CODES, "").replace(/\r/g, ""))) open = length;
-    },
-    enter() {
-      if (open !== null && o.interactive) entered = true;
-    },
-    spans() {
-      return open === null ? [...done] : [...done, { from: open, to: length }];
-    },
-  };
-}

@@ -29,10 +29,13 @@ import type { TargetId } from "../../shared/targets";
 import type {
   CommandRunner, GitFacts, JobHostRef, PathFact, RunExit, RunningCommand, RunSpec, RunnerFacts, ShellId, WindowsContext,
 } from "../commands/types";
-import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../commands/run/shells";
+import { commandEnv } from "../commands/run/env";
+import { LaunchError, launchArgv } from "../commands/run/local";
+import { sweepArgs, sweepScript, sweptNames } from "../commands/run/sweep";
+import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
 import type { WslDistro } from "./types";
 import { decodeMessage, decodeWsl } from "./decode";
-import { BOOT_TIMEOUT_MS, WSL_SPAWN_OPTIONS, envDelete, envSet, jobHostArgv, type WslChild, type WslExec, type WslSpawn } from "./discover";
+import { BOOT_TIMEOUT_MS, WSL_SPAWN_OPTIONS, envSet, type WslChild, type WslExec, type WslSpawn } from "./discover";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fixed scripts (stdin only)
@@ -63,18 +66,8 @@ export const GIT_SCRIPT = [
   "u=$(git rev-parse --abbrev-ref '@{u}' 2>/dev/null); printf 'upstream=%s\\n' \"$u\"",
 ].join("\n");
 
-/**
- * The in-distro sweep (§3.13) with its two arguments, the signal and the run id (`sh -s -- <SIGNAL> <runId>`): every
- * own-uid process whose environment carries `EMBER_RUN_ID=<runId>` gets the signal, and is named on stdout ("pid
- * comm"), so the last sweep can name what is still running. The design's one-liner plus that naming line.
- */
-export const SWEEP_SCRIPT = [
-  "for p in /proc/[0-9]*; do",
-  "  grep -qz \"^EMBER_RUN_ID=$2\\$\" \"$p/environ\" 2>/dev/null || continue",
-  "  kill -$1 \"${p#/proc/}\" 2>/dev/null",
-  "  printf '%s %s\\n' \"${p#/proc/}\" \"$(cat \"$p/comm\" 2>/dev/null)\"",
-  "done",
-].join("\n");
+/** The in-distro sweep (§3.13): RUN's, which also names what it found (`<pid> <comm>` lines) for the status line. */
+export const SWEEP_SCRIPT = sweepScript;
 
 /** The boot id of the distro's kernel (SA's same-machine rule, §5.1.14): read only from a running WSL2 distro. */
 export const BOOT_ID_SCRIPT = "cat /proc/sys/kernel/random/boot_id";
@@ -255,48 +248,15 @@ export function parseGitFacts(text: string): GitFacts | null {
 // The run's environment and argv (§3.3, §3.3.1)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The variables that cross into the distro for a run (WSLENV, each `/u`: from Windows into WSL only). */
-export const WSLENV_RUN = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM"] as const;
-/** §3.3.1's non-interactive defaults, which pipe runs also send across (a program that wants a password fails at once). */
-export const NONINTERACTIVE: Readonly<Record<string, string>> = { GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" };
-
-/** §3.3.1's removals (names compared without regard to case on Windows). */
-const REMOVE_EXACT = [
-  "NODE_OPTIONS", "NODE_PATH", "NODE_DEBUG", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "BASH_ENV", "ENV", "ZDOTDIR",
-  "PROMPT_COMMAND", "PS1", "PS2", "PS3", "PS4", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
-  // appEnv's repairs (hands/system.ts): GUI apps a command starts stay readable.
-  "CHROME_DESKTOP", "NO_AT_BRIDGE", "APPDIR", "APPIMAGE", "ARGV0", "OWD",
-];
-const REMOVE_PREFIX = ["EMBER_", "ELECTRON_", "COPILOT_"];
-
 /**
- * The Windows side's environment of a WSL run (§3.3.1 applied with Windows' case rules; written here from §3.3.1
- * because RUN's `commandEnv` hadn't merged: the same rules, `os: "win32"`, `remote: false`, no extra PATH): Ember's,
- * Electron's, Node's and Copilot's variables and the sign-in tokens removed, no start-up code variables, appEnv's
- * repairs, TERM and EMBER_RUN_ID, and on pipe runs the non-interactive defaults with SUDO_ASKPASS/SSH_ASKPASS removed.
- * Only what WSLENV lists reaches the distro; the rest is what wsl.exe and interop's Windows programs see.
+ * The Windows side's environment of a WSL run: RUN's `commandEnv` (§3.3.1) for Windows (`os: "win32"`, names compared
+ * without regard to case), not a remote, no extra PATH: Ember's, Electron's, Node's and Copilot's variables and the
+ * sign-in tokens removed, no start-up code variables, appEnv's repairs, TERM and EMBER_RUN_ID, and on pipe runs the
+ * non-interactive defaults with SUDO_ASKPASS/SSH_ASKPASS removed. Only what WSLENV lists reaches the distro; the rest is
+ * what wsl.exe and interop's Windows programs see.
  */
 export function windowsRunEnv(base: NodeJS.ProcessEnv, o: { pty: boolean; runId: string }): Record<string, string> {
-  const remove = new Set(REMOVE_EXACT.map(n => n.toUpperCase()));
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) {
-    const up = k.toUpperCase();
-    if (v === undefined || remove.has(up) || REMOVE_PREFIX.some(p => up.startsWith(p))) continue;
-    env[k] = v;
-  }
-  const original = Object.entries(env).find(([k]) => k.toUpperCase() === "ORIGINAL_XDG_CURRENT_DESKTOP");
-  if (original) {
-    envSet(env, "XDG_CURRENT_DESKTOP", original[1]);
-    envDelete(env, "ORIGINAL_XDG_CURRENT_DESKTOP");
-  }
-  envSet(env, "TERM", o.pty ? "xterm-256color" : "dumb");
-  envSet(env, "EMBER_RUN_ID", o.runId);
-  if (!o.pty) {
-    for (const [k, v] of Object.entries(NONINTERACTIVE)) envSet(env, k, v);
-    envDelete(env, "SUDO_ASKPASS");
-    envDelete(env, "SSH_ASKPASS");
-  }
-  return env;
+  return commandEnv(base, { os: "win32", pty: o.pty, remote: false, extraPath: [], runId: o.runId });
 }
 
 /** The longest value Windows keeps in one environment variable (32,767 characters with its NUL). */
@@ -322,74 +282,19 @@ export function wslLaunch(spec: RunSpec, facts: RunnerFacts, o: { exe: string; d
   if (spec.command.includes("\0")) throw new Error("the command holds a NUL character");
   const b64 = Buffer.from(spec.command, "utf8").toString("base64");
   if (b64.length > ENV_VALUE_MAX) throw new Error("the command is too long to pass to WSL");
-  const pty = facts.script !== null;
-  const cols = Number.isInteger(spec.cols) && spec.cols > 0 && spec.cols <= 1000 ? spec.cols : 80;
-  const rows = Number.isInteger(spec.rows) && spec.rows > 0 && spec.rows <= 1000 ? spec.rows : 24;
-  const inner = pty ? posixInner(shell, shellPath, "b64") : posixBody({ pty: false, from: "b64" });
-  const wslArgs = pty && facts.script
-    ? ["-d", o.distro, "--cd", spec.cwd, "--exec", "/usr/bin/env", "SHELL=/bin/sh", facts.script.path, "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null"]
-    : ["-d", o.distro, "--cd", spec.cwd, "--exec", shellPath, ...NO_RC[shell], "-c", WSL_EVAL];
+  // RUN's launcher (§3.3's two WSL rows): the job host, wsl.exe and WSL_EVAL, the command only in EMBER_CMD_B64, and a
+  // WSLENV that replaces the user's (on pipes it carries the non-interactive defaults too).
+  let launch: ReturnType<typeof launchArgv>;
+  try {
+    launch = launchArgv(spec, facts, { jobHost: o.jobHost, wsl: { exe: o.exe, distro: o.distro } });
+  } catch (err) {
+    throw new Error(err instanceof LaunchError ? err.message.replace(/\.$/, "") : "Ember couldn't prepare the command for WSL", { cause: err });
+  }
+  const pty = facts.script?.kind === "util-linux";
+  // The Windows side's environment (§3.3.1), with the launcher's variables laid over it (names compared as Windows does).
   const env = windowsRunEnv(o.env, { pty, runId: spec.runId });
-  envSet(env, "WSL_UTF8", "1");
-  envSet(env, "EMBER_INNER", inner);
-  envSet(env, "EMBER_CMD_B64", b64);
-  envSet(env, "EMBER_COLS", String(cols));
-  envSet(env, "EMBER_ROWS", String(rows));
-  // Replaces the user's WSLENV: exactly Ember's variables cross (X11), plus the non-interactive defaults on pipes.
-  const crossing = [...WSLENV_RUN, ...(pty ? [] : Object.keys(NONINTERACTIVE))];
-  envSet(env, "WSLENV", crossing.map(n => `${n}/u`).join(":"));
-  // The job host is Ember's own binary run as Node (§3.3).
-  envSet(env, "ELECTRON_RUN_AS_NODE", "1");
-  const argv = jobHostArgv(o.jobHost, o.exe, wslArgs, pty);
-  return { command: argv[0], args: argv.slice(1), env, pty };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// The secret tracker (CL's, §3.11 step 2; injected)
-// ---------------------------------------------------------------------------------------------------------------
-
-/** CL's SecretTracker (§3.11), structurally. */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
-
-/** §3.11 step 2's prompt pattern, exactly. */
-const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
-/** The longest line the tracker looks back over. */
-const LINE_MAX = 4096;
-
-/**
- * §3.11 step 2's tracker, as CL specifies it, for use until CL's `trackSecretPrompts` is wired in its place (the
- * service passes this one): a span opens when the output so far ends, without a newline, in a password-like prompt,
- * and closes at the first newline the program prints after the user's next Enter; on a run that can't take typing it
- * never closes (it runs to the end of the output).
- */
-export function fallbackSecretTracker(o: { interactive: boolean }): SecretTracker {
-  const done: { from: number; to: number }[] = [];
-  let seen = 0, line = "", open: number | null = null, entered = false;
-  return {
-    output(text) {
-      for (let i = 0; i < text.length; i++) {
-        const c = text[i];
-        if (c === "\n") {
-          if (open !== null && entered) {
-            done.push({ from: open, to: seen + i });
-            open = null;
-            entered = false;
-          }
-          line = "";
-        } else {
-          line = line.length >= LINE_MAX ? line.slice(-LINE_MAX / 2) + c : line + c;
-        }
-      }
-      seen += text.length;
-      if (open === null && SECRET_PROMPT.test(line)) open = seen;
-    },
-    enter() {
-      if (open !== null && o.interactive) entered = true;
-    },
-    spans() {
-      return open === null ? [...done] : [...done, { from: open, to: seen }];
-    },
-  };
+  for (const [k, v] of Object.entries(launch.env)) envSet(env, k, v);
+  return { command: launch.command, args: launch.args, env, pty };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -419,8 +324,8 @@ export interface WslRunnerDeps {
   winPaths: readonly string[];
   /** Tells the service the uid the distro itself reported (WslDistro.defaultUid). */
   learnedUid: (uid: number) => void;
-  /** CL's trackSecretPrompts (or this module's fallback until it is wired). */
-  trackSecrets: (o: { interactive: boolean }) => SecretTracker;
+  /** The secret tracker per run (default CL's trackSecretPrompts, §3.11 step 2; tests may pass their own). */
+  trackSecrets?: (o: { interactive: boolean }) => SecretTracker;
   now?: () => number;
 }
 
@@ -431,8 +336,12 @@ export interface ScriptResult { code: number | null; stdout: Buffer; stderr: str
 export interface WslRunningCommand extends RunningCommand {
   /** The secret prompts' spans so far (ShapeOptions.secretSpans). */
   secretSpans(): { from: number; to: number }[];
-  /** Programs carrying the run's marker that were still there at the last sweep ("1 program it started is still running: <name>"). */
-  stragglers(): string[];
+  /**
+   * Programs carrying the run's marker that were still there at the last sweep ("1 program it started is still running:
+   * <name>"), as RUN's runs report them (KeptRun.stragglers): known after the ladder's last sweep, or after the look a run
+   * that ended by itself gets; [] when nothing was looked for.
+   */
+  readonly stragglers: Promise<string[]>;
 }
 
 /** The WSL runner beyond CommandRunner (extension: the targets runtime and WB use it). */
@@ -580,8 +489,15 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
   };
 
   const sweep = async (signal: "INT" | "TERM" | "KILL" | "0", runId: string): Promise<string[]> => {
-    const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", signal, runId], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
-    return r.stdout.toString("utf8").split("\n").map(l => programName(/^\d+ (.*)$/.exec(l)?.[1] ?? "")).filter(Boolean);
+    let args: [string, string];
+    try {
+      // RUN's two words for the script: the signal (0: only look) and the run id, each checked.
+      args = sweepArgs(signal === "0" ? null : `SIG${signal}`, runId);
+    } catch {
+      return []; // not a run id Ember made: nothing of it can be in the distro
+    }
+    const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", ...args], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
+    return sweptNames(r.stdout.toString("utf8"));
   };
 
   const runner: WslRunner = {
@@ -671,15 +587,17 @@ class Run {
   private typed: string[] = [];
   private typing = "";
   private typedBytes = 0;
-  private stragglerNames: string[] = [];
+  private readonly stragglers: Promise<string[]>;
+  private setStragglers!: (names: string[]) => void;
   private readonly timers: ReturnType<typeof setTimeout>[] = [];
   private ladder: Promise<void> | null = null;
 
   constructor(private readonly spec: RunSpec, private readonly d: WslRunnerDeps, private readonly r: RunnerParts) {
     this.t0 = r.now();
     this.pty = r.lastFacts()?.pty ?? false;
-    this.tracker = d.trackSecrets({ interactive: this.pty });
+    this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     this.done = new Promise<RunExit>(resolve => { this.resolveDone = resolve; });
+    this.stragglers = new Promise<string[]>(resolve => { this.setStragglers = resolve; });
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- the handle's methods close over the run
     const run = this;
     this.handle = {
@@ -698,7 +616,7 @@ class Run {
       stop: why => run.stop(why),
       done: this.done,
       secretSpans: () => run.tracker.spans(),
-      stragglers: () => [...run.stragglerNames],
+      stragglers: this.stragglers,
     };
   }
 
@@ -722,7 +640,7 @@ class Run {
     const launch = wslLaunch(spec, facts, { exe, distro: d.distro, jobHost: d.jobHost, env: d.env });
     if (launch.pty !== this.pty) {
       this.pty = launch.pty;
-      this.tracker = d.trackSecrets({ interactive: this.pty });
+      this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     }
     // A stopped distro is started first with a no-op, so a Stop while it boots ends the run before the command is
     // handed to wsl.exe at all ("Starting Ubuntu…" meanwhile).
@@ -913,7 +831,7 @@ class Run {
       }, LADDER_MS.kill));
       this.timers.push(setTimeout(() => {
         void this.r.sweep("KILL", runId).then(names => {
-          this.stragglerNames = names;
+          this.setStragglers(names);
           if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId, count: names.length });
           resolve();
           // A job host that outlives TerminateProcess can't hold the run open: it ends as stopped all the same.
@@ -956,11 +874,14 @@ class Run {
     // the distro still runs: a command that shut it down (`poweroff`, `wsl.exe --terminate` through interop) leaves
     // nothing behind, and a sweep would start it again.
     void (async () => {
-      if (!(await this.d.runningNow()).has(this.d.distro)) return;
+      if (!(await this.d.runningNow()).has(this.d.distro)) return this.setStragglers([]);
       const names = await this.r.sweep("0", this.spec.runId);
-      this.stragglerNames = names;
+      this.setStragglers(names);
       if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
-    })().catch(err => this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err }));
+    })().catch(err => {
+      this.setStragglers([]);
+      this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err });
+    });
   }
 
   /** The process is gone: stop holding its stdin (the job host then ends its job; the ladder's sweeps go on). */
@@ -975,21 +896,15 @@ class Run {
   private end(e: Partial<RunExit> & { ended: RunExit["ended"] }): void {
     if (this.ended) return;
     this.ended = true;
+    // Nothing more is looked for unless a natural end's look is under way (it says). A ladder has said by now when it
+    // ended the run; one cut short (wsl.exe failed meanwhile) loses its timers below, so it would never say.
+    if (this.ladder || e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
     const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };
     this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes });
     this.resolveDone(exit);
   }
-}
-
-/**
- * A straggler's name as the status line and the model may show it: a process sets its own `comm` (any 15 bytes), so
- * control, bidi and zero-width characters (a terminal code, a reversed name) become "?" and it is cut to 32
- * characters.
- */
-export function programName(comm: string): string {
-  return comm.trim().replace(/[\p{Cc}\p{Cf}]/gu, "?").slice(0, 32);
 }
 
 /** An error as plain words (the message of one Ember made; a generic sentence otherwise). */

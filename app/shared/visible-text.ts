@@ -22,8 +22,12 @@ const INVISIBLE_NAMES: Readonly<Record<number, string>> = {
   0x180e: "MVS", 0x2061: "FA", 0x2062: "IT", 0x2063: "IS", 0x2064: "IP",
 };
 
-/** policy.ts's INVISIBLE set (format characters and the blank look-alikes), plus the zero-width characters. */
-const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0\u200b-\u200d\u2060\ufeff]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f/u;
+/**
+ * policy.ts's INVISIBLE set (format characters and the blank look-alikes), plus the zero-width characters, the
+ * combining grapheme joiner, and the variation selectors (Mongolian, standard and supplementary), which change how the
+ * letter before them looks without showing themselves.
+ */
+const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0\u200b-\u200d\u2060\ufeff]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f|[\ufe00-\ufe0f]|[\u{e0100}-\u{e01ef}]/u;
 
 /** Space characters other than the plain space: shown, so two look-alike commands can't differ invisibly. */
 const ODD_SPACE = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/u;
@@ -59,13 +63,14 @@ function special(ch: string): VisibleSegment | null {
   if (ch === "\t") return { text: "→", kind: "tab" };
   // A newline is the command's own line break (here-documents span lines): shown as one.
   if (ch === "\n") return null;
-  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return { text: `⟨${hex(cp)}⟩`, kind: "control" };
+  // C0 and C1 controls, and the line and paragraph separators (a line break to a reader, a word character to a shell).
+  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029) return { text: `⟨${hex(cp)}⟩`, kind: "control" };
   if (BIDI[cp]) return { text: `⟨${BIDI[cp]}⟩`, kind: "bidi" };
   if (cp === 0x00a0) return { text: "⟨NBSP⟩", kind: "nbsp" };
   if (ODD_SPACE.test(ch)) return { text: `⟨${hex(cp)}⟩`, kind: "nbsp" };
   if (INVISIBLE.test(ch)) return { text: `⟨${INVISIBLE_NAMES[cp] ?? hex(cp)}⟩`, kind: "invisible" };
-  // Unpaired surrogates and noncharacters can't be shown faithfully.
-  if ((cp >= 0xd800 && cp <= 0xdfff) || cp === 0xfffe || cp === 0xffff) return { text: `⟨${hex(cp)}⟩`, kind: "invisible" };
+  // Unpaired surrogates and noncharacters (U+FDD0-FDEF, and the last two of every plane) can't be shown faithfully.
+  if ((cp >= 0xd800 && cp <= 0xdfff) || (cp >= 0xfdd0 && cp <= 0xfdef) || (cp & 0xfffe) === 0xfffe) return { text: `⟨${hex(cp)}⟩`, kind: "invisible" };
   return null;
 }
 
@@ -90,6 +95,9 @@ export function visibleText(s: string): VisibleSegment[] {
     for (const [sc, n] of counts) {
       if (n > bestN || (n === bestN && sc === "Latin")) { best = sc; bestN = n; }
     }
+    // Latin beside Chinese, Japanese or Korean letters is how those languages name files (UTS #39's "highly
+    // restrictive" mixes), and no Latin letter looks like one of theirs: nothing to mark.
+    if ([...counts.keys()].every(sc => sc === "Latin" || sc === "CJK")) best = null;
     for (let k = start; k < end; k++) main[k] = best;
   };
   for (let k = 0; k <= chars.length; k++) {

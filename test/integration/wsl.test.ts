@@ -234,8 +234,8 @@ suite("WSL on a real Windows runner", () => {
   it("names a program that outlives the run, and leaves it alone", async () => {
     const { exit, cmd } = await run(runner, "setsid sleep 1000 >/dev/null 2>&1 < /dev/null & echo started");
     expect(exit.code).toBe(0);
-    for (let i = 0; i < 50 && cmd.stragglers().length === 0; i++) await new Promise(r => setTimeout(r, 200));
-    expect(cmd.stragglers()).toContain("sleep");
+    // Known once the look a run that ended by itself gets has come back.
+    expect(await cmd.stragglers).toContain("sleep");
     expect(await carrying(runner, cmd.runId)).not.toBe("");
     await runner.runScript(`for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=${cmd.runId}\\$" "$p/environ" 2>/dev/null && kill -9 "\${p#/proc/}"; done; true`);
   }, LONG);

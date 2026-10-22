@@ -529,6 +529,26 @@ describe("a run's tab", () => {
     expect(typedPieces("€", 1).map(b => b.length)).toEqual([3]);
   });
 
+  it("names on the status line what a run left running, once its runner has looked (§3.13)", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef") as FakeRun & { stragglers: Promise<string[]> };
+    let looked!: (names: string[]) => void;
+    run.stragglers = new Promise(r => { looked = r; });
+    ctl.attach(card(), run);
+    run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays.");
+    looked(["sleep", "\u202emalware"]);
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware.");
+    // A run that says nothing (a remote's) keeps its line as it was.
+    const quiet = new FakeRun("00000000000000aa");
+    ctl.attach(card({ runId: quiet.runId }), quiet);
+    quiet.finish();
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("Finished in 3.2 s.");
+  });
+
   it("stops a live run from its Stop and closes only a finished tab", async () => {
     const { ipc, ctl, page } = setup();
     const run = new FakeRun("0123456789abcdef");

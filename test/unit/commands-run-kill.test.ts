@@ -214,7 +214,7 @@ function child(pid: number) {
   return c;
 }
 
-function setup(facts: RunnerFacts) {
+function setup(facts: RunnerFacts, o: { ownTracker?: boolean } = {}) {
   const timers = new FakeTimers();
   const record: string[] = [];
   const children: ReturnType<typeof child>[] = [];
@@ -238,12 +238,29 @@ function setup(facts: RunnerFacts) {
     },
     facts: async () => facts,
     isDir: async () => true,
-    tracker: () => ({ output() {}, enter() {}, spans: () => [] }),
+    ...(o.ownTracker === false ? {} : { tracker: () => ({ output() {}, enter() {}, spans: () => [] }) }),
   };
   const log: Logger = { ...quiet, warn: (m, f) => warned.push([m, f]) };
   const runner = createRunner({ log, os: facts.os, env: {}, ember: { paths: [], pids: () => [], names: /^ember$/ }, home: "/home/ana", user: "ana", elevated: () => false, extraPath: [], jobHost: facts.os === "win32" ? { execPath: "C:\\Ember\\Ember.exe", script: "C:\\Ember\\job-host.cjs" } : null }, deps);
   return { timers, record, children, runner, warned };
 }
+
+describe("a local run's secret prompts", () => {
+  it("are found by CL's tracker (the runner's own), even behind tput's sgr0 at the prompt's end", async () => {
+    const s = setup(linux, { ownTracker: false });
+    await s.runner.facts();
+    const run = s.runner.start(spec({ command: "sudo true" }));
+    const c = s.children[0];
+    const prompt = `${START_MARKER}\x1b[1m[sudo] password for ana:\x1b(B\x1b[m `;
+    c.stdout.emit("data", Buffer.from(prompt));
+    run.input(Buffer.from("hunter2\r"));
+    c.stdout.emit("data", Buffer.from("\r\nok\r\n"));
+    c.exit(0);
+    await run.done;
+    if (!isKeptRun(run)) throw new Error("not kept");
+    expect(run.kept().secretSpans).toEqual([{ from: prompt.length, to: prompt.length + 1 }]);
+  });
+});
 
 describe("stopping a local run", () => {
   it("sends Ctrl+C into script's stdin at once, then reaches the group, script's child session and the sweep", async () => {

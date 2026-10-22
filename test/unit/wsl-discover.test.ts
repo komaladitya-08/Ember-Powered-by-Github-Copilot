@@ -15,7 +15,7 @@ import { createWsl, createWslWith, windowsContextOf, type WslDeps } from "../../
 import { parseTasklist, runningXServer, shortVersion, wslDoctorRows } from "../../app/main/wsl/doctor";
 import { LXSS_KEY } from "../../app/main/wsl/lxss";
 import { decodeLines } from "../../app/main/wsl/decode";
-import { fallbackSecretTracker, FACTS_SCRIPT } from "../../app/main/wsl/runner";
+import { FACTS_SCRIPT } from "../../app/main/wsl/runner";
 import type { WslFacts } from "../../app/main/wsl/types";
 import { answerWith, fakeLog, FakeRegistry, fakeSpawn, flush, forbiddenOptions, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
@@ -217,7 +217,6 @@ function pc(o: {
     exists: p => exes.includes(p),
     readFile: p => (p === "C:\\Users\\ana\\.wslconfig" ? (o.wslconfig ?? null) : null),
     registry: () => registry,
-    trackSecrets: fallbackSecretTracker,
     processImages: async () => (o.images === undefined ? ["System Idle Process", "explorer.exe"] : o.images),
     now: () => now,
   };
@@ -490,7 +489,7 @@ describe("listing time limits", () => {
   it("gives up on a listing probe after 5 s and lists nothing rather than guessing", async () => {
     const fake = fakeSpawn(() => undefined); // wsl.exe never answers
     const deps: WslDeps = {
-      spawn: fake.spawn, exists: p => p === EXE, readFile: () => null, registry: () => null, trackSecrets: fallbackSecretTracker,
+      spawn: fake.spawn, exists: p => p === EXE, readFile: () => null, registry: () => null,
       processImages: async () => null, now: () => Date.now(),
     };
     const wsl = createWslWith({ log: fakeLog(), env: ENV, os: "win32", ember: { winPaths: [] }, jobHost: JOB }, deps)!;

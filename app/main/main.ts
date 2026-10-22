@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
-import { managedKeys } from "./admin";
+import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -354,7 +354,8 @@ function start(): void {
     settingsNotice,
     admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
       confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
-      neverLook: policy.neverLook },
+      neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
+      sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
   })));
   ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
@@ -649,6 +650,8 @@ function start(): void {
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
   const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
   const questionChanged = (q: { n: number; question: Question } | null) => {
+    // The keys are held first, so a command card names the keys that answer it (the targets runtime asks keyHint).
+    if (q) holdQuestionKeys();
     // A question with a panel (a command, a consent card) shows its window; the window goes with it.
     targets?.questionChanged(q);
     if (!q) {
@@ -753,13 +756,15 @@ function start(): void {
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
     if (look) captureContext();
-    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory }, source);
+    // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
+    const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
+    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done.
     void callContext.then(c => {
       const t = c?.target;
       const sees = t ? [t.app && friendlyApp(t.app), t.title].filter(Boolean).join(" · ") || null : null;
-      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory };
+      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory, target: askTarget() };
       askWindow.setContext(ctx);
     });
   };
@@ -1475,6 +1480,8 @@ function start(): void {
       // macOS: Homebrew's, MacPorts' and pipx's folders that exist (apps started from Finder get launchd's PATH).
       extraPath: () => platform.os === "darwin" ? extraBinDirs(app.getPath("home")).filter(d => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) : [],
       jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
+      // The command card's key hint: only the keys Ember holds for the question up now.
+      keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
@@ -1511,6 +1518,10 @@ function start(): void {
       targets: targets.agent,
       // Tasks ask and are audited even where this screen has no hands (commands only, §2.6).
       taskBase: { audit, confirmer },
+      // Ember's own processes for commands here and in WSL (D4.5): main's and the targets runtime's helpers', live.
+      emberPids: () => targets?.emberPids() ?? [],
+      // A command the user asked for is announced aloud too when replies are spoken (D4.4); its Stop is on screen.
+      onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)

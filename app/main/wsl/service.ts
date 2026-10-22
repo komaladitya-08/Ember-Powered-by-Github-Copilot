@@ -22,7 +22,8 @@ import type { WslFacts, WslService } from "./types";
 import { decodeWsl } from "./decode";
 import { createWslExec, discoverWsl, envGet, locateWslExe, noWsl, readRunning, type WslChild, type WslSpawn } from "./discover";
 import { loadLxssRegistry, type RegistryReader } from "./lxss";
-import { BOOT_ID_SCRIPT, createWslRunner, fallbackSecretTracker, type SecretTracker, type WslRunner } from "./runner";
+import type { SecretTracker } from "../commands/prompts";
+import { BOOT_ID_SCRIPT, createWslRunner, type WslRunner } from "./runner";
 import { listProcessImages, runningXServer, wslDoctorRows } from "./doctor";
 
 /** How long discovery's facts are reused (§4.1); a refresh is asked for when something changes. */
@@ -45,8 +46,8 @@ export interface WslDeps {
   readFile: (path: string) => Uint8Array | null;
   /** The Lxss registry reader (null: unavailable). */
   registry: () => RegistryReader | null;
-  /** CL's trackSecretPrompts (§3.11), or runner.ts's fallback until CL's is wired here. */
-  trackSecrets: (o: { interactive: boolean }) => SecretTracker;
+  /** The secret tracker per run (default CL's trackSecretPrompts, §3.11 step 2; tests may pass their own). */
+  trackSecrets?: (o: { interactive: boolean }) => SecretTracker;
   /** Windows' process image names (the doctor's X-server line); null when they can't be listed. */
   processImages: () => Promise<string[] | null>;
   now: () => number;
@@ -79,7 +80,6 @@ export function createWsl(o: { log: Logger; env: NodeJS.ProcessEnv; os: OS; embe
       }
     },
     registry: loadLxssRegistry,
-    trackSecrets: fallbackSecretTracker,
     processImages: () => listProcessImages(spawn, o.env),
     now: Date.now,
   });

@@ -9,10 +9,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
 import type { JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
-  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
+  createWslRunner, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
   parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
@@ -202,8 +203,9 @@ describe("wslLaunch", () => {
   });
 
   it("cleans the Windows side's environment as §3.3.1 says", () => {
-    const e = windowsRunEnv({ ...ENV, ORIGINAL_XDG_CURRENT_DESKTOP: "GNOME", XDG_CURRENT_DESKTOP: "Unity", APPIMAGE: "/x" }, { pty: false, runId: RUN_ID });
-    for (const gone of ["GH_TOKEN", "COPILOT_AGENT", "NODE_OPTIONS", "EMBER_LOG_LEVEL", "ELECTRON_NO_ATTACH_CONSOLE", "SUDO_ASKPASS", "APPIMAGE", "ORIGINAL_XDG_CURRENT_DESKTOP"]) {
+    const e = windowsRunEnv({ ...ENV, ORIGINAL_XDG_CURRENT_DESKTOP: "GNOME", XDG_CURRENT_DESKTOP: "Unity", APPIMAGE: "/x", "BASH_FUNC_ls%%": "() { x; }", CdPath: "C:\\x" }, { pty: false, runId: RUN_ID });
+    // RUN's commandEnv: its rules for every run, exported functions and CDPATH (any spelling on Windows) among them.
+    for (const gone of ["GH_TOKEN", "COPILOT_AGENT", "NODE_OPTIONS", "EMBER_LOG_LEVEL", "ELECTRON_NO_ATTACH_CONSOLE", "SUDO_ASKPASS", "APPIMAGE", "ORIGINAL_XDG_CURRENT_DESKTOP", "BASH_FUNC_ls%%", "CdPath"]) {
       expect(e[gone]).toBeUndefined();
     }
     expect(e).toMatchObject({ NPM_TOKEN: "npm_user_own", XDG_CURRENT_DESKTOP: "GNOME", EMBER_RUN_ID: RUN_ID, TERM: "dumb", Path: "C:\\Windows\\System32" });
@@ -222,6 +224,9 @@ describe("wslLaunch", () => {
     expect(() => wslLaunch(spec({ command: "a\0b" }), pty, o)).toThrow(/NUL/);
     expect(() => wslLaunch(spec({ runId: "x;y" }), pty, o)).toThrow(/id/);
     expect(() => wslLaunch(spec({ command: "日".repeat(11_000) }), pty, o)).toThrow(/too long/);
+    // RUN's launcher checks the rest: a distro name wsl.exe could read as more, a character that can't pass exactly.
+    expect(() => wslLaunch(spec(), pty, { ...o, distro: "Ubuntu --exec x" })).toThrow(/name/);
+    expect(() => wslLaunch(spec({ command: "echo \ud800" }), pty, o)).toThrow(/exactly as shown/);
   });
 });
 
@@ -288,7 +293,7 @@ function distro(o: {
       return new Set(running ? ["Ubuntu"] : []);
     },
     windows: () => WINDOWS,
-    winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid), trackSecrets: fallbackSecretTracker,
+    winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid),
   });
   return { runner, runs, sweeps, probes, boots, uids, log, calls: fake.calls, setRunning: (v: boolean) => { running = v; } };
 }
@@ -559,8 +564,21 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
     await vi.advanceTimersByTimeAsync(0);
     expect(exit).toMatchObject({ ended: "stopped-user" });
-    expect(run.stragglers()).toEqual(["sleep", "?[2Jfake?sudo"]);
+    // Named by RUN's rules: terminal codes and direction marks a process put in its own name are dropped.
+    await expect(run.stragglers).resolves.toEqual(["sleep", "[2Jfakesudo"]);
     expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 2)).toBe(true);
+  });
+
+  it("settles what the run left running when wsl.exe fails while the ladder climbs (nothing is left waiting)", async () => {
+    const { run, child } = await started();
+    run.stop("user");
+    await vi.advanceTimersByTimeAsync(LADDER_MS.term);
+    child.emit("error", new Error("EPIPE"));
+    expect(await run.done).toMatchObject({ ended: "failed-to-start" });
+    let names: string[] | null = null;
+    void run.stragglers.then(n => { names = n; });
+    await vi.advanceTimersByTimeAsync(LADDER_MS.last + 1000);
+    expect(names).toEqual([]);
   });
 
   it("terminates the job host anyway when the KILL sweep hangs", async () => {
@@ -761,29 +779,9 @@ describe("WSL runner: typing and secret prompts", () => {
     run.input(Buffer.from("x\r"));
     expect(child.written).toHaveLength(0);
     child.out("\nmore\n");
-    expect(run.secretSpans()).toEqual([{ from: `${MARKER}Password: `.length, to: `${MARKER}Password: \nmore\n`.length }]);
+    // CL's tracker (the runner's default): a span nobody can answer stays open to the end of whatever is printed.
+    expect(run.secretSpans()).toEqual([{ from: `${MARKER}Password: `.length, to: OPEN_SPAN_END }]);
     child.exit(1);
     await run.done;
-  });
-});
-
-describe("fallbackSecretTracker", () => {
-  it("opens a span at a password-like prompt and closes it at the program's next newline after Enter", () => {
-    const t = fallbackSecretTracker({ interactive: true });
-    const prompt = "Enter passphrase for key '/home/ana/.ssh/id_ed25519': ";
-    t.output(prompt);
-    expect(t.spans()).toEqual([{ from: prompt.length, to: prompt.length }]);
-    t.output("\n"); // no Enter yet: still open
-    t.enter();
-    t.output("***\nIdentity added\n");
-    expect(t.spans()).toEqual([{ from: prompt.length, to: prompt.length + 4 }]);
-    t.output("Verification code： ");
-    expect(t.spans()).toHaveLength(2);
-  });
-
-  it("ignores ordinary lines that mention a password", () => {
-    const t = fallbackSecretTracker({ interactive: true });
-    t.output("Changing the password policy: done\nall good\n");
-    expect(t.spans()).toEqual([]);
   });
 });

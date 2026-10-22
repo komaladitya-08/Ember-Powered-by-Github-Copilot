@@ -7,10 +7,10 @@
  * once more (§3.16). What comes back is the shaped, untrusted output; output that reads like instructions taints the
  * task, so every later command asks (§3.11 step 7). Every step is audited (§3.12); the command's text reaches no log.
  *
- * The classifier, the decision and the shaping are CL's pure functions, reached through CommandJudge: without one
- * nothing runs (fail closed). The flow also holds CL's answer to a few invariants of its own (a task without the
- * user's own words never announces; taint, carried text, "ask every" and root always ask), so a looser decision can
- * never run a command the design says must ask.
+ * The classifier, the decision and the shaping are CL's pure functions (classify, decide, output, redact, prompts,
+ * taint, paths), reached through CommandJudge so the tests can pass their own. The flow also holds CL's answer to a few
+ * invariants of its own (a task without the user's own words never announces; taint, carried text, "ask every" and
+ * root always ask), so a looser decision can never run a command the design says must ask.
  */
 
 import crypto from "node:crypto";
@@ -25,6 +25,13 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
+import { classifyCommand } from "./classify";
+import { LINES, decideCommand } from "./decide";
+import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { resolveTargetPath } from "./paths";
+import { trackSecretPrompts, type SecretTracker } from "./prompts";
+import { redactSecrets } from "./redact";
+import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
@@ -53,8 +60,11 @@ export interface CommandFlowContext {
   /** The task's own stop: the run stops with it. */
   signal: AbortSignal;
   isOver: () => boolean;
-  /** The task's folder and downloads on this target (kept by the worker across calls). */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean };
+  /**
+   * The task's folder and downloads on this target (kept by the worker across calls). `outputTainted` (the flow's own):
+   * a command's output tainted the task, so the card says so in its own words (§3.8.4).
+   */
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -63,17 +73,7 @@ export interface CommandFlowContext {
   onDeclined?: () => void;
 }
 
-/** CL's ShapeOptions (§3.11): what shaping needs besides the raw bytes. */
-export interface ShapeOptions {
-  target: TargetId; label: string; shell: ShellId; exit: RunExit;
-  /** Lines the user typed into the run (L2): cut out wherever they appear. */
-  typed: string[];
-  /** Characters of output after which a secret prompt started (from the run's tracker), with their ends. */
-  secretSpans: { from: number; to: number }[];
-}
-
-/** CL's secret-prompt tracker (§3.11 step 2). */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+export type { SecretTracker, ShapeOptions };
 
 /** CL's pure functions the flow calls (§3.11's export block: exactly CL's signatures). */
 export interface CommandJudge {
@@ -84,25 +84,56 @@ export interface CommandJudge {
   trackSecretPrompts(o: { interactive: boolean }): SecretTracker;
   outputTaint(text: string): string | null;
   resolveTargetPath(p: string, o: { os: OS; home: string; cwd: string }): string;
+  /**
+   * CL's steps 1-4 of shaping (terminal codes, secret spans, typed lines, redaction) without the cut to size: what the
+   * output-taint check reads, so nothing hides in the part the model's copy leaves out (CL's review). Optional for
+   * judges a test makes; the flow then checks its own cleaned copy.
+   */
+  cleanOutput?(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string;
 }
 
-/**
- * CL's functions, once CL is merged: `{ classifyCommand, decideCommand, shapeOutput, redactSecrets, trackSecretPrompts,
- * outputTaint, resolveTargetPath }` from ./classify, ./decide, ./output, ./redact, ./prompts, ./taint and ./paths.
- * Until then (and in a build without them) nothing runs.
- */
-const DEFAULT_JUDGE: CommandJudge | null = null;
-let judge: CommandJudge | null = DEFAULT_JUDGE;
+/** CL's own functions: what every command is judged by unless a test passes its own judge. */
+export const CL_JUDGE: CommandJudge = Object.freeze({
+  classifyCommand, decideCommand, shapeOutput, redactSecrets, trackSecretPrompts, outputTaint, resolveTargetPath, cleanOutput,
+});
+let judge: CommandJudge = CL_JUDGE;
 
-/** Hands the flow CL's functions (tests pass their own); null: the default. */
+/** Hands the flow a judge (tests pass their own); null: CL's own again. */
 export function setCommandJudge(j: CommandJudge | null): void {
-  judge = j ?? DEFAULT_JUDGE;
+  judge = j ?? CL_JUDGE;
 }
+
+/** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
+export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
 
 /** A command service that can show its first-use commands card (§8.4.3; built by the targets runtime). */
 export interface CommandConsentSource {
   /** The commands card for this target, with its text hashed; null when it can't be shown (then nothing is turned on). */
   consentPanel(): ConsentPanel | null;
+}
+
+/**
+ * A command service that knows the other computers Ember works on (built by the targets runtime): D4.4's wrong-target
+ * guard (DOC's review). Without it (no targets runtime: tests, the eval) this computer is the only one there is.
+ */
+export interface CommandTargetGuard {
+  /** The labels of known targets other than this service's that the user's own words name anywhere. */
+  othersNamed(words: string): string[];
+}
+
+/** The card's first line when the user's words also name another computer: it says which one runs the command. */
+export const wrongTargetLine = (others: string[], here: string) => `You also named ${listOf(others)}, but this runs ${here}.`;
+
+/** The other computers the user's words name (the guard's answer; a guard that fails counts as naming one: it asks). */
+function othersNamedIn(svc: CommandService, words: string): string[] {
+  const guard = (svc as CommandService & Partial<CommandTargetGuard>).othersNamed;
+  if (typeof guard !== "function" || !words.trim()) return [];
+  try {
+    const got = guard.call(svc, words);
+    return Array.isArray(got) ? [...new Set(got.filter((x): x is string => typeof x === "string" && x.trim() !== ""))].slice(0, 5) : [];
+  } catch {
+    return ["another computer"];
+  }
 }
 
 /** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7). */
@@ -130,7 +161,6 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
-const NOT_JUDGED = "Ember can't check commands here, so it won't run them. Don't try another way; tell the user in finish_task.";
 const SAID_NO = "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
@@ -455,15 +485,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
-  const where = whereWords(binding);
+  // The user's words also name another computer Ember knows ("build-01 delete build/" bound to the active one): no
+  // command announces, and every question says where it runs, this computer included (DOC's review). Read again with
+  // the words the decision reads (a steer may have come meanwhile).
+  let others = othersNamedIn(svc, ctx.task.commandWords());
+  const here = whereWords(binding) ?? `on ${place}`;
+  let where = whereWords(binding) ?? (others.length ? here : undefined);
   const task = ctx.task.id;
   const target = binding.id;
   const audit = (e: Record<string, unknown>) => ctx.audit({ event: "command", task, target, ...e });
   const j = judge;
-  if (!j) {
-    ctx.log.warn("commands.no_judge", { task });
-    return denied(NOT_JUDGED);
-  }
 
   // Step 2: the target's commands now; the first-use card when they wait for it.
   let cap = svc.capability();
@@ -537,12 +568,28 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
 
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.
   const words = ctx.task.commandWords();
+  others = [...new Set([...others, ...othersNamedIn(svc, words)])].slice(0, 5);
+  where = whereWords(binding) ?? (others.length ? here : undefined);
   const tainted = ctx.task.tainted();
   const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
   const userAskEvery = svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
-  const d = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
+  const held = heldDecision(decided, { words, privileged: facts.privileged, os: facts.os, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, cls, paths }, binding.kind);
+  // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
+  let d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
+  // D4.4's wrong-target guard: a command the user's words asked for still asks when they also name another computer,
+  // and every card of such a task (asking for any reason) says first which computer runs it.
+  if (d.verdict === "announce" && others.length) {
+    d = {
+      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, "wrong-target"])],
+      reason: "It asks first: the user's words also name another computer.", armMs: Math.max(d.armMs, 1500),
+    };
+  }
+  if (d.verdict === "ask" && others.length) {
+    const line = wrongTargetLine(others, here);
+    d = { ...d, says: [line, ...d.says.filter(l => l !== line)] };
+  }
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
@@ -628,7 +675,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
-        const answer = await askCard([...d.says, `${binding.label}'s own check also found:`, ...theirs], "remote",
+        // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
+        const own = [`${binding.label}'s own check also found:`, ...theirs];
+        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
+        const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
+        const answer = await askCard(lines, "remote",
           `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
         if (answer === "stopped") return STOPPED();
         if (answer === "no") return denied(SAID_NO);
@@ -647,6 +698,22 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   }
 }
 
+/**
+ * The size the command window says fits a new run's tab (UI's termSize), so the program draws for the terminal it is
+ * shown in; null when the window doesn't say (the worker's own size then).
+ */
+function windowSize(w: CommandService["window"]): { cols: number; rows: number } | null {
+  const termSize = (w as CommandService["window"] & { termSize?: () => unknown }).termSize;
+  if (typeof termSize !== "function") return null;
+  try {
+    const got = termSize.call(w) as { cols?: unknown; rows?: unknown } | null;
+    const ok = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 1000;
+    return got && ok(got.cols) && ok(got.rows) ? { cols: got.cols, rows: got.rows } : null;
+  } catch {
+    return null; // a window that can't say: the worker's size
+  }
+}
+
 /** One started run and what it printed. */
 interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker; running: RunningCommand }
 
@@ -662,7 +729,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
 }): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
-  const { cols, rows } = ctx.size();
+  const { cols, rows } = windowSize(svc.window) ?? ctx.size();
   const spec: RunSpec = {
     runId: o.runId, taskId: o.stamp.taskId, shell: o.shell, command: o.command, cwd: o.cwd, timeoutMs: o.timeoutS * 1000, cols, rows,
     stamp: {
@@ -675,8 +742,10 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   const out = new OutputKeeper(tracker);
   const unsubscribe = running.onOutput(chunk => out.push(chunk));
   ctx.audit({ event: "command", phase: "started", task: o.stamp.taskId, target: svc.binding.id, runId: o.runId });
-  // The window gets the run with Enter presses noted for the tracker (what is typed goes straight to the run).
-  const shown: RunningCommand = {
+  // The window gets the run with Enter presses noted for the tracker (what is typed goes straight to the run), and what
+  // the run left running once its runner looked (RUN's and WA's `stragglers`, named on the tab's status line).
+  const shown: RunningCommand & { readonly stragglers?: unknown } = {
+    get stragglers() { return (running as RunningCommand & { stragglers?: unknown }).stragglers; },
     get runId() { return running.runId; },
     get interactive() { return running.interactive; },
     get done() { return running.done; },
@@ -710,6 +779,8 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     auditLateEnd();
     return "unseen";
   }
+  // What the runner says while the run starts ("Starting Ubuntu…": a WSL distro that has to boot) shows on its tab.
+  const offStatus = followStatus(svc, o.runId);
   // The task's stop stops the run; the tool returns once it ended, or STOP_GRACE_MS later whatever the runner does.
   let onStop = () => undefined as void;
   const stopped = new Promise<RunExit | null>(resolve => {
@@ -732,6 +803,28 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     clearTimeout(backstop);
     ctx.signal.removeEventListener("abort", onStop);
     unsubscribe();
+    offStatus();
+  }
+}
+
+/**
+ * A runner's status line ("Starting Ubuntu…", WA's WSL runner: `status()`/`onStatus()`) as a note on the run's tab
+ * (UI's `note(runId, text)`), until the run ends; nothing when either side doesn't have it. Returns the unsubscribe.
+ */
+function followStatus(svc: CommandService, runId: string): () => void {
+  const runner = svc.runner as CommandService["runner"] & { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void };
+  const window = svc.window as CommandService["window"] & { note?: (runId: string, text: string | null) => void };
+  if (typeof runner.onStatus !== "function" || typeof window.note !== "function") return () => undefined;
+  const show = (text: string | null) => {
+    try { window.note!(runId, typeof text === "string" && text ? text : null); } catch { /* a note is only a note */ }
+  };
+  try {
+    const now = runner.status?.() ?? null;
+    if (now) show(now);
+    const off = runner.onStatus(show);
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
   }
 }
 
@@ -743,12 +836,16 @@ function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o:
   // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
   const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
   const kept = out.kept([...tracker.spans(), ...theirs]);
-  const shaped = j.shapeOutput(new TextEncoder().encode(kept.text), { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
+  const raw = new TextEncoder().encode(kept.text);
+  const shaped = j.shapeOutput(raw, { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
   const task = ctx.task.id;
   const target = ctx.service.binding.id;
-  // What it printed is checked whole (before shaping cuts the middle), and as the model gets it.
-  const taint = j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
+  // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
+  // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
+  const clean = j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  const taint = (clean !== null ? j.outputTaint(clean) : null) ?? j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
   if (taint) {
+    ctx.state.outputTainted = true;
     ctx.task.taint(taint);
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }

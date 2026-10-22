@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepArgs, sweepLocal, sweepScript, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
+import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepArgs, sweepLocal, sweepScript, sweptNames, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
 
 const RUN = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
@@ -7,8 +7,17 @@ const env = (...entries: string[]) => Buffer.from(`${entries.join("\0")}\0`);
 
 describe("the sweep script fed to a distro's or a remote's shell", () => {
   it("is §3.13's fixed text, run as sh -s -- <SIGNAL> <runId> with nothing on its argv", () => {
-    expect(sweepScript).toBe('for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null && kill -$1 "${p#/proc/}" 2>/dev/null; done\n');
+    // The design's one-liner, plus a line naming each process it found (the status line's stragglers in WSL).
+    expect(sweepScript).toBe(
+      'for p in /proc/[0-9]*; do grep -qz "^EMBER_RUN_ID=$2\\$" "$p/environ" 2>/dev/null || continue; kill -$1 "${p#/proc/}" 2>/dev/null; ' +
+      'printf \'%s %s\\n\' "${p#/proc/}" "$(cat "$p/comm" 2>/dev/null)"; done\n',
+    );
     expect(sweepScript).not.toContain(RUN);
+  });
+
+  it("names what it found, by the status line's rules", () => {
+    expect(sweptNames("4242 sleep\n4243 \x1b[2Jfake\u202esudo\r\nnoise\n")).toEqual(["sleep", "[2Jfakesudo"]);
+    expect(sweptNames("")).toEqual([]);
   });
 
   it("gets the signal without SIG (dash refuses kill -SIGTERM) and only a run id as its two arguments", () => {
@@ -18,6 +27,8 @@ describe("the sweep script fed to a distro's or a remote's shell", () => {
     expect(() => sweepArgs("SIGSTOP", RUN)).toThrow();
     expect(() => sweepArgs("SIGKILL", `${RUN}; rm -rf ~`)).toThrow();
     expect(() => sweepArgs("SIGKILL", ".*")).toThrow();
+    // null only looks: kill -0 signals nothing, and the script still names what carries the marker.
+    expect(sweepArgs(null, RUN)).toEqual(["0", RUN]);
   });
 });
 
