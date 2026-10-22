@@ -30,7 +30,10 @@ import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
 import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
 import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
-import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, type CommandWindow, type PromptWindow, type TargetsParts } from "../../app/main/targets/runtime";
+import {
+  WSL_OFF_ROW, buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, wslSwitchOn,
+  type CommandWindow, type PromptWindow, type TargetsParts,
+} from "../../app/main/targets/runtime";
 import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
 import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
@@ -1105,7 +1108,7 @@ describe("the doctor's rows (§8.8)", () => {
     const off = rig({ admin: policy({ features: { ssh: false }, commands: { local: "off" } }) });
     expect(await off.t.doctorRows()).toEqual([]);
     const win = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
-    expect((await win.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl"]);
+    expect((await win.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-helper"]);
     const mac = rig({ settings: withHosts([hostRecord("mini")]), welcome: welcome({ os: "darwin", tccLimited: true }) });
     await connected(mac, "mini");
     expect((await mac.t.doctorRows()).map(x => x.id)).toContain("remote-tcc:mini");
@@ -1229,7 +1232,13 @@ describe("the remote and WSL seams (INT)", () => {
     expect(r.runnerOpts().ember.pids()).toEqual([10, 11, 55, 4242]);
     await r.t.stopAll();
     expect(r.parts.wslHelpers.stop).toHaveBeenCalledTimes(1);
-    expect((await r.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-a11y:Ubuntu"]);
+    // The user's WSL switch is off: nothing is looked at inside the distros, and the row says so.
+    expect((await r.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-helper"]);
+    expect((await r.t.doctorRows()).at(-1)).toEqual(WSL_OFF_ROW);
+    expect(r.parts.wslHelpers.doctorRows).not.toHaveBeenCalled();
+    const on = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings });
+    (on.parts.wslHelpers.doctorRows as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "wsl-a11y:Ubuntu", status: "warn", label: "Accessibility in Ubuntu", detail: "off" }]);
+    expect((await on.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-a11y:Ubuntu"]);
     // No WSL here (Linux): no helper rows asked for.
     const linux = rig();
     await linux.t.doctorRows();
@@ -1327,5 +1336,44 @@ describe("the remote and WSL seams (INT)", () => {
     await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: true, message: "Restart your Linux apps." });
     const spec = r.wslRunners.get("Ubuntu")!.start.mock.calls[0][0] as { command: string; stamp: { verdict: string } };
     expect(spec.command).toBe(A11Y_FIX_COMMAND);
+  });
+
+  it("refuses the wsl-a11y fix where the administrator turned WSL, or commands in WSL, off", async () => {
+    const turnedOff = "Your organisation has turned this off.";
+    const running = async (r: ReturnType<typeof rig>) => {
+      await flush();
+      if (r.wsl) (r.wsl as { runningNow: () => Promise<Set<string>> }).runningNow = async () => new Set(["Ubuntu"]);
+    };
+    for (const admin of [
+      policy({ features: { wsl: false }, commands: { wsl: "on" } }), policy({ commands: { wsl: "off" } }),
+      // R5: a policy that doesn't mention commands turns them off.
+      policy({}),
+    ]) {
+      const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin });
+      await running(r);
+      await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: false, message: turnedOff });
+      expect(r.wslRunners.get("Ubuntu")?.start ?? vi.fn()).not.toHaveBeenCalled();
+    }
+    const allowed = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin: policy({ commands: { wsl: "ask" } }) });
+    await running(allowed);
+    allowed.wsl.runner("Ubuntu").start.mockImplementation(() => ({ done: Promise.resolve({ ended: "exit", code: 0, signal: null, ms: 5 }) }));
+    await expect(allowed.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: true, message: "Restart your Linux apps." });
+  });
+});
+
+describe("wslSwitchOn (the doctor's reading of the user's WSL switch)", () => {
+  const file = (targets: unknown, more: Record<string, unknown> = {}) => JSON.stringify({ ...more, targets });
+  const wsl = (on: boolean, version: number) => ({ wsl: { on, consent: { version, at: SINCE } } });
+
+  it("is on only with the switch on and its card accepted at the current version", () => {
+    expect(wslSwitchOn(file(wsl(true, 1)))).toBe(true);
+    expect(wslSwitchOn(file(wsl(true, 0)))).toBe(false);
+    expect(wslSwitchOn(file(wsl(false, 1)))).toBe(false);
+  });
+
+  it("reads a file with a slip or a few bad values as Ember would, and counts anything else as off", () => {
+    expect(wslSwitchOn(`${file(wsl(true, 1))}`.replace(/}$/, ",}"))).toBe(true);
+    expect(wslSwitchOn(file(wsl(true, 1), { size: "huge" }))).toBe(true);
+    for (const text of [null, "", "not json", "[]", "null", "{}", file({ wsl: "on" })]) expect(wslSwitchOn(text)).toBe(false);
   });
 });

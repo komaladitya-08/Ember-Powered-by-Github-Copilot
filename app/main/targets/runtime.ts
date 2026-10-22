@@ -42,6 +42,7 @@ import { emberNamesRegExp } from "../remote/protocol";
 import { sshDestination, userSshProcesses } from "../remote/notice-ssh";
 import { remoteTargetParts, type RemoteTargetExtras } from "../remote/target";
 import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink, type SshSeen } from "../remote/types";
+import { SettingsSchema, lenientJson, repairSettings } from "../settings";
 import { wslAwareSystem } from "../wsl/privacy";
 import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
 import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
@@ -312,8 +313,32 @@ export function createTargets(deps: TargetsDeps & TargetsDepsExtra): TargetsRunt
   return buildTargets(deps, productionParts(deps));
 }
 
-/** The doctor's and setup check's target rows (§8.8): the SSH client, the commands terminal, the remote parts, WSL's. */
-export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean; appDir?: string }): Promise<PlatformDoctorRow[]> {
+/**
+ * The row that stands for every distro's helper rows while the user's WSL switch is off: Ember doesn't look inside a
+ * distro then (its read-only check script doesn't run there).
+ */
+export const WSL_OFF_ROW: PlatformDoctorRow = { id: "wsl-helper", status: "ok", label: "Linux apps in WSL", detail: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" };
+
+/**
+ * Whether the user's WSL switch is on (with its card accepted) in the settings file's text, read without writing
+ * anything (the doctor runs apart from Ember): a file that is missing or can't be read counts as off; one with a few bad
+ * values is read as Ember would repair it.
+ */
+export function wslSwitchOn(settingsText: string | null): boolean {
+  if (!settingsText) return false;
+  let json: unknown;
+  try { json = JSON.parse(settingsText); } catch { json = lenientJson(settingsText); }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const parsed = SettingsSchema.safeParse(json);
+  const s = parsed.success ? parsed.data : repairSettings(json as Record<string, unknown>);
+  return s.targets.wsl.on && consentCurrent("wsl", s.targets.wsl.consent);
+}
+
+/**
+ * The doctor's and setup check's target rows (§8.8): the SSH client, the commands terminal, the remote parts, WSL's.
+ * `wslOn`: the user's WSL switch (wslSwitchOn); the check script runs inside running distros only when it is true.
+ */
+export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean; appDir?: string; wslOn?: boolean }): Promise<PlatformDoctorRow[]> {
   const rows = await doctorRowsWith(o, realDoctorProbes({ os: o.os, sys: o.sys, resourcesPath: o.resourcesPath, env: process.env }));
   if (o.os !== "win32" || !wslAllowed(o.admin())) return rows;
   // The doctor runs apart from Ember: its own short-lived view of WSL (nothing is started; it is let go at once).
@@ -323,10 +348,12 @@ export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: 
     wsl = createWsl({ log: quiet, env: process.env, os: o.os, ember: { winPaths: [] }, jobHost: null });
     if (wsl) {
       rows.push(...await wsl.doctorRows());
-      // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted).
+      // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted),
+      // only while the user's WSL switch is on.
       // (main.cjs's folder, dist/app, when main doesn't say: the source tree's script beside it in a development copy.)
       const appDir = o.appDir ?? (typeof __dirname === "string" ? __dirname : null);
-      rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
+      if (o.wslOn !== true) rows.push(WSL_OFF_ROW);
+      else rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
     }
   } catch {
     // WSL's rows are left out when it can't be asked (the doctor's other rows stand).
@@ -1453,8 +1480,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const rows = await doctorRowsWith({ os: deps.os, admin, packaged: deps.packaged }, parts.doctor).catch(() => [] as PlatformDoctorRow[]);
       if (wsl) {
         try { rows.push(...await wsl.doctorRows()); } catch (err) { log.warn("targets.wsl_doctor_failed", { err }); }
-        // Each running distro's Linux apps and their accessibility (wsl-helper:<d>, wsl-a11y:<d>, §8.8).
-        try { rows.push(...await parts.wslHelpers.doctorRows()); } catch (err) { log.warn("targets.wsl_helper_doctor_failed", { err }); }
+        // Each running distro's Linux apps and their accessibility (wsl-helper:<d>, wsl-a11y:<d>, §8.8): the check
+        // script runs inside them only while the user's WSL switch is on.
+        if (!wslOn()) rows.push(WSL_OFF_ROW);
+        else try { rows.push(...await parts.wslHelpers.doctorRows()); } catch (err) { log.warn("targets.wsl_helper_doctor_failed", { err }); }
       }
       for (const [hostId, c] of conns) if (c.target?.link.welcome.tccLimited) rows.push(remoteTccRow(hostId));
       return rows;
@@ -1465,6 +1494,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const m = /^wsl-a11y:(.+)$/.exec(typeof id === "string" ? id : "");
       if (!m || !DISTRO_NAME.test(m[1])) return { ok: false, message: "Ember doesn't know that fix." };
       const name = m[1];
+      // The fix is a command in the distro: never where the administrator turned WSL, or commands in WSL, off.
+      if (!wslAllowed(admin()) || commandMode(admin(), "wsl") === "off") return { ok: false, message: "Your organisation has turned this off." };
       if (!wsl || !wslOn()) return { ok: false, message: "WSL isn't turned on for Ember. Turn it on in Ember's settings (Computers)." };
       const d = distroOf(name);
       if (!d || d.needsSetup || isToolDistro(d)) return { ok: false, message: `Ember doesn't use Linux apps in ${name}.` };

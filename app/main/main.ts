@@ -53,7 +53,7 @@ import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { FixId, HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 import { extraBinDirs } from "./platform/darwin/system";
 import { deskProcesses } from "./desk/desk";
-import { createTargets, targetDoctorRows } from "./targets/runtime";
+import { createTargets, targetDoctorRows, wslSwitchOn } from "./targets/runtime";
 import type { IpcLike, MenuItemLike, TargetsRuntime } from "./targets/types";
 import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
@@ -190,6 +190,15 @@ async function doctorHelper(): Promise<HelperStatus | null | undefined> {
   }
 }
 
+/** The user's settings file as it is on disk (the doctor only reads it), or null. */
+function settingsText(): string | null {
+  try {
+    return fs.readFileSync(path.join(userData, "settings.json"), "utf8");
+  } catch {
+    return null; // none yet: defaults, WSL off
+  }
+}
+
 async function runDoctor(): Promise<void> {
   await app.whenReady();
   const ws = wsState = platform.openWindows(log);
@@ -220,7 +229,7 @@ async function runDoctor(): Promise<void> {
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
     runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
     // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
-    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged }))],
+    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
   process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);

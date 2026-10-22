@@ -94,7 +94,7 @@ describe("main.ts's privacy wiring (critique integration-1)", () => {
 describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's stubs", () => {
   const hooks: [string, string[]][] = [
     ["1: the imports and the runtime beside the agent", [
-      'import { createTargets, targetDoctorRows } from "./targets/runtime";', 'import { wrapForWsl } from "./wsl/routed-sidecar";',
+      'import { createTargets, targetDoctorRows, wslSwitchOn } from "./targets/runtime";', 'import { wrapForWsl } from "./wsl/routed-sidecar";',
       'import { wrapWindowsForWsl } from "./wsl/routed-windows";', 'import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";',
       "let targets: TargetsRuntime | null = null;",
     ]],
@@ -120,7 +120,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     ["9: a remote's quick context first", ["const remote = targets?.quickContext();"]],
     ["10: the quit words", ["quitQuestion(busyTasks(), targets?.busy() ?? { commands: 0, connections: 0 },"]],
     ["11: dispose at quit", ['app.on("will-quit", () => { void targets?.dispose(); });']],
-    ["12: the doctor's rows", ["...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged }))"]],
+    ["12: the doctor's rows", ["...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))"]],
     ["the settings page can't skip a consent card (S0a review)", ["const { patch, dropped } = settingsFromHome(sent);"]],
   ];
   for (const [hook, snippets] of hooks) {
