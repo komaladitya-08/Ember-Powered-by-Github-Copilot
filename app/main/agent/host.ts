@@ -19,27 +19,17 @@ import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
-import { Worker, type WorkerDeps } from "./worker";
+import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { Perception, WindowTarget } from "../perception";
 import type { AtspiSidecar, Bounds } from "../perception/sidecar";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
+import { TERMINAL_REQUEST } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
+import { PLATFORM_WORDS } from "../../shared/words";
 
-/** A terminal named as a thing to work in: not GNOME Shell's extensions, nor an app that only has "console" in its name. */
-const TERMINAL = String.raw`(?:(?:gnome|kde|xfce)[- ])?(?:terminal|console(?![- ]companion))|command[- ]line|command prompt|shell(?![- ]extensions?\b)`
-  // Or one word saying which terminal or shell ("the Linux terminal", "a bash shell", "a new terminal"; not GNOME's Shell).
-  + String.raw`|(?!gnome\s)[\w.-]+\s+(?:terminal|shell(?![- ]extensions?\b))`;
-/**
- * Did the user name the terminal (or a shell) as the way to do this: as what they open or use ("open the terminal",
- * "use the command line"), or where it's done ("run it in a terminal")? Not a word about it ("the terminal font").
- */
-const ASKS_TERMINAL = new RegExp(String.raw`\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\s+(?:up\s+)?(?:(?:a|an|the|my|your)\s+)?(?:new\s+)?(?:${TERMINAL})\b|\b(?:in|into|from|via|using|with|through|on)\s+(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "i");
-/** Or said not to use it ("in Files, not in the terminal", "without opening a terminal"). */
-const REFUSES_TERMINAL = new RegExp(String.raw`\b(?:not|never|without|instead\s+of|rather\s+than|don['’]?t)\s+(?:(?:use|using|open|opening)\s+)?(?:(?:in|into|from|via|using|with|through|on)\s+)?(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "gi");
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
-const NAMES_TERMINAL = /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
 
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
@@ -132,6 +122,11 @@ export interface HostOptions {
   resolveProxy?: (url: string) => Promise<string>;
   /** How often the runtime's health is checked (ms). */
   healthMs?: number;
+  /**
+   * The OS's keys, words, apps, settings and security vocabulary (main passes its SystemPlatform), for workers, the
+   * conversation's prompt and words, and which requests name the terminal. Default: Linux's (LINUX_WORKER_SYSTEM).
+   */
+  system?: WorkerSystem;
   /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
   turnStartMs?: number;
   /** How long a turn under way may hear nothing before Ember says it's still waiting (ms; TURN_SLOW_MS). */
@@ -275,10 +270,14 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
   }
 }
 
-export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string } } = {}): string {
+/**
+ * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
+ * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
+ */
+export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "Ember's Copilot runtime is missing or can't start. Reinstall Ember (sudo dnf reinstall ember).";
+  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
   if (NO_MODEL.test(msg)) return msg;
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
@@ -423,13 +422,16 @@ export class AgentHost {
   private readonly outcomes = new Map<string, Presenter>();
   private readonly stateFile: string;
 
+  /** The OS's keys, words, apps, settings and security vocabulary (Linux's unless main passes its own). */
+  private get sys(): WorkerSystem { return this.o.system ?? LINUX_WORKER_SYSTEM; }
+
   constructor(private o: HostOptions) {
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = o.hands?.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text) });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts });
   }
 
   /**
@@ -568,7 +570,7 @@ export class AgentHost {
       while (k >= 0 && log[k].who === "ember") k--;
       const before = log[k];
       if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
-      if (isRiskyLabel(reply) || !(asked || onlyAnswers(reply))) break;
+      if (isRiskyLabel(reply, this.sys.os) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
       at = k;
     }
@@ -811,6 +813,7 @@ export class AgentHost {
           onUsage: (i, o) => this.recordUsage(i, o),
           limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
           inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
+          system: this.sys,
         }, spec),
       }) : null;
       const tasks = this.tasks;
@@ -828,6 +831,8 @@ export class AgentHost {
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
+        words: this.sys.words,
+        shortcuts: this.sys.shortcuts,
         // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
         // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
         // the tasks go on (each one's own watch decides its fate).
@@ -871,7 +876,8 @@ export class AgentHost {
             const key = refusedKey;
             const earlier = said.words.slice(0, said.words.length - r.words.length).split("\n").filter(l => l.trim());
             const held = [...earlier.filter(l => { const by = this.terminalRefused.get(key(l)); return !by || by === r; }), r.words].join("\n");
-            if (ASKS_TERMINAL.test(held.replace(REFUSES_TERMINAL, " ")) && !NAMES_TERMINAL.test(goal)) {
+            const terminal = TERMINAL_REQUEST[this.sys.os];
+            if (terminal.asks.test(held.replace(terminal.refuses, " ")) && !terminal.names.test(goal)) {
               for (const l of said.words.split("\n")) this.terminalRefused.set(key(l), r);
               while (this.terminalRefused.size > 60) this.terminalRefused.delete(this.terminalRefused.keys().next().value!);
               return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
@@ -928,7 +934,7 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      const ctx = { source: this.source, online: offline ? false : online, proxy: this.proxy };
+      const ctx = { source: this.source, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall };
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
       await this.doStop();
       // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the
@@ -1070,7 +1076,7 @@ export class AgentHost {
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
   private taskPresenter(id: string, goal: string): Presenter {
     const title = titleOf(goal);
-    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id });
+    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id, shortcuts: this.sys.shortcuts });
     this.taskPresenters.set(id, p);
     return p;
   }

@@ -11,7 +11,6 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
@@ -25,15 +24,45 @@ import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElem
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import type { AuditEntry, AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
-import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
-import { SETTINGS, changeSetting, execArgv, findApp, isTerminalApp, launchApp, listApps, type DesktopApp, type SettingName } from "../hands/system";
+import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
+import { FILE_PATH_WORDS } from "../policy/vocabulary";
+import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
 import { DIALOG_ROLES, deskWindowAt, type DeskPlace } from "../desk/place";
 import { focusedElement, isSheetCell } from "../perception/elements";
 import { SLIVER_PX } from "../perception/marks";
 import { friendlyApp } from "../../shared/apps";
+import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutTable } from "../../shared/shortcuts";
+import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
+import type { AppCatalog, PrivacyVocabulary, SystemSettings } from "../platform/types";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
+
+/**
+ * What a worker needs of the OS it runs on (main passes its SystemPlatform, which has all of it): how keys are named
+ * and which Ember presses itself, the words its tool descriptions and prompts use, Ember's shortcuts, the installed
+ * apps, the comfort settings it can change, and which windows are security prompts.
+ */
+export interface WorkerSystem {
+  os: OS;
+  keys: KeyConventions;
+  words: PlatformWords;
+  shortcuts: ShortcutTable;
+  apps: Pick<AppCatalog, "list" | "find" | "launch" | "isTerminalApp" | "programsOf" | "appKey">;
+  settings: SystemSettings;
+  privacy: Pick<PrivacyVocabulary, "isSecurityWindow">;
+}
+
+/** Linux's, from the modules a worker used before the port: a worker given no `system` (tests, the eval) works as it did. */
+export const LINUX_WORKER_SYSTEM: WorkerSystem = {
+  os: "linux", keys: KEYS.linux, words: PLATFORM_WORDS.linux, shortcuts: SHORTCUTS.linux,
+  apps: {
+    list: () => listApps(), find: findApp, launch: launchApp, isTerminalApp: app => isTerminalApp(app),
+    programsOf: app => programsOf(app), appKey: name => name.toLowerCase(),
+  },
+  settings: { available: SETTINGS, change: changeSetting },
+  privacy: { isSecurityWindow: w => isSecurityWindow(w) },
+};
 
 export interface WorkerDeps {
   client: CopilotClient;
@@ -100,6 +129,8 @@ export interface WorkerDeps {
   limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number };
   /** Whether this user's inotify instances are all in use (a task's turn can't begin then; see host's inotifyUsedUp). */
   inotifyUsedUp?: () => boolean;
+  /** The OS's keys, words, apps, settings and security vocabulary (default LINUX_WORKER_SYSTEM). */
+  system?: WorkerSystem;
 }
 
 export interface TaskSpec {
@@ -203,7 +234,7 @@ const RESTORE = /\b(restore|recover|reopen)\b/i;
  * Only a question window is read as a whole; elsewhere (Files' Trash with its Restore button, a document about
  * restoring) one control must make the offer itself (Firefox's "Restore Session").
  */
-export function dialogNote(w: { name: string; role?: string }, nodes: readonly { name: string; text?: string }[], said = ""): string {
+export function dialogNote(w: { name: string; role?: string }, nodes: readonly { name: string; text?: string }[], said = "", os: OS = "linux"): string {
   const asked = (re: RegExp) => re.test(said);
   const offer = (s: string, earlier: RegExp) => RESTORE.test(s) && earlier.test(s);
   const top = nodes.slice(0, 60);
@@ -213,7 +244,7 @@ export function dialogNote(w: { name: string; role?: string }, nodes: readonly {
   if (offers && !asked(RESTORE)) {
     return "\nNote: this asks whether to restore an earlier session or recover unsaved documents. The user didn't ask for that: answer No (or Don't restore), and work on the file the task is about.";
   }
-  if (SAVE_TITLE.test(w.name) && !/[~/][\w.-]|\.\w{1,5}\b/.test(said)) {
+  if (SAVE_TITLE.test(w.name) && !FILE_PATH_WORDS[os].test(said)) {
     return "\nNote: the user named no file. Don't accept this dialog's suggested name or folder: save to the file this task is about if you know it, or cancel and say in finish_task that you need to know where to save.";
   }
   return "";
@@ -408,8 +439,6 @@ export function atSpot(chain: PointElement[], spot: { x: number; y: number }): P
   while (end > 1 && chain[end - 1].bounds && !insideOf({ ...spot, width: 0, height: 0 }, chain[end - 1].bounds!)) end--;
   return end === chain.length ? chain : chain.slice(0, end);
 }
-/** Interpreters and launchers: an app started through one isn't known by their name. */
-const LAUNCHERS = /^(python[\d.]*|sh|bash|env|flatpak|java|perl|ruby|node|gjs|mono|gtk-launch)$/;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** The accessibility helper's word for an app that didn't answer in time (busy), as opposed to an element that is gone. */
 const isBusy = (err: unknown) => /\bbusy\b|did not (receive a reply|answer)|timeout was reached/i.test(err instanceof Error ? err.message : String(err));
@@ -448,8 +477,19 @@ const TYPED_MAX = 500;
 const TYPED_FIELDS = 32;
 /** What Ember selected with the keys in a window: everything (Ctrl+A), some of it (Shift with a key that moves), or nothing it knows of. */
 type Selected = "all" | "some" | null;
-/** Shift with a key that moves the caret selects as it goes (Shift+Right, Ctrl+Shift+End). */
-const SELECTS = /^(ctrl\+)?shift\+(up|down|left|right|home|end|prior|next)$/;
+/**
+ * Keys that only move the caret or the cell cursor (arrows, Home, End, Page Up and Down; Ctrl moves further on Linux
+ * and Windows, Option by word and ⌘ to the line's or document's end on macOS), and with Shift select as they go
+ * (Shift+Right, Ctrl+Shift+End; ⇧⌘→): `selects` and `moves`, as keyFamily spells them on each OS.
+ */
+const MOVE_KEYS: Readonly<Record<OS, { selects: RegExp; moves: RegExp }>> = (() => {
+  const linux = { selects: /^(ctrl\+)?shift\+(up|down|left|right|home|end|prior|next)$/, moves: /^(ctrl\+)?(shift\+)?(up|down|left|right|home|end|prior|next)$/ };
+  const darwin = {
+    selects: /^(alt\+)?shift\+(up|down|left|right|home|end|prior|next)$|^shift\+cmd\+(up|down|left|right|home|end|prior|next)$/,
+    moves: /^(alt\+)?(shift\+)?(up|down|left|right|home|end|prior|next)$|^(shift\+)?cmd\+(up|down|left|right|home|end|prior|next)$/,
+  };
+  return { linux, win32: linux, darwin };
+})();
 /**
  * After `keys` went into a field where this task had typed `typed`: what it has typed there now, and what is still
  * selected by the keys (until a key replaces it or moves the caret; Ctrl+C keeps it, and so do steps that move no
@@ -457,12 +497,12 @@ const SELECTS = /^(ctrl\+)?shift\+(up|down|left|right|home|end|prior|next)$/;
  * was typed: pieces typed around a move are still judged together, and the field's own text with them (only another
  * field starts again).
  */
-export function afterKeys(keys: string, typed: string, selected: Selected): { typed: string; selected: Selected } {
-  const k = keyFamily(canonicalKeys(keys) ?? "");
-  const char = typedChar(keys);
-  if (k === "ctrl+a") return { typed, selected: "all" };
-  if (SELECTS.test(k)) return { typed, selected: selected === "all" ? "all" : "some" };
-  const replaced = !!selected && replacesSelection(keys);
+export function afterKeys(keys: string, typed: string, selected: Selected, kc: KeyConventions = KEYS.linux): { typed: string; selected: Selected } {
+  const k = keyFamily(canonicalKeys(keys, kc) ?? "");
+  const char = typedChar(keys, kc);
+  if (k === canonicalKeys(kc.edit.selectAll, kc)) return { typed, selected: "all" };
+  if (MOVE_KEYS[kc.os].selects.test(k)) return { typed, selected: selected === "all" ? "all" : "some" };
+  const replaced = !!selected && replacesSelection(keys, kc);
   // Everything selected and replaced: what was typed there is gone. Part of it: which part is unknown, so it stays.
   const kept = replaced && selected === "all" ? "" : typed;
   const still = !replaced && !MOVES_CARET.test(k) ? selected : null;
@@ -470,20 +510,19 @@ export function afterKeys(keys: string, typed: string, selected: Selected): { ty
   if (k === "backspace") return { typed: replaced ? kept : kept.slice(0, -1), selected: null };
   return { typed: kept, selected: still };
 }
-/**
- * Keys that only move the caret or the cell cursor (arrows, Home, End, Page Up and Down, with Ctrl too), and with Shift
- * select as they go (Shift+End): what a key then does to the selection is judged when it comes (afterSelecting).
- */
-const MOVE_KEY = /^(ctrl\+)?(shift\+)?(up|down|left|right|home|end|prior|next)$/;
 /** Text fields where those keys only move the caret, and where Tab only moves on (one-line fields; a cell, as below). */
 const MOVES_IN = new Set(["text", "entry", "paragraph", "document text"]);
-/** Does `keys` only move, in what has the keyboard (`focus`)? Never in lists, menus, sliders, spin buttons or combo boxes (an arrow there picks). */
-function onlyMoves(keys: string, focus: Focus | undefined): boolean {
+/**
+ * Does `keys` only move, in what has the keyboard (`focus`)? Never in lists, menus, sliders, spin buttons or combo boxes
+ * (an arrow there picks). What a key that moves (MOVE_KEYS, Shift selecting as it goes) then does to the selection is
+ * judged when it comes (afterSelecting).
+ */
+function onlyMoves(keys: string, focus: Focus | undefined, kc: KeyConventions): boolean {
   if (!focus || focus.secret) return false;
-  const k = keyFamily(canonicalKeys(keys) ?? "");
+  const k = keyFamily(canonicalKeys(keys, kc) ?? "");
   const cell = isSheetCell(focus);
   if (/^(shift\+)?tab$/.test(k)) return cell || focus.role === "entry";
-  return MOVE_KEY.test(k) && (cell || MOVES_IN.has(focus.role));
+  return MOVE_KEYS[kc.os].moves.test(k) && (cell || MOVES_IN.has(focus.role));
 }
 /** Roles whose text the screen reader reads (an empty one it leaves out: it holds ""), and the selection in it when it has the keyboard. */
 const READ_TEXT_ROLES = new Set(["text", "entry", "paragraph", "document text", "spin button"]);
@@ -513,10 +552,10 @@ const KEY_TEXT: Record<string, string> = { equal: "=", plus: "+", minus: "-", at
   colon: ":", slash: "/", backslash: "\\", period: ".", comma: ",", semicolon: ";", numbersign: "#", dollar: "$", ampersand: "&", bracketleft: "[",
   bracketright: "]", underscore: "_", asterisk: "*", percent: "%", question: "?", exclam: "!", less: "<", greater: ">", asciicircum: "^",
   asciitilde: "~", grave: "`", bar: "|", braceleft: "{", braceright: "}" };
-function keyText(keys: string): string | null {
-  const c = typedChar(keys);
+function keyText(keys: string, kc: KeyConventions): string | null {
+  const c = typedChar(keys, kc);
   if (c !== null) return c;
-  const m = /^(shift\+)?(\w+)$/.exec(keyFamily(canonicalKeys(keys) ?? ""));
+  const m = /^(shift\+)?(\w+)$/.exec(keyFamily(canonicalKeys(keys, kc) ?? ""));
   return m ? KEY_TEXT[m[2]] ?? null : null;
 }
 /**
@@ -694,13 +733,6 @@ export function pickOption(options: string[], want: string): string | null {
   return same.length === 1 ? same[0] : null;
 }
 
-/** The programs an app's windows belong to: its launcher's file name and its desktop id (never an interpreter's name). */
-function programsOf(app: DesktopApp): Set<string> {
-  const argv = app.exec ? execArgv(app.exec) : [];
-  const names = [app.id.replace(/\.desktop$/, ""), ...argv.filter(a => !/^[-%]/.test(a)).map(a => path.basename(a))];
-  return new Set(names.map(n => n.toLowerCase()).filter(n => n && !LAUNCHERS.test(n)));
-}
-
 /** One borrow per desk: every task's desk input waits its turn there (a desk has one keyboard and pointer). */
 const deskBorrows = new WeakMap<DeskPlace, CursorBorrow>();
 const deskBorrowFor = (place: DeskPlace) => {
@@ -801,7 +833,11 @@ export class Worker {
   /** What spreadsheet cells the latest read didn't list were found to hold, by window (windowKey) and address: the next question says it. */
   private cellsSeen = new Map<string, string>();
 
+  /** The OS's keys, words, apps, settings and security vocabulary. */
+  private readonly sys: WorkerSystem;
+
   constructor(private d: WorkerDeps, readonly spec: TaskSpec) {
+    this.sys = d.system ?? LINUX_WORKER_SYSTEM;
     this.target = { ...spec.target };
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
@@ -813,6 +849,10 @@ export class Worker {
   }
 
   private get perception() { return this.place?.perception ?? this.d.perception; }
+  /** How keys are named on this OS, and the ones Ember presses itself (Select All, Paste…). */
+  private get kc(): KeyConventions { return this.sys.keys; }
+  /** What to suggest where the user's keyboard or mouse would be needed and isn't available: the desk, when there is one. */
+  private get deskHint(): string { return this.d.desk ? "Try open_on_desk." : "Tell the user in finish_task."; }
   private get sidecar() { return this.place?.sidecar ?? this.d.sidecar; }
   private get halted() { return this.halt.signal.aborted; }
   /** Ended by finish_task (or run() returning): a tool still in flight (a question, a window wait) then does nothing. */
@@ -900,6 +940,9 @@ export class Worker {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   private allTools(): Tool<any>[] {
     const id = z.number().int().describe("Element id from your latest perceive_window");
+    const words = this.sys.words;
+    const settings = this.sys.settings.available;
+    const settingNames = Object.keys(settings) as SettingName[];
     return [
       this.tool("perceive_window",
         "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
@@ -961,15 +1004,16 @@ export class Worker {
         async a => this.chooseOption(a.id, a.option)),
       this.tool("set_value", "Set a slider or spin button to a number.", z.object({ id, value: z.number().finite() }),
         async a => this.act("value", a.id, String(a.value), () => this.sidecar.setValue(a.id, a.value))),
-      this.tool("change_setting", `Change a desktop setting directly: ${Object.entries(SETTINGS).map(([k, v]) => `${k} (${v})`).join("; ")}.`,
+      // Only the settings this OS really changes and reads back; none, no tool (z.enum can't be empty).
+      ...(settingNames.length ? [this.tool("change_setting", `Change a desktop setting directly: ${settingNames.map(k => `${k} (${settings[k]})`).join("; ")}.`,
         z.object({
-          setting: z.enum(Object.keys(SETTINGS) as [SettingName, ...SettingName[]]),
+          setting: z.enum(settingNames as [SettingName, ...SettingName[]]),
           value: z.string().max(20).describe('"on"/"off", or a number for text_size'),
         }),
-        async a => this.system("setting", `${SETTINGS[a.setting]} → ${a.value}`, async () => {
-          const r = await changeSetting(a.setting, a.value);
-          return `${SETTINGS[a.setting]}: was ${r.before}, now ${r.after}.`;
-        })),
+        async a => this.system("setting", `${settings[a.setting]} → ${a.value}`, async () => {
+          const r = await this.sys.settings.change(a.setting, a.value);
+          return `${settings[a.setting]}: was ${r.before}, now ${r.after}.`;
+        }))] : []),
       ...(this.d.desk ? [this.tool("open_on_desk",
         "Open an app on Ember's desk: a private screen the user doesn't see, where you can use mouse and keyboard freely without disturbing them (they can watch in a small view). Good for longer jobs and for apps that need typing or shortcuts. Save files the user should get into the folder this tool names.",
         z.object({ name: z.string().min(1).max(100) }),
@@ -1000,11 +1044,12 @@ export class Worker {
             return `Started ${app.name} on your desk, but its window hasn't appeared yet. Use list_windows.`;
           }, app.name);
         })] : []),
-      this.tool("open_app", "Start an application by name (for example Text Editor, Files, Settings).", z.object({ name: z.string().min(1).max(100) }),
+      this.tool("open_app", `Start an application by name (for example ${words.openAppExamples}).`, z.object({ name: z.string().min(1).max(100) }),
         async a => {
-          const app = findApp(listApps(), a.name);
+          const apps = this.sys.apps;
+          const app = apps.find(apps.list(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", app.name, async () => {
             if (this.isOver) throw new BorrowStopped();
             this.setPlace(null);
@@ -1012,9 +1057,10 @@ export class Worker {
             // (it only raises its window) is found by its program, never by a title that happens to contain its name.
             const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
             const before = new Set((await this.perception.windows().catch(() => [])).map(key));
-            const programs = programsOf(app);
-            const ours = (w: { app: string }) => programs.has(w.app.toLowerCase());
-            launchApp(app);
+            // Compared as the OS names programs (on Windows without ".exe").
+            const programs = apps.programsOf(app);
+            const ours = (w: { app: string }) => programs.has(apps.appKey(w.app));
+            apps.launch(app);
             for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const wins = await this.perception.windows().catch(() => []);
@@ -1027,7 +1073,7 @@ export class Worker {
         }),
       ...(this.d.cursor || this.d.desk ? [
         this.tool("press_keys",
-          "Press a key or shortcut in the window you are working in, e.g. \"ctrl+s\", \"Return\", \"ctrl+shift+t\". Borrows the user's keyboard, so the user is asked first; prefer element tools when they work.",
+          `Press a key or shortcut in the window you are working in, e.g. ${words.keyExamples}. Borrows the user's keyboard, so the user is asked first; prefer element tools when they work.`,
           z.object({ keys: z.string().min(1).max(40) }),
           async a => this.pressKeys(a.keys)),
         this.tool("scroll", "Scroll an element (a list, document or page) up or down by a few steps. Borrows the user's mouse, so the user is asked first.",
@@ -1079,7 +1125,7 @@ export class Worker {
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
     if (signal.aborted) return { success: false, summary: this.stoppedSummary(), stopped: true };
     // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
-    if (!d.model && !d.runtimeDefault) return { success: false, summary: "No model is available for tasks. Pick one in settings (Ctrl+Alt+E)." };
+    if (!d.model && !d.runtimeDefault) return { success: false, summary: `No model is available for tasks. Pick one in settings (${this.sys.shortcuts.settings.label}).` };
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
@@ -1094,7 +1140,8 @@ export class Worker {
         model: d.model ?? undefined,
         provider: d.provider,
         tools,
-        systemMessage: this.spec.mode === "guide" ? guideSystemMessage() : workerSystemMessage(),
+        systemMessage: this.spec.mode === "guide" ? guideSystemMessage({ words: this.sys.words })
+          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk }),
         workingDirectory: d.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
       });
@@ -1450,7 +1497,7 @@ export class Worker {
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords)}`, resultType: "success" };
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -1652,7 +1699,7 @@ export class Worker {
     const chosen = pickOption(options, option);
     if (chosen === null && left > 0) {
       // A long list (a folder of many files): its rows further down weren't looked through in time.
-      return fail(`None of the first ${options.length} rows is called exactly ${q(option, 100)}, and the list is too long for Ember to look through the other ${left} in time. Type the name instead: in a file dialog press Ctrl+L (or use its name field) and type the file's name.`);
+      return fail(`None of the first ${options.length} rows is called exactly ${q(option, 100)}, and the list is too long for Ember to look through the other ${left} in time. Type the name instead: ${this.sys.words.fileDialogPathHint}.`);
     }
     if (chosen === null) {
       return fail(`No option is called exactly ${q(option, 100)}. <options untrusted="true">${options.slice(0, 40).map(o => q(o, 60)).join(", ")}</options> Use one of these names in full.`);
@@ -1838,7 +1885,7 @@ export class Worker {
     const borrowable = !!(this.place || this.d.cursor) && !!node.bounds;
     if (borrowable && (kind === "click" || kind === "toggle" || (kind === "text" && typable(node.role, node.states)))) return "borrow";
     if (borrowable && kind === "text") {
-      return fail(`This element (${q(node.role, 40)}) doesn't take text by accessibility, and it isn't a text field Ember may type into with the keyboard (there Ctrl+A and Delete could hit far more than it). Tell the user in finish_task.`);
+      return fail(`This element (${q(node.role, 40)}) doesn't take text by accessibility, and it isn't a text field Ember may type into with the keyboard (there ${keyLabel(this.kc.edit.selectAll, this.kc)} and Delete could hit far more than it). Tell the user in finish_task.`);
     }
     // A spreadsheet's cell that takes no number this way takes it typed: type_text fills a cell by its address.
     if (kind === "value" && isSheetCell(node)) return fail(`Cell ${q(node.name, 20)} takes no number by accessibility: use type_text with cell ${q(node.name, 20)} and the number as text.`);
@@ -1949,8 +1996,8 @@ export class Worker {
         // Keys go wherever the keyboard is: this field must have it (a click can land on an overlay), or nothing is typed.
         await this.untilFocused(id, node, element);
         // "replace" clears what is there first; append goes to the end.
-        if (mode === "replace") { await hand.keys("ctrl+a"); await hand.keys("Delete"); }
-        else if (mode === "append") await hand.keys("ctrl+End");
+        if (mode === "replace") { await hand.keys(this.kc.edit.selectAll); await hand.keys("Delete"); }
+        else if (mode === "append") await hand.keys(this.kc.edit.textEnd);
         if (!paste) { await hand.type(text); return; }
         // What the field holds before the paste: the text must be new there (the field may hold these words already).
         const prior = await this.sidecar.readElement(id).catch(() => null);
@@ -1959,7 +2006,7 @@ export class Worker {
         await this.clipboard!.writeText(text);
         pasting.written = true;
         pasting.pressed = true;
-        await hand.keys("ctrl+v");
+        await hand.keys(this.kc.edit.paste);
       }, id, async () => {
         // A switch or check box: the click is done once it shows turned, never on the click alone.
         if (goal && kind === "cursor_click") {
@@ -2193,7 +2240,7 @@ export class Worker {
     if (mode !== "replace") return fail(`In a spreadsheet's cell Ember replaces what the cell holds: call type_text with mode "replace" and the cell's whole new content.`);
     const bad = cellTextProblem(text);
     if (bad) return fail(bad);
-    if (!this.place && !this.d.cursor) return fail("Filling a cell needs the keyboard, which isn't available here. Try open_on_desk.");
+    if (!this.place && !this.d.cursor) return fail(`Filling a cell needs the keyboard, which isn't available here. ${this.deskHint}`);
     if (![...this.known.values()].some(n => isSheetCell(n))) return fail("Your latest perceive_window shows no spreadsheet cells. Call perceive_window in the spreadsheet's window first.");
     const job = this.cellJob(at.cell, at.place, text);
     const { cell, expected } = job;
@@ -2226,7 +2273,7 @@ export class Worker {
       jobs.push(this.cellJob(at.cell, at.place, c.text));
     }
     if (this.place?.userInControl()) return this.deskTaken("cursor_text");
-    if (!this.place && !this.d.cursor) return fail("Filling cells needs the keyboard, which isn't available here. Try open_on_desk.");
+    if (!this.place && !this.d.cursor) return fail(`Filling cells needs the keyboard, which isn't available here. ${this.deskHint}`);
     if (![...this.known.values()].some(n => isSheetCell(n))) return fail("Your latest perceive_window shows no spreadsheet cells. Call perceive_window in the spreadsheet's window first.");
     const secret = jobs.find(j => j.listed?.secret);
     if (secret) return fail(`Cell ${secret.cell} holds something secret: Ember doesn't type there. Nothing was typed: fill the other cells without it.`);
@@ -2319,7 +2366,7 @@ export class Worker {
     // What each cell's own question would add (text carried from another app, a long text replaced), once each.
     const notes = new Map<string, string[]>();
     for (const { job, req, d } of judged) {
-      const plain = plainQuestion(req);
+      const plain = plainQuestion(req, this.kc);
       const note = d.prompt.startsWith(plain) ? d.prompt.slice(plain.length).trim() : "";
       if (note) notes.set(note, [...notes.get(note) ?? [], job.cell]);
     }
@@ -2386,7 +2433,7 @@ export class Worker {
     const byName = Math.min(steps(at, place), fromA1) > CELL_STEPS_MAX;
     if (byName) await this.toCellByName(hand, cell);
     else {
-      if (steps(at, place) > fromA1) { await hand.keys("ctrl+Home"); at = { col: 0, row: 1 }; }
+      if (steps(at, place) > fromA1) { await hand.keys(this.kc.edit.sheetHome); at = { col: 0, row: 1 }; }
       for (let i = 0; i < Math.abs(place.col - at.col); i++) await hand.keys(place.col > at.col ? "Right" : "Left");
       for (let i = 0; i < Math.abs(place.row - at.row); i++) await hand.keys(place.row > at.row ? "Down" : "Up");
     }
@@ -2552,7 +2599,7 @@ export class Worker {
    * of a new range for the cells selected, and changes the document; "$" is never part of a name.
    */
   private async toCellByName(hand: Hand, cell: string): Promise<void> {
-    await hand.keys("ctrl+shift+F5");
+    await hand.keys(this.kc.edit.nameBox);
     for (let i = 0; ; i++) {
       await sleep(100);
       const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2666,13 +2713,13 @@ export class Worker {
     }
     if (seen === "busy") return fail(BUSY);
     if (seen === "gone") return fail("That window can't be read (it is closed, or exposes no accessibility information), so nothing was pressed. Use list_windows.");
-    const activating = isActivatingKey(keys);
+    const activating = isActivatingKey(keys, this.kc);
     // Letters and digits typed key by key are judged as typed text (text read elsewhere is asked about): with what the
     // field holds (the caret may be anywhere in it) and after what this task typed there before. A key that types
     // replaces what is selected: the policy judges the selection the screen reader tells, and what the keys selected.
     const here = this.windowKey;
     if (this.keyed.window !== here) this.keyed = { window: here, selected: null };
-    const char = typedChar(keys);
+    const char = typedChar(keys, this.kc);
     let element: Focus | undefined = seen;
     for (let round = 0; round < 3; round++) {
       const before = this.typedIn.get(this.fieldOf(element)) ?? "";
@@ -2685,14 +2732,14 @@ export class Worker {
         ...(selected === "all" ? { afterSelectAll: true } : selected === "some" ? { afterSelecting: true } : {}),
         ...(this.focusBeyond ? { selectionBeyond: this.focusBeyond } : {}),
         // In a spreadsheet's cell: what it will hold, symbols too (a formula typed key by key).
-        ...(this.focusFormula !== undefined ? { formula: this.focusFormula + (keyText(keys) ?? "") } : {}),
+        ...(this.focusFormula !== undefined ? { formula: this.focusFormula + (keyText(keys, this.kc) ?? "") } : {}),
         // Where Enter can send (a page's field), or only starts a line (an editor's text); and text that is all Ember's own.
         ...(element ? { inPage: this.focusInPage, ...(this.focusMultiLine ? { multiLine: true } : {}), ...this.ownText(this.fieldOf(element), this.focusText) } : {}),
         // The dialog the keys go to: Enter on its focused "Save Anyway" or "OK" answers it, as a click on it does.
         ...(element && this.focusDialog ? { dialog: this.focusDialog } : {}),
       };
       // On the user's screen, once they said yes to a key that only moves here, more of those go without a question.
-      const moves = !this.place && onlyMoves(keys, element);
+      const moves = !this.place && onlyMoves(keys, element, this.kc);
       const covered = moves && this.moving === here;
       const verdict = await this.authorize(req, { covered, ...(moves && !covered ? { note: "Keys that only move there after this one won't be asked about." } : {}) });
       if (verdict) return verdict;
@@ -2719,7 +2766,7 @@ export class Worker {
       if (!turn.moved) {
         if (result.resultType === "success") {
           const into = this.fieldOf(turn.into ?? approved);
-          const next = afterKeys(keys, this.typedIn.get(into) ?? "", this.keyed.selected);
+          const next = afterKeys(keys, this.typedIn.get(into) ?? "", this.keyed.selected, this.kc);
           this.keyed = { window: here, selected: next.selected };
           this.noteTyped(into, next.typed);
         }
@@ -2903,10 +2950,10 @@ export class Worker {
   private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>, keysOnly = kind === "keys"): Promise<ToolResultObject> {
     if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId, afterBorrow);
-    if (!this.d.cursor) return fail("This needs the mouse or keyboard, which isn't available here. Try open_on_desk.");
+    if (!this.d.cursor) return fail(`This needs the mouse or keyboard, which isn't available here. ${this.deskHint}`);
     const c = this.d.cursor;
     // A password or authentication prompt has the keyboard: those are the user's alone (M8.3).
-    const authPrompt = () => { const w = c.activeWindow?.(); return !!w && isSecurityWindow(w); };
+    const authPrompt = () => { const w = c.activeWindow?.(); return !!w && this.sys.privacy.isSecurityWindow(w); };
     if (authPrompt()) {
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
       return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
@@ -3081,7 +3128,7 @@ export class Worker {
     }
     if (request.kind !== "keys") this.moving = null;
     // Text going into a field is judged after what this task typed into the window's other fields too.
-    const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "") ?? "" : "";
+    const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "", this.kc) ?? "" : "";
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
     const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
@@ -3124,7 +3171,7 @@ export class Worker {
     }
     if (answer === "once" || answer === "always") {
       // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
-      if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element))) {
+      if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element, this.kc))) {
         this.allowedApps.add(req.app.toLowerCase());
       }
       return null;
