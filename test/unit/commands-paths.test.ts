@@ -146,6 +146,29 @@ describe("POSIX path rules", () => {
     expect(P.globPrefix("/home/ana/*/x", envL)).toBe("/home/ana");
   });
 
+  it("judges a glob by every name it could match: secret folders and names, Ember's folders (critique: glob evasion)", () => {
+    const reach = (g: string, use: P.PathUse = "read"): { secret: boolean; ember: boolean } => P.globReaches(g, use, envL, true);
+    for (const g of ["/home/ana/.ss[h]/id_rsa", "/home/ana/.s*/config.bak", "/home/*/.ssh/id_rsa", "/home/ana/*/id_rsa", "/proc/[0-9]*/environ", "/home/ana/proj/*/.env"]) {
+      expect(reach(g).secret, g).toBe(true);
+    }
+    for (const g of ["/home/ana/proj/*.txt", "/home/ana/proj/src/*.ts", "/home/ana/proj/*", "/home/ana/*/notes.md"]) expect(reach(g).secret, g).toBe(false);
+    expect(reach("/home/ana/.s*", "list").secret).toBe(false);
+    expect(reach("/home/ana/.s*", "readTree").secret).toBe(true);
+    expect(reach("/home/ana/.config/emb*/settings.json").ember).toBe(true);
+    expect(reach("/home/ana/.conf*").ember).toBe(false);
+    expect(reach("/home/ana/.conf*", "deleteTree").ember).toBe(true);
+  });
+
+  it("finds start-up files, hooks and git's settings behind a glob being written", () => {
+    expect(P.globWriteKind("/home/ana/.bash?c", envL, true)).toBe("startup");
+    expect(P.globWriteKind("/home/ana/proj/.git/hoo*/pre-commit", envL, true)).toBe("hook");
+    expect(P.globWriteKind("/home/ana/proj/.git/c*", envL, true)).toBe("git-config");
+    expect(P.globWriteKind("/home/ana/proj/*.log", envL, true)).toBeNull();
+    expect(P.writeKind("/home/ana/proj/.git/config", envL)).toBe("git-config");
+    expect(P.writeKind("/home/ana/.gitconfig", envL)).toBe("git-config");
+    expect(P.writeKind("/home/ana/proj/.gitignore", envL)).toBeNull();
+  });
+
   it("maps Windows paths to the drive mount", () => {
     expect(P.toMount("C:\\Users\\ana", "/mnt")).toBe("/mnt/c/Users/ana");
     expect(P.toMount("D:\\", "/mnt/")).toBe("/mnt/d");

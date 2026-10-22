@@ -272,6 +272,11 @@ const SYSTEM_WINDOWS = ["Windows/", "Program Files*/", "ProgramData/"];
 const DISK_DEVICE = /^\/dev\/(sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|disk\d|rdisk\d|mapper\/|dm-\d|loop\d|md\d|sr\d)/;
 const DISK_DEVICE_WIN = /^\\\\\.\\(physicaldrive\d+|[a-z]:$)/i;
 
+/** git's own settings files in a home (any setting may run code: §3.4.8), relative to a home. */
+const GIT_CONFIG_HOME = [".gitconfig", ".config/git/config"];
+/** A repository's own settings (`.git/config`, a submodule's `.git/modules/…/config`), in any folder. */
+const GIT_CONFIG_FILE = /(^|[\\/])\.git[\\/](modules[\\/].+[\\/])?config$/i;
+
 /** WSL's own configuration (critique wsl-22), relative to a Windows profile. */
 const WSL_CONFIG_HOME = [".wslconfig", ".wslgconfig"];
 
@@ -352,7 +357,7 @@ export type PathUse =
 
 /** A path rule that applies: a finding to add, or a refusal. */
 export interface PathVerdict {
-  kind: "secret" | "history" | "ember" | "startup" | "hook" | "wsl-config" | "system" | "autostart" | "disk";
+  kind: "secret" | "history" | "ember" | "startup" | "hook" | "git-config" | "wsl-config" | "system" | "autostart" | "disk";
 }
 
 /** Uses that change the path (writes, deletes, moves). */
@@ -473,6 +478,7 @@ export function writeKind(p: string, env: PathEnv): PathVerdict["kind"] | null {
   const ci = caseless(p, env);
   const homes = homePatterns(env);
   if (/(^|[\\/])\.git[\\/]hooks([\\/]|$)/i.test(p)) return "hook";
+  if (GIT_CONFIG_FILE.test(p) || underEntries(p, homes, GIT_CONFIG_HOME, env, true)) return "git-config";
   if (PS_PROFILE.test(p)) return "startup";
   if (env.flavour === "win32") {
     if (underEntries(p, homes, WSL_CONFIG_HOME, env, true)) return "wsl-config";
@@ -582,6 +588,202 @@ export function globRegExp(pattern: string, env: PathEnv, dotRule: boolean): Reg
     segStart = false;
   }
   return new RegExp(`^${out}$`, caseless(pattern, env) ? "i" : "");
+}
+
+/** One segment of a pattern: a literal name, a wildcard name, or `**` (any run of segments). */
+type SegPat = { lit: string; re: null } | { lit: null; re: RegExp; head: string } | "**";
+
+/** A segment pattern (`*` and `?` within the segment, `[…]` classes); `dotRule`: a leading wildcard skips dot names. */
+function segPat(seg: string, ci: boolean, dotRule: boolean, posixEscapes: boolean): SegPat {
+  if (seg === "**") return "**";
+  let out = "";
+  let head = "";
+  let wild = false;
+  let lit = "";
+  for (let k = 0; k < seg.length; k++) {
+    const c = seg[k];
+    if (c === "\\" && posixEscapes && k + 1 < seg.length) {
+      const n = seg[++k];
+      out += n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      lit += n;
+      if (!wild) head += n;
+      continue;
+    }
+    if (c === "*" || c === "?") {
+      out += (k === 0 && dotRule ? "(?!\\.)" : "") + (c === "*" ? "[^\\\\/]*" : "[^\\\\/]");
+      wild = true;
+      continue;
+    }
+    if (c === "[") {
+      const end = seg.indexOf("]", k + 2);
+      if (end > k) {
+        let body = seg.slice(k + 1, end);
+        if (body.startsWith("!") || body.startsWith("^")) body = `^${body.slice(1)}`;
+        out += `${k === 0 && dotRule ? "(?!\\.)" : ""}[${body.replace(/\\/g, "\\\\")}]`;
+        k = end;
+        wild = true;
+        continue;
+      }
+    }
+    out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    lit += c;
+    if (!wild) head += c;
+  }
+  if (!wild) return { lit: ci ? lit.toLowerCase() : lit, re: null };
+  return { lit: null, re: new RegExp(`^${out}$`, ci ? "i" : ""), head: ci ? head.toLowerCase() : head };
+}
+
+/** Whether two segment patterns can name the same name (conservative when both hold wildcards). */
+function segsMeet(a: SegPat, b: SegPat): boolean {
+  if (a === "**" || b === "**") return true;
+  if (a.lit !== null && b.lit !== null) return a.lit === b.lit;
+  if (a.lit !== null) return (b as { re: RegExp }).re.test(a.lit);
+  if (b.lit !== null) return a.re.test(b.lit);
+  // Both wildcards: they can meet unless their fixed beginnings differ.
+  const ha = a.head;
+  const hb = (b as { head: string }).head;
+  return ha.startsWith(hb) || hb.startsWith(ha);
+}
+
+/** An absolute path or pattern as segment patterns (POSIX: leading "" for the root; Windows: the drive first). */
+function patSegs(p: string, env: PathEnv, ci: boolean, dotRule: boolean): SegPat[] {
+  const parts = (env.flavour === "win32" ? p.replace(/\//g, "\\").split("\\") : p.split("/")).filter((s, k) => k === 0 || s !== "");
+  return parts.map(s => segPat(s, ci, dotRule, env.flavour === "posix"));
+}
+
+/**
+ * Whether a glob may name `entry` (a folder, when `folder`) or something inside it; `ancestors`: also a folder above
+ * it (a recursive read or a tree delete of that folder reaches the entry).
+ */
+function globMeets(g: SegPat[], e: SegPat[], folder: boolean, ancestors: boolean): boolean {
+  const star = g.indexOf("**");
+  const upto = star >= 0 ? star : g.length;
+  for (let k = 0; k < Math.min(upto, e.length); k++) if (!segsMeet(g[k], e[k])) return false;
+  if (star >= 0) return true;
+  if (g.length === e.length) return true;
+  if (g.length > e.length) return folder;
+  return ancestors;
+}
+
+/** The secret entries of §3.6.1 as absolute patterns for this environment (`*` within a segment), folders marked. */
+function secretEntries(env: PathEnv): { p: string; folder: boolean }[] {
+  const out: { p: string; folder: boolean }[] = [];
+  const s = sep(env);
+  const add = (root: string, entry: string): void => {
+    const folder = entry.endsWith("/");
+    const rel = entry.replace(/\/$/, "");
+    out.push({ p: root + s + (s === "\\" ? rel.replace(/\//g, "\\") : rel), folder });
+  };
+  if (env.flavour === "win32") {
+    const homes = ["?:\\Users\\*"];
+    if (env.home) homes.unshift(env.home);
+    for (const h of homes) for (const e of [...SECRET_HOME_EITHER, ...HISTORY_HOME]) add(h, e);
+    out.push({ p: `${env.windows?.systemRoot ?? "C:\\Windows"}\\System32\\config`, folder: true });
+    return out;
+  }
+  const homes = ["/home/*", "/Users/*", "/root", "/var/root"];
+  if (env.home) homes.unshift(env.home);
+  for (const h of homes) for (const e of [...SECRET_HOME_POSIX, ...HISTORY_HOME]) add(h, e);
+  if (env.mountRoot) {
+    for (const e of [...SECRET_HOME_WINDOWS, ...HISTORY_HOME]) add(`${env.mountRoot}/?/Users/*`, e);
+    out.push({ p: `${env.mountRoot}/?/Windows/System32/config`, folder: true });
+  }
+  for (const e of SECRET_ABSOLUTE_POSIX) out.push({ p: e.replace(/\/$/, ""), folder: e.endsWith("/") });
+  return out;
+}
+
+/**
+ * What a glob may reach (§3.6: a pattern can't be probed, so it is judged by every name it could match): a secret
+ * (a §3.6.1 folder or file, or a secret or history file name as its last segment, unless that segment matches
+ * anything), or one of Ember's own paths (one of them or inside one; with `tree`, a folder holding one too).
+ * `absPattern` is absolute in the env's flavour; `dotRule`: POSIX shells' wildcards skip a leading dot.
+ */
+export function globReaches(absPattern: string, use: PathUse, env: PathEnv, dotRule: boolean): { secret: boolean; ember: boolean } {
+  const ci = caseless(globPrefix(absPattern, env), env);
+  const g = patSegs(absPattern, env, ci, dotRule);
+  const tree = use === "deleteTree" || use === "move" || use === "permTree";
+  let ember = false;
+  for (const e of env.ember) {
+    if (globMeets(g, patSegs(e, env, ci || caseless(e, env), false), true, tree)) { ember = true; break; }
+  }
+  let secret = false;
+  if (use !== "list" && use !== "cd") {
+    // Secrets are matched without regard to case (the stricter reading on a case-sensitive system).
+    const gi = patSegs(absPattern, env, true, dotRule);
+    for (const e of compiledSecretEntries(env)) {
+      if (globMeets(gi, e.segs, e.folder, use === "readTree")) { secret = true; break; }
+    }
+    const last = gi[gi.length - 1];
+    const catchAll = last === "**" || (last.lit === null && /^[*?]*(\.\*)?$/.test(absPattern.split(/[\\/]/).pop() ?? ""));
+    if (!secret && !catchAll) {
+      // Dot-file history names only: `*.txt` says nothing about PowerShell's ConsoleHost_history.txt.
+      secret = [...SECRET_SAMPLE_NAMES, ...[...HISTORY_NAMES].filter(n => n.startsWith("."))].some(n => segsMeet(last, { lit: n.toLowerCase(), re: null }));
+    }
+  }
+  return { secret, ember };
+}
+
+/** The write rules of §3.5.5 as absolute patterns (start-up files, git hooks and settings, WSL's settings, autostart). */
+function writeEntries(env: PathEnv): { p: string; folder: boolean; kind: NonNullable<ReturnType<typeof writeKind>> }[] {
+  const out: { p: string; folder: boolean; kind: NonNullable<ReturnType<typeof writeKind>> }[] = [];
+  const s = sep(env);
+  const join = (root: string, entry: string): string => root + s + (s === "\\" ? entry.replace(/\//g, "\\") : entry);
+  const homes = env.flavour === "win32" ? ["?:\\Users\\*"] : ["/home/*", "/Users/*", "/root"];
+  if (env.home) homes.unshift(env.home);
+  for (const h of homes) {
+    for (const e of STARTUP_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: e.endsWith("/"), kind: "startup" });
+    for (const e of AUTOSTART_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: true, kind: "autostart" });
+    for (const e of GIT_CONFIG_HOME) out.push({ p: join(h, e), folder: false, kind: "git-config" });
+    if (env.flavour === "win32") {
+      for (const e of WSL_CONFIG_HOME) out.push({ p: join(h, e), folder: false, kind: "wsl-config" });
+      for (const d of ["Documents", "OneDrive*/Documents"]) for (const ps of ["WindowsPowerShell", "PowerShell"]) out.push({ p: join(h, `${d}/${ps}/*profile.ps1`), folder: false, kind: "startup" });
+    }
+  }
+  if (env.flavour === "posix") {
+    for (const e of STARTUP_ABSOLUTE) out.push({ p: e.replace(/\/$/, ""), folder: e.endsWith("/"), kind: "startup" });
+    for (const e of AUTOSTART_ABSOLUTE) out.push({ p: e.replace(/\/$/, ""), folder: true, kind: "autostart" });
+    out.push({ p: "/etc/wsl.conf", folder: false, kind: "wsl-config" });
+    if (env.mountRoot) for (const e of WSL_CONFIG_HOME) out.push({ p: `${env.mountRoot}/?/Users/*/${e}`, folder: false, kind: "wsl-config" });
+  }
+  return out;
+}
+
+/**
+ * The write rule a glob may meet (§3.5.5, §3.4.8): a start-up file, a git hook or git's own settings (in any folder),
+ * WSL's settings or an autostart folder; null when none. System locations are judged on the fixed folder.
+ */
+export function globWriteKind(absPattern: string, env: PathEnv, dotRule: boolean): NonNullable<ReturnType<typeof writeKind>> | null {
+  const g = patSegs(absPattern, env, true, dotRule);
+  // `.git/hooks/…` and `.git/config` anywhere: a pair of segments the pattern may name.
+  const dotGit = segPat(".git", true, false, false);
+  for (let k = 0; k + 1 < g.length; k++) {
+    if (!segsMeet(g[k], dotGit)) continue;
+    if (segsMeet(g[k + 1], segPat("hooks", true, false, false)) && (g.length > k + 2 || g[k + 1] === "**")) return "hook";
+    if (k + 2 === g.length && segsMeet(g[k + 1], segPat("config", true, false, false))) return "git-config";
+  }
+  const key = `${env.flavour}\0${env.home ?? ""}\0${env.mountRoot ?? ""}`;
+  let list = WRITE_SEGS.get(key);
+  if (!list) {
+    if (WRITE_SEGS.size >= 16) WRITE_SEGS.clear();
+    list = writeEntries(env).map(e => ({ segs: patSegs(e.p, env, true, false), folder: e.folder, kind: e.kind }));
+    WRITE_SEGS.set(key, list);
+  }
+  for (const e of list) if (globMeets(g, e.segs, e.folder, false)) return e.kind;
+  return null;
+}
+const WRITE_SEGS = new Map<string, { segs: SegPat[]; folder: boolean; kind: NonNullable<ReturnType<typeof writeKind>> }[]>();
+
+/** Compiled secret entries per environment shape (flavour, home, mounts, system root), a few kept. */
+const SECRET_SEGS = new Map<string, { segs: SegPat[]; folder: boolean }[]>();
+function compiledSecretEntries(env: PathEnv): { segs: SegPat[]; folder: boolean }[] {
+  const k = `${env.flavour}\0${env.home ?? ""}\0${env.mountRoot ?? ""}\0${env.windows?.systemRoot ?? ""}`;
+  let list = SECRET_SEGS.get(k);
+  if (!list) {
+    if (SECRET_SEGS.size >= 16) SECRET_SEGS.clear();
+    list = secretEntries(env).map(e => ({ segs: patSegs(e.p, env, true, false), folder: e.folder }));
+    SECRET_SEGS.set(k, list);
+  }
+  return list;
 }
 
 /** The fixed part of a glob before its first wildcard segment (a folder every match is inside). */

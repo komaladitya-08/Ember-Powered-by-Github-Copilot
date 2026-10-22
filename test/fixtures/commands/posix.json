@@ -2165,10 +2165,10 @@
    "cmd": "echo x >> ~/.gitconfig",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "system"
    ],
    "rules": [
-    "redirect.append"
+    "git.config.code"
    ]
   },
   {
@@ -8404,6 +8404,152 @@
    ],
    "rules": [
     "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cat ~/.ss[h]/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.ss?/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.s*/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/*/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /home/*/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.a*/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /proc/[0-9]*/environ",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat */.env",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/emb*/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/e?ber/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "cat *.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cat src/*.ts",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo x >> .git/hoo*/pre-commit",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.hook"
+   ]
+  },
+  {
+   "cmd": "echo '[core] pager = x' >> .git/config",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "git.config.code"
+   ]
+  },
+  {
+   "cmd": "sed -i s/a/b/ .git/config",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "git.config.code"
+   ]
+  },
+  {
+   "cmd": "cat .git/config",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo x >> ~/.bash?c",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
    ]
   }
  ]

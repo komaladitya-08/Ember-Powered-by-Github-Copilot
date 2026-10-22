@@ -44,6 +44,12 @@ describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {
     expect(classifyCommand("cat notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/proj/notes" })).findings).toEqual([]);
   });
 
+  it("judges a glob under a linked folder by the folder's real path too", () => {
+    expect(classifyCommand("cat k/*", "bash", contextOf("linux")).findings).toEqual([]);
+    expect(classifyCommand("cat k/*", "bash", withReal({ "/home/ana/proj/k": "/home/ana/.ssh" })).findings.map(f => f.rule)).toContain("path.secret");
+    expect(classifyCommand("cat k/*/settings.json", "bash", withReal({ "/home/ana/proj/k": "/home/ana/.config" })).refuse?.rule).toBe("ember.path");
+  });
+
   it("marks a finding whose real path differs, so no intent row covers it", () => {
     const cls = classifyCommand("rm notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/other/notes" }));
     expect(cls.findings[0].widening).toContain("real-path");

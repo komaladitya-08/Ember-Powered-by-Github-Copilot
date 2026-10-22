@@ -1948,6 +1948,23 @@
   {
    "cmd": "wslvar USERPROFILE",
    "verdict": "run"
+  },
+  {
+   "cmd": "cat /mnt/c/Users/*/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /mnt/c/Users/ana/AppData/Local/emb*/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

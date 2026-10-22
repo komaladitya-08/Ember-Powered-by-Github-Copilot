@@ -19,9 +19,9 @@ import {
   type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, parseOpts, programName, values,
 } from "./words";
 import {
-  type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globRegExp, holdsEmberPath, holdsSecret, inWorkTree,
-  isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, resolveTargetPath, secretCandidates, secretKind,
-  SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
+  type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
+  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, resolveTargetPath,
+  secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -291,23 +291,29 @@ class Classifier {
     if (!sc.foreign) this.addProbe(prefix);
     this.judge(prefix, use, sc.path, text, sc, true);
     const dotRule = sc.family === "posix";
-    const re = globRegExp(absPattern, sc.path, dotRule);
-    // Ember's own paths: the glob names one, or a folder holding one that a tree operation reaches.
-    for (const e of sc.path.ember) {
-      if (re.test(e)) this.refuseWith("ember.path", "safety");
-      if ((use === "deleteTree" || use === "move" || use === "permTree") && emberAncestors(e, sc.path).some(anc => re.test(anc))) this.refuseWith("ember.path", "safety");
+    // Every name the pattern could match is judged (a pattern can't be probed): a secret folder or file name, Ember's
+    // own paths (one of them, inside one, or, for a tree operation, a folder holding one). On the second pass the
+    // fixed folder's real path is judged too, with the rest of the pattern under it.
+    const forms = [absPattern];
+    const realPrefix = this.ctx.real?.get(prefix);
+    if (realPrefix && realPrefix !== prefix) {
+      forms.push(realPrefix + absPattern.slice(prefix.length));
+      this.judge(realPrefix, use, sc.path, text, sc, true);
     }
-    // A catch-all last segment (`*`, `*.*`) says nothing about which files it names; a listing reads no file.
-    const last = absPattern.split(/[\\/]/).pop() ?? "";
-    const catchAll = /^[*?]*(\.\*)?$/.test(last);
-    const samples = use === "list" || catchAll ? [] : SECRET_SAMPLE_NAMES.map(n => (sc.path.flavour === "win32" ? win32 : posix).join(prefix, n));
-    const candidates = [...secretCandidates(sc.path), ...samples];
-    if (candidates.some(c => re.test(c) || (use === "readTree" && re.test((sc.path.flavour === "win32" ? win32 : posix).dirname(c))))) {
+    let secret = false;
+    for (const f of forms) {
+      const r = globReaches(f, use, sc.path, dotRule);
+      if (r.ember) this.refuseWith("ember.path", "safety");
+      if (r.secret) secret = true;
+    }
+    if (secret) {
       this.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${text}).`, { objects: [{ kind: "glob", text, resolved: absPattern, abs: absPattern }] });
     }
     if (WRITES.has(use)) {
-      const k = writeKind(prefix, sc.path) ?? writeKind(absPattern.replace(/[*?[\]]/g, "x"), sc.path);
-      if (k) this.writeFinding(k, text);
+      for (const f of forms) {
+        const k = writeKind(globPrefix(f, sc.path), sc.path) ?? globWriteKind(f, sc.path, dotRule);
+        if (k) this.writeFinding(k, text);
+      }
     }
     if (sc.wsl && sc.mountRoot && isUnder(prefix, sc.mountRoot, sc.path)) this.windowsReach = true;
     return { kind: "glob", text, resolved: absPattern, abs: absPattern };
@@ -340,6 +346,7 @@ class Classifier {
     switch (k) {
       case "startup": this.add("system", "path.startup", "Changes what runs when you open a shell or log in."); break;
       case "hook": this.add("system", "path.hook", "Adds a git hook that runs later."); break;
+      case "git-config": this.add("system", "git.config.code", "Changes what git runs later."); break;
       case "wsl-config": this.add("system", "path.wsl-config", "Changes how WSL starts."); break;
       case "autostart": this.add("system", "path.autostart", "Schedules something to run later or at login."); break;
       case "system": this.add("system", "path.system", "Changes system files."); break;
@@ -370,20 +377,6 @@ class Classifier {
     }
     return false;
   }
-}
-
-/** Every folder above an Ember path (what a tree operation on it reaches). */
-function emberAncestors(p: string, env: PathEnv): string[] {
-  const out: string[] = [];
-  const mod = env.flavour === "win32" ? win32 : posix;
-  let cur = p;
-  for (;;) {
-    const up = mod.dirname(cur);
-    if (up === cur) break;
-    out.push(up);
-    cur = up;
-  }
-  return out;
 }
 
 /** A finding-free classification object with one unclear finding (the classifier's own failure). */
@@ -937,7 +930,7 @@ class Engine extends Classifier {
     const obj = this.usePath(t, "append", sc);
     if (obj.abs === null) { this.add("destroy", rule, "Writes to a file Ember can't name."); return; }
     const k = writeKind(obj.abs, sc.path);
-    if (k === "startup" || k === "hook" || k === "wsl-config" || k === "autostart") return;
+    if (k === "startup" || k === "hook" || k === "git-config" || k === "wsl-config" || k === "autostart") return;
     if (!inWorkTree(obj.abs, sc.path) || homeDotFile(obj.abs, sc.path)) {
       this.add("destroy", rule, `Adds to ${obj.text}, outside your project.`, { objects: [obj] });
     }

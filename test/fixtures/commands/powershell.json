@@ -4959,6 +4959,47 @@
    "classes": [
     "unclear"
    ]
+  },
+  {
+   "cmd": "Get-Content C:\\Users\\ana\\.ss[h]\\id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content C:\\Users\\*\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content C:\\Users\\ana\\AppData\\Local\\emb*\\settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "Add-Content C:\\Users\\ana\\Documents\\WindowsPowerShell\\*profile.ps1 x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "Get-Content *.txt",
+   "verdict": "run"
   }
  ]
 }
