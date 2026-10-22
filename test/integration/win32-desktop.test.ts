@@ -38,6 +38,11 @@ async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, wh
 
 const centre = (r: Rect) => ({ x: r.x + Math.floor(r.width / 2), y: r.y + Math.floor(r.height / 2) });
 
+/** Starts a bench that logs to `log` (its window shows; Windows PowerShell shares the test's console). */
+function startBench(log: string): ChildProcess {
+  return spawn(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", benchScript, "-Log", log, "-Seconds", "300"], { stdio: ["ignore", "inherit", "inherit"] });
+}
+
 describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop", () => {
   let ws: Win32WindowSystem;
   let x: Input;
@@ -47,9 +52,9 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
   let ready: BenchEvent;
   let hwnd = 0;
 
-  const events = (): BenchEvent[] => {
-    if (!existsSync(log)) return [];
-    return readFileSync(log, "utf8").split("\n").filter(Boolean).flatMap(line => {
+  const events = (path = log): BenchEvent[] => {
+    if (!existsSync(path)) return [];
+    return readFileSync(path, "utf8").split("\n").filter(Boolean).flatMap(line => {
       try { return [JSON.parse(line) as BenchEvent]; } catch { return []; } // a line still being written
     });
   };
@@ -76,7 +81,7 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     if (!existsSync(powershell)) throw new Error(`Windows PowerShell isn't at ${powershell}`);
     dir = mkdtempSync(join(tmpdir(), "ember-bench-"));
     log = join(dir, "bench.jsonl");
-    bench = spawn(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", benchScript, "-Log", log, "-Seconds", "300"], { stdio: ["ignore", "inherit", "inherit"] });
+    bench = startBench(log);
     ready = await waitFor(() => events().find(e => e.event === "ready"), 45_000, "the bench's ready line");
     hwnd = (ready.hwnd ?? 0) >>> 0;
     expect(hwnd).toBeGreaterThan(0);
@@ -151,12 +156,15 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
 
   it("types into the Name box with KEYEVENTF_UNICODE, accents included", async () => {
     const at = centre(controlRect("Name"));
+    // The Name box had the focus when the bench opened: wait for a new focus event, the one this click gives.
+    const focused = () => events().filter(e => e.event === "focus" && e.control === "Name").length;
+    const before = focused();
     x.move(at.x, at.y);
     await sleep(30);
     x.button(1, true);
     await sleep(40);
     x.button(1, false);
-    await waitFor(() => seen(e => e.event === "focus" && e.control === "Name"), 3_000, "the Name box to have the focus");
+    await waitFor(() => focused() > before, 3_000, "the Name box to have the focus");
     const text = "Ember 1é";
     for (const ch of text) {
       expect(x.textKey!(ch, true)).toBe(true);
@@ -189,4 +197,23 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     expect(x.onScreen!(screen.x - 10_000, screen.y - 10_000)).toBe(false);
     expect(x.screenSize()).toEqual({ width: screen.width, height: screen.height });
   });
+
+  it("takes the foreground from another app's window and back, and tells two same-titled windows apart by process", async () => {
+    const otherLog = join(dir, "other.jsonl");
+    const other = startBench(otherLog);
+    try {
+      const otherReady = await waitFor(() => events(otherLog).find(e => e.event === "ready"), 45_000, "the second bench's ready line");
+      const otherHwnd = (otherReady.hwnd ?? 0) >>> 0;
+      x.activate(otherHwnd);
+      await waitFor(() => x.activeWindow() === otherHwnd, 3_000, "the second bench to take the foreground");
+      x.activate(hwnd);
+      await waitFor(() => x.activeWindow() === hwnd, 3_000, "the first bench to take the foreground back");
+      expect(x.focusedWindow()).toBe(hwnd);
+      expect(x.findWindow(TITLE, ready.pid)).toBe(hwnd);
+      expect(x.findWindow(TITLE, otherReady.pid)).toBe(otherHwnd);
+      expect(x.findWindow(TITLE)).toBe(0); // two windows with that title: input to a guess could go anywhere
+    } finally {
+      other.kill();
+    }
+  }, 60_000);
 });
