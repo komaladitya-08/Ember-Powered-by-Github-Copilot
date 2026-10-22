@@ -58,6 +58,8 @@ describe("the Windows layout", () => {
       });
       expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs"]);
       expect(win.sidecarFiles.every(s => s.from === s.to)).toBe(true);
+      // The doctor for a console, beside Ember.exe (cmd.exe waits for it and keeps its exit code).
+      expect(win.launchers).toEqual([{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }]);
     });
 
     it(`needs the accessibility host, tolerates its absence only by flag, and leaves the desk helper out (${arch})`, () => {
