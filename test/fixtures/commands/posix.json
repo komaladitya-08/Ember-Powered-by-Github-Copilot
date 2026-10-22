@@ -9425,6 +9425,41 @@
    "classes": [
     "secret"
    ]
+  },
+  {
+   "cmd": "kill -9 $(pgrep ember)",
+   "verdict": "refuse",
+   "rules": [
+    "ember.process"
+   ]
+  },
+  {
+   "cmd": "kill -9 $(pidof electron)",
+   "verdict": "refuse",
+   "rules": [
+    "ember.process"
+   ]
+  },
+  {
+   "cmd": "kill $(pgrep node)",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
+  },
+  {
+   "cmd": "evemu-play /dev/input/event3 < x",
+   "verdict": "refuse",
+   "rules": [
+    "ember.input"
+   ]
+  },
+  {
+   "cmd": "cat /dev/input/event3",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
   }
  ]
 }

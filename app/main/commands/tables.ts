@@ -290,7 +290,8 @@ export const LAUNCHERS = new Set([
 /** Programs that synthesise input or drive windows (§3.5.8): refused, they could answer Ember's own questions. */
 export const INPUT_SYNTH = new Set([
   "xdotool", "ydotool", "ydotoold", "xte", "wtype", "dotool", "dotoold", "xvkbd", "cliclick", "autohotkey", "autohotkeyu64", "autohotkeyu32",
-  "autohotkey64", "autohotkey32", "autoit3", "autoit3_x64", "xmacroplay", "xautomation", "sendkeys", "nircmdc",
+  "autohotkey64", "autohotkey32", "autoit3", "autoit3_x64", "xmacroplay", "xautomation", "sendkeys", "nircmdc", "evemu-play",
+  "evemu-event",
 ]);
 
 /** Programs that read or change passwords, keys or sign-ins whatever their arguments (§3.5.4 row 2). */

@@ -55,6 +55,11 @@ export interface ClassificationExtra extends Classification {
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
 const POLICY_KEY = /(^|\\)policies\\ember(\\|$)/i;
+/** A registry key above the policy key (HKLM, HKLM\SOFTWARE, …\Policies, in any spelling): deleting or moving it removes the policy. */
+function policyAncestor(key: string): boolean {
+  const k = key.replace(/^registry::/i, "").replace(/^hkey_local_machine/i, "hklm").replace(/^hkey_current_user/i, "hkcu").replace(/:/, "").replace(/[\\/]+$/, "").toLowerCase();
+  return /^(hklm|hkcu)(\\software(\\policies)?)?$/.test(k);
+}
 
 /** A Windows path's drive ("C:"), when it has one. */
 const drive = (p: string | null | undefined): string | undefined => (p ? /^[A-Za-z]:/.exec(p)?.[0] : undefined);
@@ -3712,6 +3717,7 @@ reg(NATIVE, ["reg", "regedit", "regini"], h => {
   const verb = (h.args[0]?.v ?? "").toLowerCase().replace(/^\//, "");
   const key = h.args[1]?.v ?? "";
   if (h.args.some(a => a.v !== null && POLICY_KEY.test(a.v))) { h.e.refuseWith("ember.policy", "safety"); return; }
+  if (/^(delete|import|restore|load|unload|copy)$/.test(verb) && policyAncestor(key)) { h.e.refuseWith("ember.policy", "safety"); return; }
   if (h.key === "regedit") { if (h.args.some(a => /^[/-]s$/i.test(a.v ?? ""))) h.e.add("system", "system.registry", "Changes the Windows registry."); else h.e.unclear("unclear.gui", SAYS.openApp); return; }
   if (h.key === "regini") { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
   if (/^(add|delete|import|load|unload|restore|copy)$/.test(verb)) { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
@@ -3822,6 +3828,8 @@ reg(NATIVE, ["kill"], h => {
     const a = h.args[k];
     if (a.v === null) {
       if (a.raw === "$!" || a.raw === "\"$!\"") continue;
+      // `kill $(pgrep ember)`, `kill $(pidof electron)`: the substitution names Ember's own processes.
+      if (a.raw.split(/[^A-Za-z0-9._-]+/).some(w => w !== "" && emberNamed(h, w))) { h.e.refuseWith("ember.process", "safety"); return; }
       pids.push(null);
       continue;
     }
@@ -4246,6 +4254,7 @@ function psTargets(h: H, paths: Arg[], write: boolean): Arg[] {
     const v = p.v;
     if (v === null) { files.push(p); continue; }
     if (POLICY_KEY.test(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
+    if (write && /^(remove-item|move-item|rename-item|clear-item)$/.test(h.key) && policyAncestor(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
     if (REGISTRY.test(v)) { if (write) h.e.add("system", "system.registry", "Changes the Windows registry."); continue; }
     if (/^env:/i.test(v)) { if (!write && (/^env:\\?\*?$/i.test(v) || SECRET_VAR.test(v.slice(4)))) h.e.add("secret", "secret.env", SAYS.env); continue; }
     if (/^cert:/i.test(v)) { if (write) h.e.add("secret", "secret.program", SAYS.secrets); continue; }

@@ -5106,6 +5106,27 @@
    "classes": [
     "secret"
    ]
+  },
+  {
+   "cmd": "Remove-Item HKLM:\\SOFTWARE\\Policies -Recurse",
+   "verdict": "refuse",
+   "rules": [
+    "ember.policy"
+   ]
+  },
+  {
+   "cmd": "reg delete HKLM\\SOFTWARE\\Policies /f",
+   "verdict": "refuse",
+   "rules": [
+    "ember.policy"
+   ]
+  },
+  {
+   "cmd": "Remove-Item HKCU:\\Software\\x -Recurse",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ]
   }
  ]
 }

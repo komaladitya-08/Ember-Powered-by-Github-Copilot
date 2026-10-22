@@ -226,6 +226,8 @@ const HISTORY_NAMES = new Set([
 const SECRET_ABSOLUTE_POSIX = [
   "/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d/", "/root/",
   "/var/lib/sss/", "/etc/krb5.keytab", "/Library/Keychains/", "/proc/*/environ", "/etc/ssh/ssh_host_*_key",
+  // Keyboards and mice as devices: reading one records what is typed, passwords included.
+  "/dev/input/",
 ];
 
 /** Secret basenames anywhere (§3.6.1). */
