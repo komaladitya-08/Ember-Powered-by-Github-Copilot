@@ -297,7 +297,8 @@ describe("the doctor's probes", () => {
     expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "15000\n" }) })).sandbox).toEqual({ userNamespaces: true, suidHelper: false });
     expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "15000\n", "/proc/sys/kernel/unprivileged_userns_clone": "0\n" }) })).sandbox?.userNamespaces).toBe(false);
     expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "0\n" }) })).sandbox?.userNamespaces).toBe(false);
-    const stat = (f: string) => { if (f === "/opt/ember/chrome-sandbox") return { uid: 0, mode: 0o104755 }; throw new Error("ENOENT"); };
+    // Built as doctor-probes builds it (path.join), so the case holds on a Windows or macOS CI runner too.
+    const stat = (f: string) => { if (f === path.join("/opt/ember", "chrome-sandbox")) return { uid: 0, mode: 0o104755 }; throw new Error("ENOENT"); };
     expect((await io({ stat })).sandbox?.suidHelper).toBe(true);
     expect((await io({ stat: () => ({ uid: 1000, mode: 0o104755 }) })).sandbox?.suidHelper).toBe(false);
   });

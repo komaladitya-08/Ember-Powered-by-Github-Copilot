@@ -11,6 +11,7 @@ import { DeskManager } from "../../desk/desk";
 import { inotifyUse } from "../../agent/host";
 import { execSync, type ExecSync } from "./environment";
 
+/** What the probes read, each injectable (defaults: this machine's). */
 export interface LinuxDoctorDeps {
   /** Ember's own binary (chrome-sandbox sits beside it). */
   execPath: string;
@@ -27,6 +28,7 @@ export interface LinuxDoctorDeps {
 /** Where Chromium finds speech-dispatcher's library (spd-say isn't packaged on RHEL 8, so the program alone can't be the test). */
 const LIBSPEECHD = ["/usr/lib64/libspeechd.so.2", "/usr/lib/x86_64-linux-gnu/libspeechd.so.2"];
 
+/** The doctor's Linux measurements (SystemPlatform.doctorProbes on Linux), as main.ts's runDoctor took them. */
 export async function linuxDoctorProbes(d: LinuxDoctorDeps): Promise<PlatformDoctorProbes> {
   const exec = d.exec ?? execSync;
   const readFile = d.readFile ?? (f => fs.readFileSync(f, "utf8"));

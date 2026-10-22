@@ -13,8 +13,10 @@ import { pickPython } from "../../perception/sidecar";
 /** execFileSync as these probes call it (injected in tests). */
 export type ExecSync = (cmd: string, args: string[], opts: { encoding?: "utf8"; timeout: number; stdio?: "ignore" }) => string;
 
+/** The real execFileSync, as text. */
 export const execSync: ExecSync = (cmd, args, opts) => String(execFileSync(cmd, args, opts));
 
+/** What the setup-check inputs are read from (tests pass fakes; Ember passes this process's environment). */
 export interface LinuxEnvironmentDeps {
   env: NodeJS.ProcessEnv;
   /** Defaults: this process's. */

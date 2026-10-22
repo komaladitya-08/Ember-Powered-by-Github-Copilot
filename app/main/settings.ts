@@ -155,6 +155,7 @@ function pause(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** How a SettingsStore saves on this OS (the platform's paths). */
 export interface SettingsStoreOptions {
   /**
    * How many times a rename refused with EPERM/EBUSY/EACCES is tried again, 50 ms apart (the platform's

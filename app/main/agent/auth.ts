@@ -74,6 +74,7 @@ export interface GhCliOptions {
   timeoutMs?: number;
 }
 
+/** The GitHub CLI's token (`gh auth token`), or null when gh is missing, signed out or gives an unusable token. */
 export function ghCliToken(o: GhCliOptions = {}): Promise<string | null> {
   return new Promise(resolve => {
     execFile(o.path ?? "gh", ["auth", "token"], { ...o.spawn, timeout: o.timeoutMs ?? 3000 }, (err, stdout) => {
