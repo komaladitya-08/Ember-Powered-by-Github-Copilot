@@ -7,9 +7,10 @@ import path from "node:path";
 import { AdminPolicySchema, loadAdminPolicy, lockedDown, parseAdminPolicy } from "../../app/main/admin";
 
 const LOCKDOWN = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false },
   allowGrants: false,
   confirmEveryAction: true,
+  commands: { local: "off", wsl: "off", ssh: "off" },
 });
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-admin-"));
 const write = (text: string) => { const f = path.join(tmp(), "policy.json"); fs.writeFileSync(f, text); return f; };
