@@ -236,10 +236,60 @@ export function installParts(os: "linux" | "darwin", target: string): string {
 
 /** Connects to an agent served over ssh from the installed parts, run by `node` (an absolute path on the remote). */
 export function connectSsh(o: { os: "linux" | "darwin"; partsId: string; node: string; pcId?: string; extra?: string[] }): AgentLink {
-  if (!/^\/[A-Za-z0-9/._+-]+$/.test(o.node)) throw new Error("the remote node's path must be absolute and plain");
+  if (!/^\/[A-Za-z0-9/._+ -]+$/.test(o.node)) throw new Error("the remote node's path must be absolute and plain");
   const pc = o.pcId ?? PC_ID;
   if (!/^[0-9a-f]{32}$/.test(pc)) throw new Error("not a PC id");
   // As the bootstrap does: the loader's and Node's variables unset, then exec (§5.1.9).
   const unset = "unset NODE_OPTIONS NODE_PATH NODE_DEBUG NODE_REPL_EXTERNAL_MODULE BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH";
-  return connect("ssh", sshArgs(`${unset}; exec ${o.node} --disable-sigusr1 ${versionsDir(o.os, o.partsId)}/ember-remote.cjs serve --proto 1 --pc ${pc}`, o.extra ?? []), { partsId: o.partsId });
+  return connect("ssh", sshArgs(`${unset}; exec "${o.node}" --disable-sigusr1 ${versionsDir(o.os, o.partsId)}/ember-remote.cjs serve --proto 1 --pc ${pc}`, o.extra ?? []), { partsId: o.partsId });
+}
+
+/** scripts/package/remote-runtime.json: the Node runtime remotes run (pinned), per target. */
+interface RemoteRuntime {
+  pinned: string;
+  targets: Record<string, Record<"xz" | "gz", { file: string; sha256: string; bytes: number }>>;
+}
+
+/** The pinned runtime's archive for a target (xz), downloaded once from nodejs.org into .cache and checked. */
+export async function runtimeArchive(target: string): Promise<{ id: string; bytes: Buffer; sha256: string }> {
+  const rt = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/package/remote-runtime.json"), "utf8")) as RemoteRuntime;
+  const want = rt.targets[target]?.xz;
+  if (!want) throw new Error(`no pinned runtime for ${target}`);
+  const cached = path.join(ROOT, ".cache/remote-runtime", want.file);
+  if (!fs.existsSync(cached)) {
+    const res = await fetch(`https://nodejs.org/dist/v${rt.pinned}/${want.file}`);
+    if (!res.ok) throw new Error(`downloading ${want.file} failed: HTTP ${res.status}`);
+    fs.mkdirSync(path.dirname(cached), { recursive: true });
+    fs.writeFileSync(`${cached}.part`, Buffer.from(await res.arrayBuffer()));
+    fs.renameSync(`${cached}.part`, cached);
+  }
+  const bytes = fs.readFileSync(cached);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (bytes.length !== want.bytes || sha256 !== want.sha256) {
+    fs.rmSync(cached, { force: true });
+    throw new Error(`${want.file} doesn't match remote-runtime.json`);
+  }
+  return { id: `${rt.pinned}-${target}`, bytes, sha256 };
+}
+
+/**
+ * Installs the pinned runtime on the test sshd as the bootstrap leaves it (§5.1.9 steps 3-5): checked with the remote's
+ * own sha256 tool, unpacked into staging, the exec check (`node --version`), renamed, `.verified`. Resolves with the
+ * remote node's absolute path (`home` is the remote's $HOME).
+ */
+export async function installRuntime(os: "linux" | "darwin", target: string, home: string): Promise<string> {
+  if (!/^\/[A-Za-z0-9/._+-]+$/.test(home)) throw new Error("the remote's home must be a plain absolute path");
+  const a = await runtimeArchive(target);
+  const data = os === "darwin" ? `"$HOME/Library/Application Support/Ember Remote"` : `"$HOME/.local/share/ember-remote"`;
+  const check = os === "darwin" ? "shasum -a 256 -c -s" : "sha256sum -c --status";
+  const r = sshRun(
+    `set -e; umask 077; d=${data}/runtime/${a.id}; [ -f "$d/.verified" ] && exit 0; s="$d.staging"; rm -rf "$s"; mkdir -p "$s/runtime";` +
+    ` cat > "$s/archive"; echo "${a.sha256}  $s/archive" | ${check};` +
+    ` tar -xJf "$s/archive" -C "$s/runtime" --strip-components=1; rm -f "$s/archive"; "$s/runtime/bin/node" --version >/dev/null;` +
+    ` rm -rf "$d"; mv "$s/runtime" "$d"; rm -rf "$s"; touch "$d/.verified"`,
+    a.bytes,
+  );
+  if (r.code !== 0) throw new Error(`installing the runtime failed: ${r.stderr}`);
+  const base = os === "darwin" ? `${home}/Library/Application Support/Ember Remote` : `${home}/.local/share/ember-remote`;
+  return `${base}/runtime/${a.id}/bin/node`;
 }

@@ -36,8 +36,9 @@ function readText(p: string): string | null {
 /** The machine-id hash (§5.1.9's `machine`): /etc/machine-id (Linux) or the platform UUID (macOS), as sha256sum hashes it. */
 export async function machineHash(agentOs: AgentOs): Promise<string> {
   if (agentOs === "linux") {
-    const id = readText("/etc/machine-id") ?? readText("/var/lib/dbus/machine-id");
-    if (id?.trim()) return hashLine(id);
+    // An empty /etc/machine-id (a container's, or a first boot's) falls through to D-Bus's.
+    const id = ["/etc/machine-id", "/var/lib/dbus/machine-id"].map(readText).find(t => t?.trim());
+    if (id) return hashLine(id);
   } else {
     const r = await run("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]);
     const m = /"IOPlatformUUID" = "([^"]+)"/.exec(r.stdout);
