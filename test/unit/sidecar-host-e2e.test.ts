@@ -139,6 +139,20 @@ describe("the built sidecar host through Ember's client", () => {
     expect(Math.floor((again.nodes[0].id - 1) / ID_BLOCK)).toBeGreaterThan(Math.floor((hint.id - 1) / ID_BLOCK));
   });
 
+  it("keeps stdout for protocol lines while something in it prints", async () => {
+    const noise = path.join(dir, "noise.cjs");
+    fs.writeFileSync(noise, 'setTimeout(() => { console.log("a library printing"); console.info("more"); }, 30);\n');
+    const child = spawn(process.execPath, ["--require", noise, script], { env: { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop }, stdio: ["pipe", "pipe", "pipe"] });
+    let out = "", err = "";
+    child.stdout.on("data", d => { out += d; });
+    child.stderr.on("data", d => { err += d; });
+    await new Promise(res => setTimeout(res, 150));
+    child.stdin.end('{"jsonrpc":"2.0","id":1,"method":"list_windows","params":{}}\n');
+    await new Promise(res => child.on("exit", res));
+    expect(out.trim().split("\n").map(l => JSON.parse(l).id)).toEqual([1]);
+    expect(err).toContain("a library printing");
+  });
+
   it("answers a bad line with an error and carries on, and exits when its input closes", async () => {
     const child = spawn(process.execPath, [script], { env: { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop }, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";

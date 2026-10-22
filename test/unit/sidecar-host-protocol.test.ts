@@ -242,6 +242,14 @@ describe("shell_overlays", () => {
     });
   });
 
+  it("reports a User Account Control prompt on the user's desktop as a dialog, and an ordinary window not", async () => {
+    const consent: FakeWindowSpec = { role: "Window", name: "User Account Control", pid: 67, app: "consent", bounds: at(500, 300, 500, 400) };
+    const hidden: FakeWindowSpec = { ...prompt, offscreen: true };
+    const r = await harness([...twoApps(), consent]).call<{ overlays: { role: string; name: string }[] }>("shell_overlays");
+    expect(r.overlays.map(o => [o.role, o.name])).toEqual([["dialog", "User Account Control"]]);
+    expect((await harness([hidden]).call<{ overlays: unknown[] }>("shell_overlays")).overlays).toEqual([]);
+  });
+
   it("reports Task View and the Alt+Tab switcher as an overview", async () => {
     const view: FakeWindowSpec = { role: "Window", name: "Task View", pid: 5, app: "explorer", className: "XamlExplorerHostIslandWindow", bounds: at(0, 0, 1920, 1080) };
     const r = await harness([view]).call<{ overlays: { role: string }[] }>("shell_overlays");
