@@ -15,13 +15,22 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   changes passwords, keys or other secrets, changes the system or needs privileges, downloads code and runs it, keeps
   running after Ember stops, or that Ember can't read with certainty. The question shows the whole command, with
   invisible characters made visible, and is answered with **Allow** or **Not now** (never "Always", never by voice).
+- **Shell scripts are read before they run.** When a command runs a shell script (`sh t.sh`, `./t.sh`, `source`,
+  `powershell -File`, a `.bat`), Ember reads it first on the computer that runs it (on another computer over SSH,
+  Ember's helper there does) and judges its text like a command: a dangerous script asks, even when you asked for that
+  kind of operation. A script the same command writes first, or one this task wrote or downloaded earlier that can't
+  be read in full, asks; other scripts too big to read (over 64 KB) are judged by their name as before.
 - **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
   ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
   name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
-  Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If
-  your words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on
-  prod-db"), nothing in that task runs on an announcement: every dangerous command asks, and the card says first where
-  it runs ("You named prod-db, but this runs on this computer.").
+  Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If your
+  words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on prod-db",
+  "from the server web-2", "at deploy@10.0.0.5", "prod-db: …"), nothing in that task runs on an announcement: every
+  dangerous command asks, and the card says first where it runs ("You named prod-db, but this runs on this
+  computer."). On a Windows PC without WSL turned on in Ember, "WSL", "Linux" and "the Linux side" keep a task on this
+  computer, and count as another computer for dangerous commands, which ask.
+- **Naming a computer**: "on build-01, …", "in Ubuntu, …" or "build-01: …" picks it for the task; "this computer" and
+  "locally" mean this one. A bare "here" keeps the task on the computer picked in **Work on**.
 - **What Ember never runs**: commands that would read or change Ember's own safety settings, records or programs
   ("Ember won't run this: it would read …" or "… change …"), or press keys and click in Ember's windows.
 - **Command output** goes to Copilot as untrusted data, at most 200 lines, with what you typed cut out, output after a
@@ -29,7 +38,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   Ember makes every further command in that task ask.
 - **WSL** (Windows): Ember reads and uses the Linux apps WSLg shows ("gedit (Ubuntu)"), opens them from their Start
   menu entries, and runs commands in your distros. Each distro that has a Linux app open gets a small helper while one
-  is open; Ember never starts a distro to read it.
+  is open; Ember never starts a distro to read it. The first command in a stopped distro starts it, and the task's
+  bubble and the command's tab say "Starting Ubuntu…" meanwhile.
 - **Other computers over SSH**: add a computer in Settings › **Computers**, or accept Ember's offer when it sees you
   `ssh` somewhere ("You're connected to build-01"). Ember opens its own connection with your SSH settings, keys, agent
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
@@ -39,6 +49,14 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   session goes inactive, the tasks using the screen stop; a task only running commands there goes on (a **Stop** at
   that computer, a lost connection, **Disconnect** and the stop chord stop everything there). Your voice, Copilot and
   your GitHub sign-in stay on this computer. **Remove Ember from build-01** removes the helper again.
+- **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
+  every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
+  those clients can't mark a server's own questions. A silent connection shows "build-01 isn't answering" in the
+  bubble and a countdown on each running command's tab. A command that prints faster than the connection can carry is
+  paused until its output catches up; a stopped command that keeps printing past that limit has the rest dropped. When
+  reconnecting needs you to sign in, Ember stops trying and says "build-01 needs you to sign in again", with
+  **Reconnect**. If **Bring Ember** can't connect, the bubble says why. A Node.js download that gets nothing for 60
+  seconds ends with "The download of what Ember needs for build-01 stalled. Try again."
 - **Settings**: new **Computers** and **Commands** sections (per-computer switches, **Ask me before every command**,
   **Offer to bring Ember along when I connect with ssh**). The handle menu gains **Work on** (with more than one
   computer), **Bring Ember to a computer…** and **Disconnect build-01**; the handle, task cards and questions say where
@@ -107,8 +125,9 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
   disk access for remote users"; Windows computers can't be reached over SSH yet.
 - Ember doesn't use the mouse or keyboard in Linux apps under WSL yet (it uses their controls), and doesn't use Linux
   apps shown by an X server at all.
-- Ember judges the command line it can see: a build or script runs like a build unless its name says publish, delete,
-  install or the like.
+- Ember judges the command line it can see and the shell scripts it can read (up to 64 KB): a build file, a program, a
+  script in another language or a larger shell script runs like a build unless its name says publish, delete, install
+  or the like (a script this task wrote or downloaded asks when it can't be read in full).
 - Commands run without your shell profile, so aliases and tools set up there (conda, nvm, pyenv) are missing; on a Mac
   Homebrew's folders are added.
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks

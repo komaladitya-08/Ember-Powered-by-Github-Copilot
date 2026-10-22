@@ -33,13 +33,15 @@ there and the commands it runs.
 the active computer's name beside "Ready", and the ask box shows a chip such as "On build-01".
 
 **Naming one in a request.** Say or type where: "on build-01, check the disk", "in Ubuntu, list my home folder",
-"build-01: restart the web server". "WSL", "in Linux" and "the Linux side" mean your default distro. "This computer",
-"here" and "locally" mean this one. A name counts only after a place word (on, in, at, inside, over, via, into, onto),
-as the request's first words followed by a colon or a comma ("build-01: …", "build-01, …"), or before "'s desktop", "'s
-screen", "'s server" and the like. So "send build-01's report to Ana" names no computer, and neither does "build-01
-restart the web server": without the colon, that task goes to the computer Ember is set to work on (and nothing
-dangerous in it runs on an announcement: §2.5). Only your own words choose: never text on a screen, in a file or in a
-command's output.
+"build-01: restart the web server". "WSL", "in Linux" and "the Linux side" mean your default distro (on a Windows PC
+while WSL is on in Ember; otherwise they are just words of the request, see §2.5). "This computer" or "my computer"
+(or PC, Mac, laptop), "locally", and on a Windows PC "on Windows" mean this one. A bare "here" doesn't move a task:
+"check what's taking space here" with build-01 picked in **Work on** works on build-01. A name counts only after a
+place word (on, in, at, inside, over, via, into, onto), as the request's first words followed by a colon or a comma
+("build-01: …", "build-01, …"), or before "'s desktop", "'s screen", "'s server" and the like. So "send build-01's
+report to Ana" names no computer, and neither does "build-01 restart the web server": without the colon, that task
+goes to the computer Ember is set to work on (and nothing dangerous in it runs on an announcement: §2.5). Only your
+own words choose: never text on a screen, in a file or in a command's output.
 
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
@@ -115,6 +117,20 @@ Ember stops and asks before a command that:
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window.").
 
+**Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
+`./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
+like), Ember reads the script first, on the computer that runs it, and judges its text as it judges a command: a
+script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build and everything in it."), even when you
+asked for that kind of operation, and one that would touch Ember's own safety files is refused. Scripts it runs in
+turn are read too (four deep, sixteen in all; past that, it asks). A script whose `#!` line names another shell such
+as fish or csh, scripts named by a pattern (`sh *.sh`), a script read from a device (`sh /dev/fd/3`), and a script
+that the same command writes first (`echo 'rm -rf build' > t.sh; sh t.sh`) ask. A script this task downloaded always
+asks (that is downloading code and running it); one it wrote in an earlier command asks when Ember can't read all of
+it (bigger than 64 KB, unreadable, or not a plain file). Any other script Ember can't read in full (a large build
+script of your project) is judged by its name, as before (§2.9). Ember reads scripts on this computer and in WSL; on
+an SSH computer, build-01's helper reads them there and asks when it finds more than this computer could see (§4.5).
+Programs in other languages (`python x.py`, `node x.js`) aren't read: their names count (§2.9).
+
 **How it asks.** The bubble says "May I run a command?" with **Show the command** and **Not now**, and the command
 window shows the card "Ember wants to run this command": the whole command in monospace, nothing cut, with characters
 you wouldn't see shown in ⟨ ⟩ and letters from another alphabet underlined; then why it asks ("Deletes build and
@@ -143,13 +159,20 @@ as a folder: "delete build/" (with the slash) or "delete the build folder" cover
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
 
 **When your words name another computer.** If your words for the task also name a computer other than the one the task
-runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that looks
-like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5", "from the server web-2", "ssh
-prod-db and …", "prod-db: …": a name with a dot, a hyphen or a digit, or `user@host`, after on, in, at, inside, over,
-via, into, onto, from or ssh, or first in the request before a colon or a comma), nothing in that task runs on an
-announcement: every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but this
-runs on this computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still run.
-Everyday places ("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count.
+runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
+looks like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5", "from the server web-2",
+"ssh prod-db and …", "prod-db: …": a name with a dot, a hyphen or a digit, or `user@host`, after on, in, at, inside,
+over, via, into, onto, from or ssh, or first in the request before a colon or a comma), nothing in that task runs on
+an announcement: every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but
+this runs on this computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still
+run. Everyday places ("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count,
+nor do dates and number ranges ("on 2026-10-22,", "from 10-20"). A name in quotes, backticks, guillemets or brackets,
+written with any kind of dash, with a port or a folder after it ("prod-db:22", "deploy@prod-db:/srv"), or after a word
+such as server, host or machine ("on the server prod-db", "ssh to prod-db") counts too. On a Windows PC where WSL
+isn't on in Ember (or isn't installed, or your organisation turned it off), "WSL", "Linux" and "the Linux side" don't
+move a task, so "search for how to install Python on Linux" works here as before; but for dangerous commands they
+count as another computer: "in WSL, delete build/" asks, and its card says "You also named WSL, but this runs on this
+computer."
 
 These **always ask, even when you asked for them**: secrets (anything in §2.4's secrets item), downloading and
 running code, commands that keep running after Ember stops, and anything Ember can't read with certainty. Every
@@ -207,9 +230,11 @@ earlier command printed text that looked like instructions.").
   everything it started at once.
 - **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
   first." / "Ember is running as an administrator here, so each command asks first.").
-- **Ember judges the command line it can see.** What a build file, a script or a program does inside (`make`,
-  `npm test`, `./build.sh`) runs like a build, unless its name says deploy, publish, release, push, upload, delete,
-  clean, wipe, prod, install or the like, which asks.
+- **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
+  first (§2.4). What a build file, a program, a script in another language, or a shell script too big to read
+  (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
+  publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
+  wrote or downloaded asks when it can't be read in full.
 - **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`); a
   link changed between that check and the run is not caught.
 - **Same-user programs.** While a command runs, its text is in its own environment, which other programs of yours
@@ -259,24 +284,27 @@ Ember never installs anything itself; the check-up names the command. In each di
 | Arch | `sudo pacman -S python-atspi at-spi2-core` |
 | openSUSE | `sudo zypper install python3-pyatspi at-spi2-core` |
 
-Then turn on accessibility for Linux apps (the **Accessibility in Ubuntu** row of the settings window's setup check has
-a button that runs `gsettings set org.gnome.desktop.interface toolkit-accessibility true` in the distro) and restart
-those apps. The button runs nothing when your organisation has turned WSL or commands in WSL off ("Your organisation
-has turned this off."), when WSL is off in Ember's settings, or when the distro isn't running (Ember doesn't start it
-to change its settings). Some
-apps stay unreadable: Qt apps need `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in their environment, Chromium, Electron and
-Firefox apps need their own accessibility switch, and if Ember can't find the session bus your Linux apps use, it
-says so ("Ember can't find the session bus your Linux apps use in Ubuntu, so it can't read them. Commands in Ubuntu
-still work."). WSLg itself needs the Store or MSI WSL: "Update WSL to use Linux apps with Ember: run `wsl --update` in
-PowerShell." Commands need `base64` (coreutils) in the distro.
+Then turn on accessibility for Linux apps (the **Accessibility in Ubuntu** row of the settings window's setup check
+has a button that runs `gsettings set org.gnome.desktop.interface toolkit-accessibility true` in the distro) and
+restart those apps. The button runs nothing when your organisation has turned WSL or commands in WSL off ("Couldn't
+change it: Your organisation has turned this off."), when WSL is off in Ember's settings ("… WSL isn't turned on for
+Ember. Turn it on in Ember's settings (Computers)."), or when the distro isn't running ("… Start Ubuntu first: Ember
+doesn't start a distro to change its settings."). Some apps stay unreadable: Qt apps need
+`QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in their environment, Chromium, Electron and Firefox apps need their own
+accessibility switch, and if Ember can't find the session bus your Linux apps use, it says so ("Ember can't find the
+session bus your Linux apps use in Ubuntu, so it can't read them. Commands in Ubuntu still work."). WSLg itself needs
+the Store or MSI WSL: "Update WSL to use Linux apps with Ember: run `wsl --update` in PowerShell." Commands need
+`base64` (coreutils) in the distro.
 
 ### 3.4 Commands in WSL
 
 Commands run inside the distro as its default user, never as root through `wsl -u root`. The first command in a
-stopped distro starts it ("Starting Ubuntu…" in the command window). A command in WSL may start Windows programs and
-read or write Windows drives (`/mnt/c`); it is judged like any other command, and the card adds "This can reach your
-Windows files." when it does. `wsl.exe`'s own options (another user, `--shutdown`, `--unregister`, `--export`…) and
-changes to `.wslconfig` or `/etc/wsl.conf` ask.
+stopped distro starts it: while it boots, the task's bubble and the command's tab in the command window say "Starting
+Ubuntu…". Shell scripts a command runs are read inside the distro before it runs (§2.4), only while the distro runs
+(Ember never starts it just to read one). A command in WSL may start Windows programs and read or write Windows drives
+(`/mnt/c`); it is judged like any other command, and the card adds "This can reach your Windows files." when it does.
+`wsl.exe`'s own options (another user, `--shutdown`, `--unregister`, `--export`…) and changes to `.wslconfig` or
+`/etc/wsl.conf` ask.
 
 ## 4. Other computers over SSH
 
@@ -290,7 +318,10 @@ changes to `.wslconfig` or `/etc/wsl.conf` ask.
   your terminal's contents. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own
   connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer
   once per run, and **Don't offer again** sticks. Turn the offers off with **Offer to bring Ember along when I connect
-  with ssh**. Ember always opens its own connection; it never uses or types into yours.
+  with ssh**. Ember always opens its own connection; it never uses or types into yours. If it can't connect there
+  (your organisation doesn't allow that computer, its settings throw host keys away, it is this same computer…), the
+  bubble says so: "Can't connect to build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that
+  are running at that moment, and never starts one to look.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
@@ -303,7 +334,11 @@ changes to `.wslconfig` or `/etc/wsl.conf` ask.
 - **Passwords, passphrases and codes** are asked in Ember's own small window ("Sign in to build-01", "Unlock your SSH
   key", "Verification code for build-01", "Touch your security key"), handed to SSH only, and never saved, logged or
   sent to Copilot. A prompt for a jump host names that host "on the way to build-01". One card shows at a time: a
-  password card waits while a consent card is open.
+  password card waits while a consent card is open. **With OpenSSH older than 8.5** on this computer (RHEL 8 has 8.0,
+  Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions come from the other computer, so a server could
+  word its own question as SSH's. There every password, passphrase or code is shown as "build-01 asks", with the
+  question quoted as it came, never as "Unlock your SSH key" or as a sign-in to another host: read it before you
+  answer, because the answer goes to whoever asked.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know
@@ -311,8 +346,11 @@ changes to `.wslconfig` or `/etc/wsl.conf` ask.
 - **Not this computer.** Ember refuses to connect to this same computer ("build-01 is this computer. Ember already
   works here.") or to a WSL distro on it ("build-01 is WSL on this computer: use it as WSL instead.").
 - **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01")
-  and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval
-  carries over.
+  and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval carries
+  over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
+  hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect
+  to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says "Can't reconnect to
+  build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.
 
 ### 4.2 What stays here
 
@@ -371,13 +409,23 @@ first click **Allow**.
 ### 4.5 Commands on build-01
 
 They follow §2. build-01's helper also checks each command with its own rules and its own administrator's policy;
-when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words). Both
-computers record the command in their audit logs.
+when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words). Shell
+scripts a command runs are read there, by build-01's helper, with the same rules as on this computer (§2.4): this
+computer can't read build-01's files, so a dangerous script there asks through that second check. Both computers
+record the command in their audit logs.
 
-If the connection goes silent, the bubble says "build-01 isn't answering" — "Its running commands stop in 20 s unless
-the link comes back. Nothing new is sent meanwhile.", so a network blip doesn't kill a long build. The stop chord ends
-Ember's own connection at once, but while the network is down a command on build-01 ends only when build-01 notices,
-within those 20 seconds (an administrator can set 3 to 120).
+If the connection goes silent for 5 seconds, the bubble says "build-01 isn't answering" — "Its running commands stop
+in 15 s unless the link comes back. Nothing new is sent meanwhile.", and each running command's tab counts down
+("build-01 isn't answering. This command stops in 12 s unless the link comes back.") until the link comes back or is
+lost; so a network blip doesn't kill a long build. The stop chord ends Ember's own connection at once, but while the
+network is down a command on build-01 ends only when build-01 notices, within 20 seconds of the last thing it heard
+(an administrator can set 3 to 120; the bubble and the tab say what is left of it).
+
+A command that prints faster than the connection can carry waits for it: once about 1 MB of its output is waiting to
+be sent, build-01's helper holds the command's output back (the command pauses as it would on a slow terminal) until
+the backlog is under a quarter of that, so the connection stays free for Stop and for other work. A command you
+stopped is never held back, so its end comes through at once; if it keeps printing past that limit as it ends, the
+rest of its output is dropped and you won't see it. After the stop chord, output still waiting on build-01 is dropped.
 
 ### 4.6 Windows PCs, WSL tabs and jump hosts
 
@@ -426,6 +474,7 @@ within those 20 seconds (an administrator can set 3 to 120).
 | "build-01 doesn't let programs run from your home folder, so Ember can't run there." | Ask its administrator (§6.6) |
 | "build-01's security software doesn't let programs from your home folder run. Ask its administrator to allow Ember's helper (fapolicyd trust), or to install the Ember remote package." | §6.6 |
 | "Ember couldn't download what it needs for build-01 (&lt;reason&gt;). Check your internet connection, or ask your administrator about a mirror." | As it says; the mirror is §6.1's `ssh.runtimeMirror` |
+| "The download of what Ember needs for build-01 stalled. Try again." | Nothing arrived for 60 seconds, so Ember ended the download (nothing was copied to build-01). **Try again**; if it keeps stalling, check your proxy or ask your administrator about a mirror |
 | "Your organisation doesn't allow Ember to connect to build-01." | Your administrator's `ssh.allowedHosts` |
 | "build-01's administrator doesn't allow Ember there." / "build-01's Ember policy is broken, so Ember won't work there." | build-01's own policy (§6.4) |
 
@@ -571,7 +620,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
-| L8 | Ember judges the command line, not what a script does inside | Builds and scripts run as ordinary unless their name says publish, delete, install and the like |
+| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script this task wrote or downloaded asks when it can't be read in full, and other scripts too big to read keep the name rule |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
 | L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured |
