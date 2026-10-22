@@ -387,7 +387,7 @@ function bindProcessPath(): ((pid: number) => string | null) | null {
  * (desktopError says why). AX, HIToolbox and libproc are optional: without them the answers that need them are safe
  * defaults (null where a safety check depends on them, so callers fail closed).
  */
-export function openDesktop(o: Pick<DesktopOptions, "log"> = {}): DarwinDesktop | null {
+export function openDesktop(o: Pick<DesktopOptions, "log" | "windowCacheMs"> = {}): DarwinDesktop | null {
   const cf = openCoreFoundation();
   const cg = openCoreGraphics();
   if (!cf || !cg) {
@@ -395,7 +395,7 @@ export function openDesktop(o: Pick<DesktopOptions, "log"> = {}): DarwinDesktop 
     return null;
   }
   const processPath = bindProcessPath() ?? undefined;
-  return makeDesktop(cf, cg, openAX(cf, MAIN_THREAD_AX_TIMEOUT), openHIToolbox(cf), { log: o.log, processPath });
+  return makeDesktop(cf, cg, openAX(cf, MAIN_THREAD_AX_TIMEOUT), openHIToolbox(cf), { ...o, processPath });
 }
 
 /** DarwinPoster over bound frameworks: one event source for the poster's life, released by close(). */
