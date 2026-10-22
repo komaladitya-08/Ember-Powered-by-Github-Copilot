@@ -109,7 +109,9 @@ export function remoteTargetParts(link: RemoteLink, o: {
   const refreshDesktop = (): Promise<TargetBinding> => {
     if (asking) return asking;
     const asked = reported;
-    asking = askRemote(link, "desktop.state", {}, { label }).then(s => {
+    // A person at the remote's screen has two minutes to allow it where its administrator asks for that (§5.3.9).
+    const consoleMs = combinedAdmin(o.localAdmin(), remoteAdmin).ssh.requireConsoleConsent === true ? 120_000 : 0;
+    asking = askRemote(link, "desktop.state", {}, { label, extraMs: consoleMs }).then(s => {
       if (!disposed && (asked === reported || !lowerAccess(desktop().desktop, desktopWith(s)))) state = s;
       return binding();
     }, (err: unknown) => {

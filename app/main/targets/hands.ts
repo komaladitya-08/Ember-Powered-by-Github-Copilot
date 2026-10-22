@@ -86,15 +86,50 @@ export function screenHands(o: { hands: Hands | null; base: HandsBase | null; bi
   };
 }
 
+/** A perception port whose every read waits for `ready` first (it must never reject: a failed wait still reads). */
+export function waitingPerception(p: PerceptionPort, ready: () => Promise<unknown>): PerceptionPort {
+  const after = <T>(f: () => Promise<T>): Promise<T> => ready().then(f, f);
+  return {
+    focused: (...a) => after(() => p.focused(...a)),
+    read: (...a) => after(() => p.read(...a)),
+    atPoint: (...a) => after(() => p.atPoint(...a)),
+    quickContext: () => after(() => p.quickContext()),
+    describe: () => after(() => p.describe()),
+    perceive: (...a) => after(() => p.perceive(...a)),
+    systemDialogOpen: () => after(() => p.systemDialogOpen()),
+    windows: () => after(() => p.windows()),
+  };
+}
+
+/** A sidecar port whose every read and action waits for `ready` first; scaleOf and stop answer at once. */
+export function waitingSidecar(s: SidecarPort, ready: () => Promise<unknown>): SidecarPort {
+  const after = <T>(f: () => Promise<T>): Promise<T> => ready().then(f, f);
+  return {
+    readElement: (...a) => after(() => s.readElement(...a)),
+    canDo: (...a) => after(() => s.canDo(...a)),
+    doAction: (...a) => after(() => s.doAction(...a)),
+    setText: (...a) => after(() => s.setText(...a)),
+    setValue: (...a) => after(() => s.setValue(...a)),
+    selectOption: (...a) => after(() => s.selectOption(...a)),
+    listOptions: (...a) => after(() => s.listOptions(...a)),
+    scaleOf: id => s.scaleOf(id),
+    stop: () => s.stop(),
+  };
+}
+
 /**
  * Hands on a remote (§2.6's SSH column): its perception, sidecar and gate 1; main's audit and Confirmer (the remote keeps
  * its own audit too); no flight, no window of the remote person's as a start, no borrowed mouse, clipboard or desk (L4);
- * grants and leases keyed by the target.
+ * grants and leases keyed by the target. `ready`: the remote's desktop as the PC asked for it before this task
+ * (desktop.state, §5.3.4 step 8, which starts the desktop helper and its notice there): reads and steps wait for it.
  */
-export function remoteHands(o: { hostId: string; parts: RemoteTargetParts; base: Pick<HandsBase, "audit" | "confirmer">; commands: CommandService | null }): TargetHands {
+export function remoteHands(o: { hostId: string; parts: RemoteTargetParts; base: Pick<HandsBase, "audit" | "confirmer">; commands: CommandService | null; ready?: () => Promise<unknown> }): TargetHands {
   const id = targetIdOf("ssh", o.hostId);
+  const ready = o.ready;
   return {
-    perception: o.parts.perception, sidecar: o.parts.sidecar, policy: o.parts.policy, audit: o.base.audit, confirmer: o.base.confirmer,
+    perception: ready ? waitingPerception(o.parts.perception, ready) : o.parts.perception,
+    sidecar: ready ? waitingSidecar(o.parts.sidecar, ready) : o.parts.sidecar,
+    policy: o.parts.policy, audit: o.base.audit, confirmer: o.base.confirmer,
     flyTo: () => undefined, currentWindow: () => null,
     binding: o.parts.binding(), system: o.parts.system, commands: o.commands,
     grantKey: app => `${id}:${app.toLowerCase()}`,

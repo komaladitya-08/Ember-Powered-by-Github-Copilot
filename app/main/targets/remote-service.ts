@@ -10,7 +10,6 @@ import { targetIdOf, type TargetId } from "../../shared/targets";
 import { combineAdmin, commandMode, type AdminSummary, type LoadedAdminPolicy } from "../admin";
 import type { CommandMode, CommandService, CommandWindowPort } from "../commands/types";
 import type { Logger } from "../logger";
-import type { DesktopState } from "../remote/protocol";
 import type { RemoteTargetParts } from "../remote/target";
 import type { HostRecord, RemoteLink } from "../remote/types";
 import type { SettingsStore } from "../settings";
@@ -40,9 +39,9 @@ export interface RemoteTarget {
   readonly link: RemoteLink;
   readonly parts: RemoteTargetParts;
   readonly service: CommandService;
-  /** The remote's desktop now (the welcome's, lowered by every desktop.changed since). */
+  /** The remote's desktop now, as SC's parts judge it (the welcome's, lowered by every report, raised only by desktop.state). */
   desktop(): DesktopAccess;
-  /** Why the desktop is "none" or "text", in the agent's words (untrusted; for the bubble only, quoted by the UI). */
+  /** Why the desktop is "none" or "text", in Ember's own words (SC's remoteDesktop never uses the remote's). */
   desktopWhy(): string | undefined;
   dispose(): void;
 }
@@ -65,25 +64,37 @@ export function createRemoteTarget(o: {
   const label = o.host.id;
   const welcome = o.link.welcome;
   let remoteAdmin: AdminSummary = welcome.remoteAdmin;
-  let desktop: DesktopState = welcome.desktop;
-  const parts = o.makeParts(o.link, { log: o.log, settings: o.settings, localAdmin: o.admin, hostLabel: label, login: o.host.resolved.user });
+  let parts: RemoteTargetParts | null = null;
+  // The desktop as SC's parts judge it now (the remote's reports lower it at once; only the PC's own desktop.state
+  // request raises it again, as after a screen that was locked is unlocked): never more than what Ember may use.
+  const judged = (): TargetBinding | null => {
+    if (!parts) return null;
+    try { return parts.binding(); } catch (err) { o.log.warn("targets.remote_binding_failed", { err }); return null; }
+  };
   const offs: (() => void)[] = [];
   const listen = (f: () => () => void) => { try { offs.push(f()); } catch (err) { o.log.warn("targets.remote_listen_failed", { err }); } };
+  // Heard before the parts hear it (listening first): a lock is a desktop in use that this report takes away.
+  listen(() => o.link.on("desktop.changed", d => {
+    const was = judged()?.desktop ?? welcome.desktop.access;
+    if (was !== "none" && d.access === "none" && d.session?.locked) o.onLocked?.();
+  }));
+  try {
+    parts = o.makeParts(o.link, { log: o.log, settings: o.settings, localAdmin: o.admin, hostLabel: label, login: o.host.resolved.user });
+  } catch (err) {
+    for (const off of offs.splice(0)) { try { off(); } catch { /* the link is going anyway */ } }
+    throw err;
+  }
+  const made = parts;
   listen(() => o.link.on("policy.changed", s => {
     // The remote's own policy, newly read there: only ever stricter for this link (a looser one waits for a reconnect).
     remoteAdmin = combineAdmin(remoteAdmin, s);
-  }));
-  listen(() => o.link.on("desktop.changed", d => {
-    const was = desktop;
-    desktop = { ...d, access: lowerAccess(was.access, d.access) };
-    if (was.access !== "none" && desktop.access === "none" && d.session?.locked) o.onLocked?.();
   }));
   listen(() => o.link.on("console.stop", () => o.onConsoleStop?.()));
   // The PC's own mode for SSH (R5 with this PC's policy) and the remote's, the stricter wins (§3.8.1).
   const mode = (): CommandMode => stricterMode(commandMode(o.admin(), "ssh"), remoteAdmin.commands?.ssh ?? "off");
   const privileged = () => welcome.uid === 0 || welcome.facts.privileged === true;
   const setting = () => commandsSetting(o.settings, id);
-  const binding = (): TargetBinding => parts.binding();
+  const binding = (): TargetBinding => made.binding();
   const service: CommandService = {
     get binding() { return binding(); },
     capability: () => commandCapability({
@@ -91,19 +102,19 @@ export function createRemoteTarget(o: {
       unavailable: o.link.state === "lost" || o.link.state === "closed" ? `The connection to ${label} dropped.` : null,
     }),
     shells: () => (welcome.facts.shells.length ? [...welcome.facts.shells] : ["sh"]),
-    runner: parts.runner,
+    runner: made.runner,
     window: o.window,
     consented: () => recordCommandsConsent(o.settings, id),
     userAskEvery: () => setting()?.askEvery === true,
     mode,
   };
   return {
-    id, hostId: o.host.id, link: o.link, parts, service,
-    desktop: () => desktop.access,
-    desktopWhy: () => desktop.why,
+    id, hostId: o.host.id, link: o.link, parts: made, service,
+    desktop: () => judged()?.desktop ?? "none",
+    desktopWhy: () => judged()?.desktopWhy,
     dispose: () => {
       for (const off of offs.splice(0)) { try { off(); } catch { /* already gone with the link */ } }
-      try { parts.dispose(); } catch (err) { o.log.warn("targets.remote_parts_dispose_failed", { err }); }
+      try { made.dispose(); } catch (err) { o.log.warn("targets.remote_parts_dispose_failed", { err }); }
     },
   };
 }

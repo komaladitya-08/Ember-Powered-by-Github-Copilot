@@ -1475,6 +1475,8 @@ function start(): void {
       // macOS: Homebrew's, MacPorts' and pipx's folders that exist (apps started from Finder get launchd's PATH).
       extraPath: () => platform.os === "darwin" ? extraBinDirs(app.getPath("home")).filter(d => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) : [],
       jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
+      // A computer whose connection went, whose screen locked or where someone pressed Stop: its tasks stop here too.
+      stopTasksOn: target => { agent?.cancelTasksOn(target); },
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });

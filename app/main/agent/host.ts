@@ -1331,6 +1331,22 @@ export class AgentHost {
   }
 
   /**
+   * Stops every task bound to `target` (a queued one ends before it starts, a running one is aborted, with its question
+   * if it asked one): someone at that computer pressed Stop, its screen locked, or its connection went (§5.3.4,
+   * §5.3.9, §5.1.11). Tasks on other computers go on. Returns how many it stopped.
+   */
+  cancelTasksOn(target: TargetId): number {
+    let n = 0;
+    for (const t of this.tasks?.list() ?? []) {
+      if ((t.targetId ?? "local") !== target || (t.status !== "running" && t.status !== "queued")) continue;
+      this.tasks?.cancel(t.id);
+      n++;
+    }
+    if (n) this.o.log.info("agent.target_tasks_stopped", { kind: target.split(":")[0], n });
+    return n;
+  }
+
+  /**
    * Sign-out: the conversation belongs to the account that had it, so it is deleted (now, or at the
    * next start if Copilot isn't connected). A GitHub CLI or environment sign-in then isn't used on
    * its own (start(…, "auto")) until the user signs in again.

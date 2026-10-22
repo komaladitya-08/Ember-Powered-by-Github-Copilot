@@ -30,7 +30,10 @@ import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
 import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
 import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
-import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, progressWords, splitDest, type CommandWindow, type PromptWindow, type TargetsParts } from "../../app/main/targets/runtime";
+import { buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, type CommandWindow, type PromptWindow, type TargetsParts } from "../../app/main/targets/runtime";
+import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
+import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
+import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
 import type { IpcLike, TargetsDeps, WebContentsLike } from "../../app/main/targets/types";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
@@ -166,13 +169,29 @@ function rig(o: RigOptions = {}) {
     stopAll: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined),
   };
   const remoteRunners = new Map<string, ReturnType<typeof fakeRunner>>();
+  /** What a remote's desktop.state answers (SC's refreshDesktop; default: the welcome's access). */
+  const remoteDesktop = new Map<string, "screen" | "text" | "none">();
+  const refreshes: { hostId: string; release: () => void }[] = [];
+  const reads: string[] = [];
   const remoteParts = vi.fn((link: RemoteLink, ro: { hostLabel: string; login: string }) => {
     const r = fakeRunner(`ssh:${link.hostId}`);
     remoteRunners.set(link.hostId, r);
+    // As SC's parts judge the desktop: a report only lowers it; the PC's own desktop.state request may raise it.
+    const order = ["none", "text", "screen"];
+    let access = link.welcome.desktop.access as "screen" | "text" | "none";
+    link.on("desktop.changed", d => { if (order.indexOf(d.access) < order.indexOf(access)) access = d.access; });
+    const binding = () => ({ id: `ssh:${link.hostId}`, kind: "ssh", label: ro.hostLabel, login: ro.login, screenOs: "linux", shellOs: "linux", desktop: access });
     return {
-      perception: { quickContext: vi.fn(async () => ({ target: { pid: 7, title: "notes" }, text: "gedit: notes" })), describe: vi.fn(async () => "<screen>remote</screen>") },
-      sidecar: {}, apps: {}, runner: r, policy: { tag: "remote-policy" }, system: { os: "linux" },
-      binding: () => ({ id: `ssh:${link.hostId}`, kind: "ssh", label: ro.hostLabel, login: ro.login, screenOs: "linux", shellOs: "linux", desktop: link.welcome.desktop.access }),
+      perception: {
+        quickContext: vi.fn(async () => ({ target: { pid: 7, title: "notes" }, text: "gedit: notes" })), describe: vi.fn(async () => { reads.push("describe"); return "<screen>remote</screen>"; }),
+        read: vi.fn(async () => { reads.push("read"); return { text: "read" }; }),
+      },
+      sidecar: { doAction: vi.fn(async () => { reads.push("doAction"); return { ok: true }; }), scaleOf: () => 1, stop: vi.fn() },
+      apps: {}, runner: r, policy: { tag: "remote-policy" }, system: { os: "linux" },
+      binding,
+      refreshDesktop: vi.fn(() => new Promise(res => {
+        refreshes.push({ hostId: link.hostId, release: () => { access = remoteDesktop.get(link.hostId) ?? link.welcome.desktop.access; res(binding()); } });
+      })),
       onAuthorized: vi.fn(), dispose: vi.fn(),
     } as unknown as RemoteTargetParts;
   });
@@ -205,6 +224,7 @@ function rig(o: RigOptions = {}) {
       script: async () => "/usr/bin/script", powershell: async () => null, remoteParts: async () => ["linux-x64", "linux-arm64", "darwin-arm64"],
     },
     ownPids: () => [55],
+    wslHelpers: { stop: vi.fn(), pids: vi.fn((): number[] => []), doctorRows: vi.fn(async (): Promise<PlatformDoctorRow[]> => []) },
     sshConfigHosts: () => ["build-02"],
     randomHex: n => "c".repeat(n * 2),
     now: () => new Date("2026-10-22T12:00:00.000Z"),
@@ -220,10 +240,12 @@ function rig(o: RigOptions = {}) {
     windows: { command: windowsMade, prompt: windowsMade }, fetch: vi.fn(), devEnv: () => undefined,
     elevated: o.elevated ?? (() => false), emberPids: () => [10, 11], extraPath: () => [], jobHost: null,
   };
-  const t = buildTargets(deps, parts);
+  const stopTasksOn = vi.fn();
+  const t = buildTargets({ ...deps, stopTasksOn }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
-    handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade,
+    handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
+    remoteDesktop, refreshes, reads,
     runnerOpts: () => runnerOpts!,
     onAnswer: () => onAnswer, onConsent: () => onConsent,
     failConnect: (e: Error | null) => { connectFail = e; },
@@ -523,7 +545,12 @@ describe("SSH targets", () => {
     expect(r.t.agent.caps()).toEqual({ commands: true, targets: true });
     expect(r.t.agent.activeLine()).toBe("(Ember is set to work on build-01, connected as deploy: apps and commands. Commands: off for this computer; on on build-01.)");
     expect(r.t.agent.describeTargets()).toBe("<computers>\n- This computer (Linux): no commands; apps\n- build-01 (SSH, connected as deploy, Ember is set to work here): commands; apps on its screen\n</computers>");
-    await expect(r.t.agent.describeScreen("ssh:build-01")).resolves.toBe("<screen>remote</screen>");
+    // describe_screen there asks for its desktop first (desktop.state starts its desktop helper), then reads.
+    const described = r.t.agent.describeScreen("ssh:build-01");
+    await flush();
+    expect(r.reads).toEqual([]);
+    for (const x of r.refreshes) x.release();
+    await expect(described).resolves.toBe("<screen>remote</screen>");
     expect(r.t.busy()).toEqual({ commands: 0, connections: 1 });
   });
 
@@ -1114,5 +1141,104 @@ describe("small helpers", () => {
     expect(progressWords("build-01", { step: "copying", done: 5_000_000, total: 31_000_000 })).toBe("Copying Ember's helper to build-01 (5 of 31 MB)…");
     expect(progressWords("build-01", { step: "starting" })).toBe("Starting Ember on build-01…");
     expect(progressWords("build-01", { step: "failed", message: "x", retry: false, kind: "dns" })).toBeNull();
+  });
+});
+
+describe("the remote and WSL seams (INT)", () => {
+  it("builds its real parts with SA's noticing and WB's helpers", () => {
+    const r = rig();
+    const real = productionParts(r.deps);
+    expect(real.notice).toEqual({ sshDestination, userSshProcesses });
+    expect(real.wslHelpers).toEqual({ stop: stopWslHelpers, pids: wslHelperPids, doctorRows: wslHelperDoctorRows });
+  });
+
+  it("stops WSL's helpers with the kill switch, counts their pids as Ember's own and adds their doctor rows", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
+    (r.parts.wslHelpers.pids as ReturnType<typeof vi.fn>).mockReturnValue([4242]);
+    (r.parts.wslHelpers.doctorRows as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "wsl-a11y:Ubuntu", status: "warn", label: "Accessibility in Ubuntu", detail: "off" }]);
+    expect(r.runnerOpts().ember.pids()).toEqual([10, 11, 55, 4242]);
+    await r.t.stopAll();
+    expect(r.parts.wslHelpers.stop).toHaveBeenCalledTimes(1);
+    expect((await r.t.doctorRows()).map(x => x.id)).toEqual(["ssh-client", "powershell", "remote-parts", "wsl", "wsl-a11y:Ubuntu"]);
+    // No WSL here (Linux): no helper rows asked for.
+    const linux = rig();
+    await linux.t.doctorRows();
+    expect(linux.parts.wslHelpers.doctorRows).not.toHaveBeenCalled();
+  });
+
+  it("forgets a host once Ember is removed from it (§5.2.7), and keeps it when that fails", async () => {
+    const r = rig({ settings: { ...withHosts([hostRecord("build-01"), hostRecord("build-02")]), ...commandsOn("ssh:build-01") } });
+    await connected(r);
+    r.conns.uninstall.mockRejectedValueOnce(new ConnectError("build-02 couldn't be reached.", "network"));
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "uninstall", hostId: "build-02" })).resolves.toEqual({ ok: false, message: "build-02 couldn't be reached." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01", "build-02"]);
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "uninstall", hostId: "build-01" })).resolves.toEqual({ ok: true });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-02"]);
+    expect(r.settings.get().commands["ssh:build-01"]).toBeUndefined();
+    expect(r.t.agent.active).toBe("local");
+  });
+
+  it("stops the tasks on a computer whose link drops or closes, where someone pressed Stop, or whose screen locked; only there", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const l = await connected(r);
+    l.emit("console.stop", { at: SINCE });
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01");
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "Someone at build-01 pressed Stop." }) });
+    l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
+    l.move("stalled");
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
+    l.move("lost");
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(3);
+    await connected(r);
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(4);
+    expect(r.stopTasksOn.mock.calls.every(c => c[0] === "ssh:build-01")).toBe(true);
+  });
+
+  it("asks for a remote's desktop before each task: its reads and steps wait for the answer, and access comes back after a lock", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "screen", notice: "off" } }) });
+    const l = await connected(r);
+    const got = r.t.agent.handsFor("ssh:build-01");
+    if (!got.ok) throw new Error(got.why);
+    expect(r.refreshes).toHaveLength(1);
+    const read = got.hands.perception.read({} as never);
+    const acted = got.hands.sidecar.doAction(1);
+    expect(got.hands.sidecar.scaleOf(1)).toBe(1);
+    await flush();
+    expect(r.reads).toEqual([]);
+    r.refreshes[0].release();
+    await Promise.all([read, acted]);
+    expect(r.reads).toEqual(["read", "doAction"]);
+    // A lock lowers it at once (said once); the next task's own request takes it back once the screen is unlocked.
+    l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
+    l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
+    expect(r.t.agent.describeTargets()).toContain("no desktop session");
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
+    // (With commands off there, a task needs the desktop: refused now, while the question goes out.)
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
+    expect(r.refreshes).toHaveLength(2);
+    r.refreshes[1].release();
+    await flush();
+    expect(r.t.agent.describeTargets()).toContain("apps on its screen");
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
+    l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
+    expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
+  });
+
+  it("turns on accessibility in a running WSL distro (wsl-a11y), never starting one, and only with WSL on", async () => {
+    const off = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
+    await expect(off.t.applyFix("wsl-a11y:Ubuntu")).resolves.toMatchObject({ ok: false, message: expect.stringMatching(/isn't turned on/) });
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Root", isDefault: false, defaultUid: 0 })]), settings: wslOnSettings });
+    await flush();
+    await expect(r.t.applyFix("rm -rf /")).resolves.toEqual({ ok: false, message: "Ember doesn't know that fix." });
+    await expect(r.t.applyFix("wsl-a11y:Root")).resolves.toEqual({ ok: false, message: "Ember doesn't use Linux apps of a distro that runs as root." });
+    await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: false, message: "Start Ubuntu first: Ember doesn't start a distro to change its settings." });
+    expect(r.wslRunners.get("Ubuntu")?.start ?? vi.fn()).not.toHaveBeenCalled();
+    (r.wsl as { runningNow: () => Promise<Set<string>> }).runningNow = async () => new Set(["Ubuntu"]);
+    r.wsl.runner("Ubuntu").start.mockImplementation(() => ({ done: Promise.resolve({ ended: "exit", code: 0, signal: null, ms: 5 }) }));
+    await expect(r.t.applyFix("wsl-a11y:Ubuntu")).resolves.toEqual({ ok: true, message: "Restart your Linux apps." });
+    const spec = r.wslRunners.get("Ubuntu")!.start.mock.calls[0][0] as { command: string; stamp: { verdict: string } };
+    expect(spec.command).toBe(A11Y_FIX_COMMAND);
   });
 });
