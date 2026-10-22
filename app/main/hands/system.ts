@@ -102,6 +102,10 @@ export interface DesktopApp {
   categories?: string[];
   /** Terminal=true: the app runs inside a terminal window. */
   terminal?: boolean;
+  /** The launch command, already split into words (Windows and macOS, where `exec` is absent). */
+  argv?: string[];
+  /** Lower-case program names this app's windows report, when the catalogue knows them (Windows and macOS). */
+  programs?: string[];
 }
 
 /** A key file's string escapes (\\s \\n \\t \\r \\\\), as GLib reads them; any other backslash stays for the Exec parser. */

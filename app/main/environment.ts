@@ -3,6 +3,10 @@
  * injected inputs so it is unit-testable; main.ts passes the real ones.
  */
 
+import type { FixId } from "./platform/types";
+
+export type { FixId };
+
 export interface EnvInputs {
   env: Record<string, string | undefined>;
   osRelease: string | null;      // contents of /etc/os-release
@@ -26,7 +30,7 @@ export interface Check {
   status: CheckStatus;
   detail: string;
   /** A fix Ember can apply itself (shown as a button). */
-  fix?: "enable-accessibility";
+  fix?: FixId;
 }
 
 export interface EnvReport {
