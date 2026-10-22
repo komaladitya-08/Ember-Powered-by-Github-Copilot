@@ -439,6 +439,14 @@ const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handl
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const SCP_LIKE = /^(?:[A-Za-z0-9._%+-]+@)?[A-Za-z0-9.-]+:(?![\\/]{2})/;
 
+/** Programs that run a project's own code (its makefile, package scripts, build files or tests) from their folder. */
+const PROJECT_RUNNERS = new Set([
+  "make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw",
+  "nox", "tox", "task", "mage", "ninja", "cmake", "meson", "bazel", "bazelisk", "scons", "npm", "pnpm", "yarn", "bun", "cargo", "go",
+  "dotnet", "msbuild", "pip", "pip3", "poetry", "pipenv", "uv", "pdm", "hatch", "composer", "bundle", "bundler", "mix", "pytest", "jest",
+  "vitest", "mocha", "deno", "swift", "xcodebuild", "flutter", "dart", "stack", "cabal", "docker-compose", "podman-compose", "tsc",
+]);
+
 /** bash built-ins that take a variable's name (a subscript in it is evaluated as arithmetic). */
 const NAME_TAKERS = new Set(["printf", "read", "unset", "test", "[", "mapfile", "readarray", "declare", "typeset", "local", "export", "readonly", "wait", "getopts", "let", "eval"]);
 
@@ -987,6 +995,7 @@ class Engine extends Classifier {
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     this.afterArgs(args);
+    this.afterRun(key, args, s, sc);
     // A variable name with a subscript that runs a command (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`, `test -v …`).
     if (sc.family === "posix" && NAME_TAKERS.has(key) && args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v))) {
       this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
@@ -1130,6 +1139,29 @@ class Engine extends Classifier {
     if (n) n(inner);
     else generic(inner);
     this.afterArgs(inner.args);
+    this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
+  }
+
+  /**
+   * What every program gets after its row (§3.4.7): output a download writes to a file is a download too
+   * (`curl URL > x.sh`, `curl URL | tee x.sh`), and a build tool, test runner or package manager working in a folder
+   * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
+   */
+  afterRun(key: string, args: Arg[], s: Simple, sc: Scope): void {
+    if (s.fetchBefore || FETCHERS.has(key)) {
+      for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, sc);
+      if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
+        for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
+      }
+    }
+    const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
+    if (!runner || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return;
+    const inDownloaded = this.isDownloaded(lit("."), sc) || args.some(a => {
+      if (a.v === null || URL_LIKE.test(a.v)) return false;
+      const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
+      return v !== "" && !v.startsWith("-") && this.isDownloaded({ ...a, v }, sc);
+    });
+    if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
@@ -1950,7 +1982,11 @@ function intoInterpreter(h: H): void {
     else h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
     return;
   }
-  if (h.s.stdin === "file") return;
+  if (h.s.stdin === "file") {
+    // `bash < x.sh`: the file is the program.
+    for (const r of h.s.redirs) if (r.kind === "read" && r.target && h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    return;
+  }
   h.e.unclear("unclear.interactive", SAYS.interactive);
 }
 
