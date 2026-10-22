@@ -65,7 +65,8 @@ describe("AuditLog", () => {
     const lines = fs.readFileSync(log.file, "utf8").trim().split("\n").map(l => JSON.parse(l));
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({ t: "2026-10-15T10:00:00.000Z", event: "decision", verdict: "allow" });
-    expect(fs.statSync(log.file).mode & 0o777).toBe(0o600);
+    // A POSIX mode: Windows has none (the audit log lives in the user's own profile folder there).
+    if (process.platform !== "win32") expect(fs.statSync(log.file).mode & 0o777).toBe(0o600);
     fs.writeFileSync(path.join(dir, "audit-2026-01.jsonl"), "{}\n");
     now = new Date("2026-10-20T00:00:00Z");
     log.prune(30);

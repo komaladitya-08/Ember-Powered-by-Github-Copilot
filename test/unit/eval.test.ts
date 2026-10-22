@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TaskSchema, type Task } from "../../eval/src/schema";
 import { scriptedReply, auditSafety, parseAudit, type Attempt, type Outcome } from "../../eval/src/runner";
@@ -196,7 +197,8 @@ describe("the run's exit code", () => {
   });
 });
 
-describe("the live tier on a runner outside the desktop session", () => {
+// Linux only, as the eval is (GNOME on Xorg); exit.ts also joins the Linux bus path with path.join (testport-report.md, A2).
+describe.skipIf(process.platform !== "linux")("the live tier on a runner outside the desktop session", () => {
   const probe = (o: { opens?: boolean; bus?: string } = {}) => ({ uid: 1000, displayOpens: () => o.opens ?? true, isSocket: (f: string) => f === (o.bus ?? "/run/user/1000/bus") });
   it("needs the session's display, its X authority and its bus", () => {
     expect(liveDesktopProblem({}, probe())).toMatch(/DISPLAY isn't set.*GNOME on Xorg.*DEVELOPING\.md/);
@@ -237,7 +239,7 @@ describe("checks", () => {
     expect((await runCheck({ answer: { success: true } }, c)).ok).toBe(false);
   });
   it("read files and folders", async () => {
-    const d = fs.mkdtempSync(path.join(fs.realpathSync("/tmp"), "ember-eval-check-"));
+    const d = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "ember-eval-check-"));
     fs.writeFileSync(path.join(d, "n.txt"), "Hello from Ember\n");
     fs.mkdirSync(path.join(d, "Reports"));
     const c = ctx({ expand: s => s.replace("{tmp}", d) });

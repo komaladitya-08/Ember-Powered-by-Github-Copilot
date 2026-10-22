@@ -102,7 +102,8 @@ describe("desk helper", () => {
     expect(await until(() => !running(a.pid))).toBe(true);
   });
 
-  it("reaps a helper it gave up on: a stopped one (SIGSTOP) leaves no defunct process behind", async () => {
+  // Linux only: startTime() reads /proc/<pid>/stat and Windows has no SIGSTOP (the desk itself is Linux-only).
+  it.skipIf(process.platform !== "linux")("reaps a helper it gave up on: a stopped one (SIGSTOP) leaves no defunct process behind", async () => {
     const a = await start({ timeoutMs: 300 });
     const pid = a.pid, born = startTime(pid);
     expect(born).not.toBeNull();
@@ -121,7 +122,8 @@ describe("desk helper", () => {
     a.stop();
     expect(() => a.call("input", "move", [1, 1])).toThrow(DESK_STOPPED);
     expect(await until(() => !running(a.pid))).toBe(true);
-    expect(await until(() => startTime(a.pid) !== born)).toBe(true); // reaped
+    // Reaped: startTime() reads /proc, so this is seen on Linux only (running() is always false elsewhere).
+    if (process.platform === "linux") expect(await until(() => startTime(a.pid) !== born)).toBe(true);
     await new Promise(r => setTimeout(r, 100));
     expect(why).toEqual([]);
   });

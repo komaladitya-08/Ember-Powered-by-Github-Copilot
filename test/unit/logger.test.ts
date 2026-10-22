@@ -38,7 +38,8 @@ describe("logger robustness", () => {
     expect(() => log.error("odd", { loop, big: 10n, nested: { err } })).not.toThrow();
     const line = JSON.parse(fs.readFileSync(log.file, "utf8").trim().split("\n").at(-1)!);
     expect(line).toMatchObject({ big: "10", loop: { a: 1, self: "[circular]" }, nested: { err: { message: "boom", code: "ENOSPC" } } });
-    expect(fs.statSync(log.file).mode & 0o077).toBe(0);
+    // Owner-only: a POSIX mode (Windows has none; the log lives in the user's own profile folder there).
+    if (process.platform !== "win32") expect(fs.statSync(log.file).mode & 0o077).toBe(0);
   });
 
   it("prints a value used twice side by side, and an error that is its own cause once", () => {
