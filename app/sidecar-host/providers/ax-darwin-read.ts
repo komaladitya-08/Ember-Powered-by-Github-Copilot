@@ -818,14 +818,21 @@ export function textOf(s: AxSession, el: AxRef, maxChars: number): TextInfo {
  * "legacy" action has no AX counterpart. Never AXRaise or AXFrontmost: an action never brings a window to the front.
  */
 export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, value?: unknown): void {
-  const names = () => s.actions(el);
-  switch (op) {
-    case "invoke": {
-      const acts = names();
-      if (acts.includes("AXPress") || !acts.includes("AXPick")) s.perform(el, "AXPress", "press it");
-      else s.perform(el, "AXPick", "pick it");
-      return;
+  /** Does the first of `actions` the element has (an action it doesn't have answers kAXErrorActionUnsupported). */
+  const first = (actions: string[], what: string) => {
+    for (let i = 0; i < actions.length; i++) {
+      try {
+        s.perform(el, actions[i]!, what);
+        return;
+      } catch (err) {
+        if (i === actions.length - 1 || !(err instanceof ProviderError) || err.code !== "unsupported") throw err;
+      }
     }
+  };
+  switch (op) {
+    case "invoke":
+      first(["AXPress", "AXPick"], "press it");
+      return;
     case "toggle":
       s.perform(el, "AXPress", "press it");
       return;
@@ -835,8 +842,7 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
         return;
       }
       if (op === "addToSelection") s.raise(AX_ERROR.attributeUnsupported, "add it to the selection");
-      if (f.role === "AXMenuItem" && names().includes("AXPick")) s.perform(el, "AXPick", "pick it");
-      else s.perform(el, "AXPress", "press it");
+      first(f.role === "AXMenuItem" ? ["AXPick", "AXPress"] : ["AXPress"], "select it");
       return;
     case "removeFromSelection":
       if (f.selected === undefined || !s.settable(el, "AXSelected")) s.raise(AX_ERROR.attributeUnsupported, "unselect it");
@@ -847,8 +853,7 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
       if (f.expanded !== undefined && s.settable(el, "AXExpanded")) { s.set(el, "AXExpanded", open, `${op} it`); return; }
       if (f.disclosing !== undefined && s.settable(el, "AXDisclosing")) { s.set(el, "AXDisclosing", open, `${op} it`); return; }
       if (open && MENU_OPENERS.has(f.role)) {
-        const acts = names();
-        s.perform(el, acts.includes("AXShowMenu") ? "AXShowMenu" : "AXPress", "open its menu");
+        first(["AXShowMenu", "AXPress"], "open its menu");
         return;
       }
       s.raise(AX_ERROR.attributeUnsupported, `${op} it`);
@@ -862,7 +867,7 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
       const target = Number(value);
       if (!Number.isFinite(target)) throw new ProviderError("failed", "not a number");
       if (s.settable(el, "AXValue")) { s.set(el, "AXValue", target, "set its value"); return; }
-      stepTo(s, el, target);
+      stepTo(s, el, target, f.step);
       return;
     }
     case "focus":
@@ -876,14 +881,18 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
   }
 }
 
-/** Moves a range that can't be set toward `target` with AXIncrement/AXDecrement, stopping at the closest step. */
-function stepTo(s: AxSession, el: AxRef, target: number): void {
+/**
+ * Moves a range that can't be set toward `target` with AXIncrement/AXDecrement, stopping at the closest step (within
+ * half a step of it where the step is known; else one step past it, and back when that was further).
+ */
+function stepTo(s: AxSession, el: AxRef, target: number, step?: number): void {
   const acts = s.actions(el);
   if (!acts.includes("AXIncrement") && !acts.includes("AXDecrement")) s.raise(AX_ERROR.attributeUnsupported, "set its value");
   const read = (): number | undefined => num(s.attr(el, "AXValue"));
   let cur = read();
   if (cur === undefined) s.raise(AX_ERROR.noValue, "read its value");
   for (let i = 0; i < RANGE_STEPS && cur !== target; i++) {
+    if (step !== undefined && step > 0 && Math.abs(target - cur!) <= step / 2) return;
     const up = cur! < target;
     s.perform(el, up ? "AXIncrement" : "AXDecrement", "step its value");
     const next = read();
