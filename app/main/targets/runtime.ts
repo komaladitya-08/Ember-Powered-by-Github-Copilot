@@ -1232,7 +1232,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
-      } else if (!usableNamed.length && wsl && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
+      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
         // The user said "in WSL" while it is off for Ember: the task goes on where Ember is set to work, and "Ember can
         // work in WSL" is offered (once a run), only once discovery shows a distro to work in (it reads the registry;
         // nothing starts). Never for "Linux" alone, which is as often what a request is about as where it should run.

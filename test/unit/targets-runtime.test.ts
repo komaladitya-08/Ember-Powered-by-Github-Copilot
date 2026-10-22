@@ -864,6 +864,17 @@ describe("WSL targets", () => {
     }
   });
 
+  it("never offers WSL once the administrator has turned it off (Ember made its WSL view before that)", async () => {
+    const admin: LoadedAdminPolicy = { ...noPolicy };
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), admin });
+    expect(r.t.wsl).not.toBeNull();
+    Object.assign(admin, policy({ features: { wsl: false } }));
+    const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
+    expect(b.ok && b.binding.id).toBe("local");
+    await flush(); await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+  });
+
   it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
     const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
     const b = r.t.agent.bind({ userWords: "list my files in WSL" });
