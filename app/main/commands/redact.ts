@@ -72,8 +72,10 @@ const ASSIGNED_SECRET =
  * token patterns, an Authorization header, credentials in a URL, or a secret-named `NAME=value`.
  */
 export function commandLineSecret(word: string): boolean {
-  for (const re of TOKEN_PATTERNS) if (new RegExp(re.source, re.flags.replace("g", "")).test(word)) return true;
-  for (const re of VALUE_PATTERNS) if (new RegExp(re.source, re.flags.replace("g", "")).test(word)) return true;
-  if (new RegExp(URL_CREDENTIALS.source).test(word)) return true;
-  return ASSIGNED_SECRET.test(word);
+  return WORD_PATTERNS.some(re => re.test(word));
 }
+
+/** The same patterns without the global flag (a global pattern's `test` keeps state between calls). */
+const WORD_PATTERNS: readonly RegExp[] = [...TOKEN_PATTERNS, ...VALUE_PATTERNS, URL_CREDENTIALS]
+  .map(re => new RegExp(re.source, re.flags.replace("g", "")))
+  .concat(ASSIGNED_SECRET);

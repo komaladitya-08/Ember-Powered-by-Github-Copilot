@@ -236,7 +236,7 @@ export const INTERPRETERS: Readonly<Record<string, { inline: readonly string[]; 
   node: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "r" }, nodejs: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "r" },
   perl: { inline: ["-e", "-E"], valueOpts: "IMm" }, ruby: { inline: ["-e"], valueOpts: "Ir" }, php: { inline: ["-r", "-B", "-R", "-E", "-F"], valueOpts: "cdz" },
   lua: { inline: ["-e"], valueOpts: "l" }, luajit: { inline: ["-e"], valueOpts: "l" }, osascript: { inline: ["-e"], valueOpts: "l" },
-  rscript: { inline: ["-e"] }, r: { inline: ["-e"] }, julia: { inline: ["-e", "--eval", "-E", "--print"] }, tclsh: { inline: [] },
+  rscript: { inline: ["-e"] }, Rscript: { inline: ["-e"] }, r: { inline: ["-e"] }, R: { inline: ["-e"] }, julia: { inline: ["-e", "--eval", "-E", "--print"] }, tclsh: { inline: [] },
   wish: { inline: [] }, guile: { inline: ["-c"] }, racket: { inline: ["-e"] }, scala: { inline: ["-e"] }, groovy: { inline: ["-e"] },
   jshell: { inline: [] }, irb: { inline: [] }, ghci: { inline: ["-e"] }, runghc: { inline: [] }, expect: { inline: ["-c"] },
   awk: { inline: [] }, gawk: { inline: [] }, mawk: { inline: [] }, nawk: { inline: [] },

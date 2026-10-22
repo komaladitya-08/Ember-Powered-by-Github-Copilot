@@ -267,8 +267,7 @@ class Classifier {
     const absPattern = resolveTargetPath(pattern, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const prefix = globPrefix(absPattern, sc.path);
     this.addProbe(prefix);
-    const tree: PathUse = WRITES.has(use) ? (use === "delete" ? "deleteTree" : use) : use;
-    this.judge(prefix, tree === "deleteTree" ? "list" : use, sc.path, text, sc, true);
+    this.judge(prefix, use, sc.path, text, sc, true);
     const dotRule = sc.family === "posix";
     const re = globRegExp(absPattern, sc.path, dotRule);
     // Ember's own paths: the glob names one, or a folder holding one that a tree operation reaches.
@@ -292,17 +291,24 @@ class Classifier {
     return { kind: "glob", text, resolved: absPattern, abs: absPattern };
   }
 
+  /** A write into a folder whose new file Ember can't name: a file in it, judged by §3.6's rules (not probed). */
+  judgeInside(abs: string, use: PathUse, sc: Scope, text: string): void {
+    this.judge((sc.path.flavour === "win32" ? win32 : posix).join(abs, "x"), use, sc.path, text, sc);
+  }
+
   /** §3.6's rules on one absolute path. */
   private judge(abs: string, use: PathUse, env: PathEnv, text: string, sc: Scope, isPrefix = false): void {
     if (isEmberPath(abs, env) || (sc.path !== env && isEmberPath(abs, sc.path))) this.refuseWith("ember.path", "safety");
-    if ((use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, env)) this.refuseWith("ember.path", "safety");
-    const sk = isPrefix ? (secretKind(abs, "list", env) === "secret" ? "secret" : null) : secretKind(abs, use, env);
+    // A glob's fixed folder: what it holds is judged by the pattern (useGlob), not the whole folder.
+    if (!isPrefix && (use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, env)) this.refuseWith("ember.path", "safety");
+    const child = (env.flavour === "win32" ? win32 : posix).join(abs, "x");
+    const sk = isPrefix ? (use === "list" || use === "cd" ? null : secretKind(child, "read", env) === "secret" ? "secret" : null) : secretKind(abs, use, env);
     if (sk === "history") this.add("secret", "path.history", SAYS.history, { objects: [{ kind: "path", text, resolved: abs, abs }] });
     else if (sk === "secret") this.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${text}).`, { objects: [{ kind: "path", text, resolved: abs, abs }] });
-    if (use === "readTree" && !sk && holdsSecret(abs, env)) {
+    if (use === "readTree" && !sk && !isPrefix && holdsSecret(abs, env)) {
       this.add("secret", "path.secret-tree", `Reads or changes passwords, keys or other secrets (${text} holds some).`, { objects: [{ kind: "path", text, resolved: abs, abs }] });
     }
-    if (WRITES.has(use)) {
+    if (WRITES.has(use) && !isPrefix) {
       const k = writeKind(abs, env);
       if (k) this.writeFinding(k, text);
     }
@@ -328,9 +334,10 @@ class Classifier {
 
   /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
   isDownloaded(a: Arg, sc: Scope): boolean {
-    if (a.v === null || !sc.cwd || this.ctx.downloaded.size === 0) return false;
+    if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    for (const d of this.ctx.downloaded) if (isUnder(abs, d, sc.path)) return true;
+    // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
+    for (const d of [...this.ctx.downloaded, ...this.downloads]) if (isUnder(abs, d, sc.path)) return true;
     return false;
   }
 }
@@ -466,11 +473,15 @@ class Engine extends Classifier {
     });
   }
 
-  /** Control, format and direction characters make a command unclear wherever they are (they hide what runs). */
+  /**
+   * Control, format and direction characters make a command unclear wherever they are (they hide what runs), and so
+   * do half a surrogate pair (not text at all), private-use characters, line and paragraph separators and spaces
+   * other than the plain one (a shell reads them as part of a word, the card shows them as a gap).
+   */
   private checkCharacters(text: string, family: ShellFamily): void {
     const body = family === "posix" ? text : text.replace(/\r\n/g, "\n");
     // eslint-disable-next-line no-control-regex -- control characters are exactly what is looked for here
-    if (/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(body) || /\p{Cf}/u.test(body)) {
+    if (/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(body) || /[\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u.test(body)) {
       this.unclear("unclear.hidden-characters", "It holds control or invisible characters.");
     }
   }
@@ -1178,8 +1189,10 @@ function interactive(h: H): void {
     case "emacs": if (!has(p, "batch", "version", "script")) add(); else if (has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return;
     case "watch": {
       add();
+      // watch hands its words, joined, to sh -c.
       const w = parseOpts(a, { shortValue: "nqd", longValue: ["interval", "differences"], stopAtOperand: true });
-      h.e.payload(w.operands, h.sc, "watch");
+      if (w.operands.some(x => x.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+      else if (w.operands.length) h.e.nested(w.operands.map(x => x.v).join(" "), "sh", h.sc, "watch");
       return;
     }
     case "crontab": return;
@@ -1316,6 +1329,39 @@ function finishCd(h: H, abs: string | null): void {
   if (h.sc.depth === 0 && h.sc.wrappers.length === 0 && h.e.commands.length === 1) h.e.topCd = { at: h.e.at, abs };
 }
 
+// Listing names and sizes reads no file's contents.
+reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
+  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style"] });
+  if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
+  for (const a of p.operands) {
+    if (a.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`); continue; }
+    const obj = h.e.usePath(a, "list", h.sc);
+    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
+  }
+});
+// grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
+reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
+  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace"] });
+  if (values(p, "pre").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
+  const patternGiven = values(p, "e", "regexp", "f", "file").length > 0;
+  for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  const files = patternGiven ? p.operands : p.operands.slice(1);
+  const hiddenToo = h.key === "grep" || h.key === "egrep" || h.key === "fgrep" || h.key === "ack" || h.key === "ugrep" || has(p, "hidden", "u", "uu", "uuu", "unrestricted", "a", "all-types", "no-ignore");
+  const recursive = h.key === "rg" || h.key === "ag" || h.key === "ack" || has(p, "r", "R", "recursive", "dereference-recursive") || values(p, "d", "directories").includes("recurse");
+  const use: PathUse = recursive && hiddenToo ? "readTree" : "read";
+  for (const f of files) {
+    if (f.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`); continue; }
+    const obj = h.e.usePath(f, use, h.sc);
+    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
+  }
+  if (recursive && hiddenToo && files.length === 0 && h.sc.cwd) h.e.usePath(lit("."), "readTree", h.sc);
+});
+reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h => {
+  if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+  if (h.key === "mysql" || h.key === "mariadb") interactive(h);
+  for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
+});
+
 // a: rm and friends (§3.5.1).
 reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
   const shred = h.key === "shred";
@@ -1412,6 +1458,9 @@ reg(NATIVE, ["find"], h => {
   if (hasDelete) h.e.add("destroy", "posix.find.delete", `Deletes what it finds under ${where}.`, { objects: startObjs });
   // A find for secrets with an action that reads or lists them (the default action prints).
   const implicit = !expr.some(x => x.v !== null && /^-(exec|execdir|ok|okdir|delete|print0?|printf|ls|fprint0?|fprintf|fls|quit)$/.test(x.v));
+  if ((action || implicit) && startObjs.some(o => o.abs !== null && secretKind(o.abs, "read", h.sc.path) !== null)) {
+    h.e.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${where}).`, { objects: startObjs });
+  }
   if ((action || implicit) && patterns.some(pt => secretPattern(pt, h.sc))) {
     h.e.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${patterns.join(", ")}).`);
   }
@@ -1431,8 +1480,19 @@ reg(NATIVE, ["xargs"], h => {
   });
   for (const f of values(p, "a", "arg-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const repl = values(p, "I", "replace", "i")[0];
-  const words = (p.operands.length ? p.operands : [lit("echo")]).map(w => (repl && w.v !== null && w.v.includes(repl) ? { v: null, raw: w.raw, glob: false } : w));
-  h.e.payload([...words, { v: null, raw: "(input)", glob: false }], h.sc, "xargs", { stdin: null });
+  const ops = p.operands.length ? p.operands : [lit("echo")];
+  const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
+  let intoCode = false;
+  const words = ops.map((w, k) => {
+    if (!repl || w.v === null || !w.v.includes(repl)) return w;
+    // The input put into shell text (`sh -c 'rm {}'`): the text is still read, the input standing as an unknown
+    // word, and it is unclear (a name holding `;` or `$(…)` runs as code).
+    if (shell && k > 0 && /^-[a-zA-Z]*c$/.test(ops[k - 1].v ?? "")) { intoCode = true; return { ...w, v: w.v.split(repl).join("\"$XARGS_INPUT\"") }; }
+    return { v: null, raw: w.raw, glob: false };
+  });
+  if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+  // With -I the input replaces the placeholder; otherwise it is added after the words.
+  h.e.payload(repl ? words : [...words, { v: null, raw: "(input)", glob: false }], h.sc, "xargs", { stdin: null });
 });
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
@@ -1495,10 +1555,14 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "");
   if (intoFolder) {
     for (const s of sources) {
-      if (s.v === null || s.glob) { h.e.add("destroy", rule, `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj] }); continue; }
+      if (s.v === null || s.glob) {
+        h.e.judgeInside(destObj.abs, "write", h.sc, destObj.text);
+        h.e.add("destroy", rule, `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj] });
+        continue;
+      }
       const mod = h.sc.path.flavour === "win32" ? win32 : posix;
       const p2 = mod.join(destObj.abs, baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour));
-      h.e.addProbe(p2);
+      h.e.usePath(lit(p2), "write", h.sc);
       h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [{ kind: "path", text: p2, resolved: p2, abs: p2 }], ifExists: p2 });
     }
     return;
@@ -1816,7 +1880,11 @@ function emberText(h: H, code: string): void {
 reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk"].includes(k)), h => {
   const spec = INTERPRETERS[h.key];
   const inline = new Set(spec.inline);
-  const p = parseOpts(h.args, { shortValue: spec.valueOpts ?? "", stopAtOperand: true, longValue: ["eval", "print", "require", "import", "loader", "input-type", "experimental-loader"] });
+  const isNode = h.key === "node" || h.key === "nodejs";
+  const p = parseOpts(h.args, {
+    shortValue: spec.valueOpts ?? "", stopAtOperand: true,
+    longValue: ["eval", "print", "require", "import", "loader", "input-type", "experimental-loader", ...(isNode ? ["run"] : [])],
+  });
   for (let k = 0; k < h.args.length; k++) {
     const v = h.args[k].v;
     if (v === null) continue;
@@ -1850,7 +1918,12 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     h.e.readArgs(p.operands, h.sc);
     return;
   }
-  if (h.key === "node" || h.key === "nodejs") for (const r of values(p, "r", "require", "import", "loader", "experimental-loader")) if (r) h.e.usePath(lit(r), "read", h.sc);
+  if (isNode) {
+    for (const r of values(p, "r", "require", "import", "loader", "experimental-loader")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // `node --run <script>` runs a package.json script, judged by its name like `npm run`.
+    const run = values(p, "run");
+    if (run.length) { for (const r of run) if (r === null) h.e.unclear("unclear.script", "It runs a script Ember can't name."); else nameCheck(h, r); return; }
+  }
   const script = p.operands[0];
   if (script) {
     if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
@@ -1859,8 +1932,19 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     return;
   }
   if (["tclsh", "wish", "jshell", "irb", "ghci"].includes(h.key) && h.s.stdin === null) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
+  // Options that make it finish without a program: a version or help, and `node --test` (the work tree's tests).
+  if (isNode && has(p, "test")) return;
+  if (h.s.stdin === null && h.args.some(a => a.v !== null && (FINISHING.has(a.v) || (FINISHING_SHORT[h.key] ?? []).includes(a.v)))) return;
   intoInterpreter(h);
 });
+
+/** Interpreter options that print and finish (with no program and nothing on stdin). */
+const FINISHING = new Set(["--version", "--help", "-version", "-help"]);
+const FINISHING_SHORT: Readonly<Record<string, readonly string[]>> = {
+  python: ["-V", "-h"], python2: ["-V", "-h"], python3: ["-V", "-h"], pypy: ["-V", "-h"], pypy3: ["-V", "-h"], py: ["-V", "-h", "-0", "--list"],
+  node: ["-v", "-h"], nodejs: ["-v", "-h"], perl: ["-v", "-V"], php: ["-v", "-h", "-i", "-m"], lua: ["-v"], luajit: ["-v"],
+  julia: ["-v", "-h"], ruby: ["-h"], scala: ["-version"], groovy: ["-v"],
+};
 
 reg(NATIVE, ["source", "."], h => {
   const script = h.args[0];
@@ -2255,7 +2339,16 @@ git(["gc"], h => {
   }
 });
 git(["reflog"], h => { if (/^(expire|delete)$/.test(h.args[0]?.v ?? "")) h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.", { program: "git reflog" }); });
-git(["filter-branch", "filter-repo", "prune"], h => { h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.", { program: `git ${h.key}` }); });
+git(["filter-branch", "filter-repo", "prune"], h => {
+  h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.", { program: `git ${h.key}` });
+  // filter-branch runs each filter with sh for every commit.
+  for (let k = 0; k < h.args.length; k++) {
+    if (!/^--(env|tree|index|parent|msg|commit|tag-name)-filter$/.test(h.args[k].v ?? "")) continue;
+    const t = h.args[k + 1]?.v;
+    if (t) h.e.nested(t, "sh", h.sc, "git filter-branch");
+    else h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+  }
+});
 git(["replace", "update-ref", "symbolic-ref"], h => { if (h.args.some(a => a.v === "-d" || a.v === "--delete")) h.e.add("destroy", "git.history", "Deletes history git keeps for recovery."); });
 git(["worktree"], h => {
   if (h.args[0]?.v === "remove" && h.args.some(a => a.v === "-f" || a.v === "--force")) h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.");
@@ -2594,7 +2687,9 @@ function containerRun(h: H, prog: string, rest: Arg[]): void {
     || values(p, "cap-add", "device").length > 0 || values(p, "security-opt").some(s => /unconfined|disable/.test(s ?? ""));
   for (const vol of [...values(p, "v", "volume"), ...values(p, "mount").map(m => /(?:source|src)=([^,]+)/.exec(m ?? "")?.[1] ?? null)]) {
     if (vol === null) continue;
-    const src = vol.split(/:(?![\\/])/)[0];
+    // host:container[:options]; a Windows host path keeps its drive's colon.
+    const at = vol.indexOf(":", /^[A-Za-z]:[\\/]/.test(vol) ? 2 : 0);
+    const src = at < 0 ? vol : vol.slice(0, at);
     if (src === "/" || /^\/:/.test(vol) || /^[A-Za-z]:\\?$/.test(src)) { h.e.add("system", "docker.privileged", "Gives a container access to the whole computer."); continue; }
     if (/^[~./\\]|^[A-Za-z]:[\\/]/.test(src)) h.e.usePath(lit(src), "readTree", h.sc);
   }
@@ -2622,6 +2717,8 @@ function compose(h: H, prog: string, rest: Arg[]): void {
 }
 
 // Cloud and cluster command-line tools (§3.5.2, §3.5.3, §3.5.4).
+/** Verbs the cloud CLIs use for changes (a resource name after them isn't the verb). */
+const CLOUD_VERBS = new Set(["create", "update", "set", "add", "start", "stop", "restart", "reset", "deploy", "run", "apply", "attach", "import", "export", "upload", "download", "copy", "move", "resize", "scale", "enable", "disable", "ssh", "scp", "connect", "invoke", "publish", "tag", "untag", "patch", "replace", "edit", "rollout", "login", "logout", "configure", "assign", "grant", "revoke", "rotate", "promote", "suspend", "resume", "reboot", "cancel", "approve", "submit", "write", "put", "push", "pull", "sync", "mount", "unmount", "init", "exec", "cp", "mv", "label", "annotate", "cordon", "uncordon", "taint", "expose", "autoscale", "port-forward", "proxy", "certificate"]);
 const AWS_SECRET = /^(get-session-token|assume-role.*|get-login-password|get-authorization-token|get-secret-value|get-parameters?|get-parameters-by-path|decrypt|get-federation-token|create-access-key|get-credentials-for-identity|get-signin-token)$/;
 reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const service = CLOUD_CLIS[h.key];
@@ -2650,7 +2747,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     case "terraform": case "tofu": verb = verbs[0] === "state" || verbs[0] === "workspace" ? verbs[1] ?? verbs[0] : verbs[0]; break;
     case "kubectl": case "oc": case "helm": case "pulumi": case "vault": case "heroku": case "vercel": case "netlify": case "flyctl": case "fly": case "wrangler": case "firebase": case "cdk": case "sam": case "serverless": case "sls": case "nomad": case "consul": case "eksctl": case "gsutil":
       verb = verbs[0]; break;
-    default: verb = verbs[verbs.length - 1];
+    default: {
+      // gcloud, az, doctl, oc…: a command group path, then the verb, then names. The first verb-like word is the verb.
+      const known = verbs.find(v => CLOUD_READ.has(v) || CLOUD_DELETE.has(v) || CLOUD_VERBS.has(v) || /^(describe|list|get|delete|create|update)-/.test(v));
+      verb = known ?? verbs[verbs.length - 1];
+    }
   }
   const all = verbs.join(" ");
   // Secrets first (always ask).
@@ -3373,7 +3474,7 @@ function killPids(h: H, pids: (string | null)[]): void {
     if (/^%\d*$|^%[%+-]$/.test(p)) continue;
     const n = Number(p);
     if (!Number.isFinite(n)) { own = false; objs.push({ kind: "process", text: p, abs: null }); continue; }
-    if (n === -1 || n === 0 && false) { h.e.refuseWith("ember.process", "safety"); return; }
+    if (n === -1) { h.e.refuseWith("ember.process", "safety"); return; }
     if (h.e.ctx.ember.pids.includes(Math.abs(n))) { h.e.refuseWith("ember.process", "safety"); return; }
     own = false;
     objs.push({ kind: "process", text: p, abs: null });

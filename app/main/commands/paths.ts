@@ -208,6 +208,9 @@ const SECRET_HOME_WINDOWS = [
   ".azure/", ".kube/", ".docker/config.json", "_netrc", ".npmrc", ".git-credentials",
 ];
 
+/** A Windows profile holds both lists' secrets (a Windows build of OpenSSH, the AWS CLI and git keep the POSIX names). */
+const SECRET_HOME_EITHER = [...SECRET_HOME_WINDOWS, ...SECRET_HOME_POSIX];
+
 /** Shell and tool history (critique security-11), relative to a home. */
 const HISTORY_HOME = [".local/share/fish/fish_history", ".zsh_sessions/", "AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/"];
 /** History file names, judged anywhere. */
@@ -280,22 +283,36 @@ function entrySource(entry: string, s: string): string {
   return `${body}(?:${s === "\\" ? "\\\\" : "/"}|$)`;
 }
 
+/** Compiled entry lists, per list (the lists are module constants) and per roots, separator and case rule. */
+const ENTRY_RES = new WeakMap<readonly string[], Map<string, RegExp>>();
+
+function entriesRegExp(entries: readonly string[], k: string, make: () => RegExp): RegExp {
+  let m = ENTRY_RES.get(entries);
+  if (!m) { m = new Map(); ENTRY_RES.set(entries, m); }
+  let re = m.get(k);
+  if (!re) {
+    if (m.size >= 32) m.clear();
+    re = make();
+    m.set(k, re);
+  }
+  return re;
+}
+
 /** Whether `p` lies under `root/entry` for one of the entries (roots are regular expression sources). */
 function underEntries(p: string, roots: string[], entries: readonly string[], env: PathEnv, ci: boolean): boolean {
   const s = sep(env);
-  const target = key(p, env, ci);
-  const rootSrc = `(?:${roots.join("|")})`;
-  const parts = entries.map(e => entrySource(e, s));
-  const re = new RegExp(`^${rootSrc}${s === "\\" ? "\\\\" : "/"}(?:${parts.join("|")})`, ci ? "i" : "");
-  return re.test(target);
+  const re = entriesRegExp(entries, `${ci ? "i" : "c"}${s}${roots.join("|")}`, () => {
+    const parts = entries.map(e => entrySource(e, s));
+    return new RegExp(`^(?:${roots.join("|")})${s === "\\" ? "\\\\" : "/"}(?:${parts.join("|")})`, ci ? "i" : "");
+  });
+  return re.test(key(p, env, ci));
 }
 
 /** Whether `p` lies under an absolute entry (POSIX). */
 function underAbsolute(p: string, entries: readonly string[], ci: boolean): boolean {
-  return entries.some(e => {
-    const src = entrySource(e.replace(/^\//, ""), "/");
-    return new RegExp(`^/${src}`, ci ? "i" : "").test(p);
-  });
+  const re = entriesRegExp(entries, ci ? "i/" : "c/", () =>
+    new RegExp(`^/(?:${entries.map(e => entrySource(e.replace(/^\//, ""), "/")).join("|")})`, ci ? "i" : ""));
+  return re.test(p);
 }
 
 /** The basename of a path in its flavour. */
@@ -339,12 +356,14 @@ export interface PathVerdict {
 /** Uses that change the path (writes, deletes, moves). */
 export const WRITES: ReadonlySet<PathUse> = new Set<PathUse>(["write", "append", "delete", "deleteTree", "move", "permTree"]);
 
+const EMBER_SHARE = [".local/share/ember*"];
+
 /** Whether `p` is one of Ember's own paths or inside one (D4.5). */
 export function isEmberPath(p: string, env: PathEnv): boolean {
   if (env.ember.some(e => isUnder(p, e, env))) return true;
   if (env.flavour === "posix" && env.home) {
     // ~/.local/share/ember* (the secret list's last entry, refused first).
-    if (underEntries(p, [env.home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")], [".local/share/ember*"], env, caseless(p, env))) return true;
+    if (underEntries(p, [env.home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")], EMBER_SHARE, env, caseless(p, env))) return true;
   }
   return false;
 }
@@ -356,6 +375,8 @@ export function holdsEmberPath(p: string, env: PathEnv): boolean {
 
 /** Whether `p` is a secret path for this use, and which kind (history files have their own words). */
 export function secretKind(p: string, use: PathUse, env: PathEnv): "secret" | "history" | null {
+  // Listing names or entering a folder reads no secret (find's starts are judged by find's own rule).
+  if (use === "list" || use === "cd") return null;
   const ci = caseless(p, env);
   const homes = homePatterns(env);
   const name = baseName(p, env.flavour);
@@ -364,9 +385,8 @@ export function secretKind(p: string, use: PathUse, env: PathEnv): "secret" | "h
   if (env.flavour === "win32") {
     const w = wslUncPath(p);
     if (w) return secretKind(w.path, use, { ...env, flavour: "posix", os: "linux", home: null, mountRoot: null });
-    const winEntries = [...SECRET_HOME_WINDOWS, ...SECRET_HOME_POSIX];
     if (underEntries(p, homes, HISTORY_HOME, env, true)) return "history";
-    if (underEntries(p, homes, winEntries, env, true)) return sshReadOk(p, use, env) ? null : "secret";
+    if (underEntries(p, homes, SECRET_HOME_EITHER, env, true)) return sshReadOk(p, use, env) ? null : "secret";
     const sysRoot = env.windows?.systemRoot ?? "C:\\Windows";
     if (isUnder(p, `${sysRoot}\\System32\\config`, env)) return "secret";
     return secretBasename(name, true) ? "secret" : null;
@@ -402,8 +422,16 @@ export function holdsSecret(p: string, env: PathEnv): boolean {
   return candidates.some(c => isUnder(c, p, env));
 }
 
-/** Concrete secret paths to test globs and folders against. */
-export function secretCandidates(env: PathEnv): string[] {
+const CANDIDATES = new WeakMap<PathEnv, readonly string[]>();
+
+/** Concrete secret paths to test globs and folders against (worked out once per environment). */
+export function secretCandidates(env: PathEnv): readonly string[] {
+  let list = CANDIDATES.get(env);
+  if (!list) { list = makeCandidates(env); CANDIDATES.set(env, list); }
+  return list;
+}
+
+function makeCandidates(env: PathEnv): string[] {
   const out: string[] = [];
   const s = sep(env);
   if (env.home) {
