@@ -73,9 +73,10 @@ describe("binding the Win32 API", () => {
 
   it("degrades without DWM, the token calls or the optional functions, failing closed", () => {
     const f = fakeLoad({ GetWindowTextW: (_h: number, buf: Buffer) => { buf.write("Ember", "utf16le"); return 5; } }, {
-      libraries: ["dwmapi.dll", "advapi32.dll"], functions: ["InternalGetWindowText", "SetThreadDpiAwarenessContext"],
+      libraries: ["dwmapi.dll", "advapi32.dll"], functions: ["InternalGetWindowText", "SetThreadDpiAwarenessContext", "ToUnicodeEx"],
     });
     const api = bindWin32(koffi, f.load);
+    expect(api.deadKey(0xbf, false, null)).toBe(true); // can't ask: no punctuation key is pressed for a character
     expect(api.frameBounds(0x10)).toBeNull();
     expect(api.cloaked(0x10)).toBe(false);
     expect(api.processToken(null)).toBeNull(); // every window is then "unchecked", so refused for input
@@ -258,6 +259,22 @@ describe("the Win32 wrappers", () => {
     expect(bindWin32(koffi, fakeLoad().load).processToken(5)).toBeNull(); // OpenProcess refused
   });
 
+  it("asks ToUnicodeEx whether a key is dead with Shift as asked, never changing the keyboard state", () => {
+    const f = fakeLoad({
+      MapVirtualKeyExW: (vk: number, type: number) => (type === 0 ? vk + 0x100 : 0),
+      ToUnicodeEx: (vk: number, scan: number, state: Buffer, _buf: Buffer, size: number, flags: number, layout: bigint) => {
+        expect([scan, size, flags, layout]).toEqual([vk + 0x100, 8, 4, 0x4070407n]);
+        expect(state.length).toBe(256);
+        const shift = state[0x10] === 0x80 && state[0xa0] === 0x80;
+        return vk === 0xdc && !shift ? -1 : 1;
+      },
+    });
+    const api = bindWin32(koffi, f.load);
+    expect(api.deadKey(0xdc, false, 0x4070407n)).toBe(true);
+    expect(api.deadKey(0xdc, true, 0x4070407n)).toBe(false);
+    expect(api.deadKey(0xbb, false, 0x4070407n)).toBe(false);
+  });
+
   it("sends the INPUT array with its count and INPUT's size", () => {
     const f = fakeLoad({ SendInput: (count: number) => count });
     const buf = Buffer.alloc(2 * INPUT_SIZE);
@@ -303,5 +320,21 @@ describe("the Win32 wrappers", () => {
     expect(cleanup()).toEqual([4, 2, 2, 2]);
     expect(api.blit(0, 0, 0, 2)).toBeNull();
     expect(f.called("GetDC")).toHaveLength(2);
+  });
+
+  it("frees the bitmap and never reads an untouched DIB when the bitmap can't be selected or has no bits", () => {
+    let selected: bigint | null = null, bits = true;
+    const f = fakeLoad({
+      GetDC: () => 0x1n, CreateCompatibleDC: () => 0x2n, BitBlt: () => 1,
+      CreateDIBSection: (_dc: bigint, _info: Buffer, _usage: number, out: unknown[]) => { out[0] = bits ? 0x9n : null; return 0x3n; },
+      SelectObject: () => selected,
+    });
+    const api = bindWin32(koffi, f.load);
+    expect(api.blit(0, 0, 3, 2)).toBeNull(); // SelectObject failed: BitBlt would have drawn into the stock bitmap
+    expect(f.called("BitBlt")).toHaveLength(0);
+    selected = 0x4n;
+    bits = false;
+    expect(api.blit(0, 0, 3, 2)).toBeNull();
+    expect(["DeleteObject", "DeleteDC", "ReleaseDC"].map(n => f.called(n).length)).toEqual([2, 2, 2]);
   });
 });

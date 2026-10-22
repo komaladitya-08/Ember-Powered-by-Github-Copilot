@@ -31,6 +31,8 @@ Set-StrictMode -Version 2.0
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# Before any control exists, or the controls keep the old unthemed common controls (and their UIA shapes).
+[System.Windows.Forms.Application]::EnableVisualStyles()
 
 # Per-monitor DPI awareness before the first window, so the rectangles in the log are physical pixels (the units
 # Ember uses on Windows). Windows PowerShell is not per-monitor aware by default and would report scaled ones.
@@ -173,7 +175,6 @@ if ($Seconds -gt 0) {
   $timer.Start()
 }
 
-[System.Windows.Forms.Application]::EnableVisualStyles()
 [System.Windows.Forms.Application]::Run($form)
 Write-BenchLog ([ordered]@{ event = 'exit' })
 [Environment]::Exit(0)

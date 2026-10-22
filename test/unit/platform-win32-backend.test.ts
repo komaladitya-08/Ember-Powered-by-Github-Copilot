@@ -195,6 +195,12 @@ class FakeDesktop implements Win32Api {
     return hit ? (hit[1] << 8) | hit[0] : -1;
   }
   scanCode(vk: number) { return vk + 0x100; }
+  /** Dead keys on this layout, as "vk" or "vk+shift". */
+  dead = new Set<string>();
+  deadKey(vk: number, shift: boolean, layout: unknown) {
+    this.calls.push(`deadKey:${String(layout)}`);
+    return this.dead.has(shift ? `${vk}+shift` : `${vk}`);
+  }
   currentThreadId() { return 1; }
   attachThreadInput(from: number, to: number, attach: boolean) {
     this.calls.push(`attach:${from}->${to}:${attach}`);
@@ -563,6 +569,17 @@ describe("Windows input: keys", () => {
     expect(x.needsShift(x.keysymOf("A"))).toBe(true);
     expect(x.keycodeOf(x.keysymOf("at"))).toBe(0); // not on this layout
     expect(d.calls).toContain("vkKeyScan:hkl:2000"); // Notepad's thread's layout
+    expect(d.calls).toContain("deadKey:hkl:2000");
+  });
+
+  it("never presses a dead key for a character: it would type nothing, then change the next one", () => {
+    const d = desktop();
+    d.dead.add(`${0xbf}+shift`); // "?" is a dead key here; "/" on the same key isn't
+    const x = inputOn(d);
+    expect(x.keycodeOf(x.keysymOf("question"))).toBe(0);
+    expect(x.keysym(x.keysymOf("question"), true)).toBe(false);
+    expect(x.keycodeOf(x.keysymOf("slash"))).toBe(0xbf);
+    expect(d.sent).toEqual([]);
   });
 
   it("hands out key codes that are never 0 and match what keysDown reports", () => {
@@ -654,14 +671,16 @@ describe("Windows input: letting go", () => {
 
   it("lets go when the process exits, and stops listening after close()", () => {
     const d = desktop();
-    const before = process.listenerCount("exit");
+    const before = process.listeners("exit");
     const x = openWin32Input({ api: d })!;
-    expect(process.listenerCount("exit")).toBe(before + 1);
+    const added = process.listeners("exit").filter(l => !before.includes(l));
+    expect(added).toHaveLength(1);
     x.keysym(x.keysymOf("Shift_L"), true);
-    process.emit("exit", 0);
+    // Only the backend's own listener: emitting "exit" would also run the test runner's.
+    added[0].call(process, 0);
     expect(d.keys.size).toBe(0);
     x.close();
-    expect(process.listenerCount("exit")).toBe(before);
+    expect(process.listeners("exit")).not.toContain(added[0]);
   });
 
   it("lets go on close() and is a harmless no-op afterwards", () => {

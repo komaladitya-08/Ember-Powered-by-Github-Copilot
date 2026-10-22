@@ -174,6 +174,13 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     await waitFor(() => seen(e => e.event === "text" && e.control === "Name" && e.length === text.length), 3_000, `the Name box to hold ${text.length} characters`);
   });
 
+  it("finds keys on the desktop's layout: letters by their VK, punctuation through the layout, never a dead key", () => {
+    expect(x.keycodeOf(x.keysymOf("a"))).toBe(0x41);
+    expect(x.needsShift(x.keysymOf("A"))).toBe(true);
+    // "/" has a live key (shifted or not) on every layout a CI machine has; the lookup asks ToUnicodeEx for real.
+    expect(x.keycodeOf(x.keysymOf("slash"))).toBeGreaterThan(0);
+  });
+
   it("reports no keys down when idle, and nothing stays down after releaseAll()", async () => {
     expect(x.keysDown()).toEqual([]);
     expect(ws.keysDown()).toEqual({ control: false, alt: false, space: false });

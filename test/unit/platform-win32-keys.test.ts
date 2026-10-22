@@ -142,6 +142,25 @@ describe("keysyms as virtual keys", () => {
     expect(virtualKeyFor(0xfe50, US)).toBeNull(); // dead_grave: not a character
   });
 
+  it("gives no key for a character whose key is a dead key there, asking with the Shift it would need", () => {
+    // German: "^" is the dead circumflex (unshifted), "`" the dead grave (Shift+´); "°" shares the "^" key, shifted.
+    const de = layout({ "^": [0xdc, 0], "°": [0xdc, 1], "`": [0xdd, 1], "+": [0xbb, 0] });
+    const deDead = (vk: number, shift: boolean) => (vk === 0xdc && !shift) || vk === 0xdd;
+    expect(virtualKeyFor(0x5e, de, deDead)).toBeNull(); // asciicircum
+    expect(virtualKeyFor(0x60, de, deDead)).toBeNull(); // grave
+    expect(virtualKeyFor(0xb0, de, deDead)).toEqual({ vk: 0xdc, extended: false, shift: true }); // ° isn't dead
+    expect(virtualKeyFor(0x2b, de, deDead)).toEqual({ vk: 0xbb, extended: false, shift: false });
+    // US-International: Shift+6 is a dead circumflex though the 6 key isn't; digits keep their VK all the same.
+    const intl = layout({ "^": [0x36, 1], "6": [0x36, 0], "'": [0xde, 0] });
+    const intlDead = (vk: number, shift: boolean) => (vk === 0x36 && shift) || vk === 0xde;
+    expect(virtualKeyFor(0x5e, intl, intlDead)).toBeNull();
+    expect(virtualKeyFor(0x27, intl, intlDead)).toBeNull(); // apostrophe
+    expect(virtualKeyFor(0x36, intl, intlDead)).toEqual({ vk: 0x36, extended: false, shift: false });
+    // Letters and named keys are never looked up as characters.
+    expect(virtualKeyFor(0x61, intl, () => true)).toEqual({ vk: 0x41, extended: false, shift: false });
+    expect(virtualKeyFor(0xff0d, intl, () => true)).toEqual({ vk: 0x0d, extended: false, shift: false });
+  });
+
   it("decodes VkKeyScanExW's answer", () => {
     expect(decodeVkScan(0x01bf)).toEqual({ vk: 0xbf, shift: true });
     expect(decodeVkScan(0x00bb)).toEqual({ vk: 0xbb, shift: false });

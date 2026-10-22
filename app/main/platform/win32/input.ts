@@ -55,9 +55,10 @@ export function openWin32Input(deps: Win32InputDeps = {}): Input | null {
   const send = (events: InputEvent[]): boolean => !events.length || api.sendInput(encodeInputs(events), events.length) === events.length;
   /** The foreground app's keyboard layout: layouts are per thread on Windows, and keys go to that thread. */
   const layout = (): unknown => api.keyboardLayout(api.threadProcess(api.foregroundWindow()).tid);
-  const scanner = (): ((ch: number) => number) => {
+  /** The foreground layout's key for a keysym (one layout lookup for both of virtualKeyFor's questions). */
+  const keyFor = (sym: number) => {
     const hkl = layout();
-    return ch => api.vkKeyScan(ch, hkl);
+    return virtualKeyFor(sym, ch => api.vkKeyScan(ch, hkl), (vk, shift) => api.deadKey(vk, shift, hkl));
   };
   const swapped = () => api.systemMetric(SM.SWAPBUTTON) !== 0;
   const noteUp = (vk: number) => {
@@ -131,7 +132,7 @@ export function openWin32Input(deps: Win32InputDeps = {}): Input | null {
     },
     keysym(sym, down) {
       if (!open) return false;
-      const key = virtualKeyFor(sym, scanner());
+      const key = keyFor(sym);
       if (!key) return false;
       pressVk(key.vk, key.extended, down);
       return true;
@@ -143,10 +144,10 @@ export function openWin32Input(deps: Win32InputDeps = {}): Input | null {
       return heldKeys(vk => api.asyncKeyDown(vk), fakeControlPossible(keysHeld, rightAltUpAt, now()) ? FAKE_CONTROL : undefined);
     },
     keycodeOf(sym) {
-      return open ? virtualKeyFor(sym, scanner())?.vk ?? 0 : 0;
+      return open ? keyFor(sym)?.vk ?? 0 : 0;
     },
     needsShift(sym) {
-      return open ? virtualKeyFor(sym, scanner())?.shift ?? false : false;
+      return open ? keyFor(sym)?.shift ?? false : false;
     },
     textKey(ch, down) {
       if (!open) return false;

@@ -84,6 +84,11 @@ export interface Win32Api {
   vkKeyScan(ch: number, layout: unknown): number;
   /** MapVirtualKeyExW(MAPVK_VK_TO_VSC): the key's scan code on that layout. */
   scanCode(vk: number, layout: unknown): number;
+  /**
+   * Is the key (with Shift, or without) a dead key on that layout (ToUnicodeEx gives -1)? Asked without changing any
+   * keyboard state; true when it can't be asked, so a key that may be dead is never pressed for a character.
+   */
+  deadKey(vk: number, shift: boolean, layout: unknown): boolean;
   currentThreadId(): number;
   attachThreadInput(from: number, to: number, attach: boolean): boolean;
   setForeground(hwnd: number): boolean;
@@ -103,7 +108,9 @@ export const SM = { SWAPBUTTON: 23, XVIRTUALSCREEN: 76, YVIRTUALSCREEN: 77, CXVI
 const GW_HWNDNEXT = 2, GW_OWNER = 4, GA_ROOT = 2, GWL_STYLE = -16, GWL_EXSTYLE = -20;
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9, DWMWA_CLOAKED = 14, LWA_ALPHA = 0x2, MONITOR_DEFAULTTONULL = 0;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, TOKEN_QUERY = 0x0008, TOKEN_ELEVATION = 20, TOKEN_INTEGRITY_LEVEL = 25;
-const DESKTOP_READOBJECTS = 0x0001, UOI_NAME = 2, MAPVK_VK_TO_VSC = 0;
+const DESKTOP_READOBJECTS = 0x0001, UOI_NAME = 2, MAPVK_VK_TO_VSC = 0, VK_SHIFT = 0x10, VK_LSHIFT = 0xa0;
+/** ToUnicodeEx's flag that leaves the keyboard state (a pending dead key) alone: Windows 10 1607 and newer. */
+const TO_UNICODE_KEEP_STATE = 0x4;
 const SRCCOPY = 0x00cc0020, CAPTUREBLT = 0x40000000, DIB_RGB_COLORS = 0;
 /** DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, and DPI_AWARENESS_PER_MONITOR_AWARE. */
 const PER_MONITOR_AWARE_V2 = -4, PER_MONITOR_AWARE = 2;
@@ -176,6 +183,7 @@ export const WIN32_FUNCTIONS: Readonly<Record<string, readonly string[]>> = {
     "void * __stdcall GetKeyboardLayout(uint32_t tid)",
     "int16_t __stdcall VkKeyScanExW(uint16_t ch, void *layout)",
     "uint32_t __stdcall MapVirtualKeyExW(uint32_t code, uint32_t type, void *layout)",
+    "int __stdcall ToUnicodeEx(uint32_t vk, uint32_t scan, const uint8_t *state, void *buf, int size, uint32_t flags, void *layout)",
     "int __stdcall AttachThreadInput(uint32_t from, uint32_t to, int attach)",
     "int __stdcall SetForegroundWindow(void *hwnd)",
     "int __stdcall BringWindowToTop(void *hwnd)",
@@ -218,11 +226,13 @@ export const WIN32_FUNCTIONS: Readonly<Record<string, readonly string[]>> = {
 /**
  * What may be missing without the backend failing: DWM's attributes (windows then count as uncloaked, framed by
  * their window rectangle), the token calls (every window is then "unchecked": refused for input), the internal
- * title read (GetWindowTextW is used) and the DPI calls (older than Windows 10 1607).
+ * title read (GetWindowTextW is used), the DPI calls (older than Windows 10 1607) and ToUnicodeEx (every punctuation
+ * key then counts as possibly dead: no key for it).
  */
 const OPTIONAL_LIBRARIES: ReadonlySet<string> = new Set(["dwmapi.dll", "advapi32.dll"]);
 const OPTIONAL_FUNCTIONS: ReadonlySet<string> = new Set([
   "InternalGetWindowText", "GetThreadDpiAwarenessContext", "GetAwarenessFromDpiAwarenessContext", "SetThreadDpiAwarenessContext",
+  "ToUnicodeEx",
 ]);
 
 /** The function name in a prototype ("int __stdcall GetCursorPos(void *point)" → "GetCursorPos"). */
@@ -298,6 +308,7 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
   const GetLayeredWindowAttributes = need("GetLayeredWindowAttributes"), GetGUIThreadInfo = need("GetGUIThreadInfo");
   const WindowFromPoint = need("WindowFromPoint"), MonitorFromPoint = need("MonitorFromPoint"), SendInput = need("SendInput");
   const GetKeyboardLayout = need("GetKeyboardLayout"), VkKeyScanExW = need("VkKeyScanExW"), MapVirtualKeyExW = need("MapVirtualKeyExW");
+  const ToUnicodeEx = fn.ToUnicodeEx;
   const AttachThreadInput = need("AttachThreadInput"), SetForegroundWindow = need("SetForegroundWindow");
   const BringWindowToTop = need("BringWindowToTop"), ShowWindowAsync = need("ShowWindowAsync"), SetFocus = need("SetFocus");
   const OpenInputDesktop = need("OpenInputDesktop"), GetUserObjectInformationW = need("GetUserObjectInformationW");
@@ -443,6 +454,13 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
     keyboardLayout: tid => GetKeyboardLayout(tid),
     vkKeyScan: (ch, layout) => VkKeyScanExW(ch, layout),
     scanCode: (vk, layout) => MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, layout),
+    deadKey(vk, shift, layout) {
+      if (!ToUnicodeEx) return true;
+      const state = Buffer.alloc(256);
+      if (shift) state[VK_SHIFT] = state[VK_LSHIFT] = 0x80;
+      const out = Buffer.alloc(16);
+      return ToUnicodeEx(vk, MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, layout), state, out, out.length / 2, TO_UNICODE_KEEP_STATE, layout) < 0;
+    },
     currentThreadId: () => GetCurrentThreadId(),
     attachThreadInput: (from, to, attach) => AttachThreadInput(from, to, attach ? 1 : 0) !== 0,
     setForeground: hwnd => !!hwnd && SetForegroundWindow(hwnd) !== 0,
@@ -471,16 +489,23 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
         if (!memory) return null;
         const bits: unknown[] = [null];
         const bitmap = CreateDIBSection(screen, bitmapInfo(width, height), DIB_RGB_COLORS, bits, null, 0);
-        if (!bitmap || !bits[0]) return null;
-        const old = SelectObject(memory, bitmap);
+        if (!bitmap) return null;
         try {
-          // CAPTUREBLT includes layered windows the way they are composed on screen.
-          if (!BitBlt(memory, 0, 0, width, height, screen, x, y, SRCCOPY | CAPTUREBLT)) return null;
-          GdiFlush();
-          const pixels = koffi.decode(bits[0], "uint8_t", width * height * 4) as Uint8Array;
-          return Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength); // a copy: safe after DeleteObject
+          if (!bits[0]) return null;
+          // A bitmap that didn't go in would leave the DC's 1×1 stock bitmap as the target: the copy would then
+          // "succeed" and hand back the DIB's untouched (black) pixels.
+          const old = SelectObject(memory, bitmap);
+          if (!old) return null; // NULL is SelectObject's failure for a bitmap
+          try {
+            // CAPTUREBLT includes layered windows the way they are composed on screen.
+            if (!BitBlt(memory, 0, 0, width, height, screen, x, y, SRCCOPY | CAPTUREBLT)) return null;
+            GdiFlush();
+            const pixels = koffi.decode(bits[0], "uint8_t", width * height * 4) as Uint8Array;
+            return Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength); // a copy: safe after DeleteObject
+          } finally {
+            SelectObject(memory, old);
+          }
         } finally {
-          SelectObject(memory, old);
           DeleteObject(bitmap);
         }
       } finally {

@@ -3,8 +3,9 @@
  * policy and the borrow all speak X) and the Windows virtual key that each one presses. Key codes on Windows are
  * virtual-key codes (1..254, never 0). Letters and digits map to their layout-independent VK, so Ctrl+C presses the
  * key apps treat as Ctrl+C on any layout; punctuation goes through VkKeyScanExW on the foreground app's layout, and a
- * character that needs AltGr there gets no key (pressed without AltGr it would be another key). Pure: the layout
- * lookup is passed in, so all of it is unit-tested on Linux.
+ * character that needs AltGr there gets no key (pressed without AltGr it would be another key), nor one that is a
+ * dead key there (it would type nothing, then change the next character). Pure: the layout lookups are passed in, so
+ * all of it is unit-tested on Linux.
  */
 
 /** Keysyms of the named keys, by their case-sensitive X names (what XStringToKeysym accepts for them). */
@@ -133,8 +134,11 @@ export function decodeVkScan(result: number): { vk: number; shift: boolean } | n
  * The virtual key for a keysym, or null when the keyboard has none. `scan(ch)` is VkKeyScanExW for a UTF-16 unit
  * on the foreground app's layout (layouts are per thread on Windows). Letters keep their VK whatever the layout
  * (uppercase needs Shift); digits keep theirs too, with Shift when the layout types the digit shifted (AZERTY).
+ * Any other character's key must not be a dead key there (`dead(vk, shift)`: ToUnicodeEx): VkKeyScanExW finds "^"
+ * on the German layout's dead circumflex, which types nothing until the next key and then "â" for "^a". X names a
+ * dead key dead_circumflex, never asciicircum, so X has no key for such a character either.
  */
-export function virtualKeyFor(sym: number, scan: (ch: number) => number): VirtualKey | null {
+export function virtualKeyFor(sym: number, scan: (ch: number) => number, dead: (vk: number, shift: boolean) => boolean = () => false): VirtualKey | null {
   const named = NAMED_VK.get(sym);
   if (named) return { vk: named[0], extended: named[1], shift: false };
   if (sym >= 0x61 && sym <= 0x7a) return { vk: sym - 0x20, extended: false, shift: false };
@@ -143,7 +147,7 @@ export function virtualKeyFor(sym: number, scan: (ch: number) => number): Virtua
   const ch = keysymChar(sym);
   if (!ch) return null;
   const key = decodeVkScan(scan(ch));
-  return key ? { vk: key.vk, extended: false, shift: key.shift } : null;
+  return key && !dead(key.vk, key.shift) ? { vk: key.vk, extended: false, shift: key.shift } : null;
 }
 
 /**
