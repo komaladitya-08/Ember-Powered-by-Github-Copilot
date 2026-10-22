@@ -231,6 +231,8 @@ class Parser {
     this.skipSpaces();
     const c = this.peek();
     if (this.s.startsWith("&&", this.i) || this.s.startsWith("||", this.i)) this.fatal("&& or || (PowerShell 7 only)");
+    const last = elements[elements.length - 1];
+    if (last.kind === "command" && last.background) return { elements, assign };
     if (!(c === "" || c === "\n" || c === "\r" || c === ";" || (term && c === term))) this.fatal(`unexpected ${c}`);
     return { elements, assign };
   }
@@ -335,9 +337,10 @@ class Parser {
       if (this.eof() || c === "\n" || c === "\r" || c === ";" || c === "|" || (term && c === term) || c === ")") break;
       if (c === "&") {
         if (this.peek(1) === "&") break;
+        // PowerShell 7's `&` runs the pipeline in the background and ends the statement: what follows is another one.
         this.i++;
         cmd.background = true;
-        continue;
+        break;
       }
       if (this.s.startsWith("--%", this.i)) this.fatal("--% (stop-parsing)");
       const r = this.tryRedir(term);

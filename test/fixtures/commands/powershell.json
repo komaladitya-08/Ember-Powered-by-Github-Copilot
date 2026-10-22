@@ -5127,6 +5127,26 @@
    "classes": [
     "system"
    ]
+  },
+  {
+   "cmd": "cmd /c \"dir\" & del y",
+   "verdict": "ask",
+   "classes": [
+    "escape",
+    "destroy"
+   ],
+   "rules": [
+    "escape.background",
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "Start-Sleep 1 & Remove-Item x",
+   "verdict": "ask",
+   "classes": [
+    "escape",
+    "destroy"
+   ]
   }
  ]
 }

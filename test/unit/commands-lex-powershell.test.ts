@@ -47,6 +47,7 @@ describe("lexPowerShell: commands, values and statements", () => {
     ["# comment\nls", "[ls]"],
     ["<# block #> ls", "[ls]"],
     ["Start-Process x &", "[Start-Process x] &"],
+    ["cmd /c dir & del y", "[cmd /c dir] & ; [del y]"],
     ["ls -- -x", "[ls - -x]"],
     ["1 + 2", "expr(1+2)"],
     ["(ls).Count", "expr(<subexpression>.Count subs:1)"],
