@@ -74,7 +74,8 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
       admin: () => ({ policy: AdminPolicySchema.parse({}), source: null }), prompts,
       fetch: (url, init) => fetch(url, { signal: init?.signal }) as never, allowLoopback, audit: () => null,
       pcId: () => settings.targets.pcId, wsl: () => null,
-      jobHost: existsSync(join(APP, "job-host.cjs")) ? { execPath: process.execPath, script: join(APP, "job-host.cjs") } : null,
+      // Step 0a's stub job host refuses every run (exit 125): ssh runs under the job host only once RUN's is built.
+      jobHost: existsSync(join(APP, "job-host.cjs")) && !readFileSync(join(APP, "job-host.cjs"), "utf8").includes("job: not built") ? { execPath: process.execPath, script: join(APP, "job-host.cjs") } : null,
     });
   }
 
@@ -168,8 +169,16 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
     const api = loadPipeApi();
     expect(api).not.toBeNull();
     const pipe = await createAskpassPipe({ api: api as NonNullable<typeof api>, handler: async r => `answer to ${r.prompt.slice(0, 20)}` });
-    const r = spawnSync(built.exe, ["deploy@build-01's", "password:"], { env: { ...process.env, EMBER_ASKPASS_PIPE: pipe.address, EMBER_ASKPASS_NONCE: pipe.nonce }, encoding: "utf8", windowsHide: true, timeout: 30_000 });
-    const wrong = spawnSync(built.exe, ["p"], { env: { ...process.env, EMBER_ASKPASS_PIPE: pipe.address, EMBER_ASKPASS_NONCE: "0".repeat(32) }, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    // Asynchronously: the pipe's answers run on this event loop, which spawnSync would block until the helper gave up.
+    const helper = (args: string[], nonce: string) => new Promise<{ status: number | null; stdout: string }>(resolve => {
+      const c = spawn(built.exe, args, { env: { ...process.env, EMBER_ASKPASS_PIPE: pipe.address, EMBER_ASKPASS_NONCE: nonce }, windowsHide: true, timeout: 30_000 });
+      let stdout = "";
+      c.stdout.setEncoding("utf8");
+      c.stdout.on("data", d => { stdout += d; });
+      c.on("close", status => resolve({ status, stdout }));
+    });
+    const r = await helper(["deploy@build-01's", "password:"], pipe.nonce);
+    const wrong = await helper(["p"], "0".repeat(32));
     await pipe.close();
     expect(r.status).toBe(0);
     expect(r.stdout).toBe("answer to deploy@build-01's pa\n");
