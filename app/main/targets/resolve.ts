@@ -52,10 +52,13 @@ export function normaliseName(s: string): string {
   return wordsOf(fold(String(s ?? ""))).map(w => w.text).join("");
 }
 
-/** Every run of whole words whose letters and digits spell `name` exactly: [first word, last word] pairs. */
-function runsOf(words: readonly Word[], name: string): [number, number][] {
+/**
+ * Every run of whole words whose letters and digits spell `name` exactly: [first word, last word] pairs. Names shorter
+ * than `min` never match (MIN_NAME for binding; the wrong-target guard, which only makes a command ask, takes any).
+ */
+function runsOf(words: readonly Word[], name: string, min = MIN_NAME): [number, number][] {
   const out: [number, number][] = [];
-  if (name.length < MIN_NAME) return out;
+  if (name.length < Math.max(1, min)) return out;
   for (let i = 0; i < words.length; i++) {
     if (!name.startsWith(words[i].text)) continue;
     let acc = "";
@@ -143,7 +146,9 @@ export function namedAnywhere(words: string, t: NamedTarget, os: OS = "linux"): 
  * The known targets other than `bound` that the user's words name anywhere, by any of their names and without rule 3
  * ("build-01 delete build/" names build-01 though it binds to the active computer); this computer by its fixed words
  * other than a bare "here" ("delete it here" is where the task already is). D4.4's wrong-target guard (DOC's review):
- * a dangerous command in a task whose words also name another computer always asks, never announces.
+ * a dangerous command in a task whose words also name another computer always asks, never announces. Names shorter
+ * than MIN_NAME count too: binding ignores them, so "delete build/ on pi" binds to the active computer, and only
+ * this guard stops it announcing there (a name said by accident only makes a command ask).
  */
 export function otherTargetsNamed(words: string, targets: readonly NamedTarget[], bound: TargetId, os: OS = "linux"): TargetId[] {
   const folded = fold(String(words ?? ""));
@@ -151,7 +156,7 @@ export function otherTargetsNamed(words: string, targets: readonly NamedTarget[]
   const out: TargetId[] = [];
   for (const t of targets) {
     if (t.id === bound || out.includes(t.id)) continue;
-    const named = t.id === "local" ? localAt(folded, ws, os, false) >= 0 : t.names.some(n => runsOf(ws, normaliseName(n)).length > 0);
+    const named = t.id === "local" ? localAt(folded, ws, os, false) >= 0 : t.names.some(n => runsOf(ws, normaliseName(n), 1).length > 0);
     if (named) out.push(t.id);
   }
   return out;

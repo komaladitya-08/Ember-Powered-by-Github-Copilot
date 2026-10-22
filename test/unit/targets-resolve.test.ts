@@ -156,8 +156,12 @@ describe("otherTargetsNamed (D4.4's wrong-target guard)", () => {
     expect(otherTargetsNamed("delete build/ on this computer", all, "local")).toEqual([]);
   });
 
-  it("keeps word boundaries and the shortest names out, as binding does", () => {
+  it("keeps word boundaries, and counts names too short to bind (they bind to the active computer instead)", () => {
     expect(otherTargetsNamed("rebuild01 delete build/", all, "local")).toEqual([]);
-    expect(otherTargetsNamed("ab rm -r x", [local, { id: "ssh:ab", names: ["ab"] }], "local")).toEqual([]);
+    const pi: NamedTarget = { id: "ssh:pi", names: ["pi"] };
+    expect(bindTarget({ userWords: "delete build/ on pi", targets: [local, pi], active: "local", os: "linux" })).toEqual({ ok: true, id: "local" });
+    expect(otherTargetsNamed("delete build/ on pi", [local, pi], "local")).toEqual(["ssh:pi"]);
+    expect(otherTargetsNamed("delete build/ on pip", [local, pi], "local")).toEqual([]);
+    expect(otherTargetsNamed("delete build/", [local, { id: "ssh:x", names: ["-"] }], "local")).toEqual([]);
   });
 });
