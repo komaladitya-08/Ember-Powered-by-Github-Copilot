@@ -233,7 +233,8 @@ export function axRole(n: RawNode, ctx: RoleContext): string {
  * "dialog" for the system's credential and consent prompts (SECURITY_OWNERS, the list port/darwin's systemDialogOpen
  * reads too, so the two can't drift; and loginwindow, which the provider lists only while it covers a display: the
  * lock screen), "overview" for Mission Control and Launchpad (Dock windows, which the provider lists only above the
- * normal window layer and covering a display), null for an ordinary window. The provider lists these windows from the
+ * normal window layer and covering a display, and never the Dock's own window, which covers it at rest), null for an
+ * ordinary window. The provider lists these windows from the
  * window server's list alone and never asks them anything over AX. windows.ts's overlayRole is UI Automation's.
  */
 export function axOverlayRole(w: Pick<RawWindow, "app">): "dialog" | "overview" | null {

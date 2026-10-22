@@ -492,16 +492,23 @@ export function readsActions(atspiRole: string): boolean {
   return INTERACTIVE_ROLES.has(atspiRole) && !LAZY_ACTION_ROLES.has(atspiRole) && !TEXT_ROLES.has(atspiRole);
 }
 
+/** Containers whose text fields are a table's cells (CELL_PARENTS: an AXRow's, or an AXCell's in a view-based table). */
+export const CELL_PARENTS: ReadonlySet<string> = new Set(["AXRow", "AXCell"]);
+
 /**
- * The host's facts of an element (see RawNode): its name (AXTitle, else AXDescription, else a label's text), its
- * states, its frame, and from its value its text (cut to TEXT_MAX; never a secure field's), its state or its number.
+ * The host's facts of an element (see RawNode): its name (AXTitle, else AXDescription, else a label's text, or a
+ * table cell's: `inCell`, a text field whose parent is in CELL_PARENTS), its states, its frame, and from its value its
+ * text (cut to TEXT_MAX; never a secure field's), its state or its number. A cell-based NSTableView's cells are text
+ * fields that carry their words only as AXValue (macos-15, CI run 120): named by it, a row says what it is ("Row 1"),
+ * as AT-SPI and UI Automation name their cells, and the label beside the table isn't taken for the first cell's name.
  */
-export function nodeOf(f: Facts, value: AxValue | undefined, actions: string[], settable: Settable | null = null): NodeBody {
+export function nodeOf(f: Facts, value: AxValue | undefined, actions: string[], settable: Settable | null = null, inCell = false): NodeBody {
   const secure = isSecure(f);
   const text = typeof value === "string" && !secure ? value.slice(0, TEXT_MAX) : undefined;
+  const named = f.role === "AXStaticText" || (inCell && f.role === "AXTextField");
   const n: NodeBody = {
     platformRole: f.role || "AXUnknown",
-    name: (f.title || f.description || (f.role === "AXStaticText" ? text ?? "" : "")).slice(0, TEXT_MAX),
+    name: (f.title || f.description || (named ? text ?? "" : "")).slice(0, TEXT_MAX),
     bounds: f.frame,
     actions,
   };
@@ -618,7 +625,8 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
     }
     let trips = 1;
     let value: AxValue | undefined;
-    const provisional = nodeOf(f, undefined, []);
+    const inCell = parent >= 0 && CELL_PARENTS.has(nodes[parent]?.node.platformRole ?? "");
+    const provisional = nodeOf(f, undefined, [], null, inCell);
     const role = axRole({ ...provisional, handle: 0, key: "", parent, depth }, ctx);
     // What doesn't show is dropped by the host with all it holds: its value and actions aren't asked for.
     const off = !first && clippedOut(f, clip);
@@ -636,7 +644,7 @@ export function walk(s: AxSession, root: AxRef, o: WalkOptions): WalkResult {
       return;
     }
     const index = nodes.length;
-    const node = nodeOf(f, value, []);
+    const node = nodeOf(f, value, [], null, inCell);
     if (off) node.offscreen = true;
     nodes.push({ ref, node, parent, depth, path, clip, trips });
     if (f.titleElement) { titles.set(index, f.titleElement); f.titleElement = null; }
@@ -802,11 +810,11 @@ export function lookAt(s: AxSession, el: AxRef): { facts: Facts; node: NodeBody 
  * Reads a child or a chain element for the host: no action names (what its facts imply), no settable questions, no
  * label. With CHAIN_ATTRS its AXParent stays in the facts (the caller's to release); nothing else is held.
  */
-export function glance(s: AxSession, el: AxRef, names: readonly string[] = NODE_ATTRS): { facts: Facts; node: NodeBody } {
+export function glance(s: AxSession, el: AxRef, names: readonly string[] = NODE_ATTRS, inCell = false): { facts: Facts; node: NodeBody } {
   const { facts, value } = readOne(s, el, names);
   if (facts.titleElement) s.api.release(facts.titleElement);
   facts.titleElement = null;
-  return { facts, node: nodeOf(facts, value, actionsOf(facts, null, null)) };
+  return { facts, node: nodeOf(facts, value, actionsOf(facts, null, null), null, inCell) };
 }
 
 /**

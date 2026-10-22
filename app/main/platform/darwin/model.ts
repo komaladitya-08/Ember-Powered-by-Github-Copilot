@@ -247,6 +247,34 @@ export function unionRect(rects: readonly Rect[]): Rect | null {
 /** kCGPopUpMenuWindowLevel: menus, context menus and pop-up buttons' lists. */
 export const POPUP_MENU_LAYER = 101;
 
+/** kCGDockWindowLevel: the Dock's own window. */
+export const DOCK_LAYER = 20;
+
+/**
+ * The Dock's own window, as opposed to Mission Control's or Launchpad's (the Dock draws those too): on macos-15 it is
+ * titled "Dock" and covers the whole display above every app's windows at rest (CI run 120), though only the Dock
+ * itself, its strip of icons, is drawn and takes clicks. Known by its level, or by its title where the window list
+ * gives titles (with Screen Recording).
+ */
+export const isDockItself = (e: CGWindowEntry): boolean => e.owner === "Dock" && (e.layer === DOCK_LAYER || e.title === "Dock");
+
+/**
+ * The window list with the Dock's own window cut down to `strip`, the Dock as AX frames its list of icons: over the
+ * rest of the display a click lands on the window below and a picture shows it, so nothing there is covered. Without
+ * a strip (AX can't tell) the window stays as listed, covering everything below it (fail closed); a Dock window that
+ * doesn't meet the strip (another display's) goes.
+ */
+export function withDockStrip(frontToBack: readonly CGWindowEntry[], strip: Rect | null): CGWindowEntry[] {
+  if (!strip) return [...frontToBack];
+  return frontToBack.flatMap(e => {
+    if (!isDockItself(e)) return [e];
+    const x = Math.max(e.bounds.x, strip.x), y = Math.max(e.bounds.y, strip.y);
+    const width = Math.min(e.bounds.x + e.bounds.width, strip.x + strip.width) - x;
+    const height = Math.min(e.bounds.y + e.bounds.height, strip.y + strip.height) - y;
+    return width > 0 && height > 0 ? [{ ...e, bounds: { x, y, width, height } }] : [];
+  });
+}
+
 /**
  * Would a click at (x, y) land in `window` (or `elementWindow`)? The first drawn window there, front to back, is
  * what gets it. Ember's click-through overlay is passed over (it takes no clicks while Ember drives); Ember's other

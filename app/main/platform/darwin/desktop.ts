@@ -17,7 +17,7 @@ import {
 import { AX_ERROR, MAIN_THREAD_AX_TIMEOUT, openAX, type AX } from "./ax";
 import { openHIToolbox, type HIToolbox, type KeyboardLayoutSource } from "./hitoolbox";
 import { MAX_CG_KEY } from "./keys";
-import { bundleOf, keysInMap, processName, sameFrame, secureInputState, windowEntry, type AXWindowInfo, type CGWindowEntry } from "./model";
+import { bundleOf, isDockItself, keysInMap, processName, sameFrame, secureInputState, windowEntry, withDockStrip, type AXWindowInfo, type CGWindowEntry } from "./model";
 import { bindOptional, koffiModule, onMacOS } from "./native";
 import type { Ref } from "./native";
 import type { Rect } from "../types";
@@ -25,6 +25,8 @@ import type { Logger } from "../../logger";
 
 /** How long the window list is reused (a borrow step every 8 ms never needs a fresher one). */
 export const WINDOW_CACHE_MS = 30;
+/** How long the Dock's strip is kept: one AX read of the Dock (a system process that answers at once) a second. */
+export const DOCK_CACHE_MS = 1000;
 /**
  * How long raise() waits for macOS to activate the app before going through LaunchServices instead: macOS 14 and
  * later may decline an activation a background process asks for (cooperative activation), and CursorBorrow waits
@@ -42,7 +44,7 @@ export interface DarwinSession {
 
 /** What the backends read from the system. Every method answers safely (null, [], false) when it can't tell. */
 export interface DarwinDesktop {
-  /** On-screen windows, front to back. */
+  /** On-screen windows, front to back; the Dock's own window cut down to the Dock's strip where AX tells it (withDockStrip). */
   windows(): CGWindowEntry[];
   /** The pointer in global points (CGEventGetLocation of a fresh event). */
   pointer(): { x: number; y: number } | null;
@@ -232,6 +234,17 @@ export function makeDesktop(cf: CF, cg: CGRaw, ax: AX | null, hi: HIToolbox | nu
   };
   let layout: KeyboardLayoutSource | null = null;
   let cached: { at: number; list: CGWindowEntry[] } | null = null;
+  let dock: { at: number; pid: number; strip: Rect | null } | null = null;
+  /** The Dock's strip on screen (AX's frame of its list of icons), kept DOCK_CACHE_MS; null when AX can't tell. */
+  const dockStrip = (pid: number, t: number): Rect | null => {
+    if (dock && dock.pid === pid && t >= dock.at && t - dock.at < DOCK_CACHE_MS) return dock.strip;
+    const strip = withApp(pid, (app, a) => a.withElements(app, "AXChildren", items => {
+      const list = items.find(i => a.string(i, "AXRole") === "AXList");
+      return list ? a.frame(list) : null;
+    })) ?? null;
+    dock = { at: t, pid, strip };
+    return strip;
+  };
   /** The pending LaunchServices fallback of the last raise(): a newer raise() or dispose() cancels it. */
   let pending: (() => void) | null = null;
   let generation = 0;
@@ -244,8 +257,11 @@ export function makeDesktop(cf: CF, cg: CGRaw, ax: AX | null, hi: HIToolbox | nu
     windows() {
       const t = now();
       if (cached && t >= cached.at && t - cached.at < cacheMs) return cached.list;
+      // The Dock's own window covers the display: only its strip counts (withDockStrip).
+      const read = readWindows();
+      const own = read.find(isDockItself);
       // Frozen: every caller shares the cached list for its 30 ms.
-      const list = Object.freeze(readWindows()) as CGWindowEntry[];
+      const list = Object.freeze(own ? withDockStrip(read, dockStrip(own.pid, t)) : read) as CGWindowEntry[];
       cached = { at: t, list };
       return list;
     },

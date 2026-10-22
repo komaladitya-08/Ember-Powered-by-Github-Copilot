@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ACTIVATION_FALLBACK_MS, WINDOW_CACHE_MS, makeDesktop, secureInputOf, type DesktopOptions } from "../../app/main/platform/darwin/desktop";
+import { ACTIVATION_FALLBACK_MS, DOCK_CACHE_MS, WINDOW_CACHE_MS, makeDesktop, secureInputOf, type DesktopOptions } from "../../app/main/platform/darwin/desktop";
 import type { HIToolbox } from "../../app/main/platform/darwin/hitoolbox";
 import { fakeAX, fakeCG, type FakeCGOptions } from "./platform-darwin-fakes";
 
@@ -62,6 +62,33 @@ function setup(cgo: Partial<FakeCGOptions> = {}, o: DesktopOptions & { hi?: HITo
   };
   return { ...ax, ...cg, desktop, advance, opened, logged, pending: () => timers.filter(x => !x.cancelled).length };
 }
+
+describe("the Dock's own window in the macOS desktop's window list", () => {
+  const dock = { ...textEdit, kCGWindowNumber: 7, kCGWindowOwnerPID: 366, kCGWindowOwnerName: "Dock", kCGWindowName: "Dock", kCGWindowBounds: { X: 0, Y: 0, Width: 1024, Height: 768 }, kCGWindowLayer: 20 };
+
+  it("is cut down to the Dock's strip as AX frames it, read again only after DOCK_CACHE_MS", () => {
+    const ax = fakeAX({ dockList: { x: 200, y: 700, width: 620, height: 68 } });
+    const cg = fakeCG(ax.f, { windows: [dock, textEdit] });
+    let t = 1000;
+    const desktop = makeDesktop(ax.cf, cg.cg, ax.ax, null, { ownPid: 4242, now: () => t });
+    expect(desktop.windows().map(e => [e.owner, e.bounds])).toEqual([["Dock", { x: 200, y: 700, width: 620, height: 68 }], ["TextEdit", { x: -100, y: 25, width: 600, height: 400 }]]);
+    expect(ax.calls.filter(c => c === "app 366")).toHaveLength(1);
+    t += WINDOW_CACHE_MS;
+    desktop.windows();
+    expect(ax.calls.filter(c => c === "app 366")).toHaveLength(1);
+    t += DOCK_CACHE_MS;
+    desktop.windows();
+    expect(ax.calls.filter(c => c === "app 366")).toHaveLength(2);
+  });
+
+  it("stays as listed, covering the display, when AX can't tell where the Dock is", () => {
+    const ax = fakeAX();
+    const desktop = makeDesktop(ax.cf, fakeCG(ax.f, { windows: [dock, textEdit] }).cg, ax.ax, null, { ownPid: 4242 });
+    expect(desktop.windows()[0]!.bounds).toEqual({ x: 0, y: 0, width: 1024, height: 768 });
+    const noAx = makeDesktop(ax.cf, fakeCG(ax.f, { windows: [dock] }).cg, null, null, { ownPid: 4242 });
+    expect(noAx.windows()[0]!.bounds).toEqual({ x: 0, y: 0, width: 1024, height: 768 });
+  });
+});
 
 describe("the macOS desktop over stand-in frameworks", () => {
   it("reads the window list front to back, drops entries it can't place, and releases the list once", () => {

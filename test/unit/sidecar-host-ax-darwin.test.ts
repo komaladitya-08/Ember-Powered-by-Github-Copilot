@@ -102,8 +102,9 @@ describe("the macOS AX provider's window list", () => {
     const s = setup();
     s.fake.extraWindows = [
       { id: 1, pid: 88, owner: "SecurityAgent", title: "", bounds: at(500, 300, 440, 280), layer: 1000, alpha: 1 },
-      { id: 2, pid: 89, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 },
-      { id: 3, pid: 89, owner: "Dock", title: "", bounds: at(0, 860, 1440, 40), layer: 20, alpha: 1 },
+      { id: 2, pid: 89, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 18, alpha: 1 },
+      { id: 3, pid: 89, owner: "Dock", title: "", bounds: at(0, 860, 1440, 40), layer: 18, alpha: 1 },
+      { id: 9, pid: 89, owner: "Dock", title: "Dock", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 },
       { id: 4, pid: 90, owner: "loginwindow", title: "", bounds: at(0, 0, 1440, 900), layer: 2000, alpha: 1 },
       { id: 5, pid: 90, owner: "loginwindow", title: "", bounds: at(600, 400, 200, 100), layer: 0, alpha: 1 },
       { id: 6, pid: 91, owner: "Control Center", title: "", bounds: at(1200, 0, 100, 24), layer: 0, alpha: 1 },
@@ -456,16 +457,19 @@ describe("the sidecar host on the macOS AX provider (the bench as AX describes i
     expect(listed.windows.find(w => w.pid === BENCH)).toMatchObject({ busy: true, name: "Ember Bench (macOS)" });
   });
 
-  it("reports a credential prompt as a dialog and Mission Control as an overview in shell_overlays, and the desktop picture not", async () => {
+  it("reports a credential prompt as a dialog and Mission Control as an overview in shell_overlays, and the Dock's own window not", async () => {
     const { fake, call } = hostOn();
-    // The desktop picture: the Dock's, below every window (the provider lists windows without desktop elements anyway).
-    const wallpaper = { id: 7, pid: 354, owner: "Dock", title: "Desktop Picture", bounds: at(0, 0, 1440, 900), layer: -2147483624, alpha: 1 };
-    fake.extraWindows = [wallpaper];
+    // The Dock's own window covers the display above the apps at rest (macos-15): it is no overview.
+    const dock = { id: 7, pid: 354, owner: "Dock", title: "Dock", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 };
+    fake.extraWindows = [dock];
     expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });
-    fake.extraWindows = [{ id: 34, pid: 88, owner: "SecurityAgent", title: "", bounds: at(500, 300, 440, 280), layer: 1000, alpha: 1 }, wallpaper];
+    fake.extraWindows = [{ id: 34, pid: 88, owner: "SecurityAgent", title: "", bounds: at(500, 300, 440, 280), layer: 1000, alpha: 1 }, dock];
     expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "dialog", name: "", text: "", bounds: at(500, 300, 440, 280) }], complete: true });
-    fake.extraWindows = [{ id: 8, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 }, wallpaper];
+    fake.extraWindows = [{ id: 8, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 18, alpha: 1 }, dock];
     expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "overview", name: "", text: "", bounds: null }], complete: true });
+    // Without titles (no Screen Recording) the Dock's own window is still told by its level.
+    fake.extraWindows = [{ ...dock, title: "" }];
+    expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });
     expect(fake.pidsAsked.has(88) || fake.pidsAsked.has(354)).toBe(false);
   });
 });

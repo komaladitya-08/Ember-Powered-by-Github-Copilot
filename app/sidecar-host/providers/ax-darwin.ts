@@ -26,11 +26,11 @@ import {
   ProviderError, type AxProvider, type Handle, type PerformOp, type ProviderHealth, type RawNode, type RawWindow, type Rect,
   type Snapshot, type SnapshotOptions, type TextInfo,
 } from "../provider";
-import { SECURITY_OWNERS, SYSTEM_OWNERS, axWindowId, contains, isAppWindow, isVisible } from "../../main/platform/darwin/model";
+import { SECURITY_OWNERS, SYSTEM_OWNERS, axWindowId, contains, isAppWindow, isDockItself, isVisible } from "../../main/platform/darwin/model";
 import { AX_ERROR } from "../../main/platform/darwin/ax";
 import { isAxError, type AxApi, type AxRef, type AxWindowEntry } from "./ax-darwin-api";
 import {
-  AxSession, BusyApps, CHAIN_ATTRS, CHAIN_MAX, NEEDS_PERMISSION, WINDOW_ATTRS, busyError, clipInside, clippedOut, doPerform,
+  AxSession, BusyApps, CELL_PARENTS, CHAIN_ATTRS, CHAIN_MAX, NEEDS_PERMISSION, WINDOW_ATTRS, busyError, clipInside, clippedOut, doPerform,
   glance, lookAt, releaseFacts, releaseValue, textOf, walk, type Facts, type NodeBody, type Note,
 } from "./ax-darwin-read";
 
@@ -127,13 +127,14 @@ export function coversDisplay(b: Rect, displays: readonly Rect[]): boolean {
 /**
  * The system's windows shell_overlays reports, from the window list alone (never asked over AX): every drawn window of
  * a credential or consent prompt's process, loginwindow's while it covers a display (the lock screen), and the Dock's
- * above the normal layer while they cover a display (Mission Control, Launchpad). null: an ordinary process.
+ * above the normal layer while they cover a display (Mission Control, Launchpad), but not the Dock's own window, which
+ * covers the display at rest (model.ts's isDockItself). null: an ordinary process.
  */
 export function systemOverlays(entries: readonly AxWindowEntry[], displays: readonly Rect[]): { entries: AxWindowEntry[]; subrole: string } | null {
   const owner = entries[0]?.owner ?? "";
   if (SECURITY_OWNERS.has(owner)) return { entries: [...entries], subrole: "AXSystemDialog" };
   if (owner === "loginwindow") return { entries: entries.filter(e => coversDisplay(e.bounds, displays)), subrole: "AXSystemDialog" };
-  if (owner === "Dock") return { entries: entries.filter(e => e.layer > 0 && coversDisplay(e.bounds, displays)), subrole: "AXSystemFloatingWindow" };
+  if (owner === "Dock") return { entries: entries.filter(e => e.layer > 0 && !isDockItself(e) && coversDisplay(e.bounds, displays)), subrole: "AXSystemFloatingWindow" };
   return null;
 }
 
@@ -528,7 +529,7 @@ export class AxDarwinProvider implements AxProvider {
     for (let index = 0; index < kids.length; index++) {
       const k = kids[index]!;
       try {
-        const g = glance(s, k);
+        const g = glance(s, k, undefined, CELL_PARENTS.has(menu ? "AXMenu" : held.role));
         read.push({ ref: k, node: g.node, facts: g.facts, index });
       } catch (err) {
         api.release(k);
