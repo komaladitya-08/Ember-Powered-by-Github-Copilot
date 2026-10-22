@@ -64,6 +64,18 @@ describe("loading the Windows admin policy", () => {
     expect(r.policy).toMatchObject(LOCKED);
   });
 
+  it("locks down, without throwing, when a registry call itself fails (another path error included)", () => {
+    const throwing = fakeApi(new FakeRegistry(), { regGetValue: () => { throw new TypeError("koffi: bad argument"); } });
+    const thrown = win32AdminPolicy({ api: () => throwing, env: {} }).load();
+    expect(thrown.error).toMatch(/couldn't read the Windows registry/);
+    expect(thrown.policy).toMatchObject(LOCKED);
+    const pathError = fakeApi(new FakeRegistry(), { regGetValue: () => ({ status: 3, type: 0, size: 0 }) });
+    const r = win32AdminPolicy({ api: () => pathError, env: {} }).load();
+    expect(r.source).toBe(POLICY_LOCATION);
+    expect(r.error).toMatch(/error 3/);
+    expect(r.policy).toMatchObject(LOCKED);
+  });
+
   it("locks down a policy that names an API key file (unsupported on Windows)", () => {
     const policy = { provider: { type: "openai", baseUrl: "https://llm.example.org/v1", apiKeyFile: "C:\\keys\\key.txt" } };
     const r = source(new FakeRegistry().sz(HKLM, POLICY_KEY, "PolicyJson", JSON.stringify(policy))).load();

@@ -3,7 +3,7 @@
  * the gh lookup (PATH read case-insensitively, quotes stripped, .exe/.com only, winget/Scoop/Chocolatey folders after
  * PATH, kept a minute), the bundled speech-model folders, the screen-reader probe (asked once a minute, never
  * Chromium's own flag), reduced motion, the life cycle, and the Start Menu shortcut toasts need. Also the interim
- * copies of Phase 1's helpers the composition uses (withSystemDialog, hostEnv, hoverShaper).
+ * copies of Phase 1's helpers the composition uses (withSystemDialog, hostEnv, hoverShaper, the clipboard row).
  */
 
 import { describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import type { WindowSystem } from "../../app/main/platform/types";
 import { SCREEN_READER_MS, win32A11y } from "../../app/main/platform/win32/system/a11y";
 import { AUMID, ensureShortcut, win32Lifecycle, type ShortcutDeps } from "../../app/main/platform/win32/system/lifecycle";
 import { bundledModelDirs, defaultUserData, GH_CACHE_MS, ghCandidates, win32Paths, win32Which } from "../../app/main/platform/win32/system/paths";
-import { cleanEnv, hostEnv, hoverShaper, which, withSystemDialog } from "../../app/main/platform/win32/system/interim";
+import { cleanEnv, CLIPBOARD_FORMATS_WIN32, hostEnv, hoverShaper, which, withSystemDialog } from "../../app/main/platform/win32/system/interim";
 import { buildLnk, FakeFs, fakeApi } from "./win32-system-fakes";
 
 const ENV = { LOCALAPPDATA: "C:\\Users\\Ana\\AppData\\Local", ProgramFiles: "C:\\Program Files", USERPROFILE: "C:\\Users\\Ana", Path: "C:\\Windows\\system32;\"C:\\Tools\\bin\";relative\\dir" };
@@ -182,5 +182,13 @@ describe("the interim Phase 1 helpers the composition uses", () => {
     expect(s.forward).toBe(false);
     for (const kind of ["overlay", "handle", "ask"] as const) expect(s.floating(kind)).toEqual({ options: { type: "toolbar", thickFrame: false, roundedCorners: false }, allWorkspaces: null });
     expect(s.floating("desk-view")).toEqual({ options: {}, allWorkspaces: null });
+  });
+
+  it("the Windows clipboard row treats Windows password managers' markers as passwords", () => {
+    for (const marker of ["ExcludeClipboardContentFromMonitorProcessing", "Clipboard Viewer Ignore", 'electron application/osclipboard;format="Clipboard Viewer Ignore"']) {
+      expect(CLIPBOARD_FORMATS_WIN32.passwordMarker(marker), marker).toBe(true);
+    }
+    expect(CLIPBOARD_FORMATS_WIN32.passwordMarker("text/plain")).toBe(false);
+    expect(CLIPBOARD_FORMATS_WIN32.savable("text/plain")).toBe(true);
   });
 });

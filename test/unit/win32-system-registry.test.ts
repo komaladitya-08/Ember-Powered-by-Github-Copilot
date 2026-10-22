@@ -15,10 +15,10 @@ import { FakeRegistry, fakeApi, HKCU, HKLM } from "./win32-system-fakes";
 const KEY = "SOFTWARE\\Policies\\Ember";
 
 describe("registryFailure", () => {
-  it("treats only a missing key, value or path as absence", () => {
+  it("treats only ERROR_FILE_NOT_FOUND (a missing key or value) as absence", () => {
     expect(registryFailure(2)).toBe("not-found");
-    expect(registryFailure(3)).toBe("not-found");
-    expect(registryFailure(161)).toBe("not-found");
+    expect(registryFailure(3)).toBe("failed"); // ERROR_PATH_NOT_FOUND: not what RegGetValueW says for absence
+    expect(registryFailure(161)).toBe("failed"); // ERROR_BAD_PATHNAME
     expect(registryFailure(5)).toBe("denied");
     expect(registryFailure(1630)).toBe("wrong-type");
     expect(registryFailure(UNAVAILABLE)).toBe("unavailable");

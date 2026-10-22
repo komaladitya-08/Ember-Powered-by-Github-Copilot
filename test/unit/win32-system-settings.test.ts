@@ -60,5 +60,7 @@ describe("Windows settings", () => {
 
   it("refuses a setting Windows doesn't offer", async () => {
     await expect(win32Settings({ api: () => fakeApi(theme(1)) }).change("night_light", "on")).rejects.toThrow(/isn't something Ember can change on Windows/);
+    // A name the model made up that happens to be an Object.prototype member is no setting either.
+    await expect(win32Settings({ api: () => fakeApi(theme(1)) }).change("toString" as "dark_style", "on")).rejects.toThrow("toString isn't something Ember can change on Windows");
   });
 });

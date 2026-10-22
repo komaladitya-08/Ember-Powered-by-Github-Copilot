@@ -226,10 +226,15 @@ export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy
 export const NEVER_LOOK_DEFAULTS_WIN32: readonly string[] = ["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"];
 
 const OS_FORMAT = /^electron application\/osclipboard;format="(.*)"$/;
-/** CLIPBOARD_FORMATS.win32: the Linux row until V verifies Windows' (MIME types only, §9.11, R13). */
+/** Windows password managers' "don't keep this" formats (§9.11), and KDE's for a Linux-born marker. */
+const PASSWORD_MARKERS = new Set(["x-kde-passwordManagerHint", "ExcludeClipboardContentFromMonitorProcessing", "Clipboard Viewer Ignore"]);
+/**
+ * CLIPBOARD_FORMATS.win32: MIME types only until V verifies Windows' (§9.11, R13), but already treating the Windows
+ * password-manager markers as passwords, so a copied password is never saved and put back (fail closed).
+ */
 export const CLIPBOARD_FORMATS_WIN32: ClipboardFormats = {
   savable: savableFormat,
-  passwordMarker: t => (OS_FORMAT.exec(t)?.[1] ?? t) === "x-kde-passwordManagerHint",
+  passwordMarker: t => PASSWORD_MARKERS.has(OS_FORMAT.exec(t)?.[1] ?? t),
   ownTextMarkers: [],
 };
 

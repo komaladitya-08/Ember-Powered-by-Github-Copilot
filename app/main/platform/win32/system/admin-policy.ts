@@ -13,10 +13,14 @@ import type { Win32SysApi } from "./ffi";
 import { lockedDown, parseAdminPolicy } from "./interim";
 import { describeFailure, HKEY, readString, RRF } from "./registry";
 
+/** The policy's key under HKLM. */
 export const POLICY_KEY = "SOFTWARE\\Policies\\Ember";
+/** Where the doctor and the settings window say the policy lives. */
 export const POLICY_LOCATION = "HKLM\\SOFTWARE\\Policies\\Ember (PolicyJson)";
 /** The largest policy read (a policy is a few kilobytes; anything near this is a mistake or an attack). */
 export const MAX_POLICY_BYTES = 256 * 1024;
+const UNREADABLE = "Ember couldn't read the Windows registry, so it can't tell whether a policy applies";
+/** Why a policy naming provider.apiKeyFile locks Ember down on Windows. */
 export const APIKEY_FILE_REFUSED = "provider.apiKeyFile isn't supported on Windows: put the key in the ProviderApiKey value of HKLM\\SOFTWARE\\Policies\\Ember";
 
 /** The Windows admin policy source over the registry API (null: advapi32 couldn't be loaded). */
@@ -26,11 +30,17 @@ export function win32AdminPolicy(o: { api: () => Win32SysApi | null; env: NodeJS
     load(devOverride?: string): LoadedAdminPolicy {
       // Development only (main passes EMBER_ADMIN_POLICY only when unpackaged): a file, without the root-owner check.
       if (devOverride !== undefined) return loadAdminPolicy(devOverride, { requireRootOwned: false });
-      const api = o.api();
-      if (!api) return lockedDown(POLICY_LOCATION, "Ember couldn't read the Windows registry, so it can't tell whether a policy applies");
-      const r = readString(api, HKEY.LOCAL_MACHINE, POLICY_KEY, "PolicyJson", {
-        flags: RRF.RT_REG_SZ | RRF.RT_REG_MULTI_SZ | RRF.SUBKEY_WOW6464KEY, maxBytes: MAX_POLICY_BYTES,
-      });
+      let r: ReturnType<typeof readString>;
+      try {
+        const api = o.api();
+        if (!api) return lockedDown(POLICY_LOCATION, UNREADABLE);
+        r = readString(api, HKEY.LOCAL_MACHINE, POLICY_KEY, "PolicyJson", {
+          flags: RRF.RT_REG_SZ | RRF.RT_REG_MULTI_SZ | RRF.SUBKEY_WOW6464KEY, maxBytes: MAX_POLICY_BYTES,
+        });
+      } catch {
+        // koffi or advapi32 failing mid-call (not only at load) is "can't tell", never "no policy".
+        return lockedDown(POLICY_LOCATION, UNREADABLE);
+      }
       if (!r.ok) {
         if (r.error === "not-found") return { policy: AdminPolicySchema.parse({}), source: null };
         if (r.error === "too-large") return lockedDown(POLICY_LOCATION, `PolicyJson is larger than ${MAX_POLICY_BYTES / 1024} KiB`);

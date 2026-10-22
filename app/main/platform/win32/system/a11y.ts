@@ -11,6 +11,7 @@ import type { Win32SysApi } from "./ffi";
 /** How long a screen-reader answer is kept (maySpeak asks often; the flag changes rarely). */
 export const SCREEN_READER_MS = 60_000;
 
+/** Windows' A11yProbes. */
 export function win32A11y(o: { api: () => Win32SysApi | null; systemPreferences: Pick<SystemPreferencesLike, "getAnimationSettings">; now?: () => number }): A11yProbes {
   const now = o.now ?? Date.now;
   let last: { at: number; on: boolean } | null = null;

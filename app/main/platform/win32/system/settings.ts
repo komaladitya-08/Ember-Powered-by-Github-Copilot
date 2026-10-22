@@ -15,7 +15,9 @@ import type { Win32SysApi } from "./ffi";
 import { parseOnOff } from "./interim";
 import { HKEY, readDword, writeDword } from "./registry";
 
+/** The user's theme key (HKCU). */
 export const PERSONALIZE = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+/** 0 = dark mode for apps, 1 = light. */
 export const APPS_USE_LIGHT_THEME = "AppsUseLightTheme";
 /** How long each top-level window gets to answer the broadcast (on koffi's worker thread, not Ember's main thread). */
 export const BROADCAST_TIMEOUT_MS = 1000;
@@ -26,7 +28,7 @@ export function win32Settings(o: { api: () => Win32SysApi | null; log?: () => Lo
   return {
     available,
     async change(name, value) {
-      if (!(name in available)) throw new Error(`${SETTINGS[name] ?? name} isn't something Ember can change on Windows`);
+      if (!Object.hasOwn(available, name)) throw new Error(`${Object.hasOwn(SETTINGS, name) ? SETTINGS[name] : name} isn't something Ember can change on Windows`);
       const api = o.api();
       if (!api) throw new Error("Ember can't reach Windows' settings on this computer");
       const read = () => {
