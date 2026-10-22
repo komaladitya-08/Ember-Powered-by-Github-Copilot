@@ -1,9 +1,10 @@
 /**
  * The Windows window system and input backends on a fake Win32 desktop (so they run on Linux): the stack and the
  * apps' windows as Ember sees them, UWP frames named after their app, focus, capture that fails closed, window ids,
- * the documented foreground order, and input that ends exactly where asked, presses logical buttons, tracks and lets
- * go of everything Ember holds (also at exit), reports only the user's keys, types any character, refuses elevated
- * windows and knows where a click lands. Both factories give null off Windows without a fake.
+ * console windows named conhost, the documented foreground order (never waiting for another app's thread), and
+ * input that ends exactly where asked, presses logical buttons, tracks and lets go of everything Ember holds (also at
+ * exit), reports only the user's keys, types any character, refuses elevated windows and knows where a click lands.
+ * Both factories give null off Windows without a fake.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -214,7 +215,7 @@ class FakeDesktop implements Win32Api {
     if (ok) this.fg = hwnd;
     return ok;
   }
-  bringToTop(hwnd: number) { this.calls.push(`bringToTop:${hwnd}`); return true; }
+  bringToTopAsync(hwnd: number) { this.calls.push(`bringToTopAsync:${hwnd}`); return true; }
   showWindowAsync(hwnd: number, command: number) {
     this.calls.push(`showWindowAsync:${hwnd}:${command}`);
     const w = this.win(hwnd);
@@ -266,6 +267,18 @@ function desktop(): FakeDesktop {
     .set(300, "C:\\Windows\\System32\\ApplicationFrameHost.exe").set(301, "C:\\Program Files\\WindowsApps\\Calc\\CalculatorApp.exe")
     .set(400, "C:\\Program Files\\Mail\\msedge.exe").set(600, "C:\\Program Files\\NVIDIA\\nvcontainer.exe");
   d.fg = 0x40;
+  return d;
+}
+
+/** The typical desktop plus console windows: a Python REPL, ssh in a pseudo-console's window, and bare conhost. */
+function consoles(): FakeDesktop {
+  const d = desktop();
+  d.windows.unshift(
+    { hwnd: 0xb0, pid: 700, cls: "ConsoleWindowClass", title: "Python 3.12", visible: true, frame: { x: 50, y: 60, width: 700, height: 400 } },
+    { hwnd: 0xb1, pid: 710, cls: "PseudoConsoleWindow", title: "", visible: true, frame: { x: 60, y: 70, width: 300, height: 200 } },
+    { hwnd: 0xb2, pid: 720, cls: "ConsoleWindowClass", title: "conhost", visible: true, frame: { x: 70, y: 80, width: 300, height: 200 } },
+  );
+  d.images.set(700, "C:\\Python312\\python.exe").set(710, "C:\\Windows\\System32\\OpenSSH\\ssh.exe").set(720, "C:\\Windows\\System32\\conhost.exe");
   return d;
 }
 
@@ -342,6 +355,36 @@ describe("the Windows window system", () => {
     expect(list.find(w => w.id === 0x40)).toEqual({ id: 0x40, pid: 200, title: "Untitled - Notepad", x: 100, y: 100, width: 800, height: 600, wmClass: "notepad", wmClassName: "Notepad" });
     expect(list.find(w => w.id === 0x50)).toMatchObject({ wmClass: "CalculatorApp", wmClassName: "ApplicationFrameWindow" });
     expect(list.find(w => w.id === 0x70)).toMatchObject({ wmClass: "msedge", title: "Inbox - Mail" });
+  });
+
+  it("names a console window conhost whatever runs in it, keeping its first client's program and process id", () => {
+    const d = consoles();
+    const ws = windowsOn(d);
+    // A Python REPL started from the Start menu: Windows reports python.exe's process for conhost's window.
+    expect(ws.stack().find(w => w.id === 0xb0)).toMatchObject({ pid: 700, wmClass: "conhost", clientProgram: "python", title: "Python 3.12" });
+    expect(ws.clientWindows().find(w => w.id === 0xb0)).toEqual({
+      id: 0xb0, pid: 700, title: "Python 3.12", x: 50, y: 60, width: 700, height: 400,
+      wmClass: "conhost", clientProgram: "python", wmClassName: "ConsoleWindowClass",
+    });
+    expect(ws.stack().find(w => w.id === 0xb1)).toMatchObject({ wmClass: "conhost", clientProgram: "ssh" }); // a pseudo-console
+    d.fg = 0xb0;
+    expect(ws.activeWindow()).toMatchObject({ id: 0xb0, wmClass: "conhost", clientProgram: "python", wmClassName: "ConsoleWindowClass" });
+    expect(ws.focusWindow()).toMatchObject({ id: 0xb0, wmClass: "conhost", clientProgram: "python" });
+  });
+
+  it("names a console window conhost even when its client's program can't be read, and adds nothing to other windows", () => {
+    const d = consoles();
+    d.images.delete(700);
+    const ws = windowsOn(d);
+    const python = ws.stack().find(w => w.id === 0xb0)!;
+    expect(python.wmClass).toBe("conhost");
+    expect("clientProgram" in python).toBe(false);
+    // conhost started on its own reports itself: there is no other client to show.
+    expect("clientProgram" in ws.stack().find(w => w.id === 0xb2)!).toBe(false);
+    expect(ws.stack().find(w => w.id === 0xb2)?.wmClass).toBe("conhost");
+    for (const w of [...ws.stack(), ...ws.clientWindows()].filter(w => ![0xb0, 0xb1, 0xb2].includes(w.id))) {
+      expect("clientProgram" in w, `0x${w.id.toString(16)}`).toBe(false);
+    }
   });
 
   it("lists an app window whose program the system won't name with an empty name, never another app's", () => {
@@ -467,7 +510,7 @@ describe("activating a window (the documented foreground order)", () => {
     d.fg = 0x50;
     d.lock = "attach";
     windowsOn(d).activate(0x40);
-    expect(d.calls).toEqual(["sendInput", "setForeground:64", "attach:1->3000:true", "bringToTop:64", "setForeground:64", "attach:1->3000:false"]);
+    expect(d.calls).toEqual(["sendInput", "setForeground:64", "attach:1->3000:true", "bringToTopAsync:64", "setForeground:64", "attach:1->3000:false"]);
     expect(d.fg).toBe(0x40);
     expect(d.attached).toBe(false);
   });
@@ -483,6 +526,19 @@ describe("activating a window (the documented foreground order)", () => {
     expect(d.fg).toBe(0x50);
   });
 
+  it("doesn't attach to the target's own thread, where the async raise would wait for it", () => {
+    // Notepad's Save as dialog has the foreground and Notepad's window is asked for: one thread, so attaching to the
+    // foreground thread would put Ember on the target's input queue, where SWP_ASYNCWINDOWPOS no longer posts.
+    const d = desktop();
+    d.fg = 0x31;
+    d.lock = "attach";
+    expect(d.threadProcess(0x31).tid).toBe(d.threadProcess(0x40).tid);
+    windowsOn(d).activate(0x40);
+    expect(d.calls).toEqual(["sendInput", "setForeground:64"]);
+    expect(d.fg).toBe(0x31);
+    expect(d.attached).toBe(false);
+  });
+
   it("restores a minimised window without waiting on its thread", () => {
     const d = desktop();
     windowsOn(d).activate(0x70);
@@ -494,6 +550,51 @@ describe("activating a window (the documented foreground order)", () => {
     const d = desktop();
     windowsOn(d).activate(0x999);
     expect(d.calls).toEqual([]);
+  });
+
+  it("never waits for another app's thread: only ShowWindowAsync, async SetWindowPos, SetForegroundWindow and a hung-guarded attach", () => {
+    // Every Win32 call activate() may make on a foreign window, in every foreground-lock state: reads that never
+    // touch the window's thread, and the four actions that don't wait for it (plus the empty input event).
+    const reads = new Set(["foregroundWindow", "isWindow", "isIconic", "isHung", "threadProcess", "currentThreadId"]);
+    const actions = new Set(["showWindowAsync", "bringToTopAsync", "setForeground", "attachThreadInput", "sendInput"]);
+    const cases: { name: string; set(d: FakeDesktop): void; target?: number }[] = [
+      { name: "already in front", set: d => { d.fg = 0x40; } },
+      { name: "Ember in front", set: d => { d.fg = 0x21; d.lock = "closed"; } },
+      { name: "after Ember's input", set: d => { d.fg = 0x50; d.lock = "input"; } },
+      { name: "needing the attach", set: d => { d.fg = 0x50; d.lock = "attach"; } },
+      { name: "refused", set: d => { d.fg = 0x50; d.lock = "closed"; } },
+      { name: "hung foreground", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x50)!.hung = true; } },
+      { name: "hung target", set: d => { d.fg = 0x50; d.lock = "attach"; d.win(0x40)!.hung = true; } },
+      { name: "minimised target", set: d => { d.fg = 0x50; d.lock = "attach"; }, target: 0x70 },
+      { name: "foreground on the target's thread", set: d => { d.fg = 0x31; d.lock = "attach"; } },
+    ];
+    for (const c of cases) {
+      const d = desktop();
+      c.set(d);
+      const used: string[] = [];
+      const api = new Proxy(d, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            used.push(String(prop));
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        },
+      });
+      const ws = openWin32Windows({ screen, api })!;
+      opened.push(ws);
+      ws.activate(c.target ?? 0x40);
+      for (const name of used) expect(reads.has(name) || actions.has(name), `${c.name}: ${name}`).toBe(true);
+      const hung = c.name.startsWith("hung");
+      // The attach is the last resort: only when SetForegroundWindow failed and neither thread is hung.
+      expect(used.includes("attachThreadInput"), `${c.name}: attach`).toBe(["needing the attach", "refused", "minimised target"].includes(c.name));
+      if (hung) expect(d.calls.some(call => call.startsWith("attach")), c.name).toBe(false);
+      // Raised only while attached (the foreground lock allows it then), and always detached afterwards.
+      const raise = d.calls.indexOf(`bringToTopAsync:${c.target ?? 0x40}`);
+      if (raise >= 0) expect(d.calls.slice(0, raise).filter(call => call.startsWith("attach")).pop(), c.name).toMatch(/:true$/);
+      expect(d.attached, `${c.name}: detached`).toBe(false);
+    }
   });
 });
 
@@ -717,6 +818,14 @@ describe("Windows input: windows", () => {
     expect(x.focusedWindow()).toBe(0x40);
     d.fg = 0x31;
     expect(x.focusedWindow()).toBe(0x31); // a dialog is its own top-level, as on X11
+  });
+
+  it("finds a console window by its one stable name, conhost, not by the program running in it", () => {
+    const x = inputOn(consoles());
+    expect(x.findWindow("Python 3.12", undefined, "conhost")).toBe(0xb0);
+    expect(x.findWindow("Python 3.12", undefined, "ConsoleWindowClass")).toBe(0xb0);
+    expect(x.findWindow("Python 3.12", undefined, "python")).toBe(0);
+    expect(x.findWindow("Python 3.12", 700)).toBe(0xb0);
   });
 
   it("finds windows by title like XInput does, dialogs and minimised windows included", () => {

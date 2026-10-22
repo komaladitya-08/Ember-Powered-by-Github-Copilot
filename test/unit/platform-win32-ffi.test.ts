@@ -2,15 +2,16 @@
  * The Win32 bindings (ffi.ts) on Linux: every C declaration parses with koffi's own parser, and the wrappers do the
  * right thing with what the system hands back, checked against fake DLLs and real koffi memory: handles normalised,
  * styles unsigned, UTF-16 titles (Ember's own read without a message), out-parameters, DWM attributes, process
- * images and tokens (the integrity SID read through its pointer), handles always closed, the GDI capture sequence
- * cleaned up even when BitBlt fails, and the DPI awareness fixed for plain Node. Missing optional pieces degrade;
- * missing required ones refuse to bind. Off Windows, loadWin32() is null.
+ * images and tokens (the integrity SID read through its pointer), handles always closed, raising a window without
+ * waiting for its thread (and no binding that would wait), the GDI capture sequence cleaned up even when BitBlt
+ * fails, and the DPI awareness fixed for plain Node. Missing optional pieces degrade; missing required ones refuse
+ * to bind. Off Windows, loadWin32() is null.
  */
 
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import type { LibraryHandle } from "koffi";
-import { bindWin32, defineWin32Types, functionName, loadWin32, WIN32_FUNCTIONS } from "../../app/main/platform/win32/ffi";
+import { bindWin32, defineWin32Types, functionName, loadWin32, RAISE_ASYNC_FLAGS, WIN32_FUNCTIONS } from "../../app/main/platform/win32/ffi";
 import { INPUT_SIZE } from "../../app/main/platform/win32/layouts";
 
 const requireCjs = createRequire(import.meta.url);
@@ -46,6 +47,15 @@ describe("the Win32 declarations", () => {
     for (const declaration of Object.values(WIN32_FUNCTIONS).flat()) expect(() => koffi.proto(declaration), declaration).not.toThrow();
     expect(new Set(ALL_NAMES).size).toBe(ALL_NAMES.length);
     expect(ALL_NAMES).not.toContain("");
+  });
+
+  it("bind no call that waits for another app's thread to handle a window message", () => {
+    // Ember calls these on its main thread: a busy app would freeze the overlay and the stop shortcut (W16).
+    const waiting = [
+      "SendMessageW", "SendMessageA", "SendMessageTimeoutW", "SendNotifyMessageW", "BringWindowToTop", "ShowWindow",
+      "MoveWindow", "SetWindowPlacement", "SetActiveWindow", "SwitchToThisWindow", "GetWindowTextLengthW", "PrintWindow",
+    ];
+    for (const name of waiting) expect(ALL_NAMES, name).not.toContain(name);
   });
 
   it("names the function in a prototype", () => {
@@ -275,6 +285,19 @@ describe("the Win32 wrappers", () => {
     expect(api.deadKey(0xbb, false, 0x4070407n)).toBe(false);
   });
 
+  it("raises a window with SetWindowPos(HWND_TOP, SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS), never waiting for it", () => {
+    let ok = 1;
+    const f = fakeLoad({ SetWindowPos: () => ok });
+    const api = bindWin32(koffi, f.load);
+    expect(RAISE_ASYNC_FLAGS).toBe(0x4003);
+    expect(api.bringToTopAsync(0x40)).toBe(true);
+    expect(f.called("SetWindowPos")[0].args).toEqual([0x40, null, 0, 0, 0, 0, 0x4003]);
+    ok = 0;
+    expect(api.bringToTopAsync(0x40)).toBe(false);
+    expect(api.bringToTopAsync(0)).toBe(false);
+    expect(f.called("SetWindowPos")).toHaveLength(2); // no call for a null window
+  });
+
   it("sends the INPUT array with its count and INPUT's size", () => {
     const f = fakeLoad({ SendInput: (count: number) => count });
     const buf = Buffer.alloc(2 * INPUT_SIZE);
@@ -320,6 +343,10 @@ describe("the Win32 wrappers", () => {
     expect(cleanup()).toEqual([4, 2, 2, 2]);
     expect(api.blit(0, 0, 0, 2)).toBeNull();
     expect(f.called("GetDC")).toHaveLength(2);
+    // SRCCOPY alone only when asked (the integration test's CAPTUREBLT measurement).
+    blt = 1;
+    expect(api.blit(1, 2, 3, 2, false)).not.toBeNull();
+    expect(f.called("BitBlt").map(c => c.args[8])).toEqual([0x40cc0020, 0x40cc0020, 0x00cc0020]);
   });
 
   it("frees the bitmap and never reads an untouched DIB when the bitmap can't be selected or has no bits", () => {

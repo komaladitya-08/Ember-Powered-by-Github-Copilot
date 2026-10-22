@@ -4,6 +4,6 @@
  * loaded until one of them runs on Windows.
  */
 
-export { openWin32Windows, type Win32WindowSystem, type Win32WindowsDeps } from "./windows";
+export { openWin32Windows, type Win32StackedWindow, type Win32Window, type Win32WindowSystem, type Win32WindowsDeps } from "./windows";
 export { openWin32Input, type Win32InputDeps } from "./input";
 export { win32Error, type Win32Api } from "./ffi";

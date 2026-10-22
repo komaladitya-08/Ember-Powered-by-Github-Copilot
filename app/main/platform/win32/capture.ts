@@ -1,9 +1,11 @@
 /**
  * Screen capture on Windows: GDI BitBlt from the screen DC into a 32-bit top-down DIB section, synchronous, with X11's
  * contract (BGRA, stride width × 4, the requested rectangle clipped to the screen, 1 image pixel = 1 screen pixel).
- * With DWM the screen DC is the composed desktop, so other apps' windows and layered windows are in it. It fails
- * closed: nothing on screen, the secure desktop (UAC, the lock screen) or a failed BitBlt all give null, never a
- * black or stale picture.
+ * With DWM the screen DC is the composed desktop, so other apps' windows are in it; the copy adds CAPTUREBLT so
+ * layered windows (Ember's overlay is one) are too. CAPTUREBLT may hide and redraw a software cursor on each capture,
+ * so test/integration/win32-desktop.test.ts measures whether layered windows are in the capture without it; the flag
+ * goes only on that evidence. It fails closed: nothing on screen, the secure desktop (UAC, the lock screen) or a
+ * failed BitBlt all give null, never a black or stale picture.
  */
 
 import type { X11Image } from "../types";
