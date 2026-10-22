@@ -1,8 +1,11 @@
 /**
- * Accessibility windows on the X11 screen: which top-level window an AT-SPI
+ * Accessibility windows on screen: which top-level window an accessibility
  * frame is, how many physical pixels one of its reported pixels is (HiDPI
- * apps report logical pixels: GDK_SCALE=2 halves every coordinate), and
- * which windows stacked above it hide parts of it.
+ * apps on X11 report logical pixels: GDK_SCALE=2 halves every coordinate), and
+ * which windows stacked above it hide parts of it. Pure geometry over the window
+ * system's stack (X11, or the Windows and macOS backends with the same shape, whose
+ * accessibility helpers report the stack's own units, so the scale found there is 1);
+ * coordinates may be negative off Linux.
  */
 
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type ShellOverlay } from "./sidecar";
