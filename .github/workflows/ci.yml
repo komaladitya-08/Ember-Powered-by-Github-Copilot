@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       packages:
-        description: "Upload the built RPM and AppImage as an artifact (about 340 MB, kept 3 days)"
+        description: "Upload the built packages as artifacts (RPM and AppImage, Windows zip, macOS zip and dmg; 200-400 MB each, kept 3 days)"
         type: boolean
         default: false
 
@@ -289,12 +289,14 @@ jobs:
           if [ -f sidecar/uia/ember_uia.cs ]; then test -f "$app/resources/sidecar/uia/ember_uia.ps1" && test -f "$app/resources/sidecar/uia/ember_uia.cs"; fi
       - name: The packaged Ember starts and shows its window
         run: node test/smoke/launch.mjs --exe dist/package/Ember/Ember.exe
+      # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
           name: ember-windows
           path: dist/package/*.zip
-          retention-days: 14
+          retention-days: 3
 
   macos:
     name: macOS (unit tests, build, smoke, accessibility, app bundle)
@@ -390,11 +392,13 @@ jobs:
           if [ -f dist/app/ax-sidecar.cjs ]; then test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"; fi
       - name: The packaged Ember.app starts and shows its window
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
+      # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
           name: ember-macos
           path: |
             dist/package/*.zip
             dist/package/*.dmg
-          retention-days: 14
+          retention-days: 3
