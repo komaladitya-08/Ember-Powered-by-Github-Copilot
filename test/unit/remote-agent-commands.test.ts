@@ -271,6 +271,26 @@ describe("a command on the remote", () => {
     await h.runs.ladders();
   });
 
+  it("drops what a stopped run prints past the cap (one that ignores ^C and SIGTERM until SIGKILL), sending nothing after", async () => {
+    let queued = 0;
+    const h = harness({ backlog: () => queued, drop: () => 0 });
+    h.runs.start(spec(), 7, facts(true));
+    const c = h.spawned[0].child;
+    c.out(`${START}before`);
+    h.runs.stop("0123456789abcdef", "user");
+    c.out(" stopping");
+    queued = BACKLOG.high + 1;
+    for (let i = 0; i < 10; i++) c.out("y\n".repeat(32 * 1024));
+    // It still flows (its end must be seen), but nothing past the cap is queued, nor once the queue drains.
+    expect(c.stdout.paused).toBe(false);
+    queued = 0;
+    c.out("tail");
+    expect(h.sent.map(x => x.bytes).join("")).toBe(`${START}before stopping`);
+    c.close(130);
+    expect(h.exits[0].outBytes).toBe(`${START}before stopping`.length);
+    await h.runs.ladders();
+  });
+
   it("refuses a run id used before", () => {
     const h = harness();
     h.runs.start(spec(), 7, facts(true));

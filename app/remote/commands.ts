@@ -84,7 +84,10 @@ interface Run {
   stderr: string;
   exitMark: number | null;
   outBytes: number;
-  /** The kill switch stopped it: its output is dropped (nobody reads it), so it can't hold the link for later work. */
+  /**
+   * Its output is dropped: the kill switch stopped it (nobody reads it), or it printed past the cap while being stopped,
+   * so it can't hold the link for later work.
+   */
   discard: boolean;
   t0: number;
   stopWhy: StopWhy | null;
@@ -176,6 +179,12 @@ export class RemoteRuns {
       if (isErr && run.stderr.length < STDERR_KEEP) run.stderr += chunk.toString("utf8");
       if (!run.started || run.exitMark === null) this.scan(run, chunk);
       if (run.discard) return;
+      if (run.stopWhy && this.d.backlog && this.d.backlog() > BACKLOG.high) {
+        // Being stopped it flows (its end must be seen), so what it prints past the cap is dropped, and nothing after
+        // that gap: one that ignores ^C and SIGTERM would otherwise queue all it prints until its SIGKILL.
+        run.discard = true;
+        return;
+      }
       run.outBytes += chunk.length;
       this.d.send(run.channel, chunk);
       this.throttle();
