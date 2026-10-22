@@ -662,11 +662,17 @@ export class WslRouter {
     return hits.find(w => w.hwnd === s.foreground) ?? "base";
   }
 
-  /** The Linux pids of the never-look windows of `distro` (the distro's own skipPids). */
-  skipPids(distro: string): number[] {
+  /**
+   * The Linux pids of `distro`'s never-look windows (the distro's own skipPids): the hidden ones (Linux's defaults), and
+   * the identified ones the user's list (`neverLook`) names by any name their app goes by.
+   */
+  skipPids(distro: string, neverLook: readonly string[] = []): number[] {
     const s = this.snap;
     if (!s) return [];
-    return [...new Set([...s.hidden.values()].filter(h => h.distro === distro && h.linuxPid !== null).map(h => h.linuxPid!))];
+    const list = neverLook.filter(i => i.trim());
+    const listed = [...s.windows.values()].filter(w => w.distro === distro && w.frame.pid !== null && list.length
+      && [w.app, ...linuxNames(w.frame)].some(n => isNeverLook({ app: n, name: w.frame.name }, list)));
+    return [...new Set([...[...s.hidden.values()].filter(h => h.distro === distro && h.linuxPid !== null).map(h => h.linuxPid!), ...listed.map(w => w.frame.pid!)])];
   }
 
   /** Remembers which window these element ids came from (for mapping their bounds later). */

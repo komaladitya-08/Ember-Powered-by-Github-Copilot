@@ -99,7 +99,7 @@ export class RoutedSidecar implements PerceptionSidecar, SidecarPort {
     const res = await this.router.withHelper(target.distro, sc => sc.readWindow({
       pid: target.frame.pid!, path: target.frame.path,
       // Never a Windows pid: the distro's own never-look processes, and the Linux defaults beside the user's list.
-      neverLook: [...(neverLook ?? []), ...NEVER_LOOK_DEFAULTS.linux], skipPids: this.router.skipPids(target.distro),
+      neverLook: [...(neverLook ?? []), ...NEVER_LOOK_DEFAULTS.linux], skipPids: this.router.skipPids(target.distro, neverLook ?? []),
       ...(maxDepth !== undefined ? { maxDepth } : {}), ...(maxNodes !== undefined ? { maxNodes } : {}),
       ...(keep !== undefined ? { keep } : {}), ...(cells ? { cells } : {}),
     }));
@@ -119,7 +119,7 @@ export class RoutedSidecar implements PerceptionSidecar, SidecarPort {
     const p = unmapPoint(tr, { x: params.x, y: params.y });
     const res = await this.router.withHelper(w.distro, sc => sc.atPoint({
       pid: linux.pid, path: linux.path, x: p.x, y: p.y, neverLook: [...(params.neverLook ?? []), ...NEVER_LOOK_DEFAULTS.linux],
-      skipPids: this.router.skipPids(w.distro), ...(params.menus === false ? { menus: false } : {}),
+      skipPids: this.router.skipPids(w.distro, params.neverLook ?? []), ...(params.menus === false ? { menus: false } : {}),
     }));
     return { ...res, chain: (res.chain ?? []).map(n => ({ ...n, bounds: placed(tr, n.bounds) })) };
   }

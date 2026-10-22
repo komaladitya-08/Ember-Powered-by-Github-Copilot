@@ -172,6 +172,9 @@ describe("identifying a WSLg window", () => {
     expect([...s.windows.keys()]).toEqual([11]);
     expect(s.hidden.get(12)).toEqual({ distro: "Ubuntu", linuxPid: 800 });
     expect(r.skipPids("Ubuntu")).toEqual([800]);
+    // The user's own list names gedit: its Linux process is skipped too (never a Windows pid).
+    expect(r.skipPids("Ubuntu", ["gedit"]).sort()).toEqual([700, 800]);
+    expect(r.skipPids("Debian", ["gedit"])).toEqual([]);
     expect(r.identityNow(12, 4242, true)).toBeNull();
   });
 
