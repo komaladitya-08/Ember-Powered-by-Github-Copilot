@@ -26,7 +26,7 @@ import {
   ProviderError, type AxProvider, type Handle, type PerformOp, type ProviderHealth, type RawNode, type RawWindow, type Rect,
   type Snapshot, type SnapshotOptions, type TextInfo,
 } from "../provider";
-import { SECURITY_OWNERS, SYSTEM_OWNERS, axWindowId, contains, isAppWindow, isDockItself, isVisible } from "../../main/platform/darwin/model";
+import { SECURITY_OWNERS, SYSTEM_OWNERS, axWindowId, contains, dockTitled, isAppWindow, isDockItself, isVisible } from "../../main/platform/darwin/model";
 import { AX_ERROR } from "../../main/platform/darwin/ax";
 import { isAxError, type AxApi, type AxRef, type AxWindowEntry } from "./ax-darwin-api";
 import {
@@ -136,7 +136,10 @@ export function systemOverlays(entries: readonly AxWindowEntry[], displays: read
   const owner = entries[0]?.owner ?? "";
   if (SECURITY_OWNERS.has(owner)) return { entries: [...entries], subrole: "AXSystemDialog" };
   if (owner === "loginwindow") return { entries: entries.filter(e => coversDisplay(e.bounds, displays)), subrole: "AXSystemDialog" };
-  if (owner === "Dock") return { entries: entries.filter(e => e.layer > 0 && !isDockItself(e) && coversDisplay(e.bounds, displays)), subrole: "AXSystemFloatingWindow" };
+  if (owner === "Dock") {
+    const titled = dockTitled(entries);
+    return { entries: entries.filter(e => e.layer > 0 && !isDockItself(e, titled) && coversDisplay(e.bounds, displays)), subrole: "AXSystemFloatingWindow" };
+  }
   return null;
 }
 

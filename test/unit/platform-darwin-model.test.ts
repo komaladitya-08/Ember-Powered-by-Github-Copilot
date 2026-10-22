@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   OVERLAY_TITLE, SECURITY_OWNERS, axWindowId, bundleOf, clientWindowsOf, findWindowIn, frontWindowOf, keysInMap, ownFrontWindow,
-  isDockItself, parseMediaSourceId, pointerLandsOn, processName, sameFrame, secureInputState, stackOf, unionRect, windowEntry,
+  dockTitled, isDockItself, parseMediaSourceId, pointerLandsOn, processName, sameFrame, secureInputState, stackOf, unionRect, windowEntry,
   withDockStrip, type CGWindowEntry, type RawWindowInfo, type TitledWindow,
 } from "../../app/main/platform/darwin/model";
 
@@ -141,6 +141,13 @@ describe("where a click lands", () => {
     expect(withDockStrip(list, null)).toEqual(list);
     // Another display's Dock window doesn't meet the strip: it goes.
     expect(withDockStrip([w(8, 700, "Dock", "Dock", 1440, 0, 1920, 1080, 20)], strip)).toEqual([]);
+    // Mission Control's untitled window at the Dock's level, beside the titled Dock: not cut, it still covers.
+    const mc = w(64, 700, "Dock", "", 0, 0, 1440, 900, 20);
+    const up = withDockStrip([mc, dock, ...LIST.filter(e => e.owner !== "Dock")], strip);
+    expect(up.slice(0, 2)).toEqual([mc, { ...dock, bounds: strip }]);
+    expect(pointerLandsOn(up, 400, 300, 101, OWN)).toBe(false);
+    // Without titles (no Screen Recording) the level is all there is: both are taken for the Dock and cut.
+    expect(withDockStrip([{ ...mc }, { ...dock, title: "" }], strip).map(e => e.bounds)).toEqual([strip, strip]);
   });
 
   it("tells the Dock's own window from Mission Control's by its level, or by its title", () => {
@@ -148,6 +155,11 @@ describe("where a click lands", () => {
     expect(isDockItself(w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 25))).toBe(true);
     expect(isDockItself(w(9, 700, "Dock", "", 0, 0, 1440, 900, 18))).toBe(false);
     expect(isDockItself(w(9, 701, "TextEdit", "Dock", 0, 0, 100, 100, 20))).toBe(false);
+    // Titles read (a window of the Dock's is titled "Dock"): an untitled one at its level is something else it draws.
+    expect(isDockItself(w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), true)).toBe(false);
+    expect(isDockItself(w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 20), true)).toBe(true);
+    expect(dockTitled([w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), w(7, 700, "Dock", "Dock", 0, 0, 1440, 900, 20)])).toBe(true);
+    expect(dockTitled([w(64, 700, "Dock", "", 0, 0, 1440, 900, 20), w(9, 701, "TextEdit", "Dock", 0, 0, 100, 100, 0)])).toBe(false);
   });
 
   it("lands in the element's own window when the caller says the element is there", () => {

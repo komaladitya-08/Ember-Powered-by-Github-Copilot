@@ -467,6 +467,9 @@ describe("the sidecar host on the macOS AX provider (the bench as AX describes i
     expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "dialog", name: "", text: "", bounds: at(500, 300, 440, 280) }], complete: true });
     fake.extraWindows = [{ id: 8, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 18, alpha: 1 }, dock];
     expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "overview", name: "", text: "", bounds: null }], complete: true });
+    // An untitled window at the Dock's level beside the titled Dock (titles read) is something else the Dock draws: an overview.
+    fake.extraWindows = [{ id: 10, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 20, alpha: 1 }, dock];
+    expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "overview", name: "", text: "", bounds: null }], complete: true });
     // Without titles (no Screen Recording) the Dock's own window is still told by its level.
     fake.extraWindows = [{ ...dock, title: "" }];
     expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });

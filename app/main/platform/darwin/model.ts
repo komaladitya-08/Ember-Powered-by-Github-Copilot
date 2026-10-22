@@ -253,10 +253,16 @@ export const DOCK_LAYER = 20;
 /**
  * The Dock's own window, as opposed to Mission Control's or Launchpad's (the Dock draws those too): on macos-15 it is
  * titled "Dock" and covers the whole display above every app's windows at rest (CI run 120), though only the Dock
- * itself, its strip of icons, is drawn and takes clicks. Known by its level, or by its title where the window list
- * gives titles (with Screen Recording).
+ * itself, its strip of icons, is drawn and takes clicks. Known by its title where the window list gives titles (with
+ * Screen Recording; `titled`: dockTitled says so), else by its level. Once titles are read, an untitled window of the
+ * Dock's at its level is something else it draws (Mission Control adds two, CI run 122) and stays as listed, covering
+ * what is below it (fail closed).
  */
-export const isDockItself = (e: CGWindowEntry): boolean => e.owner === "Dock" && (e.layer === DOCK_LAYER || e.title === "Dock");
+export const isDockItself = (e: Pick<CGWindowEntry, "owner" | "title" | "layer">, titled = false): boolean =>
+  e.owner === "Dock" && (e.title === "Dock" || (!titled && e.layer === DOCK_LAYER));
+
+/** Does the window list give the Dock's own window its title ("Dock")? Then isDockItself goes by the title alone. */
+export const dockTitled = (list: readonly Pick<CGWindowEntry, "owner" | "title">[]): boolean => list.some(e => e.owner === "Dock" && e.title === "Dock");
 
 /**
  * The window list with the Dock's own window cut down to `strip`, the Dock as AX frames its list of icons: over the
@@ -266,8 +272,9 @@ export const isDockItself = (e: CGWindowEntry): boolean => e.owner === "Dock" &&
  */
 export function withDockStrip(frontToBack: readonly CGWindowEntry[], strip: Rect | null): CGWindowEntry[] {
   if (!strip) return [...frontToBack];
+  const titled = dockTitled(frontToBack);
   return frontToBack.flatMap(e => {
-    if (!isDockItself(e)) return [e];
+    if (!isDockItself(e, titled)) return [e];
     const x = Math.max(e.bounds.x, strip.x), y = Math.max(e.bounds.y, strip.y);
     const width = Math.min(e.bounds.x + e.bounds.width, strip.x + strip.width) - x;
     const height = Math.min(e.bounds.y + e.bounds.height, strip.y + strip.height) - y;

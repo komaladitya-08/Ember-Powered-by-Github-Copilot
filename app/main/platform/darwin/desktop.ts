@@ -17,7 +17,7 @@ import {
 import { AX_ERROR, MAIN_THREAD_AX_TIMEOUT, openAX, type AX } from "./ax";
 import { openHIToolbox, type HIToolbox, type KeyboardLayoutSource } from "./hitoolbox";
 import { MAX_CG_KEY } from "./keys";
-import { bundleOf, isDockItself, keysInMap, processName, sameFrame, secureInputState, windowEntry, withDockStrip, type AXWindowInfo, type CGWindowEntry } from "./model";
+import { bundleOf, dockTitled, isDockItself, keysInMap, processName, sameFrame, secureInputState, windowEntry, withDockStrip, type AXWindowInfo, type CGWindowEntry } from "./model";
 import { bindOptional, koffiModule, onMacOS } from "./native";
 import type { Ref } from "./native";
 import type { Rect } from "../types";
@@ -259,7 +259,8 @@ export function makeDesktop(cf: CF, cg: CGRaw, ax: AX | null, hi: HIToolbox | nu
       if (cached && t >= cached.at && t - cached.at < cacheMs) return cached.list;
       // The Dock's own window covers the display: only its strip counts (withDockStrip).
       const read = readWindows();
-      const own = read.find(isDockItself);
+      const titled = dockTitled(read);
+      const own = read.find(e => isDockItself(e, titled));
       // Frozen: every caller shares the cached list for its 30 ms.
       const list = Object.freeze(own ? withDockStrip(read, dockStrip(own.pid, t)) : read) as CGWindowEntry[];
       cached = { at: t, list };
