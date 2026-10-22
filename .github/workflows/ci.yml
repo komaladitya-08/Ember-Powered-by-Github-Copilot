@@ -334,11 +334,14 @@ jobs:
           done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
-      - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host)
-        run: node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts test/integration/ax-sidecar.test.ts
+      - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host, system integration, vocabularies)
+        run: >-
+          node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts
+          test/integration/ax-sidecar.test.ts test/integration/win32-system.test.ts test/integration/win32-vocabulary.test.ts
         env:
           EMBER_WIN32_TEST: "1"
           EMBER_UIA_TEST: "1"
+          EMBER_WINSYS_TEST: "1"
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         run: |
           node scripts/package/stage.mjs

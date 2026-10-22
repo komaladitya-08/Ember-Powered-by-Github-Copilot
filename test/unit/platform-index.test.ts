@@ -48,6 +48,17 @@ describe("loadPlatform", () => {
     expect(loads).toEqual([]);
   });
 
+  it("picks Windows' and macOS's own platforms for those OSes, building each without touching Electron or loading a library", async () => {
+    const { loadPlatform } = await import("../../app/main/platform");
+    const win = loadPlatform(deps({}), "win32");
+    expect(win.os).toBe("win32");
+    expect(win.desk).toBeNull();
+    const mac = loadPlatform(deps({}), "darwin");
+    expect(mac.os).toBe("darwin");
+    expect(mac.desk).toBeNull();
+    expect(loads).toEqual([]);
+  });
+
   it("gives an OS it has no backend for Linux's platform, which fails the setup check's platform row (as today)", async () => {
     const { loadPlatform } = await import("../../app/main/platform");
     for (const os of ["freebsd", "openbsd", "aix", "sunos"] as const) expect(loadPlatform(deps({}), os).os).toBe("linux");
@@ -57,8 +68,6 @@ describe("loadPlatform", () => {
   it("asks the process's own OS when none is given", async () => {
     const { loadPlatform } = await import("../../app/main/platform");
     const p = loadPlatform(deps({}));
-    expect(["linux", "win32", "darwin"]).toContain(p.os);
-    // Until Phase 3 switches Windows and macOS on, every OS gets Linux's.
-    if (process.platform !== "win32" && process.platform !== "darwin") expect(p.os).toBe("linux");
+    expect(p.os).toBe(process.platform === "win32" || process.platform === "darwin" ? process.platform : "linux");
   });
 });
