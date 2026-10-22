@@ -177,7 +177,7 @@ export function namesTarget(said: string, t: Pick<TargetBinding, "id" | "kind" |
 }
 
 /** Characters that would hide or reorder what a line says: shown as ⟨U+XXXX⟩ (remote text on the card, quoted). */
-const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f­؜ᅟᅠ᠎​-‏‪-‮⁠-⁤⁦-⁩ㅤ﻿ﾠ]/gu; // eslint-disable-line no-control-regex -- control characters are exactly what is made visible
+const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\uffa0]/gu; // eslint-disable-line no-control-regex -- control characters are exactly what is made visible
 
 /** Untrusted text for the card: quoted, one line, every hidden character shown, at most `max` characters. */
 export function shownQuote(s: string, max = 300): string {
