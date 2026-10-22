@@ -3,7 +3,7 @@ import posix from "node:path/posix";
 import win32 from "node:path/win32";
 import type { RunnerFacts } from "../../app/main/commands/types";
 import { localFactsWith, powershellPath, type FactProbes } from "../../app/main/commands/run/facts";
-import { inspectPaths, MAX_INSPECT, MAX_SCRIPT_BYTES, readScriptText, type InspectFs, type ScriptFile } from "../../app/main/commands/run/inspect";
+import { decodeScript, inspectPaths, MAX_INSPECT, MAX_SCRIPT_BYTES, readScriptText, type InspectFs, type ScriptFile } from "../../app/main/commands/run/inspect";
 import { findGit, GIT_ARGV, GIT_FACTS_MS, readGitFacts, type GitRun } from "../../app/main/commands/run/git-facts";
 
 const ember: RunnerFacts["ember"] = { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ };
@@ -239,6 +239,25 @@ describe("readScriptText", () => {
     const atCap = openFs({ "/x/s.sh": { bytes: bytesOf("echo " + "a".repeat(MAX_SCRIPT_BYTES)) } }) as InspectFs;
     const text = await readScriptText("/x/s.sh", "/", { os: "linux", fs: atCap });
     expect(text).toBeNull(); // over the cap once "echo " is added
+  });
+
+  it("never opens a POSIX device or process file (a stream, or Ember's own descriptors)", async () => {
+    const opened: string[] = [];
+    const fs: InspectFs = { ...(openFs({}) as InspectFs), open: async p => { opened.push(p); throw new Error("ENOENT"); } };
+    for (const p of ["/dev/fd/3", "/proc/self/fd/0", "/dev/stdin", "/proc/1/environ"]) {
+      await expect(readScriptText(p, "/", { os: "linux", fs }), p).resolves.toBeNull();
+    }
+    await expect(readScriptText("../../dev/tty", "/home/ana", { os: "linux", fs })).resolves.toBeNull();
+    expect(opened).toEqual([]);
+  });
+
+  it("decodes UTF-8 and UTF-16 by their byte order mark, keeping the mark (a shell doesn't skip it)", () => {
+    expect(decodeScript(bytesOf("echo hi\n"))).toBe("echo hi\n");
+    expect(decodeScript(Uint8Array.from([0xef, 0xbb, 0xbf, 0x23, 0x21]))).toBe("\uFEFF#!");
+    expect(decodeScript(Uint8Array.from([0xff, 0xfe, 0x72, 0x00, 0x6d, 0x00]))).toBe("\uFEFFrm");
+    expect(decodeScript(Uint8Array.from([0xfe, 0xff, 0x00, 0x72, 0x00, 0x6d]))).toBe("\uFEFFrm");
+    // A bad byte doesn't swallow the separators after it.
+    expect(decodeScript(Uint8Array.from([0x72, 0xff, 0x20, 0x2d, 0x66]))).toBe("r\uFFFD -f");
   });
 
   it("returns null when the filesystem can't open a file (no readScript capability)", async () => {

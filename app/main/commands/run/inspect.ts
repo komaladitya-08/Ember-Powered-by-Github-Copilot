@@ -45,7 +45,10 @@ const NODE_FS: InspectFs = {
   realpath: p => fs.promises.realpath(p),
   readlink: p => fs.promises.readlink(p),
   open: async p => {
-    const fh = await fs.promises.open(p, "r");
+    // Never blocks on a FIFO (it would hold one of libuv's few threads until something writes to it) and never takes
+    // a terminal as Ember's own: both are refused below as not regular files.
+    const c = fs.constants;
+    const fh = await fs.promises.open(p, c.O_RDONLY | (c.O_NONBLOCK ?? 0) | (c.O_NOCTTY ?? 0));
     return {
       stat: async () => fh.stat(),
       read: async n => { const buf = Buffer.alloc(n); const { bytesRead } = await fh.read(buf, 0, n, 0); return buf.subarray(0, bytesRead); },
@@ -124,9 +127,9 @@ export const MAX_SCRIPT_BYTES = 64 * 1024;
 
 /**
  * The text of a shell script Ember is about to run, so the classifier can judge what it does (L8, the lead's ruling):
- * the target's own filesystem, a regular file no larger than `maxBytes`, decoded as UTF-8. Never throws; null when the
- * path can't be read, is too big, isn't a regular file, or reaches another host (a UNC or device path on Windows).
- * Paths follow the target's rules; a relative one is joined to `cwd`.
+ * the target's own filesystem, a regular file no larger than `maxBytes` (decodeScript). Never throws; null when the
+ * path can't be read, is too big, isn't a regular file, reaches another host (a UNC or device path on Windows) or is
+ * a POSIX device or process file. Paths follow the target's rules; a relative one is joined to `cwd`.
  */
 export async function readScriptText(path: string, cwd: string, o: { os: OS; maxBytes?: number; fs?: InspectFs }): Promise<string | null> {
   const P = o.os === "win32" ? win32 : posix;
@@ -137,8 +140,10 @@ export async function readScriptText(path: string, cwd: string, o: { os: OS; max
   if (P.isAbsolute(path)) abs = P.normalize(path);
   else if (P.isAbsolute(cwd)) abs = P.join(cwd, path);
   else return null;
-  // A UNC or device path would open a connection to another host before the user was asked (as inspect avoids).
+  // A UNC or device path would open a connection to another host before the user was asked (as inspect avoids); a
+  // POSIX device or process file is a stream (and /proc/self, /dev/fd would be Ember's own).
   if (o.os === "win32" && /^[\\/]{2}/.test(abs)) return null;
+  if (o.os !== "win32" && /^\/(dev|proc)(\/|$)/.test(abs)) return null;
   if (!files.open) return null;
   let fh: ScriptFile | null = null;
   try {
@@ -146,10 +151,25 @@ export async function readScriptText(path: string, cwd: string, o: { os: OS; max
     const st = await fh.stat();
     if (!st.isFile() || st.size > maxBytes) return null;
     const bytes = await fh.read(Math.min(st.size, maxBytes));
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return decodeScript(bytes);
   } catch {
     return null; // missing, unreadable, or not a file: today's behaviour (L8) unchanged
   } finally {
     if (fh) await fh.close().catch(() => undefined);
   }
+}
+
+/**
+ * A script's bytes as text, its byte order mark kept as U+FEFF (a POSIX shell doesn't skip one, so `#!` after it is
+ * no `#!` line; the flow drops it for PowerShell, which does): UTF-16 with its mark, else UTF-8 (a bad byte becomes
+ * U+FFFD and the bytes after it are kept, so the words and separators a shell sees stay the same).
+ */
+export function decodeScript(bytes: Uint8Array): string {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le", { ignoreBOM: true }).decode(bytes);
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const swapped = new Uint8Array(bytes.length - (bytes.length % 2));
+    for (let k = 0; k + 1 < bytes.length; k += 2) { swapped[k] = bytes[k + 1]; swapped[k + 1] = bytes[k]; }
+    return new TextDecoder("utf-16le", { ignoreBOM: true }).decode(swapped);
+  }
+  return new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes);
 }

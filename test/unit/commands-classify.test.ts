@@ -179,19 +179,57 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
   const scripts = (cmd: string, shell: "bash" | "zsh" | "sh" | "powershell" | "cmd", ctx: "linux" | "win32") =>
     (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts;
 
-  it("records the shell scripts a command runs by path, with how to read each", () => {
-    expect(scripts("sh t.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/t.sh", as: "sh" }]);
-    expect(scripts("bash ./scripts/deploy.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/scripts/deploy.sh", as: "sh" }]);
-    expect(scripts("zsh x.zsh", "zsh", "linux")).toEqual([{ path: "/home/ana/proj/x.zsh", as: "zsh" }]);
-    expect(scripts("dash x.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/x.sh", as: "sh" }]);
-    expect(scripts("source env.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/env.sh", as: "sh" }]);
-    expect(scripts(". ./env.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/env.sh", as: "sh" }]);
-    expect(scripts("./deploy.sh", "bash", "linux")).toEqual([{ path: "/home/ana/proj/deploy.sh", as: "shebang" }]);
-    expect(scripts("powershell -File deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
-    expect(scripts(".\\deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
-    expect(scripts("& .\\deploy.ps1", "powershell", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\deploy.ps1", as: "powershell" }]);
-    expect(scripts("cmd /c build.bat", "cmd", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\build.bat", as: "cmd" }]);
-    expect(scripts("build.bat", "cmd", "win32")).toEqual([{ path: "C:\\Users\\ana\\proj\\build.bat", as: "cmd" }]);
+  it("records the shell scripts a command runs by path, with how to read each and the folder each runs in", () => {
+    const P = "/home/ana/proj";
+    const W = "C:\\Users\\ana\\proj";
+    expect(scripts("sh t.sh", "bash", "linux")).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P }]);
+    expect(scripts("bash ./scripts/deploy.sh", "bash", "linux")).toEqual([{ path: `${P}/scripts/deploy.sh`, as: "bash", cwd: P }]);
+    expect(scripts("zsh x.zsh", "zsh", "linux")).toEqual([{ path: `${P}/x.zsh`, as: "zsh", cwd: P }]);
+    expect(scripts("dash x.sh", "bash", "linux")).toEqual([{ path: `${P}/x.sh`, as: "sh", cwd: P }]);
+    // A sourced script runs in the shell that sources it.
+    expect(scripts("source env.sh", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "bash", cwd: P }]);
+    expect(scripts(". ./env.sh", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "bash", cwd: P }]);
+    expect(scripts("sh -c '. ./env.sh'", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "sh", cwd: P }]);
+    expect(scripts("./deploy.sh", "bash", "linux")).toEqual([{ path: `${P}/deploy.sh`, as: "shebang", cwd: P }]);
+    // It runs in the command's folder, not beside the script (its relative paths resolve there).
+    expect(scripts("cd sub && sh ../tools/t.sh", "bash", "linux")).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub` }]);
+    // Through a wrapper, and from stdin.
+    for (const cmd of ["env FOO=1 ./x.sh", "exec ./x.sh", "nice ./x.sh", "timeout 5 ./x.sh", "command ./x.sh"]) {
+      expect(scripts(cmd, "bash", "linux"), cmd).toEqual([{ path: `${P}/x.sh`, as: "shebang", cwd: P }]);
+    }
+    expect(scripts("bash < x.sh", "bash", "linux")).toEqual([{ path: `${P}/x.sh`, as: "bash", cwd: P }]);
+    expect(scripts("sh -s < x.sh", "bash", "linux")).toEqual([{ path: `${P}/x.sh`, as: "sh", cwd: P }]);
+    expect(scripts("powershell -File deploy.ps1", "powershell", "win32")).toEqual([{ path: `${W}\\deploy.ps1`, as: "powershell", cwd: W }]);
+    expect(scripts(".\\deploy.ps1", "powershell", "win32")).toEqual([{ path: `${W}\\deploy.ps1`, as: "powershell", cwd: W }]);
+    expect(scripts("& .\\deploy.ps1", "powershell", "win32")).toEqual([{ path: `${W}\\deploy.ps1`, as: "powershell", cwd: W }]);
+    // PowerShell runs `.\\deploy` as deploy.ps1, else deploy.bat or deploy.cmd; cmd runs `build` as build.bat or build.cmd.
+    expect(scripts(".\\deploy", "powershell", "win32")).toEqual([
+      { path: `${W}\\deploy.ps1`, as: "powershell", cwd: W }, { path: `${W}\\deploy.bat`, as: "cmd", cwd: W }, { path: `${W}\\deploy.cmd`, as: "cmd", cwd: W },
+    ]);
+    expect(scripts("cmd /c build.bat", "powershell", "win32")).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+    expect(scripts("build.bat", "cmd", "win32")).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+    expect(scripts("build", "cmd", "win32")).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }, { path: `${W}\\build.cmd`, as: "cmd", cwd: W }]);
+  });
+
+  it("asks when what would run can't be read first: a pattern, a stream, a script this command writes, too many", () => {
+    const rules = (cmd: string, shell: "bash" | "powershell" | "cmd" = "bash", ctx: "linux" | "win32" = "linux") =>
+      classifyCommand(cmd, shell, contextOf(ctx)).findings.map(f => f.rule);
+    for (const cmd of ["sh *.sh", "./t*.sh", "source t?.sh", ". ./*.sh"]) expect(rules(cmd), cmd).toContain("unclear.script-pattern");
+    for (const cmd of ["sh /dev/fd/3 3<t.sh", "sh /proc/self/fd/0 < t.sh"]) expect(rules(cmd), cmd).toContain("unclear.script-stream");
+    // The lead's own examples, and every way a known program writes the script before it runs.
+    for (const cmd of [
+      "echo 'rm -rf build' > t.sh; sh t.sh", "echo 'cat ~/.ssh/id_rsa' > t.sh; sh t.sh", "printf 'rm -rf build' > t.sh && chmod +x t.sh && ./t.sh",
+      "sed -i 's/a/b/' t.sh; sh t.sh", "echo x >> t.sh; bash t.sh", "cp a.sh t.sh && sh t.sh", "mv a.sh t.sh && ./t.sh", "tee t.sh < a; sh t.sh",
+      "mkfifo t.sh && sh t.sh", "cp -r tmpl/ scripts && sh scripts/t.sh", "tar xf a.tar && sh t.sh", "unzip a.zip && ./t.sh", "patch -p1 < p.diff && sh t.sh",
+      "git apply p.diff && sh t.sh", "git -C . checkout other && ./t.sh", "gunzip t.sh.gz && sh t.sh", "for i in 1 2; do sh t.sh; echo 'rm -rf build' > t.sh; done",
+    ]) expect(rules(cmd), cmd).toContain("unclear.script-written");
+    expect(rules("git pull; .\\build", "powershell", "win32")).toContain("unclear.script-written");
+    // Permissions, an empty new file, or a writer that runs before nothing it wrote don't count.
+    for (const cmd of ["chmod +x t.sh && ./t.sh", "touch t.sh && sh t.sh", "sh t.sh && tar czf out.tgz dist", "git status && ./t.sh"]) {
+      expect(rules(cmd), cmd).not.toContain("unclear.script-written");
+    }
+    expect(rules("git pull", "cmd", "win32")).toEqual([]);
+    expect(rules(Array.from({ length: 17 }, (_, k) => `sh s${k}.sh`).join("; "))).toContain("unclear.scripts");
   });
 
   it("records no script for an interpreter, a downloaded file, `sh -c`, or stdin", () => {

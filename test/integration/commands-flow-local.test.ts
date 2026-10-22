@@ -350,6 +350,29 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(fs.existsSync(path.join(w.work, "build", "out.o"))).toBe(true);
   }, 20_000);
 
+  it("reads `./t.sh` with no #! line, which the shell runs itself: a delete in it asks", async () => {
+    w.verdicts = () => "deny";
+    const file = path.join(w.work, "t.sh");
+    fs.writeFileSync(file, "rm -rf build\n");
+    fs.chmodSync(file, 0o755);
+    const { result } = await run("./t.sh", "");
+    expect(w.announced).toEqual([]);
+    expect(w.cards).toHaveLength(1);
+    expect(result).toMatchObject({ resultType: "denied" });
+    expect(fs.existsSync(path.join(w.work, "build", "out.o"))).toBe(true);
+  }, 20_000);
+
+  it("never waits on a FIFO named like a script: reading it gives nothing at once", async () => {
+    const fifo = path.join(w.work, "pipe.sh");
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("mkfifo", [fifo]);
+    const { readScriptText } = await import("../../app/main/commands/run/inspect");
+    const started = Date.now();
+    await expect(readScriptText(fifo, w.work, { os: platform })).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(2000);
+    fs.rmSync(fifo);
+  }, 20_000);
+
   it("runs an ordinary `sh ok.sh` without asking", async () => {
     fs.writeFileSync(path.join(w.work, "ok.sh"), "#!/bin/sh\necho hello from the script\n");
     const { result } = await run("sh ok.sh", "");

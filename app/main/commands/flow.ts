@@ -30,6 +30,7 @@ import { classifyCommand, type ClassificationExtra, type ScriptRef } from "./cla
 import { LINES, decideCommand } from "./decide";
 import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
+import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -286,62 +287,134 @@ async function factsOf(ctx: CommandFlowContext): Promise<RunnerFacts | null> {
   return facts;
 }
 
-/** The shell a script's `#!` line names (L8): a POSIX shell, PowerShell, or null (not a shell script → L8 unchanged). */
-function shebangShell(text: string): ShellId | null {
-  const m = /^#![ \t]*(\S+)(?:[ \t]+(\S+))?/.exec(text);
-  if (!m) return null;
-  // `#!/usr/bin/env bash` names the shell in the second word; otherwise the interpreter's basename.
-  const prog = (/\/env$/.test(m[1]) || m[1] === "env" ? m[2] ?? "" : m[1]).split(/[\\/]/).pop() ?? "";
-  const name = prog.toLowerCase().replace(/\.exe$/, "");
-  if (name === "bash" || name === "zsh") return name;
-  if (name === "sh" || name === "dash" || name === "ash" || name === "ksh") return "sh";
-  if (name === "pwsh" || name === "powershell") return "powershell";
-  return null;
+/** How the flow reads a script's text (L8, the lead's ruling). */
+export type ScriptLanguage =
+  /** Classify the text in each of these shells (`sh` is dash on some systems and bash on others: both). */
+  | { kind: "shells"; shells: ShellId[] }
+  /** A shell whose language Ember can't read (fish, csh…): the command asks. */
+  | { kind: "unclear"; says: string }
+  /** The `#!` line names an interpreter by path that may itself be a script: read that next. */
+  | { kind: "follow"; path: string }
+  /** Not a shell script (a program, a Python or Node script): today's behaviour (L8) unchanged. */
+  | { kind: "none" };
+
+const BOTH_SH: ShellId[] = ["sh", "bash"];
+
+/**
+ * How to read a script's text, given how the command runs it (ScriptRef.as). Run directly ("shebang"), the kernel
+ * reads the `#!` line (`#!/usr/bin/env -S bash -e` names bash); a text file without one is run by the calling shell
+ * (bash and zsh do that when exec says it isn't a program), and one with a NUL in its first line is a program.
+ */
+export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguage {
+  switch (as) {
+    case "bash": case "zsh": return { kind: "shells", shells: [as] };
+    case "sh": return { kind: "shells", shells: BOTH_SH };
+    case "powershell": return { kind: "shells", shells: ["powershell"] };
+    case "cmd": return { kind: "shells", shells: ["cmd"] };
+    case "shebang": break;
+  }
+  if (!text.startsWith("#!")) {
+    const first = text.slice(0, 80).split("\n")[0];
+    return first.includes("\0") ? { kind: "none" } : { kind: "shells", shells: BOTH_SH };
+  }
+  const words = text.slice(2).split("\n")[0].trim().split(/[ \t]+/);
+  let prog = words[0] ?? "";
+  const baseOf = (w: string): string => (w.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.exe$/, "");
+  if (baseOf(prog) === "env") {
+    // env's options (-S splits the rest into words, -i, -u NAME) and NAME=value assignments come before the program.
+    let k = 1;
+    for (; k < words.length; k++) {
+      const w = words[k];
+      if (/^-[A-Za-z]*S./.test(w)) { words[k] = w.replace(/^-[A-Za-z]*S/, ""); break; }
+      if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") { k++; continue; }
+      if (!w.startsWith("-") && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) break;
+    }
+    prog = words[k] ?? "";
+  }
+  const name = baseOf(prog);
+  const posixShell = POSIX_SHELLS[name];
+  if (posixShell) return { kind: "shells", shells: posixShell === "sh" ? BOTH_SH : [posixShell] };
+  if (name === "pwsh" || name === "powershell") return { kind: "shells", shells: ["powershell"] };
+  if (OTHER_SHELLS.has(name)) return { kind: "unclear", says: `It runs a ${name} script, which Ember can't read.` };
+  // An interpreter by path is followed (a script there runs this one); a program there isn't a script and stops.
+  if (prog.startsWith("/") && baseOf(words[0] ?? "") !== "env") return { kind: "follow", path: prog };
+  return { kind: "none" };
 }
 
-/** How to read a script's text, given the way the command runs it (ScriptRef.as) and its `#!` line for a direct run. */
-function scriptShell(as: ScriptRef["as"], text: string): ShellId | null {
-  switch (as) {
-    case "bash": return "bash";
-    case "zsh": return "zsh";
-    case "sh": return "sh";
-    case "powershell": return "powershell";
-    case "cmd": return "cmd";
-    case "shebang": return shebangShell(text);
-  }
-}
+/** At most this many scripts are read for one command, nested ones included; at most this deep. More asks. */
+const MAX_SCRIPT_READS = 16;
+const MAX_SCRIPT_DEPTH = 4;
 
 /**
  * Reads each shell script the command runs and classifies its text as a nested command (L8, the lead's ruling): the
- * script's own refusal and findings join the command's, the findings tagged "in-script" so the user's words for the
- * command never announce the script (every dangerous script asks). The runner may not read scripts (a remote or WSL
- * runner today): then nothing is read and the command's own classification stands, as the ruling allows.
+ * script's own refusal, findings and downloads join the command's, and so do those of the scripts it runs in turn.
+ * Findings are tagged "in-script" (and say which script) so the user's words for the command never announce a
+ * script: every dangerous script asks. A script runs in the command's folder, so its relative paths resolve there.
+ * Each script's paths are inspected as the command's are (§3.8.3 step 5: an overwrite of a file that isn't there is
+ * dropped, a symbolic link is judged by where it leads), and their facts join the decision's.
+ * The runner may not read scripts (a remote or WSL runner today): then nothing is read and the command's own
+ * classification stands, as the ruling allows; so does a script that can't be read, is too big or isn't a shell's.
  */
 async function judgeScripts(cls: Classification, runner: CommandRunner, j: CommandJudge, env: {
-  os: OS; home: string; ember: RunnerFacts["ember"]; wsl: RunnerFacts["wsl"]; downloaded: Set<string>;
+  os: OS; home: string; ember: ClassifyContext["ember"]; wsl: RunnerFacts["wsl"]; downloaded: Set<string>; paths: Map<string, PathFact>;
+  /** The task was stopped (Stop, the kill switch): read no more. */
+  isOver: () => boolean;
 }): Promise<Classification> {
   const refs = (cls as Partial<ClassificationExtra>).scripts ?? [];
   const read = (runner as CommandRunner & { readScript?(path: string, cwd: string): Promise<string | null> }).readScript;
   if (refs.length === 0 || typeof read !== "function") return cls;
   const flavour = env.os === "win32" ? win32 : posix;
   const extra: Finding[] = [];
+  const downloads: string[] = [];
   let refuse = cls.refuse;
-  for (const ref of refs) {
-    const text = await read.call(runner, ref.path, flavour.dirname(ref.path)).catch(() => null);
-    if (text === null || text === "") continue;
-    const shell = scriptShell(ref.as, text);
-    if (shell === null) continue; // not a shell script: today's behaviour (L8) unchanged
-    const dir = flavour.dirname(ref.path);
+  const unclear = (rule: string, says: string): void => {
+    if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening: ["in-script"], at: -1 });
+  };
+  const queue = refs.map(ref => ({ ref, depth: 1 }));
+  const seen = new Set<string>();
+  let reads = 0;
+  while (queue.length > 0 && !env.isOver()) {
+    const { ref, depth } = queue.shift()!;
+    const key = `${ref.as}\0${ref.path}\0${ref.cwd}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (depth > MAX_SCRIPT_DEPTH || ++reads > MAX_SCRIPT_READS) {
+      unclear("unclear.scripts", "It runs more scripts, or scripts deeper inside scripts, than Ember reads first.");
+      break;
+    }
+    const raw = await within(read.call(runner, ref.path, ref.cwd || flavour.dirname(ref.path)), PROBE_MS, null);
+    if (typeof raw !== "string" || raw === "") continue;
+    // PowerShell skips a byte order mark; a POSIX shell or cmd reads it as part of the first word (it stays, and asks).
+    const text = ref.as === "powershell" ? raw.replace(/^\uFEFF/, "") : raw;
+    const lang = scriptLanguage(ref.as, text);
+    if (lang.kind === "none") continue;
+    if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says); continue; }
+    if (lang.kind === "follow") { queue.push({ ref: { path: lang.path, as: "shebang", cwd: ref.cwd }, depth: depth + 1 }); continue; }
+    const name = flavour.basename(ref.path);
     const sctx: ClassifyContext = {
-      os: env.os, home: env.home, cwd: dir, ember: env.ember, downloaded: env.downloaded,
+      os: env.os, home: env.home, cwd: ref.cwd, ember: env.ember, downloaded: env.downloaded,
       ...(env.wsl ? { wsl: { mountRoot: env.wsl.mountRoot, windows: env.wsl.windows } } : {}),
     };
-    const inner = j.classifyCommand(text, shell, sctx);
-    refuse ??= inner.refuse;
-    for (const f of inner.findings) extra.push({ ...f, widening: [...f.widening, "in-script"] });
+    for (const shell of lang.shells) {
+      let inner = j.classifyCommand(text, shell, sctx);
+      const wanted = [...new Set([...inner.probe, ...inner.findings.flatMap(f => (f.ifExists === undefined ? [] : [f.ifExists]))])].slice(0, 64);
+      const probe = wanted.filter(p => !env.paths.has(p));
+      const found = await inspect(runner, probe, ref.cwd || flavour.dirname(ref.path));
+      probe.forEach((p, i) => env.paths.set(p, found[i]));
+      const real = new Map<string, string>();
+      for (const p of wanted) { const r = env.paths.get(p)?.real ?? null; if (r !== null && r !== p) real.set(p, r); }
+      if (real.size) inner = j.classifyCommand(text, shell, { ...sctx, real });
+      refuse ??= inner.refuse;
+      for (const f of inner.findings) {
+        const says = `In ${name}: ${f.says}`;
+        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script"] });
+      }
+      downloads.push(...inner.downloads);
+      for (const next of (inner as Partial<ClassificationExtra>).scripts ?? []) queue.push({ ref: next, depth: depth + 1 });
+    }
   }
-  if (!refuse && extra.length === 0) return cls;
-  return { ...cls, refuse, findings: [...cls.findings, ...extra] };
+  if (!refuse && extra.length === 0 && downloads.length === 0) return cls;
+  return { ...cls, refuse, findings: [...cls.findings, ...extra], downloads: [...new Set([...cls.downloads, ...downloads])] };
 }
 
 /** Each path's facts, all unknown when the target doesn't answer in time (§3.8.3 step 5). */
@@ -662,7 +735,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // Step 6b (L8, the lead's ruling): a shell script the command runs (`sh x.sh`, `./x.sh`, `cmd x.bat`, `powershell
   // -File x.ps1`) is read from the target and its text classified as a nested command, so a dangerous script asks and
   // a refusal refuses. Unreadable, too big or not a shell script leaves today's behaviour.
-  cls = await judgeScripts(cls, svc.runner, j, { os: facts.os, home: facts.home, ember: facts.ember, wsl: facts.wsl, downloaded: ctx.state.downloaded });
+  cls = await judgeScripts(cls, svc.runner, j, { os: facts.os, home, ember, wsl: facts.wsl, downloaded: ctx.state.downloaded, paths, isOver: () => ctx.isOver() });
   if (ctx.isOver()) return STOPPED();
 
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.
