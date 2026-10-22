@@ -1170,30 +1170,27 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       rebuild();
       const words = typeof o.userWords === "string" ? o.userWords : "";
       const usableNamed = targetsNamed(words, namedTargets(entries), deps.os);
-      if (!usableNamed.length) {
-        // A place the user named that Ember lists but can't work in yet (WSL off, a distro to set up): say why.
+      // "WSL", "Linux" and a distro's name name a place only while WSL is on for Ember (§2.3 rule 5). While it is off,
+      // not installed or not allowed, they are words of the request ("search for how to install Python on Linux") and
+      // the task binds as any other: refusing them would stop ordinary requests on every Windows PC without WSL set up.
+      if (!usableNamed.length && wsl && wslOn()) {
+        // A place the user named that Ember lists but can't work in yet (a distro to set up first): say why.
         const listed = entries.filter(e => e.listedOnly);
         const hit = targetsNamed(words, listed.map(e => ({ id: e.id, names: e.names })), deps.os)[0];
         const e = hit ? entryOf(hit) : null;
-        if (e) {
-          if (e.kind === "wsl" && !wslOn()) offerWsl();
-          return refuse(e.why ?? NOT_NAMED);
-        }
-        // "In WSL" on a Windows PC where Ember has no distros listed (WSL off and not looked at yet, or none found).
+        if (e) return refuse(e.why ?? NOT_NAMED);
+        // "In WSL" while Ember has no distro listed (not looked at yet, or none found).
         if (deps.os === "win32" && !entries.some(x => x.kind === "wsl") && targetsNamed(words, [{ id: "wsl:WSL", names: [...WSL_WORDS] }], deps.os).length) {
-          if (!wslAllowed(admin())) return refuse("Your organisation doesn't allow Ember to work in WSL.");
-          if (!wsl) return refuse("WSL isn't installed on this computer.");
           // Discovery has looked and found no distro Ember could use (WSL's installer alone, or only tools' distros).
-          const none = "WSL has no Linux distro Ember can use on this computer.";
-          if (wslFacts && !defaultDistro(wslFacts)) return refuse(none);
-          if (!wslOn()) {
-            // "Ember can work in WSL" only once discovery shows a distro to work in (it reads the registry; nothing starts).
-            void refreshWsl().then(() => { if (defaultDistro(wslFacts)) offerWsl(); });
-            return refuse("WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers).");
-          }
+          if (wslFacts && !defaultDistro(wslFacts)) return refuse("WSL has no Linux distro Ember can use on this computer.");
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
+      } else if (!usableNamed.length && wsl && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
+        // The user said "in WSL" while it is off for Ember: the task goes on where Ember is set to work, and "Ember can
+        // work in WSL" is offered (once a run), only once discovery shows a distro to work in (it reads the registry;
+        // nothing starts). Never for "Linux" alone, which is as often what a request is about as where it should run.
+        void refreshWsl().then(() => { if (!wslOn() && defaultDistro(wslFacts)) offerWsl(); });
       }
       const r = bindTarget({ userWords: words, ...(o.choice !== undefined ? { choice: o.choice } : {}), targets: namedTargets(entries), active: activeId(), os: deps.os });
       if (!r.ok) return r;

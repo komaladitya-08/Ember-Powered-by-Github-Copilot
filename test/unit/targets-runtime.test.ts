@@ -801,21 +801,57 @@ describe("WSL targets", () => {
     expect(r.t.agent.caps()).toEqual({ commands: true, targets: true });
   });
 
-  it("refuses 'in WSL' while WSL is off in Ember, and offers to turn it on (once a run)", async () => {
+  it("binds 'in WSL' where Ember is set to work while WSL is off in Ember, and offers to turn it on (once a run)", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
     await flush();
     const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
-    expect(b).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
+    expect(b.ok && b.binding.id).toBe("local");
     // Offered once discovery has shown a distro to work in.
     await flush();
     expect(r.wsl.facts).toHaveBeenCalled();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
     r.showState.mockClear();
-    expect(r.t.agent.bind({ userWords: "open gedit in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. The user can turn it on in Ember's settings (Computers)." });
+    const again = r.t.agent.bind({ userWords: "open gedit in WSL" });
+    expect(again.ok && again.binding.id).toBe("local");
     await flush();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
+  });
+
+  it("takes 'on Linux', 'in WSL' and a distro's name as words of the request while WSL is off, not installed or not allowed", async () => {
+    const asks = ["Open Edge and search for how to install Python on Linux", "Show me how to open a PDF in WSL", "in Ubuntu, how do I list my files?", "what's on the Linux side of my disk?"];
+    const setups: RigOptions[] = [
+      { os: "win32", wslFacts: wslFacts([ubuntu()]) }, // installed, never turned on in Ember (the default)
+      { os: "win32", wslFacts: { ...wslFacts([]), installed: false } }, // not installed
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin: policy({ features: { wsl: false } }) }, // not allowed
+    ];
+    for (const o of setups) {
+      const r = rig(o);
+      await flush();
+      // "Linux" alone never brings up the WSL offer.
+      r.t.agent.bind({ userWords: "search for how to install Python on Linux" });
+      await flush();
+      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+      for (const words of asks) {
+        const b = r.t.agent.bind({ userWords: words });
+        expect(b.ok && b.binding.id, `${JSON.stringify(o.wslFacts?.installed)} ${words}`).toBe("local");
+      }
+    }
+  });
+
+  it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
+    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
+    const b = r.t.agent.bind({ userWords: "list my files in WSL" });
+    expect(b.ok && b.binding.id).toBe("local");
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+  });
+
+  it("with WSL on, still says why it can't work in WSL when discovery found no distro to work in", async () => {
+    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: true }, settings: wslOnSettings });
+    await flush();
+    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL has no Linux distro Ember can use on this computer." });
   });
 
   it("says in the active line which distro 'WSL' means when the default one is hidden (§2.3 rule 5)", async () => {
@@ -828,16 +864,6 @@ describe("WSL targets", () => {
     const plain = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { ...wslOnSettings, ...commandsOn("wsl:Ubuntu") } });
     await flush();
     expect(plain.t.agent.activeLine()).not.toContain("\"WSL\" means");
-  });
-
-  it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
-    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
-    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
-    await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
-    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL has no Linux distro Ember can use on this computer." });
-    await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
   });
 
   it("never offers a distro still to be set up, and says how to set it up", async () => {
