@@ -1224,6 +1224,13 @@ namespace Ember.Uia
     [DllImport("user32.dll")]
     internal static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr w, IntPtr l, uint flags, uint timeoutMs, out IntPtr result);
 
+    // Queues a message and returns at once: never waits for the window's thread.
+    [DllImport("user32.dll")]
+    internal static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr w, IntPtr l);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetParent(IntPtr hwnd);
+
     [DllImport("dwmapi.dll")]
     internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 
@@ -1979,6 +1986,58 @@ namespace Ember.Uia
   /// API (UiaGetPropertyValue, UiaGetPatternProvider) on the node the .NET element wraps. When that node can't be
   /// reached, the legacy facts are simply missing.
   /// </summary>
+  /// <summary>
+  /// Classic list boxes (the Win32 "ListBox" class and WinForms' ListBox). .NET's client-side proxy selects an item of
+  /// a single-selection list box with LB_SETCURSEL alone, which doesn't tell the app: a click makes the list box send
+  /// its parent WM_COMMAND with LBN_SELCHANGE (when it has LBS_NOTIFY), and apps act on that (WinForms raises
+  /// SelectedIndexChanged from it). The real runner showed the selection change while the app heard nothing, so after
+  /// a select that changed it the bridge sends the same notification a click would, posted (it never waits for the app).
+  /// </summary>
+  internal static class ListBoxes
+  {
+    private const int GwlStyle = -16;
+    private const int GwlId = -12;
+    private const int LbsNotify = 0x0001;
+    private const int LbsMultipleSel = 0x0008;
+    private const int LbsExtendedSel = 0x0800;
+    private const uint WmCommand = 0x0111;
+    private const int LbnSelChange = 1;
+
+    /// <summary>The window of the classic single-selection list box with LBS_NOTIFY this item is in, else zero.</summary>
+    internal static IntPtr NotifyingSingle(SelectionItemPattern item)
+    {
+      try
+      {
+        AutomationElement container = item.Current.SelectionContainer;
+        if (container == null) return IntPtr.Zero;
+        IntPtr hwnd = new IntPtr(container.Current.NativeWindowHandle);
+        if (hwnd == IntPtr.Zero) return IntPtr.Zero;
+        StringBuilder name = new StringBuilder(256);
+        Native.GetClassNameW(hwnd, name, name.Capacity);
+        string cls = name.ToString();
+        bool classic = string.Equals(cls, "ListBox", StringComparison.OrdinalIgnoreCase)
+          || cls.StartsWith("WindowsForms10.LISTBOX.", StringComparison.OrdinalIgnoreCase);
+        if (!classic) return IntPtr.Zero;
+        int style = Native.GetWindowLongW(hwnd, GwlStyle);
+        if ((style & LbsNotify) == 0 || (style & (LbsMultipleSel | LbsExtendedSel)) != 0) return IntPtr.Zero;
+        return hwnd;
+      }
+      catch (Exception)
+      {
+        return IntPtr.Zero; // not a list box the bridge can tell about: the select goes ahead as before
+      }
+    }
+
+    /// <summary>Tells the list box's parent its selection changed, as the list box does after a click.</summary>
+    internal static void SelectionChanged(IntPtr list)
+    {
+      IntPtr parent = Native.GetParent(list);
+      if (parent == IntPtr.Zero) return;
+      int id = Native.GetWindowLongW(list, GwlId) & 0xFFFF;
+      Native.PostMessageW(parent, WmCommand, new IntPtr((LbnSelChange << 16) | id), list);
+    }
+  }
+
   internal static class Legacy
   {
     private const int ControlTypePropertyId = 30003;
@@ -2859,7 +2918,15 @@ namespace Ember.Uia
       {
         case "invoke": ((InvokePattern)Pattern(el, InvokePattern.Pattern, op)).Invoke(); break;
         case "toggle": ((TogglePattern)Pattern(el, TogglePattern.Pattern, op)).Toggle(); break;
-        case "select": ((SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op)).Select(); break;
+        case "select":
+          {
+            SelectionItemPattern item = (SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op);
+            IntPtr list = ListBoxes.NotifyingSingle(item);
+            bool was = list != IntPtr.Zero && item.Current.IsSelected;
+            item.Select();
+            if (list != IntPtr.Zero && !was) ListBoxes.SelectionChanged(list);
+            break;
+          }
         case "addToSelection": ((SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op)).AddToSelection(); break;
         case "removeFromSelection": ((SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op)).RemoveFromSelection(); break;
         case "expand": ((ExpandCollapsePattern)Pattern(el, ExpandCollapsePattern.Pattern, op)).Expand(); break;

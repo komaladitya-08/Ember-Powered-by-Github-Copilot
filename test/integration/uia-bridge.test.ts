@@ -403,7 +403,8 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
   });
 
   it("selects Banana in the Fruit list through SelectionItemPattern, and the bench is told", async () => {
-    // The list box proxy sends the app LBN_SELCHANGE, as a click would: the app's own selection event runs.
+    // .NET's list box proxy selects with LB_SETCURSEL alone; the bridge then sends LBN_SELCHANGE, as a click would, so
+    // the app's own selection event runs.
     const fruit = control(nodes, "List", "Fruit");
     const banana = nodes.find(n => n.parent === nodes.indexOf(fruit) && n.name === "Banana");
     expect(banana, "the Banana item").toBeTruthy();

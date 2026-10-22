@@ -163,24 +163,38 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
       $shell.Open('C:\\Windows')
       $win = $null
       for ($i = 0; $i -lt 100 -and -not $win; $i++) { Start-Sleep -Milliseconds 150; $win = Find-Top 'CabinetWClass' '*Windows*' }
-      $address = @(); $band = @()
+      function Describe($e) { '{0} "{1}" class "{2}" id "{3}" offscreen {4}' -f $e.Current.ControlType.ProgrammaticName, $e.Current.Name, $e.Current.ClassName, $e.Current.AutomationId, $e.Current.IsOffscreen }
+      $address = @(); $band = @(); $edits = @()
       if ($win) {
-        $address = @($win.FindAll($T::Descendants, (Where-Is ($A::AutomationIdProperty) '41477')) | ForEach-Object { $_.Current.Name })
-        $root = $win.FindFirst($T::Descendants, (Where-Is ($A::NameProperty) 'Address Band Root'))
-        if ($root) { $band = @($root.FindAll($T::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) }
+        # A new window builds its address band after it shows: looked at until the band has names (10 s at most).
+        $bandRoot = New-Object System.Windows.Automation.OrCondition((Where-Is ($A::NameProperty) 'Address Band Root'), (Where-Is ($A::ClassNameProperty) 'Address Band Root'))
+        for ($i = 0; $i -lt 40; $i++) {
+          $address = @($win.FindAll($T::Descendants, (Where-Is ($A::AutomationIdProperty) '41477')) | ForEach-Object { $_.Current.Name })
+          $root = $win.FindFirst($T::Descendants, $bandRoot)
+          if ($root) { $band = @($root.FindAll($T::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) }
+          if ($band.Count -gt 0 -and -not ($address | Where-Object { -not $_ })) { break }
+          Start-Sleep -Milliseconds 250
+        }
+        $edits = @($win.FindAll($T::Descendants, (Where-Is ($A::ControlTypeProperty) ([System.Windows.Automation.ControlType]::Edit))) | ForEach-Object { Describe $_ })
+        $edits += @($win.FindAll($T::Descendants, (Where-Is ($A::AutomationIdProperty) '41477')) | ForEach-Object { Describe $_ })
         Close-Window $win
       }
       $shell.FileRun()
       $run = $null
       for ($i = 0; $i -lt 100 -and -not $run; $i++) { Start-Sleep -Milliseconds 150; $run = Find-Top '#32770' 'Run' }
-      $box = @(); $program = ''
+      $box = @(); $program = ''; $controls = @()
       if ($run) {
         $combo = Where-Is ($A::ControlTypeProperty) ([System.Windows.Automation.ControlType]::ComboBox)
-        $box = @($run.FindAll($T::Descendants, $combo) | ForEach-Object { $_.Current.Name })
+        # The dialog's controls come a moment after its window: looked at until its box is there (10 s at most).
+        for ($i = 0; $i -lt 40 -and $box.Count -eq 0; $i++) {
+          $box = @($run.FindAll($T::Descendants, $combo) | ForEach-Object { $_.Current.Name })
+          if ($box.Count -eq 0) { Start-Sleep -Milliseconds 250 }
+        }
+        $controls = @($run.FindAll($T::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { Describe $_ })
         $program = (Get-Process -Id $run.Current.ProcessId).ProcessName
         Close-Window $run
       }
-      [pscustomobject]@{ explorer = [bool]$win; address = $address; band = $band; run = [bool]$run; box = $box; program = $program } | ConvertTo-Json -Compress -Depth 3
+      [pscustomobject]@{ explorer = [bool]$win; address = $address; band = $band; edits = $edits; run = [bool]$run; box = $box; controls = $controls; program = $program } | ConvertTo-Json -Compress -Depth 3
     `, 90_000);
     console.log(`File Explorer and Run: ${out}`);
     const seen = JSON.parse(out.split(/\r?\n/).pop() ?? "{}") as { explorer: boolean; address: string[] | string; band: string[] | string; run: boolean; box: string[] | string; program: string };

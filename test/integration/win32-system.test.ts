@@ -141,7 +141,7 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
     expect(links.length).toBeGreaterThan(0);
     const list = path.join(tmp, "links.txt");
     fs.writeFileSync(list, links.map(l => l.file).join("\n"), "utf8");
-    const shell = JSON.parse(ps(`$s = New-Object -ComObject WScript.Shell; $o = @(Get-Content -Encoding UTF8 -LiteralPath '${list}' | ForEach-Object { $l = $s.CreateShortcut($_); [pscustomobject]@{ file = $_; target = $l.TargetPath; args = $l.Arguments } }); ConvertTo-Json -Compress -InputObject $o`)) as { file: string; target: string; args: string }[];
+    const shell = JSON.parse(ps(`$s = New-Object -ComObject WScript.Shell; $o = @(Get-Content -Encoding UTF8 -LiteralPath '${list}' | ForEach-Object { $l = $s.CreateShortcut($_); [pscustomobject]@{ file = [string]$_; target = $l.TargetPath; args = $l.Arguments } }); ConvertTo-Json -Compress -InputObject $o`)) as { file: string; target: string; args: string }[];
     const mismatched: string[] = [], unread: string[] = [];
     for (const s of shell) {
       const mine = links.find(l => l.file === s.file)?.link ?? null;
@@ -285,7 +285,9 @@ app.whenReady().then(() => {
       console.log(`Run\\${AUMID} = ${value.ok ? value.value : "?"}`);
       if (value.ok) {
         expect(value.value.toLowerCase()).toContain(electronExe.toLowerCase());
-        expect(value.value).toContain(item.args.join(" "));
+        // Electron quotes an argument with a space itself: the app folder appears once, quoted once.
+        expect(value.value).toContain(item.args.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(" "));
+        expect(value.value).not.toContain('\\"');
       }
       expect((await run("on")).changed).toBe(false); // in step: not written again
       expect(await run("off")).toEqual({ changed: true, settings: expect.objectContaining({ openAtLogin: false }) });

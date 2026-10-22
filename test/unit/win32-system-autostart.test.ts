@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { AppLike, LoginItemSettingsLike } from "../../app/main/platform/types";
-import { loginItem, quoteArg, TURNED_OFF_NOTE, win32Autostart } from "../../app/main/platform/win32/system/autostart";
+import { loginItem, TURNED_OFF_NOTE, win32Autostart } from "../../app/main/platform/win32/system/autostart";
 import { AUMID } from "../../app/main/platform/win32/system/lifecycle";
 
 /** Electron's Windows behaviour: one Run value named after the AUMID; openAtLogin when its command matches path + args. */
@@ -32,10 +32,9 @@ function fakeApp(o: { taskManagerOff?: boolean; willLaunch?: boolean } = {}) {
 }
 
 describe("loginItem", () => {
-  it("registers Ember's own program with --autostart, plus the quoted app folder in development", () => {
+  it("registers Ember's own program with --autostart, plus the app folder unquoted in development (Electron quotes it)", () => {
     expect(loginItem({ packaged: true, execPath: "C:\\Program Files\\Ember\\Ember.exe", appPath: "C:\\x" })).toEqual({ path: "C:\\Program Files\\Ember\\Ember.exe", args: ["--autostart"] });
-    expect(loginItem({ packaged: false, execPath: "C:\\dev\\electron.exe", appPath: "C:\\My Projects\\ember" })).toEqual({ path: "C:\\dev\\electron.exe", args: ["\"C:\\My Projects\\ember\"", "--autostart"] });
-    expect(quoteArg("C:\\ember")).toBe("C:\\ember");
+    expect(loginItem({ packaged: false, execPath: "C:\\dev\\electron.exe", appPath: "C:\\My Projects\\ember" })).toEqual({ path: "C:\\dev\\electron.exe", args: ["C:\\My Projects\\ember", "--autostart"] });
   });
 });
 
