@@ -182,6 +182,28 @@ describe("the page's model: seen, in view and Allow", () => {
     }
   });
 
+  it("doesn't count a block its scrolling card area cuts off, though it is inside the window, and withdraws 'in view' when it is", () => {
+    // The card area ends at 150 px (an announcement above pushed the question down): the block (80-180) is cut off.
+    const cut = metrics({ clip: { top: 12, bottom: 150, left: 12, right: 748 } });
+    expect(judgeMetrics(cut).onScreen).toBe(false);
+    const a = run([{ type: "state", view: view(1), now: 0 }, { type: "card-metrics", n: 4, metrics: cut }]);
+    expect(a.model.card).toMatchObject({ seen: false, inView: false });
+    // Inside the card area: seen and in view; scrolled out of it again: no longer in view (seen sticks).
+    const b = run([{ type: "card-metrics", n: 4, metrics: metrics({ clip: { top: 12, bottom: 340, left: 12, right: 748 } }) }], a.model);
+    expect(b.model.card).toMatchObject({ seen: true, inView: true });
+    const c = run([{ type: "card-metrics", n: 4, metrics: metrics({ top: 0, bottom: 100, clip: { top: 12, bottom: 340, left: 12, right: 748 } }) }], b.model);
+    expect(c.model.card).toMatchObject({ seen: true, inView: false });
+    expect(c.effects).toEqual([{ kind: "report", msg: { n: 4, inView: false, seen: true } }]);
+    expect(judgeMetrics(metrics({ clip: { top: Number.NaN, bottom: 340, left: 12, right: 748 } })).onScreen).toBe(false);
+  });
+
+  it("never counts a block whose lines run off to the side as read through, even scrolled to its end", () => {
+    const wide = metrics({ scrollWidth: 900, clientWidth: 500 });
+    expect(judgeMetrics(wide)).toMatchObject({ fits: false, atEnd: false });
+    const r = run([{ type: "state", view: view(1), now: 0 }, { type: "card-metrics", n: 4, metrics: wide }]);
+    expect(r.model.card).toMatchObject({ seen: false, inView: false });
+  });
+
   it("reports only changes, ignores another question's measurements, and starts over for a new question", () => {
     const a = run([{ type: "state", view: view(1), now: 0 }, { type: "card-metrics", n: 4, metrics: metrics() }, { type: "card-metrics", n: 4, metrics: metrics() }]);
     expect(a.effects).toHaveLength(1);
@@ -238,6 +260,8 @@ describe("visibleText (critique security-10)", () => {
     expect(kinds("x\u{e0041}\ufe0f\u2066\u2069\u200e\u061c")).toEqual([
       ["plain", "x"], ["invisible", "⟨U+E0041⟩"], ["invisible", "⟨U+FE0F⟩"], ["bidi", "⟨LRI⟩"], ["bidi", "⟨PDI⟩"], ["bidi", "⟨LRM⟩"], ["bidi", "⟨ALM⟩"],
     ]);
+    // An unpaired surrogate or a noncharacter would draw as a box or nothing: shown by its code point.
+    expect(kinds("r\ud800m\uffff\ufdd0")).toEqual([["plain", "r"], ["invisible", "⟨U+D800⟩"], ["plain", "m"], ["invisible", "⟨U+FFFF⟩"], ["invisible", "⟨U+FDD0⟩"]]);
   });
 
   it("marks a letter from another alphabet in every token, Cyrillic in a Latin word or Latin in a Cyrillic one", () => {

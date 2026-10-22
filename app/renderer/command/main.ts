@@ -44,6 +44,17 @@ function visibleNodes(s: string): { nodes: Node[]; legend: string[] } {
   return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : [])] };
 }
 
+/**
+ * A line of where a command runs ("On build-01 as deploy · bash · in /srv/app"), every character visible too: the
+ * folder comes from the model, and an approval binds to it.
+ */
+function headerNode(header: string): { node: HTMLElement; legend: string[] } {
+  const p = el("p", "where");
+  const v = visibleNodes(header);
+  p.append(...v.nodes);
+  return { node: p, legend: v.legend };
+}
+
 /** A command block: the whole command, wrapping, scrolling when long (never cut). */
 function commandBlock(command: string, label: string): { block: HTMLPreElement; legend: string[] } {
   const block = el("pre", "command");
@@ -65,13 +76,14 @@ let armTimer: ReturnType<typeof setTimeout> | null = null;
 function buildAsk(card: CommandCard & { n: number }): AskEls {
   const root = el("section", "card ask");
   root.setAttribute("aria-labelledby", "ask-h");
-  root.append(el("p", "where", headerLine(card)));
+  const where = headerNode(headerLine(card));
+  root.append(where.node);
   const h = el("h1", "heading", ASK_HEADING);
   h.id = "ask-h";
   root.append(h);
   const { block, legend } = commandBlock(card.command, "The command, every character shown");
   root.append(block);
-  for (const line of legend) root.append(el("p", "legend", line));
+  for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
   const { lines, why } = cardLines(card);
   if (lines.length) {
     const ul = el("ul", "lines");
@@ -117,10 +129,30 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   });
   block.addEventListener("scroll", () => measureCard(), { passive: true });
   cardResize.observe(block);
+  cardVisible.observe(block);
   return els;
 }
 
-/** The card's own element, measured: nothing but it decides "seen" and "in view". */
+/**
+ * What the element's scrolling ancestors leave visible (the card area scrolls when a question and an announcement are
+ * both up), in viewport coordinates: the intersection of the viewport and each clipping ancestor's padding box.
+ */
+function clipOf(e: HTMLElement): NonNullable<CardMetrics["clip"]> {
+  let top = 0, left = 0, bottom = window.innerHeight, right = window.innerWidth;
+  for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+    const cs = getComputedStyle(a);
+    if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+    const r = a.getBoundingClientRect();
+    const t = r.top + a.clientTop, l = r.left + a.clientLeft;
+    top = Math.max(top, t);
+    left = Math.max(left, l);
+    bottom = Math.min(bottom, t + a.clientHeight);
+    right = Math.min(right, l + a.clientWidth);
+  }
+  return { top, bottom, left, right };
+}
+
+/** The card's own element, measured: nothing but it (and what clips it) decides "seen" and "in view". */
 function measureCard(): void {
   if (!ask) return;
   const b = ask.block;
@@ -128,12 +160,15 @@ function measureCard(): void {
   const metrics: CardMetrics = {
     scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
     top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
-    visible: document.visibilityState === "visible",
+    clip: clipOf(b), visible: document.visibilityState === "visible",
   };
   dispatch({ type: "card-metrics", n: ask.card.n, metrics });
   paintAllow();
 }
 const cardResize = new ResizeObserver(() => measureCard());
+// The block moving in or out of view for any reason (the card area scrolled, an announcement put above it, the layout
+// changed) is measured again, so "in view" never outlives the view.
+const cardVisible = new IntersectionObserver(() => measureCard(), { threshold: [0, 0.25, 0.5, 0.75, 0.99, 1] });
 
 /** Allow, its hint and the key hint, from the model only. */
 function paintAllow(): void {
@@ -164,13 +199,14 @@ let countTimer: ReturnType<typeof setInterval> | null = null;
 function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
   const root = el("section", "card announce");
   root.setAttribute("aria-labelledby", "announce-h");
-  root.append(el("p", "where", headerLine(card)));
+  const where = headerNode(headerLine(card));
+  root.append(where.node);
   const h = el("h1", "heading", ANNOUNCE_HEADING);
   h.id = "announce-h";
   root.append(h);
   const { block, legend } = commandBlock(card.command, "The command, every character shown");
   root.append(block);
-  for (const line of legend) root.append(el("p", "legend", line));
+  for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
   const count = el("p", "count", countdownText(endsAt, Date.now()));
   count.setAttribute("role", "timer");
   const row = el("div", "buttons");
@@ -235,7 +271,7 @@ function buildTab(t: TabView): TabEls {
     else { action.disabled = true; api.stop(cur.runId); }
   });
   foot.append(status, action);
-  panel.append(el("p", "where", t.header), block, host, typing, foot);
+  panel.append(headerNode(t.header).node, block, host, typing, foot);
   const term = createRunTerminal({ cols: t.cols, rows: t.rows, interactive: t.interactive, onInput: data => api.input(t.runId, data) });
   return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
 }
@@ -275,15 +311,16 @@ function render(): void {
   const card = v?.card ?? null;
   const askKey = card ? `${card.n}:${card.sha256}` : "";
   if ((ask?.key ?? "") !== askKey) {
-    if (ask) { cardResize.unobserve(ask.block); ask.root.remove(); }
+    if (ask) { cardResize.unobserve(ask.block); cardVisible.unobserve(ask.block); ask.root.remove(); }
     ask = card ? buildAsk(card) : null;
     if (ask) {
       $("cards").append(ask.root);
       requestAnimationFrame(measureCard);
     }
   }
-  if (ask) paintAllow();
   $("cards").hidden = !announce && !ask;
+  // Anything drawn may have moved the card: measure it again once laid out.
+  if (ask) { paintAllow(); requestAnimationFrame(measureCard); }
 
   // The tabs, newest first.
   const tabs = v?.tabs ?? [];
@@ -368,6 +405,8 @@ $("empty").textContent = EMPTY_TEXT;
 api.onState(onState);
 api.onOutput(msg => dispatch({ type: "output", msg }));
 window.addEventListener("resize", () => { measureCard(); reportSize(); });
+// A scroll anywhere on the page (the card area, not only the command block) can move the card out of view.
+document.addEventListener("scroll", () => measureCard(), { capture: true, passive: true });
 document.addEventListener("visibilitychange", () => measureCard());
 // Main may have sent the state before this page listened: take it whole, with each run's recent output.
 void api.pull().then(snap => {

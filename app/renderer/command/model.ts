@@ -70,6 +70,11 @@ export interface CardMetrics {
   /** The block's box in the viewport. */
   top: number; bottom: number; left: number; right: number;
   viewWidth: number; viewHeight: number;
+  /**
+   * What the block's scrolling ancestors leave visible (the card area scrolls), in viewport coordinates: the block
+   * counts as on screen only inside it. Absent: nothing but the viewport clips it.
+   */
+  clip?: { top: number; bottom: number; left: number; right: number };
   visible: boolean;
 }
 
@@ -117,11 +122,19 @@ export const INITIAL_MODEL: PageModel = { view: null, card: null, selected: null
 /** One CSS pixel of slack for sub-pixel layout. */
 const SLACK = 1;
 
-/** The block shows its whole content: nothing to scroll in it, and the block itself inside the window. */
+/**
+ * The block shows its whole content: nothing to scroll in it, and the block itself inside the window and inside what
+ * its scrolling ancestors show. `atEnd` (scrolled through to its end) never holds while a line runs off to the side:
+ * the command wraps, so a block that scrolls sideways is one the user can't have read whole (fail closed).
+ */
 export function judgeMetrics(m: CardMetrics): { fits: boolean; atEnd: boolean; onScreen: boolean } {
-  const fits = m.scrollHeight <= m.clientHeight + SLACK && m.scrollWidth <= m.clientWidth + SLACK;
-  const atEnd = m.scrollTop + m.clientHeight >= m.scrollHeight - SLACK;
-  const onScreen = m.visible && m.top >= -SLACK && m.left >= -SLACK && m.bottom <= m.viewHeight + SLACK && m.right <= m.viewWidth + SLACK
+  const narrow = m.scrollWidth <= m.clientWidth + SLACK;
+  const fits = m.scrollHeight <= m.clientHeight + SLACK && narrow;
+  const atEnd = narrow && m.scrollTop + m.clientHeight >= m.scrollHeight - SLACK;
+  const c = m.clip;
+  const inClip = !c || ([c.top, c.bottom, c.left, c.right].every(Number.isFinite)
+    && m.top >= c.top - SLACK && m.left >= c.left - SLACK && m.bottom <= c.bottom + SLACK && m.right <= c.right + SLACK);
+  const onScreen = m.visible && inClip && m.top >= -SLACK && m.left >= -SLACK && m.bottom <= m.viewHeight + SLACK && m.right <= m.viewWidth + SLACK
     && m.clientHeight > 0 && m.clientWidth > 0;
   return { fits, atEnd, onScreen };
 }

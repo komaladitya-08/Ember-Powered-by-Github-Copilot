@@ -64,6 +64,8 @@ function special(ch: string): VisibleSegment | null {
   if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029) return { text: `⟨${hex(cp)}⟩`, kind: "control" };
   if (BIDI[cp]) return { text: `⟨${BIDI[cp]}⟩`, kind: "bidi" };
   if (isInvisible(ch, cp) || ODD_SPACE.test(ch)) return { text: `⟨${NAMED_INVISIBLE[cp] ?? hex(cp)}⟩`, kind: "invisible" };
+  // An unpaired surrogate or a noncharacter can't be shown faithfully (it would draw as a box, or not at all).
+  if ((cp >= 0xd800 && cp <= 0xdfff) || (cp >= 0xfdd0 && cp <= 0xfdef) || (cp & 0xfffe) === 0xfffe) return { text: `⟨${hex(cp)}⟩`, kind: "invisible" };
   return null;
 }
 
