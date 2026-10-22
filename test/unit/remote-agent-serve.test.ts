@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { Server, graceSeconds, type ServeDeps } from "../../app/remote/serve";
+import { RUN_START_MAX_MS, Server, graceSeconds, type ServeDeps } from "../../app/remote/serve";
 import { PolicyWatch } from "../../app/remote/admin";
 import { DesktopController } from "../../app/remote/desktop";
 import { CONTRACTS } from "../../app/remote/contracts";
@@ -208,6 +208,37 @@ describe("serve (§5.3, §5.4)", () => {
     expect(res(await t.m.req("cmd.run", run("ls x")))).toMatchObject({ ok: false, code: "stale" });
     expect(t.calls.some(c => c.startsWith("start"))).toBe(false);
     expect(t.audit.some(e => e.event === "command" && e.phase === "start")).toBe(false);
+  });
+
+  it("never starts a command the PC stopped while gate 2 checked it, nor one past its time to start (the PC gave up)", async () => {
+    const started = new Set<string>();
+    const calls: string[] = [];
+    const runs = {
+      get running() { return started.size; },
+      knows: (id: string) => started.has(id),
+      start: (spec: RunSpec) => { started.add(spec.runId); calls.push(`start ${spec.runId}`); return { interactive: true }; },
+      input: () => true,
+      stop: (id: string, why: string) => { calls.push(`stop ${id} ${why}`); return started.has(id); },
+      stopAll: async () => {}, allEnded: async () => {}, ladders: async () => {}, pids: () => [],
+    } as unknown as RemoteRuns;
+    const probing: ServeDeps["classify"] = (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: ["/mnt/nfs/data"], needsGit: false, downloads: [], programs: [], commands: [] });
+    let answerPaths: () => void = () => {};
+    const t = server({ classify: probing, deps: { runs, inspect: paths => new Promise(r => { answerPaths = () => r(paths.map(() => ({ exists: true, real: null }))); }) } });
+    await t.m.req("hello", helloArgs());
+    // A stale NFS path: the PC stops waiting and sends cmd.stop while the path check still runs.
+    const answer = t.m.req("cmd.run", run("ls /mnt/nfs/data"));
+    expect(res(await t.m.req("cmd.stop", { runId: "0123456789abcdef", why: "task" }))).toMatchObject({ ok: false, code: "gone" });
+    answerPaths();
+    expect(res(await answer)).toMatchObject({ ok: false, code: "stopped" });
+    expect(calls.some(c => c.startsWith("start"))).toBe(false);
+    expect(t.audit.some(e => e.event === "command" && e.phase === "start")).toBe(false);
+    // A gate that took longer than RUN_START_MAX_MS: the PC may have said "wasn't started" already.
+    const slow: ServeDeps["classify"] = (text, shell, ctx) => { vi.setSystemTime(Date.now() + RUN_START_MAX_MS + 1000); return CONTRACTS.classifyCommand(text, shell, ctx); };
+    const late = server({ classify: slow, deps: { runs } });
+    await late.m.req("hello", helloArgs());
+    late.m.setSilent(0);
+    expect(res(await late.m.req("cmd.run", { ...run("ls"), spec: { ...run("ls").spec, runId: "00000000000000aa" } }))).toMatchObject({ ok: false, code: "stale", m: "This computer took too long to check the command, so it didn't start." });
+    expect(calls.some(c => c.startsWith("start"))).toBe(false);
   });
 
   it("classifies with Ember's own pids as they are now, not as they were at hello (D4.5)", async () => {

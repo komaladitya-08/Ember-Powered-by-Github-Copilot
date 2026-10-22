@@ -87,7 +87,9 @@ export class RemoteError extends Error {
 export function opTimeout(op: Op): { ms: number; plusRtt: boolean } {
   if (op === "hello") return { ms: 20_000, plusRtt: false };
   if (op === "apps.list") return { ms: 10_000, plusRtt: false };
-  if (op === "cmd.facts" || op === "cmd.inspect" || op === "cmd.git" || op === "cmd.run") return { ms: 5_000, plusRtt: true };
+  // cmd.run waits longer than the agent may take to start a command (remote-sidecar.ts OP_MS says why).
+  if (op === "cmd.run") return { ms: 15_000, plusRtt: true };
+  if (op === "cmd.facts" || op === "cmd.inspect" || op === "cmd.git") return { ms: 5_000, plusRtt: true };
   return { ms: 10_000, plusRtt: true };
 }
 

@@ -204,6 +204,14 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.state !== "starting") return;
     const { link, o } = this.ctx;
     if (link.state === "lost" || link.state === "closed") return this.lose();
+    // Unless the agent's own answer said it didn't start the run (refused, wanted a yes, was stopped), it may have
+    // started it, or may yet (gate 2 still checking when the PC stopped waiting; the answer then goes nowhere): it is
+    // told to stop that run, which it then never starts, so nothing runs there without a tab and a Stop.
+    const agentSaidNo = err instanceof RemoteStepError && (err.code === "deny" || err.code === "needs_confirm" || err.code === "stopped");
+    if (!agentSaidNo && !this.stopSent) {
+      this.stopSent = true;
+      askRemote(link, "cmd.stop", { runId: this.runId, why: "task" }, { label: o.label, whileStalled: true }).catch(() => undefined);
+    }
     if (err instanceof RemoteStepError) {
       switch (err.code) {
         // linkFailure's sentence, with the remote's own words quoted in it.

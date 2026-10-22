@@ -35,6 +35,14 @@ const DEFAULT_GRACE_S = 20;
 /** After a stop with runs live, the agent exits no sooner than this (the ladder's last sweep must not race it) and no later than EXIT_MAX_MS. */
 const EXIT_MIN_MS = 1600;
 const EXIT_MAX_MS = 3000;
+/**
+ * How long after its request arrives a command may still start (§3.16): past it the PC may have stopped waiting for
+ * the answer (it waits 15 s and the round trip, remote-sidecar.ts), and a command it was told "wasn't started" must
+ * never run. Gate 2's path check alone may take 5 s (gate.ts INSPECT_MS).
+ */
+export const RUN_START_MAX_MS = 10_000;
+/** Run ids whose cmd.stop came before they started, remembered at most (they never start). */
+const STOPPED_EARLY_MAX = 256;
 /** Why the agent stopped, for its audit (§5.3.11). */
 export type StopSource = "local" | "link-lost" | "console" | "orphan" | "policy";
 
@@ -107,6 +115,8 @@ export class Server {
   private stopping: Promise<void> | null = null;
   /** Bumped by every pull of the kill switch: a command whose gate was still running then doesn't start. */
   private fence = 0;
+  /** Runs the PC stopped before they started (still in gate 2, or their cmd.run not here yet): they never start. */
+  private readonly stoppedEarly = new Set<string>();
   private facts: RunnerFacts | null = null;
   private readonly handlers: Handlers;
 
@@ -144,7 +154,13 @@ export class Server {
         return {};
       },
       "cmd.stop": async a => {
-        if (!this.d.runs.knows(a.runId)) throw new OpError("gone", "No such command is running here.");
+        if (!this.d.runs.knows(a.runId)) {
+          // The PC stopped waiting for this run's start (or its cmd.run, a large one on data, is still behind this
+          // stop on ctl): it never starts here.
+          this.stoppedEarly.add(a.runId);
+          if (this.stoppedEarly.size > STOPPED_EARLY_MAX) this.stoppedEarly.delete(this.stoppedEarly.values().next().value as string);
+          throw new OpError("gone", "No such command is running here.");
+        }
         this.d.runs.stop(a.runId, a.why);
         return {};
       },
@@ -389,6 +405,8 @@ export class Server {
   private async run(a: OpArgs<"cmd.run">): Promise<OpResult<"cmd.run">> {
     const d = this.d;
     const fence = this.fence;
+    const arrived = d.now();
+    if (this.stoppedEarly.has(a.spec.runId)) throw new OpError("stopped", "Ember was stopped.");
     const known = this.facts ?? await this.currentFacts();
     // Ember's own pids as they are now (the desktop child may have started since the facts were read).
     const facts: RunnerFacts = d.ember ? { ...known, ember: d.ember() } : known;
@@ -404,8 +422,10 @@ export class Server {
     }
     // The gate awaited the paths' facts (up to 5 s): a stop may have come meanwhile, or the link gone quiet. Checked
     // again here, where nothing else can run until the command has started (the audit write is synchronous).
-    if (a.epoch < this.epoch || this.stopping || fence !== this.fence) throw new OpError("stopped", "Ember was stopped.");
+    if (a.epoch < this.epoch || this.stopping || fence !== this.fence || this.stoppedEarly.has(spec.runId)) throw new OpError("stopped", "Ember was stopped.");
     if (!this.liveness?.fresh()) throw new OpError("stale", "The connection went quiet, so the command didn't start.");
+    // Started this late, its answer could reach a PC that already said it wasn't started (RUN_START_MAX_MS).
+    if (d.now() - arrived > RUN_START_MAX_MS) throw new OpError("stale", "This computer took too long to check the command, so it didn't start.");
     // Write-ahead: no record, no command.
     const written = d.audit.write({
       event: "command", phase: "start", task: spec.taskId, op: spec.runId, runId: spec.runId, shell: spec.shell, cwd: spec.cwd, command: spec.command,
