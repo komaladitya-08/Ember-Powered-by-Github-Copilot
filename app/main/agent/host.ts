@@ -816,11 +816,14 @@ export class AgentHost {
         },
         provider: !!this.o.provider,
         makeWorker: (spec, progress) => {
-          // No hands (no window system): the targets runtime's for the task's target, or why it can't take the task.
+          // This screen's hands for a task on this computer (as before); otherwise (no window system, or a task bound to
+          // another computer) the targets runtime's for the task's target, or why it can't take the task. A task bound
+          // elsewhere never runs on this screen's hands (fail closed).
+          const id = spec.targetId ?? "local";
           let h: Hands, on: TargetHands | null = null;
-          if (hands) h = hands;
+          if (hands && id === "local") h = hands;
           else {
-            const got = targets!.handsFor(spec.targetId ?? "local");
+            const got = targets ? targets.handsFor(id) : { ok: false as const, why: "Ember can't work on that computer here." };
             if (!got.ok) return refusedWorker(spec, got.why);
             h = on = got.hands;
           }

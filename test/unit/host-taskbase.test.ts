@@ -48,6 +48,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
 import { AgentHost, type HostOptions } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import type { TargetHands, TargetsForAgent } from "../../app/main/targets/types";
+import type { TaskManagerDeps } from "../../app/main/agent/tasks";
+import type { TaskSpec } from "../../app/main/agent/worker";
 import type { TargetId } from "../../app/shared/targets";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -179,5 +181,26 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     expect(t.asked).toEqual([]);
     expect(taskSessions()[0].sent.join("\n")).toContain("notes.txt");
     await host.stop();
+  });
+
+  it("never runs a task bound to another computer on this screen's hands: the targets runtime decides, or it is refused", async () => {
+    const hands = {
+      perception: {} as never, sidecar: {} as never, policy: {} as never, audit: { write() {} } as never,
+      confirmer: { waiting: false, settled: async () => undefined, cancelAll() {} } as never, flyTo() {}, currentWindow: () => null,
+    };
+    const spec: TaskSpec = { id: "9-abc", goal: "list the files", target: {}, mode: "do", targetId: "ssh:build-01" };
+    // The TaskManager's own makeWorker (AG's start_task is what will bind targets; until then, only a spec can).
+    const makeWorker = (host: AgentHost) => (host.tasks as unknown as { d: TaskManagerDeps }).d.makeWorker;
+    const t = targets(id => ({ ok: false, why: `${id} isn't connected.` }));
+    const withTargets = makeHost({ hands, targets: t.agent, taskBase: taskBase().base });
+    await withTargets.host.start(TOKEN, "stored");
+    await expect(makeWorker(withTargets.host)(spec, () => undefined).run(new AbortController().signal)).resolves.toEqual({ success: false, summary: "ssh:build-01 isn't connected." });
+    expect(t.asked).toEqual(["ssh:build-01"]);
+    await withTargets.host.stop();
+    const handsOnly = makeHost({ hands });
+    await handsOnly.host.start(TOKEN, "stored");
+    await expect(makeWorker(handsOnly.host)(spec, () => undefined).run(new AbortController().signal)).resolves.toMatchObject({ success: false });
+    expect(taskSessions()).toEqual([]);
+    await handsOnly.host.stop();
   });
 });
