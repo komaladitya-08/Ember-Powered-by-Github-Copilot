@@ -700,8 +700,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
         stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
       });
-      if (run === "stopped") return STOPPED();
-      if (run === "unseen") return fail(UNSEEN);
+      if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
+      if (run === "unseen") { noteDownloads(ctx, cls); return fail(UNSEEN); }
       const { exit } = run;
       // The remote's gate 2 refused the run before it started: its end is audited here (the error is sized in the journal).
       if (exit.ended === "refused-remote") {
@@ -864,6 +864,15 @@ function followStatus(svc: CommandService, runId: string): () => void {
   }
 }
 
+/**
+ * Notes what a run that started may have downloaded, whatever its end (D4.3 f: running a file downloaded in this task
+ * asks): a download cut short by a later part of the line failing, a Stop or the time limit can still leave the file
+ * on disk, and a later `bash x.sh` must not count it as the user's own.
+ */
+function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
+  for (const p of cls.downloads) ctx.state.downloaded.add(p);
+}
+
 /** Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. */
 function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): ToolResultObject {
   const { exit, out, tracker, running } = run;
@@ -885,7 +894,7 @@ function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o:
     ctx.task.taint(taint);
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }
-  if (exit.ended === "exit" && exit.code === 0) for (const p of o.cls.downloads) ctx.state.downloaded.add(p);
+  if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
     outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length,
