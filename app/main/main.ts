@@ -16,7 +16,7 @@ import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
-import { createHomeWindow, isTrustedSender } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { OverlayManager } from "./overlay";
@@ -51,6 +51,14 @@ import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { FixId, HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
+import { extraBinDirs } from "./platform/darwin/system";
+import { deskProcesses } from "./desk/desk";
+import { createTargets, targetDoctorRows } from "./targets/runtime";
+import type { IpcLike, MenuItemLike, TargetsRuntime } from "./targets/types";
+import { wrapForWsl } from "./wsl/routed-sidecar";
+import { wrapWindowsForWsl } from "./wsl/routed-windows";
+import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
+import type { Question } from "./agent/confirm";
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -210,7 +218,9 @@ async function runDoctor(): Promise<void> {
     xtest: ws ? !!input && !blocked : null,
     speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
-    runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers, extra: probes.extra,
+    runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
+    // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
+    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
   process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
@@ -357,7 +367,10 @@ function start(): void {
     return { ...patch, privacy: { ...patch.privacy, neverLook: patch.privacy.neverLook.filter(x => !adminOnly.has(lower(x))) } };
   };
   // Dragging the size slider sends a change per step: shown at once, saved a moment later.
-  ipcMain.handle(IPC.updateSettings, guard((patch: SettingsPatch) => {
+  ipcMain.handle(IPC.updateSettings, guard((sent: SettingsPatch) => {
+    // Where Ember works and what commands may do change only behind their consent cards (TARGETS_IPC), never here.
+    const { patch, dropped } = settingsFromHome(sent);
+    if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     return settings.update(ownNeverLook(patch), { soon: sizeOnly });
   }));
@@ -425,14 +438,17 @@ function start(): void {
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
+  /** What quitting would stop (§8.9): tasks under way, commands running, computers connected; null when nothing. */
+  const quitWords = () => quitQuestion(busyTasks(), targets?.busy() ?? { commands: 0, connections: 0 },
+    targets?.summaries().filter(t => t.kind === "ssh" && (t.state === "ready" || t.state === "connecting")).map(t => t.label));
   /**
-   * Quitting with tasks under way asks first (they would stop half-way). One question at a time: Quit chosen
-   * again while it is up (perhaps behind a window now) closes it and asks again on top.
+   * Quitting with tasks under way (or commands running, or connections) asks first (they would stop half-way). One
+   * question at a time: Quit chosen again while it is up (perhaps behind a window now) closes it and asks again on top.
    */
   let quitAsking: AbortController | null = null;
   const quitEmber = async (): Promise<void> => {
-    const n = busyTasks();
-    if (!n) { app.quit(); return; }
+    const words = quitWords();
+    if (!words) { app.quit(); return; }
     quitAsking?.abort();
     const mine = quitAsking = new AbortController();
     // A question with no parent window comes up in front only once Ember is the active app (macOS).
@@ -440,7 +456,7 @@ function start(): void {
     try {
       const { response } = await dialog.showMessageBox({
         type: "question", buttons: ["Keep Ember running", "Stop and quit"], defaultId: 0, cancelId: 0, signal: mine.signal,
-        title: "Quit Ember?", message: `Ember is still working on ${n === 1 ? "a task" : `${n} tasks`}.`, detail: "Quitting stops it where it is.",
+        title: "Quit Ember?", message: words.message, detail: words.detail,
       });
       if (!mine.signal.aborted && response === 1) app.quit();
     } finally {
@@ -500,6 +516,8 @@ function start(): void {
         opens = true; openAsk({ look: false, over: back, source: "menu" });
       } },
       { label: label("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
+      // "Work on" (which computer requests go to), when there is more than this one.
+      ...toMenu(targets?.menuItems() ?? []),
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
@@ -509,7 +527,7 @@ function start(): void {
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
-      { label: "Quit Ember", click: () => { opens = busyTasks() > 0; void quitEmber(); } },
+      { label: "Quit Ember", click: () => { opens = quitWords() !== null; void quitEmber(); } },
     ]);
     // The handle never takes focus (a click on it leaves the user's app focused), so the menu's arrows, Enter
     // and Esc would go to that app: the handle takes focus first (the window manager may refuse a toolbar
@@ -569,6 +587,12 @@ function start(): void {
     win.focus();
     if (inputRef?.focusInput) inputRef.focusInput(xid);
   };
+  /** The targets runtime's menu items as Electron's (the same fields; submenus too). */
+  const toMenu = (items: MenuItemLike[]): Electron.MenuItemConstructorOptions[] => items.map(i => ({
+    ...(i.label !== undefined ? { label: i.label } : {}), ...(i.type ? { type: i.type } : {}),
+    ...(i.checked !== undefined ? { checked: i.checked } : {}), ...(i.enabled !== undefined ? { enabled: i.enabled } : {}),
+    ...(i.submenu ? { submenu: toMenu(i.submenu) } : {}), ...(i.click ? { click: i.click } : {}),
+  }));
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
@@ -624,7 +648,9 @@ function start(): void {
   const heldKeys = () => QUESTION_KEYS.filter(k => questionKeys.includes(k.accel));
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
   const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
-  const questionChanged = (q: { question: { prompt: string; options: { id: string }[] } } | null) => {
+  const questionChanged = (q: { n: number; question: Question } | null) => {
+    // A question with a panel (a command, a consent card) shows its window; the window goes with it.
+    targets?.questionChanged(q);
     if (!q) {
       for (const k of questionKeys) globalShortcut.unregister(k);
       questionKeys = [];
@@ -638,11 +664,14 @@ function start(): void {
     // also when the compositor comes back while the question is on the card).
     keptHidden = false;
     if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
+    // A command is never read out or put in a notification (R7): only that Ember wants to run one, and where; the card
+    // on screen shows it, and the keys work only there.
+    const words = targets?.questionWords(q.question) ?? null;
     if (maySpeak()) {
       const keys = heldKeys().map(k => k.say);
-      voice?.speak(`Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
+      voice?.speak(words ?? `Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
     }
-    if (userAway()) notify("Ember needs your OK", q.question.prompt);
+    if (userAway()) notify("Ember needs your OK", words ?? q.question.prompt);
   };
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;
@@ -674,6 +703,8 @@ function start(): void {
     onReveal: source => log.info("ask.reveal", { source }),
   });
   let agent: AgentHost | null = null;
+  /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
+  let targets: TargetsRuntime | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
@@ -681,7 +712,12 @@ function start(): void {
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
   const captureContext = () => {
-    if (!perception || !consented()) { callContext = Promise.resolve(null); return; }
+    if (!consented()) { callContext = Promise.resolve(null); return; }
+    // Set to work on another computer: its context (never this screen's: the user's window is the terminal they reached
+    // it from, §2.8). Asked first, so it works without a window system here too.
+    const remote = targets?.quickContext();
+    if (remote) { callContext = remote.catch(() => null); return; }
+    if (!perception) { callContext = Promise.resolve(null); return; }
     // What is selected in the user's window, asked for now (some apps don't tell it through accessibility; Linux's
     // PRIMARY selection, which other OSes don't have).
     const active = wsRef?.activeWindow();
@@ -736,6 +772,8 @@ function start(): void {
     // A request still being spoken is dropped, not sent after Stop.
     { name: "listening", stop: () => voice?.cancelListening() },
     { name: "agent", stop: () => agent?.abortAll() },
+    // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
+    { name: "targets", stop: () => targets?.stopAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -986,19 +1024,22 @@ function start(): void {
     const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
     const task = /^task:(.+):(stop|dismiss)$/.exec(id);
-    // Stopping a task is always honoured (also while Ember waits for the mouse). Anything else that arrives
-    // while Ember really drives the pointer was Ember's own click, not the user's: ignored.
-    if (borrowRef?.driving && !(task && task[2] === "stop")) { log.warn("bubble.action_while_borrowing", { id }); return; }
+    // Stopping a task is always honoured (also while Ember waits for the mouse), and so is an announced command's Stop
+    // (critique integration-24). Anything else that arrives while Ember really drives the pointer was Ember's own
+    // click, not the user's: ignored.
+    if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { openSettings(); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
+    // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
+    if (targets?.bubbleAction(id)) return;
     if (task) {
       if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
       return;
     }
-    log.info("bubble.action", { id, handled: confirmer?.answer(id) ?? false });
+    log.info("bubble.action", { id, handled: confirmer?.answer(id, "bubble") ?? false });
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
     if (isHandle(event.sender)) showMenu();
@@ -1252,18 +1293,25 @@ function start(): void {
     const launch = platform.sidecarLaunch(sidecarContext());
     const sidecar = sidecarRef = new AtspiSidecar(sidecarScript(), log.child("atspi"), undefined, undefined, launch);
     app.on("will-quit", () => sidecar.stop());
+    // WSL (§4.4, §4.5): WSLg apps' windows read through their distros' sidecars, named "wsl:<distro>:<app>" in the
+    // window system's lists, and judged as Linux apps too (on top of today's checks, macOS's bundle ids included).
+    // Without WSL every one of these is today's own, unchanged.
+    const privacy = wslAwarePrivacy({ isSecurityWindow: sys.privacy.isSecurityWindow, isTerminalApp: a => isTerminalWindowApp(a.name ?? a.id, sys.apps, platform.os) });
+    const wslOptions = { os: platform.os, log: log.child("wsl"), ws: () => wsRef, wsl: () => targets?.wsl ?? null, settings };
+    const seenBy = wrapForWsl(sidecar, wslOptions);
+    const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
     // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
     // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
     if (launch) {
       setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, () => { helper = null; }), atLogin ? 60_000 : 10_000).unref();
     }
     perception = new Perception({
-      sidecar, x11: ws, log: log.child("perception"),
+      sidecar: seenBy, x11: wsSeen, log: log.child("perception"),
       neverLook: () => settings.get().privacy.neverLook,
       // Every display in the window system's units; Electron's displays (X11's arithmetic) when none opened.
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
       words: sys.words,
-      isSecurityWindow: sys.privacy.isSecurityWindow,
+      isSecurityWindow: privacy.isSecurityWindow,
       // Remote desktops' and WSLg apps' windows are blacked out of every screenshot (Windows only; undefined elsewhere).
       isRemoteSurface: remoteSurfaceCheck(platform.os),
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
@@ -1284,6 +1332,9 @@ function start(): void {
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
       onChange: questionChanged,
       keyHint: questionKeyHint,
+      // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
+      // shows all of it (R7).
+      panelReady: n => targets?.panelReady(n) ?? false,
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
@@ -1335,26 +1386,27 @@ function start(): void {
     deskManager?.onDead(() => { deskPlace = null; });
     app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager?.stop(); });
     // Built whenever a window system opened: reading apps (tier 1) needs no input backend.
-    const hands: Hands | undefined = ws ? {
-      perception, sidecar, audit, confirmer,
+    const hands: Hands | undefined = wsSeen ? {
+      perception, sidecar: seenBy, audit, confirmer,
       policy: new PolicyEngine({
         neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
         rateLimit: policy.maxActionsPerMinute,
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
-        // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal).
-        isTerminalApp: name => isTerminalWindowApp(name, sys.apps, platform.os),
-        keys: sys.keys, os: platform.os, isSecurityWindow: sys.privacy.isSecurityWindow,
+        // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
+        // app's also as a Linux app (§4.5).
+        isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
+        keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow,
       }),
       // The window system's units to Electron's DIP (X11: ÷ the primary scale factor).
-      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? ws.toDip(b) : null }),
+      flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? wsSeen.toDip(b) : null }),
       currentWindow: () => {
-        const w = ws.activeWindow();
+        const w = wsSeen.activeWindow();
         // Ember's own windows (ask box, settings) are not a task's target.
         if (!w || w.pid === process.pid) return null;
         // A private window: its process only (a task there is refused), never its title.
-        const priv = isNeverLook({ app: w.wmClass ?? "", name: w.title }, settings.get().privacy.neverLook) || sys.privacy.isSecurityWindow({ app: w.wmClass ?? "", title: w.title });
+        const priv = isNeverLook({ app: w.wmClass ?? "", name: w.title }, settings.get().privacy.neverLook) || privacy.isSecurityWindow({ app: w.wmClass ?? "", title: w.title });
         return priv ? { pid: w.pid ?? undefined } : { pid: w.pid ?? undefined, title: w.title };
       },
       pointer: xinput ? () => xinput.pointerState() : undefined,
@@ -1377,11 +1429,48 @@ function start(): void {
         borrow,
         findWindow: (title, pid) => xinput.findWindow(title, pid),
         // The window with keyboard focus (where typed keys would go), else the one the WM calls active.
-        activeWindow: () => { const w = ws.focusWindow() ?? ws.activeWindow(); return w ? { app: w.wmClass, title: w.title, pid: w.pid } : null; },
+        activeWindow: () => { const w = wsSeen.focusWindow() ?? wsSeen.activeWindow(); return w ? { app: w.wmClass, title: w.title, pid: w.pid } : null; },
         // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
         setBorrowing: showBorrowing,
       } : undefined,
     } : undefined;
+    // Where tasks act (this computer, WSL distros, computers over SSH) and their commands (§2): made whether or not this
+    // screen has hands (without them, this computer is commands only).
+    const ipc: IpcLike = {
+      on: (channel, fn) => { ipcMain.on(channel, (e, ...args) => fn({ sender: e.sender }, ...args)); },
+      handle: (channel, fn) => { ipcMain.handle(channel, (e, ...args) => fn({ sender: e.sender }, ...args)); },
+    };
+    let elevatedNow: boolean | undefined;
+    targets = createTargets({
+      log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
+      execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
+      localHands: hands ?? null, showState: setState, notify,
+      openSettings: section => { showHome(); if (section) sendToHome(IPC.focusSection, section); },
+      ipc,
+      // As the settings channels' guard: the settings window's own page only (critique integration-5).
+      isHome: sender => !!home && !home.isDestroyed() && sender.id === home.webContents.id && isTrustedSender(home.webContents.getURL()),
+      windows: { command: () => createCommandWindow(platform.os), prompt: () => createPromptWindow(platform.os) },
+      fetch: (u, i) => net.fetch(u, i),
+      devEnv,
+      // Windows: the token's elevation, as the platform reads it (TokenElevation); elsewhere uid 0. It can't change while
+      // Ember runs. A check that fails counts as elevated: every command then asks (D4.6).
+      elevated: () => elevatedNow ??= (() => {
+        if (platform.os !== "win32") return process.getuid?.() === 0;
+        try { return sys.environment({ windows: wsState, shortcutsTaken, helper }).windows?.elevated !== false; } catch (err) { log.warn("targets.elevation_unknown", { err }); return true; }
+      })(),
+      // Ember's own processes now (D4.5): Electron's (main, the pages, the voice utility), the accessibility helper, and
+      // everything on Ember's desk (its helper, display, bus and apps).
+      emberPids: () => {
+        const desk = deskManager?.running?.env.EMBER_DESK_ID;
+        const pids = [...app.getAppMetrics().map(m => m.pid), sidecar.pid, deskManager?.agent?.pid, ...(desk ? deskProcesses(desk) : [])];
+        return [...new Set(pids.filter((p): p is number => typeof p === "number" && p > 0))];
+      },
+      // macOS: Homebrew's, MacPorts' and pipx's folders that exist (apps started from Finder get launchd's PATH).
+      extraPath: () => platform.os === "darwin" ? extraBinDirs(app.getPath("home")).filter(d => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) : [],
+      jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
+    });
+    // Commands still running and connections are let go of when Ember quits.
+    app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
@@ -1410,8 +1499,11 @@ function start(): void {
       reachable: gitHubReachable((url, init) => net.fetch(url, init)),
       // A proxy set only in GNOME Settings reaches the Copilot runtime too (it reads only HTTPS_PROXY).
       resolveProxy: url => session.defaultSession.resolveProxy(url),
-      // This OS's words, keys, apps, settings and privacy vocabulary for the conductor and workers.
-      system: sys,
+      // This OS's words, keys, apps, settings and privacy vocabulary for the conductor and workers (WSLg apps among them).
+      system: wslAwareSystem(sys),
+      targets: targets.agent,
+      // Tasks ask and are audited even where this screen has no hands (commands only, §2.6).
+      taskBase: { audit, confirmer },
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
