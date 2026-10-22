@@ -23,7 +23,9 @@
  * - `ev: "log"` is the diag stream's message: an agent's `send({ t: "ev", ev: "log", d })` goes on diag, and a diag
  *   line arrives as that event.
  * - Order holds within a stream, not across them: a small answer on ctl overtakes bulk bytes written before it (that
- *   is the point of priorities). `ImageRef.bytes` and `cmd.exit`'s `outBytes` say how many bytes to wait for.
+ *   is the point of priorities). `ImageRef.bytes` and `cmd.exit`'s `outBytes` say how many bytes to wait for. A
+ *   request over 60 KiB (a `hello` or `policy.sync` with a long never-look list, a `cmd.inspect` of long paths) rides
+ *   data, so a later ctl request overtakes it: a request that depends on it is sent after its answer.
  * - The mux never ends or destroys the streams it is given: on close it stops reading and writing, and its owner
  *   (the link worker, the agent) ends the process or the stream.
  */
@@ -109,6 +111,16 @@ export class MuxError extends Error {
     super(message);
     this.name = "MuxError";
   }
+}
+
+/**
+ * What `createMux` returns beyond the Mux contract (an extension SA and SB may use): the bytes this end has accepted
+ * and not yet handed to its output stream. The mux queues without limit (a credit bounds only what is on the wire), so
+ * an owner feeding it from a source faster than the link (a run's output) pauses that source while `bulk` is high.
+ */
+export interface MuxBacklog {
+  /** Bytes queued per stream (frame headers included for ctl and diag; message or send bytes for data and bulk). */
+  backlog(): { ctl: number; data: number; bulk: number; diag: number };
 }
 
 /** Test seams for `createMux`: a monotonic clock in ms (default `performance.now()`). */
@@ -250,10 +262,15 @@ function frame(stream: number, kind: number, payload: Uint8Array): Buffer {
   return f;
 }
 
+/**
+ * Characters that must not reach a log, a terminal or a bubble from text the other end chose (a RESET's reason, a
+ * schema path naming one of its keys): C0 and C1 controls (U+009B is a terminal's CSI), line and paragraph separators,
+ * and format characters (bidi overrides and isolates, zero-width marks).
+ */
 // eslint-disable-next-line no-control-regex -- control characters are exactly what's replaced here
-const CONTROL = /[\u0000-\u001f\u007f]+/g;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]+/gu;
 
-/** Text for a RESET or a log line: control characters made spaces, at most `max` UTF-8 bytes, cut at a character. */
+/** Text for a RESET or a log line: controls and format characters made spaces, at most `max` UTF-8 bytes, cut at a character. */
 function plainText(s: string, max: number): string {
   const t = s.replace(CONTROL, " ");
   const b = Buffer.from(t, "utf8");
@@ -291,7 +308,7 @@ interface LogLine { level: "debug" | "info" | "warn" | "error"; event: string }
 interface Checked { wire: Msg | LogLine; diag: boolean; commit: () => void }
 interface Problem { code: number; why: string }
 
-class FramedMux implements Mux {
+class FramedMux implements Mux, MuxBacklog {
   private state: "preamble" | "open" | "closed" = "preamble";
   private why = "";
   private ownPreambleSent = false;
@@ -319,6 +336,10 @@ class FramedMux implements Mux {
   private readonly ctl: Buffer[] = [];
   private readonly data: Outgoing[] = [];
   private readonly bulk: Outgoing[] = [];
+  /** What `backlog()` reports for ctl, data and bulk, kept as they change (a run's output may queue thousands of sends). */
+  private ctlBytes = 0;
+  private dataBytes = 0;
+  private bulkBytes = 0;
   private readonly diag: Buffer[] = [];
   private diagBytes = 0;
   private diagDropped = 0;
@@ -393,9 +414,13 @@ class FramedMux implements Mux {
     } else {
       if (bytes.length > CAPS.dataMessageBytes) throw new MuxError("too_large", `a message of ${bytes.length} bytes (at most ${CAPS.dataMessageBytes})`);
       c.commit();
-      if (bytes.length <= CTL_JSON_MAX) this.ctl.push(frame(STREAM.ctl, KIND.json, bytes));
-      else {
+      if (bytes.length <= CTL_JSON_MAX) {
+        const f = frame(STREAM.ctl, KIND.json, bytes);
+        this.ctl.push(f);
+        this.ctlBytes += f.length;
+      } else {
         this.data.push({ id: this.nextMsgId, bytes, at: 0 });
+        this.dataBytes += bytes.length;
         this.nextMsgId = (this.nextMsgId + 1) >>> 0;
       }
     }
@@ -414,6 +439,7 @@ class FramedMux implements Mux {
     if (!bytes.length) return;
     // A copy: the caller may reuse its buffer before the last chunk is written.
     this.bulk.push({ id: channel, bytes: Buffer.from(bytes), at: 0 });
+    this.bulkBytes += bytes.length;
     this.pump();
   }
 
@@ -454,6 +480,10 @@ class FramedMux implements Mux {
       if (t - this.lastOut[s] <= busy) bytes += Math.max(0, this.availHigh[s] - this.avail[s]);
     }
     return { bytes, throughput: Math.round(this.meter.rate()) };
+  }
+
+  backlog(): { ctl: number; data: number; bulk: number; diag: number } {
+    return { ctl: this.ctlBytes, data: this.dataBytes, bulk: this.bulkBytes, diag: this.diagBytes };
   }
 
   reset(code: number, reason: string): void {
@@ -561,7 +591,10 @@ class FramedMux implements Mux {
       return u;
     }
     const c = this.ctl.shift();
-    if (c) return c;
+    if (c) {
+      this.ctlBytes -= c.length;
+      return c;
+    }
     const d = this.cut(STREAM.data);
     if (d) return d;
     const b = this.cut(STREAM.bulk);
@@ -590,6 +623,8 @@ class FramedMux implements Mux {
     if (s === STREAM.data) f[FRAME_HEAD + 4] = end === item.bytes.length ? 1 : 0;
     item.bytes.copy(f, FRAME_HEAD + head, item.at, end);
     item.at = end;
+    if (s === STREAM.data) this.dataBytes -= n;
+    else this.bulkBytes -= n;
     if (end === item.bytes.length) q.shift();
     this.avail[s] -= head + n;
     this.lastOut[s] = this.now();
@@ -947,6 +982,9 @@ class FramedMux implements Mux {
     this.bulk.length = 0;
     this.diag.length = 0;
     this.diagBytes = 0;
+    this.ctlBytes = 0;
+    this.dataBytes = 0;
+    this.bulkBytes = 0;
     this.pending.clear();
     this.log.info("remote.mux_closed", { role: this.role, why, ...(this.diagDropped ? { diagDropped: this.diagDropped } : {}) });
     const fns = [...this.closeFns];
@@ -978,8 +1016,10 @@ class FramedMux implements Mux {
  *   before one.
  * - `reset` writes a RESET ahead of anything queued and closes; `onClose` fires once, with why, on any close (a
  *   listener added after it is called on a microtask). The mux never ends or destroys `read` or `write`.
+ * - `backlog()` (MuxBacklog, beyond the contract) says how many bytes wait to be written, per stream: nothing bounds
+ *   the queues but the owner, who pauses a fast source (a run's output on a slow link) while `bulk` is high.
  */
-export function createMux(o: { read: NodeJS.ReadableStream; write: NodeJS.WritableStream; role: "pc" | "agent"; partsId: string; log: Logger }, tuning?: MuxTuning): Mux {
+export function createMux(o: { read: NodeJS.ReadableStream; write: NodeJS.WritableStream; role: "pc" | "agent"; partsId: string; log: Logger }, tuning?: MuxTuning): Mux & MuxBacklog {
   if (!o || typeof o.read?.on !== "function" || typeof o.read.resume !== "function" || typeof o.write?.write !== "function" || typeof o.write.on !== "function") {
     throw new TypeError("createMux needs a readable and a writable byte stream");
   }

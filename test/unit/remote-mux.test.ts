@@ -600,6 +600,31 @@ describe("sending", () => {
     expect(p.reader.of(2)).toEqual([]);
   });
 
+  it("reports what waits to be written per stream, so the owner can pause a source faster than the link", async () => {
+    const out = new HeldWritable();
+    const a = rawPeer("agent", { write: out });
+    a.send(PC_PREAMBLE);
+    a.send(ctlJson({ t: "req", id: 1, op: "audit.recent", a: { limit: 1 } }));
+    await settle();
+    expect(a.mux.backlog()).toEqual({ ctl: 0, data: 0, bulk: 0, diag: 0 });
+    // The PC isn't reading: everything stays queued here.
+    a.mux.sendBytes(6, Buffer.alloc(MiB, 1));
+    a.mux.sendBytes(7, Buffer.alloc(10, 1));
+    a.mux.send({ t: "res", id: 1, ok: true, v: auditResult(100_000) });
+    a.mux.send({ t: "ev", ev: "notice", d: { state: "shown" } });
+    a.mux.send({ t: "ev", ev: "log", d: { level: "info", event: "remote.x" } });
+    const notice = 6 + jsonBytes({ t: "ev", ev: "notice", d: { state: "shown" } }).length;
+    const line = 6 + jsonBytes({ level: "info", event: "remote.x" }).length;
+    expect(a.mux.backlog()).toEqual({ ctl: notice, data: 100_000, bulk: MiB + 10, diag: line });
+    // Once the stream accepts, only what credit holds back is left: 64 KiB each of data and bulk went (sub-headers
+    // included in the credit).
+    out.release();
+    await settle(30);
+    expect(a.mux.backlog()).toEqual({ ctl: 0, data: 100_000 - 2 * (CAPS.chunkBytes - 5), bulk: MiB + 10 - 2 * (CAPS.chunkBytes - 4), diag: 0 });
+    a.mux.reset(RESET_CODE.normal, "done");
+    expect(a.mux.backlog()).toEqual({ ctl: 0, data: 0, bulk: 0, diag: 0 });
+  });
+
   it("copies bulk bytes when they are sent, so the caller may reuse its buffer", async () => {
     const p = await openPc();
     const buf = Buffer.alloc(100 * KiB, 1);
@@ -1108,6 +1133,11 @@ describe("closing", () => {
     await settle();
     expect(p.closed).toEqual(["reset by the other end (7): bye now "]);
     expect(p.reader.resets()).toEqual([]);
+    // A terminal's 8-bit CSI, a bidi override, a zero-width space and a line separator never pass either.
+    const q = await openPc();
+    q.send(resetFrame(8, "a\u009b2J\u202Eexe.txt\u200B\u2028b\u2066c"));
+    await settle();
+    expect(q.closed).toEqual(["reset by the other end (8): a 2J exe.txt b c"]);
   });
 
   it("reset() writes a RESET ahead of anything queued, closes once, and later sends do nothing", async () => {
