@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askpassWorks, knownHostsDiscarded, minimumVersion, parseSshG, parseSshVersion, sshClientPath, SshConfigError, unfixableSessionOption, versionAtLeast } from "../../app/main/remote/ssh-config";
+import { askpassWorks, knownHostsDiscarded, minimumVersion, parseSshG, parseSshVersion, sshClientPath, sshClientRow, SshConfigError, unfixableSessionOption, versionAtLeast } from "../../app/main/remote/ssh-config";
 
 /** `ssh -G` as OpenSSH 8.0 prints it (dump_client_config's order), trimmed to the keys around the ones Ember reads. */
 const G80 = [
@@ -98,5 +98,17 @@ describe("the client and its version (§5.1.1)", () => {
     expect(sshClientPath("win32", "C:\\WINDOWS")).toBe("C:\\WINDOWS\\System32\\OpenSSH\\ssh.exe");
     expect(sshClientPath("win32")).toBe("C:\\Windows\\System32\\OpenSSH\\ssh.exe");
     expect(sshClientPath("win32", "relative\\dir")).toBe("C:\\Windows\\System32\\OpenSSH\\ssh.exe");
+  });
+});
+
+describe("the doctor's SSH client row (§8.8)", () => {
+  const v = (major: number, minor: number) => ({ major, minor, windows: false, text: "" });
+  it("names the client and version, or says what's wrong", () => {
+    expect(sshClientRow("linux", "/usr/bin/ssh", v(8, 0))).toEqual({ id: "ssh-client", status: "ok", label: "SSH client", detail: "OpenSSH 8.0 at /usr/bin/ssh" });
+    expect(sshClientRow("win32", "C:\\Windows\\System32\\OpenSSH\\ssh.exe", v(9, 5))).toMatchObject({ status: "ok", detail: "OpenSSH 9.5 (passwords through Ember's prompt)" });
+    expect(sshClientRow("win32", "x", v(8, 1))).toMatchObject({ status: "warn", detail: "Passwords can't be asked here: keys and the ssh-agent only" });
+    expect(sshClientRow("win32", "x", v(9, 5), { askpass: false })).toMatchObject({ status: "warn" });
+    expect(sshClientRow("win32", "x", v(7, 7))).toMatchObject({ status: "fail", detail: "OpenSSH is too old for Ember" });
+    expect(sshClientRow("linux", "/usr/bin/ssh", null)).toMatchObject({ status: "fail", detail: "No SSH client found" });
   });
 });

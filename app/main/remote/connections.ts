@@ -513,7 +513,7 @@ export function createConnections(o: {
     const me = await self();
     const wantOs = probe.os === "Darwin" ? "darwin" : probe.os === "Linux" ? "linux" : null;
     const wantArch = /^(x86_64|amd64)$/.test(probe.arch ?? "") ? "x64" : /^(aarch64|arm64)$/.test(probe.arch ?? "") ? "arm64" : null;
-    const odd = w.partsId !== partsId || w.os !== wantOs || w.arch !== wantArch || !w.home.startsWith("/") || !Number.isInteger(w.uid)
+    const odd = w.partsId !== partsId || w.os !== wantOs || w.arch !== wantArch || !w.home.startsWith("/") || !w.facts.home.startsWith("/") || !Number.isInteger(w.uid)
       || (!o.allowLoopback && me.machine !== null && w.machineIdHash === me.machine);
     if (odd) throw new ConnectError(MESSAGES.answeredOddly(h), "protocol");
     return w;
@@ -539,6 +539,8 @@ export function createConnections(o: {
     try {
       if (!HOST_ID.test(host.id)) throw new ConnectError(MESSAGES.answeredOddly(h), "bad-record");
       if (!(host.consent.version >= FEATURE_CONSENT_VERSION.ssh) || !host.consent.at) throw new ConnectError(MESSAGES.noConsent(h), "consent");
+      // The targets runtime makes this install's id at first use; without it the remote couldn't tell this PC's lock.
+      if (!/^[0-9a-f]{32}$/.test(o.pcId())) throw new ConnectError(MESSAGES.unknown(h), "internal");
       progress(host.id, { step: "resolving" });
       const p = await prepare(host.dest, host.port, host.extra, host.via, h);
       const r = resolvedOf(p);
@@ -579,14 +581,14 @@ export function createConnections(o: {
         throw new ConnectError(MESSAGES.cancelled(), "cancelled", undefined, true);
       }
       const old = links.get(host.id);
-      if (old && old !== link) void old.kill("replaced");
       links.set(host.id, link);
+      // The map holds the new link first, so the old one's end isn't taken for a loss to reconnect from.
+      if (old && old !== link) void old.kill("replaced");
       remember(host.id, /^[0-9a-f]{64}$/.test(run.r.probe.machine ?? "") ? run.r.probe.machine : null);
       link.onState((s, why) => {
-        if (s === "lost") void onLost(host.id, link, why);
-        if (s === "lost" || s === "closed") {
-          if (links.get(host.id) === link) links.delete(host.id);
-        }
+        const current = links.get(host.id) === link;
+        if (current && (s === "lost" || s === "closed")) links.delete(host.id);
+        if (s === "lost" && current) void onLost(host.id, link, why);
       });
       audit({ step: "connected", host: host.id, ms: now() - started });
       log?.info("remote.connected", { host: host.id, ms: now() - started, os: welcome.os, desktop: welcome.desktop.access });
@@ -635,6 +637,19 @@ export function createConnections(o: {
     next();
   }
 
+  /** The user's Disconnect: no reconnect, bye and EOF to the agent. */
+  async function disconnect(hostId: string): Promise<void> {
+    closing.add(hostId);
+    stopReconnect(hostId);
+    connecting.get(hostId)?.abort.abort();
+    const link = links.get(hostId);
+    links.delete(hostId);
+    if (link) {
+      await link.close("disconnect");
+      audit({ step: "disconnected", host: hostId });
+    }
+  }
+
   function stopReconnect(hostId: string): void {
     const r = reconnects.get(hostId);
     if (!r) return;
@@ -663,17 +678,7 @@ export function createConnections(o: {
       return promise;
     },
 
-    async disconnect(hostId) {
-      closing.add(hostId);
-      stopReconnect(hostId);
-      connecting.get(hostId)?.abort.abort();
-      const link = links.get(hostId);
-      links.delete(hostId);
-      if (link) {
-        await link.close("disconnect");
-        audit({ step: "disconnected", host: hostId });
-      }
-    },
+    disconnect,
 
     link(hostId) {
       const l = links.get(hostId);
@@ -682,7 +687,7 @@ export function createConnections(o: {
 
     async uninstall(host) {
       const h = hostLabel(host.dest);
-      await this.disconnect(host.id);
+      await disconnect(host.id);
       const abort = new AbortController();
       try {
         progress(host.id, { step: "resolving" });
@@ -698,7 +703,6 @@ export function createConnections(o: {
         if (run.r.kind === "failed") throw refuse(failureOf(run.r, p, h, "interactive", run.cancelledByUser));
         if (run.r.kind !== "done" || !run.r.uninstalled) throw refuse({ kind: "remote", message: MESSAGES.remoteStopped(h, "uninstall") });
         audit({ step: "uninstalled", host: host.id });
-        progress(host.id, { step: "ready" });
       } catch (err) {
         const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(h), "unknown", undefined, true);
         audit({ step: "failed", host: host.id, kind: e.kind, uninstall: true });
