@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn as realSpawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   BACKOFF_MS, POLICY_DETAIL, UiaProvider, bridgeEnv, codeOf, fromBridgeNode, fromBridgeWindow, powershellPath, rectOf, uiaScript,
   type BridgeNode,
@@ -323,6 +325,31 @@ describe("the bridge client", () => {
     expect(spawned).toHaveLength(2);
     // PowerShell's words never reach the log.
     expect(notes.join("\n")).not.toMatch(/cannot be loaded|PSSecurityException|Execution_Policies/);
+  });
+
+  it("reads a fatal line or a refusal that arrives after Node reports the bridge's exit (W4)", async () => {
+    /** A bridge process whose exit is reported before what it wrote has been read: its stderr's end, then its stdout. */
+    const exitsFirst = (stdout: string, stderr: string) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null as number | null, signalCode: null, kill: () => true,
+      });
+      setTimeout(() => {
+        child.exitCode = 1;
+        child.emit("exit", 1, null);
+        child.stderr.end(stderr);
+        setTimeout(() => child.stdout.end(stdout), 50);
+      }, 20);
+      return child;
+    };
+    const fatal = JSON.stringify({ fatal: "Cannot add type.", languageMode: "ConstrainedLanguage" }) + "\n";
+    const constrained = new UiaProvider({ script: "C:\\e.ps1", spawn: (() => exitsFirst(fatal, "")) as never, backoffMs: [0] });
+    expect(await failure(constrained.start())).toBe("error: the accessibility bridge could not start (Cannot add type.)");
+    expect(constrained.health()).toEqual({ ok: false, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    // Constrained Language mode: never again, even with no back-off at all.
+    expect(await failure(constrained.start())).toMatch(/could not start \(Cannot add type\.\)/);
+    const refusal = "File C:\\e.ps1 cannot be loaded. For more information, see about_Execution_Policies.\n";
+    const policy = new UiaProvider({ script: "C:\\e.ps1", spawn: (() => exitsFirst("", refusal)) as never, streamExists: () => false });
+    expect(await failure(policy.start())).toBe(`error: the accessibility bridge could not start: ${POLICY_DETAIL}`);
   });
 
   it("isn't taken for an execution-policy refusal when the bridge wrote a line first", async () => {

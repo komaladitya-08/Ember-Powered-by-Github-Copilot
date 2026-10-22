@@ -284,8 +284,8 @@ const POLICY_REFUSAL = /execution[ _]polic|PSSecurityException|UnauthorizedAcces
 export const POLICY_DETAIL = "PowerShell refused to run the bridge (execution policy)";
 /** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
 const STDERR_KEPT = 16_384;
-/** How long an exit's stderr may still be on its way before the start's failure is judged without the rest of it. */
-const STDERR_GRACE_MS = 500;
+/** How long what a bridge wrote may still be on its way after its exit before its start's failure is judged without it. */
+const STREAMS_GRACE_MS = 500;
 
 /** Why the bridge couldn't start, as the provider keeps it until a start works. */
 interface StartFailure {
@@ -319,8 +319,6 @@ interface Bridge {
   lines: number;
   /** Its stderr while it starts, to tell a refusal (STDERR_KEPT at most). */
   stderr: string;
-  /** Its stderr was read to the end. */
-  stderrDone: boolean;
 }
 
 /**
@@ -448,7 +446,7 @@ export class UiaProvider implements AxProvider {
     const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
     // Nobody may be waiting when a start fails in the background: that is no unhandled rejection.
     ready.catch(() => undefined);
-    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, generation: 0, lines: 0, stderr: "", stderrDone: false };
+    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, generation: 0, lines: 0, stderr: "" };
     const first = this.starts++ === 0;
     /** The bridge is finished with; `start`: why it couldn't start, when it never got ready. */
     const fail = (why: string, start?: Omit<StartFailure, "at" | "why">) => {
@@ -464,7 +462,8 @@ export class UiaProvider implements AxProvider {
       b.pending.clear();
       if (child.exitCode === null && child.signalCode === null) child.kill();
     };
-    readline.createInterface({ input: child.stdout }).on("line", line => {
+    const out = readline.createInterface({ input: child.stdout });
+    out.on("line", line => {
       b.lines++;
       let msg: Record<string, unknown>;
       try {
@@ -510,16 +509,22 @@ export class UiaProvider implements AxProvider {
       this.note("uia.stderr", { bytes: line.length });
       if (!b.isReady && b.stderr.length < STDERR_KEPT) b.stderr += line.slice(0, STDERR_KEPT - b.stderr.length) + "\n";
     });
-    errors.on("close", () => { b.stderrDone = true; });
+    // Both streams read to the end. Node may report the exit before the last of either: a fatal line written just
+    // before it (whose languageMode says whether to start again) or PowerShell's refusal on stderr.
+    const readTo = (rl: readline.Interface) => new Promise<void>(resolve => rl.once("close", () => resolve()));
+    const drained = Promise.all([readTo(out), readTo(errors)]);
     child.on("exit", (code, signal) => {
       this.note("uia.exit", { code, signal });
       const how = signal ?? `exit code ${code}`;
       if (b.isReady || b.done) { fail(`the accessibility bridge stopped (${how})`); return; }
-      // It never got ready: why is judged once its stderr is read (it may still be on its way), within a moment.
-      const judge = () => fail(...this.exitBeforeReady(b, how));
-      if (b.stderrDone) { judge(); return; }
-      const timer = setTimeout(judge, STDERR_GRACE_MS);
-      errors.once("close", () => { clearTimeout(timer); judge(); });
+      // It never got ready: why is judged once what it wrote is read, within a moment (a fatal line read meanwhile
+      // has judged it already: fail() does nothing then).
+      let timer: NodeJS.Timeout | undefined;
+      const late = new Promise<void>(resolve => { timer = setTimeout(resolve, STREAMS_GRACE_MS); });
+      void Promise.race([drained, late]).then(() => {
+        clearTimeout(timer);
+        if (!b.done) fail(...this.exitBeforeReady(b, how));
+      });
     });
     child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: `Windows PowerShell could not be run (${err.message})` }));
     child.stdin.on("error", () => fail("the accessibility bridge stopped"));
