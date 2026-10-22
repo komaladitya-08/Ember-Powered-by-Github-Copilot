@@ -879,7 +879,7 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider,
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
-        describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); turn?.screen.push(seen); return seen; }
+        describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
           : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
         caps,
         ...(targets ? {
@@ -1189,15 +1189,16 @@ export class AgentHost {
   /**
    * describe_screen with targets (§2.6): the screen of the computer the user's words name (or the model's choice, when
    * their words name it too), else the active one's; this screen's through main, another computer's through its agent.
+   * `read`: it is screen text (the turn's tasks then know it was read); a refusal isn't.
    */
-  private async describeTarget(choice?: string): Promise<string> {
+  private async describeTarget(choice?: string): Promise<{ text: string; read: boolean }> {
     const targets = this.o.targets!;
     const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "", ...(choice !== undefined ? { choice } : {}) });
-    if (!b.ok) return b.why;
+    if (!b.ok) return { text: b.why, read: false };
     const remote = targets.describeScreen(b.binding.id);
-    if (remote) return remote;
-    if (this.o.describeScreen) return this.o.describeScreen();
-    return `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`;
+    if (remote) return { text: await remote, read: true };
+    if (this.o.describeScreen) return { text: await this.o.describeScreen(), read: true };
+    return { text: `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`, read: false };
   }
 
   /** Windows with WSL turned on (the user's switch, and the administrator allows it): the terminal words then differ (§3.15). */

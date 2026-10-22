@@ -270,6 +270,9 @@ export const TOOL_STEPS: Record<string, string> = {
   scroll: "Scrolling (your mouse)",
   report_progress: "Updating you",
   finish_task: "Wrapping up",
+  run_command: "Running a command",
+  list_computers: "Checking which computers I can use",
+  offer_connect: "Offering to connect",
 };
 
 /** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */
@@ -314,7 +317,7 @@ export const STILL_WAITING = "Still waiting for Copilot…";
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
   click: "tap", toggle: "tap", choose_option: "tap", set_value: "tap", change_setting: "tap", open_app: "tap", scroll: "tap",
-  type_text: "type", fill_cells: "type", press_keys: "type",
+  type_text: "type", fill_cells: "type", press_keys: "type", run_command: "type",
   point_at: "point", wait_for_click: "point",
   set_appearance: "wave", start_task: "thumbsUp", show_me: "point",
 };
