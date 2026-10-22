@@ -8,10 +8,10 @@
  *   that **replaces** the user's, so nothing else of the PC's environment crosses into the distro (X11). wsl.exe's own
  *   -c text is `WSL_EVAL`, which holds no quote or backslash for Windows' argument quoting to change (critique wsl-18).
  * - A PTY through util-linux `script` when the distro has it (BusyBox's has no `-e`), else pipes with stdin closed.
- * - Every fixed script (facts, inspect, git facts, sweeps, boot ids) goes to `/bin/sh -s` on stdin, never on argv,
- *   and ends in `exit` (the job host ends its job when its stdin closes, so stdin stays open for the script's life).
- *   Data a script reads (inspect's paths) travels inside a quoted here-document with a random delimiter: dash, Ubuntu's
- *   /bin/sh, reads a script from a pipe in blocks, so data written after the script on stdin would be parsed as
+ * - Every fixed script (facts, inspect, git facts, script reads, sweeps, boot ids) goes to `/bin/sh -s` on stdin, never
+ *   on argv, and ends in `exit` (the job host ends its job when its stdin closes, so stdin stays open for the script's
+ *   life). Data a script reads (inspect's paths) travels inside a quoted here-document with a random delimiter: dash,
+ *   Ubuntu's /bin/sh, reads a script from a pipe in blocks, so data written after the script on stdin would be parsed as
  *   commands (checked: `printf 'while read p; do …; done\necho INJECTED\n' | dash -s` runs `echo INJECTED`).
  * - The start marker the launcher prints decides whether the command started: output that ends without it is a
  *   failed start whose reason is wsl.exe's (or the launcher's) own error text, decoded (critique wsl-17).
@@ -30,6 +30,7 @@ import type {
   CommandRunner, GitFacts, JobHostRef, PathFact, RunExit, RunningCommand, RunSpec, RunnerFacts, ShellId, WindowsContext,
 } from "../commands/types";
 import { commandEnv } from "../commands/run/env";
+import { MAX_SCRIPT_BYTES, decodeScript } from "../commands/run/inspect";
 import { LaunchError, launchArgv } from "../commands/run/local";
 import { sweepArgs, sweepScript, sweptNames } from "../commands/run/sweep";
 import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
@@ -71,6 +72,43 @@ export const SWEEP_SCRIPT = sweepScript;
 
 /** The boot id of the distro's kernel (SA's same-machine rule, §5.1.14): read only from a running WSL2 distro. */
 export const BOOT_ID_SCRIPT = "cat /proc/sys/kernel/random/boot_id";
+
+/** What READ_SCRIPT prints before the script's bytes (anything wsl.exe printed ahead of it isn't the script). */
+export const SCRIPT_MARKER = Buffer.from("\x1b]777;ember-script\x07", "latin1");
+/** The bytes READ_SCRIPT reads: one more than the cap, so a longer script is known to be too big (L8, the lead's ruling). */
+export const SCRIPT_READ_BYTES = MAX_SCRIPT_BYTES + 1;
+/** How long reading a script in a running distro may take. */
+export const SCRIPT_READ_MS = 5_000;
+
+/**
+ * A shell script's first bytes, so the flow can judge what it does before it runs (L8, the lead's ruling). The path is
+ * here-document data, absolute (the runner joins a relative one to the command's folder; starting with "/", it is never
+ * taken for an option, and BusyBox's realpath knows no `--`), resolved through its links (readlink -f where realpath
+ * fails); only a regular file is read (never a FIFO, a device or a socket), and never one under /dev, /proc or /sys by either
+ * form (`/proc/self/fd/N` resolves to an ordinary-looking file). dd reads at most SCRIPT_READ_BYTES, after the marker.
+ */
+export const READ_SCRIPT = [
+  "IFS= read -r p || exit 3",
+  'case "$p" in /*) ;; *) exit 3;; esac',
+  'r=$(realpath "$p" 2>/dev/null) || r=$(readlink -f "$p" 2>/dev/null) || exit 3',
+  '[ -n "$r" ] || exit 3',
+  'for x in "$p" "$r"; do case "$x" in /dev|/dev/*|/proc|/proc/*|/sys|/sys/*) exit 3;; esac; done',
+  '[ -f "$r" ] || exit 3',
+  "printf '\\033]777;ember-script\\007'",
+  `dd if="$r" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`,
+].join("\n");
+
+/**
+ * READ_SCRIPT's output as the script's text (decodeScript: its byte order mark kept), or null: no marker, or more
+ * bytes than the cap (too big to judge whole).
+ */
+export function parseScriptRead(stdout: Uint8Array): string | null {
+  const out = Buffer.from(stdout.buffer, stdout.byteOffset, stdout.byteLength);
+  const at = out.indexOf(SCRIPT_MARKER);
+  if (at < 0) return null;
+  const bytes = out.subarray(at + SCRIPT_MARKER.length);
+  return bytes.length > MAX_SCRIPT_BYTES ? null : decodeScript(bytes);
+}
 
 /** A line a here-document can carry as data: no line break, no NUL. */
 function carriable(line: string): boolean {
@@ -361,6 +399,12 @@ export interface WslRunner extends CommandRunner {
    * stopped distro unless `mayBoot`. Null when it couldn't run (not listed, set-up pending, stopped, timed out).
    */
   runScript(script: string, o?: { lines?: readonly string[]; cwd?: string; timeoutMs?: number; mayBoot?: boolean }): Promise<ScriptResult | null>;
+  /**
+   * A shell script's text from the distro's own filesystem (the flow's CommandRunner extension, L8): a regular file of
+   * at most 64 KiB, a relative path joined to `cwd`. Null when it can't be read in full (missing, unreadable, not a
+   * regular file, under /dev, /proc or /sys, too big, too slow) or the distro isn't running: it never starts one.
+   */
+  readScript(path: string, cwd: string): Promise<string | null>;
 }
 
 /** Facts read within this long are reused (one tool call's facts, inspect, git facts and start). */
@@ -533,6 +577,15 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     async gitFacts(cwd) {
       const r = await runScript(GIT_SCRIPT, { cwd, mayBoot: true });
       return r ? parseGitFacts(r.stdout.toString("utf8")) : null;
+    },
+    async readScript(path, cwd) {
+      if (typeof path !== "string" || path === "" || typeof cwd !== "string") return null;
+      // Joined, not normalised: the shell opens `x/../t.sh` through x's real folder, and so does realpath.
+      const abs = path.startsWith("/") ? path : cwd.startsWith("/") ? `${cwd.replace(/\/+$/, "")}/${path}` : null;
+      if (abs === null || abs.length > 4096 || !carriable(abs)) return null;
+      // From "/": the command's folder may hold characters wsl.exe's --cd can't take; the path is absolute anyway.
+      const r = await runScript(READ_SCRIPT, { lines: [abs], cwd: "/", timeoutMs: SCRIPT_READ_MS });
+      return r && r.code === 0 ? parseScriptRead(r.stdout) : null;
     },
     start(spec) {
       const run = new Run(spec, d, { factsAndLines, usable, sweep, boot, now, lastFacts: () => cache?.facts ?? null });
