@@ -34,7 +34,7 @@ import {
   WSL_OFF_ROW, buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, wslSwitchOn,
   type CommandWindow, type PromptWindow, type TargetsParts,
 } from "../../app/main/targets/runtime";
-import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
+import { WSL_READER, sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
 import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
 import { validConsent } from "../../app/main/remote/prompt-window";
@@ -1094,6 +1094,33 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.cards.map(c => c.title)).toEqual(["Bring Ember to build-01?"]);
     expect(r.conns.connect).toHaveBeenCalled();
     expect(r.t.agent.active).toBe("ssh:build-01");
+  });
+
+  it("reads the user's ssh in WSL only in distros running now (never booting one), through WA's runner", async () => {
+    const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
+    const make = (live: string[]) => {
+      // Ubuntu ran when Ember last looked (its cached flag says running); WSL reports what runs now.
+      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: wslOnSettings });
+      r.wsl.runningNow = async () => new Set(live);
+      const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" }));
+      for (const d of ["Ubuntu", "Debian"]) Object.assign(r.wsl.runner(d), { runScript });
+      return { r, runScript };
+    };
+    const stopped = make([]);
+    await flush();
+    stopped.r.ticks[0]();
+    await flush(); await flush();
+    expect(seen.userSshProcesses).toHaveBeenCalledWith("win32");
+    expect(stopped.runScript).not.toHaveBeenCalled();
+    expect(stopped.r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected") }) });
+    const running = make(["Debian"]);
+    await flush();
+    running.r.ticks[0]();
+    await flush(); await flush(); await flush();
+    // Only Debian, which runs now; never with mayBoot.
+    expect(running.runScript).toHaveBeenCalledTimes(1);
+    expect(running.runScript).toHaveBeenCalledWith(WSL_READER, { timeoutMs: 5000 });
+    expect(running.r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-02 from Debian" }) });
   });
 
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {

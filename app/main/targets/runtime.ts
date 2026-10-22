@@ -39,13 +39,14 @@ import { createConnections } from "../remote/connections";
 import { parseTypedDestination } from "../remote/destination";
 import { createPromptWindow } from "../remote/prompt-window";
 import { emberNamesRegExp } from "../remote/protocol";
-import { sshDestination, userSshProcesses } from "../remote/notice-ssh";
+import { WSL_READER, parseWslReader, sshDestination, userSshProcesses } from "../remote/notice-ssh";
 import { remoteTargetParts, type RemoteTargetExtras } from "../remote/target";
 import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink, type SshSeen } from "../remote/types";
 import { SettingsSchema, lenientJson, repairSettings } from "../settings";
 import { wslAwareSystem } from "../wsl/privacy";
 import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
 import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
+import type { WslRunner } from "../wsl/runner";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
 import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
@@ -962,13 +963,38 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (own.dismissedOffers.some(d => d.toLowerCase() === dest.toLowerCase())) return;
     try { settings.update({ targets: { ...own, dismissedOffers: [...own.dismissedOffers, dest].slice(-200) } }); } catch (err) { log.warn("targets.dismiss_failed", { err }); }
   };
+  /**
+   * SA's noticing with the WSL part read here: the user's own ssh in each distro that runs NOW, by WA's runner for
+   * that distro (runScript without mayBoot: it reads the running set again right before, never starts a stopped
+   * distro, and runs under Ember's job host). The registry's running flags are a cached copy that can be minutes
+   * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7).
+   */
+  const noticeOf = (n: SshNotice): SshNotice => ({
+    sshDestination: argv => n.sshDestination(argv),
+    userSshProcesses: async (os, o) => {
+      const local = await n.userSshProcesses(os);
+      const w = wsl;
+      if (!local || !o?.wsl || !w) return local;
+      let live: Set<string>;
+      try { live = await w.runningNow(); } catch (err) { log.warn("targets.wsl_running_failed", { err }); return local; }
+      for (const distro of o.wsl.distros.slice(0, 8)) {
+        if (!DISTRO_NAME.test(distro) || !live.has(distro)) continue;
+        let runner: Partial<WslRunner>;
+        try { runner = w.runner(distro) as Partial<WslRunner>; } catch { continue; }
+        if (typeof runner.runScript !== "function") continue; // not WA's runner: nothing is read there
+        const r = await runner.runScript(WSL_READER, { timeoutMs: 5_000 }).catch(() => null);
+        if (r && r.code === 0) local.push(...parseWslReader(r.stdout.toString("utf8"), distro));
+      }
+      return local;
+    },
+  });
   let noticer: Noticer | null = null;
   let noticeTimer: unknown = null;
   // The window the user is in comes from the hands' tier-3 view of it (main's window system); without it, no noticing.
   const look = deps.localHands?.cursor?.activeWindow;
   if (parts.notice && look) {
     noticer = createNoticer({
-      os: deps.os, log, notice: parts.notice,
+      os: deps.os, log, notice: noticeOf(parts.notice),
       enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh,
       activeWindow: () => {
         const w = look();
@@ -976,9 +1002,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       },
       isTerminal: app => isTerminalWindowApp(app, deps.sys.apps, deps.os),
       cimAllowed: () => settings.get().targets.hosts.length > 0 || settings.get().targets.dismissedOffers.length === 0,
+      // The distros Ember works in; which of them run is read uncached when the processes are (noticeOf).
       wsl: () => {
         if (!wsl || !wslOn() || !wslFacts?.wslExe) return null;
-        const distros = wslFacts.distros.filter(d => d.running && entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
+        const distros = wslFacts.distros.filter(d => entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
         return { exe: wslFacts.wslExe, distros };
       },
       dismissed: s => settings.get().targets.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase()),
