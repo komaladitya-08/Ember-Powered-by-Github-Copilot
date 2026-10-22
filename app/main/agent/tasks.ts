@@ -15,6 +15,7 @@ import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
 import type { AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
+import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -29,6 +30,10 @@ export interface Task {
   started: number;
   finished: number | null;
   mode?: "do" | "guide";
+  /** The target it acts on, fixed for its life (absent: this computer). */
+  targetId?: TargetId;
+  /** Where it acts when not on this computer ("on build-01", "in Ubuntu (WSL)"): its card's badge (§2.4). */
+  where?: string;
 }
 
 /**
@@ -101,18 +106,21 @@ export class TaskManager {
   /**
    * `userWords`: what the user said in the turn that started it (risky steps are checked against those); `agreed`:
    * Ember's questions they answered then (TaskSpec.agreed); `screen`: what the conversation read on the screen in that
-   * turn (text from it typed into a window is asked about).
+   * turn (text from it typed into a window is asked about). `targetId`: the target the host bound the task to (§2.3;
+   * absent: this computer), and `where` its card's badge when that isn't this computer.
    */
-  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide"; userWords?: string; agreed?: Agreement[]; screen?: string } = {}): Task {
+  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide"; userWords?: string; agreed?: Agreement[]; screen?: string; targetId?: TargetId; where?: string } = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
-    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null };
+    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null,
+      ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
-      ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}) } });
+      ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
-    this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title });
+    this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
+      ...(opts.targetId && opts.targetId !== "local" ? { target: opts.targetId } : {}) });
     this.pump();
     this.publish();
     return task;
@@ -286,6 +294,7 @@ export class TaskManager {
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
         : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
+      ...(t.where ? { where: t.where } : {}),
     }));
     this.d.setCards(cards);
   }

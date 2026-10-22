@@ -9,6 +9,7 @@ import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { plainMarkdown } from "@ember/bubble";
+import { ANNOUNCE_MS } from "../commands/flow";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
@@ -234,6 +235,13 @@ export interface PresenterOptions {
   onProblem?: (text: string) => void;
   /** Ember's shortcuts on this OS, for the settings shortcut errors name (default Linux's). */
   shortcuts?: ShortcutTable;
+  /**
+   * Where the task acts when it isn't this computer ("on build-01", "in Ubuntu (WSL)", §2.4): every bubble of this
+   * presenter carries it as its badge. Absent: no badge, as before targets existed.
+   */
+  where?: string;
+  /** An announcement went up (D4.4): main speaks it when replies are spoken. */
+  onAnnounce?: (text: string) => void;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -342,6 +350,9 @@ export class Presenter {
   private readonly onProblem?: (text: string) => void;
   /** The task whose bubbles these are (BubbleState.task). */
   private readonly taskId?: string;
+  /** Where that task acts (BubbleState.where), when not on this computer. */
+  private readonly where?: string;
+  private readonly onAnnounce?: (text: string) => void;
   /** The settings shortcut as this OS writes it, for the errors that send the user there. */
   private readonly settingsKey: string;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
@@ -352,6 +363,8 @@ export class Presenter {
   private askedOverAnswer = false;
   /** The turn under way has shown words or run a step (one that has neither by its end says so). */
   private produced = false;
+  /** An announcement is up (announce): its Stop's id and the bubble it replaced, put back by endAnnouncement. */
+  private beforeAnnounce: { stopId: string; bubble: BubbleState } | null = null;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -371,11 +384,13 @@ export class Presenter {
     this.onProblem = opts.onProblem;
     this.settingsKey = (opts.shortcuts ?? SHORTCUTS.linux).settings.label;
     if (typeof opts.task === "string") this.taskId = opts.task;
+    if (opts.where) this.where = opts.where;
+    this.onAnnounce = opts.onAnnounce;
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
-    this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}) } };
+    this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
     if (this.silent) return false;
     if (!patch.bubble) {
       // Just the face (talking stops): only while this presenter's bubble is the one on screen.
@@ -606,6 +621,39 @@ export class Presenter {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
     this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true } });
+  }
+
+  /**
+   * A command the user's own words asked for is about to run (D4.4, §3.9.2): the announcement ("Pushing feature-x to
+   * origin, as you asked.") shows now with one action, Stop (`stopId`, `ui:cmdstop:<runId>`), which stops only this
+   * announcement. The command window's countdown is the authoritative Stop: this copy may wait behind a question.
+   */
+  announce(text: string, stopId: string): void {
+    this.beforeAnnounce = { stopId, bubble: this.state.bubble };
+    this.cancelHide();
+    this.guiding = false;
+    this.answering = false;
+    this.silent = false;
+    const title = text.trim().replace(/[.!]+$/, "");
+    const where = this.where ? `${this.where.charAt(0).toUpperCase()}${this.where.slice(1)}` : "On this computer";
+    this.apply({
+      emotion: "focused", talking: false,
+      bubble: { visible: true, mood: "attention", title, thought: `${where}. It starts in ${Math.round(ANNOUNCE_MS / 1000)} seconds.`, step: null, streaming: false, actions: [{ id: stopId, label: "Stop" }] },
+    }, "take");
+    this.onAnnounce?.(text);
+  }
+
+  /**
+   * The announcement with `stopId` is over (the command runs now, or was stopped): the task's bubble goes back to what
+   * it showed before, without the Stop.
+   */
+  endAnnouncement(stopId: string): void {
+    const before = this.beforeAnnounce;
+    if (!before || before.stopId !== stopId) return;
+    this.beforeAnnounce = null;
+    if (!this.state.bubble.actions.some(a => a.id === stopId)) return;
+    const b = before.bubble.visible ? before.bubble : { ...IDLE_BUBBLE, visible: true, title: this.name() };
+    this.apply({ emotion: "focused", bubble: { ...b, visible: true, mood: "acting", streaming: true, actions: b.actions.filter(a => a.id !== stopId) } }, "progress");
   }
 
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
