@@ -4,20 +4,24 @@
  * user's own mouse and keyboard keep working and can take over at once. Keys keep X's vocabulary (keysym names and
  * numbers); key codes are CGKeyCode + 8 (kVK_ANSI_A is 0, and 0 means "no key" to callers); buttons and the button
  * mask are X's. The modifiers Ember holds are set as flags on every event it posts. Posting needs the Accessibility
- * permission, without which macOS drops events silently: blockedReason() says so. AX calls (focus, titles,
+ * permission, without which macOS drops events silently: blockedReason() says so, and also refuses (failing closed)
+ * while secure keyboard entry is on or can't be checked, without Input Monitoring (Ember might not see the user take
+ * over the keyboard) and while the input source is an input method (it would compose from the key code Ember's text
+ * carries). Posted events become visible asynchronously, so the input says `pointerLags`. AX calls (focus, titles,
  * activation) run with a 0.25 s timeout on Electron's main thread and never target Ember's own process. Whatever
  * Ember holds is let go by releaseAll(), by close() and when the process exits (a key posted down stays down).
  * createDarwinInput() holds the logic over a DarwinDesktop and a DarwinPoster, so it is unit-tested with fakes.
  */
 
 import { strokeFor, type KeyLayout } from "../../hands/keymap";
+import type { Logger } from "../../logger";
 import type { Input, OwnWindowHandle } from "../types";
 import { EVENT, FLAG, MOUSE_BUTTON } from "./cg";
-import { openDesktop, openPoster, desktopError, type DarwinDesktop, type DarwinPoster } from "./desktop";
+import { openDesktop, openPoster, desktopError, secureInputOf, type DarwinDesktop, type DarwinPoster } from "./desktop";
 import { resolveActive, resolveFocus } from "./focus";
 import {
-  MAX_CG_KEY, SHORTCUT_FLAGS, VK, buildLayout, cgKeyOf, charKeysym, isModifierKey, keyFlags, keysymOf, modifierFlags,
-  namedKey, toCode, usNeedsShift,
+  SHORTCUT_FLAGS, VK, buildLayout, cgKeyOf, charKeysym, isModifierKey, keyFlags, keysymOf, modifierFlags, namedKey, toCode,
+  usNeedsShift,
 } from "./keys";
 import { clientWindowsOf, findWindowIn, parseMediaSourceId, pointerLandsOn, sameFrame, type AXWindowInfo, type TitledWindow } from "./model";
 
@@ -30,6 +34,23 @@ export function secureInputReason(app: string): string {
   const where = app ? ` in ${app}` : "";
   return `Secure keyboard entry is on${where} (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't use the mouse or keyboard until it's off.`;
 }
+
+/** Shown when neither IsSecureEventInputEnabled nor the session can say whether secure keyboard entry is on. */
+export const SECURE_INPUT_UNKNOWN_REASON = "Ember can't tell whether a password is being typed, so it won't use the keyboard.";
+
+/**
+ * Shown without Input Monitoring: the user's keyboard brake is Ember seeing a key it doesn't hold, and whether
+ * macOS shows other apps' keys to a process without the permission is undocumented, so Ember refuses rather than
+ * risk typing on while the user types (design Q10: dropped only with evidence that key-state polling isn't gated).
+ */
+export const INPUT_MONITORING_REASON =
+  "Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard.";
+
+/** Shown while the input source is an input method (Japanese, Pinyin, Korean…), which would compose from Ember's keys. */
+export const INPUT_METHOD_REASON = "Switch to a keyboard layout (not an input method) so Ember can type, or let Ember fill the field directly.";
+
+/** Shown when the current input source can't be read (so it might be an input method). */
+export const INPUT_SOURCE_UNKNOWN_REASON = "Ember can't tell whether an input method is in use, so it won't use the keyboard.";
 
 /** Lines one wheel notch scrolls (X's buttons 4–7 are one notch each; 3 matches Windows' default). */
 export const LINES_PER_NOTCH = 3;
@@ -67,10 +88,17 @@ export interface DarwinInputDeps {
    * focusedWindow() says so (its id), so keys meant for another window are never typed into Ember's.
    */
   focusedOwnWindow?: () => OwnWindowHandle | null;
+  /**
+   * Where `platform.secure_input_unknown` goes (once) when Ember can't tell whether secure keyboard entry is on, and
+   * `platform.activation_fallback` when an app is activated through LaunchServices.
+   */
+  log?: Pick<Logger, "warn" | "info">;
 }
 
 /** Input on macOS, with the optional members it implements. */
 export interface DarwinInput extends Input {
+  /** CGEventPost hands events to the window server, which applies them a little later (CursorBorrow allows for it). */
+  readonly pointerLags: true;
   textKey(ch: string, down: boolean): boolean;
   onScreen(x: number, y: number): boolean;
   blockedReason(window: number): string | null;
@@ -175,15 +203,26 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
     lastDown = { button, at: t, x: at.x, y: at.y, count: again ? prev!.count + 1 : 1 };
     return lastDown.count;
   };
+  let unknownLogged = false;
   /**
-   * The app holding secure keyboard entry ("" when unknown), or null when no app does. Whichever app holds it, a
-   * password is being typed: when it is the target itself, its password field has the keyboard and Ember's keys
-   * would land in it, so the target gets no exception.
+   * Why secure keyboard entry stops Ember, or null when it is off. Whichever app holds it, a password is being typed:
+   * when it is the target itself, its password field has the keyboard and Ember's keys would land in it, so the
+   * target gets no exception. When it can't be told, Ember acts as if it were on (fail closed).
    */
-  const secureHolder = (): string | null => {
-    if (!desktop.secureInput()) return null;
-    const holder = desktop.session().secureInputPid;
-    return holder !== null ? desktop.windows().find(e => e.pid === holder)?.owner ?? "" : "";
+  const secureReason = (): string | null => {
+    const state = secureInputOf(desktop);
+    if (state.on === false) return null;
+    if (state.on === true) return secureInputReason(state.app);
+    if (!unknownLogged) {
+      unknownLogged = true;
+      deps.log?.warn("platform.secure_input_unknown", { part: "input" });
+    }
+    return SECURE_INPUT_UNKNOWN_REASON;
+  };
+  /** Why the input source stops typing (an input method, or one that can't be read), or null for a keyboard layout. */
+  const inputSourceReason = (): string | null => {
+    const layout = desktop.inputSourceIsLayout();
+    return layout === true ? null : layout === false ? INPUT_METHOD_REASON : INPUT_SOURCE_UNKNOWN_REASON;
   };
   const releaseAll = (): void => {
     if (!open) return;
@@ -202,6 +241,8 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
   const unregisterExit = (o.onExit ?? defaultOnExit)(releaseAll);
 
   return {
+    pointerLags: true,
+
     pointer() {
       if (!open) return null;
       const p = desktop.pointer();
@@ -269,10 +310,8 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
 
     keysDown() {
       if (!open) return [];
-      const down: number[] = [];
       // Caps Lock is left out: its key state can read as down while the lock is on, which isn't the user acting.
-      for (let cg = 0; cg <= MAX_CG_KEY; cg++) if (cg !== VK.capsLock && desktop.keyDown(cg)) down.push(toCode(cg));
-      return down;
+      return desktop.keysDown().filter(cg => cg !== VK.capsLock).map(toCode);
     },
 
     keycodeOf,
@@ -354,6 +393,8 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
       if (heldFlags() & SHORTCUT_FLAGS) return false;
       const named = ch === "\n" || ch === "\r" ? VK.return : ch === "\t" ? VK.tab : -1;
       if (named < 0 && !charKeysym(ch)) return false; // control characters type nothing
+      // An input method would compose from the A key's code instead of inserting the text (a key-up still goes out).
+      if (down && inputSourceReason() !== null) return false;
       if (named >= 0) poster.key(named, down, FLAG.nonCoalesced);
       else poster.text(VK.ansiA, ch, down, FLAG.nonCoalesced);
       if (down) textHeld.set(ch, named >= 0 ? named : VK.ansiA);
@@ -368,14 +409,17 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
     blockedReason() {
       if (!open) return null;
       if (!desktop.trusted()) return ACCESSIBILITY_REASON;
-      const holder = secureHolder();
-      return holder === null ? null : secureInputReason(holder);
+      const secure = secureReason();
+      if (secure) return secure;
+      // null: the call doesn't exist, which means a macOS older than the permission itself (10.15).
+      if (desktop.listenAccess() === false) return INPUT_MONITORING_REASON;
+      return inputSourceReason();
     },
 
     keyboardGrabbed() {
       // CursorBorrow asks before every character: a password field taking the keyboard mid-borrow stops the typing.
       if (!open) return false;
-      return secureHolder() !== null;
+      return secureReason() !== null;
     },
 
     pointerOn(window, elementWindow) {
@@ -386,7 +430,7 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
 
     screenLocked() {
       if (!open) return false;
-      return desktop.session().locked || desktop.displayAsleep();
+      return desktop.session()?.locked === true || desktop.displayAsleep();
     },
   };
 }
@@ -404,7 +448,7 @@ export function openDarwinInput(deps: DarwinInputDeps = {}): DarwinInput | null 
     return null;
   }
   try {
-    const desktop = openDesktop();
+    const desktop = openDesktop({ log: deps.log });
     if (!desktop) {
       darwinInputError = desktopError;
       return null;

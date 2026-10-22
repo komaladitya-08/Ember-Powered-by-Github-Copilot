@@ -126,7 +126,11 @@ export interface CF {
   readonly kTrue: Ref | null;
   readonly kFalse: Ref | null;
   equal(a: Ref | null | undefined, b: Ref | null | undefined): boolean;
-  hash(ref: Ref | null | undefined): number;
+  /**
+   * CFHash as the exact unsigned 64-bit value in hex ("0" for NULL). koffi hands values above 2^53 over as BigInt,
+   * and a Number would round distinct objects together (the accessibility provider keys elements by it).
+   */
+  hash(ref: Ref | null | undefined): string;
 }
 
 /** UTF-16 code units → string, dropping a lone high surrogate left at the end by a cap. */
@@ -144,6 +148,11 @@ export function pointerArray(values: readonly Ref[]): Buffer {
   const buf = Buffer.alloc(Math.max(8, values.length * 8));
   values.forEach((v, i) => buf.writeBigUInt64LE(BigInt.asUintN(64, v), i * 8));
   return buf;
+}
+
+/** A CFHashCode (an unsigned long, as koffi returns it: a number up to 2^53, a BigInt above) as exact hex. */
+export function hashHex(raw: number | bigint): string {
+  return BigInt.asUintN(64, BigInt(raw)).toString(16);
 }
 
 /** The JS side of CoreFoundation over raw functions (koffi's in openCoreFoundation(), a fake in the tests). */
@@ -262,7 +271,7 @@ export function makeCF(raw: CFRaw): CF {
       return !!a && !!b && !!raw.CFEqual(a, b);
     },
     hash(ref) {
-      return ref ? Number(raw.CFHash(ref)) : 0;
+      return ref ? hashHex(raw.CFHash(ref)) : "0";
     },
   };
   return cf;

@@ -2,7 +2,9 @@
  * The macOS window system over a stand-in DarwinDesktop: points throughout (DIP is the identity), X's button mask,
  * the stack bottom to top, the active and focused windows (Ember's own focused panel answered without AX, AX never
  * asked about Ember's process, titles from AX when Screen Recording is missing), the apps' open windows, capture that
- * fails closed, own-window ids from media source ids, system dialogs, and nothing after close().
+ * fails closed, own-window ids from media source ids, system dialogs (every credential or consent prompt's owner, and
+ * secure keyboard entry, which fails closed when it can't be checked), the holder of secure input, Input Monitoring,
+ * and nothing after close().
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -40,8 +42,10 @@ function fakeDesktop() {
       [600, null],
     ]),
     trusted: true,
-    secure: false,
+    secure: false as boolean | null,
+    session: { locked: false, secureInputPid: null as number | null } as { locked: boolean; secureInputPid: number | null } | null,
     screenAccess: true,
+    listen: true as boolean | null,
     calls: [] as string[],
   };
   const desktop: DarwinDesktop = {
@@ -50,14 +54,20 @@ function fakeDesktop() {
     buttonDown: b => s.buttons.has(b),
     flags: () => s.flags,
     keyDown: k => s.keys.has(k),
+    keysDown: () => [...s.keys],
     frontmostPid: () => (s.calls.push("frontmost"), s.frontmost),
     focusedWindow: pid => (s.calls.push(`focused ${pid}`), s.focused.get(pid) ?? null),
     appWindows: pid => (s.calls.push(`windows ${pid}`), s.axWindows.get(pid) ?? null),
     raise: () => true,
     trusted: () => s.trusted,
     secureInput: () => s.secure,
-    session: () => ({ locked: false, secureInputPid: null }),
+    session: () => s.session,
     screenAccess: () => s.screenAccess,
+    listenAccess: () => s.listen,
+    requestListenAccess: () => (s.calls.push("request listen"), s.listen),
+    postAccess: () => true,
+    inputSourceIsLayout: () => true,
+    processPath: pid => (pid === 77 ? "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent" : null),
     mainDisplay: () => ({ x: 0, y: 0, width: 1440, height: 900 }),
     displaysAt: () => 1,
     displayAsleep: () => false,
@@ -77,8 +87,9 @@ const ownWindow = (id: string) => ({ getMediaSourceId: () => id, getNativeWindow
 
 function setup(deps: Partial<DarwinWindowsDeps> = {}) {
   const { s, desktop } = fakeDesktop();
-  const ws = createDarwinWindows(desktop, { screen, ...deps }, { ownPid: OWN });
-  return { s, ws };
+  const warned: string[] = [];
+  const ws = createDarwinWindows(desktop, { screen, log: { warn: (e, f) => warned.push(`${e} ${JSON.stringify(f)}`), info: () => undefined }, ...deps }, { ownPid: OWN });
+  return { s, ws, warned };
 }
 
 describe("the macOS window system", () => {
@@ -280,12 +291,69 @@ describe("system dialogs and permissions on macOS", () => {
     expect(createDarwinWindows(desktop, { screen }).systemDialogOpen()).toBe(true);
   });
 
+  it("sees every system prompt that takes credentials or consent (M17)", () => {
+    const owners = [
+      "SecurityAgent", "coreautha", "coreauthd", "universalAccessAuthWarn", "UserNotificationCenter", "CoreServicesUIAgent",
+      "AuthenticationServicesAgent", "ScreenSaverEngine",
+    ];
+    for (const owner of owners) {
+      const { s, ws } = setup();
+      s.windows.unshift(w(990, 77, owner, "", 500, 300, 400, 200, 0));
+      expect(ws.systemDialogOpen(), owner).toBe(true);
+      s.windows[0]!.alpha = 0; // ordered in but fully transparent: nothing to see
+      expect(ws.systemDialogOpen(), owner).toBe(false);
+    }
+    const { s, ws } = setup();
+    s.windows.unshift(w(990, 78, "Finder", "", 500, 300, 400, 200, 0));
+    expect(ws.systemDialogOpen()).toBe(false);
+  });
+
+  it("falls back to the session's secure-input pid when IsSecureEventInputEnabled can't be called (M18)", () => {
+    const { s, ws, warned } = setup();
+    s.secure = null;
+    expect(ws.systemDialogOpen()).toBe(false);
+    s.session = { locked: false, secureInputPid: 600 };
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(warned).toEqual([]);
+  });
+
+  it("fails closed, and logs it once, when neither the call nor the session can tell (M18)", () => {
+    const { s, ws, warned } = setup();
+    s.secure = null;
+    s.session = null;
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.secureInput()).toEqual({ on: null, pid: null, app: "" });
+    expect(warned).toEqual(['platform.secure_input_unknown {"part":"windows"}']);
+  });
+
+  it("names the app holding secure input, for the refusal text and the doctor", () => {
+    const { s, ws } = setup();
+    expect(ws.secureInput()).toEqual({ on: false, pid: null, app: "" });
+    s.secure = true;
+    s.session = { locked: false, secureInputPid: 600 };
+    expect(ws.secureInput()).toEqual({ on: true, pid: 600, app: "Finder" });
+    s.session = { locked: false, secureInputPid: 77 }; // no window: named by its process
+    expect(ws.secureInput()).toEqual({ on: true, pid: 77, app: "SecurityAgent" });
+  });
+
   it("reports the Accessibility and Screen Recording permissions", () => {
     const { s, ws } = setup();
     expect([ws.accessibilityTrusted(), ws.screenRecording()]).toEqual([true, true]);
     s.trusted = false;
     s.screenAccess = false;
     expect([ws.accessibilityTrusted(), ws.screenRecording()]).toEqual([false, false]);
+  });
+
+  it("reports Input Monitoring and asks for it, null where macOS has no such call (M3)", () => {
+    const { s, ws } = setup();
+    expect(ws.inputMonitoring()).toBe(true);
+    s.listen = false;
+    expect(ws.inputMonitoring()).toBe(false);
+    expect(ws.requestInputMonitoring()).toBe(false);
+    expect(s.calls).toEqual(["request listen"]);
+    s.listen = null;
+    expect([ws.inputMonitoring(), ws.requestInputMonitoring()]).toEqual([null, null]);
   });
 });
 
@@ -297,6 +365,7 @@ describe("the macOS window system after close()", () => {
     expect([ws.pointer(), ws.keysDown(), ws.activeWindow(), ws.focusWindow(), ws.capture(0, 0, 5, 5)]).toEqual([null, null, null, null, null]);
     expect([ws.clientWindows(), ws.stack()]).toEqual([[], []]);
     expect(ws.systemDialogOpen()).toBe(true);
+    expect([ws.secureInput(), ws.inputMonitoring(), ws.requestInputMonitoring()]).toEqual([{ on: null, pid: null, app: "" }, null, null]);
     ws.close();
   });
 });

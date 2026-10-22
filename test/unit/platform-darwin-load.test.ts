@@ -10,6 +10,7 @@ import { CF_PROTOTYPES, cfTypes, openCoreFoundation } from "../../app/main/platf
 import { CG_OPTIONAL_PROTOTYPES, CG_PROTOTYPES, cgTypes, openCoreGraphics } from "../../app/main/platform/darwin/cg";
 import { AX_GET_WINDOW_PROTOTYPE, AX_PROTOTYPES } from "../../app/main/platform/darwin/ax";
 import { HITOOLBOX_PROTOTYPES, UC_KEY_TRANSLATE_PROTOTYPE } from "../../app/main/platform/darwin/hitoolbox";
+import { PROC_PIDPATH_PROTOTYPE } from "../../app/main/platform/darwin/desktop";
 import { functionName } from "../../app/main/platform/darwin/native";
 import * as darwin from "../../app/main/platform/darwin/index";
 import { darwinWindowsError } from "../../app/main/platform/darwin/windows";
@@ -46,6 +47,7 @@ describe("the macOS bindings' C prototypes", () => {
     const all = [
       ...Object.values(CF_PROTOTYPES), ...Object.values(CG_PROTOTYPES), ...Object.values(CG_OPTIONAL_PROTOTYPES),
       ...Object.values(AX_PROTOTYPES), AX_GET_WINDOW_PROTOTYPE, ...Object.values(HITOOLBOX_PROTOTYPES), UC_KEY_TRANSLATE_PROTOTYPE,
+      PROC_PIDPATH_PROTOTYPE,
     ];
     const tag = Math.random().toString(36).slice(2, 8);
     for (const prototype of all) {
@@ -61,6 +63,15 @@ describe("the macOS bindings' C prototypes", () => {
     }
     expect(functionName(AX_GET_WINDOW_PROTOTYPE)).toBe("_AXUIElementGetWindow");
     expect(functionName(UC_KEY_TRANSLATE_PROTOTYPE)).toBe("UCKeyTranslate");
+    expect(functionName(PROC_PIDPATH_PROTOTYPE)).toBe("proc_pidpath");
+  });
+
+  it("bind the permission checks and the one-call key read the design names (M3, M11)", () => {
+    expect(Object.keys(CG_OPTIONAL_PROTOTYPES).sort()).toEqual([
+      "CGPreflightListenEventAccess", "CGPreflightPostEventAccess", "CGPreflightScreenCaptureAccess", "CGRequestListenEventAccess",
+    ]);
+    expect(HITOOLBOX_PROTOTYPES.GetKeys).toBe("void GetKeys(void *keyMap)");
+    expect(HITOOLBOX_PROTOTYPES.TISCopyCurrentKeyboardInputSource).toBe("void *TISCopyCurrentKeyboardInputSource(void)");
   });
 
   it("never declare the variadic scroll-wheel call", () => {

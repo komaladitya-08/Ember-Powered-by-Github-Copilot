@@ -7,7 +7,12 @@
 
 export { openDarwinWindows, createDarwinWindows, darwinWindowsError } from "./windows";
 export type { DarwinWindowSystem, DarwinWindowsDeps, DarwinWindowsOptions, DarwinKeysDown } from "./windows";
-export { openDarwinInput, createDarwinInput, darwinInputError, ACCESSIBILITY_REASON } from "./input";
+export {
+  openDarwinInput, createDarwinInput, darwinInputError, ACCESSIBILITY_REASON, INPUT_METHOD_REASON, INPUT_MONITORING_REASON,
+  INPUT_SOURCE_UNKNOWN_REASON, SECURE_INPUT_UNKNOWN_REASON, secureInputReason,
+} from "./input";
 export type { DarwinInput, DarwinInputDeps, DarwinInputOptions } from "./input";
+export type { DarwinSecureInput } from "./desktop";
+export { SECURITY_OWNERS } from "./model";
 export { composePoints } from "./capture";
 export type { DarwinCapture, DisplayBitmap } from "./capture";

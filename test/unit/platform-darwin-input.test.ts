@@ -2,13 +2,17 @@
  * macOS synthetic input over a stand-in desktop and event poster: key codes CGKeyCode + 8, the layout's own keys
  * for characters (none at all when the layout can't be read), held modifiers as flags on every event, drags while a
  * button is held, X's buttons and wheel, double clicks, text typed whatever the layout, everything Ember holds let go
- * (also at process exit), window lookups with AX titles, activation that never targets Ember, the Accessibility
- * and secure-input reasons, and CursorBorrow driving it unchanged.
+ * (also at process exit), window lookups with AX titles, activation that never targets Ember, the reasons input is
+ * refused (Accessibility; secure input on or unknown; Input Monitoring; an input method), the lagging pointer, and
+ * CursorBorrow driving it unchanged.
  */
 
 import { describe, expect, it } from "vitest";
 import { CursorBorrow } from "../../app/main/hands/borrow";
-import { ACCESSIBILITY_REASON, DOUBLE_CLICK_MS, createDarwinInput, type DarwinInputDeps } from "../../app/main/platform/darwin/input";
+import {
+  ACCESSIBILITY_REASON, DOUBLE_CLICK_MS, INPUT_METHOD_REASON, INPUT_MONITORING_REASON, INPUT_SOURCE_UNKNOWN_REASON,
+  SECURE_INPUT_UNKNOWN_REASON, createDarwinInput, type DarwinInputDeps,
+} from "../../app/main/platform/darwin/input";
 import type { DarwinDesktop, DarwinPoster } from "../../app/main/platform/darwin/desktop";
 import type { KeyboardLayoutSource } from "../../app/main/platform/darwin/hitoolbox";
 import { UC_MODIFIER } from "../../app/main/platform/darwin/hitoolbox";
@@ -50,8 +54,11 @@ function fakeDesktop() {
       [500, [{ id: 101, title: "notes.txt", frame: null }, { id: 103, title: "Other", frame: null }]],
     ]),
     trusted: true,
-    secure: false,
+    secure: false as boolean | null,
     secureInputPid: null as number | null,
+    sessionReadable: true,
+    listen: true as boolean | null,
+    layoutSource: true as boolean | null,
     locked: false,
     asleep: false,
     layout: layoutSource(AZERTY) as KeyboardLayoutSource | null,
@@ -63,6 +70,7 @@ function fakeDesktop() {
     buttonDown: b => s.buttons.has(b),
     flags: () => s.flags,
     keyDown: k => s.keys.has(k),
+    keysDown: () => (s.calls.push("keys"), [...s.keys]),
     frontmostPid: () => s.frontmost,
     focusedWindow: pid => s.focused.get(pid) ?? null,
     appWindows: pid => (s.calls.push(`ax windows ${pid}`), s.axWindows.get(pid) ?? null),
@@ -75,8 +83,13 @@ function fakeDesktop() {
     },
     trusted: () => s.trusted,
     secureInput: () => s.secure,
-    session: () => ({ locked: s.locked, secureInputPid: s.secureInputPid }),
+    session: () => (s.sessionReadable ? { locked: s.locked, secureInputPid: s.secureInputPid } : null),
     screenAccess: () => true,
+    listenAccess: () => s.listen,
+    requestListenAccess: () => s.listen,
+    postAccess: () => true,
+    inputSourceIsLayout: () => s.layoutSource,
+    processPath: () => null,
     mainDisplay: () => ({ x: 0, y: 0, width: 1440, height: 900 }),
     displaysAt: (x, y) => (x >= 0 && y >= 0 && x < 1440 && y < 900) || (x >= -1280 && x < 0 && y >= 100 && y < 900) ? 1 : 0,
     displayAsleep: () => s.asleep,
@@ -102,6 +115,8 @@ function fakePoster(s: { pointer: { x: number; y: number } | null }) {
 
 function setup(deps: DarwinInputDeps = {}) {
   const { s, desktop } = fakeDesktop();
+  const warned: string[] = [];
+  deps = { log: { warn: (e, f) => warned.push(`${e} ${JSON.stringify(f)}`), info: () => undefined }, ...deps };
   const { log, poster } = fakePoster(s);
   let t = 1000;
   const clock = { advance: (ms: number) => { t += ms; } };
@@ -112,7 +127,7 @@ function setup(deps: DarwinInputDeps = {}) {
     now: () => t,
     onExit: fn => { exits.push(fn); return () => { unregistered++; }; },
   });
-  return { s, log, input, clock, exits, unregistered: () => unregistered };
+  return { s, log, input, clock, exits, warned, unregistered: () => unregistered };
 }
 
 describe("macOS key codes and the layout in use", () => {
@@ -181,10 +196,11 @@ describe("macOS keys", () => {
     expect(log).toEqual([]);
   });
 
-  it("reports the keys held now as codes, leaving Caps Lock out", () => {
+  it("reports the keys held now as codes, leaving Caps Lock out, from one read of every key (M11)", () => {
     const { s, input } = setup();
     s.keys = new Set([0x00, 0x38, 0x39]);
     expect(input.keysDown()).toEqual([8, 0x38 + 8]);
+    expect(s.calls.filter(c => c === "keys")).toEqual(["keys"]);
   });
 });
 
@@ -203,6 +219,18 @@ describe("macOS text", () => {
     input.textKey("\n", true);
     input.textKey("\t", true);
     expect(log).toEqual(["key 36 down f100", "key 48 down f100"]);
+  });
+
+  it("types nothing while an input method (or a source it can't read) would compose from the A key, but still lets go (M16)", () => {
+    const { s, log, input } = setup();
+    expect(input.textKey("a", true)).toBe(true);
+    s.layoutSource = false;
+    expect(input.textKey("a", false)).toBe(true);
+    expect(input.textKey("あ", true)).toBe(false);
+    expect(input.textKey("\n", true)).toBe(false);
+    s.layoutSource = null;
+    expect(input.textKey("b", true)).toBe(false);
+    expect(log).toEqual(["text 0 a down f100", "text 0 a up f100"]);
   });
 
   it("refuses control characters, several characters, and anything under Command, Control or Option", () => {
@@ -262,6 +290,10 @@ describe("the macOS pointer", () => {
     expect(log).toEqual([]);
   });
 
+  it("says its posted moves land a little later, so CursorBorrow allows for the previous step (L5)", () => {
+    expect(setup().input.pointerLags).toBe(true);
+  });
+
   it("reports the pointer with X's button and modifier mask bits", () => {
     const { s, input } = setup();
     s.buttons = new Set([0, 2]);
@@ -304,6 +336,7 @@ describe("letting go on macOS", () => {
     expect(log.slice(-2)).toEqual(["key 56 up f100", "close"]);
     expect(unregistered()).toBe(1);
     expect(s.calls).toContain("dispose");
+    expect(input.blockedReason(101)).toBeNull();
     input.move(1, 1);
     input.button(1, true);
     expect(input.keysym(input.keysymOf("a"), true)).toBe(false);
@@ -377,6 +410,59 @@ describe("why input can't reach a window on macOS", () => {
     s.secure = false;
     expect(input.blockedReason(101)).toBeNull();
     expect(input.keyboardGrabbed(101)).toBe(false);
+  });
+
+  it("goes by the session's secure-input pid when IsSecureEventInputEnabled can't be called (M18)", () => {
+    const { s, input, warned } = setup();
+    s.secure = null;
+    expect(input.blockedReason(101)).toBeNull();
+    s.secureInputPid = 600;
+    expect(input.blockedReason(101)).toMatch(/^Secure keyboard entry is on in Finder \(/);
+    expect(input.keyboardGrabbed(101)).toBe(true);
+    expect(warned).toEqual([]);
+  });
+
+  it("won't use the keyboard when it can't tell whether a password is being typed, and logs that once (M18)", () => {
+    const { s, input, warned } = setup();
+    s.secure = null;
+    s.sessionReadable = false;
+    expect(input.blockedReason(101)).toBe(SECURE_INPUT_UNKNOWN_REASON);
+    expect(SECURE_INPUT_UNKNOWN_REASON).toBe("Ember can't tell whether a password is being typed, so it won't use the keyboard.");
+    expect(input.keyboardGrabbed(101)).toBe(true);
+    expect(warned).toEqual(['platform.secure_input_unknown {"part":"input"}']);
+  });
+
+  it("refuses without Input Monitoring, as it might not see the user take over the keyboard (M3, Q10)", () => {
+    const { s, input } = setup();
+    s.listen = false;
+    expect(input.blockedReason(101)).toBe(INPUT_MONITORING_REASON);
+    expect(INPUT_MONITORING_REASON).toBe("Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard.");
+    s.listen = null; // a macOS without the call has no such permission
+    expect(input.blockedReason(101)).toBeNull();
+  });
+
+  it("refuses while the input source is an input method, or can't be read (M16)", () => {
+    const { s, input } = setup();
+    s.layoutSource = false;
+    expect(input.blockedReason(101)).toBe(INPUT_METHOD_REASON);
+    expect(INPUT_METHOD_REASON).toBe("Switch to a keyboard layout (not an input method) so Ember can type, or let Ember fill the field directly.");
+    s.layoutSource = null;
+    expect(input.blockedReason(101)).toBe(INPUT_SOURCE_UNKNOWN_REASON);
+  });
+
+  it("names the most basic missing piece first: Accessibility, then secure input, Input Monitoring, the input source", () => {
+    const { s, input } = setup();
+    s.trusted = false;
+    s.secure = true;
+    s.listen = false;
+    s.layoutSource = false;
+    expect(input.blockedReason(101)).toBe(ACCESSIBILITY_REASON);
+    s.trusted = true;
+    expect(input.blockedReason(101)).toMatch(/^Secure keyboard entry is on/);
+    s.secure = false;
+    expect(input.blockedReason(101)).toBe(INPUT_MONITORING_REASON);
+    s.listen = true;
+    expect(input.blockedReason(101)).toBe(INPUT_METHOD_REASON);
   });
 
   it("sees a locked session or a sleeping display", () => {
