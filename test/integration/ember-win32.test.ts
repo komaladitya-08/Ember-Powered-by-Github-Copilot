@@ -239,9 +239,10 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     const plain = before && "then" in before ? await before : before;
     expect(plain, "a plain capture of the overlay's rectangle").toBeTruthy();
     const plainRed = redShareBgra(plain!.bgra);
-    const stacked = ws.stack().find(w => w.id === child.hwnd);
-    console.log(`overlay stand-in pid ${child.pid} hwnd ${child.hwnd}: in the stack ${JSON.stringify(stacked ?? null)}; a plain capture is ${(plainRed * 100).toFixed(0)} % red`);
-    expect(stacked, "the overlay stand-in's window in the stack").toBeTruthy();
+    // A click-through layered window covers nothing for the stack (win32/rules.ts coversScreen), as on Linux.
+    const stacked = ws.stack().some(w => w.id === child.hwnd);
+    console.log(`overlay stand-in pid ${child.pid} hwnd ${child.hwnd}: in the stack ${String(stacked)}; a plain capture is ${(plainRed * 100).toFixed(0)} % red`);
+    expect(stacked).toBe(false);
     expect(plainRed, "the overlay shows in a capture taken without hiding it (else hiding it proves nothing)").toBeGreaterThan(0.8);
     const seen = await perception.perceive({ image: true, scope: "window", target: { pid: ready.pid, title: TITLE } });
     expect(seen.capture, seen.text).toBeTruthy();
@@ -272,7 +273,9 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       console.log(`Settings: bridge ${JSON.stringify(w)}; matched ${JSON.stringify(m?.window ?? null)}`);
       expect(m, "the frame Perception matches for Settings").toBeTruthy();
       expect(m!.window.pid).toBe(w.pid);
-      expect(m!.window.wmClass).toBe("systemsettings");
+      // The hosted program's name, as the bridge reports it (C15: the same pid and program on both sides).
+      expect(m!.window.wmClass.toLowerCase()).toBe(w.app.toLowerCase());
+      expect(w.app.toLowerCase()).toBe("systemsettings");
       expect(m!.scale).toBe(1);
     } finally {
       spawnSync("taskkill", ["/IM", "SystemSettings.exe", "/F"], { windowsHide: true, stdio: "ignore" });

@@ -251,9 +251,9 @@ jobs:
         shell: bash
     steps:
       - name: Runner facts (Windows edition and build, elevation, UAC, screens, PowerShell), exported for the integration suites
-        # windows-2022 is Windows Server 2022, run as an administrator with UAC effectively off, one 1024x768 screen at
-        # 100 % and no Store apps. The suites read EMBER_CI_ELEVATED, EMBER_CI_LUA and EMBER_CI_SERVER and record
-        # "not testable on this runner" for what needs a client Windows, a normal user or UAC, instead of passing it.
+        # windows-2022 is Windows Server 2022 21H2, run elevated (its shell, explorer.exe, too) with EnableLUA 1, one
+        # 1024x768 screen at 100 % and no Store apps. The suites read EMBER_CI_ELEVATED, EMBER_CI_LUA and EMBER_CI_SERVER
+        # and record "not testable on this runner" for what needs a client Windows or a normal user, instead of passing it.
         shell: powershell -NoLogo -NoProfile -NonInteractive -Command ". '{0}'"
         run: |
           $ErrorActionPreference = "Stop"

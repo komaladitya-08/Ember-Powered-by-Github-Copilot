@@ -2020,37 +2020,30 @@ namespace Ember.Uia
           up = TreeWalker.RawViewWalker.GetParent(up);
           if (up != null) hwnd = new IntPtr(up.Current.NativeWindowHandle);
         }
-        if (hwnd == IntPtr.Zero) return Skip("no list box window");
+        if (hwnd == IntPtr.Zero) return IntPtr.Zero;
         StringBuilder name = new StringBuilder(256);
         Native.GetClassNameW(hwnd, name, name.Capacity);
         string cls = name.ToString();
         bool classic = string.Equals(cls, "ListBox", StringComparison.OrdinalIgnoreCase)
           || cls.StartsWith("WindowsForms10.LISTBOX.", StringComparison.OrdinalIgnoreCase);
-        if (!classic) return Skip("class " + cls);
+        if (!classic) return IntPtr.Zero;
         int style = Native.GetWindowLongW(hwnd, GwlStyle);
-        if ((style & LbsNotify) == 0 || (style & (LbsMultipleSel | LbsExtendedSel)) != 0) return Skip("style 0x" + style.ToString("x", CultureInfo.InvariantCulture));
+        if ((style & LbsNotify) == 0 || (style & (LbsMultipleSel | LbsExtendedSel)) != 0) return IntPtr.Zero;
         return hwnd;
       }
-      catch (Exception ex)
+      catch (Exception)
       {
-        return Skip(ex.GetType().Name); // not a list box the bridge can tell about: the select goes ahead as before
+        return IntPtr.Zero; // not a list box the bridge can tell about: the select goes ahead as before
       }
-    }
-
-    // TODO(port): diagnostics for the Windows runner while the list box notification is proven; removed after.
-    private static IntPtr Skip(string why)
-    {
-      Console.Error.WriteLine("ember_uia: list box select not notified: " + why);
-      return IntPtr.Zero;
     }
 
     /// <summary>Tells the list box's parent its selection changed, as the list box does after a click.</summary>
     internal static void SelectionChanged(IntPtr list)
     {
       IntPtr parent = Native.GetParent(list);
+      if (parent == IntPtr.Zero) return;
       int id = Native.GetWindowLongW(list, GwlId) & 0xFFFF;
-      bool posted = parent != IntPtr.Zero && Native.PostMessageW(parent, WmCommand, new IntPtr((LbnSelChange << 16) | id), list);
-      Console.Error.WriteLine("ember_uia: list box select notified: parent " + Win.Number(parent).ToString(CultureInfo.InvariantCulture) + " id " + id.ToString(CultureInfo.InvariantCulture) + " posted " + (posted ? "yes" : "no"));
+      Native.PostMessageW(parent, WmCommand, new IntPtr((LbnSelChange << 16) | id), list);
     }
   }
 
@@ -2941,7 +2934,6 @@ namespace Ember.Uia
             bool was = list != IntPtr.Zero && item.Current.IsSelected;
             item.Select();
             if (list != IntPtr.Zero && !was) ListBoxes.SelectionChanged(list);
-            else if (list != IntPtr.Zero) Console.Error.WriteLine("ember_uia: list box select not notified: already selected");
             break;
           }
         case "addToSelection": ((SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op)).AddToSelection(); break;

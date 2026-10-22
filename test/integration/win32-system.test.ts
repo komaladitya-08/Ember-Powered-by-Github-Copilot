@@ -9,7 +9,7 @@
  * PowerShell; and systemDialogOpen is false at rest.
  *
  * Skipped off Windows; with EMBER_WINSYS_TEST=1 it fails instead of skipping when Windows, koffi, Electron or Windows
- * PowerShell is missing. What this runner can't show (windows-2022 is Windows Server, elevated, UAC off, one screen)
+ * PowerShell is missing. What this runner can't show (windows-2022 is Windows Server, elevated with its shell, one screen)
  * is printed as "not testable on this runner: <reason>" from the facts CI exports (EMBER_CI_ELEVATED, EMBER_CI_LUA,
  * EMBER_CI_SERVER), never passed vacuously.
  */
@@ -185,7 +185,7 @@ describe.skipIf(!onWindows && !required)("Windows system integration on a real d
     console.log(`Notepad opened: pid ${opened.pid}, "${opened.title}"`);
     try { process.kill(opened.pid!); } catch { /* already closed */ }
     ws.close();
-    if (ciFlag("EMBER_CI_ELEVATED") === true || ciFlag("EMBER_CI_LUA") === false) notTestable("an app opened while Ember is elevated starts non-elevated", "the runner runs elevated with UAC off, so Explorer is elevated too");
+    if (ciFlag("EMBER_CI_ELEVATED") === true || ciFlag("EMBER_CI_LUA") === false) notTestable("an app opened while Ember is elevated starts non-elevated", "the runner runs elevated and so does its shell (explorer.exe), so what Explorer starts is elevated too");
   }, 60_000);
 
   it("gives an app opened through a shortcut Explorer's environment, never Ember's tokens or EMBER_* variables", async () => {
