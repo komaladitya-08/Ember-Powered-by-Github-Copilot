@@ -663,12 +663,14 @@ export async function runBootstrap(
       if (!next || next.name !== ready[1]) return fail("ready", plain, true);
       let sent = 0;
       let cut = false;
+      // (One wait for the reader's end for the whole archive, not one more per chunk.)
+      const gone = reader.whenEnded().then(() => false);
       try {
         for await (const chunk of next.open()) {
           if (sent + chunk.length > next.bytes) return fail("integrity", plain, true, next.name);
           // A remote that stops reading and floods its output instead ends the reader (overflowed); one whose output
           // ends (its script failed and said why) is read on below, its EMBER-ERROR first.
-          if (!(await Promise.race([writeAll(io.stdin, chunk).then(() => true), reader.whenEnded().then(() => false)]))) { cut = true; break; }
+          if (!(await Promise.race([writeAll(io.stdin, chunk).then(() => true), gone]))) { cut = true; break; }
           sent += chunk.length;
           copied += chunk.length;
           hooks.progress?.(copied, total);
