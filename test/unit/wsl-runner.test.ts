@@ -12,7 +12,7 @@ import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/
 import type { JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
-  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS,
+  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
   parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
@@ -580,15 +580,20 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     await vi.advanceTimersByTimeAsync(0);
     const child = w.runs[0].child;
     run.stop("user");
-    await vi.advanceTimersByTimeAsync(1_000);
+    // A launcher that is already in the distro is killed at once, before it reaches the command.
+    expect(w.sweeps.map(s => s.signal)).toEqual(["KILL"]);
+    await vi.advanceTimersByTimeAsync(PRESTART_SWEEP_MS - 1);
     // Nothing to interrupt yet, and wsl.exe isn't killed (that could orphan the launcher about to run the command).
     expect(child.written).toHaveLength(0);
-    expect(w.sweeps).toHaveLength(0);
+    expect(w.sweeps).toHaveLength(1);
     expect(child.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(w.sweeps.map(s => s.signal)).toEqual(["KILL", "KILL"]);
     child.out(MARKER);
     expect(Buffer.concat(child.written).toString("latin1")).toBe("\x03");
     await vi.advanceTimersByTimeAsync(LADDER_MS.last + 10);
-    expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
+    // Once started, no more early sweeps: the ladder's own.
+    expect(w.sweeps.map(s => s.signal)).toEqual(["KILL", "KILL", "TERM", "KILL", "KILL"]);
     expect(child.killed).toBe(true);
     expect(await run.done).toMatchObject({ ended: "stopped-user" });
   });
@@ -607,6 +612,20 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     await vi.advanceTimersByTimeAsync(LADDER_MS.last + 10);
     expect(w.sweeps.map(s => s.signal).every(s => s === "KILL")).toBe(true);
     expect(w.sweeps.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("ends as stopped, not as a failed start, when the early sweep killed the launcher", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    run.stop("killswitch");
+    expect(w.sweeps.map(s => s.signal)).toEqual(["KILL"]);
+    w.runs[0].child.exit(137);
+    expect(await run.done).toMatchObject({ ended: "killswitch", code: 137 });
+    await vi.advanceTimersByTimeAsync(PRESTART_STOP_MS + LADDER_MS.last);
+    // The early sweeps end with the run; one last sweep catches anything the launcher left.
+    expect(w.sweeps.map(s => s.signal)).toEqual(["KILL", "KILL"]);
+    expect(w.runs[0].child.killed).toBe(false);
   });
 
   it("ends a stopped run even if its job host somehow outlives TerminateProcess", async () => {

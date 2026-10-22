@@ -471,9 +471,12 @@ export const START_MARKER = Buffer.from("\x1b]777;ember-start\x07", "latin1");
 /**
  * A Stop that comes after wsl.exe was started but before the command started waits this long for it to start (the
  * ladder then runs at once), then ends wsl.exe: killing it earlier could leave a launcher that is about to run the
- * command orphaned inside the distro (critique wsl-16).
+ * command orphaned inside the distro (critique wsl-16). Meanwhile a KILL sweep runs at once and every
+ * PRESTART_SWEEP_MS: a launcher already in the distro carries the run's marker and dies before it reaches the command.
  */
 export const PRESTART_STOP_MS = 5_000;
+/** How often a Stop that came before the command started sweeps for its launcher while it waits. */
+export const PRESTART_SWEEP_MS = 1_000;
 /** How long after the last sweep a stopped run whose job host is somehow still there ends anyway. */
 const UNKILLABLE_MS = 2_000;
 /** The job host's exit code when it couldn't make or join its job (run/job-host.ts's JOB_FAILED). */
@@ -847,6 +850,14 @@ class Run {
     }
     this.d.log.info("wsl.run_stopping", { distro: this.d.distro, runId: this.spec.runId, why, started: this.started });
     if (!this.started && !this.exited) {
+      // Nothing to interrupt yet, and wsl.exe is held; a launcher that is already there is killed before it can run
+      // the command (it carries EMBER_RUN_ID from its start), now and again until the command starts or time is up.
+      const runId = this.spec.runId;
+      const early = () => {
+        if (!this.started && !this.exited && !this.ended) void this.r.sweep("KILL", runId);
+      };
+      early();
+      for (let t = PRESTART_SWEEP_MS; t < PRESTART_STOP_MS; t += PRESTART_SWEEP_MS) this.timers.push(setTimeout(early, t));
       this.timers.push(setTimeout(() => this.neverStarted(), PRESTART_STOP_MS));
       return;
     }
