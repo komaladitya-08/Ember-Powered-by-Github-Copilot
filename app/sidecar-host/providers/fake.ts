@@ -46,6 +46,8 @@ export interface FakeElementSpec {
   /** Its whole text (textInfo), where it is longer than or other than its value. */
   text?: string;
   selectionText?: string;
+  /** Where the caret is in its text, and whether that is its end. */
+  caret?: number;
   caretAtEnd?: boolean;
   range?: { value: number; min: number; max: number; step?: number; readOnly?: boolean };
   /** It chooses among its children. */
@@ -367,6 +369,7 @@ export class FakeProvider implements AxProvider {
     return {
       ...(text !== undefined ? { text: text.slice(0, maxChars) } : {}),
       ...(s.selectionText ? { selection: s.selectionText } : {}),
+      ...(s.caret !== undefined ? { caret: s.caret } : {}),
       ...(s.caretAtEnd !== undefined ? { caretAtEnd: s.caretAtEnd } : {}),
     };
   }

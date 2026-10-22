@@ -36,11 +36,14 @@ describe("the bridge's elements as the host's", () => {
     expect(fromBridgeNode({ h: 1, controlType: "Slider", patterns: { range: { value: NaN, min: 0, max: 10 } } }).range).toBeUndefined();
   });
 
-  it("calls a document editable where its text can be typed into, not where MSAA says it is read-only", () => {
-    expect(fromBridgeNode({ h: 1, controlType: "Document", patterns: { text: true } }).editable).toBe(true);
-    expect(fromBridgeNode({ h: 1, controlType: "Document", patterns: { text: true, legacy: { state: 0x40 } } }).editable).toBeUndefined();
-    expect(fromBridgeNode({ h: 1, controlType: "Document", isEnabled: false, patterns: { text: true } }).editable).toBeUndefined();
-    expect(fromBridgeNode({ h: 1, controlType: "Text", patterns: { text: true } }).editable).toBeUndefined();
+  it("calls a field or document editable where it takes the keyboard, alike in a snapshot and a look at one element", () => {
+    const doc = { h: 1, controlType: "Document", isKeyboardFocusable: true, patterns: { text: true } as BridgeNode["patterns"] };
+    expect(fromBridgeNode(doc).editable).toBe(true);
+    // (A snapshot doesn't read LegacyIAccessible: what it says can't make the two disagree.)
+    expect(fromBridgeNode({ ...doc, patterns: { text: true, legacy: { state: 0x40 } } }).editable).toBe(true);
+    expect(fromBridgeNode({ ...doc, isEnabled: false }).editable).toBeUndefined();
+    expect(fromBridgeNode({ ...doc, isKeyboardFocusable: false }).editable).toBeUndefined();
+    expect(fromBridgeNode({ ...doc, controlType: "Text" }).editable).toBeUndefined();
   });
 
   it("has no position for an empty or infinite rectangle, and no key without a RuntimeId", () => {
@@ -52,10 +55,11 @@ describe("the bridge's elements as the host's", () => {
   });
 
   it("names windows by their HWND and their program without .exe", () => {
-    expect(fromBridgeWindow({ handle: 3, hwnd: 0x1a2b, pid: 9, processName: "Notepad.EXE", name: "Untitled - Notepad", className: "Notepad", controlType: "Window", windowState: "Minimized", focused: true })).toEqual({
+    expect(fromBridgeWindow({ h: 3, hwnd: 0x1a2b, pid: 9, processName: "Notepad.EXE", name: "Untitled - Notepad", className: "Notepad", controlType: "Window", windowState: "Minimized", focused: true })).toEqual({
       handle: 3, key: String(0x1a2b), pid: 9, app: "Notepad", title: "Untitled - Notepad", platformRole: "Window", bounds: null, active: true, offscreen: true, className: "Notepad", native: 0x1a2b,
     });
-    expect(fromBridgeWindow({ handle: 4, pid: 9, isModal: true, busy: true })).toMatchObject({ key: "uia-9-4", modal: true, busy: true, platformRole: "Window" });
+    expect(fromBridgeWindow({ h: 4, pid: 9, isModal: true, busy: true })).toMatchObject({ key: "uia-9-4", modal: true, busy: true, platformRole: "Window" });
+    expect(fromBridgeWindow({ h: 5, hwnd: 6, pid: 9, patterns: { window: { modal: true } } })).toMatchObject({ handle: 5, modal: true });
   });
 
   it("maps the bridge's error codes onto the host's", () => {
@@ -103,8 +107,13 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   const fail = (code, message) => send({ id: req.id, error: { code, message } });
   const p = req.params || {};
   switch (req.method) {
-    case "topWindows": return ok([{ handle: 1, hwnd: 4660, pid: 77, processName: "notepad.exe", name: "Untitled - Notepad", className: "Notepad", controlType: "Window", bounds: { x: 0, y: 0, width: 800, height: 600 }, focused: true }]);
-    case "snapshot": return ok({ nodes: [{ h: 1, parent: -1, depth: 0, controlType: "Window", name: "Untitled - Notepad", runtimeId: "42.4660", pid: 77 }, { h: 2, parent: 0, depth: 1, controlType: "Document", name: "Text editor", runtimeId: "42.9.1", pid: 77, patterns: { text: true } }], truncated: true, cut: ["nodes"] });
+    case "topWindows": return ok({ windows: [
+      { h: 1, hwnd: 4660, pid: 77, processName: "notepad", name: "Untitled - Notepad", className: "Notepad", controlType: "Window", bounds: { x: 0, y: 0, width: 800, height: 600 }, focused: true, z: 0, patterns: { window: { modal: false, state: "Normal" } } },
+      { hwnd: 4661, pid: 78, processName: "hung", name: "Not Responding", className: "Hung", bounds: { x: 10, y: 10, width: 100, height: 100 }, busy: true, z: 1 },
+    ] });
+    case "snapshot":
+      if (p.handle === 2) return ok({ nodes: [{ h: 9, parent: -1, depth: 0, controlType: "Pane", childrenFailed: true }], truncated: false, cut: [], busy: false });
+      return ok({ nodes: [{ h: 1, parent: -1, depth: 0, controlType: "Window", name: "Untitled - Notepad", runtimeId: "42.4660", pid: 77 }, { h: 2, parent: 0, depth: 1, controlType: "Document", name: "Text editor", runtimeId: "42.9.1", pid: 77, patterns: { text: true } }], truncated: true, cut: ["nodes"] });
     case "element":
       if (p.handle === 99) return fail("gone", "ElementNotAvailableException");
       if (p.handle === 98) return fail("busy", "the app didn't answer in time");
@@ -117,7 +126,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       if (p.op === "toggle") return fail("failed", "unsupported:toggle");
       if (p.op === "setValue" && p.handle === 66) return fail("denied", "password field");
       return ok({ ok: true });
-    case "textInfo": return ok(p.handle === 66 ? { secret: true } : { text: "hello", selection: "ell", caretAtEnd: false });
+    case "textInfo": return ok(p.handle === 66 ? { secret: true } : { source: "text", text: "hello", truncated: true, selection: "ell", caret: 1, selectionLength: 3, caretAtEnd: false });
     case "release": return ok({});
     case "exit": process.exit(3);
   }
@@ -162,7 +171,10 @@ describe("the bridge client", () => {
     const t0 = Date.now();
     await p.start();
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
-    expect((await p.topWindows())[0]).toMatchObject({ key: "4660", app: "notepad", title: "Untitled - Notepad", active: true });
+    const windows = await p.topWindows();
+    expect(windows[0]).toMatchObject({ handle: 1, key: "4660", app: "notepad", title: "Untitled - Notepad", active: true });
+    // A busy app's window comes from Win32 alone, with no handle.
+    expect(windows[1]).toMatchObject({ handle: 0, key: "4661", busy: true, title: "Not Responding" });
   });
 
   it("lets a slow first start go on in the background instead of starting it again", async () => {
@@ -195,10 +207,12 @@ describe("the bridge client", () => {
     const snap = await p.snapshot(1, { maxDepth: 65, maxNodes: 1600, deadlineMs: 9000 });
     expect(snap).toMatchObject({ truncated: true, cut: ["nodes"] });
     expect(snap.nodes.map(n => [n.platformRole, n.key, n.hasText ?? false])).toEqual([["Window", "77:42.4660", false], ["Document", "77:42.9.1", true]]);
+    // Children that couldn't be read leave the read incomplete.
+    expect(await p.snapshot(2, { maxDepth: 1, maxNodes: 10, deadlineMs: 500 })).toMatchObject({ truncated: true, cut: ["nodes"] });
     await p.element(2);
-    const reqs = lines().filter(l => l.method);
-    expect(reqs[0]).toMatchObject({ method: "snapshot", params: { handle: 1, maxDepth: 65, maxNodes: 1600, deadlineMs: 4000 } });
-    expect(reqs[1]).toMatchObject({ method: "element", params: { handle: 2, deadlineMs: 100 } });
+    const reqs = lines().filter(l => l.method && l.method !== "snapshot" || l.params?.handle === 1);
+    expect(reqs[0]).toMatchObject({ method: "snapshot", params: { handle: 1, maxDepth: 65, maxNodes: 1600, maxChildren: 200, values: true, legacy: false, deadlineMs: 4000 } });
+    expect(reqs[1]).toMatchObject({ method: "element", params: { handle: 2, values: true, legacy: true, deadlineMs: 100 } });
   });
 
   it("answers gone as null, and busy, denied and unsupported as the host's errors", async () => {
@@ -215,7 +229,7 @@ describe("the bridge client", () => {
     expect((await p.elementsAt(10.4, 20.6)).map(n => n.name)).toEqual(["", "Save"]);
     expect(await p.focused()).toMatchObject({ element: { platformRole: "Edit", focused: true }, window: 1 });
     expect((await p.children(1, 16)).map(n => n.name)).toEqual(["a"]);
-    expect(await p.textInfo(2, 2000)).toEqual({ text: "hello", selection: "ell", caretAtEnd: false });
+    expect(await p.textInfo(2, 2000)).toEqual({ text: "hello", truncated: true, selection: "ell", caret: 1, caretAtEnd: false });
     expect(await p.textInfo(66, 2000)).toEqual({ secret: true });
     await p.perform(3, "legacy");
     expect(lines().filter(l => l.method).map(l => l.params.op ?? l.params.x)).toContain("legacyDefaultAction");

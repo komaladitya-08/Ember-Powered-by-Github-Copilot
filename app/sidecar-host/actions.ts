@@ -342,9 +342,12 @@ async function setText(host: Host, params: Record<string, unknown>): Promise<Act
     }
     if (info.secret) throw new PermissionError("password fields are off limits to Ember; the user must fill them in");
     const now = info.text ?? n.value ?? "";
-    const whole = info.text !== undefined ? now.length < COMPOSE_MAX : now.length < 2000;
+    const whole = info.text !== undefined ? !info.truncated && now.length < COMPOSE_MAX : now.length < 2000;
     if (!whole) throw new Error(`${BACKGROUND}this element's text is too long to change at a place in it directly`);
-    if (mode === "append" || !now || info.caretAtEnd) value = now + text;
+    // Inserted at the caret, as AT-SPI inserts it: a selection there isn't replaced.
+    if (mode === "append" || !now) value = now + text;
+    else if (info.caret !== undefined && info.caret <= now.length) value = now.slice(0, info.caret) + text + now.slice(info.caret);
+    else if (info.caretAtEnd) value = now + text;
     else throw new Error(`${BACKGROUND}where the caret is in this element's text can't be told`);
   }
   try {

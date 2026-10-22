@@ -146,8 +146,11 @@ export interface SnapshotOptions { maxDepth: number; maxNodes: number; deadlineM
  */
 export interface Snapshot { nodes: RawNode[]; truncated: boolean; cut: string[]; busy?: boolean }
 
-/** Text read from an element: none of it for a password field (`secret`). `caretAtEnd`: the caret is after the last character. */
-export interface TextInfo { text?: string; selection?: string; caretAtEnd?: boolean; secret?: boolean }
+/**
+ * Text read from an element: none of it for a password field (`secret`). `truncated`: there was more than asked for.
+ * `caret`: where the caret (the selection's start) is in `text`; `caretAtEnd`: it is after the last character.
+ */
+export interface TextInfo { text?: string; truncated?: boolean; selection?: string; caret?: number; caretAtEnd?: boolean; secret?: boolean }
 
 /** What `perform` can be asked to do (see RawNode.actions). */
 export type PerformOp = "invoke" | "toggle" | "select" | "addToSelection" | "removeFromSelection" | "expand" | "collapse"

@@ -109,7 +109,8 @@ export class Host {
 
   /** Notes handles the provider gave out (given back at the end of the request unless a read holds them). */
   see<T extends { handle: Handle } | null | undefined>(x: T | T[]): void {
-    for (const n of Array.isArray(x) ? x : [x]) if (n) this.seen.add(n.handle);
+    // (A window whose app is busy comes with no handle: 0.)
+    for (const n of Array.isArray(x) ? x : [x]) if (n && n.handle > 0) this.seen.add(n.handle);
   }
 
   /** The top-level windows (their handles noted). */

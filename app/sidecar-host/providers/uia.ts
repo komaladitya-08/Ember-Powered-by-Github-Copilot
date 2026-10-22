@@ -47,6 +47,8 @@ export interface BridgeNode {
   labeledBy?: string;
   helpText?: string;
   gone?: boolean;
+  /** Snapshots: its children couldn't be read (an error other than gone). */
+  childrenFailed?: boolean;
   patterns?: {
     invoke?: boolean;
     toggle?: "On" | "Off" | "Indeterminate";
@@ -65,9 +67,14 @@ export interface BridgeNode {
   };
 }
 
-/** The bridge's top-level window (its topWindows answer). */
+/**
+ * The bridge's top-level window (its topWindows answer): a RawNode of the window plus Win32 facts. A window whose
+ * process is busy has no handle (`h`), only what Win32 says.
+ */
 export interface BridgeWindow {
-  handle: number;
+  h?: number;
+  /** Older drafts of the protocol named the handle so. */
+  handle?: number;
   hwnd?: number;
   pid: number;
   processName?: string;
@@ -82,10 +89,9 @@ export interface BridgeWindow {
   isTopmost?: boolean;
   focused?: boolean;
   busy?: boolean;
+  patterns?: BridgeNode["patterns"];
 }
 
-/** MSAA's read-only state bit (LegacyIAccessible.State). */
-const STATE_READONLY = 0x40;
 /** Control types whose text can be typed into where the platform says so. */
 const TEXT_TYPES = new Set(["Edit", "Document"]);
 
@@ -109,7 +115,6 @@ export function fromBridgeNode(b: BridgeNode): RawNode {
   if (p.legacy?.defaultAction) actions.push("legacy");
   if (p.scrollItem) actions.push("scrollIntoView");
   const type = b.controlType ?? "Custom";
-  const readOnlyText = ((p.legacy?.state ?? 0) & STATE_READONLY) !== 0;
   const n: RawNode = {
     handle: b.h,
     key: b.runtimeId ? `${b.pid ?? 0}:${b.runtimeId}` : "",
@@ -142,7 +147,9 @@ export function fromBridgeNode(b: BridgeNode): RawNode {
     n.range = { value: p.range.value, min: p.range.min, max: p.range.max, ...(Number.isFinite(p.range.smallChange) ? { step: p.range.smallChange } : {}), ...(p.range.readOnly ? { readOnly: true } : {}) };
   }
   if (p.selection) n.selection = { multiple: !!p.selection.multiple };
-  if ((p.value && !p.value.readOnly) || (p.text && TEXT_TYPES.has(type) && b.isEnabled !== false && !readOnlyText && !p.value)) n.editable = true;
+  // Editable by what every look says alike (a snapshot doesn't read LegacyIAccessible, a look at one element does): a
+  // writable value, or a text field or document that takes the keyboard.
+  if ((p.value && !p.value.readOnly) || (p.text && !p.value && TEXT_TYPES.has(type) && b.isEnabled !== false && !!b.isKeyboardFocusable)) n.editable = true;
   set("grid", p.grid);
   set("cell", p.gridItem ? { row: p.gridItem.row, column: p.gridItem.column } : undefined);
   if (b.hwnd) n.native = b.hwnd;
@@ -152,9 +159,10 @@ export function fromBridgeNode(b: BridgeNode): RawNode {
 
 /** A bridge window as the host's RawWindow (its key on the wire is its HWND). */
 export function fromBridgeWindow(w: BridgeWindow): RawWindow {
+  const handle = w.h ?? w.handle ?? 0;
   const out: RawWindow = {
-    handle: w.handle,
-    key: w.hwnd ? String(w.hwnd) : `uia-${w.pid}-${w.handle}`,
+    handle,
+    key: w.hwnd ? String(w.hwnd) : `uia-${w.pid}-${handle}`,
     pid: w.pid,
     app: (w.processName ?? "").replace(/\.exe$/i, ""),
     title: w.name ?? "",
@@ -164,7 +172,7 @@ export function fromBridgeWindow(w: BridgeWindow): RawWindow {
     offscreen: !!w.isOffscreen || w.windowState === "Minimized",
   };
   if (w.className !== undefined) out.className = w.className;
-  if (w.isModal) out.modal = true;
+  if (w.isModal || w.patterns?.window?.modal) out.modal = true;
   if (w.busy) out.busy = true;
   if (w.hwnd) out.native = w.hwnd;
   return out;
@@ -225,7 +233,10 @@ export interface UiaOptions {
   deadlineMs?: number;
   /** How long past its deadline an answer may take before the bridge counts as stuck (killed, started again). */
   graceMs?: number;
-  /** How soon a bridge that failed to start is tried again. */
+  /**
+   * How soon a bridge that couldn't start is tried again (a fatal line, or PowerShell refusing the script): not in a
+   * loop, since what stops it (a Group Policy execution policy, Constrained Language mode) doesn't go away by itself.
+   */
   retryMs?: number;
   spawn?: typeof nodeSpawn;
   note?: (event: string, fields?: Record<string, unknown>) => void;
@@ -236,6 +247,8 @@ interface Bridge { child: ChildProcessWithoutNullStreams; pending: Map<number, P
 
 /** The bridge's longest deadline for one call. */
 const MAX_DEADLINE_MS = 4000;
+/** Children listed under one element in a snapshot (the on-screen ones first), as the Python sidecar's MAX_CHILDREN. */
+const MAX_CHILDREN = 200;
 /** The window list is given a little longer than one call (many windows, each a few properties). */
 const WINDOWS_DEADLINE_MS = 1500;
 
@@ -263,7 +276,7 @@ export class UiaProvider implements AxProvider {
     this.startMs = o.startMs ?? 18_000;
     this.deadlineMs = o.deadlineMs ?? 800;
     this.graceMs = o.graceMs ?? 2000;
-    this.retryMs = o.retryMs ?? 5000;
+    this.retryMs = o.retryMs ?? 60_000;
     this.spawn = o.spawn ?? nodeSpawn;
     this.note = o.note ?? (() => undefined);
   }
@@ -385,14 +398,20 @@ export class UiaProvider implements AxProvider {
 
   async snapshot(window: Handle, o: SnapshotOptions): Promise<Snapshot> {
     const deadline = Math.min(MAX_DEADLINE_MS, Math.max(100, Math.round(o.deadlineMs)));
-    const r = await this.call<{ nodes?: BridgeNode[]; truncated?: boolean; cut?: unknown; busy?: boolean }>("snapshot", { handle: window, maxDepth: o.maxDepth, maxNodes: o.maxNodes }, deadline);
+    // Values are read (a field's text); LegacyIAccessible isn't (three calls an element): a look at one element reads it.
+    const r = await this.call<{ nodes?: BridgeNode[]; truncated?: boolean; cut?: unknown; busy?: boolean }>("snapshot", {
+      handle: window, maxDepth: o.maxDepth, maxNodes: o.maxNodes, maxChildren: MAX_CHILDREN, values: true, legacy: false,
+    }, deadline);
     const cut = Array.isArray(r?.cut) ? r.cut.filter((c): c is string => typeof c === "string") : [];
-    return { nodes: (r?.nodes ?? []).map(fromBridgeNode), truncated: !!r?.truncated || cut.length > 0, cut, ...(r?.busy ? { busy: true } : {}) };
+    const nodes = r?.nodes ?? [];
+    // What an element held couldn't be read: the read isn't whole (no picture is taken of what it may hide).
+    if (nodes.some(n => n.childrenFailed) && !cut.includes("nodes")) cut.unshift("nodes");
+    return { nodes: nodes.map(fromBridgeNode), truncated: !!r?.truncated || cut.length > 0, cut, ...(r?.busy ? { busy: true } : {}) };
   }
 
   async element(h: Handle): Promise<RawNode | null> {
     try {
-      const r = await this.call<BridgeNode | null>("element", { handle: h });
+      const r = await this.call<BridgeNode | null>("element", { handle: h, values: true, legacy: true });
       return r ? fromBridgeNode(r) : null;
     } catch (err) {
       if (err instanceof ProviderError && err.code === "gone") return null;
@@ -420,12 +439,14 @@ export class UiaProvider implements AxProvider {
   }
 
   async textInfo(h: Handle, maxChars: number): Promise<TextInfo> {
-    const r = await this.call<TextInfo | null>("textInfo", { handle: h, maxChars });
+    const r = await this.call<TextInfo | null>("textInfo", { handle: h, maxChars: Math.min(100_000, Math.max(1, maxChars)) });
     if (!r) return {};
     if (r.secret) return { secret: true };
     const out: TextInfo = {};
     if (typeof r.text === "string") out.text = r.text;
+    if (r.truncated === true) out.truncated = true;
     if (typeof r.selection === "string") out.selection = r.selection;
+    if (typeof r.caret === "number" && Number.isInteger(r.caret) && r.caret >= 0) out.caret = r.caret;
     if (typeof r.caretAtEnd === "boolean") out.caretAtEnd = r.caretAtEnd;
     return out;
   }

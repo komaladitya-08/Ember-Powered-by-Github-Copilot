@@ -254,6 +254,9 @@ describe("set_text and set_value", () => {
     expect(await fails("set_text", { id: notes, text: "!", mode: "insert" })).toMatch(/^background_unavailable: where the caret is/);
     fake.el("Notes").spec.caretAtEnd = true;
     expect((await call<ActionResult>("set_text", { id: notes, text: "!", mode: "insert" })).after!.text).toBe("Hello world!");
+    // At the caret, a selection there not replaced (as AT-SPI inserts).
+    Object.assign(fake.el("Notes").spec, { caret: 5, caretAtEnd: false, selectionText: " world" });
+    expect((await call<ActionResult>("set_text", { id: notes, text: ",", mode: "insert" })).after!.text).toBe("Hello, world!");
   });
 
   it("refuses secret fields, and text where it can't be set", async () => {
