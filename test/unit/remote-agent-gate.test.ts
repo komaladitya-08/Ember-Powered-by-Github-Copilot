@@ -92,6 +92,14 @@ describe("gate 2 for commands (§3.16)", () => {
     expect((await gateCommand(input({ spec: spec({ verdict: "ask", approval: { ageMs: 10 } }), classify: c, facts: facts({ privileged: true }) }))).status).toBe("ok");
   });
 
+  it("asks one question for every reason at once, so one yes with its rules runs it (§3.8.3 step 13)", async () => {
+    const c = classifier(() => [RM]).classify;
+    const r = await gateCommand(input({ spec: spec(), classify: c, mode: "ask", facts: facts({ privileged: true }) }));
+    expect(r).toEqual({ status: "needs_confirm", reason: GATE_WORDS.disagree, says: [GATE_WORDS.adminAsks, GATE_WORDS.root, RM.says], rules: ["posix.rm"] });
+    const again = spec({ verdict: "ask", rules: ["posix.rm"], approval: { ageMs: 300 } });
+    expect((await gateCommand(input({ spec: again, classify: c, mode: "ask", facts: facts({ privileged: true }) }))).status).toBe("ok");
+  });
+
   it("denies what its own classifier refuses (D4.5 on this computer's paths), approved or not", async () => {
     const c = classifier(() => [], { refuse: { rule: "ember.own", says: "This would change Ember itself." } }).classify;
     expect(await gateCommand(input({ spec: spec({ verdict: "ask", approval: { ageMs: 1 } }), classify: c }))).toEqual({ status: "deny", reason: "This would change Ember itself." });

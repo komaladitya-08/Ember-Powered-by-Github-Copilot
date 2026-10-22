@@ -100,11 +100,11 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   }
   if (i.mode === "off") return { status: "deny", reason: GATE_WORDS.commandsOff };
   const approval = stamp.approval && stamp.approval.ageMs < APPROVAL_MAX_MS ? stamp.approval : null;
-  const ask = (reason: string, says: string[] = [reason], rules?: string[]): CommandGate => ({
-    status: "needs_confirm", reason, says: [...new Set(says.map(line))].slice(0, SAYS_MAX), ...(rules?.length ? { rules } : {}),
-  });
-  if (stamp.verdict === "ask" && !approval) return ask(GATE_WORDS.approvalMissing);
-  if (i.mode === "ask" && !approval) return ask(GATE_WORDS.adminAsks);
+  // Every reason to ask is gathered into one question, so a single yes (with these rules added) covers them all: the
+  // PC asks once and sends again once (§3.8.3 step 13).
+  const asks: string[] = [];
+  if (stamp.verdict === "ask" && !approval) asks.push(GATE_WORDS.approvalMissing);
+  if (i.mode === "ask" && !approval) asks.push(GATE_WORDS.adminAsks);
 
   const ctx: ClassifyContext = {
     os: i.facts.os, home: i.facts.home, cwd: spec.cwd, ember: i.facts.ember, downloaded: new Set(),
@@ -126,13 +126,21 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // The second pass judges the real paths too (§3.8.3 step 5); never a third.
   if ([...real].some(([p, r]) => p !== r)) cls = i.classify(spec.command, spec.shell, { ...ctx, real });
   if (cls.refuse) return { status: "deny", reason: line(cls.refuse.says) || GATE_WORDS.mismatch };
-  if (i.facts.privileged && !approval) return ask(GATE_WORDS.root);
+  if (i.facts.privileged && !approval) asks.push(GATE_WORDS.root);
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
   const findings = cls.findings.filter(f => !(f.ifExists && byPath.get(f.ifExists)?.exists === false));
   const covered = (f: Finding) => stamp.rules.includes(f.rule) && (stamp.classes.includes(f.cls) || approval !== null);
   const extra = findings.filter(f => !covered(f));
-  if (extra.length) return ask(GATE_WORDS.disagree, extra.map(f => f.says), [...new Set(extra.map(f => f.rule))].slice(0, 64));
+  if (extra.length || asks.length) {
+    const rules = [...new Set(extra.map(f => f.rule))].slice(0, 64);
+    return {
+      status: "needs_confirm",
+      reason: extra.length ? GATE_WORDS.disagree : asks[0],
+      says: [...new Set([...asks, ...extra.map(f => f.says)].map(line))].slice(0, SAYS_MAX),
+      ...(rules.length ? { rules } : {}),
+    };
+  }
   return { status: "ok", cls, approved: approval !== null };
 }
 

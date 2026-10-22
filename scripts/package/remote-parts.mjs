@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { npmInvocation } from "./layout.mjs";
 import { gzip, readTar, tarArchive } from "./tar-writer.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -203,9 +204,9 @@ function packageTarball(name, lock, cache) {
   fs.mkdirSync(cache, { recursive: true });
   const file = path.join(cache, `${name.replace(/^@/, "").replace("/", "-")}-${entry.version}.tgz`);
   if (!fs.existsSync(file) || !matchesIntegrity(fs.readFileSync(file), entry.integrity)) {
-    const out = execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["pack", `${name}@${entry.version}`, "--json", "--pack-destination", cache], {
-      cwd: cache, encoding: "utf8", shell: process.platform === "win32", stdio: ["ignore", "pipe", "inherit"],
-    });
+    // Run in the cache folder, so no path goes on npm's command line (Windows may need a shell for it: layout.mjs).
+    const npm = npmInvocation({ platform: process.platform, execPath: process.execPath, npmExecPath: process.env.npm_execpath }, ["pack", `${name}@${entry.version}`, "--json"]);
+    const out = execFileSync(npm.file, npm.args, { cwd: cache, encoding: "utf8", shell: npm.shell, stdio: ["ignore", "pipe", "inherit"] });
     const packed = JSON.parse(out)[0]?.filename;
     if (!packed) throw new Error(`npm pack ${name}@${entry.version} gave no file`);
     if (path.join(cache, packed) !== file) fs.renameSync(path.join(cache, packed), file);
