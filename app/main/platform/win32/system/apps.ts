@@ -290,8 +290,11 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
       check(app);
       const windows = d.folders.windowsDirectory();
       if (!windows) throw new Error("Ember couldn't find Windows' own folder, so it can't open apps.");
+      // No windowsHide: explorer.exe has no console window to hide, and SW_HIDE in its STARTUPINFO could reach the
+      // ShellExecute it makes for the shortcut, starting the app invisible (the integration test opens Notepad and
+      // waits for its visible window).
       const child = spawn(wpath.join(windows, "explorer.exe"), [app.file], {
-        detached: true, stdio: "ignore", windowsHide: true, cwd: homedir(), env: appEnv(d.env, { os: "win32" }),
+        detached: true, stdio: "ignore", cwd: homedir(), env: appEnv(d.env, { os: "win32" }),
       });
       // explorer.exe hands the request to the running shell and exits (exit code 1 is normal); a failure to start is logged.
       child.on("error", err => d.log?.()?.warn("apps.launch_failed", { err }));

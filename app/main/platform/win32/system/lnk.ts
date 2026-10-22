@@ -176,7 +176,7 @@ function idListPath(r: Reader, at: number, end: number): string | null {
   return drive && names.length ? drive + names.join("\\") : null;
 }
 
-/** System.AppUserModel.ID from a serialized property store (MS-PROPSTORE), or null. */
+/** System.AppUserModel.ID from a serialised property store (MS-PROPSTORE), or null. */
 function aumidOf(r: Reader, at: number, end: number): string | null {
   let p = at;
   while (p + 4 <= end) {

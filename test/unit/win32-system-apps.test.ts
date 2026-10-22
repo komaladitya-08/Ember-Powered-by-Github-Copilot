@@ -211,7 +211,7 @@ describe("the catalogue's cache", () => {
 });
 
 describe("launching an app", () => {
-  it("asks explorer.exe to open the shortcut, detached, hidden, from the home folder, with the allowlisted environment", () => {
+  it("asks explorer.exe to open the shortcut, detached, from the home folder, with the allowlisted environment", () => {
     const t = setup();
     t.lnk(`${USER}\\Notepad.lnk`, { target: "C:\\Windows\\System32\\notepad.exe" });
     const apps = t.apps();
@@ -220,7 +220,8 @@ describe("launching an app", () => {
     const s = t.spawned[0];
     expect(s.command).toBe("C:\\Windows\\explorer.exe");
     expect(s.args).toEqual([`${USER}\\Notepad.lnk`]);
-    expect(s.options).toMatchObject({ detached: true, stdio: "ignore", windowsHide: true, cwd: "C:\\Users\\Ana" });
+    expect(s.options).toMatchObject({ detached: true, stdio: "ignore", cwd: "C:\\Users\\Ana" });
+    expect(s.options.windowsHide).toBeUndefined(); // a GUI program: SW_HIDE could reach the app it opens
     expect(s.options.env).toEqual({ SystemRoot: "C:\\Windows", windir: "C:\\Windows", Path: "C:\\Windows\\system32" });
     expect(s.unref).toBe(true);
     s.onError!(new Error("spawn failed"));
