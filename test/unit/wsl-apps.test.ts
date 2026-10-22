@@ -11,6 +11,7 @@ import { isTerminalApp, type DesktopApp } from "../../app/main/hands/system";
 import type { AppCatalog, AppIdentity } from "../../app/main/platform/types";
 import { isWslgShortcut, isWslLauncher, withWslApps, wslgLaunch, wslgRefusal } from "../../app/main/wsl/apps";
 import type { WslDistro, WslFacts, WslService } from "../../app/main/wsl/types";
+import type { CommandRunner, RunnerFacts } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
 import { buildLnk } from "./win32-system-fakes";
 
@@ -113,11 +114,11 @@ const shortcut = (name: string, args: string, file = `C:\\Users\\ana\\AppData\\R
   id: `Ubuntu/${name}`, name, file, keywords: [], argv: [WSLG, ...args.split(" ")], programs: ["wslg"],
 });
 
-function setup(o: { on?: boolean; facts?: WslFacts; files?: Record<string, Buffer> } = {}) {
+function setup(o: { on?: boolean; facts?: WslFacts; files?: Record<string, Buffer>; wsl?: Partial<WslService> } = {}) {
   const launched: DesktopApp[] = [];
   const spawned: { command: string; args: string[]; options: Record<string, unknown> }[] = [];
   const f = o.facts ?? facts([distro("Ubuntu", { isDefault: true })]);
-  const wsl = { facts: async () => f, onChange: () => () => undefined } as unknown as WslService;
+  const wsl = { facts: async () => f, onChange: () => () => undefined, ...o.wsl } as unknown as WslService;
   const files = o.files ?? {};
   const apps = withWslApps(windowsCatalogue(launched), {
     wsl: () => wsl, log, on: () => o.on ?? true, env: { SystemRoot: "C:\\Windows", PATH: "C:\\Windows", GH_TOKEN: "secret" },
@@ -138,6 +139,25 @@ describe("withWslApps", () => {
     for (const args of ["-d Ubuntu -- gnome-terminal", "-d Ubuntu -- env TERM=xterm xterm", "-d Ubuntu -- bash", "-d Ubuntu -- python3 -m idlelib",
       "-d Ubuntu -- timeout 5 konsole", "-d Ubuntu -- code .", "-d Ubuntu -- python3 /usr/bin/terminator"]) {
       expect(apps.isTerminalApp(shortcut("x", args)), args).toBe(true);
+    }
+  });
+
+  it("judges the command the distro's shell runs: leading NAME=value words are assignments, not the program", async () => {
+    const { apps } = setup();
+    for (const args of ["-d Ubuntu -- GDK_BACKEND=x11 gnome-terminal", "-d Ubuntu -- X=1 bash", "-d Ubuntu -- A=b B=c xterm", "-d Ubuntu -- LANG=C.UTF-8 konsole"]) {
+      expect(apps.isTerminalApp(shortcut("Foo (Ubuntu)", args)), args).toBe(true);
+    }
+    // Assignments before an ordinary app change nothing about it.
+    expect(apps.isTerminalApp(shortcut("gedit (Ubuntu)", "-d Ubuntu -- GDK_BACKEND=x11 gedit"))).toBe(false);
+    expect(apps.programsOf(shortcut("gedit (Ubuntu)", "-d Ubuntu -- GDK_BACKEND=x11 gedit"))).toEqual(new Set(["wsl:ubuntu:gedit"]));
+    // Only assignments: the shell runs nothing Ember can name.
+    expect(wslgLaunch([WSLG, "-d", "Ubuntu", "--", "A=1", "B=2"])).toBeNull();
+    // And at launch, from the file.
+    const foo = shortcut("Foo (Ubuntu)", "-d Ubuntu -- gedit");
+    for (const args of ["-d Ubuntu --cd \"~\" -- GDK_BACKEND=x11 gnome-terminal", "-d Ubuntu -- X=1 bash"]) {
+      const s = setup({ files: { [foo.file]: lnk(args) } });
+      await expect(s.apps.launch(foo), args).rejects.toThrow("Ember doesn't run terminals");
+      expect(s.spawned).toEqual([]);
     }
   });
 
@@ -186,6 +206,40 @@ describe("withWslApps", () => {
       await expect(s.apps.launch(gedit)).rejects.toThrow(/root|WSL 1|WSLg/);
       expect(s.spawned).toEqual([]);
     }
+  });
+
+  it("asks a distro whose default user isn't known yet which user it runs apps as, and refuses root (L17)", async () => {
+    const file = { [gedit.file]: lnk("-d Ubuntu -- gedit") };
+    const unknown = (running: boolean) => facts([distro("Ubuntu", { isDefault: true, defaultUid: null, running })]);
+    const asked: string[] = [];
+    const runner = (privileged: boolean | Error) => () => ({
+      facts: async () => { asked.push("facts"); if (privileged instanceof Error) throw privileged; return { privileged } as RunnerFacts; },
+    }) as unknown as CommandRunner;
+    // Running: the distro itself is asked (nothing is started), and root is refused.
+    const root = setup({ facts: unknown(true), files: file, wsl: { defaultUid: async () => { asked.push("uid"); return 0; }, runner: runner(true) } });
+    await expect(root.apps.launch(gedit)).rejects.toThrow("Ember doesn't use Linux apps of a distro that runs as root.");
+    expect(root.spawned).toEqual([]);
+    expect(asked).toEqual(["uid"]);
+    // Stopped: reading its set-up starts it, as opening its app would, and root is refused all the same.
+    asked.length = 0;
+    const stopped = setup({ facts: unknown(false), files: file, wsl: { defaultUid: async () => null, runner: runner(true) } });
+    await expect(stopped.apps.launch(gedit)).rejects.toThrow("runs as root");
+    expect(stopped.spawned).toEqual([]);
+    expect(asked).toEqual(["facts"]);
+    // Can't tell: not opened.
+    const failed = setup({ facts: unknown(false), files: file, wsl: { defaultUid: async () => null, runner: runner(new Error("Ubuntu took too long to start")) } });
+    await expect(failed.apps.launch(gedit)).rejects.toThrow("couldn't tell which user Ubuntu runs apps as");
+    expect(failed.spawned).toEqual([]);
+    // An ordinary user: opened.
+    const user = setup({ facts: unknown(true), files: file, wsl: { defaultUid: async () => 1000, runner: runner(false) } });
+    await user.apps.launch(gedit);
+    expect(user.spawned).toHaveLength(1);
+    // A terminal is refused before anything is asked of the distro: a stopped one isn't started just to say no.
+    asked.length = 0;
+    const term = setup({ facts: unknown(false), files: { [gedit.file]: lnk("-d Ubuntu -- X=1 xterm") }, wsl: { defaultUid: async () => { asked.push("uid"); return null; }, runner: runner(false) } });
+    await expect(term.apps.launch(gedit)).rejects.toThrow("Ember doesn't run terminals");
+    expect(asked).toEqual([]);
+    expect(term.spawned).toEqual([]);
   });
 
   it("leaves every other app to the Windows catalogue", () => {

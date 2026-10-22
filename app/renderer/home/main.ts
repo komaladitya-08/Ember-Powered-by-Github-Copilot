@@ -11,8 +11,8 @@ import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus, retryMessage,
-  tagline, usageLine, type HomePatch, type Segment,
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  retryMessage, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -197,7 +197,8 @@ function renderChecks(environment: Status["environment"]): void {
         btn.disabled = true;
         window.ember.applyFix(fix).then(renderChecks, err => {
           btn.disabled = false;
-          detail.textContent = `Couldn't change it: ${err instanceof Error ? err.message : String(err)}`;
+          // A refused fix says why in its own words (main's message, without Electron's IPC prefix).
+          detail.textContent = `Couldn't change it: ${ipcErrorText(err)}`;
         });
       });
       li.append(btn);
@@ -517,7 +518,6 @@ const setSigningIn = (on: boolean) => {
   else $("cancel-sign-in").hidden = !on;
   void window.ember.agentStatus().then(renderAgent);
 };
-const cleanError = (err: unknown) => (err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err));
 $("sign-in").addEventListener("click", () => {
   setSigningIn(true);
   $("cancel-sign-in").focus();
@@ -525,7 +525,7 @@ $("sign-in").addEventListener("click", () => {
     setSigningIn(false);
     // Not agreed yet: the way forward is the checkbox at the top, so go there.
     if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
-    signInMsg(cleanError(err), true);
+    signInMsg(ipcErrorText(err), true);
   });
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
@@ -535,7 +535,7 @@ $("retry").addEventListener("click", () => {
   window.ember.retrySignIn().then(r => {
     retryFound = r.found ? r : null;
     say(retryMessage(r, r.found && agent?.phase === "ready"));
-  }, err => signInMsg(cleanError(err), true));
+  }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
 $("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
@@ -744,7 +744,7 @@ $("never-look-form").addEventListener("submit", e => {
   window.ember.updateSettings({ privacy: { neverLook: [...own, v] } }).then(() => {
     input.value = "";
     listMsg(`Added ${v}.`);
-  }, err => listMsg(`Couldn't add it: ${cleanError(err)}`));
+  }, err => listMsg(`Couldn't add it: ${ipcErrorText(err)}`));
 });
 $("never-look-add").addEventListener("input", () => listMsg(""));
 $("never-look-defaults").addEventListener("click", () => {

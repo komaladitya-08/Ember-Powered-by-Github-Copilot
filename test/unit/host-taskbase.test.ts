@@ -78,7 +78,7 @@ const commandsOnly = (): TargetHands => ({
 });
 
 /** A targets runtime's view for the host that gives (or refuses) hands, noting each target it is asked about. */
-function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok: false; why: string }) {
+function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok: false; why: string }, caps: () => { commands: boolean; targets: boolean } = () => ({ commands: true, targets: false })) {
   const asked: TargetId[] = [];
   const agent: TargetsForAgent = {
     active: "local",
@@ -88,7 +88,7 @@ function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok
     describeScreen: () => null,
     offerConnect: () => "",
     activeLine: () => "",
-    caps: () => ({ commands: true, targets: false }),
+    caps,
   };
   return { agent, asked };
 }
@@ -98,11 +98,29 @@ function makeHost(extra: Partial<HostOptions>) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
   const cards: unknown[] = [];
+  const bubbles: { thought?: string; task?: string }[] = [];
   const host = new AgentHost({
     userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
-    setState: p => { if (p.tasks) cards.push(p.tasks); }, onStatus: () => undefined, ...extra,
+    setState: p => { if (p.tasks) cards.push(p.tasks); if (p.bubble) bubbles.push(p.bubble); }, onStatus: () => undefined, ...extra,
   });
-  return { host, cards };
+  return { host, cards, bubbles };
+}
+
+/** WSL's commands as the targets runtime gives them: a WSL runner that says "Starting Ubuntu…" while the distro boots. */
+function wslCommands() {
+  const fns = new Set<(t: string | null) => void>();
+  let now: string | null = null;
+  const runner = {
+    target: "wsl:Ubuntu", running: 0, facts: async () => { throw new Error("unused"); }, inspect: async () => [], gitFacts: async () => null,
+    start: () => { throw new Error("unused"); }, stopAll: async () => undefined,
+    status: () => now, onStatus: (fn: (t: string | null) => void) => { fns.add(fn); return () => fns.delete(fn); },
+  };
+  const service = {
+    binding: { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", screenOs: "win32", shellOs: "linux", desktop: "screen" },
+    capability: () => ({ state: "on", askEvery: null }), shells: () => ["bash"], runner, window: {} as never,
+    consented: () => undefined, userAskEvery: () => false, mode: () => "on",
+  };
+  return { service, say: (t: string | null) => { now = t; for (const f of [...fns]) f(t); }, listeners: () => fns.size };
 }
 
 beforeEach(() => { sim.sessions = []; });
@@ -166,6 +184,65 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     expect(host.tasks).toBeNull();
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
     expect(tool(conductor(), "list_tasks")).toBeUndefined();
+    await host.stop();
+  });
+
+  it("has today's tools and words when nothing can take a task (no screen, commands off, no other computer)", async () => {
+    const t = targets(() => ({ ok: false, why: "Ember can't use this computer's screen here, and commands are off." }), () => ({ commands: false, targets: false }));
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    expect(host.tasks).toBeNull();
+    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me"]);
+    expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
+    expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
+    expect(taskSessions()).toEqual([]);
+    await host.stop();
+  });
+
+  it("reconnects before the next request once a computer can take a task, so the conversation has the task tools", async () => {
+    let caps = { commands: false, targets: false };
+    const t = targets(() => ({ ok: true, hands: commandsOnly() }), () => caps);
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    const first = conductor();
+    expect(host.tasks).toBeNull();
+    caps = { commands: true, targets: false };
+    await host.ask("run the tests in ~/project");
+    expect(conductor()).not.toBe(first);
+    expect(conductor().sessionId).toBe(first.sessionId); // the same conversation, resumed
+    expect(host.tasks).not.toBeNull();
+    expect(tool(conductor(), "list_tasks")).toBeDefined();
+    expect(conductor().sent.join("\n")).toContain("run the tests in ~/project");
+    expect(first.sent).toEqual([]);
+    await host.stop();
+  });
+
+  it("refuses a guide before anything is queued where the bound computer has no screen", async () => {
+    const t = targets(() => ({ ok: true, hands: commandsOnly() }));
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
+    expect(host.tasks!.list()).toEqual([]);
+    expect(taskSessions()).toEqual([]);
+    await host.stop();
+  });
+
+  it("says \"Starting Ubuntu…\" in the task's bubble while its distro boots for the first command, until the task ends", async () => {
+    const wsl = wslCommands();
+    const hands: TargetHands = { ...commandsOnly(), binding: wsl.service.binding as never, commands: wsl.service as never };
+    const t = targets(() => ({ ok: true, hands }));
+    const { host, bubbles } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    await tool(conductor(), "start_task").handler({ goal: "run the tests in Ubuntu" }, {});
+    await until(() => taskSessions()[0]?.sent.length > 0);
+    expect(wsl.listeners()).toBe(1);
+    wsl.say("Starting Ubuntu…");
+    expect(bubbles.at(-1)).toMatchObject({ thought: "Starting Ubuntu…", task: host.tasks!.list()[0].id });
+    wsl.say(null);
+    await tool(taskSessions()[0], "finish_task").handler({ success: true, summary: "Done." }, {});
+    taskSessions()[0].emit("session.idle", {});
+    await until(() => host.tasks!.list()[0]?.status !== "running");
+    expect(wsl.listeners()).toBe(0);
     await host.stop();
   });
 

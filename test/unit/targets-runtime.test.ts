@@ -34,7 +34,7 @@ import {
   WSL_OFF_ROW, buildTargets, configHosts, emberNamesOf, emberPathsOf, hostIdFor, productionParts, progressWords, splitDest, wslSwitchOn,
   type CommandWindow, type PromptWindow, type TargetsParts,
 } from "../../app/main/targets/runtime";
-import { sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
+import { WSL_READER, sshDestination, userSshProcesses } from "../../app/main/remote/notice-ssh";
 import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/main/wsl/router";
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
 import { validConsent } from "../../app/main/remote/prompt-window";
@@ -104,6 +104,8 @@ interface RigOptions {
   commandWindowExtras?: boolean;
   keyHint?: () => string | null;
   cursor?: boolean;
+  /** Main passes its window system's active window (TargetsDepsExtra.activeWindow). */
+  activeWindow?: boolean;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -248,7 +250,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -323,6 +325,15 @@ describe("with nothing set up", () => {
     const got = r.t.agent.handsFor("local");
     expect(got.ok).toBe(false);
     if (!got.ok) expect(got.why).toMatch(/commands are off/);
+  });
+
+  it("without a window system, says the user can turn commands on only where the administrator hasn't turned them off", () => {
+    expect(rig({ hands: null }).t.agent.handsFor("local")).toEqual({ ok: false, why: "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings." });
+    // A policy that doesn't mention commands turns them off (R5), as does one that says so.
+    for (const admin of [policy({}), policy({ commands: { local: "off" } })]) {
+      const got = rig({ hands: null, admin, settings: commandsOn("local") }).t.agent.handsFor("local");
+      expect(got).toEqual({ ok: false, why: "Ember can't use this computer's screen here, and your organisation has turned off commands on it. Tell the user." });
+    }
   });
 
   it("keeps today's behaviour when the administrator turns WSL, SSH and commands off", () => {
@@ -417,6 +428,19 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(r.t.agent.othersNamed!("ssh:build-01", "on build-01 delete build/")).toEqual([]);
     // A host of the user's ssh config Ember has no record of yet is another computer too.
     expect(guard.othersNamed("build-02 delete build/")).toEqual(["build-02"]);
+  });
+
+  it("put no badge on a task that can only use apps for a computer's name that is just a word of the request", () => {
+    // Commands off, no SSH host: build-02 is only a Host of the user's ssh config.
+    const r = rig();
+    expect(r.t.agent.othersNamed!("local", "open the build-02 report in LibreOffice")).toEqual([]);
+    expect(r.t.agent.othersNamed!("local", "open build-02.example.com in Firefox")).toEqual([]);
+    // Named as a place, it still says where the task acts.
+    expect(r.t.agent.othersNamed!("local", "open the report on build-02")).toEqual(["build-02"]);
+    expect(r.t.agent.othersNamed!("local", "build-02: open the report")).toEqual(["build-02"]);
+    // With commands there, any name counts (D4.4's guard).
+    const cmd = rig({ settings: commandsOn("local") });
+    expect(cmd.t.agent.othersNamed!("local", "open the build-02 report in LibreOffice")).toEqual(["build-02"]);
   });
 
   it("know the places the user names that look like a computer Ember doesn't know (the lead's ruling)", () => {
@@ -801,21 +825,87 @@ describe("WSL targets", () => {
     expect(r.t.agent.caps()).toEqual({ commands: true, targets: true });
   });
 
-  it("refuses 'in WSL' while WSL is off in Ember, and offers to turn it on (once a run)", async () => {
+  it("binds 'in WSL' where Ember is set to work while WSL is off in Ember, and offers to turn it on (once a run)", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]) });
     await flush();
     const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
-    expect(b).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
+    expect(b.ok && b.binding.id).toBe("local");
     // Offered once discovery has shown a distro to work in.
     await flush();
     expect(r.wsl.facts).toHaveBeenCalled();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
     r.showState.mockClear();
-    expect(r.t.agent.bind({ userWords: "open gedit in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. The user can turn it on in Ember's settings (Computers)." });
+    const again = r.t.agent.bind({ userWords: "open gedit in WSL" });
+    expect(again.ok && again.binding.id).toBe("local");
     await flush();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
+  });
+
+  it("takes 'on Linux', 'in WSL' and a distro's name as words of the request while WSL is off, not installed or not allowed", async () => {
+    const asks = ["Open Edge and search for how to install Python on Linux", "Show me how to open a PDF in WSL", "in Ubuntu, how do I list my files?", "what's on the Linux side of my disk?"];
+    const setups: RigOptions[] = [
+      { os: "win32", wslFacts: wslFacts([ubuntu()]) }, // installed, never turned on in Ember (the default)
+      { os: "win32", wslFacts: { ...wslFacts([]), installed: false } }, // not installed
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: wslOnSettings, admin: policy({ features: { wsl: false } }) }, // not allowed
+    ];
+    for (const o of setups) {
+      const r = rig(o);
+      await flush();
+      // "Linux" alone never brings up the WSL offer.
+      r.t.agent.bind({ userWords: "search for how to install Python on Linux" });
+      await flush();
+      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+      for (const words of asks) {
+        const b = r.t.agent.bind({ userWords: words });
+        expect(b.ok && b.binding.id, `${JSON.stringify(o.wslFacts?.installed)} ${words}`).toBe("local");
+      }
+    }
+  });
+
+  it("keeps D4.4's wrong-target guard for 'in WSL' while WSL is off, not installed or not allowed (the task binds here)", async () => {
+    const setups: RigOptions[] = [
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: commandsOn("local") }, // installed, off in Ember
+      { os: "win32", wslFacts: { ...wslFacts([]), installed: false }, settings: commandsOn("local") }, // not installed
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { ...wslOnSettings, ...commandsOn("local") }, admin: policy({ features: { wsl: false }, commands: { local: "on" } }) }, // not allowed
+    ];
+    for (const o of setups) {
+      const r = rig(o);
+      await flush();
+      expect(r.t.agent.bind({ userWords: "in WSL, delete build/" })).toMatchObject({ ok: true, binding: { id: "local" } });
+      const got = r.t.agent.handsFor("local");
+      if (!got.ok) throw new Error(got.why);
+      const guard = got.hands.commands as unknown as { othersNamed(words: string): string[] };
+      expect(guard.othersNamed("in WSL, delete build/").length, JSON.stringify(o.admin?.policy.features ?? o.wslFacts?.installed)).toBeGreaterThan(0);
+      expect(guard.othersNamed("on the Linux side, delete build/").length).toBeGreaterThan(0);
+      expect(guard.othersNamed("delete build/")).toEqual([]);
+    }
+  });
+
+  it("never offers WSL once the administrator has turned it off (Ember made its WSL view before that)", async () => {
+    const admin: LoadedAdminPolicy = { ...noPolicy };
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), admin });
+    expect(r.t.wsl).not.toBeNull();
+    Object.assign(admin, policy({ features: { wsl: false } }));
+    const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
+    expect(b.ok && b.binding.id).toBe("local");
+    await flush(); await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+  });
+
+  it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
+    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
+    const b = r.t.agent.bind({ userWords: "list my files in WSL" });
+    expect(b.ok && b.binding.id).toBe("local");
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+  });
+
+  it("with WSL on, still says why it can't work in WSL when discovery found no distro to work in", async () => {
+    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: true }, settings: wslOnSettings });
+    await flush();
+    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL has no Linux distro Ember can use on this computer." });
   });
 
   it("says in the active line which distro 'WSL' means when the default one is hidden (§2.3 rule 5)", async () => {
@@ -828,16 +918,6 @@ describe("WSL targets", () => {
     const plain = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { ...wslOnSettings, ...commandsOn("wsl:Ubuntu") } });
     await flush();
     expect(plain.t.agent.activeLine()).not.toContain("\"WSL\" means");
-  });
-
-  it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
-    const r = rig({ os: "win32", wslFacts: { ...wslFacts([]), installed: false } });
-    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers)." });
-    await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
-    expect(r.t.agent.bind({ userWords: "list my files in WSL" })).toEqual({ ok: false, why: "WSL has no Linux distro Ember can use on this computer." });
-    await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
   });
 
   it("never offers a distro still to be set up, and says how to set it up", async () => {
@@ -1068,6 +1148,45 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.cards.map(c => c.title)).toEqual(["Bring Ember to build-01?"]);
     expect(r.conns.connect).toHaveBeenCalled();
     expect(r.t.agent.active).toBe("ssh:build-01");
+  });
+
+  it("looks with main's window system alone: no mouse borrowing needed (an organisation's features.cursor: false)", async () => {
+    const r = rig({ notice, activeWindow: true });
+    expect(r.hands?.cursor).toBeUndefined();
+    expect(r.ticks).toHaveLength(1);
+    r.ticks[0]();
+    await flush();
+    expect(r.activeWindow).toHaveBeenCalled();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
+    // Without a window system there is nothing to look at.
+    expect(rig({ notice, hands: null }).ticks).toEqual([]);
+  });
+
+  it("reads the user's ssh in WSL only in distros running now (never booting one), through WA's runner", async () => {
+    const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
+    const make = (live: string[]) => {
+      // Ubuntu ran when Ember last looked (its cached flag says running); WSL reports what runs now.
+      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: wslOnSettings });
+      r.wsl.runningNow = async () => new Set(live);
+      const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" }));
+      for (const d of ["Ubuntu", "Debian"]) Object.assign(r.wsl.runner(d), { runScript });
+      return { r, runScript };
+    };
+    const stopped = make([]);
+    await flush();
+    stopped.r.ticks[0]();
+    await flush(); await flush();
+    expect(seen.userSshProcesses).toHaveBeenCalledWith("win32");
+    expect(stopped.runScript).not.toHaveBeenCalled();
+    expect(stopped.r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected") }) });
+    const running = make(["Debian"]);
+    await flush();
+    running.r.ticks[0]();
+    await flush(); await flush(); await flush();
+    // Only Debian, which runs now; never with mayBoot.
+    expect(running.runScript).toHaveBeenCalledTimes(1);
+    expect(running.runScript).toHaveBeenCalledWith(WSL_READER, { timeoutMs: 5000 });
+    expect(running.r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-02 from Debian" }) });
   });
 
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {

@@ -193,6 +193,29 @@ function hostOf(url: string): string | null {
   try { return new URL(url).hostname.replace(/^\[|\]$/g, "") || null; } catch { return null; }
 }
 
+/**
+ * A command runner's status line ("Starting Ubuntu…": WA's WSL runner while a stopped distro boots, `status()` and
+ * `onStatus()`) given to `show` while it says something; nothing for a runner without one. Returns the unsubscribe.
+ */
+function followStatus(runner: unknown, show: (text: string) => void): () => void {
+  const r = runner as { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void } | null | undefined;
+  if (!r || typeof r.onStatus !== "function") return () => undefined;
+  const say = (text: string | null) => {
+    if (typeof text !== "string" || !text.trim()) return;
+    try { show(text.slice(0, 200)); } catch { /* a status is only a note */ }
+  };
+  try {
+    const off = r.onStatus(say);
+    say(typeof r.status === "function" ? r.status() : null);
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
+  }
+}
+
+/** show_me where Ember can't see this screen (no window system): today's words for a session without a desktop. */
+const NO_GUIDE = "Ember can't point at things in this session (no desktop access). Explain the steps in words instead.";
+
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 /** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
@@ -464,6 +487,8 @@ export class AgentHost {
   private readonly taskBindings = new Map<string, TargetBinding>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
   private readonly taskDesktop = new Map<string, () => boolean>();
+  /** Each running task's hold on its command runner's status line (followStatus), let go when it finishes. */
+  private readonly taskStatus = new Map<string, () => void>();
   /**
    * What the conversation's prompt promised when it was created (§3.15): kept for its resumes (the system message is
    * kept with it), and compared with now on every request.
@@ -812,12 +837,14 @@ export class AgentHost {
       void this.sweepTaskSessions(client);
 
       const hands = this.o.hands;
-      // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6).
+      // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6), and
+      // only then: with none (commands off, no other computer), the tools are today's (no TaskManager; start_task and
+      // show_me say there is no desktop), as the prompt is. Once one can, the next request reconnects first (ask).
       const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
         && this.o.admin?.().features.screenImages !== false;
-      this.tasks = hands || targets ? new TaskManager({
+      this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
         log: this.o.log.child("tasks"),
         currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
@@ -832,6 +859,8 @@ export class AgentHost {
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
           this.taskDesktop.delete(task.id);
+          this.taskStatus.get(task.id)?.();
+          this.taskStatus.delete(task.id);
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
           this.taskPresenters.delete(task.id);
           const said = this.remember("task", text);
@@ -866,11 +895,16 @@ export class AgentHost {
           const h = got.hands;
           const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
           if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
+          const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0);
+          // "Starting Ubuntu…" while a stopped distro boots for the task's first command: that happens while its facts are
+          // read, before any run (or command window tab) exists, so the task's bubble says it.
+          this.taskStatus.get(spec.id)?.();
+          this.taskStatus.set(spec.id, followStatus(h.commands?.runner, text => presenter.progress(text)));
           return new Worker({
             client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
-            settings: this.o.settings, presenter: this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0),
+            settings: this.o.settings, presenter,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
@@ -981,11 +1015,16 @@ export class AgentHost {
           return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {
-          // Ember points only on this screen, never at another computer's (§2.6).
+          // Ember points only on this screen, never at another computer's (§2.6), and only where it can see this screen:
+          // a computer that can't take the guide refuses it here, before anything is queued.
           if (targets) {
             const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "" });
             if (!b.ok) return b.why;
             if (b.binding.kind === "ssh") return "Ember can't point at things on another computer's screen. Explain the steps in words instead.";
+            if (b.binding.desktop !== "screen") return NO_GUIDE;
+            const got = targets.handsFor(b.binding.id);
+            if (!got.ok) return got.why;
+            if (got.hands.binding.desktop !== "screen") return NO_GUIDE;
           }
           // Nothing is promised that can't be done: a window Ember can't read is one it can't point into. A window read on
           // another computer is never one to point into here (G14): the guide then finds its own on this screen.
@@ -1216,6 +1255,19 @@ export class AgentHost {
     return { text: `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`, read: false };
   }
 
+  /**
+   * Some computer can take a task without this screen's hands (§2.6): commands on (or awaiting their card) somewhere, or
+   * another computer Ember knows. False without a targets runtime, and when it can't say.
+   */
+  private targetsTakeTasks(): boolean {
+    try {
+      const c = this.o.targets?.caps();
+      return !!c && (c.commands || c.targets);
+    } catch {
+      return false;
+    }
+  }
+
   /** Windows with WSL turned on (the user's switch, and the administrator allows it): the terminal words then differ (§3.15). */
   private wslOn(): boolean {
     if (this.sys.os !== "win32" || !this.o.targets || this.o.admin?.().features.wsl === false) return false;
@@ -1283,6 +1335,13 @@ export class AgentHost {
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
+    // No window system, and no computer could take a task when the conversation's tools were made, but one can now (the
+    // user turned commands on, or added a computer): Copilot is reconnected first, so the conversation (resumed as it
+    // was) has the task tools. Never while a turn or a task is under way (the reconnect would cut it off).
+    if (this.status.phase === "ready" && !this.tasks && !this.o.hands && this.targetsTakeTasks() && !this.presenter.busy && !this.queued.length) {
+      this.o.log.info("agent.tasks_available");
+      void this.launch(this.token, this.source);
+    }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);

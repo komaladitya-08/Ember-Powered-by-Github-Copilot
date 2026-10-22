@@ -176,6 +176,8 @@ export class WslRouter {
   private snap: Snapshot | null = null;
   private inflight: Promise<Snapshot> | null = null;
   private pidDistro = new Map<number, string>();
+  /** msrdc pids given to the only running distro without its titles saying so (dropped once another distro runs). */
+  private guessed = new Set<number>();
   private wslg: WslgPids;
   private ticker: { stop(): void } | null = null;
   private watched: WslService | null = null;
@@ -313,7 +315,20 @@ export class WslRouter {
       this.o.log.warn("wsl.facts_failed", { err });
       return (this.snap = EMPTY(at, stack, foreground));
     }
-    const running = (n: string) => { try { return wsl.isRunning(n); } catch { return false; } };
+    const byPid = new Map<number, RailWindow[]>();
+    for (const r of rails) byPid.set(r.pid, [...byPid.get(r.pid) ?? [], r]);
+    // A new msrdc is most often a distro that has just started (the user opened one of its apps): which distros run is
+    // read now, not from the 2 s cache, which may still say it is stopped and so give its msrdc to the one that ran
+    // before. This look's helpers start from the same read. Null: it couldn't be read, so nothing is guessed.
+    let live: Set<string> | null = null;
+    if ([...byPid.keys()].some(p => !this.pidDistro.has(p))) {
+      try {
+        live = await wsl.runningNow();
+      } catch (err) {
+        this.o.log.warn("wsl.running_failed", { err });
+      }
+    }
+    const running = (n: string) => { if (live) return live.has(n); try { return wsl.isRunning(n); } catch { return false; } };
     // Distros that can show Linux apps now: WSL 2, set up, not a tool's, not known to run as root, running.
     const candidates = facts.distros.filter(d => d.version === 2 && !d.needsSetup && !d.tool && d.defaultUid !== 0 && running(d.name)).map(d => d.name);
     // Every running WSL 2 distro may show Linux apps, root's and a tool's too (never read for): msrdc's windows are
@@ -321,10 +336,13 @@ export class WslRouter {
     const showing = facts.distros.filter(d => d.version === 2 && running(d.name)).length;
     const known = new Set(candidates);
     for (const [p, n] of [...this.pidDistro]) if (!known.has(n)) this.pidDistro.delete(p);
-    const byPid = new Map<number, RailWindow[]>();
-    for (const r of rails) byPid.set(r.pid, [...byPid.get(r.pid) ?? [], r]);
+    // An msrdc given to the only running distro is that one's only while no other runs: asked again (by its titles)
+    // once another does, so a guess can never stick to the wrong distro.
+    for (const p of [...this.guessed]) if (showing > 1 || !this.pidDistro.has(p)) { this.guessed.delete(p); this.pidDistro.delete(p); }
     const unresolved = [...byPid.keys()].filter(p => !this.pidDistro.has(p));
-    if (candidates.length === 1 && showing === 1) for (const p of unresolved.splice(0)) this.pidDistro.set(p, candidates[0]);
+    if (live && candidates.length === 1 && showing === 1) {
+      for (const p of unresolved.splice(0)) { this.pidDistro.set(p, candidates[0]); this.guessed.add(p); }
+    }
     const consult = new Set<string>([...byPid.keys()].map(p => this.pidDistro.get(p)).filter((n): n is string => !!n));
     if (unresolved.length) for (const n of candidates) consult.add(n);
     const titlesFor = (n: string) => {
@@ -335,13 +353,13 @@ export class WslRouter {
     await Promise.all([...consult].map(async n => {
       const st = this.state(n);
       st.lastRail = at;
-      const f = await this.framesOf(st, wsl, facts, titlesFor(n));
+      const f = await this.framesOf(st, wsl, facts, titlesFor(n), live);
       if (f) frames.set(n, f);
     }));
     this.ensureTicker();
     for (const p of unresolved) {
       const n = distroOfTitles(byPid.get(p)!.filter(r => !r.popup).map(r => r.title), frames);
-      if (n) this.pidDistro.set(p, n);
+      if (n) { this.pidDistro.set(p, n); this.guessed.delete(p); }
     }
     const snap = EMPTY(at, stack, foreground);
     for (const r of rails) snap.rails.set(r.hwnd, r);
@@ -404,8 +422,8 @@ export class WslRouter {
   }
 
   /** The distro's frames, from its checked helper; null when there is none (yet), or it can't say. */
-  private async framesOf(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[]): Promise<LinuxFrame[] | null> {
-    const sc = await this.ready(st, wsl, facts, titles);
+  private async framesOf(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[], live: Set<string> | null): Promise<LinuxFrame[] | null> {
+    const sc = await this.ready(st, wsl, facts, titles, live);
     if (!sc) return null;
     if (st.bus === "none") {
       // No bus showed these windows when the helper started (an app not yet on its accessibility bus): asked again
@@ -425,23 +443,23 @@ export class WslRouter {
   }
 
   /**
-   * The distro's helper, checked: started if none runs (only once an uncached running list names the distro), its
-   * status read (uid 0 → stopped for good while the distro runs; no /mnt/wslg or no pyatspi → stopped), and its bus
-   * chosen by `titles` (find_bus). null when it can't be used now.
+   * The distro's helper, checked: started if none runs (only once an uncached running list names the distro: `live`,
+   * when this look has just read one, else read now), its status read (uid 0 → stopped for good while the distro runs;
+   * no /mnt/wslg or no pyatspi → stopped), and its bus chosen by `titles` (find_bus). null when it can't be used now.
    */
-  private ready(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[]): Promise<DistroSidecar | null> {
+  private ready(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[], live: Set<string> | null): Promise<DistroSidecar | null> {
     if (st.sidecar && st.verifiedPid !== null && st.sidecar.pid === st.verifiedPid) return Promise.resolve(st.sidecar);
-    st.readying ??= this.start(st, wsl, facts, titles).finally(() => { st.readying = null; });
+    st.readying ??= this.start(st, wsl, facts, titles, live).finally(() => { st.readying = null; });
     return st.readying;
   }
 
-  private async start(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[]): Promise<DistroSidecar | null> {
+  private async start(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[], live: Set<string> | null): Promise<DistroSidecar | null> {
     // Root and no WSLg hold until the distro stops; the rest are tried again now and then (the user may install python3).
     if (st.problem === "root" || st.problem === "nowslg" || st.problem === "missing" || this.d.now() < st.retryAt) return null;
     if (!facts.wslExe) return null;
     let names: Set<string>;
     try {
-      names = await wsl.runningNow();
+      names = live ?? await wsl.runningNow();
     } catch {
       return null; // can't tell whether it runs: never boot it
     }
@@ -667,7 +685,7 @@ export class WslRouter {
     const d = facts.distros.find(x => x.name === distro);
     if (!d || d.version !== 2 || d.needsSetup || d.tool || d.defaultUid === 0) return null;
     const titles = [...(this.snap?.rails.values() ?? [])].filter(r => !r.popup && this.pidDistro.get(r.pid) === distro).map(r => railTitle(r.title, [distro])).filter(Boolean);
-    const sc = await this.ready(st, wsl, facts, [...new Set(titles)].slice(0, MAX_TITLES));
+    const sc = await this.ready(st, wsl, facts, [...new Set(titles)].slice(0, MAX_TITLES), null);
     return sc && st.bus !== "none" ? sc : null;
   }
 

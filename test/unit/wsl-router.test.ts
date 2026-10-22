@@ -299,6 +299,37 @@ describe("several distros", () => {
     expect(h.helperOf("Debian")!.calls.filter(c => c.method === "list_windows")).toHaveLength(1);
   });
 
+  it("gives a distro that just started its own msrdc while the cached running set still says it's stopped, and asks again which msrdc was whose", async () => {
+    const h = harness();
+    h.wsl.add("Ubuntu").add("Debian", { running: false });
+    const s = geditScene(h);
+    h.setups.set("Ubuntu", helper => { helper.frames = [s.frame]; });
+    const r = router(h);
+    expect((await r.refresh()).windows.get(11)?.app).toBe("wsl:Ubuntu:gedit");
+    // The user opens gedit in Debian: it boots and its own msrdc shows the window, while WA's 2 s cache of the running set
+    // (what isRunning answers) still says it's stopped. As in WA's service, an uncached read refreshes that cache.
+    let cached = new Set(["Ubuntu"]);
+    const truth = () => new Set(h.wsl.distros.filter(d => d.running).map(d => d.name));
+    h.wsl.service.isRunning = n => cached.has(n);
+    h.wsl.service.runningNow = async () => { h.wsl.runningNowCalls++; cached = truth(); return truth(); };
+    h.wsl.distros[1].running = true;
+    geditScene(h, { hwnd: 21, pid: 4300, title: "notes.txt - gedit (Debian)", inner: { x: 1000, y: 200, width: 800, height: 600 } });
+    h.setups.set("Debian", helper => { helper.frames = [s.frame]; });
+    h.state.now += IDENTITY_MS + 1;
+    let snap = await r.refresh();
+    expect(snap.windows.get(21)?.app).toBe("wsl:Debian:gedit");
+    expect(snap.windows.get(11)?.app).toBe("wsl:Ubuntu:gedit");
+    // Later looks (the cache refreshed in the background meanwhile) keep both right.
+    cached = truth();
+    for (let i = 0; i < 3; i++) {
+      h.state.now += IDENTITY_MS + 1;
+      snap = await r.refresh();
+    }
+    expect(snap.windows.get(21)?.app).toBe("wsl:Debian:gedit");
+    expect(snap.windows.get(11)?.app).toBe("wsl:Ubuntu:gedit");
+    expect(h.created.sort()).toEqual(["Debian", "Ubuntu"]);
+  });
+
   it("identifies nothing when two distros' frames both name the windows (and the title doesn't say which)", async () => {
     const h = harness();
     h.wsl.add("Ubuntu").add("Debian");

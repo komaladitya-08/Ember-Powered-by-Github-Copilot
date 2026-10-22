@@ -39,13 +39,14 @@ import { createConnections } from "../remote/connections";
 import { parseTypedDestination } from "../remote/destination";
 import { createPromptWindow } from "../remote/prompt-window";
 import { emberNamesRegExp } from "../remote/protocol";
-import { sshDestination, userSshProcesses } from "../remote/notice-ssh";
+import { WSL_READER, parseWslReader, sshDestination, userSshProcesses } from "../remote/notice-ssh";
 import { remoteTargetParts, type RemoteTargetExtras } from "../remote/target";
 import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink, type SshSeen } from "../remote/types";
 import { SettingsSchema, lenientJson, repairSettings } from "../settings";
 import { wslAwareSystem } from "../wsl/privacy";
 import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
 import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
+import type { WslRunner } from "../wsl/runner";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
 import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
@@ -296,6 +297,12 @@ export interface TargetsDepsExtra {
    * bubble says which.
    */
   stopTasksOn?(target: TargetId, only?: "desktop"): void;
+  /**
+   * The window the user is in now (its program and title), from main's window system: what the ssh noticer looks at
+   * (§2.7). It needs only a window system, never the input backend or the administrator's mouse borrowing. Absent: the
+   * hands' tier-3 view of it, when they have one; neither: no noticing.
+   */
+  activeWindow?(): { app: string; title: string } | null;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -962,13 +969,39 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (own.dismissedOffers.some(d => d.toLowerCase() === dest.toLowerCase())) return;
     try { settings.update({ targets: { ...own, dismissedOffers: [...own.dismissedOffers, dest].slice(-200) } }); } catch (err) { log.warn("targets.dismiss_failed", { err }); }
   };
+  /**
+   * SA's noticing with the WSL part read here: the user's own ssh in each distro that runs NOW, by WA's runner for
+   * that distro (runScript without mayBoot: it reads the running set again right before, never starts a stopped
+   * distro, and runs under Ember's job host). The registry's running flags are a cached copy that can be minutes
+   * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7).
+   */
+  const noticeOf = (n: SshNotice): SshNotice => ({
+    sshDestination: argv => n.sshDestination(argv),
+    userSshProcesses: async (os, o) => {
+      const local = await n.userSshProcesses(os);
+      const w = wsl;
+      if (!local || !o?.wsl || !w) return local;
+      let live: Set<string>;
+      try { live = await w.runningNow(); } catch (err) { log.warn("targets.wsl_running_failed", { err }); return local; }
+      for (const distro of o.wsl.distros.slice(0, 8)) {
+        if (!DISTRO_NAME.test(distro) || !live.has(distro)) continue;
+        let runner: Partial<WslRunner>;
+        try { runner = w.runner(distro) as Partial<WslRunner>; } catch { continue; }
+        if (typeof runner.runScript !== "function") continue; // not WA's runner: nothing is read there
+        const r = await runner.runScript(WSL_READER, { timeoutMs: 5_000 }).catch(() => null);
+        if (r && r.code === 0) local.push(...parseWslReader(r.stdout.toString("utf8"), distro));
+      }
+      return local;
+    },
+  });
   let noticer: Noticer | null = null;
   let noticeTimer: unknown = null;
-  // The window the user is in comes from the hands' tier-3 view of it (main's window system); without it, no noticing.
-  const look = deps.localHands?.cursor?.activeWindow;
+  // The window the user is in comes from main's window system (or, without that, the hands' tier-3 view of it, which
+  // exists only while Ember may borrow the mouse); without either, no noticing.
+  const look: (() => { app?: string; title?: string } | null) | undefined = deps.activeWindow ? () => deps.activeWindow!() : deps.localHands?.cursor?.activeWindow;
   if (parts.notice && look) {
     noticer = createNoticer({
-      os: deps.os, log, notice: parts.notice,
+      os: deps.os, log, notice: noticeOf(parts.notice),
       enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh,
       activeWindow: () => {
         const w = look();
@@ -976,9 +1009,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       },
       isTerminal: app => isTerminalWindowApp(app, deps.sys.apps, deps.os),
       cimAllowed: () => settings.get().targets.hosts.length > 0 || settings.get().targets.dismissedOffers.length === 0,
+      // The distros Ember works in; which of them run is read uncached when the processes are (noticeOf).
       wsl: () => {
         if (!wsl || !wslOn() || !wslFacts?.wslExe) return null;
-        const distros = wslFacts.distros.filter(d => d.running && entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
+        const distros = wslFacts.distros.filter(d => entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
         return { exe: wslFacts.wslExe, distros };
       },
       dismissed: s => settings.get().targets.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase()),
@@ -1091,6 +1125,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     });
   };
   const refuse = (why: string) => ({ ok: false as const, why });
+  /**
+   * Why this computer can't take a task without a screen and with commands off: the user can turn commands on only
+   * where the administrator hasn't turned them off.
+   */
+  const noScreenWhy = (): string => commandMode(admin(), "local") === "off"
+    ? "Ember can't use this computer's screen here, and your organisation has turned off commands on it. Tell the user."
+    : "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings.";
   /** SC's desktop.state request for a remote (it never rejects; a failure leaves the binding as it was). */
   const desktopNow = (t: RemoteTarget): Promise<unknown> => {
     const refresh = (t.parts as Partial<RemoteTargetExtras>).refreshDesktop;
@@ -1107,6 +1148,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // notice there, and is the only way access comes back after a lock, so it goes out even when this one is refused.
       const live = e.kind === "ssh" && e.host ? conns.get(e.host.id) : undefined;
       const asking = live?.target && live.state === "ready" && live.target.link.state === "ready" ? desktopNow(live.target) : null;
+      if (e.kind === "local" && !e.usable) return refuse(noScreenWhy());
       if (e.listedOnly || !e.usable) return refuse(e.why ?? `Ember can't work on ${e.label} now.`);
       if (e.kind === "ssh") {
         const c = e.host ? conns.get(e.host.id) : undefined;
@@ -1124,9 +1166,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const binding = bindingOf(e);
       const commands = liveCommands(commandsOf(id), id);
       if (binding.desktop === "none" && !commands) {
-        return refuse(e.kind === "local"
-          ? "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings."
-          : `${binding.desktopWhy ?? `Ember can't use ${e.label}'s screen.`} Commands are off there; the user can turn them on in Ember's settings.`);
+        return refuse(e.kind === "local" ? noScreenWhy()
+          : `${binding.desktopWhy ?? `Ember can't use ${e.label}'s screen.`} ${commandMode(admin(), "wsl") === "off" ? "Your organisation has turned off commands in WSL." : "Commands are off there; the user can turn them on in Ember's settings."}`);
       }
       const hands = screenHands({ hands: deps.localHands, base: deps.localHands ? null : handsBase(), binding, system, commands });
       if (!hands) return refuse("Ember can't keep its record of what it does, so it won't work here.");
@@ -1158,7 +1199,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
   const othersNamed = (bound: TargetId, words: string): string[] => {
     const { known, labels } = knownNamed();
+    // On a Windows PC "WSL", "Linux" and "the Linux side" name WSL whether or not Ember works there. While no distro it
+    // lists answers to them (WSL off and not looked at yet, not installed, or not allowed), the task binds here (§2.3
+    // rule 5), and they still name a computer other than this one: a command they ask for asks, never announces.
+    if (deps.os === "win32" && !known.some(t => t.names.some(n => normaliseName(n) === "wsl"))) {
+      known.push({ id: "wsl:WSL" as TargetId, names: [...WSL_WORDS] });
+      labels.set("wsl:WSL", "WSL");
+    }
     return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
+  };
+  /** The other computers the user's words name as a place (§2.3 rule 3: "on build-02", "build-02: …"), never as a word. */
+  const othersPlaced = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
+    return targetsNamed(words, known.filter(t => t.id !== bound), deps.os).map(id => labels.get(id) ?? "another computer");
   };
   /**
    * The places the user's words name that look like a computer but are neither a target Ember knows nor a host of the
@@ -1170,30 +1223,27 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       rebuild();
       const words = typeof o.userWords === "string" ? o.userWords : "";
       const usableNamed = targetsNamed(words, namedTargets(entries), deps.os);
-      if (!usableNamed.length) {
-        // A place the user named that Ember lists but can't work in yet (WSL off, a distro to set up): say why.
+      // "WSL", "Linux" and a distro's name name a place only while WSL is on for Ember (§2.3 rule 5). While it is off,
+      // not installed or not allowed, they are words of the request ("search for how to install Python on Linux") and
+      // the task binds as any other: refusing them would stop ordinary requests on every Windows PC without WSL set up.
+      if (!usableNamed.length && wsl && wslOn()) {
+        // A place the user named that Ember lists but can't work in yet (a distro to set up first): say why.
         const listed = entries.filter(e => e.listedOnly);
         const hit = targetsNamed(words, listed.map(e => ({ id: e.id, names: e.names })), deps.os)[0];
         const e = hit ? entryOf(hit) : null;
-        if (e) {
-          if (e.kind === "wsl" && !wslOn()) offerWsl();
-          return refuse(e.why ?? NOT_NAMED);
-        }
-        // "In WSL" on a Windows PC where Ember has no distros listed (WSL off and not looked at yet, or none found).
+        if (e) return refuse(e.why ?? NOT_NAMED);
+        // "In WSL" while Ember has no distro listed (not looked at yet, or none found).
         if (deps.os === "win32" && !entries.some(x => x.kind === "wsl") && targetsNamed(words, [{ id: "wsl:WSL", names: [...WSL_WORDS] }], deps.os).length) {
-          if (!wslAllowed(admin())) return refuse("Your organisation doesn't allow Ember to work in WSL.");
-          if (!wsl) return refuse("WSL isn't installed on this computer.");
           // Discovery has looked and found no distro Ember could use (WSL's installer alone, or only tools' distros).
-          const none = "WSL has no Linux distro Ember can use on this computer.";
-          if (wslFacts && !defaultDistro(wslFacts)) return refuse(none);
-          if (!wslOn()) {
-            // "Ember can work in WSL" only once discovery shows a distro to work in (it reads the registry; nothing starts).
-            void refreshWsl().then(() => { if (defaultDistro(wslFacts)) offerWsl(); });
-            return refuse("WSL isn't turned on for Ember. Tell the user they can turn it on in Ember's settings (Computers).");
-          }
+          if (wslFacts && !defaultDistro(wslFacts)) return refuse("WSL has no Linux distro Ember can use on this computer.");
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
+      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
+        // The user said "in WSL" while it is off for Ember: the task goes on where Ember is set to work, and "Ember can
+        // work in WSL" is offered (once a run), only once discovery shows a distro to work in (it reads the registry;
+        // nothing starts). Never for "Linux" alone, which is as often what a request is about as where it should run.
+        void refreshWsl().then(() => { if (!wslOn() && defaultDistro(wslFacts)) offerWsl(); });
       }
       const r = bindTarget({ userWords: words, ...(o.choice !== undefined ? { choice: o.choice } : {}), targets: namedTargets(entries), active: activeId(), os: deps.os });
       if (!r.ok) return r;
@@ -1312,8 +1362,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const agent: TargetsForAgent = {
     get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
     bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
-    // A place that looks like a computer Ember doesn't know counts too: the task's bubbles say where it acts.
-    othersNamed: (id, userWords) => { try { return [...othersNamed(id, userWords), ...unknownPlaces(userWords)]; } catch { return ["another computer"]; } },
+    // The task's bubbles say where it acts when the user's words name another computer: with commands there, any it
+    // names anywhere (as D4.4's guard counts them: such a task's commands never announce); without, only one named as a
+    // place, so a name that is just a word of the request ("open github.com in Firefox" with a `Host github.com` in the
+    // ssh config) adds no badge to a task that can only use apps. A place that looks like a computer Ember doesn't know
+    // counts in both.
+    othersNamed: (id, userWords) => {
+      try {
+        const named = safeState(commandsOf(id)) !== "off" ? othersNamed(id, userWords) : othersPlaced(id, userWords);
+        return [...named, ...unknownPlaces(userWords)];
+      } catch {
+        return ["another computer"];
+      }
+    },
   };
 
   // ── The picker and the bubble's actions ──

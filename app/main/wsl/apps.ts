@@ -20,17 +20,31 @@ import type { Logger } from "../logger";
 import type { AppCatalog, AppIdentity } from "../platform/types";
 import { splitWindowsArgs } from "../platform/win32/system/argv";
 import { expandEnvironmentStrings, LnkError, parseShellLink } from "../platform/win32/system/lnk";
-import type { WslFacts, WslService } from "./types";
+import type { WslDistro, WslFacts, WslService } from "./types";
 
 /** A word after "--" that no shell reads as anything but itself (no quote, $, `, ;&|<>(){}*?[]~!#, or blank inside). */
 const TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
+/** A shell variable assignment (NAME=value): before the command's first word, the shell sets it and runs what follows. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The words the distro's shell runs as the command (pure): `argv` without its leading NAME=value assignments, which
+ * the shell reads as variables for the command, not as its program ("GDK_BACKEND=x11 gnome-terminal" runs
+ * gnome-terminal). Empty when there are only assignments.
+ */
+export function commandWords(argv: readonly string[]): string[] {
+  let i = 0;
+  while (i < argv.length && ASSIGNMENT.test(argv[i])) i++;
+  return argv.slice(i);
+}
 /** wslg.exe's program name. */
 const WSLG = /^wslg(?:\.exe)?$/i;
 
 /**
  * What a wslg.exe command line runs, read strictly (pure): only `wslg.exe [-d|--distribution <name>] [--cd <dir>|~] --
- * <argv…>` with a non-empty argv of plain tokens. -u/--user, -e/--exec, --system, --shell-type, any other option, a
- * missing "--" and any token with shell syntax give null ("Ember can't tell exactly what this shortcut runs"). The
+ * <argv…>` with a non-empty argv of plain tokens that runs a command (not only NAME=value assignments). -u/--user,
+ * -e/--exec, --system, --shell-type, any other option, a missing "--" and any token with shell syntax give null ("Ember
+ * can't tell exactly what this shortcut runs"). The
  * older shape (wslg.exe ~ -d D <cmd>) is not accepted until the wslg-probe job has recorded it. `argv[0]` is wslg.exe.
  */
 export function wslgLaunch(argv: string[]): { distro: string | null; cwd: string | null; argv: string[] } | null {
@@ -54,7 +68,7 @@ export function wslgLaunch(argv: string[]): { distro: string | null; cwd: string
   }
   if (argv[i] !== "--") return null;
   const rest = argv.slice(i + 1);
-  if (!rest.length || !rest.every(t => typeof t === "string" && TOKEN.test(t))) return null;
+  if (!rest.length || !rest.every(t => typeof t === "string" && TOKEN.test(t)) || !commandWords(rest).length) return null;
   return { distro, cwd, argv: rest };
 }
 
@@ -84,16 +98,40 @@ export function wslgRefusal(argv: string[], facts: WslFacts | null): string | nu
   return null;
 }
 
-/** Is the Linux command a terminal, a shell or an app with one built in (the Linux vocabulary, wrappers followed)? */
+/**
+ * Is the Linux command a terminal, a shell or an app with one built in (the Linux vocabulary, wrappers followed)? Judged
+ * as the distro's shell runs it (its leading assignments skipped), and as written too (an extra refusal only).
+ */
 function linuxTerminal(app: Pick<DesktopApp, "id" | "name">, argv: string[]): boolean {
-  return isTerminalApp({ id: app.id, name: app.name, argv }, "linux");
+  return isTerminalApp({ id: app.id, name: app.name, argv: commandWords(argv) }, "linux") || isTerminalApp({ id: app.id, name: app.name, argv }, "linux");
 }
 
 /** The Linux program a window of this command reports (§4.5's app: an interpreter's script, else the program). */
-function linuxProgram(argv: string[]): string | null {
+function linuxProgram(all: string[]): string | null {
+  const argv = commandWords(all);
   const prog = (argv[0] ?? "").slice((argv[0] ?? "").lastIndexOf("/") + 1).toLowerCase();
   const script = argv[1] && !argv[1].startsWith("-") ? argv[1].slice(argv[1].lastIndexOf("/") + 1).toLowerCase() : "";
   return (prog && LAUNCHERS.linux.test(prog) && script ? script : prog) || null;
+}
+
+/**
+ * Whether the distro's default user is root, as the distro itself reports it (WslDistro.defaultUid is only what was
+ * learned from inside it; the registry's hint never counts); null when it can't be told. A running distro is asked
+ * without starting anything (WslService.defaultUid); a stopped one is started to read its set-up, as opening its app
+ * would start it anyway (§4.8).
+ */
+export async function runsAsRoot(wsl: Pick<WslService, "defaultUid" | "runner">, d: Pick<WslDistro, "name" | "defaultUid" | "running">): Promise<boolean | null> {
+  if (d.defaultUid !== null) return d.defaultUid === 0;
+  try {
+    if (d.running) {
+      const uid = await wsl.defaultUid(d.name);
+      if (uid !== null) return uid === 0;
+    }
+    const f = await wsl.runner(d.name).facts();
+    return typeof f?.privileged === "boolean" ? f.privileged : null;
+  } catch {
+    return null; // couldn't read it (a timeout, no job host): not opened
+  }
 }
 
 type SpawnLike = (command: string, args: string[], options: SpawnOptions) => { on(event: "error", fn: (err: Error) => void): unknown; unref(): void };
@@ -178,6 +216,12 @@ export function withWslApps(apps: AppCatalog, o: { wsl: () => WslService | null;
     if (why) throw new Error(/[.!?]$/.test(why) ? why : `Ember can't open that app: ${why}.`);
     const p = wslgLaunch(argv)!;
     if (linuxTerminal(app, p.argv) || apps.isTerminalApp({ id: app.id, name: app.name })) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
+    // Its default user as the distro itself says (L17, critique wsl-7): a uid not learned yet is asked for now (after the
+    // checks that need nothing from the distro, so a stopped one is never started only to refuse its app).
+    const d = (p.distro ? fresh.distros.find(x => x.name.toLowerCase() === p.distro!.toLowerCase()) : fresh.distros.find(x => x.isDefault))!;
+    const root = await runsAsRoot(wsl, d);
+    if (root === null) throw new Error(`Ember couldn't tell which user ${d.name} runs apps as, so it didn't open that app.`);
+    if (root) throw new Error("Ember doesn't use Linux apps of a distro that runs as root.");
     const explorer = expandEnvironmentStrings("%SystemRoot%\\explorer.exe", env);
     if (!wpath.isAbsolute(explorer) || explorer.includes("%")) throw new Error("Ember couldn't find Windows' own folder, so it can't open apps.");
     // The shortcut as the Start menu would open it: Ember never starts wslg.exe (or the distro's shell) itself.

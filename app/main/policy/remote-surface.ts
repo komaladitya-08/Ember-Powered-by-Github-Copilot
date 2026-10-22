@@ -23,17 +23,19 @@ import type { OS } from "../../shared/shortcuts";
  * - Windows365: the Windows App (verify on a real install that its sessions are msrdc's);
  * - RdClient.Windows: the Microsoft Store's Remote Desktop app, which draws its sessions itself;
  * - the X servers for Windows that show Linux apps' windows as their own (critique wsl-15): VcXsrv (vcxsrv), X410
- *   (x410), Xming (xming), Cygwin/X (xwin) and GWSL (gwsl). Nothing tells which Linux app draws which of their
- *   windows (WSL 1 users, or WSLg turned off), so they stay remote surfaces; WSLg's windows can be identified (wsl/).
+ *   (x410), Xming (xming), Cygwin/X (xwin) and GWSL, whose Linux windows belong to its bundled VcXsrv, GWSL_vcxsrv
+ *   or GWSL_vcxsrv_lowdpi (GWSL.exe is its dashboard, GWSL_service its tray service: every GWSL_* program is
+ *   counted, as the WSL doctor counts them). Nothing tells which Linux app draws which of their windows (WSL 1
+ *   users, or WSLg turned off), so they stay remote surfaces; WSLg's windows can be identified (wsl/).
  */
 export const REMOTE_SURFACE: Readonly<Record<OS, RegExp | null>> = {
   linux: null,
-  win32: /^(?:msrdc|mstsc|msrdcw|windows365|rdclient\.windows|vcxsrv|x410|xming|xwin|gwsl)(?:\.exe)?$/i,
+  win32: /^(?:msrdc|mstsc|msrdcw|windows365|rdclient\.windows|vcxsrv|x410|xming|xwin|gwsl(?:_\w+)?)(?:\.exe)?$/i,
   darwin: null,
 };
 
 /** The X servers for Windows among the remote surfaces (the WSL doctor row says their Linux apps can't be used). */
-const WINDOWS_X_SERVER = /^(?:vcxsrv|x410|xming|xwin|gwsl)(?:\.exe)?$/i;
+const WINDOWS_X_SERVER = /^(?:vcxsrv|x410|xming|xwin|gwsl(?:_\w+)?)(?:\.exe)?$/i;
 
 /** Is `app` (a window's app) an X server for Windows showing Linux apps (VcXsrv, X410, Xming, Cygwin/X, GWSL)? */
 export function isWindowsXServer(app: string, os: OS): boolean {
