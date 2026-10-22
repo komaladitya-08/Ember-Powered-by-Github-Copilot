@@ -188,7 +188,10 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     expect(node("Notes", "text")).toMatchObject({ text: "First line\nSecond line", states: expect.arrayContaining(["multi line"]) });
     expect(node("Save", "push button").actions).toContain("click");
     expect(node("Rows", "table")).toBeTruthy();
-    for (const n of read.nodes.filter(x => x.role !== "label" && x.role !== "frame" && x.depth === 1)) {
+    // (Not the title bar's buttons: a window that can't be resized has its zoom button disabled.)
+    for (const [name, role] of [["Name", "entry"], ["Password", "password text"], ["Remember me", "check box"], ["Theme", "combo box"],
+      ["Volume", "slider"], ["Notes", "text"], ["Save", "push button"]]) {
+      const n = node(name!, role!);
       expect(n.states.includes("enabled") && n.states.includes("sensitive"), `${n.role} "${n.name}" says enabled`).toBe(true);
     }
     expect(JSON.stringify(read)).not.toMatch(/"(button|search|search box)"/);
