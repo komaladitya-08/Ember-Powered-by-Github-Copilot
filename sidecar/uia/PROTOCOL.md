@@ -42,6 +42,9 @@ listed under "Methods" are exactly the ones in the bridge's dispatch table.
   is accepted on input). The bridge writes **ASCII only**: every character outside printable ASCII is escaped as
   `\uXXXX` (UTF-16 code units, so astral characters are surrogate pairs), so the console code page never matters.
 - Numbers are finite: a value that would be NaN or infinite is written as `null`.
+- If the process exits before writing any line, PowerShell refused to run the script: a Group Policy execution
+  policy (`AllSigned`, `RemoteSigned`) overrides `-ExecutionPolicy Bypass` for an unsigned script, and stderr says so.
+  Report it once and don't restart in a loop.
 - stdout carries only protocol lines. stderr is diagnostics only (PowerShell may write `#< CLIXML` records there); the
   bridge itself writes no screen text to stderr. Log it at debug level, never parse it.
 
@@ -88,7 +91,7 @@ line.
 | code | meaning |
 |---|---|
 | `busy` | The app didn't answer within the deadline, or its process is marked busy (below), or no worker thread is free. Messages: `the app did not answer in time`, `the app did not answer in time (it may still do it)` (an action: it may still happen), `the app is not answering`, `too many requests are waiting for apps that do not answer`. |
-| `gone` | The handle is unknown, released or evicted, or the element no longer exists (`ElementNotAvailableException`). |
+| `gone` | The handle is unknown, released or evicted (`unknown handle N (released, evicted or never given)`), or the element no longer exists (`the element is no longer available`). |
 | `denied` | Refused on purpose: `setValue` on a password field, or Windows denied access (an app running as administrator: UIPI). |
 | `bad_request` | Malformed JSON, unknown method or `op`, a missing or ill-typed parameter. |
 | `failed` | Everything else. `unsupported:<op>` when the element lacks the pattern an action needs; otherwise `<ExceptionType>: <message>` (for example `ElementNotEnabledException: ...`, `InvalidOperationException: ...`). |
