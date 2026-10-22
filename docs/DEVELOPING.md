@@ -706,13 +706,15 @@ With WSL turned on for Ember (§14), WSLg's windows are identified instead: `app
 from a Remote Desktop client's by its program's path (`isWslgImage`), a helper inside the distro reads the Linux apps
 over AT-SPI, and `app/main/wsl/match.ts` pairs each RAIL window with its Linux window. A matched window's app becomes
 `wsl:<distro>:<program>` ("gedit (Ubuntu)" to the user) everywhere Ember names windows, so grants, never-look, the
-terminal and security-window checks apply to the Linux app itself, and it is no longer a remote surface. A window
-that can't be matched (no helper, no session bus, an app without AT-SPI such as xterm, two windows Ember can't tell
-apart) keeps "msrdc" and stays refused and blacked out; its title is then judged by the Linux vocabulary too (a Linux
+terminal and security-window checks apply to the Linux app itself, and it is no longer a remote surface. A window that
+can't be matched (no helper, no session bus, an app without AT-SPI such as xterm, two windows Ember can't tell apart)
+keeps "msrdc" and stays refused and blacked out; its title is then judged by the Linux vocabulary too (a Linux
 "Authentication Required" title is a security window). The borrowed mouse and keyboard stay refused in every WSLg
 window (`app/main/policy/target-rules.ts`) until the Windows backend checks a RAIL window's owner chain and types by
-scancode there. The Windows X servers `vcxsrv`, `x410`, `xming`, `xwin` (Cygwin/X) and `gwsl` join the remote
-surfaces: their windows are Linux apps Ember can't identify.
+scancode there. The Windows X servers `vcxsrv`, `x410`, `xming`, `xwin` (Cygwin/X) and GWSL's programs (`gwsl` and
+every `gwsl_*`: `GWSL_vcxsrv` and `GWSL_vcxsrv_lowdpi`, the X server whose windows the Linux apps are, and
+`GWSL_service`) join the remote surfaces: their windows are Linux apps Ember can't identify. The WSL check-up row
+(`app/main/wsl/doctor.ts`) recognises the same programs when it says an X server shows Linux apps.
 
 ### 10.9 Troubleshooting
 
@@ -1019,11 +1021,11 @@ computer reached over SSH is eyes, hands and a command runner. PLAN.md M12 lists
 | Folder | What it holds |
 |---|---|
 | `app/main/targets/` | The targets runtime (`runtime.ts`, the only part main calls): the registry of computers (`registry.ts`), naming a computer from the user's own words and binding a task to it (`resolve.ts`), each target's hands and command service, the handle menu's part, the first-use consent cards (`consent.ts`), noticing the user's own `ssh` (`offer.ts`), quick context, the settings window's channel and the check-up rows (`doctor.ts`) |
-| `app/main/commands/` | Commands on every target: the contract (`types.ts`); the classifier (`lex-posix.ts`, `lex-powershell.ts`, `lex-cmd.ts`, `tables.ts`, `paths.ts`, `classify.ts`), the intent matcher (`intent.ts`) and the decision (`decide.ts`); output shaping (`output.ts`, `redact.ts`, `prompts.ts`, `taint.ts`); `run_command`'s flow (`flow.ts`, with `carried.ts`) and the command window's controller (`window.ts`) |
-| `app/main/commands/run/` | Running a command: the fixed launchers (`shells.ts`: the command text travels in `EMBER_CMD`, never on any argv), the environment, the local runner (`local.ts`), the stop ladder and the sweep, and the Windows job host (`job-host.ts`: Ember's binary in Node mode holding a kill-on-close job object, so Stop ends the whole tree) |
+| `app/main/commands/` | Commands on every target: the contract (`types.ts`); the classifier (`lex-posix.ts`, `lex-powershell.ts`, `lex-cmd.ts`, `tables.ts`, `paths.ts`, `classify.ts`, which also records each shell script a command runs and asks for one it can't read first), the intent matcher (`intent.ts`) and the decision (`decide.ts`); output shaping (`output.ts`, `redact.ts`, `prompts.ts`, `taint.ts`); `run_command`'s flow (`flow.ts`, with `carried.ts`: it reads each recorded script through the target's runner and classifies its text before deciding, L8) and the command window's controller (`window.ts`) |
+| `app/main/commands/run/` | Running a command: the fixed launchers (`shells.ts`: the command text travels in `EMBER_CMD`, never on any argv), the environment, the local runner (`local.ts`), the stop ladder and the sweep, the target's facts and path checks (`inspect.ts`, with `readScriptText` and `decodeScript`: a script's first 64 KiB, a regular file only, never `/dev`, `/proc` or a UNC path), and the Windows job host (`job-host.ts`: Ember's binary in Node mode holding a kill-on-close job object, so Stop ends the whole tree) |
 | `app/main/wsl/` | WSL discovery from the registry and `wsl.exe`, never starting a distro (`discover.ts`, `lxss.ts`, `decode.ts`), the WSL runner (`runner.ts`), the `wsl` check-up row (`doctor.ts`), and the WSLg layer: the router over UIA and each distro's AT-SPI helper (`router.ts`, `routed-sidecar.ts`, `routed-windows.ts`, `launch-sidecar.ts`), window matching (`match.ts`), RAIL identification (`rail.ts`), Start-menu launching (`apps.ts`) and the joined vocabularies (`privacy.ts`) |
 | `app/main/remote/` | The PC's side of SSH: the protocol's schemas (`protocol.ts`), the framed stream both ends share (`mux.ts`), the link's worker thread (`link-worker.ts`), connections (`connections.ts`), ssh's argv, configuration and errors, the bootstrap script (`scripts/bootstrap.sh`), the install plan and the same-machine check, the Node.js download, the askpass server, noticing ssh (`notice-ssh.ts`), the prompt window's controller (`prompt-window.ts`), and the remote target's perception, accessibility, apps and runner (`target.ts`, `remote-*.ts`) |
-| `app/remote/` | `ember-remote`, the agent Ember runs on a computer reached over SSH (plain Node 24, `main.ts`): the protocol loop, gate 2 (its own re-check of every step and command), desktop discovery and the desktop child, PNG capture, the single-instance lock, liveness, and the remote's own policy and audit |
+| `app/remote/` | `ember-remote`, the agent Ember runs on a computer reached over SSH (plain Node 24, `main.ts`): the protocol loop, gate 2 (its own re-check of every step and command, which also reads the shell scripts a command runs on its own filesystem: the PC can't, so its gate 1 leaves them to L8), the commands it runs (`commands.ts`: output held back while the link's bulk queue is over 1 MiB), desktop discovery and the desktop child, PNG capture, the single-instance lock, liveness, and the remote's own policy and audit |
 | `app/askpass/` | `askpass.cjs`, which ssh runs to ask for a password on a Linux or macOS PC (the answer comes from Ember's prompt window over a Unix socket made for that one ssh run) |
 | `app/renderer/command/`, `app/renderer/prompt/` | The command window (xterm.js, no add-ons) and the prompt window (host keys, passwords, consent cards) |
 | `app/shared/targets.ts`, `commands.ts`, `consent.ts`, `remote-ui.ts`, `visible-text.ts` | Target ids and summaries; the two windows' IPC names and types; the consent cards' versions (`FEATURE_CONSENT_VERSION`); `visibleText`, which shows every invisible character of a command |
@@ -1097,14 +1099,14 @@ costing ten times Linux's. A suite named in a job that doesn't exist yet is skip
 | Job | Runner | Suites (`test/integration/…`) | Variables |
 |---|---|---|---|
 | `unit-matrix` | `ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched | the SSH/WSL unit files | — |
-| `commands-linux`, `commands-linux-el8` | `ubuntu-24.04`; a `rockylinux:8` container (util-linux 2.32), as a normal user | `commands-local` | `EMBER_COMMANDS_TEST` |
-| `ssh-linux` | `ubuntu-24.04`, sshd on 127.0.0.1:2222 and a jump host on 2223 | `ssh-transport`, `remote-ssh`, `remote-desktop` (under Xvfb) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_REMOTE_DEV` (desktop) |
+| `commands-linux`, `commands-linux-el8` | `ubuntu-24.04`; a `rockylinux:8` container (util-linux 2.32), as a normal user | `commands-local`, `commands-flow-local` | `EMBER_COMMANDS_TEST` |
+| `ssh-linux` | `ubuntu-24.04`, sshd on 127.0.0.1:2222 and a jump host on 2223 | `ssh-transport`, `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_SUDO` (the runner's sudo writes the remote's policy file), `EMBER_REMOTE_DEV` (desktop) |
 | `ssh-el8` | a `rockylinux:8` container as the remote | `remote-el8` | `EMBER_SSH_TEST` |
 | `wayland-remote` | `ubuntu-24.04`, headless mutter | `remote-wayland` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
-| `wsl-windows` | `windows-2022`, Ubuntu 22.04 as WSL 1 with sshd | `wsl`, `commands-local` (PowerShell), `ssh-windows` | `EMBER_WSL_TEST`, `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST` |
+| `wsl-windows` | `windows-2022`, Ubuntu 22.04 as WSL 1 with sshd | `wsl`, `commands-local` and `commands-flow-local` (PowerShell), `ssh-windows` | `EMBER_WSL_TEST`, `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST` |
 | `wsl2-windows` | `windows-2025`, WSL 2 with a non-root default user | `wsl` | `EMBER_WSL_TEST` |
 | `wslg-probe` | `windows-2025` | `wslg-probe`: records what WSLg looks like as artefacts, never passes or fails | `EMBER_WSL_TEST` |
-| `ssh-macos` | `macos-15` | `commands-local`, `remote-ssh` (commands only) | `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST_MACOS` |
+| `ssh-macos` | `macos-15` | `commands-local`, `commands-flow-local`, `remote-ssh` (commands only) | `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST_MACOS` (set only once the runner's sshd starts), `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
 
 Hosted runners can't show another user's desktop session, real logind sessions (desktop discovery is tested with
 captured real `loginctl` and `busctl` output), macOS TCC, Windows remotes, NFS homes, real network loss, fapolicyd, or
@@ -1118,7 +1120,8 @@ Build first (`npm run build`). Never point a test at another computer: the SSH s
   `script`:
 
   ```bash
-  EMBER_COMMANDS_TEST=1 node scripts/run-integration.mjs test/integration/commands-local.test.ts
+  EMBER_COMMANDS_TEST=1 node scripts/run-integration.mjs test/integration/commands-local.test.ts \
+    test/integration/commands-flow-local.test.ts
   ```
 
 - **SSH** on Linux: start an sshd of your own on 127.0.0.1:2222 (and a second on 2223 as the jump host) with your key
@@ -1127,7 +1130,7 @@ Build first (`npm run build`). Never point a test at another computer: the SSH s
 
   ```bash
   EMBER_SSH_TEST=1 EMBER_TEST_ALLOW_LOOPBACK_SSH=1 node scripts/run-integration.mjs \
-    test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts
+    test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
   EMBER_SSH_TEST=1 EMBER_TEST_ALLOW_LOOPBACK_SSH=1 EMBER_REMOTE_DEV=1 \
     dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" \
     node scripts/run-integration.mjs test/integration/remote-desktop.test.ts

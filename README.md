@@ -118,8 +118,9 @@ you turn it on in settings (**Commands**, **Computers**) and accept the card tha
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
   them. Most run straight away. Ember stops and asks before anything that deletes or overwrites data, pushes or
   publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code; when you asked for
-  exactly that yourself, it says so and gives you 4 seconds to stop it. It never runs a command that would change its
-  own safety settings, records or programs, or press keys in its own windows.
+  exactly that yourself, it says so and gives you 4 seconds to stop it. It reads a shell script before running it, and
+  a script that does any of that always asks. It never runs a command that would read or change its own safety
+  settings, records or programs, or press keys in its own windows.
 - **WSL**: Ember reads and uses the Linux apps WSL shows on Windows, opens them, and runs commands in your distros.
 - **Other computers**: on your click, Ember opens its own SSH connection with your SSH settings and keys, copies a
   small helper there (about 31 MB) that runs only while it is connected, and works there: commands, and the apps on

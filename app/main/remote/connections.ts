@@ -79,6 +79,8 @@ export interface ConnectionsInternals {
   windowsHelper?: (d: AskpassWinDeps) => ReturnType<typeof ensureAskpassHelper>;
   /** L22: connecting through a WSL distro's ssh only once `wsl2-windows` proved the stream binary-safe (verify). */
   viaWsl?: boolean;
+  /** How long the runtime's download may go without a byte (RUNTIME_STALL_MS unless a test shortens it). */
+  runtimeStallMs?: number;
   /** Timers for the reconnect backoff (tests use fake ones). */
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (t: unknown) => void;
@@ -392,11 +394,13 @@ export function createConnections(o: {
             dir: pc.join(o.userData, "remote", "runtime"), file: n => pc.join(o.userData, "remote", "runtime", n),
             fs: runtimeFs(), fetch: o.fetch, mirror: o.admin().policy.ssh?.runtimeMirror, signal,
             progress: (done, total) => progress(host.id, { step: "downloading", done, total }),
+            ...(internals.runtimeStallMs !== undefined ? { stallMs: internals.runtimeStallMs } : {}),
           });
           archives.push({ name: "runtime", bytes: rt.bytes, path: rt.path });
         } catch (err) {
           const e = err instanceof RuntimeError ? err : new RuntimeError("download", "it stopped");
-          refusal.plan = { action: "refuse", kind: "download", message: e.kind === "mismatch" ? MESSAGES.downloadMismatch(h) : MESSAGES.download(h, e.reason), retry: true };
+          const message = e.kind === "mismatch" ? MESSAGES.downloadMismatch(h) : e.kind === "stalled" ? MESSAGES.downloadStalled(h) : MESSAGES.download(h, e.reason);
+          refusal.plan = { action: "refuse", kind: "download", message, retry: true };
           return { kind: "quit" };
         }
       }

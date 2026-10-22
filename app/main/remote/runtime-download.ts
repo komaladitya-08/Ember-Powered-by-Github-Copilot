@@ -3,7 +3,9 @@
  * (`minimum`, `pinned`, and each target's .tar.xz and .tar.gz with their SHA-256 copied from the release's
  * SHASUMS256.txt). The PC downloads it once per target with Electron's net.fetch (the system proxy), from nodejs.org
  * or the administrator's `ssh.runtimeMirror` (same layout, still checked), and keeps it in <userData>/remote/runtime/.
- * Every byte is hashed before anything is sent: a file that doesn't match is deleted and never sent anywhere.
+ * Every byte is hashed before anything is sent: a file that doesn't match is deleted and never sent anywhere. A download
+ * that goes RUNTIME_STALL_MS without a byte is ended (request and all): the SSH attempt waits on it, and nothing else
+ * would end a server or proxy that stops sending.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -15,6 +17,8 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 /** The largest runtime archive Ember accepts (Node's are about 30-50 MB). */
 export const RUNTIME_MAX_BYTES = 200 * 1024 * 1024;
+/** How long the download may go without a byte from the network before Ember ends it as stalled. */
+export const RUNTIME_STALL_MS = 60_000;
 
 const RuntimeFile = z.object({
   file: z.string().regex(/^node-v\d{1,3}\.\d{1,3}\.\d{1,3}-(linux|darwin)-(x64|arm64)\.tar\.(xz|gz)$/),
@@ -31,9 +35,9 @@ export const RuntimeManifestSchema = z.object({
 
 export type RuntimeManifest = z.infer<typeof RuntimeManifestSchema>;
 
-/** Why a download failed: §8.7's "Node download" (with a few words) or the mismatch message. */
+/** Why a download failed: §8.7's "Node download" (with a few words), the mismatch message, or a stall (no byte in time). */
 export class RuntimeError extends Error {
-  constructor(readonly kind: "download" | "mismatch", readonly reason: string) { super(reason); }
+  constructor(readonly kind: "download" | "mismatch" | "stalled", readonly reason: string) { super(reason); }
 }
 
 /** The file system the cache uses (fs/promises in Ember; a temp folder in tests). */
@@ -67,10 +71,20 @@ export async function cachedOk(fs: RuntimeFs, file: string, want: { sha256: stri
   return (await sha256File(fs, file).catch(() => "")) === want.sha256;
 }
 
+/** Lets the server's connection go without waiting on it: a body that ignores its cancel can't hold the attempt. */
+function release(body: { cancel(): Promise<void> } | null | undefined): void {
+  try {
+    body?.cancel().catch(() => undefined);
+  } catch {
+    // nothing more to let go
+  }
+}
+
 /**
  * The pinned runtime archive for `target` in `format`, downloaded if the cache doesn't hold it (§5.2.1). `file` is the
  * cache path (`<userData>/remote/runtime/<name>`), `dir` its folder. Resolves the path of a file whose bytes match;
- * throws RuntimeError otherwise. `progress` hears bytes downloaded of the total.
+ * throws RuntimeError otherwise: "stalled" when the answer or the next byte doesn't come within `stallMs` (default
+ * RUNTIME_STALL_MS), the request then aborted and the partial file deleted. `progress` hears bytes downloaded of the total.
  */
 export async function ensureRuntime(o: {
   manifest: RuntimeManifest;
@@ -83,6 +97,7 @@ export async function ensureRuntime(o: {
   mirror?: string;
   signal?: AbortSignal;
   progress?: (done: number, total: number) => void;
+  stallMs?: number;
 }): Promise<{ path: string; sha256: string; bytes: number }> {
   const entry = o.manifest.targets[o.target]?.[o.format];
   if (!entry) throw new RuntimeError("download", "no runtime for that computer");
@@ -90,44 +105,90 @@ export async function ensureRuntime(o: {
   if (await cachedOk(o.fs, dest, entry)) return { path: dest, sha256: entry.sha256, bytes: entry.bytes };
   await o.fs.mkdir(o.dir, { recursive: true, mode: 0o700 });
   const url = runtimeUrl(o.manifest.pinned, entry.file, o.mirror);
-  let res: Awaited<ReturnType<TargetsDeps["fetch"]>>;
+  // The request's own signal: the caller's Cancel, or no byte for stallMs. Waits race it too, so a fetch or a read that
+  // doesn't honour the signal is still never waited for.
+  const ac = new AbortController();
+  const cancel = () => ac.abort();
+  if (o.signal?.aborted) ac.abort();
+  else o.signal?.addEventListener("abort", cancel, { once: true });
+  const ended = new Promise<never>((_, reject) => {
+    const fail = () => reject(new Error("aborted"));
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener("abort", fail, { once: true });
+  });
+  ended.catch(() => { /* seen by whichever wait it ends */ });
+  let stalled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  /** (Re)starts the stall limit: before the request, at its answer, and as each piece of the file arrives. */
+  const watch = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; stalled = true; ac.abort(); }, o.stallMs ?? RUNTIME_STALL_MS);
+  };
+  /** Why the download ended early: a stall, the caller's Cancel, or `other`. */
+  const why = (other: string) => (stalled ? new RuntimeError("stalled", "no data arrived for a while")
+    : o.signal?.aborted ? new RuntimeError("download", "cancelled") : new RuntimeError("download", other));
+  let part: string | null = null;
   try {
-    res = await o.fetch(url, { signal: o.signal });
-  } catch {
-    throw new RuntimeError("download", o.signal?.aborted ? "cancelled" : "no connection");
-  }
-  if (!res.ok || !res.body) throw new RuntimeError("download", `the server answered ${res.status}`);
-  const part = o.file(`${entry.file}.${randomBytes(4).toString("hex")}.part`);
-  const out = await o.fs.open(part, "w");
-  const h = createHash("sha256");
-  let got = 0;
-  let failed: RuntimeError | null = null;
-  try {
-    const reader = res.body.getReader();
-    for (;;) {
-      if (o.signal?.aborted) { failed = new RuntimeError("download", "cancelled"); break; }
-      let r: ReadableStreamReadResult<Uint8Array>;
-      try {
-        r = await reader.read();
-      } catch {
-        failed = new RuntimeError("download", o.signal?.aborted ? "cancelled" : "the download broke off");
-        break;
-      }
-      if (r.done) break;
-      got += r.value.length;
-      if (got > entry.bytes) { failed = new RuntimeError("mismatch", "larger than expected"); await reader.cancel().catch(() => undefined); break; }
-      h.update(r.value);
-      await out.write(r.value);
-      o.progress?.(got, entry.bytes);
+    watch();
+    let res: Awaited<ReturnType<TargetsDeps["fetch"]>>;
+    let request: ReturnType<TargetsDeps["fetch"]> | null = null;
+    try {
+      request = o.fetch(url, { signal: ac.signal });
+      res = await Promise.race([request, ended]);
+    } catch {
+      // An answer that still comes (a fetch that ignored the abort) is let go unread.
+      request?.then(late => release(late.body), () => undefined);
+      throw why("no connection");
     }
+    // The answer is bytes from the server too: the limit counts again from it, so it now waits for the first piece.
+    watch();
+    if (!res.ok || !res.body) {
+      release(res.body);
+      throw new RuntimeError("download", `the server answered ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const letGo = () => release(reader);
+    part = o.file(`${entry.file}.${randomBytes(4).toString("hex")}.part`);
+    const out = await o.fs.open(part, "w").catch((err: unknown) => {
+      letGo();
+      throw err;
+    });
+    const h = createHash("sha256");
+    let got = 0;
+    let failed: RuntimeError | null = null;
+    let complete = false;
+    try {
+      for (;;) {
+        if (ac.signal.aborted) { failed = why("cancelled"); break; }
+        let r: ReadableStreamReadResult<Uint8Array>;
+        try {
+          r = await Promise.race([reader.read(), ended]);
+        } catch {
+          failed = why("the download broke off");
+          break;
+        }
+        if (r.done) { complete = true; break; }
+        if (r.value.length) watch();
+        got += r.value.length;
+        if (got > entry.bytes) { failed = new RuntimeError("mismatch", "larger than expected"); break; }
+        h.update(r.value);
+        await out.write(r.value);
+        o.progress?.(got, entry.bytes);
+      }
+    } finally {
+      await out.close().catch(() => undefined);
+      // Whatever ended the loop early (a stall, Cancel, too many bytes, a write that failed) lets the server go.
+      if (!complete) letGo();
+    }
+    if (!failed && (got !== entry.bytes || h.digest("hex") !== entry.sha256)) failed = new RuntimeError("mismatch", "doesn't match the expected file");
+    if (failed) throw failed;
+  } catch (err) {
+    if (part) await o.fs.rm(part, { force: true }).catch(() => undefined);
+    throw err;
   } finally {
-    await out.close().catch(() => undefined);
+    if (timer) clearTimeout(timer);
+    o.signal?.removeEventListener("abort", cancel);
   }
-  if (!failed && (got !== entry.bytes || h.digest("hex") !== entry.sha256)) failed = new RuntimeError("mismatch", "doesn't match the expected file");
-  if (failed) {
-    await o.fs.rm(part, { force: true }).catch(() => undefined);
-    throw failed;
-  }
-  await o.fs.rename(part, dest);
+  await o.fs.rename(part as string, dest);
   return { path: dest, sha256: entry.sha256, bytes: entry.bytes };
 }
