@@ -226,7 +226,7 @@ progress[hidden] { display: none; }
 
 /* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes ───── */
 .conversation { list-style: none; margin: 0; padding: 10px 0; max-height: 360px; overflow-y: auto; display: grid; gap: 2px; }
-.conversation:empty::before { content: "Nothing yet. Press Ctrl+Alt+Space and ask Ember something."; display: block; padding: 4px 16px; color: var(--muted); }
+.conversation:empty::before { content: attr(data-empty); display: block; padding: 4px 16px; color: var(--muted); }
 /* Who and when on one line, then the words on their own line (the zero-height ::before breaks the line). */
 .conversation li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 4px 14px; }
 .conversation li::before { content: ""; order: 1; flex-basis: 100%; }
