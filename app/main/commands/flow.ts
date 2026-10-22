@@ -486,10 +486,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   const binding = svc.binding;
   const place = placeName(binding);
   // The user's words also name another computer Ember knows ("build-01 delete build/" bound to the active one): no
-  // command announces, and every question says where it runs, this computer included (DOC's review).
-  const others = othersNamedIn(svc, ctx.task.commandWords());
+  // command announces, and every question says where it runs, this computer included (DOC's review). Read again with
+  // the words the decision reads (a steer may have come meanwhile).
+  let others = othersNamedIn(svc, ctx.task.commandWords());
   const here = whereWords(binding) ?? `on ${place}`;
-  const where = whereWords(binding) ?? (others.length ? here : undefined);
+  let where = whereWords(binding) ?? (others.length ? here : undefined);
   const task = ctx.task.id;
   const target = binding.id;
   const audit = (e: Record<string, unknown>) => ctx.audit({ event: "command", task, target, ...e });
@@ -567,6 +568,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
 
   // Steps 7-8: text carried from elsewhere, then the decision on the user's own words only.
   const words = ctx.task.commandWords();
+  others = [...new Set([...others, ...othersNamedIn(svc, words)])].slice(0, 5);
+  where = whereWords(binding) ?? (others.length ? here : undefined);
   const tainted = ctx.task.tainted();
   const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
@@ -576,12 +579,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
   // Taint that came from a command's own output says so on the card (§3.8.4's output-taint wording).
   let d = ctx.state.outputTainted ? { ...held, says: held.says.map(l => (l === LINES.tainted ? OUTPUT_TAINT_LINE : l)) } : held;
   // D4.4's wrong-target guard: a command the user's words asked for still asks when they also name another computer,
-  // and the card says first which one runs it.
+  // and every card of such a task (asking for any reason) says first which computer runs it.
   if (d.verdict === "announce" && others.length) {
     d = {
-      ...d, verdict: "ask", requested: undefined, says: [wrongTargetLine(others, here), ...d.says], rules: [...new Set([...d.rules, "wrong-target"])],
+      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, "wrong-target"])],
       reason: "It asks first: the user's words also name another computer.", armMs: Math.max(d.armMs, 1500),
     };
+  }
+  if (d.verdict === "ask" && others.length) {
+    const line = wrongTargetLine(others, here);
+    d = { ...d, says: [line, ...d.says.filter(l => l !== line)] };
   }
   const refused = d.verdict === "refuse";
   audit({
@@ -735,8 +742,10 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   const out = new OutputKeeper(tracker);
   const unsubscribe = running.onOutput(chunk => out.push(chunk));
   ctx.audit({ event: "command", phase: "started", task: o.stamp.taskId, target: svc.binding.id, runId: o.runId });
-  // The window gets the run with Enter presses noted for the tracker (what is typed goes straight to the run).
-  const shown: RunningCommand = {
+  // The window gets the run with Enter presses noted for the tracker (what is typed goes straight to the run), and what
+  // the run left running once its runner looked (RUN's and WA's `stragglers`, named on the tab's status line).
+  const shown: RunningCommand & { readonly stragglers?: unknown } = {
+    get stragglers() { return (running as RunningCommand & { stragglers?: unknown }).stragglers; },
     get runId() { return running.runId; },
     get interactive() { return running.interactive; },
     get done() { return running.done; },

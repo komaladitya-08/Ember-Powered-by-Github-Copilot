@@ -570,6 +570,28 @@ describe("the wrong-target guard (D4.4, DOC's review)", () => {
     expect((await call(h, { target: "this computer", command: "ls" })).resultType).toBe("success");
     expect(h.asked).toEqual([]);
   });
+
+  it("says where it runs first on a card that asks for another reason too", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."], unasked: true }) });
+    const h = harness({ binding: LOCAL, words: "build-01 tidy up", othersNamed: known, answers: ["deny"] });
+    await call(h, { target: "this computer", command: "rm -rf build" });
+    expect((h.asked[0].panel as { card: CommandCard }).card.says.slice(0, 2)).toEqual(["You also named build-01, but this runs on this computer.", "Deletes build and everything in it."]);
+    expect(h.asked[0].where).toBe("on this computer");
+  });
+
+  it("reads the words the decision reads: a steer naming another computer while the paths were checked still asks", async () => {
+    const announcing = pushes().judge;
+    makeJudge({ classify: () => ordinary({ probe: ["/home/ana/build"] }), decide: i => announcing.decideCommand(i) });
+    let words = "delete build/";
+    const h = harness({
+      binding: LOCAL, othersNamed: known, answers: ["deny"],
+      inspect: async paths => { words = "delete build/ and tell build-01"; return paths.map(p => ({ exists: true, real: p })); },
+    });
+    h.ctx.task.commandWords = () => words;
+    await call(h, { target: "this computer", command: "rm -r build" });
+    expect(h.announced).toEqual([]);
+    expect((h.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You also named build-01, but this runs on this computer.");
+  });
 });
 
 describe("the user's own words only (critique security-1)", () => {
@@ -678,6 +700,16 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(j.shaped[0].o).toMatchObject({ target: "ssh:build-01", label: "build-01", shell: "bash", exit: { code: 0, ended: "exit" }, typed: [], secretSpans: [] });
     expect(r).toEqual({ resultType: "success", textResultForLlm: `<command_output target="build-01" exit="0">\nok done\n\n</command_output>` });
     expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ runId: h.starts[0].runId, ended: "exit", code: 0, outBytes: 8, secretSpans: 0, typedLines: 0 });
+  });
+
+  it("hands the window what the run left running, when its runner says (the tab's status line names them, §3.13)", async () => {
+    makeJudge();
+    const h = harness();
+    await call(h);
+    // RUN's and WA's runs carry `stragglers` (a promise settled after their last sweep); a remote's carries none.
+    expect((h.attached[0].run as RunningCommand & { stragglers?: unknown }).stragglers).toBeUndefined();
+    (h.runs[0] as RunningCommand & { stragglers?: Promise<string[]> }).stragglers = Promise.resolve(["sleep"]);
+    await expect((h.attached[0].run as RunningCommand & { stragglers?: Promise<string[]> }).stragglers).resolves.toEqual(["sleep"]);
   });
 
   it("says how a run ended that didn't end well", async () => {
