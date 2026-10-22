@@ -4,6 +4,7 @@ import type { Emotion, Gesture } from "@ember/characters";
 import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
 import type { MicState } from "./voice";
+import type { TargetSummary } from "./targets";
 
 export const OVERLAY = {
   init: "overlay:init",
@@ -51,6 +52,8 @@ export interface BubbleState {
   task?: string;
   /** "Read all" was pressed: the whole answer shows, scrolling if it must. */
   expanded?: boolean;
+  /** Where the task this bubble belongs to acts, when not on this computer ("on build-01", "in Ubuntu (WSL)"). */
+  where?: string;
 }
 
 export interface TaskCard {
@@ -60,6 +63,8 @@ export interface TaskCard {
   detail: string;
   /** Buttons on the card ("Stop" while it works, "Close" on a failure); clicks come back as bubble actions with these ids. */
   actions?: { id: string; label: string }[];
+  /** Where the task acts, when not on this computer. */
+  where?: string;
 }
 
 export interface EmberState {
@@ -78,6 +83,8 @@ export interface EmberState {
   avoid?: Rect[];
   /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */
   idle?: string;
+  /** The picker's target, for the handle's badge (absent or "local": no badge). */
+  target?: TargetSummary;
 }
 
 export const IDLE_BUBBLE: BubbleState = {

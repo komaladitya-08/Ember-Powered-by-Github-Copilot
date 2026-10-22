@@ -15,14 +15,16 @@ import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
-import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
+import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
+import type { PerceptionSidecar } from "./ports";
+import type { TargetId } from "../../shared/targets";
 
 /** What Perception is given (main.ts, and the desk's own Perception in desk/place.ts). */
 export interface PerceptionOptions {
-  sidecar: AtspiSidecar;
+  sidecar: PerceptionSidecar;
   /**
    * The window system: X11 on Linux (or the desk's remote X11), the Windows or macOS backend elsewhere; null without
    * one. The field keeps its old name so the desk and the tests keep compiling.
@@ -47,6 +49,8 @@ export interface PerceptionOptions {
    * are blacked out of every screenshot. Absent on Linux and macOS, which capture as before.
    */
   isRemoteSurface?: (app: string) => boolean;
+  /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
+  capture?: typeof captureRect;
 }
 
 /**
@@ -66,6 +70,8 @@ export interface QuickContext {
    * are in it). Only when the window isn't private, the focus isn't a secret field, and the app told no selection.
    */
   takesSelection?: boolean;
+  /** The target whose screen it was read on (absent: this computer's, "local"); a task starts there only on that target. */
+  targetId?: TargetId;
 }
 
 export interface Seen {
@@ -487,7 +493,7 @@ export class Perception {
     const blacked = [...mask, ...covers, ...shell.masks];
     let coveredAfter = false;
     let dialogAfter = false;
-    const capture = await captureRect(x11, rect, {
+    const capture = await (this.o.capture ?? captureRect)(x11, rect, {
       mask: [...blacked, ...secrets.map(n => pad(n.bounds!)), ...unread.flatMap(f => physical(f.bounds, k).map(pad))],
       // Windows can move or open, and fields scroll, while the picture is taken: black out where they are afterwards too.
       maskAfter: async () => {
