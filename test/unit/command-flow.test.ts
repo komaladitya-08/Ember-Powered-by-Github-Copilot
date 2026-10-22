@@ -347,6 +347,23 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     expect(wsl.classified[0][2].ember.pids).toEqual([10, 4242]);
   });
 
+  it("shows the runner's status (\"Starting Ubuntu…\") on the run's tab until the run ends", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL, run: () => ({ hang: true }) });
+    const notes: [string, string | null][] = [];
+    let say: ((t: string | null) => void) | null = null;
+    Object.assign(h.ctx.service.runner, { status: () => "Starting Ubuntu…", onStatus: (fn: (t: string | null) => void) => { say = fn; return () => { say = null; }; } });
+    (h.ctx.service.window as unknown as { note: (id: string, t: string | null) => void }).note = (id, t) => { notes.push([id, t]); };
+    const pending = call(h, { target: "Ubuntu" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    const id = h.starts[0].runId;
+    say!(null);
+    expect(notes).toEqual([[id, "Starting Ubuntu…"], [id, null]]);
+    h.runs[0].stop("user");
+    await pending;
+    expect(say).toBeNull();
+  });
+
   it("starts a run at the size the command window says fits its tab", async () => {
     makeJudge();
     const h = harness();

@@ -770,6 +770,8 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     auditLateEnd();
     return "unseen";
   }
+  // What the runner says while the run starts ("Starting Ubuntu…": a WSL distro that has to boot) shows on its tab.
+  const offStatus = followStatus(svc, o.runId);
   // The task's stop stops the run; the tool returns once it ended, or STOP_GRACE_MS later whatever the runner does.
   let onStop = () => undefined as void;
   const stopped = new Promise<RunExit | null>(resolve => {
@@ -792,6 +794,28 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     clearTimeout(backstop);
     ctx.signal.removeEventListener("abort", onStop);
     unsubscribe();
+    offStatus();
+  }
+}
+
+/**
+ * A runner's status line ("Starting Ubuntu…", WA's WSL runner: `status()`/`onStatus()`) as a note on the run's tab
+ * (UI's `note(runId, text)`), until the run ends; nothing when either side doesn't have it. Returns the unsubscribe.
+ */
+function followStatus(svc: CommandService, runId: string): () => void {
+  const runner = svc.runner as CommandService["runner"] & { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void };
+  const window = svc.window as CommandService["window"] & { note?: (runId: string, text: string | null) => void };
+  if (typeof runner.onStatus !== "function" || typeof window.note !== "function") return () => undefined;
+  const show = (text: string | null) => {
+    try { window.note!(runId, typeof text === "string" && text ? text : null); } catch { /* a note is only a note */ }
+  };
+  try {
+    const now = runner.status?.() ?? null;
+    if (now) show(now);
+    const off = runner.onStatus(show);
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
   }
 }
 
