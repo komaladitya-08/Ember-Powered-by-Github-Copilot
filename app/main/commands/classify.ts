@@ -14,7 +14,7 @@ import type {
 } from "./types";
 import { SHELL_FAMILY } from "./types";
 import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
-import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsSeg, type PsStatement } from "./lex-powershell";
+import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
   type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, parseOpts, programName, values,
@@ -50,6 +50,12 @@ export interface ClassificationExtra extends Classification {
   /** A WSL command touching the drive mounts, a Windows-form path or a Windows program (§3.8.2's Windows line). */
   windowsReach: boolean;
 }
+
+/** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
+const POLICY_KEY = /(^|\\)policies\\ember(\\|$)/i;
+
+/** SendKeys as code (`[System.Windows.Forms.SendKeys]::SendWait(…)`, `$shell.SendKeys(…)`), not the word in a message. */
+const SENDKEYS = /sendkeys\s*\]|\.sendkeys\b/i;
 
 /** The card's words for the escape class (§3.8.4). */
 export const SAYS = {
@@ -138,6 +144,8 @@ class Classifier {
   program = "";
   /** The current pipeline's state. */
   pipe: PipeState = { fetch: false, program: "" };
+  /** What a listing (Get-ChildItem, Get-Item) hands down its pipeline: the folders or files it names, by command. */
+  listed = new Map<number, Arg[]>();
   private probeFull = false;
 
   constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
@@ -486,6 +494,19 @@ class Engine extends Classifier {
     }
   }
 
+  /**
+   * What PowerShell text says wherever it is, parsed or not: SendKeys (from `[System.Windows.Forms.SendKeys]` or a
+   * WScript.Shell object) is refused (D4.5), and Invoke-Expression in a text that downloads (a WebClient's
+   * DownloadString, Invoke-WebRequest, curl) is download-and-run (§3.4.7).
+   */
+  private psTextScan(text: string): void {
+    if (SENDKEYS.test(text)) this.refuseWith("ember.input", "input");
+    if (/(^|[^\w-])(iex|invoke-expression)([^\w-]|$)/i.test(text)
+      && /download(string|data|file)|net\.webclient|invoke-webrequest|invoke-restmethod|(^|[^\w-])(iwr|irm|curl|wget|start-bitstransfer)([^\w-]|$)/i.test(text)) {
+      this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
+    }
+  }
+
   /** Classifies a whole command text in a family (nested `sh -c`, `cmd /c`, `powershell -Command` too). */
   classifyText(text: string, shell: ShellId, sc: Scope): void {
     if (sc.depth > 8) { this.unclear("unclear.depth", "It nests commands too deeply for Ember to follow."); return; }
@@ -500,8 +521,9 @@ class Engine extends Classifier {
     if (family === "powershell") {
       const p = lexPowerShell(text);
       this.noteUnclear(p.unclear);
-      if (p.fatal) { this.fallbackScan(text, sc); return; }
-      this.psStatements(p.statements, child(sc, { family: "powershell", shell: "powershell" }));
+      if (p.fatal) this.fallbackScan(text, sc);
+      else this.psStatements(p.statements, child(sc, { family: "powershell", shell: "powershell" }));
+      this.psTextScan(text);
       return;
     }
     const p = lexCmd(text);
@@ -688,8 +710,15 @@ class Engine extends Classifier {
           const savedAt = this.at;
           let fetch = false;
           for (const sub of el.subs) if (this.psSub(sub, sc)) fetch = true;
-          this.newCommand("", [], sc, [], false, k === 0 ? undefined : prev);
+          const redirs = this.psRedirs(el.redirs, sc);
+          this.newCommand("", [], sc, redirs, false, k === 0 ? undefined : prev);
           if (fetch) this.pipe.fetch = true;
+          this.redirects(redirs, sc);
+          // A token typed into an assignment (`$env:GITHUB_TOKEN = 'ghp_…'`) is on the command line (§3.5.4).
+          if (st.assign && k === 0) {
+            const value = el.segs.map(seg => (seg.t === "lit" ? seg.s : "")).join("");
+            if (commandLineSecret(el.raw) || (value !== "" && commandLineSecret(`${st.assign.replace(/^env:/i, "")}=${value}`))) this.add("secret", "secret.token-arg", SAYS.tokenArg);
+          }
           // A value that is a secret environment variable prints it.
           for (const seg of el.segs) if (seg.t === "var" && /^env:/i.test(seg.name) && SECRET_VAR.test(seg.name.slice(4))) this.add("secret", "secret.env", SAYS.env);
           if (/\$(\{)?env:/i.test(el.raw) && /\$\{?env:[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|CREDENTIAL|AUTH|SESSION|COOKIE|PRIVATE)/i.test(el.raw)) this.add("secret", "secret.env", SAYS.env);
@@ -755,6 +784,16 @@ class Engine extends Classifier {
     return [this.psValue(a.segs, a.raw, sc, a.quoted)];
   }
 
+  /** PowerShell redirections in the shared form (`*>` as `&>`; a merge such as `2>&1` writes no file). */
+  private psRedirs(list: readonly PsRedir[], sc: Scope): Redir[] {
+    return list.map(r => {
+      if (r.merge || !r.target) return { op: "2>", target: null, kind: "none" } as Redir;
+      const t = this.psValue(r.target.segs, r.target.raw, sc, r.target.quoted);
+      const op = r.op === "*>" ? "&>" : r.op === "*>>" ? "&>>" : r.op;
+      return { op, target: t, kind: r.op.endsWith(">>") ? "append" : "write" } as Redir;
+    });
+  }
+
   private psCommand(cmd: PsCommand, sc: Scope, o: { stdinPipe: boolean; pipedFrom?: number }): void {
     let fetch = false;
     for (const a of [cmd.name, ...cmd.args]) for (const sub of a.subs) if (this.psSub(sub, sc)) fetch = true;
@@ -764,8 +803,14 @@ class Engine extends Classifier {
     const words: Arg[] = [name];
     for (const a of cmd.args) {
       if (a.kind === "param") {
+        if (a.attached && a.param) {
+          // `-p:value` reaches a program as one argument, as written (a cmdlet binds it from the parsed command).
+          const vals = this.psArgValues(a, sc);
+          const one = vals.length === 1 ? vals[0].v : null;
+          words.push({ v: one === null ? null : `-${a.param}:${one}`, raw: a.raw, glob: false, param: a.param });
+          continue;
+        }
         words.push(a.param ? { v: `-${a.param}`, raw: a.raw, glob: false, param: a.param } : { v: "--", raw: a.raw, glob: false });
-        if (a.attached) for (const v of this.psArgValues(a, sc)) words.push(v);
       } else if (a.kind === "block") {
         words.push({ v: null, raw: a.raw, glob: false });
       } else {
@@ -773,12 +818,7 @@ class Engine extends Classifier {
         for (const v of vals) { if (fetch) v.fetch = true; words.push(v); }
       }
     }
-    const redirs: Redir[] = cmd.redirs.map(r => {
-      if (r.merge || !r.target) return { op: "2>", target: null, kind: "none" } as Redir;
-      const t = this.psValue(r.target.segs, r.target.raw, sc, r.target.quoted);
-      const op = r.op === "*>" ? "&>" : r.op === "*>>" ? "&>>" : r.op;
-      return { op, target: t, kind: r.op.endsWith(">>") ? "append" : "write" } as Redir;
-    });
+    const redirs = this.psRedirs(cmd.redirs, sc);
     this.simple({ words, redirs, stdin: o.stdinPipe ? "pipe" : null, fetchBefore: this.pipe.fetch, background: cmd.background, pipedFrom: o.pipedFrom, ps: cmd }, sc);
   }
 
@@ -2998,8 +3038,25 @@ reg(NATIVE, ["dotnet"], h => {
     return;
   }
   if (verb === "remove" && sub === "package") { languageInstall(h, rest.filter(a => !isOption(a)).slice(1)); return; }
+  if (verb === "clean") { h.e.add("destroy", "script.destroy", "Runs dotnet clean, which deletes build output.", { program: "dotnet clean" }); return; }
+  // `dotnet ef database drop`, `dotnet ef migrations remove`: judged by their words like a task runner's target.
+  if (verb === "ef") { nameCheck(h, rest.filter(a => !isOption(a)).slice(0, 2).map(a => a.v ?? "").join(" "), `dotnet ef ${rest.filter(a => !isOption(a)).slice(0, 2).map(a => a.v ?? "?").join(" ")}`); return; }
+  // A publish profile (or DeployOnBuild) deploys what it builds; plain `dotnet publish` writes a local folder.
+  if ((verb === "publish" || verb === "build" || verb === "msbuild") && rest.some(a => /^[-/]p(roperty)?:(PublishProfile|DeployOnBuild|WebPublishMethod|PublishUrl)=/i.test(a.v ?? ""))) {
+    h.e.add("publish", "script.publish", "Builds and deploys with a publish profile.", { program: `dotnet ${verb}` });
+    return;
+  }
   if (verb === "run" || verb === "test" || verb === "build" || verb === "publish") return;
   if (verb && /\.(dll|exe)$/i.test(verb)) runScript(h, h.args[g.verbAt]);
+});
+/** MSBuild: its targets are judged by name (§3.5.9); a publish profile or DeployOnBuild deploys. */
+reg(NATIVE, ["msbuild"], h => {
+  for (const a of h.args) {
+    const v = a.v ?? "";
+    const t = /^[-/]t(arget)?:(.+)$/i.exec(v);
+    if (t) for (const name of t[2].split(/[;,]/)) nameCheck(h, name);
+    if (/^[-/]p(roperty)?:(PublishProfile|DeployOnBuild|WebPublishMethod|PublishUrl)=/i.test(v)) h.e.add("publish", "script.publish", "Builds and deploys with a publish profile.", { program: "msbuild" });
+  }
 });
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
@@ -3377,7 +3434,7 @@ reg(NATIVE, ["net", "net1"], h => {
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
   const verb = (h.args[0]?.v ?? "").toLowerCase().replace(/^\//, "");
   const key = h.args[1]?.v ?? "";
-  if (/\\policies\\ember(\\|$)/i.test(h.args.map(a => a.v ?? "").join(" "))) { h.e.refuseWith("ember.policy", "safety"); return; }
+  if (h.args.some(a => a.v !== null && POLICY_KEY.test(a.v))) { h.e.refuseWith("ember.policy", "safety"); return; }
   if (h.key === "regedit") { if (h.args.some(a => /^[/-]s$/i.test(a.v ?? ""))) h.e.add("system", "system.registry", "Changes the Windows registry."); else h.e.unclear("unclear.gui", SAYS.openApp); return; }
   if (h.key === "regini") { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
   if (/^(add|delete|import|load|unload|restore|copy)$/.test(verb)) { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
@@ -3795,6 +3852,8 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
   for (let k = 0; k < a.length; k++) {
     const v = (a[k].v ?? "").toLowerCase();
     if (a[k].v === null) { text = null; break; }
+    // `powershell -` (or `-Command -`) reads its commands from stdin.
+    if (v === "-" || (/^[-/](c|co|com|comm|comma|comman|command)$/.test(v) && a[k + 1]?.v === "-" && a.length === k + 2)) { intoInterpreter(h); return; }
     if (/^[-/](e|ec|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)$/.test(v)) { h.e.unclear("unclear.encoded-command", "It runs an encoded command Ember can't read."); return; }
     if (/^[-/](c|co|com|comm|comma|comman|command)$/.test(v)) {
       const rest = a.slice(k + 1);
@@ -3818,7 +3877,7 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
     h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
-  if (/sendkeys/i.test(text)) { h.e.refuseWith("ember.input", "input"); return; }
+  if (SENDKEYS.test(text)) { h.e.refuseWith("ember.input", "input"); return; }
   const sc = windowsScope(h, "powershell");
   if (!sc) return;
   h.e.nested(text, "powershell", h.sc, "powershell -Command", sc);
@@ -3885,7 +3944,7 @@ function psTargets(h: H, paths: Arg[], write: boolean): Arg[] {
   for (const p of paths) {
     const v = p.v;
     if (v === null) { files.push(p); continue; }
-    if (/\\policies\\ember(\\|$)/i.test(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
+    if (POLICY_KEY.test(v)) { h.e.refuseWith("ember.policy", "safety"); continue; }
     if (REGISTRY.test(v)) { if (write) h.e.add("system", "system.registry", "Changes the Windows registry."); continue; }
     if (/^env:/i.test(v)) { if (!write && (/^env:\\?\*?$/i.test(v) || SECRET_VAR.test(v.slice(4)))) h.e.add("secret", "secret.env", SAYS.env); continue; }
     if (/^cert:/i.test(v)) { if (write) h.e.add("secret", "secret.program", SAYS.secrets); continue; }
@@ -3899,13 +3958,18 @@ function psUnknown(h: H, b: PsBound): void {
   if (b.unknown.length) h.e.unclear("unclear.ps-parameter", `Ember can't tell what ${h.prog}'s ${b.unknown[0] || "arguments"} mean.`);
 }
 const piped = (h: H): Obj[] => (h.s.stdin === "pipe" ? [{ kind: "other", text: "what the pipeline gives it", abs: null }] : []);
+/** The paths a listing earlier in the pipeline hands this command (`Get-ChildItem ~\.ssh | Get-Content`), if any. */
+const pipedListing = (h: H): Arg[] => (h.s.stdin === "pipe" && h.s.pipedFrom !== undefined ? h.e.listed.get(h.s.pipedFrom) ?? [] : []);
 
 reg(CMDLETS, ["remove-item"], h => {
   const b = bindPs(h, PS_CMDLETS["remove-item"]);
   psUnknown(h, b);
   const rec = b.switches.has("Recurse");
   const files = psTargets(h, psPaths(b, "Path", "LiteralPath"), true);
-  const objs = [...objsOf(h, files, rec ? "deleteTree" : "delete"), ...(files.length === 0 && psPaths(b, "Path", "LiteralPath").length === 0 ? piped(h) : [])];
+  const fromPipe = files.length === 0 && psPaths(b, "Path", "LiteralPath").length === 0;
+  // Items a listing hands down: what is in the folders it lists goes (judged as a tree, so nothing of Ember's is in it).
+  if (fromPipe) objsOf(h, pipedListing(h), "deleteTree");
+  const objs = [...objsOf(h, files, rec ? "deleteTree" : "delete"), ...(fromPipe ? piped(h) : [])];
   if (objs.length === 0 && files.length === 0 && psPaths(b, "Path", "LiteralPath").length) return;
   const widening = [...(rec ? ["recursive"] : []), ...["Include", "Exclude", "Filter"].filter(n => b.named.has(n)).map(n => `-${n}`)];
   const list = listOf(objs);
@@ -3929,6 +3993,7 @@ function psCopyMove(h: H, kind: "copy" | "move" | "rename"): void {
   if (b.named.has("ToSession")) h.e.add("publish", "upload.session", "Sends data to another computer.");
   const srcs = psTargets(h, psPaths(b, "Path", "LiteralPath"), kind !== "copy");
   objsOf(h, srcs, kind === "copy" ? (b.switches.has("Recurse") ? "readTree" : "read") : "move");
+  if (srcs.length === 0 && psPaths(b, "Path", "LiteralPath").length === 0) objsOf(h, pipedListing(h), kind === "copy" ? "readTree" : "move");
   let dest: Arg | undefined;
   if (kind === "rename") {
     const nn = (b.named.get("NewName") ?? [])[0];
@@ -3949,8 +4014,8 @@ function psCopyMove(h: H, kind: "copy" | "move" | "rename"): void {
 reg(CMDLETS, ["copy-item"], h => psCopyMove(h, "copy"));
 reg(CMDLETS, ["move-item"], h => psCopyMove(h, "move"));
 reg(CMDLETS, ["rename-item"], h => psCopyMove(h, "rename"));
-function psWrite(h: H, kind: "set" | "add" | "out" | "tee"): void {
-  const spec = PS_CMDLETS[kind === "set" ? "set-content" : kind === "add" ? "add-content" : kind === "out" ? "out-file" : "tee-object"];
+function psWrite(h: H, kind: "set" | "add" | "out" | "tee" | "export"): void {
+  const spec = PS_CMDLETS[kind === "set" ? "set-content" : kind === "add" ? "add-content" : kind === "out" ? "out-file" : kind === "tee" ? "tee-object" : h.key];
   const b = bindPs(h, spec);
   psUnknown(h, b);
   const files = psTargets(h, psPaths(b, "Path", "FilePath", "LiteralPath"), true);
@@ -3970,6 +4035,8 @@ reg(CMDLETS, ["set-content"], h => psWrite(h, "set"));
 reg(CMDLETS, ["add-content"], h => psWrite(h, "add"));
 reg(CMDLETS, ["out-file"], h => psWrite(h, "out"));
 reg(CMDLETS, ["tee-object"], h => psWrite(h, "tee"));
+// Export-Csv and Export-Clixml write their file like Out-File (-Append adds to it, -NoClobber keeps one that exists).
+reg(CMDLETS, ["export-csv", "export-clixml"], h => psWrite(h, "export"));
 reg(CMDLETS, ["new-item"], h => {
   const b = bindPs(h, PS_CMDLETS["new-item"]);
   psUnknown(h, b);
@@ -3991,12 +4058,19 @@ reg(CMDLETS, ["get-content", "get-item", "select-string", "get-itemproperty", "g
   const files = psTargets(h, paths, false);
   objsOf(h, files, "read");
   if (files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} reads.`);
+  // Reading what a listing hands down reads the files in the folders it lists.
+  if (paths.length === 0) objsOf(h, pipedListing(h), h.key === "get-item" ? "list" : "readTree");
+  if (h.key === "get-item") h.e.listed.set(h.e.at, files);
 });
 reg(CMDLETS, ["get-childitem"], h => {
   const b = bindPs(h, PS_CMDLETS["get-childitem"]);
   const paths = psPaths(b, "Path", "LiteralPath");
   const files = psTargets(h, paths, false);
   objsOf(h, files, "list");
+  h.e.listed.set(h.e.at, paths.length === 0 ? [lit(".")] : files);
+  // A search for secret files by name prints where they are, as find -name does (§3.4.5).
+  const patterns = [...(b.named.get("Filter") ?? []), ...(b.named.get("Include") ?? [])].map(a => a.v).filter((v): v is string => v !== null);
+  if (patterns.some(pt => secretPattern(pt, h.sc))) h.e.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${patterns.join(", ")}).`);
 });
 reg(CMDLETS, ["set-location", "push-location", "pop-location"], h => NATIVE.cd(h));
 reg(CMDLETS, ["invoke-webrequest", "invoke-restmethod"], h => {
@@ -4016,13 +4090,13 @@ reg(CMDLETS, ["invoke-webrequest", "invoke-restmethod"], h => {
 });
 reg(CMDLETS, ["invoke-expression"], h => {
   if (h.args.some(a => a.fetch) || (h.s.stdin === "pipe" && h.s.fetchBefore)) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
-  for (const a of h.args) if (a.v && /sendkeys/i.test(a.v)) h.e.refuseWith("ember.input", "input");
+  for (const a of h.args) if (a.v && SENDKEYS.test(a.v)) h.e.refuseWith("ember.input", "input");
   for (const a of h.args) if (a.v) emberText(h, a.v);
   h.e.unclear("unclear.eval", "Runs code Ember can't see.");
 });
 reg(CMDLETS, ["invoke-command", "enter-pssession", "new-pssession", "invoke-wmimethod", "remove-wmiobject", "set-wmiinstance", "invoke-cimmethod", "remove-ciminstance", "set-ciminstance", "new-ciminstance", "add-type", "new-object", "import-module", "set-alias", "new-alias", "invoke-history", "read-host", "out-gridview", "start-transcript", "register-objectevent", "register-wmievent", "register-engineevent", "new-webserviceproxy", "invoke-restmethod-legacy", "start-dscconfiguration", "invoke-dscresource"], h => {
   const text = h.args.map(a => a.v ?? a.raw).join(" ");
-  if (/sendkeys/i.test(text)) { h.e.refuseWith("ember.input", "input"); return; }
+  if (SENDKEYS.test(text)) { h.e.refuseWith("ember.input", "input"); return; }
   if (/^(invoke-command|enter-pssession|new-pssession)$/.test(h.key) && h.args.some(a => /^(computername|cn|session|hostname|connectionuri|vmname|vmid|containerid)$/i.test(a.param ?? ""))) h.e.add("publish", "send.remote-session", "Runs commands on another computer.");
   if (h.key === "read-host") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (h.key === "out-gridview") { h.e.unclear("unclear.gui", SAYS.openApp); return; }
@@ -4064,6 +4138,26 @@ reg(CMDLETS, ["stop-process", "stop-service-process", "debug-process"], h => {
   for (const n of names) {
     if (n === null) continue;
     if (emberNamed(h, n) || (/[*?[]/.test(n) && globRegExp(n, { ...h.sc.path, flavour: "win32" }, false).test("ember"))) { h.e.refuseWith("ember.process", "safety"); return; }
+  }
+  // `Get-Process <names> | Stop-Process`: the names Get-Process was given are what stops (all of them: Ember too).
+  const from = h.s.stdin === "pipe" && h.s.pipedFrom !== undefined ? h.e.commands[h.s.pipedFrom] : undefined;
+  if (ids.length + names.length === 0 && from && from.program.toLowerCase() === "get-process") {
+    const given: (string | null)[] = [];
+    const pidsGiven: (string | null)[] = [];
+    for (let k = 0; k < from.args.length; k++) {
+      const v = from.args[k];
+      if (v !== null && /^-(id|pid)$/i.test(v)) { pidsGiven.push(from.args[k + 1] ?? null); k++; continue; }
+      if (v !== null && /^-(name|processname)$/i.test(v)) { given.push(from.args[k + 1] ?? null); k++; continue; }
+      if (v !== null && v.startsWith("-")) continue;
+      given.push(v);
+    }
+    if (given.length + pidsGiven.length === 0) { h.e.refuseWith("ember.process", "safety"); return; }
+    for (const n of given) {
+      if (n === null) continue;
+      if (emberNamed(h, n) || (/[*?[]/.test(n) && globRegExp(n, { ...h.sc.path, flavour: "win32" }, false).test("ember"))) { h.e.refuseWith("ember.process", "safety"); return; }
+    }
+    killPids(h, [...pidsGiven, ...given]);
+    return;
   }
   killPids(h, [...ids, ...names, ...(ids.length + names.length === 0 ? ["(from the pipeline)"] : [])]);
 });
@@ -4124,7 +4218,7 @@ reg(CMDLETS, ["where-object", "foreach-object", "sort-object", "select-object", 
     if (a.kind === "block") {
       const text = a.segs.map(s => (s.t === "lit" ? s.s : "")).join("");
       if (!restrictedExpression(text)) h.e.unclear("unclear.script-block", "It runs a script block Ember can't follow.");
-      if (/sendkeys/i.test(text)) h.e.refuseWith("ember.input", "input");
+      if (SENDKEYS.test(text)) h.e.refuseWith("ember.input", "input");
       continue;
     }
     if (h.key === "foreach-object" && a.kind === "word") h.e.unclear("unclear.script-block", "It calls a method Ember can't follow.");

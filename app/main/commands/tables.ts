@@ -460,6 +460,11 @@ export const PS_CMDLETS: Readonly<Record<string, PsCmdletSpec>> = {
   "add-content": { params: { ...PATHS, Value: "v", PassThru: "s", NoNewline: "s", Encoding: "v", Stream: "v", AsByteStream: "s" }, aliases: PATH_ALIASES, pos: ["Path", "Value"] },
   "out-file": { params: { FilePath: "v", LiteralPath: "v", Encoding: "v", Append: "s", Force: "s", NoClobber: "s", Width: "v", NoNewline: "s", InputObject: "v" }, aliases: { ...PATH_ALIASES, path: "FilePath", nooverwrite: "NoClobber" }, pos: ["FilePath", "Encoding"] },
   "tee-object": { params: { FilePath: "v", LiteralPath: "v", Append: "s", Variable: "v", InputObject: "v", Encoding: "v" }, aliases: { ...PATH_ALIASES, path: "FilePath" }, pos: ["FilePath"] },
+  "export-csv": {
+    params: { Path: "v", LiteralPath: "v", Append: "s", Force: "s", NoClobber: "s", NoTypeInformation: "s", IncludeTypeInformation: "s", Delimiter: "v", UseCulture: "s", Encoding: "v", InputObject: "v", QuoteFields: "v", UseQuotes: "v" },
+    aliases: { ...PATH_ALIASES, nti: "NoTypeInformation", nooverwrite: "NoClobber", ita: "IncludeTypeInformation" }, pos: ["Path", "Delimiter"],
+  },
+  "export-clixml": { params: { Path: "v", LiteralPath: "v", Depth: "v", Force: "s", NoClobber: "s", Encoding: "v", InputObject: "v" }, aliases: { ...PATH_ALIASES, nooverwrite: "NoClobber" }, pos: ["Path"] },
   "new-item": { params: { Path: "v", Name: "v", ItemType: "v", Value: "v", Force: "s", Credential: "v" }, aliases: { type: "ItemType", target: "Value" }, pos: ["Path"] },
   "get-content": { params: { ...PATHS, ReadCount: "v", TotalCount: "v", Tail: "v", Delimiter: "v", Wait: "s", Raw: "s", Encoding: "v", Stream: "v", AsByteStream: "s" }, aliases: { ...PATH_ALIASES, first: "TotalCount", head: "TotalCount", last: "Tail" }, pos: ["Path"] },
   "get-childitem": { params: { ...PATHS, Recurse: "s", Depth: "v", Name: "s", Attributes: "v", Directory: "s", File: "s", Hidden: "s", ReadOnly: "s", System: "s", FollowSymlink: "s" }, aliases: { ...PATH_ALIASES, ad: "Directory", d: "Directory", af: "File", ah: "Hidden", h: "Hidden", ar: "ReadOnly", as: "System", s: "Recurse" }, pos: ["Path", "Filter"] },

@@ -41,8 +41,11 @@ export interface PsCommand {
   background: boolean;
 }
 
-/** A value in a pipeline (a variable, a literal, a parenthesised pipeline): its nested statements are classified. */
-export interface PsExpr { kind: "expr"; subs: PsStatement[][]; raw: string; segs: PsSeg[] }
+/**
+ * A value in a pipeline (a variable, a literal, a parenthesised pipeline): its nested statements are classified, and
+ * its redirections (`'x' > notes.txt`) judged like a command's.
+ */
+export interface PsExpr { kind: "expr"; subs: PsStatement[][]; raw: string; segs: PsSeg[]; redirs: PsRedir[] }
 
 export type PsElement = PsCommand | PsExpr;
 
@@ -273,10 +276,21 @@ class Parser {
     const start = this.i;
     const subs: PsStatement[][] = [];
     const segs: PsSeg[] = [];
+    const redirs: PsRedir[] = [];
+    let cut = -1;
     for (;;) {
       this.skipSpaces();
       const c = this.peek();
       if (this.eof() || c === "\n" || c === "\r" || c === ";" || c === "|" || (term && c === term) || c === ")") break;
+      const at = this.i;
+      const r = c === ">" || /^[1-6*]>/.test(this.s.slice(this.i, this.i + 2)) ? this.tryRedir(term) : null;
+      if (r) {
+        if (cut < 0) cut = at;
+        for (const sub of r.target?.subs ?? []) subs.push(sub);
+        redirs.push(r);
+        continue;
+      }
+      if (redirs.length) this.fatal("a value after a redirection");
       if (c === "(" || (c === "$" && this.peek(1) === "(") || (c === "@" && this.peek(1) === "(")) {
         this.i += c === "(" ? 1 : 2;
         subs.push(this.nested());
@@ -291,13 +305,13 @@ class Parser {
         if (!EXPR_OPS.test(`-${a.param ?? ""}`)) this.fatal("an operator Ember doesn't follow");
       } else segs.push(...a.segs);
     }
-    const raw = this.s.slice(start, this.i);
+    const raw = this.s.slice(start, cut < 0 ? this.i : cut).trimEnd();
     // Member calls and types anywhere in the value make it unclear.
     if (/\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(raw.replace(/'[^']*'/g, "''")) || /\[[A-Za-z_.]+\]/.test(raw.replace(/'[^']*'/g, "''"))) {
       this.note("method-call", "It calls a .NET method Ember can't follow.");
     }
     if (/\$executioncontext/i.test(raw)) this.note("execution-context", "It uses $ExecutionContext.");
-    return { kind: "expr", subs, raw, segs };
+    return { kind: "expr", subs, raw, segs, redirs };
   }
 
   /** `( … )`, `$( … )` or `@( … )` already opened: the statements inside, then the closing `)`. */
