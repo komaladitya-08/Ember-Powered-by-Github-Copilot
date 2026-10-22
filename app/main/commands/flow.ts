@@ -592,6 +592,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
       });
       if (run === "stopped") return STOPPED();
       const { exit } = run;
+      // The remote's gate 2 refused the run before it started: its end is audited here (the error is sized in the journal).
+      if (exit.ended === "refused-remote") {
+        audit({ phase: "ended", runId, ended: exit.ended, code: null, signal: null, ms: exit.ms, needsConfirm: exit.needsConfirm === true, error: exit.error ?? "" });
+      }
       if (exit.ended === "refused-remote" && exit.needsConfirm && !asked) {
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         asked = true;

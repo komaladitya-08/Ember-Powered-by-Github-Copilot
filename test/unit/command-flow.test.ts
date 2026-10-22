@@ -628,6 +628,8 @@ describe("a remote's own check (§3.8.3 step 13, §3.16)", () => {
     expect(h.starts[1].runId).not.toBe(h.starts[0].runId);
     expect(h.starts[1].stamp.sha256).toBe(h.starts[0].stamp.sha256);
     expect(r.resultType).toBe("success");
+    // Both runs' ends are audited: the refused one, then the one that ran.
+    expect(h.audit.filter(e => e.phase === "ended").map(e => [e.runId, e.ended])).toEqual([[h.starts[0].runId, "refused-remote"], [h.starts[1].runId, "exit"]]);
   });
 
   it("asks only once: a second needs_confirm is the remote's refusal", async () => {
