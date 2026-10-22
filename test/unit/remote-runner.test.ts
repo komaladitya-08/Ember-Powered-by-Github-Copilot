@@ -123,13 +123,13 @@ describe("RemoteRunner: gate 2's answers (§3.16, critique security-3)", () => {
     const { runner } = setup({ answer: () => ({ status: "needs_confirm", reason: "It deletes build", says: ["Deletes build\u0000 and everything in it.\n", ""], rules: ["posix.rm", "remote.extra"] }) });
     const exit = await runner.start(specOf({ command: "rm -r build" }, { verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: 900 } })).done;
     expect(exit).toEqual<RemoteRunExit>({
-      code: null, signal: null, ended: "refused-remote", ms: 0, error: "It deletes build", needsConfirm: true, remoteSays: ["Deletes build and everything in it."], rules: ["remote.extra"],
+      code: null, signal: null, ended: "refused-remote", ms: 0, error: "build-01's own check wants the user's yes first: \"It deletes build\"", needsConfirm: true, remoteSays: ["Deletes build and everything in it."], rules: ["remote.extra"],
     });
   });
 
   it("ends a deny as refused-remote with the remote's reason", async () => {
     const { runner } = setup({ answer: () => ({ status: "deny", reason: "This computer's administrator has turned off commands from Ember." }) });
-    expect(await runner.start(specOf()).done).toEqual({ code: null, signal: null, ended: "refused-remote", ms: 0, error: "This computer's administrator has turned off commands from Ember." });
+    expect(await runner.start(specOf()).done).toEqual({ code: null, signal: null, ended: "refused-remote", ms: 0, error: "build-01 refused it: \"This computer's administrator has turned off commands from Ember.\"" });
   });
 
   it("never takes a question or a refusal from an event: only the answer to the PC's own cmd.run carries one", async () => {
@@ -150,7 +150,7 @@ describe("RemoteRunner: gate 2's answers (§3.16, critique security-3)", () => {
     const odd = setup({ answer: () => ({ status: "started", channel: -1, interactive: true }) });
     expect((await odd.runner.start(specOf()).done).error).toBe("build-01 answered in a way Ember can't check");
     const denied = setup({ answer: () => { throw agentError("denied", "no commands here"); } });
-    expect(await denied.runner.start(specOf()).done).toMatchObject({ ended: "refused-remote", error: "no commands here" });
+    expect(await denied.runner.start(specOf()).done).toMatchObject({ ended: "refused-remote", error: "build-01 refused it: \"no commands here\"" });
   });
 });
 

@@ -123,7 +123,7 @@ describe("RemoteApps.launch (§2.6: asynchronous, through gate 2)", () => {
     stamps.add(stampOf("Text Editor"));
     const denied = (await apps.launch(editor).catch((e: unknown) => e)) as RemoteStepError;
     expect(denied).toBeInstanceOf(RemoteStepError);
-    expect([denied.code, denied.message]).toEqual(["deny", "This computer's administrator doesn't let Ember act in apps."]);
+    expect([denied.code, denied.message]).toEqual(["deny", "build-01 refused it: \"This computer's administrator doesn't let Ember act in apps.\""]);
     link.answer("apps.launch", () => ({ status: "needs_confirm", reason: "ask" }));
     stamps.add(stampOf("Text Editor"));
     expect(((await apps.launch(editor).catch((e: unknown) => e)) as RemoteStepError).code).toBe("needs_confirm");

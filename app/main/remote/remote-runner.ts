@@ -13,9 +13,8 @@
 import crypto from "node:crypto";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
-import { quoteUntrusted } from "../perception/elements";
 import { EV_SCHEMAS, OP_SCHEMAS, type EvMap, type OpResult } from "./protocol";
-import { askRemote, cleanRemote, RemoteError, RemoteStepError, unchecked } from "./remote-sidecar";
+import { askRemote, cleanRemote, RemoteError, RemoteStepError, remoteWords, unchecked } from "./remote-sidecar";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import type { CommandRunner, GitFacts, PathFact, RunExit, RunnerFacts, RunningCommand, RunSpec } from "../commands/types";
@@ -201,11 +200,12 @@ class RemoteRun implements RemoteRunningCommand {
       return;
     }
     if (a.status !== "started") {
-      if (a.status === "deny") return this.end({ ...this.base("refused-remote"), error: cleanRemote(a.reason, 500) || `${o.label} refused it` });
+      const said = remoteWords(a.reason, 500);
+      if (a.status === "deny") return this.end({ ...this.base("refused-remote"), error: said ? `${o.label} refused it: ${said}` : `${o.label} refused it` });
       // Gate 2 found more than the PC did (critique security-3): the flow asks once, with the remote's own lines.
       const extra = (a.rules ?? []).filter(r => !this.spec.stamp.rules.includes(r));
       const says = (a.says ?? []).map(s => cleanRemote(s, 500)).filter(Boolean).slice(0, SAYS_MAX);
-      return this.end({ ...this.base("refused-remote"), error: cleanRemote(a.reason, 500) || `${o.label}'s own check wants the user's yes first`, needsConfirm: true, remoteSays: says, rules: extra });
+      return this.end({ ...this.base("refused-remote"), error: `${o.label}'s own check wants the user's yes first${said ? `: ${said}` : ""}`, needsConfirm: true, remoteSays: says, rules: extra });
     }
     if (this.ctx.channelTaken(a.channel, this)) {
       // Two runs on one channel would mix their output: this one is stopped there and ends here.
@@ -246,7 +246,8 @@ class RemoteRun implements RemoteRunningCommand {
     if (link.state === "lost" || link.state === "closed") return this.lose();
     if (err instanceof RemoteStepError) {
       switch (err.code) {
-        case "deny": return this.end({ ...this.base("refused-remote"), error: cleanRemote(err.message, 500) || `${o.label} refused it` });
+        // linkFailure's sentence, with the remote's own words quoted in it.
+        case "deny": return this.end({ ...this.base("refused-remote"), error: err.message || `${o.label} refused it` });
         case "needs_confirm": return this.end({ ...this.base("refused-remote"), error: `${o.label}'s own check wants the user's yes first`, needsConfirm: true, remoteSays: [], rules: [] });
         case "stopped": return this.end(this.failed("It was stopped before it started"));
         default: return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));
@@ -254,8 +255,9 @@ class RemoteRun implements RemoteRunningCommand {
     }
     if (err instanceof RemoteError && err.remoteCode === "link") return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));
     if (err instanceof RemoteError && err.remoteCode === "unchecked") return this.end(this.failed(unchecked(o.label).replace(/\.$/, "")));
-    const said = err instanceof Error ? cleanRemote(err.message, 300) : "";
-    this.end(this.failed(said ? `${o.label} couldn't start it: ${quoteUntrusted(said, 300)}` : `${o.label} couldn't start it`));
+    // linkFailure's sentences already quote the remote's words; anything else is quoted here.
+    const said = err instanceof RemoteError ? cleanRemote(err.message, 600) : err instanceof Error ? remoteWords(err.message, 300) : "";
+    this.end(this.failed(said ? `${o.label} couldn't start it: ${said}` : `${o.label} couldn't start it`));
   }
 
   private trackerFor(interactive: boolean): SecretTracker {
@@ -309,8 +311,8 @@ class RemoteRun implements RemoteRunningCommand {
     let ended: RunExit["ended"] = e.ended === "refused-remote" ? "failed-to-start" : e.ended;
     // The kill switch's Stop goes out as the user's: the run ended as the kill switch ended it.
     if (this.stopWhy && STOP_ENDINGS.has(ended)) ended = ENDED_BY[this.stopWhy];
-    const said = e.error ? cleanRemote(e.error, 300) : "";
-    const error = ended === "failed-to-start" ? (said ? `${label} said ${quoteUntrusted(said, 300)}` : `${label} couldn't start it`) : said || undefined;
+    const said = e.error ? remoteWords(e.error, 300) : "";
+    const error = ended === "failed-to-start" ? (said ? `${label} said ${said}` : `${label} couldn't start it`) : said ? `${label} said ${said}` : undefined;
     this.end({ code: e.code, signal: e.signal, ended, ms: this.elapsed(), ...(error ? { error } : {}) });
   }
 

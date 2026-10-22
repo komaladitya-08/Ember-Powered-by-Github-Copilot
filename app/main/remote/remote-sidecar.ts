@@ -10,11 +10,11 @@
  * Also the small helpers every PC-side remote object shares: asking the link with the per-op timeouts of §5.4 and
  * re-checking each answer against OP_SCHEMAS (§7.2), mapping the link's failures to plain words, and the books of the
  * elements this link read and the stamps waiting for their step. Nothing a remote sends is ever turned into an approval,
- * an action, a setting or an instruction here: its strings only come back as data the worker quotes. Plain Node.
+ * an action, a setting or an instruction here: its strings only come back as quoted data in Ember's own sentences. Plain Node.
  */
 
 import crypto from "node:crypto";
-import { inferLabels } from "../perception/elements";
+import { inferLabels, quoteUntrusted } from "../perception/elements";
 import { ERR_CODES, OP_SCHEMAS, type ErrCode, type GateAnswer, type Op, type OpArgs, type OpResult } from "./protocol";
 import type { Logger } from "../logger";
 import type { ActionResult, AxNode, CanDo, ElementInfo } from "../perception/sidecar";
@@ -70,6 +70,16 @@ const BIDI = /[\u202a-\u202e\u2066-\u2069]/g;
 export function cleanRemote(s: string, max = 500): string {
   const one = s.replace(CONTROLS, " ").replace(BIDI, "").replace(/\s+/g, " ").trim();
   return one.length > max ? `${one.slice(0, max)}…` : one;
+}
+
+/**
+ * A remote's own words as Ember passes them on (§7.2 item 4): one plain line of at most `max` characters, quoted as
+ * screen text is (`<` escaped), so a refusal's reason reaches the model as data inside Ember's sentence, never as
+ * words of Ember's own. "" for nothing said.
+ */
+export function remoteWords(s: string, max = 300): string {
+  const one = cleanRemote(s, max);
+  return one ? quoteUntrusted(one, max + 1) : "";
 }
 
 /** SHA-256 of a text as lower-case hex (the stamp's valueSha256). */
@@ -141,10 +151,10 @@ export function askRemote<O extends Op>(link: RemoteLink, op: O, args: OpArgs<O>
 export function linkFailure(err: unknown, link: Pick<RemoteLink, "state">, label: string): Error {
   if (err instanceof RemoteStepError || err instanceof RemoteError) return err;
   const code = (err as { code?: unknown } | null)?.code;
-  const said = cleanRemote(err instanceof Error ? err.message : typeof err === "string" ? err : "", 300);
+  const said = remoteWords(err instanceof Error ? err.message : typeof err === "string" ? err : "", 300);
   if (typeof code === "string" && ERR_SET.has(code)) {
     switch (code as ErrCode) {
-      case "denied": return new RemoteStepError("deny", said || `${label} refused it.`);
+      case "denied": return new RemoteStepError("deny", said ? `${label} refused it: ${said}` : `${label} refused it.`);
       case "needs_confirm": return new RemoteStepError("needs_confirm", needsConfirmWords(label));
       case "changed": return new RemoteStepError("changed", "It changed: perceive again.");
       case "stale": return new RemoteStepError("stale", `${label} didn't answer in time, so this step wasn't done.`);
@@ -152,7 +162,7 @@ export function linkFailure(err: unknown, link: Pick<RemoteLink, "state">, label
       case "busy": return new RemoteError("busy", `${label} is busy${said ? `: ${said}` : ""}`);
       case "gone": return new RemoteError("gone", `It is gone on ${label}${said ? `: ${said}` : ""}`);
       case "not_ready": return new RemoteError("not_ready", `${label}'s desktop isn't ready${said ? `: ${said}` : ""}`);
-      default: return new RemoteError(code as ErrCode, said || `${label} couldn't do it (${code}).`);
+      default: return new RemoteError(code as ErrCode, said ? `${label} couldn't do it: ${said}` : `${label} couldn't do it (${code}).`);
     }
   }
   if (link.state === "lost" || link.state === "closed") return new RemoteError("link", `The connection to ${label} dropped.`);
@@ -168,7 +178,10 @@ export const needsConfirmWords = (label: string) => `${label} refused this step 
 export function gateRefusal(a: GateAnswer, label: string): RemoteStepError | null {
   switch (a.status) {
     case "ok": return null;
-    case "deny": return new RemoteStepError("deny", cleanRemote(a.reason, 500) || `${label} refused it.`);
+    case "deny": {
+      const said = remoteWords(a.reason, 500);
+      return new RemoteStepError("deny", said ? `${label} refused it: ${said}` : `${label} refused it.`);
+    }
     case "needs_confirm": return new RemoteStepError("needs_confirm", needsConfirmWords(label));
     case "changed": return new RemoteStepError("changed", "It changed: perceive again.");
     case "stale": return new RemoteStepError("stale", `${label} didn't answer in time, so this step wasn't done.`);
