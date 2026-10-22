@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path/posix";
 import { isMainThread, workerData } from "node:worker_threads";
+import { z } from "zod";
 import { createLogger, type Logger, type LogLevel } from "../main/logger";
 import { journalSink } from "../main/policy/audit";
 import { createMux } from "../main/remote/mux";
@@ -29,7 +30,7 @@ import { recordConsent } from "./consent";
 import { CONTRACTS } from "./contracts";
 import { DesktopController } from "./desktop";
 import { runDesktopChild } from "./desktop-child";
-import { discoverDesktop } from "./desktop-linux";
+import { discoverDesktop, type DesktopFound, type NoDesktop } from "./desktop-linux";
 import { childOf, extraPath, isWslHost, killSession, machineHash, realDesktopIo, spawnGroup, startOf, sweeper, tccLimited } from "./host-io";
 import { acquireLock, fileLockIo } from "./lock";
 import { stampFolder, stampText, sweepOrphans } from "./orphans";
@@ -83,6 +84,24 @@ export function agentEnv(env: NodeJS.ProcessEnv, packaged: boolean): NodeJS.Proc
 const LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 const levelOf = (env: NodeJS.ProcessEnv): LogLevel => ((LEVELS as readonly string[]).includes(env.EMBER_LOG_LEVEL ?? "") ? env.EMBER_LOG_LEVEL as LogLevel : "info");
 
+/** $HOME as the bootstrap used it (its paths are relative to it), else the account's home folder. */
+export function homeOf(env: NodeJS.ProcessEnv): string {
+  return env.HOME && path.isAbsolute(env.HOME) ? env.HOME : os.userInfo().homedir;
+}
+
+/** The desktop a development test names (EMBER_REMOTE_TEST_DESKTOP, JSON), in place of logind's (never packaged). */
+const TestDesktopSchema = z.object({
+  access: z.enum(["screen", "text"]),
+  session: z.object({ id: z.string().min(1).max(64), type: z.enum(["x11", "wayland"]) }).strict(),
+  env: z.record(z.string(), z.string()),
+}).strict();
+function testDesktop(json: string): DesktopFound | NoDesktop {
+  const parsed = TestDesktopSchema.safeParse((() => { try { return JSON.parse(json); } catch { return null; } })());
+  if (!parsed.success) return { access: "none", why: "EMBER_REMOTE_TEST_DESKTOP isn't a desktop." };
+  const t = parsed.data;
+  return { access: t.access, session: { id: t.session.id, type: t.session.type, locked: false, active: true }, env: t.env };
+}
+
 /** Refuses to start, in the bootstrap's error form. */
 function refuse(code: string): never {
   process.stderr.write(`EMBER-ERROR ${code}\n`);
@@ -133,7 +152,7 @@ async function placesNow(agentOs: AgentOs, home: string, uid: number, env: NodeJ
 async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64"; partsId: string; packaged: boolean; dir: string; env: NodeJS.ProcessEnv }): Promise<void> {
   const user = os.userInfo();
   const uid = process.getuid?.() ?? user.uid;
-  const home = user.homedir;
+  const home = homeOf(o.env);
   const host = os.hostname().split(".")[0] || os.hostname();
   const { places, machineHashHex } = await placesNow(o.agentOs, home, uid, o.env);
   const log = createLogger({ dir: places.logs, level: levelOf(o.env), maxBytes: 1024 * 1024, keep: 3 });
@@ -176,8 +195,11 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     unavailable: o.agentOs === "darwin" ? "Ember can't use a Mac's screen over SSH yet; it can run commands there."
       : wsl ? `${host} is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.` : null,
     host,
-    // Wayland's "text" access waits for its CI job (L5); tests switch it on in development builds only.
-    discover: () => discoverDesktop(realDesktopIo({ uid, user: user.username, home, host }), { waylandText: !o.packaged && o.env.EMBER_REMOTE_WAYLAND === "1" }),
+    // Wayland's "text" access waits for its CI job (L5); tests switch it on, and give the desktop logind can't give on
+    // CI runners, in development builds only.
+    discover: !o.packaged && o.env.EMBER_REMOTE_TEST_DESKTOP
+      ? async () => testDesktop(o.env.EMBER_REMOTE_TEST_DESKTOP!)
+      : () => discoverDesktop(realDesktopIo({ uid, user: user.username, home, host }), { waylandText: !o.packaged && o.env.EMBER_REMOTE_WAYLAND === "1" }),
     spawnChild: env => spawnGroup(process.execPath, ["--disable-sigusr1", self, "desktop", "--logs", places.logs], { ...env, ...(o.packaged ? {} : { EMBER_REMOTE_DEV: "1" }) }),
     baseEnv: o.env,
     scripts: { atspi: parts("sidecar/atspi/ember_atspi.py"), notice: parts("sidecar/notice/ember_notice.py") },
@@ -240,7 +262,7 @@ export function main(argv: string[] = process.argv.slice(2)): void {
   const agentOs: AgentOs = process.platform === "linux" || process.platform === "darwin" ? process.platform : refuse("os");
   const arch = process.arch === "x64" || process.arch === "arm64" ? process.arch : refuse("arch");
   const dir = path.dirname(__filename);
-  const where = whereFrom({ dir, os: agentOs, home: os.userInfo().homedir, env, exists: fs.existsSync }) ?? refuse("not-packaged");
+  const where = whereFrom({ dir, os: agentOs, home: homeOf(env), env, exists: fs.existsSync }) ?? refuse("not-packaged");
   const own = agentEnv(env, where.packaged);
   if (argv[0] === "desktop") {
     const i = argv.indexOf("--logs");

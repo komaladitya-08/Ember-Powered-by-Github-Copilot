@@ -67,15 +67,18 @@ function remember(s: ChildState, window: AxWindow | null, ids: number[]): void {
   while (s.ids.size > IDS_KEPT) s.ids.delete(s.ids.keys().next().value as number);
 }
 
-/** The engine gate 2 judges steps with: this computer's policy, Linux's vocabulary, no grants (§5.3.7 step 4). */
-function engineFor(policy: () => ChildPolicy): PolicyEngine {
+/**
+ * The engine gate 2 judges steps with: this computer's policy, Linux's vocabulary, no grants (§5.3.7 step 4). The rate
+ * limit is fixed when it is made (a policy that changes it makes a new engine).
+ */
+function engineFor(policy: () => ChildPolicy, rateLimit: number | undefined): PolicyEngine {
   return new PolicyEngine({
     neverLook: () => policy().neverLook,
     grants: () => ({}),
     allowGrants: () => false,
     actionsAllowed: () => policy().actionsAllowed,
     confirmEveryAction: () => policy().confirmEveryAction,
-    ...(policy().maxActionsPerMinute !== undefined ? { rateLimit: policy().maxActionsPerMinute } : {}),
+    ...(rateLimit !== undefined ? { rateLimit } : {}),
     isTerminalApp: name => isTerminalApp({ id: name, name }),
     ownPid: process.pid,
     os: "linux",
@@ -144,7 +147,7 @@ async function start(init: InitArgs, log: Logger, onStop: () => void, onGone: (w
   // The engine and Perception read the policy in force at each call (serve sends a new one on a change).
   const state: ChildState = {
     init, policy: init.policy, ws, xinput, sidecar, notice, ids: new Map(), paused: false,
-    engine: engineFor(() => state.policy),
+    engine: engineFor(() => state.policy, init.policy.maxActionsPerMinute),
     perception: new Perception({
       sidecar,
       x11: ws,
@@ -206,7 +209,9 @@ async function handle(s: ChildState, rpc: LineRpc, op: string, raw: unknown): Pr
     return {};
   }
   if (op === "policy") {
-    s.policy = ChildPolicySchema.parse(raw);
+    const next = ChildPolicySchema.parse(raw);
+    if (next.maxActionsPerMinute !== s.policy.maxActionsPerMinute) s.engine = engineFor(() => s.policy, next.maxActionsPerMinute);
+    s.policy = next;
     return {};
   }
   if (s.paused) throw new IpcError("not_ready", "Ember stopped using this screen while the connection was silent.");

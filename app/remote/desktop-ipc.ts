@@ -67,7 +67,8 @@ export class IpcError extends Error {
 }
 
 const ID = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const MessageSchema = z.discriminatedUnion("t", [
+// A plain union: zod's discriminated union refuses two members with the same tag (the two kinds of "res").
+const MessageSchema = z.union([
   z.object({ t: z.literal("req"), id: ID, op: z.string().max(64), a: z.unknown() }).strict(),
   z.object({ t: z.literal("res"), id: ID, ok: z.literal(true), v: z.unknown() }).strict(),
   z.object({ t: z.literal("res"), id: ID, ok: z.literal(false), e: z.object({ code: z.enum(ERR_CODES), m: z.string().max(1000) }).strict() }).strict(),
