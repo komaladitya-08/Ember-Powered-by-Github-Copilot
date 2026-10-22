@@ -76,6 +76,13 @@ describe("absolute pointer coordinates over the virtual desktop", () => {
     }
   });
 
+  it("still lands exactly if Windows rounds instead of truncating (Wine maps with MulDiv)", () => {
+    const rounded = (n: number, size: number) => Math.round((n * size) / 65536);
+    for (const size of [1024, 1920, 3840, 7680, 11520]) {
+      for (let px = 0; px < size; px++) expect(rounded(absoluteCoordinate(px, 0, size), size)).toBe(px);
+    }
+  });
+
   it("handles a monitor left of and above the primary one (negative origin)", () => {
     // Two 1920×1080 monitors: the second is left of the primary and 200 px higher.
     const screen = { x: -1920, y: -200, width: 3840, height: 1280 };
