@@ -1,6 +1,7 @@
 // What the RPM's License: tag must cover: the licence of every package Ember bundles (its package.json),
-// and of the libraries a package declares it bundles inside it (sharp-libvips lists them in its README.md).
-// stage.mjs stops before staging anything if one of them is missing from packaging/rpm/ember.spec.
+// and of the libraries a package declares it bundles inside it (sharp-libvips lists them in its README.md, and so
+// do sharp's Windows builds, which carry libvips themselves). The tag is the one list of licences Ember ships under
+// on every target: stage.mjs stops before staging anything if one of them is missing from packaging/rpm/ember.spec.
 
 /** The SPDX ids in a licence expression: "(MIT OR Apache-2.0) AND Zlib" → ["MIT", "Apache-2.0", "Zlib"]. */
 export const spdxIds = expr => String(expr ?? "").split(/[()\s]+/).filter(t => t && !/^(AND|OR|WITH)$/.test(t));
@@ -15,10 +16,12 @@ export const specLicenceIds = spec => spdxIds(/^License:\s*(.+)$/m.exec(spec)?.[
  */
 export const BUNDLED_LIBRARIES = [
   {
-    package: /^@img\/sharp-libvips-/,
-    // From the "Licensing" table of @img/sharp-libvips-linux-x64's README.md. The LGPLv3 entries are used under
-    // the "any later version" clause of LGPLv2/2.1 (so LGPL-3.0-or-later); aom's AOMedia Patent License 1.0 is a
-    // patent grant beside its BSD-2-Clause copyright licence; fontconfig's licence is HPND-sell-variant.
+    // sharp-libvips-<platform> (Linux, macOS) and sharp-win32-<arch> (Windows: no separate libvips package).
+    package: /^@img\/sharp-(libvips-|win32-)/,
+    // From the "Licensing" table of @img/sharp-libvips-linux-x64's README.md (@img/sharp-win32-x64 0.35.5 has the
+    // same table). The LGPLv3 entries are used under the "any later version" clause of LGPLv2/2.1 (so
+    // LGPL-3.0-or-later); aom's AOMedia Patent License 1.0 is a patent grant beside its BSD-2-Clause copyright
+    // licence; fontconfig's licence is HPND-sell-variant.
     libraries: {
       aom: ["BSD-2-Clause"], cairo: ["MPL-1.1"], cgif: ["MIT"], expat: ["MIT"], fontconfig: ["HPND-sell-variant"],
       freetype: ["FTL"], fribidi: ["LGPL-3.0-or-later"], glib: ["LGPL-3.0-or-later"], harfbuzz: ["MIT"],
