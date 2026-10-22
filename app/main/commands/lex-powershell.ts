@@ -65,6 +65,10 @@ const SINGLE_QUOTES = "'‘’‚‛";
 const DOUBLE_QUOTES = "\"“”„";
 const DASHES = "-–—―";
 const isSpace = (c: string): boolean => c === " " || c === "\t" || c === "\f" || c === "\v";
+/** One character of a set (an empty string, past the end of the text, is none of them). */
+const isSq = (c: string | undefined): boolean => c !== undefined && c.length === 1 && SINGLE_QUOTES.includes(c);
+const isDq = (c: string | undefined): boolean => c !== undefined && c.length === 1 && DOUBLE_QUOTES.includes(c);
+const isDash = (c: string | undefined): boolean => c !== undefined && c.length === 1 && DASHES.includes(c);
 
 /** Keywords that start a statement Ember doesn't follow. */
 const KEYWORDS = new Set([
@@ -100,21 +104,21 @@ export function restrictedExpression(text: string): boolean {
       if (s[i] === "[") return false;
       continue;
     }
-    if (SINGLE_QUOTES.includes(c)) {
+    if (isSq(c)) {
       let k = i + 1;
       for (; k < s.length; k++) {
-        if (SINGLE_QUOTES.includes(s[k])) { if (SINGLE_QUOTES.includes(s[k + 1] ?? "")) { k++; continue; } break; }
+        if (isSq(s[k])) { if (isSq(s[k + 1])) { k++; continue; } break; }
       }
       if (k >= s.length) return false;
       i = k + 1;
       continue;
     }
-    if (DOUBLE_QUOTES.includes(c)) {
+    if (isDq(c)) {
       let k = i + 1;
       for (; k < s.length; k++) {
         if (s[k] === "`") { k++; continue; }
         if (s[k] === "$" && (s[k + 1] === "(" || s[k + 1] === "{")) return false;
-        if (DOUBLE_QUOTES.includes(s[k])) break;
+        if (isDq(s[k])) break;
       }
       if (k >= s.length) return false;
       i = k + 1;
@@ -122,7 +126,7 @@ export function restrictedExpression(text: string): boolean {
     }
     const num = /^(0x[0-9a-f]+|\d+(\.\d+)?)(kb|mb|gb|tb|pb)?/i.exec(s.slice(i));
     if (num && /\d/.test(c)) { i += num[0].length; continue; }
-    if (DASHES.includes(c)) {
+    if (isDash(c)) {
       const op = /^[-–—―][A-Za-z]+/.exec(s.slice(i));
       if (op) {
         if (!EXPR_OPS.test(`-${op[0].slice(1)}`)) return false;
@@ -251,11 +255,11 @@ class Parser {
       }
       return this.parseCommandRest(name, true, term);
     }
-    if (c === "." && (isSpace(this.peek(1)) || SINGLE_QUOTES.includes(this.peek(1)) || DOUBLE_QUOTES.includes(this.peek(1)))) this.fatal("dot-sourcing");
+    if (c === "." && (isSpace(this.peek(1)) || isSq(this.peek(1)) || isDq(this.peek(1)))) this.fatal("dot-sourcing");
     if (c === "[") this.fatal("a [Type]");
     if (c === "{") this.fatal("a script block");
     if (c === "@" && this.peek(1) === "{") this.fatal("a hashtable");
-    if (c === "$" || c === "(" || (c === "@" && this.peek(1) === "(") || SINGLE_QUOTES.includes(c) || DOUBLE_QUOTES.includes(c) || /\d/.test(c) || (DASHES.includes(c) && first)) {
+    if (c === "$" || c === "(" || (c === "@" && this.peek(1) === "(") || isSq(c) || isDq(c) || /\d/.test(c) || (isDash(c) && first)) {
       if (!first && !(c === "$" || c === "(")) this.fatal("a value after |");
       return this.parseExpression(term);
     }
@@ -347,8 +351,8 @@ class Parser {
     let depth = 0;
     for (let k = this.i; k < this.s.length; k++) {
       const c = this.s[k];
-      if (SINGLE_QUOTES.includes(c)) { while (++k < this.s.length && !SINGLE_QUOTES.includes(this.s[k])); continue; }
-      if (DOUBLE_QUOTES.includes(c)) { while (++k < this.s.length && !DOUBLE_QUOTES.includes(this.s[k])) if (this.s[k] === "`") k++; continue; }
+      if (isSq(c)) { while (++k < this.s.length && !isSq(this.s[k])); continue; }
+      if (isDq(c)) { while (++k < this.s.length && !isDq(this.s[k])) if (this.s[k] === "`") k++; continue; }
       if (c === "{") depth++;
       else if (c === "}") { depth--; if (depth === 0) return k; }
     }
@@ -374,7 +378,7 @@ class Parser {
     const c = this.peek();
     if (this.eof() || c === "\n" || c === "\r" || c === ";" || c === "|" || c === ")" || (term && c === term)) return null;
     const start = this.i;
-    if (DASHES.includes(c) && /[A-Za-z_?]/.test(this.peek(1))) {
+    if (isDash(c) && /[A-Za-z_?]/.test(this.peek(1))) {
       const m = /^[-–—―]([A-Za-z_?][A-Za-z0-9_?-]*)(:?)/.exec(this.s.slice(this.i))!;
       this.i += m[0].length;
       if (m[2] === ":") {
@@ -424,13 +428,13 @@ class Parser {
         this.i += 2;
         continue;
       }
-      if (SINGLE_QUOTES.includes(c)) {
+      if (isSq(c)) {
         quoted = true;
         let k = this.i + 1;
         let body = "";
         for (; k < this.s.length; k++) {
-          if (SINGLE_QUOTES.includes(this.s[k])) {
-            if (SINGLE_QUOTES.includes(this.s[k + 1] ?? "")) { body += "'"; k++; continue; }
+          if (isSq(this.s[k])) {
+            if (isSq(this.s[k + 1])) { body += "'"; k++; continue; }
             break;
           }
           body += this.s[k];
@@ -440,12 +444,12 @@ class Parser {
         this.i = k + 1;
         continue;
       }
-      if (DOUBLE_QUOTES.includes(c)) {
+      if (isDq(c)) {
         quoted = true;
         this.parseDouble(segs, subs);
         continue;
       }
-      if (c === "@" && (SINGLE_QUOTES.includes(this.peek(1)) || DOUBLE_QUOTES.includes(this.peek(1))) && (this.peek(2) === "\n" || this.peek(2) === "\r")) {
+      if (c === "@" && (isSq(this.peek(1)) || isDq(this.peek(1))) && (this.peek(2) === "\n" || this.peek(2) === "\r")) {
         quoted = true;
         this.parseHereString(segs, subs);
         continue;
@@ -468,7 +472,7 @@ class Parser {
         continue;
       }
       if (c === "(") this.fatal("a ( inside a word");
-      lit(DASHES.includes(c) ? "-" : c, false);
+      lit(isDash(c) ? "-" : c, false);
       this.i++;
     }
     if (this.i === start) return null;
@@ -491,8 +495,8 @@ class Parser {
     for (;;) {
       if (this.eof()) this.fatal("unterminated \"");
       const c = this.peek();
-      if (DOUBLE_QUOTES.includes(c)) {
-        if (DOUBLE_QUOTES.includes(this.peek(1))) { lit("\""); this.i += 2; continue; }
+      if (isDq(c)) {
+        if (isDq(this.peek(1))) { lit("\""); this.i += 2; continue; }
         this.i++;
         return;
       }
@@ -524,7 +528,7 @@ class Parser {
   /** `@'…'@` and `@"…"@` (the closing marker at the start of a line). */
   private parseHereString(segs: PsSeg[], subs: PsStatement[][]): void {
     const q = this.peek(1);
-    const expandable = DOUBLE_QUOTES.includes(q);
+    const expandable = isDq(q);
     const bodyStart = this.s.indexOf("\n", this.i) + 1;
     const close = new RegExp(`\\n[${expandable ? DOUBLE_QUOTES : SINGLE_QUOTES}]@`);
     const m = close.exec(this.s.slice(bodyStart - 1));

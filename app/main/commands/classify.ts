@@ -276,7 +276,11 @@ class Classifier {
       if (re.test(e)) this.refuseWith("ember.path", "safety");
       if ((use === "deleteTree" || use === "move" || use === "permTree") && emberAncestors(e, sc.path).some(anc => re.test(anc))) this.refuseWith("ember.path", "safety");
     }
-    const candidates = [...secretCandidates(sc.path), ...SECRET_SAMPLE_NAMES.map(n => (sc.path.flavour === "win32" ? win32 : posix).join(prefix, n))];
+    // A catch-all last segment (`*`, `*.*`) says nothing about which files it names; a listing reads no file.
+    const last = absPattern.split(/[\\/]/).pop() ?? "";
+    const catchAll = /^[*?]*(\.\*)?$/.test(last);
+    const samples = use === "list" || catchAll ? [] : SECRET_SAMPLE_NAMES.map(n => (sc.path.flavour === "win32" ? win32 : posix).join(prefix, n));
+    const candidates = [...secretCandidates(sc.path), ...samples];
     if (candidates.some(c => re.test(c) || (use === "readTree" && re.test((sc.path.flavour === "win32" ? win32 : posix).dirname(c))))) {
       this.add("secret", "path.secret", `Reads or changes passwords, keys or other secrets (${text}).`, { objects: [{ kind: "glob", text, resolved: absPattern, abs: absPattern }] });
     }
@@ -749,7 +753,7 @@ class Engine extends Classifier {
     const words: Arg[] = [name];
     for (const a of cmd.args) {
       if (a.kind === "param") {
-        words.push({ v: `-${a.param ?? ""}`, raw: a.raw, glob: false, param: a.param ?? "" });
+        words.push(a.param ? { v: `-${a.param}`, raw: a.raw, glob: false, param: a.param } : { v: "--", raw: a.raw, glob: false });
         if (a.attached) for (const v of this.psArgValues(a, sc)) words.push(v);
       } else if (a.kind === "block") {
         words.push({ v: null, raw: a.raw, glob: false });
@@ -1555,12 +1559,12 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
-    else if (archive !== "-") h.e.usePath(arc, create ? "write" : "read", h.sc);
+    else if (archive !== "-" && !NULL_SINKS.has(archive.toLowerCase())) h.e.usePath(arc, create ? "write" : "read", h.sc);
   }
   if (create) {
     const inputs = objsOf(h, p.operands, "readTree");
     if (has(p, "remove-files")) h.e.add("destroy", "archive.remove-files", `Deletes ${listOf(inputs)} after packing them.`, { objects: inputs });
-    if (archive && archive !== "-") {
+    if (archive && archive !== "-" && !NULL_SINKS.has(archive.toLowerCase()) && !URL_LIKE.test(archive)) {
       const obj = h.e.usePath(lit(archive), "write", h.sc);
       if (obj.abs && has(p, "c", "create")) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
     }
