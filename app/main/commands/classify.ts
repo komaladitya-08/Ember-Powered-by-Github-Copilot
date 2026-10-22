@@ -60,6 +60,17 @@ export interface ClassificationExtra extends Classification {
    * build (L8 unchanged).
    */
   scripts: ScriptRef[];
+  /**
+   * Files and folders this command writes, moves, deletes or unpacks into (a folder covers everything under it): the
+   * task remembers them, so a script an earlier command wrote that can't be read in full asks (L8's padding bypass:
+   * `printf '%70000s' > t.sh; echo 'rm -rf ~' >> t.sh`, then `sh t.sh`). Absolute on the target.
+   */
+  writes: string[];
+  /**
+   * It may write files where Ember can't tell: a checkout's work tree, an archive unpacked with options Ember can't
+   * follow, or code Ember can't see or follow (an unclear or escape finding: it runs only once the user said yes).
+   */
+  writesAnywhere: boolean;
 }
 
 /** A shell script to read and classify (ClassificationExtra.scripts). */
@@ -186,6 +197,9 @@ class Classifier {
   written: { p: string; env: PathEnv }[] = [];
   /** A part of the command writes files Ember can't name (an archive extracted, a patch applied, a checkout). */
   writesUnnamed = false;
+  /** The folders those unnamed files go into (unnamedWriteFolders), or anywhere when Ember can't tell. */
+  unnamedAt: string[] = [];
+  unnamedAnywhere = false;
   /** Scripts recorded only because a name may resolve to them (`.\x` → x.ps1), with what had been written by then. */
   private candidates = new Map<ScriptRef, { written: number; unnamed: boolean }>();
   simpleCount = 0;
@@ -476,6 +490,15 @@ class Classifier {
     } else if (sc.family === "posix" && pn.ext !== ".bat" && pn.ext !== ".cmd") this.recordScript(nameArg, "shebang", sc);
   }
 
+  /** A program that writes files Ember can't name (writesUnnamedFiles): where they go, for the task's memory. */
+  unnamedWrites(key: string, args: readonly Arg[], sc: Scope): void {
+    if (!writesUnnamedFiles(key, args)) return;
+    this.writesUnnamed = true;
+    const at = unnamedWriteFolders(key, args, sc);
+    if (at === null) this.unnamedAnywhere = true;
+    else for (const p of at) if (!this.unnamedAt.includes(p)) this.unnamedAt.push(p);
+  }
+
   /** Records a file this command downloads (§3.4.7), resolved against the scope's folder. */
   download(p: string | null, sc: Scope): void {
     if (!p || !sc.cwd) return;
@@ -507,6 +530,8 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
     shell, family: SHELL_FAMILY[shell] ?? "posix",
     findings: [{ cls: "unclear", rule: "internal", says: SAYS.unclear, program: "", objects: [], widening: [], at: -1 }],
     refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], cwd, windowsReach: false, scripts: [],
+    // What it writes is unknown too: every script counts as the task's own later (L8's padding bypass).
+    writes: [], writesAnywhere: true,
   };
 }
 
@@ -609,6 +634,84 @@ export function writesUnnamedFiles(key: string, args: readonly Arg[]): boolean {
       return v === null || (v !== undefined && VCS_TREE_WRITERS[key].has(v));
     }
     default: return false;
+  }
+}
+
+/**
+ * Where a program that writes files Ember can't name puts them (writesUnnamedFiles), as folders: a script under one
+ * counts as written by the task (L8's padding bypass). An archive unpacks into the folder it runs in and any folder its
+ * options name (tar -C, unzip -d, 7z -o); tar, bsdtar, unzip and 7-Zip keep members inside it unless told to keep
+ * absolute names or `..` (then: anywhere). A decompressor writes beside each file it is given. null: Ember can't tell
+ * (a checkout or patch writes anywhere in its work tree; cpio and pax keep absolute names; jar and rar have options
+ * Ember doesn't follow; the folder is unknown; a word Ember can't see).
+ */
+export function unnamedWriteFolders(key: string, args: readonly Arg[], sc: Pick<Scope, "os" | "home" | "cwd" | "path">): string[] | null {
+  const cwd = sc.cwd;
+  if (!cwd || args.some(a => a.v === null)) return null;
+  const vs = args.map(a => a.v as string);
+  const at = (p: string): string | null => (p === "" || /[*?[]/.test(p) ? null : resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd }));
+  /** cwd and each folder `dirs` names; null when one can't be resolved. */
+  const into = (dirs: string[]): string[] | null => {
+    const out = [cwd];
+    for (const d of dirs) { const r = at(d); if (r === null) return null; out.push(r); }
+    return out;
+  };
+  switch (key) {
+    case "tar": case "bsdtar": case "gtar": {
+      const dirs: string[] = [];
+      for (let k = 0; k < vs.length; k++) {
+        const v = vs[k];
+        if (v === "-C" || v === "--directory" || v === "--cd") { if (k + 1 >= vs.length) return null; dirs.push(vs[++k]); continue; }
+        if (/^--(directory|cd)=/.test(v)) { dirs.push(v.slice(v.indexOf("=") + 1)); continue; }
+        // Absolute names kept, members renamed, or a bundle holding -C, -P or bsdtar's -s (a renaming pattern).
+        if (/^--(absolute-names|transform|xform|substitute)/.test(v)) return null;
+        if (/^-[A-Za-z]*[CPs]/.test(v) || (k === 0 && /^[A-Za-z]*[CPs][A-Za-z]*$/.test(v))) return null;
+      }
+      return into(dirs);
+    }
+    case "unzip": {
+      const dirs: string[] = [];
+      for (let k = 0; k < vs.length; k++) {
+        const v = vs[k];
+        if (v === "-d") { if (k + 1 >= vs.length) return null; dirs.push(vs[++k]); continue; }
+        // `-:` lets members climb out with `..`; an attached -d is a folder too.
+        if (/^-[A-Za-z^$]*:/.test(v)) return null;
+        if (/^-d./.test(v)) dirs.push(v.slice(2));
+      }
+      return into(dirs);
+    }
+    case "7z": case "7za": case "7zr": {
+      const dirs: string[] = [];
+      for (const v of vs) {
+        if (/^-spf/i.test(v)) return null; // full (absolute) paths kept
+        if (/^-o./i.test(v)) dirs.push(v.slice(2));
+      }
+      return into(dirs);
+    }
+    case "ar":
+      // ar keeps a member's base name only, in the folder it runs in (P: the full name of a thin archive's member).
+      return /P/.test(vs[0] ?? "") ? null : [cwd];
+    case "gunzip": case "bunzip2": case "unxz": case "unzstd": case "unlzma": case "uncompress": case "unlz4":
+    case "gzip": case "bzip2": case "xz": case "zstd": case "lzma": case "lz4": {
+      // Each file's folder (a pattern's too, when only its name is a pattern); none for stdin to stdout.
+      const P = sc.path.flavour === "win32" ? win32 : posix;
+      const files: string[] = [];
+      for (let k = 0; k < vs.length; k++) {
+        const v = vs[k];
+        if (v === "-S" || v === "--suffix") { k++; continue; }
+        if (v === "--") { files.push(...vs.slice(k + 1)); break; }
+        if (!v.startsWith("-")) files.push(v);
+      }
+      const out: string[] = [];
+      for (const f of files) {
+        const dir = at(P.dirname(f));
+        if (dir === null) return null;
+        if (!out.includes(dir)) out.push(dir);
+      }
+      return out;
+    }
+    default:
+      return null;
   }
 }
 
@@ -761,6 +864,10 @@ class Engine extends Classifier {
       cwd: this.ctx.cwd,
       windowsReach: this.windowsReach,
       scripts: this.scripts,
+      writes: [...new Set([...this.written.map(w => w.p), ...this.unnamedAt])],
+      // Code Ember can't see (unclear), or that it can't follow (a download run, a program that keeps running after the
+      // command), writes where it likes once the user says yes.
+      writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
     // row covers a finding of such a text.
@@ -1262,7 +1369,7 @@ class Engine extends Classifier {
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
-    if (writesUnnamedFiles(key, args)) this.writesUnnamed = true;
+    this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
     this.hiddenNames(key, args, sc);
@@ -1420,7 +1527,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(inner);
     else generic(inner);
-    if (writesUnnamedFiles(key, inner.args)) this.writesUnnamed = true;
+    this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
     // `command printf -v …` and `time unset …` run the same built-ins.

@@ -375,6 +375,115 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
   });
 });
 
+describe("a script of the task's own that can't be read in full (L8's padding bypass)", () => {
+  /** CL's own judge on this computer; `texts` serves readScript by path (missing: unreadable, as past the cap). */
+  const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    const h = harness({
+      binding: LOCAL, answers: o.answers ?? ["deny", "deny", "deny"], state: o.state ?? { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+      paths: p => ({ exists: o.exists ? o.exists(p) : false, real: p }),
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+  const UNREAD = "It runs t.sh, which this task wrote or downloaded, and Ember can't read all of it first.";
+
+  it("asks before running a script an earlier command wrote when it can't be read in full, however it is run", async () => {
+    for (const run of ["sh t.sh", "bash t.sh", "./t.sh", "source t.sh", "env X=1 ./t.sh"]) {
+      const h = own();
+      // The padding: the script grows past the 64 KiB cap, then gets its payload; writing a new file is ordinary.
+      expect((await local(h, "printf '%70000s' > t.sh")).resultType, run).toBe("success");
+      expect((await local(h, "echo 'rm -rf ~' >> t.sh")).resultType, run).toBe("success");
+      expect([...h.ctx.state.written!.paths], run).toEqual(["/home/ana/proj/t.sh"]);
+      const r = await local(h, run);
+      expect(r.resultType, run).toBe("denied");
+      expect(h.starts, run).toHaveLength(2);
+      expect((h.asked.at(-1)!.panel as { card: CommandCard }).card.says, run).toContain(UNREAD);
+      expect(h0rules(h), run).toContain("unclear.script-unread");
+    }
+  });
+
+  it("keeps L8 for a script the task didn't write: a repository's large ./configure runs", async () => {
+    const h = own();
+    expect((await local(h, "./configure")).resultType).toBe("success");
+    expect((await local(h, "sh configure")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    // Writing elsewhere doesn't make it the task's own.
+    expect((await local(h, "echo hi > notes.txt")).resultType).toBe("success");
+    expect((await local(h, "./configure")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+
+  it("reads a script the task wrote that fits, and judges it as any other: ordinary runs, deleting asks", async () => {
+    const ok = own({ "/home/ana/proj/t.sh": "echo building\n" });
+    await local(ok, "printf 'echo building' > t.sh");
+    expect((await local(ok, "sh t.sh")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+    const bad = own({ "/home/ana/proj/t.sh": "rm -rf build\n" });
+    await local(bad, "printf 'rm -rf build' > t.sh");
+    expect((await local(bad, "sh t.sh")).resultType).toBe("denied");
+    expect(h0rules(bad)).not.toContain("unclear.script-unread");
+  });
+
+  it("counts what cp, mv, tee and sed -i wrote, and the folders an archive unpacked into", async () => {
+    for (const [first, second] of [
+      ["cp /tmp/pad.sh t.sh", "sh t.sh"], ["mv /tmp/pad.sh t.sh", "./t.sh"], ["echo x | tee t.sh", "sh t.sh"], ["sed -i 's/a/b/' t.sh", "sh t.sh"],
+      ["tar -xzf deps.tgz -C /tmp/deps", "sh /tmp/deps/t.sh"], ["unzip a.zip -d /tmp/a", "sh /tmp/a/t.sh"], ["gunzip -k /tmp/data/t.sh.gz", "sh /tmp/data/t.sh"],
+    ]) {
+      const h = own({}, { exists: p => p === "/tmp/pad.sh" });
+      expect((await local(h, first)).resultType, first).toBe("success");
+      expect((await local(h, second)).resultType, `${first}; ${second}`).toBe("denied");
+      expect(h0rules(h), `${first}; ${second}`).toContain("unclear.script-unread");
+    }
+    // An unpack into /tmp/deps leaves another folder's script alone.
+    const other = own();
+    await local(other, "tar -xzf deps.tgz -C /tmp/deps");
+    expect([...other.ctx.state.written!.paths].sort()).toEqual(["/home/ana/proj", "/tmp/deps"]);
+    expect((await local(other, "sh /srv/tools/big.sh")).resultType).toBe("success");
+  });
+
+  it("counts every script once a command wrote where Ember can't tell (a checkout), or ran code it couldn't see", async () => {
+    const h = own();
+    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect(h.ctx.state.written!.anywhere).toBe(true);
+    expect((await local(h, "./configure")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+  });
+
+  it("counts a script inside a folder this task downloaded, reached through a #! line", async () => {
+    const h = own({ "/home/ana/proj/t": "#!/home/ana/tools/i.sh\necho hi\n" }, {
+      state: { cwd: "/home/ana/proj", downloaded: new Set(["/home/ana/tools"]), running: false },
+    });
+    expect((await local(h, "./t")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    expect(h.reads).toEqual(["/home/ana/proj/t", "/home/ana/tools/i.sh"]);
+  });
+
+  it("remembers only what ran: a write the user said no to doesn't make the file the task's own", async () => {
+    const h = own({}, { exists: () => true, answers: ["deny"] });
+    expect((await local(h, "printf '%70000s' > t.sh")).resultType).toBe("denied");
+    expect(h.ctx.state.written).toBeUndefined();
+    expect((await local(h, "sh t.sh")).resultType).toBe("success");
+  });
+
+  it("asks when one script of a command writes another it runs, or the command line writes a script a script runs", async () => {
+    const pair = own({ "/home/ana/proj/a.sh": "printf '%70000s' > b.sh\n", "/home/ana/proj/b.sh": "echo old\n" });
+    expect((await local(pair, "sh a.sh && sh b.sh")).resultType).toBe("denied");
+    expect(h0rules(pair)).toContain("unclear.script-written");
+    const nested = own({ "/home/ana/proj/a.sh": "sh b.sh\n", "/home/ana/proj/b.sh": "echo old\n" });
+    expect((await local(nested, "echo 'rm -rf ~' > b.sh; sh a.sh")).resultType).toBe("denied");
+    expect(h0rules(nested)).toContain("unclear.script-written");
+    // A script that writes only its own output runs.
+    const fine = own({ "/home/ana/proj/a.sh": "echo built > out.txt\n", "/home/ana/proj/b.sh": "cat out.txt\n" });
+    expect((await local(fine, "sh a.sh && sh b.sh")).resultType).toBe("success");
+    // What a script wrote is the task's own afterwards.
+    expect([...fine.ctx.state.written!.paths]).toEqual(["/home/ana/proj/out.txt"]);
+  });
+});
+
 describe("the target echo check (§3.2)", () => {
   it("normalises names as §2.3 does: case, spacing, punctuation and spoken numbers", () => {
     expect(normalName("Build 01")).toBe("build01");
