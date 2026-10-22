@@ -436,6 +436,10 @@ class Classifier {
       this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
       return;
     }
+    // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
+    // own rule), and its text has no business on a card.
+    const real = this.ctx.real?.get(abs);
+    if ([abs, ...(real ? [real] : [])].some(p => secretKind(p, "read", sc.path) !== null || isEmberPath(p, sc.path))) return;
     const cwd = sc.cwd ?? "";
     if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd)) return;
     if (this.scripts.length >= MAX_SCRIPTS) { this.unclear("unclear.scripts", "It runs more scripts than Ember reads first."); return; }

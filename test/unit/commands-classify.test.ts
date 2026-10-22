@@ -238,6 +238,10 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     expect(scripts("deno run main.ts", "bash", "linux")).toEqual([]);
     expect(scripts("sh -c 'echo hi'", "bash", "linux")).toEqual([]);
     expect(scripts("sh", "bash", "linux")).toEqual([]);
+    // A secret or Ember's own file is never read as a script (running it asks or is refused by the path's own rule).
+    expect(scripts("sh ~/.ssh/id_rsa", "bash", "linux")).toEqual([]);
+    expect(scripts("source .env", "bash", "linux")).toEqual([]);
+    expect(scripts("sh ~/.config/ember/x.sh", "bash", "linux")).toEqual([]);
     // A bare `deploy.ps1` (no .\) does not run the local file in PowerShell.
     expect(scripts("deploy.ps1", "powershell", "win32")).toEqual([]);
     // A file this task downloaded is already escape.run-downloaded, not read.
