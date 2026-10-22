@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { IPC, type EmberHomeApi, type Presence, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
+import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
+import type { EmberTargetsApi } from "../renderer/home/computers-copy";
 
 const listen = <T>(channel: string, fn: (v: T) => void) => {
   const handler = (_e: IpcRendererEvent, v: T) => fn(v);
@@ -39,3 +41,11 @@ const api: EmberHomeApi = {
 };
 
 contextBridge.exposeInMainWorld("ember", api);
+
+// Computers and their commands (§8.3): TARGETS_IPC's channels only; main takes them only from this window (isHome).
+const targets: EmberTargetsApi = {
+  list: () => ipcRenderer.invoke(TARGETS_IPC.list) as Promise<TargetSummary[]>,
+  onChanged: fn => listen<TargetSummary[]>(TARGETS_IPC.changed, fn),
+  act: a => ipcRenderer.invoke(TARGETS_IPC.act, a),
+};
+contextBridge.exposeInMainWorld("emberTargets", targets);

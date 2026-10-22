@@ -14,6 +14,8 @@ import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus, retryMessage,
   tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
+import { startTargets, targetsSettings, targetsStatus } from "./computers";
+import { TARGET_FEATURE_TEXT } from "./computers-copy";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -233,6 +235,7 @@ function render(status: Status): void {
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
+  targetsStatus(status);
 }
 
 // ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
@@ -291,7 +294,7 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 const FEATURE_TEXT: Record<string, string> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
-  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots",
+  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", ...TARGET_FEATURE_TEXT,
 };
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
@@ -573,6 +576,9 @@ window.ember.onAgentStatus(renderAgent);
 
 void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);
+// Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
+window.ember.onSettingsChanged(targetsSettings);
+startTargets();
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
