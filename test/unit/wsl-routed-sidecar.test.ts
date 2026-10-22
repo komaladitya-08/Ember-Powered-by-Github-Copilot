@@ -105,7 +105,9 @@ describe("off Windows and with WSL off", () => {
     await routed.secretFields({ pid: 4242, path: "/x" });
     routed.scaleElements([id], 2);
     expect(routed.scaleOf(id)).toBe(2);
-    expect(u.calls.map(c => c.method)).toEqual(["listWindows", "readWindow", "readElement", "doAction", "atPoint", "secretFields", "scaleElements"]);
+    // An id UIA never handed out is still UIA's to answer (its own error, as before).
+    await routed.readElement(42);
+    expect(u.calls.map(c => c.method)).toEqual(["listWindows", "readWindow", "readElement", "doAction", "atPoint", "secretFields", "scaleElements", "readElement"]);
     expect(u.calls[1].args).toEqual([{ pid: 4242, title: "notes.txt - gedit (Ubuntu)", ownPid: 9 }]);
     expect(h.created).toEqual([]);
   });

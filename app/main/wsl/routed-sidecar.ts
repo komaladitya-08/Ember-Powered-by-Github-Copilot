@@ -67,14 +67,17 @@ export class RoutedSidecar implements PerceptionSidecar, SidecarPort {
     return path ? this.router.windowAt(path) : null;
   }
 
-  /** The distro whose helper handed `id` out (ownsId), or null for UIA's own; an id neither knows is an error. */
+  /**
+   * The distro whose helper handed `id` out (ownsId), or null for UIA's own; an id neither knows is an error while WSL
+   * is in use (with WSL off every id is UIA's to answer, as before).
+   */
   private owner(id: number): { distro: string } | null {
     const distro = this.router.distroOfId(id);
     if (distro) {
       if (!this.router.active()) throw unknownId(id);
       return { distro };
     }
-    if (this.base.ownsId(id)) return null;
+    if (!this.router.active() || this.base.ownsId(id)) return null;
     throw unknownId(id);
   }
 
