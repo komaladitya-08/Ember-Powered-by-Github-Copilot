@@ -85,7 +85,9 @@ export const SCRIPT_READ_MS = 5_000;
  * here-document data, absolute (the runner joins a relative one to the command's folder; starting with "/", it is never
  * taken for an option, and BusyBox's realpath knows no `--`), resolved through its links (readlink -f where realpath
  * fails); only a regular file is read (never a FIFO, a device or a socket), and never one under /dev, /proc or /sys by either
- * form (`/proc/self/fd/N` resolves to an ordinary-looking file). dd reads at most SCRIPT_READ_BYTES, after the marker.
+ * form (`/proc/self/fd/N` resolves to an ordinary-looking file). dd reads at most SCRIPT_READ_BYTES, after the marker,
+ * by the path as written, which the kernel opens through the same links as the shell that runs it: the resolved form
+ * is only checked, never read (`$(…)` drops a name's trailing line breaks, so a link to `x<LF>` would read `x`).
  */
 export const READ_SCRIPT = [
   "IFS= read -r p || exit 3",
@@ -93,9 +95,9 @@ export const READ_SCRIPT = [
   'r=$(realpath "$p" 2>/dev/null) || r=$(readlink -f "$p" 2>/dev/null) || exit 3',
   '[ -n "$r" ] || exit 3',
   'for x in "$p" "$r"; do case "$x" in /dev|/dev/*|/proc|/proc/*|/sys|/sys/*) exit 3;; esac; done',
-  '[ -f "$r" ] || exit 3',
+  '[ -f "$p" ] || exit 3',
   "printf '\\033]777;ember-script\\007'",
-  `dd if="$r" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`,
+  `dd if="$p" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`,
 ].join("\n");
 
 /**

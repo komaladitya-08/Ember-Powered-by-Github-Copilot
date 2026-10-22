@@ -276,8 +276,11 @@ suite("WSL on a real Windows runner", () => {
       "printf '\\357\\273\\277#!/bin/sh\\necho \\303\\251\\n' > bom.sh",
       "head -c 65536 /dev/zero | tr '\\0' a > max.sh && head -c 65537 /dev/zero | tr '\\0' a > over.sh",
       "mkfifo fifo.sh && ln -sfn /proc/self/environ env.sh && ln -sfn /dev/zero zero.sh",
+      // A link to a name ending in a line break: the file that runs is read, not the one `$(realpath …)` names.
+      "printf 'echo plain\\n' > x && nl=$(printf 'x\\n_') && nl=${nl%_} && printf 'echo linked\\n' > \"$nl\" && ln -sfn \"$nl\" nl.sh",
     ].join("; "));
     expect(await runner.readScript("bom.sh", "/tmp/ember-ts")).toBe("\uFEFF#!/bin/sh\necho é\n");
+    expect(await runner.readScript("nl.sh", "/tmp/ember-ts")).toBe("echo linked\n");
     expect(await runner.readScript("/tmp/ember-ts/max.sh", "/")).toHaveLength(65_536);
     for (const f of ["over.sh", "fifo.sh", "env.sh", "zero.sh", "missing.sh"]) expect(await runner.readScript(f, "/tmp/ember-ts"), f).toBeNull();
     await run(runner, "rm -rf /tmp/ember-ts");

@@ -768,10 +768,13 @@ describe("WSL runner: reading a script before it runs (L8, the lead's ruling)", 
   });
 
   it("reads only a regular file outside /dev, /proc and /sys, by its real path too, at most one byte over the cap", () => {
-    expect(READ_SCRIPT).toContain('[ -f "$r" ] || exit 3');
+    expect(READ_SCRIPT).toContain('[ -f "$p" ] || exit 3');
     expect(READ_SCRIPT).toContain('for x in "$p" "$r"; do case "$x" in /dev|/dev/*|/proc|/proc/*|/sys|/sys/*) exit 3;; esac; done');
     expect(READ_SCRIPT).toContain('case "$p" in /*) ;; *) exit 3;; esac');
-    expect(READ_SCRIPT).toContain(`dd if="$r" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`);
+    // Read by the path as written (the kernel follows the links the shell will): `$(realpath …)` drops a name's trailing
+    // line breaks, so reading the resolved form of a link to `x<LF>` would read `x` (checked under dash and bash).
+    expect(READ_SCRIPT).toContain(`dd if="$p" bs=${SCRIPT_READ_BYTES} count=1 2>/dev/null`);
+    expect(READ_SCRIPT).not.toMatch(/if="\$r"|-f "\$r"/);
     expect(SCRIPT_READ_BYTES).toBe(65_537);
     // The path never reaches the script's text: it is data only.
     expect(READ_SCRIPT).not.toMatch(/\/home\//);
