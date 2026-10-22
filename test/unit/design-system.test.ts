@@ -5,7 +5,7 @@ import { BUBBLE_CSS } from "@ember/bubble";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const shared = read("app/renderer/shared/ember.css");
-const PAGES = ["home", "overlay", "handle", "ask", "desk"];
+const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
 const token = (name: string) => {
