@@ -1,5 +1,7 @@
 /** The "Ask Ember" box: type a request, Enter sends it, ↑/↓ go through earlier questions, Esc closes. */
-import type { EmberAskApi } from "../../shared/ipc";
+import type { AskContext, EmberAskApi } from "../../shared/ipc";
+import type { TargetSummary } from "../../shared/targets";
+import { targetChip } from "../handle/badge";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
@@ -8,6 +10,7 @@ document.documentElement.classList.toggle("opaque", new URLSearchParams(location
 
 const input = document.getElementById("q") as HTMLInputElement;
 const sees = document.getElementById("sees")!;
+const where = document.getElementById("where")!;
 let history: string[] = [];
 /** Where we are in the history while browsing it (history.length = the new, unsent text). */
 let at = 0;
@@ -37,6 +40,11 @@ window.emberAsk.onContext(c => {
   draft = "";
   // "↑ earlier questions" only when there are some.
   document.getElementById("hint-history")!.hidden = history.length === 0;
+  // Where a request goes when it names no computer (§8.1): "On build-01" when that isn't this computer. Main sends the
+  // picker's target with the context when the targets runtime has one; without it nothing shows, as before.
+  const chip = targetChip((c as AskContext & { target?: TargetSummary | null }).target);
+  where.hidden = !chip;
+  where.textContent = chip ?? "";
   sees.hidden = !c.sees;
   sees.textContent = c.sees ? `Ember will see: ${c.sees}` : "";
   input.focus();

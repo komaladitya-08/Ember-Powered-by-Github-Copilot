@@ -14,6 +14,8 @@ import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
+import { consentPanel } from "../../app/main/remote/prompt-window";
+import { keyHintText, statusLine } from "../../app/renderer/command/copy";
 
 // ───── A small model of the page: elements, attributes and text, as home/index.html writes them ─────
 interface El { tag: string; attrs: Record<string, string>; children: Node[] }
@@ -327,5 +329,54 @@ describe("the pieces of the OS's markup", () => {
   it("shows a command in brackets at the end of the journal hint as code", () => {
     expect(auditCopySegments("the system journal (journalctl -t ember-audit)")).toEqual([" and in the system journal (", { code: "journalctl -t ember-audit" }, ")"]);
     expect(auditCopySegments("the event log")).toEqual([" and in the event log"]);
+  });
+});
+
+// ───── SSH, WSL and commands: each OS's stop chord in the new words (critique integration-22) ─────
+
+describe("the stop chord in the SSH, WSL and commands words, per OS", () => {
+  const OSES: OS[] = ["linux", "win32", "darwin"];
+
+  it("writes each OS's own chord into the commands and SSH consent cards before they are hashed", () => {
+    const hashes = new Set<string>();
+    for (const os of OSES) {
+      const stop = SHORTCUTS[os].stop.label;
+      const commands = consentPanel({ feature: "commands", os, target: "local", targetLabel: "This computer" });
+      expect(commands.body.at(-1)).toBe(`${stop} stops everything at once. What a command already changed stays changed.`);
+      const ssh = consentPanel({ feature: "ssh", os, target: "ssh:build-01", targetLabel: "build-01", ssh: { login: "deploy", hostname: "build-01", port: 22, jump: [], desktop: "headless" } });
+      expect(ssh.body[1]).toContain(`stops when you disconnect, quit Ember or press ${stop}. If the connection drops`);
+      for (const other of OSES.filter(o => o !== os)) expect(JSON.stringify([commands, ssh])).not.toContain(SHORTCUTS[other].stop.label);
+      hashes.add(commands.sha256);
+    }
+    // Each OS's card is its own text, so its own hash.
+    expect(hashes.size).toBe(3);
+    expect(consentPanel({ feature: "wsl", os: "win32", target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }).body.join(" ")).not.toMatch(/\+X/);
+  });
+
+  it("writes each OS's approve keys in the command card's key hint", () => {
+    expect(keyHintText("linux")).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    expect(keyHintText("win32")).toBe("Win+Alt+Y allow · Win+Alt+N not now");
+    expect(keyHintText("darwin")).toBe("Control+Shift+Command+Y allow · Control+Shift+Command+N not now");
+  });
+
+  it("names each OS's chord when the kill switch stopped a command", () => {
+    for (const os of OSES) {
+      expect(statusLine({ code: null, signal: null, ended: "killswitch", ms: 2000 }, { label: "build-01", os }))
+        .toBe(`Stopped by ${SHORTCUTS[os].stop.label} after 2 s. What it already changed stays.`);
+    }
+  });
+});
+
+describe("Computers and Commands before the targets runtime answers", () => {
+  it("keep both sections and their links hidden, so the window looks as it did", () => {
+    const root = page();
+    for (const id of ["computers", "commands", "jump-computers", "jump-commands"]) expect(byId(root, id).attrs, id).toHaveProperty("hidden");
+    expect(byId(root, "computers-h").attrs.tabindex).toBe("-1");
+    expect(byId(root, "commands-h").attrs.tabindex).toBe("-1");
+    // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
+    const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
+    expect(plug).toHaveLength(1);
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
   });
 });

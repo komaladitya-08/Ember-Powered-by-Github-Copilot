@@ -24,6 +24,9 @@ input:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 255,
   width: fit-content; max-width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
 }
 .sees { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--label); font-weight: 500; }
+/* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. */
+.where { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
+.where[hidden] { display: none; }
 /* The keys as keycaps, each with its few words. */
 .hint { flex: none; display: inline-flex; gap: 10px; color: var(--label-2); }
 .hint [hidden] { display: none; }
