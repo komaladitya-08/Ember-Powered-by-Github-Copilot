@@ -769,6 +769,7 @@ export class AgentHost {
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
         audit: hands.audit,
+        settingsKey: this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });

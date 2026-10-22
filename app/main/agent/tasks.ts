@@ -45,6 +45,8 @@ export interface TaskManagerDeps {
   onRemoved?: (task: Task, byUser: boolean) => void;
   /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
   provider?: boolean;
+  /** How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings. */
+  settingsKey?: string;
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
   maxRunning?: number;
@@ -232,7 +234,7 @@ export class TaskManager {
     } catch (err) {
       this.d.log.error("task.error", { id: task.id, err });
       // One plain sentence for the card, the bubble, speech and the conversation (the log keeps the raw error).
-      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider }) };
+      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey: this.d.settingsKey }) };
     }
     this.running.delete(task.id);
     if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });

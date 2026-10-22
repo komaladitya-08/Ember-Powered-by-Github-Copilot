@@ -442,6 +442,19 @@ describe("review round 4: how tasks end", () => {
     expect(key.cards.at(-1)?.[0].detail).toBe(b.result?.summary);
   });
 
+  it("a task whose model is gone points to settings by this OS's own shortcut", async () => {
+    const fails = () => fakeWorker(async () => { throw new Error("model_not_supported: the requested model is not available"); });
+    const mac = manager(fails, { settingsKey: "⌃⇧⌘E" });
+    const a = mac.tm.start("Turn on Dark Mode");
+    await vi.waitFor(() => expect(a.status).toBe("failed"));
+    expect(a.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (⌃⇧⌘E).");
+    // Without one (Linux), today's wording.
+    const linux = manager(fails);
+    const b = linux.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(b.status).toBe("failed"));
+    expect(b.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+  });
+
   it("says when a finished card goes, and whether the user closed it", async () => {
     vi.useFakeTimers();
     const removed: [string, boolean][] = [];
