@@ -250,6 +250,56 @@ export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> =
   darwin: [],
 };
 
+/** An app that runs a program or script it opens, with no dialog: what is refused there. */
+export interface OpensPrograms {
+  /** The app, tested on ActionRequest.app (trimmed). */
+  readonly app: RegExp;
+  /** The name of an item that is a program or script, tested on the item's normalised name (ActionRequest.element.name, trimmed). */
+  readonly item: RegExp;
+  /**
+   * Commands that open or run whatever is selected, as whole labels (written with their accents, folded when matched; an
+   * access key or "…" may follow): the request doesn't say what is selected, so they are refused whatever it is.
+   */
+  readonly commands: readonly string[];
+}
+
+/**
+ * What File Explorer (and the desktop, also explorer.exe) runs with no dialog when it opens it: programs, scripts and
+ * their hosts' files, installers and patches, screen savers, Control Panel items, shortcuts and Java archives. (Linux's
+ * file manager asks first: RUN_FILE_DIALOG.)
+ */
+const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|scr|pif|cpl|lnk|url|appref-ms|jar)$/i;
+
+/**
+ * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
+ * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
+ * PowerShell commands, in Windows' main languages. An item is known by the extension its name shows: where Explorer
+ * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
+ * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
+ * item is judged as any other. None on Linux and macOS.
+ */
+export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
+  linux: [],
+  win32: [{
+    app: /^explorer(\.exe)?$/i,
+    item: RUNS_WHEN_OPENED,
+    commands: [
+      "open", "open with", "run as administrator", "run as different user", "run as a different user", "run with powershell",
+      "öffnen", "öffnen mit", "als administrator ausführen", "als anderer benutzer ausführen", "mit powershell ausführen",
+      "ouvrir", "ouvrir avec", "exécuter en tant qu'administrateur", "exécuter en tant qu'autre utilisateur", "exécuter avec powershell",
+      "abrir", "abrir con", "abrir com", "ejecutar como administrador", "ejecutar como otro usuario", "ejecutar con powershell",
+      "executar como administrador", "executar como outro usuário", "executar com o powershell",
+      "apri", "apri con", "esegui come amministratore", "esegui come altro utente", "esegui con powershell",
+      "openen", "openen met", "als administrator uitvoeren", "als andere gebruiker uitvoeren", "uitvoeren met powershell",
+      "開く", "プログラムから開く", "管理者として実行", "別のユーザーとして実行", "powershell で実行",
+      "打开", "打开方式", "以管理员身份运行", "以其他用户身份运行", "使用 powershell 运行",
+      "開啟", "開啟檔案", "以系統管理員身分執行", "以不同使用者身分執行", "用 powershell 執行",
+      "열기", "연결 프로그램", "관리자 권한으로 실행", "다른 사용자로 실행", "powershell에서 실행",
+    ],
+  }],
+  darwin: [],
+};
+
 /**
  * Does the user's request name a file (a path or a name with an extension), for the worker's note on a Save dialog's
  * suggestion (worker.ts dialogNote)? Windows also knows drive and network paths ("C:\…", "\\server\…").

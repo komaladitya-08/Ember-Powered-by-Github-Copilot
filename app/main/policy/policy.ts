@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type TypingRefusal } from "./vocabulary";
+import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
@@ -1712,6 +1712,37 @@ export function refusesTyping(rules: readonly TypingRefusal[], r: Pick<ActionReq
   return rules.some(t => t.app.test(app) && t.field.test(field) && (!t.text || t.text.test(text)));
 }
 
+/** Controls that carry a command (a context menu's items, Open with's submenu, a ribbon's or command bar's buttons). */
+const COMMAND_ROLES = /^(menu|menu item|push button|toggle button|link)$/;
+/** Enter, also with Ctrl or Shift, opens the focused item (Alt+Enter only shows its Properties). */
+const OPEN_KEY = /^(ctrl\+)?(shift\+)?return$/;
+/** A rule's commands as one expression on a folded label: the whole label, an access key ("(O)") or "…" ("...") after it. */
+const commandsOf = (rule: OpensPrograms) => new RegExp(`^\\s*(${foldLabel(rule.commands.join("|"))})\\s*(\\(\\w\\))?\\s*(\\.\\.\\.)?\\s*$`, "u");
+const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
+
+/**
+ * Does `r` open a program or script in an app that runs what it opens with no dialog (`rules`: OPENS_PROGRAMS[os],
+ * File Explorer on Windows)? "item": an item named like one (an icon, a list's or grid's item), opened by a click that
+ * does more than select it (its own action, a double click), by the borrowed mouse (a single click opens where Explorer
+ * is set to open items that way, which Ember can't tell) or by Enter. "command": a command that opens or runs whatever
+ * is selected (Open, Run as administrator), clicked or pressed with Enter or Space: what is selected isn't known.
+ * Selecting an item by accessibility, and reading, stay allowed.
+ */
+export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects">, kc: KeyConventions = KEYS.linux): "item" | "command" | null {
+  const rule = r.element && rules.find(x => x.app.test(r.app.trim()));
+  if (!rule || !r.element) return null;
+  const { role, name } = r.element;
+  const key = r.kind === "keys" ? keyFamily(canonicalKeys(r.value ?? "", kc) ?? "") : "";
+  if (CONTENT_ROLES.test(role)) {
+    const opens = (r.kind === "click" && !r.clickSelects) || r.kind === "cursor_click" || OPEN_KEY.test(key);
+    return opens && rule.item.test(normalizeLabel(name).trim()) ? "item" : null;
+  }
+  if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key))) return null;
+  let commands = commandExpressions.get(rule);
+  if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
+  return commands.test(plainText(name)) ? "command" : null;
+}
+
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
 
@@ -1974,6 +2005,10 @@ export class PolicyEngine {
     if (r.kind !== "read" && READ_ONLY_WINDOW[os].some(w => w.app.test(r.app.trim()) && w.title.test(r.window.trim()) && !(windowRole !== undefined && w.otherRole?.test(windowRole)))) {
       return never("Ember doesn't run programs, so it never acts in the Run dialog");
     }
+    // File Explorer runs a program or script it opens with no dialog (OPENS_PROGRAMS; none on Linux and macOS).
+    const opens = r.kind !== "read" ? opensProgram(OPENS_PROGRAMS[os], r, kc) : null;
+    if (opens === "item") return never("Ember doesn't run programs, so it never opens programs or scripts from File Explorer");
+    if (opens === "command") return never("Ember doesn't run programs, and File Explorer's Open and Run as commands may start one, so it never uses them");
     if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog, os)) {
       return never("Ember doesn't run programs, so it never makes files executable or runs them");
     }

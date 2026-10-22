@@ -4,8 +4,9 @@
  * dialog is a security window by its title and the Credential Backup wizard by its program, and systemDialogOpen sees
  * each (and is false again once they close); File Explorer's address box and the Run dialog's box carry the names
  * TYPING_REFUSED expects (read through Ember's own accessibility host, the names the policy is given: the address
- * band at rest, and the box that has the keyboard after Alt+D), and the window roles READ_ONLY_WINDOW tells the Run
- * dialog from a folder window by; and through a real Electron, a password
+ * band at rest, and the box that has the keyboard after Alt+D), the window roles READ_ONLY_WINDOW tells the Run
+ * dialog from a folder window by, and File Explorer's items as OPENS_PROGRAMS reads them (a script by the extension
+ * its name shows; where Explorer hides it, the log says so); and through a real Electron, a password
  * manager's copy is recognised by CLIPBOARD_FORMATS.win32, an image copy saves without a GDI handle format, and the
  * text Ember pastes carries ExcludeClipboardContentFromMonitorProcessing as Windows itself lists it (the G5 check).
  * Each check prints what it saw, so a name that differs on a runner is in the log.
@@ -31,9 +32,10 @@ import { loadWin32System } from "../../app/main/platform/win32/system/ffi";
 import { win32SystemDialog, type SecurityVocabulary } from "../../app/main/platform/win32/system/system-dialog";
 import { hasBuiltInShell, isSecurityClass, isSecurityWindow, isTerminalApp } from "../../app/main/platform/win32/system/interim";
 import { TERMINAL_CLASSES } from "../../app/main/hands/terminals";
-import { OFFICE_APP, READ_ONLY_WINDOW, SECURITY_APP, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED } from "../../app/main/policy/vocabulary";
+import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, SECURITY_APP, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED } from "../../app/main/policy/vocabulary";
 import { CLIPBOARD_FORMATS } from "../../app/main/agent/clipboard-formats";
-import { normalizeLabel } from "../../app/main/policy/policy";
+import { normalizeLabel, opensProgram } from "../../app/main/policy/policy";
+import { KEYS } from "../../app/shared/shortcuts";
 import { friendlyApp, useAppNames } from "../../app/shared/apps";
 import { runClipboardChild } from "./vocabulary-clipboard";
 
@@ -252,6 +254,38 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
       input.close();
     }
   }, 180_000);
+
+  it("reads File Explorer's items as OPENS_PROGRAMS expects: a script by the extension its name shows, or the gap where Explorer hides it", async () => {
+    // A folder of its own (one window, two items, nothing scrolled away): a script that is never run, and a document.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-explorer-"));
+    fs.writeFileSync(path.join(dir, "ember-check.cmd"), "@rem Ember's vocabulary check: never run\r\n");
+    fs.writeFileSync(path.join(dir, "ember-notes.txt"), "notes\r\n");
+    const folder = path.basename(dir);
+    const host = await startHost();
+    const own = { ownPid: process.pid };
+    const ITEM = new Set(["list item", "icon", "table cell", "tree item"]);
+    try {
+      ps(`(New-Object -ComObject Shell.Application).Open(${quote(dir)})`);
+      const win = await waitForAsync(async () => (await host.listWindows(own)).windows.find(w => /^explorer$/i.test(w.app) && w.name.includes(folder) && !!w.path), 20_000, "File Explorer on the check folder");
+      const read = () => host.readWindow({ pid: win.pid!, path: win.path, ...own });
+      const nodes = await waitForAsync(async () => { const r = await read(); return r.nodes.some(n => ITEM.has(n.role) && /^ember-notes/i.test(n.name.trim())) ? r.nodes : null; }, 15_000, "the folder's items")
+        .catch(async (err: Error) => { throw new Error(`${err.message}: ${JSON.stringify(summary((await read()).nodes))}`, { cause: err }); });
+      // Everything named after the two files, and anything that says a file's type (the Type column), for the log.
+      console.log(`File Explorer's items as Ember's host reads them: ${JSON.stringify(summary(nodes.filter(n => /ember-(check|notes)/i.test(n.name))))}`);
+      console.log(`what the view says of types: ${JSON.stringify(summary(nodes).filter(t => /command script|text document|\btype\b/i.test(t)))}`);
+      const item = (name: RegExp) => nodes.find(n => ITEM.has(n.role) && name.test(n.name.trim()));
+      const opened = (n: AxNode) => opensProgram(OPENS_PROGRAMS.win32, { kind: "keys", app: win.app, value: "Return", element: { role: n.role, name: n.name } }, KEYS.win32);
+      const script = item(/^ember-check/i), notes = item(/^ember-notes/i);
+      expect(script, JSON.stringify(summary(nodes))).toBeTruthy();
+      expect(opened(notes!)).toBeNull();
+      if (/\.cmd$/i.test(script!.name.trim())) expect(opened(script!)).toBe("item");
+      else console.log(`File Explorer hides the extension here (${JSON.stringify(script!.name)}): OPENS_PROGRAMS can't tell the script by its name, the documented gap`);
+    } finally {
+      host.stop();
+      ps(`(New-Object -ComObject Shell.Application).Windows() | Where-Object { $_.LocationName -eq ${quote(folder)} } | ForEach-Object { $_.Quit() }`);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   describe("the clipboard, through a real Electron", () => {
     const OWN = "ExcludeClipboardContentFromMonitorProcessing";
