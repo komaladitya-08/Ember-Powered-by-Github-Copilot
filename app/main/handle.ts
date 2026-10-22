@@ -5,6 +5,9 @@
  *
  * Without a compositor (xrdp, VNC) transparent overlays render black, so the
  * handle becomes an opaque card that also shows what Ember is saying.
+ *
+ * The platform says how a floating window is made on this OS (a macOS panel,
+ * a Windows tool window) and whether click-through forwards the pointer.
  */
 
 import { BrowserWindow, screen } from "electron";
@@ -12,6 +15,8 @@ import path from "node:path";
 import type { Settings } from "./settings";
 import { revive } from "./revive";
 import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
+import type { FloatingWindow } from "./platform/types";
+import { applyAllWorkspaces } from "./platform/compose";
 
 const appDir = __dirname;
 const PILL = { width: 200, height: 56 };
@@ -23,7 +28,11 @@ const MARGIN = 12;
 export class HandleWindow {
   readonly win: BrowserWindow;
 
-  constructor(private settings: () => Settings, readonly fallback: boolean) {
+  /**
+   * `o.floating`: the platform's options and workspace rule for the handle (default: today's Linux window, on every
+   * workspace); `o.forward`: click-through forwards the pointer's moves (macOS).
+   */
+  constructor(private settings: () => Settings, readonly fallback: boolean, private o: { floating?: FloatingWindow; forward?: boolean } = {}) {
     const size = fallback ? CARD : PILL;
     this.win = new BrowserWindow({
       ...size,
@@ -43,6 +52,7 @@ export class HandleWindow {
       show: false,
       type: "toolbar",
       title: "Ember",
+      ...(o.floating?.options ?? {}),
       webPreferences: {
         preload: path.join(appDir, "preload", "handle.cjs"),
         contextIsolation: true,
@@ -53,7 +63,7 @@ export class HandleWindow {
       },
     });
     this.win.setAlwaysOnTop(true, "screen-saver");
-    this.win.setVisibleOnAllWorkspaces(true);
+    applyAllWorkspaces(this.win, o.floating ? o.floating.allWorkspaces : "plain");
     this.win.webContents.on("did-finish-load", () => {
       const primary = screen.getPrimaryDisplay();
       const init: OverlayInit = { displayId: primary.id, bounds: primary.bounds, settings: this.settings(), fallback };
@@ -94,7 +104,9 @@ export class HandleWindow {
 
   /** While Ember borrows the mouse, its own windows let clicks through (a borrowed click must never land on Ember). */
   setClickThrough(on: boolean): void {
-    if (!this.win.isDestroyed()) this.win.setIgnoreMouseEvents(on);
+    if (this.win.isDestroyed()) return;
+    if (on && this.o.forward) this.win.setIgnoreMouseEvents(true, { forward: true });
+    else this.win.setIgnoreMouseEvents(on);
   }
 
   sendSettings(s: Settings): void {

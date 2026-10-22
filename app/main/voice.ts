@@ -38,6 +38,11 @@ export interface VoiceOptions {
   modelsRoot: string;
   /** Speaker-output rejection (needs parec). */
   monitor: boolean;
+  /**
+   * Where the user allows Ember the microphone when the system refused it (Windows Settings, macOS System Settings),
+   * added to that refusal's text. Absent on Linux, where nothing asks first.
+   */
+  micHint?: string;
   onEvent: (e: VoiceEvent) => void;
   onState: (s: MicState, detail?: string) => void;
 }
@@ -91,8 +96,8 @@ export class VoiceService {
   constructor(private o: VoiceOptions) {
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
-      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message)); this.teardown(); }
-      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message)} Trying again…`); }
+      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
+      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
       else {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
@@ -340,8 +345,9 @@ export function downloadHelp(message: string): string {
   return message;
 }
 
-function micHelp(message: string): string {
-  if (/NotAllowed|Permission/i.test(message)) return "Ember wasn't allowed to use the microphone.";
+/** The microphone's error in plain words; `hint` says where to allow it when the system refused it. */
+export function micHelp(message: string, hint?: string): string {
+  if (/NotAllowed|Permission/i.test(message)) return hint ? `Ember wasn't allowed to use the microphone. ${hint}` : "Ember wasn't allowed to use the microphone.";
   if (/NotFound|DevicesNotFound/i.test(message)) return "No microphone was found.";
   if (/NotReadable|TrackStart|AbortError/i.test(message)) return "The microphone is in use by another app or unavailable.";
   return message;

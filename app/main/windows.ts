@@ -1,3 +1,8 @@
+/**
+ * The settings window ("home") and the check that an IPC message comes from one of Ember's own bundled pages. Every
+ * BrowserWindow keeps contextIsolation, the sandbox and a preload of its own.
+ */
+
 import { BrowserWindow } from "electron";
 import path from "node:path";
 
@@ -27,7 +32,10 @@ export function createHomeWindow(): BrowserWindow {
   return win;
 }
 
-/** True when an IPC message comes from one of our own bundled pages. */
+/**
+ * True when an IPC message comes from one of our own bundled pages. File URLs use "/" on every OS: path.sep is "\" on
+ * Windows, which never appears in one, so testing for it refused every settings request there.
+ */
 export function isTrustedSender(url: string): boolean {
-  return url.startsWith("file://") && decodeURIComponent(url).includes(`${path.sep}renderer${path.sep}`);
+  return url.startsWith("file://") && decodeURIComponent(url).includes("/renderer/");
 }
