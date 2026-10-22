@@ -15,7 +15,8 @@
 // Only the target's own platform builds are kept (no musl, no wasm fallbacks, no other OS). Licence and notice files
 // always are. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
 // Every file the target needs must exist, or nothing is staged; --allow-missing-sidecar stages without the
-// accessibility host (dist/app/ax-sidecar.cjs) and the UIA bridge (sidecar/uia) while the port hasn't added them.
+// accessibility host (dist/app/ax-sidecar.cjs) and the UIA bridge (sidecar/uia), an Ember that can't read apps, for a
+// local try only: CI never passes it.
 // Speech models ship beside the Linux app (an RPM sub-package); on Windows and macOS only with --with-models.
 // usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--with-models]   (after npm run build)
 import { build } from "esbuild";
