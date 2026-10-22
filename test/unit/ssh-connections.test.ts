@@ -770,12 +770,29 @@ describe("the link as its users rely on it (INT)", () => {
     let got = 0;
     link.onBytes(6, b => { got += b.length; });
     expect(got).toBe(0);
-    // Every channel's held bytes count towards one total too.
-    for (let ch = 10; ch < 10 + HELD_TOTAL_BYTES / HELD_CHANNEL_BYTES; ch++) for (let i = 0; i < HELD_CHANNEL_BYTES / chunk.length; i++) bytes(ch, chunk);
+    // Every channel's held bytes count towards one total too: past it, the channel held longest goes (a reader that gave
+    // up on it, e.g. a picture whose answer came after its request timed out), never the fresh one.
+    const full = HELD_TOTAL_BYTES / HELD_CHANNEL_BYTES;
+    for (let ch = 10; ch < 10 + full; ch++) for (let i = 0; i < HELD_CHANNEL_BYTES / chunk.length; i++) bytes(ch, chunk);
     bytes(20, [7]);
     let twenty = 0;
     link.onBytes(20, b => { twenty += b.length; });
-    expect(twenty).toBe(0);
+    expect(twenty).toBe(1);
+    // The dropped channel's later bytes go nowhere either.
+    bytes(10, [1]);
+    const sizes = Array.from({ length: full }, (_, i) => { let n = 0; link.onBytes(10 + i, b => { n += b.length; }); return n; });
+    expect(sizes).toEqual([0, ...Array.from({ length: full - 1 }, () => HELD_CHANNEL_BYTES)]);
+  });
+
+  it("never lets stale held channels starve every later picture", () => {
+    const { link, bytes } = fedLink();
+    const picture = new Uint8Array(3 * 1024 * 1024);
+    // Many pictures whose readers never came (their requests timed out), then one whose reader comes now.
+    for (let ch = 100; ch < 140; ch++) bytes(ch, picture);
+    bytes(140, picture);
+    let got = 0;
+    link.onBytes(140, b => { got += b.length; });
+    expect(got).toBe(picture.length);
   });
 
   it("lets held bytes go when the link is lost", () => {

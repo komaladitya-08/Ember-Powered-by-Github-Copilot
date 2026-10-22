@@ -15,8 +15,9 @@ import type { RemoteLink } from "./types";
  * Bytes that come for a bulk channel nobody listens to yet are held for its first listener (§5.4: a screenshot's bytes
  * travel before the answer that names their channel, and a command's output may come before cmd.run's answer is read),
  * up to these bounds: one channel's largest legitimate payload (a screenshot) and three of them in all. A channel past
- * either bound is dropped (its reader then times out: fail closed), and so is every byte for a channel whose listeners
- * have all left: it was taken, and nothing holds bytes nobody will ask for.
+ * its own bound is dropped (its reader then times out: fail closed); past the total, the channels held longest are
+ * dropped first; and so is every byte for a channel whose listeners have all left: it was taken, and nothing holds
+ * bytes nobody will ask for.
  */
 export const HELD_CHANNEL_BYTES = CAPS.image.bytes;
 export const HELD_TOTAL_BYTES = 3 * CAPS.image.bytes;
@@ -302,17 +303,26 @@ export class WorkerLink implements RemoteLink {
     };
   }
 
-  /** Holds bytes for a channel nobody listens to yet, within the bounds; a channel past them is dropped. */
+  /**
+   * Holds bytes for a channel nobody listens to yet, within the bounds. A channel past its own bound is dropped; past
+   * the total, the channels held longest go first (their readers gave up or never came: a picture whose answer came
+   * after its request timed out, a command the PC stopped waiting for), so stale bytes never starve a fresh reader.
+   */
   private hold(channel: number, b: Uint8Array): void {
     if (this.st === "lost" || this.st === "closed" || this.doneChannels.has(channel)) return;
     const kept = this.held.get(channel) ?? { chunks: [], size: 0 };
-    if (kept.size + b.length > HELD_CHANNEL_BYTES || this.heldSize + b.length > HELD_TOTAL_BYTES) {
-      this.log?.warn("remote.bytes_dropped", { channel, bytes: kept.size + b.length });
-      this.held.delete(channel);
-      this.heldSize -= kept.size;
-      this.done(channel);
-      return;
+    const drop = (ch: number, size: number, bytes: number): void => {
+      this.log?.warn("remote.bytes_dropped", { channel: ch, bytes });
+      this.held.delete(ch);
+      this.heldSize -= size;
+      this.done(ch);
+    };
+    if (kept.size + b.length > HELD_CHANNEL_BYTES) return drop(channel, kept.size, kept.size + b.length);
+    for (const [ch, k] of this.held) {
+      if (this.heldSize + b.length <= HELD_TOTAL_BYTES) break;
+      if (ch !== channel) drop(ch, k.size, k.size);
     }
+    if (this.heldSize + b.length > HELD_TOTAL_BYTES) return drop(channel, kept.size, kept.size + b.length);
     kept.chunks.push(b);
     kept.size += b.length;
     this.heldSize += b.length;
