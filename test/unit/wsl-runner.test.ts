@@ -9,10 +9,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
 import type { JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
-  createWslRunner, fallbackSecretTracker, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
+  createWslRunner, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
   parseInspect, runnerFacts, scriptInput, SWEEP_SCRIPT, toWslPath, windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
@@ -288,7 +289,7 @@ function distro(o: {
       return new Set(running ? ["Ubuntu"] : []);
     },
     windows: () => WINDOWS,
-    winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid), trackSecrets: fallbackSecretTracker,
+    winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid),
   });
   return { runner, runs, sweeps, probes, boots, uids, log, calls: fake.calls, setRunning: (v: boolean) => { running = v; } };
 }
@@ -761,29 +762,9 @@ describe("WSL runner: typing and secret prompts", () => {
     run.input(Buffer.from("x\r"));
     expect(child.written).toHaveLength(0);
     child.out("\nmore\n");
-    expect(run.secretSpans()).toEqual([{ from: `${MARKER}Password: `.length, to: `${MARKER}Password: \nmore\n`.length }]);
+    // CL's tracker (the runner's default): a span nobody can answer stays open to the end of whatever is printed.
+    expect(run.secretSpans()).toEqual([{ from: `${MARKER}Password: `.length, to: OPEN_SPAN_END }]);
     child.exit(1);
     await run.done;
-  });
-});
-
-describe("fallbackSecretTracker", () => {
-  it("opens a span at a password-like prompt and closes it at the program's next newline after Enter", () => {
-    const t = fallbackSecretTracker({ interactive: true });
-    const prompt = "Enter passphrase for key '/home/ana/.ssh/id_ed25519': ";
-    t.output(prompt);
-    expect(t.spans()).toEqual([{ from: prompt.length, to: prompt.length }]);
-    t.output("\n"); // no Enter yet: still open
-    t.enter();
-    t.output("***\nIdentity added\n");
-    expect(t.spans()).toEqual([{ from: prompt.length, to: prompt.length + 4 }]);
-    t.output("Verification code： ");
-    expect(t.spans()).toHaveLength(2);
-  });
-
-  it("ignores ordinary lines that mention a password", () => {
-    const t = fallbackSecretTracker({ interactive: true });
-    t.output("Changing the password policy: done\nall good\n");
-    expect(t.spans()).toEqual([]);
   });
 });

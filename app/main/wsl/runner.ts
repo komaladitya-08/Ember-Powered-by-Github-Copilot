@@ -30,6 +30,7 @@ import type {
   CommandRunner, GitFacts, JobHostRef, PathFact, RunExit, RunningCommand, RunSpec, RunnerFacts, ShellId, WindowsContext,
 } from "../commands/types";
 import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../commands/run/shells";
+import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
 import type { WslDistro } from "./types";
 import { decodeMessage, decodeWsl } from "./decode";
 import { BOOT_TIMEOUT_MS, WSL_SPAWN_OPTIONS, envDelete, envSet, jobHostArgv, type WslChild, type WslExec, type WslSpawn } from "./discover";
@@ -345,54 +346,6 @@ export function wslLaunch(spec: RunSpec, facts: RunnerFacts, o: { exe: string; d
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The secret tracker (CL's, §3.11 step 2; injected)
-// ---------------------------------------------------------------------------------------------------------------
-
-/** CL's SecretTracker (§3.11), structurally. */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
-
-/** §3.11 step 2's prompt pattern, exactly. */
-const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
-/** The longest line the tracker looks back over. */
-const LINE_MAX = 4096;
-
-/**
- * §3.11 step 2's tracker, as CL specifies it, for use until CL's `trackSecretPrompts` is wired in its place (the
- * service passes this one): a span opens when the output so far ends, without a newline, in a password-like prompt,
- * and closes at the first newline the program prints after the user's next Enter; on a run that can't take typing it
- * never closes (it runs to the end of the output).
- */
-export function fallbackSecretTracker(o: { interactive: boolean }): SecretTracker {
-  const done: { from: number; to: number }[] = [];
-  let seen = 0, line = "", open: number | null = null, entered = false;
-  return {
-    output(text) {
-      for (let i = 0; i < text.length; i++) {
-        const c = text[i];
-        if (c === "\n") {
-          if (open !== null && entered) {
-            done.push({ from: open, to: seen + i });
-            open = null;
-            entered = false;
-          }
-          line = "";
-        } else {
-          line = line.length >= LINE_MAX ? line.slice(-LINE_MAX / 2) + c : line + c;
-        }
-      }
-      seen += text.length;
-      if (open === null && SECRET_PROMPT.test(line)) open = seen;
-    },
-    enter() {
-      if (open !== null && o.interactive) entered = true;
-    },
-    spans() {
-      return open === null ? [...done] : [...done, { from: open, to: seen }];
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // The runner
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -419,8 +372,8 @@ export interface WslRunnerDeps {
   winPaths: readonly string[];
   /** Tells the service the uid the distro itself reported (WslDistro.defaultUid). */
   learnedUid: (uid: number) => void;
-  /** CL's trackSecretPrompts (or this module's fallback until it is wired). */
-  trackSecrets: (o: { interactive: boolean }) => SecretTracker;
+  /** The secret tracker per run (default CL's trackSecretPrompts, §3.11 step 2; tests may pass their own). */
+  trackSecrets?: (o: { interactive: boolean }) => SecretTracker;
   now?: () => number;
 }
 
@@ -678,7 +631,7 @@ class Run {
   constructor(private readonly spec: RunSpec, private readonly d: WslRunnerDeps, private readonly r: RunnerParts) {
     this.t0 = r.now();
     this.pty = r.lastFacts()?.pty ?? false;
-    this.tracker = d.trackSecrets({ interactive: this.pty });
+    this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     this.done = new Promise<RunExit>(resolve => { this.resolveDone = resolve; });
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- the handle's methods close over the run
     const run = this;
@@ -722,7 +675,7 @@ class Run {
     const launch = wslLaunch(spec, facts, { exe, distro: d.distro, jobHost: d.jobHost, env: d.env });
     if (launch.pty !== this.pty) {
       this.pty = launch.pty;
-      this.tracker = d.trackSecrets({ interactive: this.pty });
+      this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     }
     // A stopped distro is started first with a no-op, so a Stop while it boots ends the run before the command is
     // handed to wsl.exe at all ("Starting Ubuntu…" meanwhile).

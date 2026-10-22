@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { commandHash, createRemoteRunner, standInSecretTracker, type RemoteRunExit } from "../../app/main/remote/remote-runner";
+import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
+import { commandHash, createRemoteRunner, type RemoteRunExit } from "../../app/main/remote/remote-runner";
 import { agentError, fakeLink, LINUX_FACTS, recordingLog, settle } from "./remote-target-fakes";
 import type { RunExit, RunSpec } from "../../app/main/commands/types";
 import type { OpResult } from "../../app/main/remote/protocol";
@@ -196,13 +197,13 @@ describe("RemoteRunner: the user's typing and secret prompts (§3.10, §3.11, L2
     run.input(enc("hunter2\r"));
     link.bytes(20, enc("\r\nok\n"));
     expect(run.secretSpans()).toEqual([{ from: 28, to: 29 }]);
-    // On pipes nobody can answer: the span runs to the end of the output.
+    // On pipes nobody can answer: the span runs to the end of the output (CL's tracker, the runner's default: an open end).
     const pipes = setup({ pty: false });
     const piped = pipes.runner.start(specOf());
     await settle();
     pipes.link.bytes(20, enc("Passphrase: "));
     pipes.link.bytes(20, enc("anything\nmore\n"));
-    expect(piped.secretSpans()).toEqual([{ from: 12, to: 26 }]);
+    expect(piped.secretSpans()).toEqual([{ from: 12, to: OPEN_SPAN_END }]);
   });
 
   it("uses CL's tracker when it is handed one", async () => {
@@ -322,27 +323,5 @@ describe("RemoteRunner: facts, paths and git", () => {
     expect(await runner.gitFacts("/home/deploy/src")).toBeNull();
     link.answer("cmd.git", () => ({ git: { branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" } }));
     expect(await runner.gitFacts("/home/deploy/src")).toEqual({ branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" });
-  });
-});
-
-describe("standInSecretTracker (§3.11 step 2)", () => {
-  it("opens a span after a prompt for a secret and closes it at the first newline after the user's Enter", () => {
-    const t = standInSecretTracker({ interactive: true });
-    const prompt = "Enter passphrase for key '/home/deploy/.ssh/id_ed25519': ";
-    t.output(prompt);
-    t.output("****");
-    t.enter();
-    t.output("\nIdentity added\n");
-    const first = { from: prompt.length, to: prompt.length + 4 };
-    expect(t.spans()).toEqual([first]);
-    t.output("Verification code: ");
-    const end = prompt.length + 4 + "\nIdentity added\n".length + "Verification code: ".length;
-    expect(t.spans()).toEqual([first, { from: end, to: end }]);
-  });
-
-  it("matches nothing in ordinary output", () => {
-    const t = standInSecretTracker({ interactive: false });
-    t.output("Compiling 12 files\nTokens: 42 parsed\nDone.\n");
-    expect(t.spans()).toEqual([]);
   });
 });

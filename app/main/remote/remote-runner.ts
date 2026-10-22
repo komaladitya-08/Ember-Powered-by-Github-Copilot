@@ -20,9 +20,10 @@ import type { TargetId } from "../../shared/targets";
 import type { CommandRunner, GitFacts, PathFact, RunExit, RunnerFacts, RunningCommand, RunSpec } from "../commands/types";
 import type { Logger } from "../logger";
 import type { RemoteLink } from "./types";
+import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
 
-/** CL's secret-prompt tracker (§3.11 step 2; commands/prompts.ts trackSecretPrompts), structurally. */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+/** CL's secret-prompt tracker (§3.11 step 2; commands/prompts.ts). */
+export type { SecretTracker };
 
 /** A run's end as the flow reads it, with the extra rule ids a remote's `needs_confirm` carried (the flow resends with them). */
 export type RemoteRunExit = RunExit & { rules?: string[] };
@@ -49,7 +50,7 @@ export interface RemoteRunnerOptions {
   log: Logger;
   /** The remote's facts as last known (welcome.facts at first): whether a run there gets a PTY before the agent says. */
   facts: RunnerFacts;
-  /** CL's trackSecretPrompts (default: standInSecretTracker, the same rule). */
+  /** The secret tracker per run (default CL's trackSecretPrompts; tests may pass their own). */
   trackSecrets?: (o: { interactive: boolean }) => SecretTracker;
   now?: () => number;
   timers?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
@@ -72,47 +73,6 @@ const MAX_TYPED_LINES = 1000;
 const MAX_TYPED_LINE = 4096;
 /** The remote's own card lines passed on with a needs_confirm, at most (the flow shows ten). */
 const SAYS_MAX = 10;
-
-/** §3.11 step 2: a line ending like this, with no newline after it, asks for a secret. */
-export const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
-/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a line is matched. */
-const TERMINAL_CODES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g; // eslint-disable-line no-control-regex -- terminal codes are what's removed
-
-/**
- * §3.11 step 2's tracker, for use until CL's trackSecretPrompts is wired in its place (the same rule): a span opens where
- * the output so far ends, without a newline, in a line matching SECRET_PROMPT, and closes at the first newline the
- * program prints after the user's next Enter; on a run that can't take typing nothing closes it, so it runs to the end.
- * Positions are characters (UTF-16 units) of the output as decoded.
- */
-export function standInSecretTracker(o: { interactive: boolean }): SecretTracker {
-  const done: { from: number; to: number }[] = [];
-  let length = 0;
-  let line = "";
-  let open: number | null = null;
-  let entered = false;
-  return {
-    output(text) {
-      if (open !== null && entered) {
-        const nl = text.indexOf("\n");
-        if (nl >= 0) {
-          done.push({ from: open, to: length + nl });
-          open = null;
-          entered = false;
-        }
-      }
-      length += text.length;
-      const nl = text.lastIndexOf("\n");
-      line = nl >= 0 ? text.slice(nl + 1) : (line + text).slice(-512);
-      if (open === null && SECRET_PROMPT.test(line.replace(TERMINAL_CODES, "").replace(/\r/g, ""))) open = length;
-    },
-    enter() {
-      if (open !== null && o.interactive) entered = true;
-    },
-    spans() {
-      return open === null ? [...done] : [...done, { from: open, to: length }];
-    },
-  };
-}
 
 type StopWhy = "user" | "task" | "killswitch" | "timeout";
 /** How a run the PC stopped ended, by who stopped it. */
@@ -262,10 +222,10 @@ class RemoteRun implements RemoteRunningCommand {
 
   private trackerFor(interactive: boolean): SecretTracker {
     try {
-      return (this.ctx.o.trackSecrets ?? standInSecretTracker)({ interactive });
+      return (this.ctx.o.trackSecrets ?? trackSecretPrompts)({ interactive });
     } catch {
-      // A tracker that can't be made: the stand-in's rule keeps prompts out all the same.
-      return standInSecretTracker({ interactive });
+      // A tracker that can't be made: CL's own keeps prompts out all the same.
+      return trackSecretPrompts({ interactive });
     }
   }
 

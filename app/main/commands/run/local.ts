@@ -25,6 +25,7 @@ import { commandEnv, mergeEnv } from "./env";
 import { localFacts, SAFE_POSIX_PATH } from "./facts";
 import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths } from "./inspect";
+import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "./shells";
 import { linesKept, RUN_ID, sweepLocal } from "./sweep";
@@ -161,8 +162,8 @@ export function launchArgv(
   };
 }
 
-/** The secret tracker (§3.11; CL's `commands/prompts.ts` exports the same shape with trackSecretPrompts). */
-export interface SecretTracker { output(text: string): void; enter(): void; spans(): { from: number; to: number }[] }
+/** CL's secret tracker (§3.11 step 2; `commands/prompts.ts`), fed the run's output decoded as a stream. */
+export type { SecretTracker };
 
 /** What a run kept for shaping (§3.10, §3.11). */
 export interface KeptOutput {
@@ -349,7 +350,7 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
     inspect: (paths, cwd) => inspectPaths(paths, cwd, { os: o.os }),
     gitFacts: cwd => readGitFacts(cwd, gitRunner({ os: o.os, env: o.env, extraPath: o.extraPath })),
     isDir: p => fs.promises.stat(p).then(s => s.isDirectory(), () => false),
-    tracker: standInSecretTracker,
+    tracker: trackSecretPrompts,
   };
 }
 
@@ -820,44 +821,7 @@ class OutputKeep {
   }
 }
 
-/** §3.11 step 2's prompt pattern: the output so far ends, without a newline, in a line asking for a secret. */
-const SECRET_PROMPT = /(password|passphrase|passcode|pin|otp|token|secret|verification code|one-time code|2fa code|\[sudo\] password for [^:]*)[^\n]{0,40}[:：]\s*$/i;
-/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a line is matched or a reason is shown. */
+/** Terminal sequences (OSC, CSI, two-byte escapes), removed before a failed start's reason is shown. */
 const TERMINAL_CODES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g; // eslint-disable-line no-control-regex -- terminal codes are what's removed
 /** Control characters other than tab and newline. */
 const OTHER_CONTROLS = /[\0-\x08\x0b-\x1f\x7f]/g; // eslint-disable-line no-control-regex -- control characters are what's removed
-
-/**
- * A stand-in for CL's trackSecretPrompts (§3.11 step 2) until package CL merges: a span opens where the output so far
- * ends, without a newline, in a line matching SECRET_PROMPT, and closes at the first newline the program prints after
- * the user's next Enter; on a run that can't take typing nothing closes it, so it runs to the end of the output.
- */
-function standInSecretTracker(o: { interactive: boolean }): SecretTracker {
-  const done: { from: number; to: number }[] = [];
-  let length = 0;
-  let line = "";
-  let open: number | null = null;
-  let entered = false;
-  return {
-    output(text) {
-      if (open !== null && entered) {
-        const nl = text.indexOf("\n");
-        if (nl >= 0) {
-          done.push({ from: open, to: length + nl });
-          open = null;
-          entered = false;
-        }
-      }
-      length += text.length;
-      const nl = text.lastIndexOf("\n");
-      line = nl >= 0 ? text.slice(nl + 1) : (line + text).slice(-512);
-      if (open === null && SECRET_PROMPT.test(line.replace(TERMINAL_CODES, "").replace(/\r/g, ""))) open = length;
-    },
-    enter() {
-      if (open !== null && o.interactive) entered = true;
-    },
-    spans() {
-      return open === null ? [...done] : [...done, { from: open, to: length }];
-    },
-  };
-}
