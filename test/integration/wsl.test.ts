@@ -9,7 +9,7 @@
  * WSLInterop-late, the drive root, the uid from inside against the registry's hint, RunOOBE's value); the runner with
  * script (a PTY on WSL1 too), exit codes, a multi-line command through EMBER_CMD_B64, WSLENV replaced, a failed start
  * with wsl.exe's own message decoded; Stop (Ctrl+C, and the sweeps when the command ignores it), stragglers named; an
- * interop child ended with the job; inspect (paths as data, symlinks resolved) and git facts; boot ids; the doctor row;
+ * interop child ended with the job; inspect (paths as data, symlinks resolved), script reads and git facts; boot ids; the doctor row;
  * and L22's channel check (4 MiB of random bytes through wsl.exe's stdio unchanged; the ssh half waits for SA).
  *
  * Skipped without EMBER_WSL_TEST; with EMBER_WSL_TEST=1 it fails when Windows, WSL, the distro or the built job host is
@@ -268,6 +268,19 @@ suite("WSL on a real Windows runner", () => {
     expect(facts[4]).toEqual({ exists: null, real: null });
     const pwned = await runner.runScript("[ -e /tmp/ember-wa-pwned ] && echo yes || echo no");
     expect(pwned!.stdout.toString().trim()).toBe("no");
+  }, LONG);
+
+  it("reads a script's bytes as they are (L8): a BOM and UTF-8 kept, null past 64 KiB, for a FIFO, a device or /proc", async () => {
+    await run(runner, [
+      "mkdir -p /tmp/ember-ts && cd /tmp/ember-ts && rm -f fifo.sh",
+      "printf '\\357\\273\\277#!/bin/sh\\necho \\303\\251\\n' > bom.sh",
+      "head -c 65536 /dev/zero | tr '\\0' a > max.sh && head -c 65537 /dev/zero | tr '\\0' a > over.sh",
+      "mkfifo fifo.sh && ln -sfn /proc/self/environ env.sh && ln -sfn /dev/zero zero.sh",
+    ].join("; "));
+    expect(await runner.readScript("bom.sh", "/tmp/ember-ts")).toBe("\uFEFF#!/bin/sh\necho é\n");
+    expect(await runner.readScript("/tmp/ember-ts/max.sh", "/")).toHaveLength(65_536);
+    for (const f of ["over.sh", "fifo.sh", "env.sh", "zero.sh", "missing.sh"]) expect(await runner.readScript(f, "/tmp/ember-ts"), f).toBeNull();
+    await run(runner, "rm -rf /tmp/ember-ts");
   }, LONG);
 
   it("reads git's push facts in a work tree, and none outside one", async () => {
