@@ -578,7 +578,7 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
 
   const sweep = async (signal: "INT" | "TERM" | "KILL" | "0", runId: string): Promise<string[]> => {
     const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", signal, runId], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
-    return r.stdout.toString("utf8").split("\n").map(l => /^\d+ (.*)$/.exec(l)?.[1]?.trim() ?? "").filter(Boolean);
+    return r.stdout.toString("utf8").split("\n").map(l => programName(/^\d+ (.*)$/.exec(l)?.[1] ?? "")).filter(Boolean);
   };
 
   const runner: WslRunner = {
@@ -729,6 +729,9 @@ class Run {
       if (this.stopWhy || this.ended) return;
       if (!boot) throw new Error(`${d.distro} didn't start`);
     }
+    // A Stop or the kill switch while the running set was read (the distro already ran) has ended this run: the
+    // command must never be handed to wsl.exe after that, where nothing could stop it any more.
+    if (this.stopWhy || this.ended) return;
     const child = d.spawn(launch.command, launch.args, { ...WSL_SPAWN_OPTIONS, env: launch.env });
     this.child = child;
     d.log.info("wsl.run_started", { distro: d.distro, runId: spec.runId, pty: launch.pty });
@@ -938,11 +941,15 @@ class Run {
       return;
     }
     this.end(exit);
-    // A natural end: report (without waiting) anything still carrying the run's marker; nothing is killed.
-    void this.r.sweep("0", this.spec.runId).then(names => {
+    // A natural end: report (without waiting) anything still carrying the run's marker; nothing is killed. Only while
+    // the distro still runs: a command that shut it down (`poweroff`, `wsl.exe --terminate` through interop) leaves
+    // nothing behind, and a sweep would start it again.
+    void (async () => {
+      if (!(await this.d.runningNow()).has(this.d.distro)) return;
+      const names = await this.r.sweep("0", this.spec.runId);
       this.stragglerNames = names;
       if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
-    });
+    })().catch(err => this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err }));
   }
 
   /** The process is gone: stop holding its stdin (the job host then ends its job; the ladder's sweeps go on). */
@@ -963,6 +970,15 @@ class Run {
     this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes });
     this.resolveDone(exit);
   }
+}
+
+/**
+ * A straggler's name as the status line and the model may show it: a process sets its own `comm` (any 15 bytes), so
+ * control, bidi and zero-width characters (a terminal code, a reversed name) become "?" and it is cut to 32
+ * characters.
+ */
+export function programName(comm: string): string {
+  return comm.trim().replace(/[\p{Cc}\p{Cf}]/gu, "?").slice(0, 32);
 }
 
 /** An error as plain words (the message of one Ember made; a generic sentence otherwise). */

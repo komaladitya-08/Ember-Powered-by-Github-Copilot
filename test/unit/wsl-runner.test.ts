@@ -235,6 +235,10 @@ function hereDoc(script: string): string[] {
 function distro(o: {
   facts?: string; listed?: WslDistro | null; running?: boolean; jobHost?: JobHostRef | null; sweepNames?: Record<string, string[]>;
   hang?: ("facts" | "boot" | "KILL" | "TERM")[]; inspect?: (lines: string[]) => string | null; git?: string;
+  /** What the service's cached running set says (default: the distro's real state). */
+  cachedRunning?: boolean;
+  /** runningNow() answers only once this settles. */
+  runningNowWait?: Promise<void>;
 } = {}) {
   const runs: SpawnCall[] = [];
   const sweeps: { signal: string; call: SpawnCall; at: number }[] = [];
@@ -278,7 +282,12 @@ function distro(o: {
   const exec = createWslExec({ exe: () => EXE, env: ENV, jobHost, spawn: fake.spawn, log });
   const runner: WslRunner = createWslRunner({
     log, distro: "Ubuntu", env: ENV, jobHost, spawn: fake.spawn, exec, exe: () => EXE, listed: async () => listed,
-    isRunning: () => running, runningNow: async () => new Set(running ? ["Ubuntu"] : []), windows: () => WINDOWS,
+    isRunning: () => o.cachedRunning ?? running,
+    runningNow: async () => {
+      if (o.runningNowWait) await o.runningNowWait;
+      return new Set(running ? ["Ubuntu"] : []);
+    },
+    windows: () => WINDOWS,
     winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid), trackSecrets: fallbackSecretTracker,
   });
   return { runner, runs, sweeps, probes, boots, uids, log, calls: fake.calls, setRunning: (v: boolean) => { running = v; } };
@@ -405,6 +414,19 @@ describe("WSL runner: starting a command", () => {
     expect(w.sweeps[0].call.child.stdinText()).toBe(`${SWEEP_SCRIPT}\nexit\n`);
   });
 
+  it("doesn't start a distro the command shut down just to look for what outlived the run", async () => {
+    const w = distro({ sweepNames: {} });
+    const run = w.runner.start(spec({ command: "sudo poweroff" }));
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(MARKER);
+    w.setRunning(false);
+    w.runs[0].child.exit(0);
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0 });
+    await flush(50);
+    expect(w.sweeps).toHaveLength(0);
+    expect(w.calls).toHaveLength(2); // the facts and the run: nothing after it
+  });
+
   it("reuses the facts for 10 s, then reads them again (the default user may have changed)", async () => {
     vi.useFakeTimers();
     try {
@@ -473,6 +495,21 @@ describe("WSL runner: starting a stopped distro", () => {
     expect(w.runs).toHaveLength(0);
   });
 
+  it("never hands the command to wsl.exe when the kill switch comes while the running set is read", async () => {
+    let release!: () => void;
+    const w = distro({ cachedRunning: false, runningNowWait: new Promise<void>(r => { release = r; }) });
+    await w.runner.facts();
+    const run = w.runner.start(spec());
+    await vi.advanceTimersByTimeAsync(0);
+    await w.runner.stopAll("killswitch");
+    expect(await run.done).toMatchObject({ ended: "killswitch" });
+    // The distro turns out to be running already: still nothing is started for a run that has ended.
+    release();
+    await vi.advanceTimersByTimeAsync(PRESTART_STOP_MS);
+    expect(w.runs).toHaveLength(0);
+    expect(w.boots).toHaveLength(0);
+  });
+
   it("stops a run that is still waiting for the distro without ever spawning it", async () => {
     const w = distro({ running: false, hang: ["facts"] });
     const run = w.runner.start(spec());
@@ -498,7 +535,8 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
   }
 
   it("PTY: Ctrl+C at once, TERM at 300 ms, KILL at 1 s and only then the job host, a last KILL sweep at 1.5 s", async () => {
-    const { w, run, child } = await started({ sweepNames: { KILL: ["sleep"] } });
+    // A process names itself: a terminal code or a bidi override in its name is shown as "?".
+    const { w, run, child } = await started({ sweepNames: { KILL: ["sleep", "\x1b[2Jfake\u202esudo"] } });
     let exit: RunExit | null = null;
     void run.done.then(e => { exit = e; });
     run.stop("user");
@@ -521,8 +559,8 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
     await vi.advanceTimersByTimeAsync(0);
     expect(exit).toMatchObject({ ended: "stopped-user" });
-    expect(run.stragglers()).toEqual(["sleep"]);
-    expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 1)).toBe(true);
+    expect(run.stragglers()).toEqual(["sleep", "?[2Jfake?sudo"]);
+    expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 2)).toBe(true);
   });
 
   it("terminates the job host anyway when the KILL sweep hangs", async () => {
