@@ -393,6 +393,19 @@ describe("the local runner's spawn", () => {
     const failing = createRunner({ ...h.options, elevated: () => { throw new Error("can't read the token"); } }, h.deps);
     await expect(failing.facts()).resolves.toMatchObject({ privileged: true });
   });
+
+  it("finds its facts afresh for each task, one search at a time, and starts runs on the last ones found", async () => {
+    let searches = 0;
+    let found: RunnerFacts = linux;
+    const h = harness(linux, { facts: async () => { searches++; return found; } });
+    await Promise.all([h.runner.facts(), h.runner.facts()]);
+    expect(searches).toBe(1);
+    found = { ...linux, script: null, pty: false };
+    await expect(h.runner.facts()).resolves.toMatchObject({ pty: false });
+    expect(searches).toBe(2);
+    h.runner.start(spec());
+    expect(h.spawned[0].command).toBe("/usr/bin/bash");
+  });
 });
 
 describe("a local run", () => {

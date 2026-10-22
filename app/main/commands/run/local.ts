@@ -208,7 +208,7 @@ export interface RunnerDeps {
   exec(file: string, args: string[]): Promise<{ code: number | null; stdout: string }>;
   /** The environment sweep (§3.13): the names of the processes carrying the run's marker, each sent `signal`. */
   sweep(runId: string, signal: NodeJS.Signals | null): Promise<string[]>;
-  /** The runner's facts without the live parts (pids, privilege), found once. */
+  /** The runner's facts without the live parts (pids, privilege). */
   facts(): Promise<RunnerFacts>;
   inspect(paths: string[], cwd: string): Promise<PathFact[]>;
   gitFacts(cwd: string): Promise<GitFacts | null>;
@@ -242,13 +242,18 @@ export function createLocalRunner(o: {
 export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): CommandRunner {
   const d: RunnerDeps = { ...defaultDeps(o), ...deps };
   const runs = new Set<LocalRun>();
+  // Found afresh on every facts() call (the flow asks once per task), one search at a time; a run starts on the last.
   let cached: RunnerFacts | null = null;
   let pending: Promise<RunnerFacts> | null = null;
-  const staticFacts = (): Promise<RunnerFacts> => {
+  const refresh = (): Promise<RunnerFacts> => {
     pending ??= d.facts().then(
-      f => (cached = f),
+      f => {
+        cached = f;
+        pending = null;
+        return f;
+      },
       err => {
-        pending = null; // asked again next time
+        pending = null;
         throw err;
       },
     );
@@ -272,7 +277,7 @@ export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): 
 
   return {
     target: o.target ?? "local",
-    facts: async () => live(await staticFacts()),
+    facts: async () => live(await refresh()),
     inspect: async (paths, cwd) => {
       try {
         return await d.inspect(paths, cwd);
@@ -292,7 +297,7 @@ export function createRunner(o: RunnerOptions, deps: Partial<RunnerDeps> = {}): 
       runs.add(run);
       void run.done.then(() => runs.delete(run));
       if (cached) run.launch(cached);
-      else staticFacts().then(f => run.launch(f), () => run.failToStart("Ember couldn't find out which shells this computer has."));
+      else refresh().then(f => run.launch(f), () => run.failToStart("Ember couldn't find out which shells this computer has."));
       return run;
     },
     async stopAll(why) {
