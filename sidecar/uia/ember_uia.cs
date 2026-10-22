@@ -416,6 +416,74 @@ namespace Ember.Uia
       }
       return handles;
     }
+
+    /// <summary>A set of process ids (positive whole numbers); empty when the key is missing or null.</summary>
+    internal static Dictionary<int, bool> Pids(JObj p, string key)
+    {
+      Dictionary<int, bool> pids = new Dictionary<int, bool>();
+      object v = p.Get(key);
+      if (v == null) return pids;
+      IList list = v as IList;
+      if (list == null) throw Bad(key + " must be a list of process ids");
+      foreach (object x in list)
+      {
+        double d = x is double ? (double)x : 0;
+        if (d < 1 || d > int.MaxValue || d != Math.Floor(d)) throw Bad(key + " must be a list of process ids");
+        pids[(int)d] = true;
+      }
+      return pids;
+    }
+  }
+
+  /// <summary>
+  /// Rules about top-level windows that take their facts as arguments (Win reads them), so they need no Win32 call
+  /// and are kept in the core.
+  /// </summary>
+  internal static class WindowRules
+  {
+    /// <summary>The class of a UWP app's frame; ApplicationFrameHost draws the frames of every UWP app.</summary>
+    internal const string FrameClass = "ApplicationFrameWindow";
+    /// <summary>The program named for a console window (conhost draws them).</summary>
+    internal const string ConsoleProgram = "conhost";
+
+    internal static bool IsFrame(string className)
+    {
+      return string.Equals(className, FrameClass, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A classic console window or a pseudo console's: Windows reports the process of its first client (python,
+    /// cmd, ssh...) as the window's, though conhost draws it.
+    /// </summary>
+    internal static bool IsConsole(string className)
+    {
+      return string.Equals(className, "ConsoleWindowClass", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(className, "PseudoConsoleWindow", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The process a request about a window counts against when it times out (its busy key): for a UWP frame the
+    /// app it hosts, since ApplicationFrameHost is one process for every UWP window and one hung app must not make
+    /// them all busy; the frame's own process when it hosts none; for any other window its own process.
+    /// </summary>
+    internal static int BusyKey(string className, int pid, int hostedPid)
+    {
+      return hostedPid > 0 && IsFrame(className) ? hostedPid : pid;
+    }
+
+    /// <summary>
+    /// The program a window is named after (topWindows' processName): conhost for a console window, whose client
+    /// program (the one Windows reports) goes to clientProgram; null when there is none to name.
+    /// </summary>
+    internal static string ProgramOf(string className, string program, out string clientProgram)
+    {
+      clientProgram = null;
+      if (!IsConsole(className)) return program;
+      bool host = string.Equals(program, ConsoleProgram, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(program, "OpenConsole", StringComparison.OrdinalIgnoreCase);
+      if (!string.IsNullOrEmpty(program) && !host) clientProgram = program;
+      return ConsoleProgram;
+    }
   }
 
   internal delegate object Handler(Call call);
@@ -458,7 +526,10 @@ namespace Ember.Uia
     internal readonly int DeadlineMs;
     private readonly long started = Stopwatch.GetTimestamp();
 
-    /// <summary>The process the call touches (0 when none or unknown).</summary>
+    /// <summary>
+    /// The process the call counts against: the one it touches, or for a UWP frame the app it hosts (its busy key,
+    /// WindowRules.BusyKey); 0 when none or unknown.
+    /// </summary>
     internal int Pid;
     /// <summary>A window of that process, for the hung-app probe (zero: find one).</summary>
     internal IntPtr Window;
@@ -511,15 +582,16 @@ namespace Ember.Uia
   {
     internal readonly int Handle;
     internal readonly object Element;
-    internal readonly int Pid;
+    /// <summary>The process requests about the element count against (its busy key, WindowRules.BusyKey).</summary>
+    internal readonly int Key;
     internal readonly IntPtr Window;
     internal LinkedListNode<int> Node;
 
-    internal Entry(int handle, object element, int pid, IntPtr window)
+    internal Entry(int handle, object element, int key, IntPtr window)
     {
       Handle = handle;
       Element = element;
-      Pid = pid;
+      Key = key;
       Window = window;
     }
   }
@@ -540,7 +612,7 @@ namespace Ember.Uia
 
     internal int Count { get { lock (gate) return map.Count; } }
 
-    internal int Add(object element, int pid, IntPtr window)
+    internal int Add(object element, int key, IntPtr window)
     {
       lock (gate)
       {
@@ -548,7 +620,7 @@ namespace Ember.Uia
         {
           next = next == int.MaxValue ? 1 : next + 1;
         } while (map.ContainsKey(next));
-        Entry e = new Entry(next, element, pid, window);
+        Entry e = new Entry(next, element, key, window);
         e.Node = lru.AddLast(next);
         map[next] = e;
         while (map.Count > cap)
@@ -732,10 +804,12 @@ namespace Ember.Uia
     internal Func<Exception, BridgeError> MapError;
     /// <summary>Has the call's process stopped answering? Asked after an action times out.</summary>
     internal Func<Call, bool> Hung;
-    /// <summary>Ends the process when Environment.Exit doesn't within 300 ms (a worker stuck in a hung app).</summary>
-    internal Action<int> HardExit;
-    /// <summary>Called on stdin EOF; tests replace it.</summary>
+    /// <summary>Ends the process at once with this exit code (TerminateProcess); without it, Environment.Exit.</summary>
+    internal Action<int> Terminate;
+    /// <summary>Called on stdin EOF or a broken stdout; tests replace it.</summary>
     internal Action<int> Exit;
+    // 1 once ExitProcess has begun (Interlocked).
+    private int exiting;
 
     internal Server(MethodSpec[] table, Stream output, HandleTable handles, Pool pool)
     {
@@ -993,22 +1067,35 @@ namespace Ember.Uia
       }
     }
 
+    /// <summary>
+    /// Ends the process: writes the exit line, then terminates it at once. Every answer was flushed as it was written,
+    /// so ending without an orderly shutdown loses nothing. On windows-2022 (CI runs 113 and 114) the exit came 2.3 s
+    /// after end of input, the same with a backstop thread set to end the process after 1.5 s and after 300 ms, so by
+    /// the timings that thread never got to run: the .NET Framework's shutdown (Environment.Exit) stops the other
+    /// managed threads and then waits up to 2 s for ProcessExit handlers and finalizers, and ExitProcess ends every
+    /// other thread before it runs each DLL's detach code (UI Automation's and COM's among them). TerminateProcess does
+    /// neither. The exit line tells the one other explanation, a late end of input, apart.
+    /// </summary>
     private void ExitProcess(int code)
     {
-      // Every answer is flushed as it is written, so nothing is lost by ending at once. Under Windows PowerShell 5.1,
-      // Environment.Exit waited for the host's own shutdown for over 1.5 s on windows-2022 (CI run 113).
-      Thread backstop = new Thread(delegate ()
+      // Once. Anyone else arriving here (a worker whose write found stdout closed, the exit line's own failed write)
+      // has nothing left to do: the first caller ends the process.
+      if (Interlocked.Exchange(ref exiting, 1) != 0) return;
+      // The exit line tells a client the bridge saw its input end, apart from how long the process then took to go.
+      // It is written on its own thread: a client that no longer reads stdout must not keep the process alive.
+      Thread last = new Thread(delegate ()
       {
-        Thread.Sleep(300);
-        try
-        {
-          if (HardExit != null) HardExit(code);
-          else Process.GetCurrentProcess().Kill();
-        }
-        catch (Exception) { /* nothing else can end it */ }
+        try { Write(Json.Write(new JObj().Add("exit", code))); }
+        catch (Exception) { /* stdout is gone: there is nobody to tell */ }
       });
-      backstop.IsBackground = true;
-      backstop.Start();
+      last.IsBackground = true;
+      last.Start();
+      last.Join(200);
+      if (Terminate != null)
+      {
+        try { Terminate(code); }
+        catch (Exception) { /* fall back to the runtime's own exit below */ }
+      }
       Environment.Exit(code);
     }
   }
@@ -1023,7 +1110,8 @@ namespace Ember.Uia
 
     /// <summary>
     /// Sets Per-Monitor-V2 DPI awareness, writes the ready line and serves requests from stdin until it closes, then
-    /// exits the process with code 0. Returns 1 when it can't start (after writing a fatal line).
+    /// ends the process with code 0 (it doesn't return then). Returns 1 when it can't start (after writing a fatal
+    /// line).
     /// </summary>
     public static int Run()
     {
@@ -1034,15 +1122,16 @@ namespace Ember.Uia
       {
         // Before anything touches UI Automation: a DPI-unaware client gets virtualised (scaled) bounds.
         string dpi = Dpi.Setup();
+        string processDpi = Dpi.DescribeProcess();
         HandleTable handles = new HandleTable(20000);
         Pool pool = new Pool(64, Dpi.ThreadInit);
         Server server = new Server(Methods.Table(), stdout, handles, pool);
         server.MapError = Faults.Map;
         server.Hung = Win.IsHung;
-        server.HardExit = Win.Terminate;
-        Methods.Init(server, dpi);
+        server.Terminate = Win.Terminate;
+        Methods.Init(server, dpi, processDpi);
         TextReader stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, false), false, 1 << 16);
-        return server.Run(stdin, new JObj().Add("ready", true).Add("version", Version).Add("dpi", dpi));
+        return server.Run(stdin, new JObj().Add("ready", true).Add("version", Version).Add("dpi", dpi).Add("processDpi", processDpi));
       }
       catch (Exception e)
       {
@@ -1084,6 +1173,10 @@ namespace Ember.Uia
 
     [DllImport("user32.dll")]
     internal static extern int GetAwarenessFromDpiAwarenessContext(IntPtr value);
+
+    // Windows 10 1803 and later; null asks about the calling process.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetDpiAwarenessContextForProcess(IntPtr process);
 
     [DllImport("user32.dll")]
     internal static extern bool IsProcessDPIAware();
@@ -1195,6 +1288,32 @@ namespace Ember.Uia
         return Name(Native.GetAwarenessFromDpiAwarenessContext(context));
       }
       catch (EntryPointNotFoundException) { /* before Windows 10 1607: ask the process instead */ }
+      return FromProcessApi();
+    }
+
+    /// <summary>
+    /// The process's own DPI awareness (processDpi in the ready line and status), which can differ from the threads'
+    /// when powershell.exe's manifest had already fixed it: UI Automation may then convert some coordinates by the
+    /// process's awareness. Read as a context where Windows has it, since GetProcessDpiAwareness can't tell
+    /// Per-Monitor-V2 from Per-Monitor and the host compares the two names.
+    /// </summary>
+    internal static string DescribeProcess()
+    {
+      try
+      {
+        IntPtr context = Native.GetDpiAwarenessContextForProcess(IntPtr.Zero);
+        if (context != IntPtr.Zero)
+        {
+          if (Native.AreDpiAwarenessContextsEqual(context, PerMonitorV2)) return "per-monitor-v2";
+          return Name(Native.GetAwarenessFromDpiAwarenessContext(context));
+        }
+      }
+      catch (EntryPointNotFoundException) { /* before Windows 10 1803: ask shcore below */ }
+      return FromProcessApi();
+    }
+
+    private static string FromProcessApi()
+    {
       try
       {
         int awareness;
@@ -1351,22 +1470,44 @@ namespace Ember.Uia
     /// <summary>For an ApplicationFrameHost frame: the process of the UWP app it hosts (0 when it has none).</summary>
     internal static int Hosted(IntPtr frame, int framePid)
     {
+      IntPtr core = HostedWindow(frame, framePid, 0);
+      return core == IntPtr.Zero ? 0 : PidOf(core);
+    }
+
+    /// <summary>
+    /// A frame's Windows.UI.Core.CoreWindow child that belongs to another process than the frame's (the hosted app),
+    /// and to process <c>pid</c> unless that is 0; zero when there is none. FindWindowEx sends no message.
+    /// </summary>
+    internal static IntPtr HostedWindow(IntPtr frame, int framePid, int pid)
+    {
       IntPtr child = IntPtr.Zero;
       for (int i = 0; i < 16; i++)
       {
         child = Native.FindWindowExW(frame, child, "Windows.UI.Core.CoreWindow", null);
-        if (child == IntPtr.Zero) return 0;
-        int pid = PidOf(child);
-        if (pid != 0 && pid != framePid) return pid;
+        if (child == IntPtr.Zero) return IntPtr.Zero;
+        int owner = PidOf(child);
+        if (owner != 0 && owner != framePid && (pid == 0 || owner == pid)) return child;
       }
-      return 0;
+      return IntPtr.Zero;
     }
 
-    /// <summary>Asked after an action timed out: does the process still answer window messages?</summary>
+    /// <summary>The busy key of a window of process <c>pid</c> (WindowRules.BusyKey): a UWP frame's hosted app.</summary>
+    internal static int BusyKey(IntPtr hwnd, int pid)
+    {
+      if (hwnd == IntPtr.Zero || pid <= 0) return pid;
+      string cls = ClassName(hwnd);
+      return WindowRules.IsFrame(cls) ? WindowRules.BusyKey(cls, pid, Hosted(hwnd, pid)) : pid;
+    }
+
+    /// <summary>
+    /// Asked after an action timed out: does the call's process still answer window messages? For a UWP frame whose
+    /// hosted app the call counts against, its CoreWindow is asked (the frame's process draws only the frame).
+    /// </summary>
     internal static bool IsHung(Call c)
     {
       IntPtr h = c.Window;
-      if (h == IntPtr.Zero || PidOf(h) != c.Pid) h = AnyWindowOf(c.Pid);
+      if (h != IntPtr.Zero && PidOf(h) != c.Pid) h = HostedWindow(h, PidOf(h), c.Pid);
+      if (h == IntPtr.Zero) h = AnyWindowOf(c.Pid);
       if (h == IntPtr.Zero) return false;
       IntPtr result;
       return Native.SendMessageTimeoutW(h, 0, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung, 300, out result) == IntPtr.Zero;
@@ -1404,6 +1545,15 @@ namespace Ember.Uia
         if (com.ErrorCode == AccessDenied) return new BridgeError("denied", "access denied (the app may run as administrator)");
       }
       return null;
+    }
+
+    /// <summary>
+    /// What failed, for a diagnostic field: the exception's type and HRESULT, never its message (a provider's
+    /// message could quote what is on the screen).
+    /// </summary>
+    internal static string Describe(Exception e)
+    {
+      return e.GetType().Name + " 0x" + e.HResult.ToString("x8", CultureInfo.InvariantCulture);
     }
   }
 
@@ -2132,11 +2282,15 @@ namespace Ember.Uia
   {
     private static Server server;
     private static string dpi = "unaware";
+    private static string processDpi = "unaware";
+    /// <summary>A target's verdict that the call is about a process in skipPids: answered without UI Automation.</summary>
+    private static readonly object Skipped = new object();
 
-    internal static void Init(Server s, string awareness)
+    internal static void Init(Server s, string threads, string process)
     {
       server = s;
-      dpi = awareness;
+      dpi = threads;
+      processDpi = process;
     }
 
     // test/unit/uia-files.test.ts checks these names against the methods PROTOCOL.md documents.
@@ -2158,14 +2312,25 @@ namespace Ember.Uia
       };
     }
 
-    /// <summary>Gives an element a new handle, owned by its own process (or the call's when it can't tell).</summary>
+    /// <summary>
+    /// Gives an element a new handle, counted against its own process (a UWP frame's: the app it hosts), or the call's
+    /// when UI Automation doesn't say.
+    /// </summary>
     internal static int Register(Call c, AutomationElement el, IntPtr window)
     {
-      int pid = Props.Pid(el);
-      if (pid == 0) pid = c.Pid;
-      int handle = server.Handles.Add(el, pid, window);
+      int handle = server.Handles.Add(el, KeyOf(el, c), window);
       c.Track(handle);
       return handle;
+    }
+
+    // An element's busy key (WindowRules.BusyKey): its ProcessId, so an element inside a hosted app's CoreWindow counts
+    // against that app; for the frame window itself, the app it hosts.
+    private static int KeyOf(AutomationElement el, Call c)
+    {
+      int pid = Props.Pid(el);
+      if (pid <= 0) return c.Pid;
+      IntPtr hwnd = Props.Hwnd(el);
+      return hwnd != IntPtr.Zero ? Win.BusyKey(hwnd, pid) : pid;
     }
 
     private static Want WantOf(JObj p, bool legacy)
@@ -2187,7 +2352,7 @@ namespace Ember.Uia
       if (e == null) throw new BridgeError("gone", "unknown handle " + handle.ToString(CultureInfo.InvariantCulture) + " (released, evicted or never given)");
       c.Target = e;
       c.Window = e.Window;
-      return e.Pid;
+      return e.Key;
     }
 
     private static int SnapshotTarget(Call c)
@@ -2201,12 +2366,17 @@ namespace Ember.Uia
         c.Window = new IntPtr((long)hwnd);
         int pid = Win.PidOf(c.Window);
         if (pid == 0) throw new BridgeError("gone", "there is no such window");
-        return pid;
+        return Win.BusyKey(c.Window, pid);
       }
       if (p.Get("pid") != null)
       {
         int pid = Args.Int(p, "pid", 0, 0, int.MaxValue);
-        Args.Text(p, "name");
+        string name = Args.Text(p, "name");
+        // A UWP frame of that title counts against the app it hosts, as by hwnd (SnapshotRoot still chooses the window).
+        foreach (IntPtr h in Win.TopLevel())
+        {
+          if (Win.PidOf(h) == pid && Win.Visible(h) && string.Equals(Win.Title(h), name, StringComparison.Ordinal)) return Win.BusyKey(h, pid);
+        }
         return pid;
       }
       throw Args.Bad("snapshot needs a handle, an hwnd, or a pid and a name");
@@ -2216,14 +2386,30 @@ namespace Ember.Uia
     {
       double x = Args.Number(c.Params, "x");
       double y = Args.Number(c.Params, "y");
+      Dictionary<int, bool> skip = Args.Pids(c.Params, "skipPids");
       c.Window = Win.RootAt(x, y);
-      return c.Window == IntPtr.Zero ? 0 : Win.PidOf(c.Window);
+      if (c.Window == IntPtr.Zero) return 0;
+      int pid = Win.PidOf(c.Window);
+      if (skip.ContainsKey(pid))
+      {
+        c.Target = Skipped;
+        return 0;
+      }
+      return Win.BusyKey(c.Window, pid);
     }
 
     private static int ForegroundTarget(Call c)
     {
+      Dictionary<int, bool> skip = Args.Pids(c.Params, "skipPids");
       c.Window = Win.Foreground();
-      return c.Window == IntPtr.Zero ? 0 : Win.PidOf(c.Window);
+      if (c.Window == IntPtr.Zero) return 0;
+      int pid = Win.PidOf(c.Window);
+      if (skip.ContainsKey(pid))
+      {
+        c.Target = Skipped;
+        return 0;
+      }
+      return Win.BusyKey(c.Window, pid);
     }
 
     // ---- inline methods
@@ -2235,6 +2421,7 @@ namespace Ember.Uia
       return new JObj()
         .Add("version", Bridge.Version)
         .Add("dpi", dpi)
+        .Add("processDpi", processDpi)
         .Add("handles", server.Handles.Count)
         .Add("busyPids", server.BusyPids())
         .Add("workers", server.Pool.Total)
@@ -2255,12 +2442,31 @@ namespace Ember.Uia
     {
       internal IntPtr Hwnd;
       internal int Pid;
+      /// <summary>The process its read counts against (a UWP frame's hosted app): windows are read in groups by it.</summary>
+      internal int Key;
+      /// <summary>Its process is in skipPids: listed from Win32 facts only.</summary>
+      internal bool Skip;
       internal JObj Rect;
+      internal string Class;
+      internal int Hosted;
       // Win32 facts, gathered while the processes are read (no app can delay them).
       internal string Program;
-      internal int Hosted;
+      internal string Client;
       internal IntPtr Owner;
       internal bool Topmost;
+    }
+
+    /// <summary>One window's read: its node, or why it couldn't be read (the window is then listed from Win32 facts).</summary>
+    private sealed class WindowRead
+    {
+      internal readonly JObj Node;
+      internal readonly string Reason;
+
+      internal WindowRead(JObj node, string reason)
+      {
+        Node = node;
+        Reason = reason;
+      }
     }
 
     private sealed class Group
@@ -2268,12 +2474,17 @@ namespace Ember.Uia
       internal readonly List<Listed> Windows = new List<Listed>();
       internal readonly object Gate = new object();
       internal bool Done;
-      internal Dictionary<long, JObj> Found;
+      internal Dictionary<long, WindowRead> Found;
+      internal string Error;
     }
+
+    /// <summary>A failed window read is asked once more after this pause, when the call has the time.</summary>
+    private const int RetryPauseMs = 100;
 
     private static object TopWindows(Call c)
     {
       int only = Args.Int(c.Params, "pid", 0, 0, int.MaxValue);
+      Dictionary<int, bool> skip = Args.Pids(c.Params, "skipPids");
       List<IntPtr> all = Win.TopLevel();
       IntPtr foreground = Win.Foreground();
       List<Listed> listed = new List<Listed>();
@@ -2291,29 +2502,37 @@ namespace Ember.Uia
         w.Hwnd = h;
         w.Pid = pid;
         w.Rect = rect;
+        w.Class = Win.ClassName(h);
+        w.Hosted = WindowRules.IsFrame(w.Class) ? Win.Hosted(h, pid) : 0;
+        w.Key = WindowRules.BusyKey(w.Class, pid, w.Hosted);
+        w.Skip = skip.ContainsKey(pid) || skip.ContainsKey(w.Key);
         listed.Add(w);
+        if (w.Skip) continue;
         Group g;
-        if (!groups.TryGetValue(pid, out g))
+        if (!groups.TryGetValue(w.Key, out g))
         {
           g = new Group();
-          groups[pid] = g;
-          order.Add(pid);
+          groups[w.Key] = g;
+          order.Add(w.Key);
         }
         g.Windows.Add(w);
       }
-      // Each process is read on its own worker, so one that doesn't answer costs only its own windows.
+      // Each process (each UWP app) is read on its own worker, so one that doesn't answer costs only its own windows.
       Batch batch = new Batch();
       double subDeadline = c.RemainingMs - 60;
-      foreach (int pid in order)
+      foreach (int key in order)
       {
-        Group g = groups[pid];
+        Group g = groups[key];
         Group captured = g;
-        server.Sub(c, pid, g.Windows[0].Hwnd, subDeadline, delegate (Call s) { return ReadWindows(s, captured); }, batch, delegate (object result, BridgeError error)
+        server.Sub(c, key, g.Windows[0].Hwnd, subDeadline, delegate (Call s) { return ReadWindows(s, captured); }, batch, delegate (object result, BridgeError error)
         {
           lock (captured.Gate)
           {
             captured.Done = true;
-            captured.Found = error == null ? result as Dictionary<long, JObj> : null;
+            captured.Found = error == null ? result as Dictionary<long, WindowRead> : null;
+            // A busy message is one of the bridge's own; any other error's message may quote an exception's (and so
+            // what is on the screen), so the reason is then only the error's code.
+            captured.Error = error == null ? null : error.Code == "busy" ? error.Message : error.Code;
           }
         });
       }
@@ -2325,36 +2544,44 @@ namespace Ember.Uia
       int z2 = 0;
       foreach (Listed w in listed)
       {
-        Group g = groups[w.Pid];
-        Dictionary<long, JObj> found;
-        bool done;
-        lock (g.Gate)
-        {
-          done = g.Done;
-          found = g.Found;
-        }
         JObj entry = null;
-        bool busy = !done || found == null;
-        if (!busy)
+        string reason = null;
+        if (!w.Skip)
         {
-          // Not there: not a control element, or it closed meanwhile. There but null: it failed to answer.
-          if (!found.TryGetValue(Win.Number(w.Hwnd), out entry)) continue;
-          busy = entry == null;
+          Group g = groups[w.Key];
+          Dictionary<long, WindowRead> found;
+          bool done;
+          lock (g.Gate)
+          {
+            done = g.Done;
+            found = g.Found;
+            reason = done ? g.Error : Msg.Late;
+          }
+          if (found != null)
+          {
+            // Not there: not a control element, or it closed meanwhile.
+            WindowRead read;
+            if (!found.TryGetValue(Win.Number(w.Hwnd), out read)) continue;
+            entry = read.Node;
+            reason = read.Reason;
+          }
         }
-        if (busy)
-        {
-          entry = new JObj().Add("name", Win.Title(w.Hwnd)).Add("className", Win.ClassName(w.Hwnd)).Add("bounds", w.Rect);
-        }
+        if (entry == null) entry = new JObj().Add("name", Win.Title(w.Hwnd)).Add("className", w.Class).Add("bounds", w.Rect);
         AddWindowFacts(entry, w, foreground, z2++);
-        if (busy) entry.Add("busy", true);
+        if (w.Skip) entry.Add("skipped", true);
+        else if (!entry.Has("h"))
+        {
+          entry.Add("busy", true);
+          if (reason != null) entry.Add("reason", reason);
+        }
         windows.Add(entry);
       }
       return new JObj().Add("windows", windows);
     }
 
-    private static Dictionary<long, JObj> ReadWindows(Call s, Group g)
+    private static Dictionary<long, WindowRead> ReadWindows(Call s, Group g)
     {
-      Dictionary<long, JObj> found = new Dictionary<long, JObj>();
+      Dictionary<long, WindowRead> found = new Dictionary<long, WindowRead>();
       CacheRequest request = Props.Request(false);
       Want want = new Want(false, false);
       using (request.Activate())
@@ -2362,25 +2589,42 @@ namespace Ember.Uia
         foreach (Listed w in g.Windows)
         {
           if (s.Abandoned) break;
-          long key = Win.Number(w.Hwnd);
-          AutomationElement el;
-          try { el = Props.Ensure(AutomationElement.FromHandle(w.Hwnd), request); }
-          catch (ElementNotAvailableException) { continue; }
-          catch (ArgumentException) { continue; }
-          catch (InvalidOperationException) { continue; }
-          catch (TimeoutException) { throw; }
-          catch (Exception)
-          {
-            // This window failed (a provider error): list it from Win32 facts, and read the process's others.
-            found[key] = null;
-            continue;
-          }
-          if (Props.Flag(el, AutomationElement.IsControlElementProperty) == false) continue;
-          int handle = Register(s, el, w.Hwnd);
-          found[key] = Props.Node(el, handle, Props.NoTree, Props.NoTree, want);
+          WindowRead read = ReadWindow(s, w, request, want);
+          if (read != null) found[Win.Number(w.Hwnd)] = read;
         }
       }
       return found;
+    }
+
+    // One window: its node; null when it isn't listed (it closed, or isn't a control element); or why it failed. A
+    // provider error is asked about once more (a window still being set up, or a provider that failed once); a timeout
+    // fails the whole process's read (its windows are busy).
+    private static WindowRead ReadWindow(Call s, Listed w, CacheRequest request, Want want)
+    {
+      for (int attempt = 0; ; attempt++)
+      {
+        AutomationElement el;
+        try { el = Props.Ensure(AutomationElement.FromHandle(w.Hwnd), request); }
+        catch (ElementNotAvailableException) { return null; }
+        catch (ArgumentException) { return null; }
+        catch (InvalidOperationException) { return null; }
+        catch (TimeoutException) { throw; }
+        catch (Exception e)
+        {
+          BridgeError mapped = Faults.Map(e);
+          if (mapped != null && mapped.Code == "gone") return null;
+          if (mapped != null && mapped.Code == "busy") throw;
+          if (attempt == 0 && !s.Abandoned && s.RemainingMs > RetryPauseMs + 300)
+          {
+            Thread.Sleep(RetryPauseMs);
+            continue;
+          }
+          return new WindowRead(null, Faults.Describe(e));
+        }
+        if (Props.Flag(el, AutomationElement.IsControlElementProperty) == false) return null;
+        int handle = Register(s, el, w.Hwnd);
+        return new WindowRead(Props.Node(el, handle, Props.NoTree, Props.NoTree, want), null);
+      }
     }
 
     private static string ProgramOf(int pid, Dictionary<int, string> programs)
@@ -2396,16 +2640,13 @@ namespace Ember.Uia
 
     private static void Learn(Listed w, Dictionary<int, string> programs)
     {
-      w.Program = ProgramOf(w.Pid, programs);
-      if (string.Equals(w.Program, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase))
+      string program = ProgramOf(w.Pid, programs);
+      if (w.Hosted > 0)
       {
-        w.Hosted = Win.Hosted(w.Hwnd, w.Pid);
-        if (w.Hosted > 0)
-        {
-          string app = ProgramOf(w.Hosted, programs);
-          if (app.Length > 0) w.Program = app;
-        }
+        string app = ProgramOf(w.Hosted, programs);
+        if (app.Length > 0) program = app;
       }
+      w.Program = WindowRules.ProgramOf(w.Class, program, out w.Client);
       w.Owner = Win.Owner(w.Hwnd);
       w.Topmost = Win.Topmost(w.Hwnd);
     }
@@ -2416,6 +2657,7 @@ namespace Ember.Uia
       entry.Add("pid", w.Pid);
       if (w.Hosted > 0) entry.Add("hostedPid", w.Hosted);
       entry.Add("processName", w.Program);
+      if (w.Client != null) entry.Add("clientProgram", w.Client);
       if (w.Owner != IntPtr.Zero) entry.Add("owner", Win.Number(w.Owner));
       JObj patterns = entry.Get("patterns") as JObj;
       JObj window = patterns != null ? patterns.Get("window") as JObj : null;
@@ -2466,10 +2708,12 @@ namespace Ember.Uia
         catch (ArgumentException) { throw new BridgeError("gone", "there is no such window", c.Pid); }
       }
       string name = Args.Text(c.Params, "name");
+      // The process asked about (c.Pid is the busy key: for a UWP frame, the app it hosts).
+      int pid = Args.Int(c.Params, "pid", 0, 0, int.MaxValue);
       AutomationElement byTitle = null;
       foreach (IntPtr h in Win.TopLevel())
       {
-        if (Win.PidOf(h) != c.Pid || !Win.Visible(h) || Win.Cloaked(h)) continue;
+        if (Win.PidOf(h) != pid || !Win.Visible(h) || Win.Cloaked(h)) continue;
         AutomationElement el;
         try { el = Props.Ensure(AutomationElement.FromHandle(h), request); }
         catch (ElementNotAvailableException) { continue; }
@@ -2509,8 +2753,11 @@ namespace Ember.Uia
       double x = Args.Number(c.Params, "x");
       double y = Args.Number(c.Params, "y");
       Want want = WantOf(c.Params, false);
-      CacheRequest request = Props.Request(false);
       List<object> result = new List<object>();
+      // The window under the point is a skipped process's: no UI Automation call at all.
+      if (c.Target == Skipped) return result;
+      Dictionary<int, bool> skip = Args.Pids(c.Params, "skipPids");
+      CacheRequest request = Props.Request(false);
       using (request.Activate())
       {
         AutomationElement el = AutomationElement.FromPoint(new Point(x, y));
@@ -2527,6 +2774,9 @@ namespace Ember.Uia
         while (current != null && chain.Count < 64 && !c.Abandoned)
         {
           if (IsDesktop(current, desktop)) break;
+          // UI Automation's hit test found a skipped process after all (its window wasn't the one Win32 found on top):
+          // nothing more is asked of it, and nothing of it is answered.
+          if (skip.ContainsKey(Props.Pid(current))) return new List<object>();
           chain.Add(current);
           current = TreeWalker.ControlViewWalker.GetParent(current, request);
         }
@@ -2545,13 +2795,17 @@ namespace Ember.Uia
     private static object Focused(Call c)
     {
       Want want = WantOf(c.Params, false);
-      CacheRequest request = Props.Request(false);
       JObj result = new JObj().Add("element", null).Add("window", null).Add("hwnd", null);
+      // The foreground window is a skipped process's: said so from Win32 alone, without asking UI Automation.
+      if (c.Target == Skipped) return result.Add("hwnd", Win.Number(c.Window)).Add("skipped", true);
+      Dictionary<int, bool> skip = Args.Pids(c.Params, "skipPids");
+      CacheRequest request = Props.Request(false);
       using (request.Activate())
       {
         AutomationElement focused = AutomationElement.FocusedElement;
         if (focused == null) return result;
         focused = Props.Ensure(focused, request);
+        if (skip.ContainsKey(Props.Pid(focused))) return result.Add("skipped", true);
         IntPtr desktop = Native.GetDesktopWindow();
         if (IsDesktop(focused, desktop)) return result;
         AutomationElement top = focused;
@@ -2613,7 +2867,7 @@ namespace Ember.Uia
         case "setValue":
           {
             string value = Args.Text(c.Params, "value");
-            if (Props.IsSecret(el)) throw new BridgeError("denied", "this is a password field", e.Pid);
+            if (Props.IsSecret(el)) throw new BridgeError("denied", "this is a password field", e.Key);
             ((ValuePattern)Pattern(el, ValuePattern.Pattern, op)).SetValue(value);
             break;
           }

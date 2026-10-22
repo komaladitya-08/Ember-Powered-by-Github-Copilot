@@ -22,10 +22,13 @@ listed under "Methods" are exactly the ones in the bridge's dispatch table.
 - Use the absolute path of Windows PowerShell 5.1 (`GetSystemDirectoryW` or `%SystemRoot%`), never `pwsh` and never a
   `PATH` lookup. Spawn it with `windowsHide: true` (`powershell.exe` is a console program: without it a console window
   stays open for the bridge's whole life) and stdio `["pipe", "pipe", "pipe"]`.
-- Environment: the parent's environment **without `PSModulePath`** (PowerShell 7's module folders break Windows
-  PowerShell 5.1's autoloading; 5.1 rebuilds its default). Keep `SystemRoot`, `windir`, `TEMP`/`TMP` (the C# compiler
-  writes there), `USERPROFILE`, `LOCALAPPDATA` and `PATH`. Never remove `__PSLockdownPolicy`: it is the
-  administrator's choice, and the bridge reports what it causes (below).
+- Environment: the parent's environment with **`PSModulePath` set to the system modules folder only**,
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules`, after removing every case-variant of the name. PowerShell
+  7's module folders break Windows PowerShell 5.1's autoloading, and without the variable 5.1 rebuilds a default that
+  includes the user's `Documents\WindowsPowerShell\Modules` (often redirected to OneDrive), so the bridge would load
+  user modules. Keep `SystemRoot`, `windir`, `TEMP`/`TMP` (the C# compiler writes there), `USERPROFILE`,
+  `LOCALAPPDATA` and `PATH`. Never remove `__PSLockdownPolicy`: it is the administrator's choice, and the bridge
+  reports what it causes (below).
 - `EMBER_UIA_CACHE` (optional): a folder for the compiled bridge, e.g. `%LOCALAPPDATA%\ember\uia`. The bootstrap
   hashes `ember_uia.cs` (SHA-256) and loads `<cache>\ember_uia-<hash>.dll` when its own SHA-256 matches the
   `<cache>\ember_uia-<hash>.dll.sha256` written beside it; otherwise it compiles with `Add-Type -OutputAssembly` and
@@ -45,8 +48,9 @@ listed under "Methods" are exactly the ones in the bridge's dispatch table.
 - If the process exits before writing any line, PowerShell refused to run the script: a Group Policy execution
   policy (`AllSigned`, `RemoteSigned`) overrides `-ExecutionPolicy Bypass` for an unsigned script, and stderr says so.
   Report it once and don't restart in a loop.
-- stdout carries only protocol lines; a line that isn't JSON should never appear (ignore it and log it at debug
-  level). stderr is diagnostics only (PowerShell may write `#< CLIXML` records there); the
+- stdout carries only protocol lines: the first line, answers, and the exit line (below). A line that isn't JSON
+  should never appear (ignore it and log it at debug level), and a JSON line without an `id` that isn't one of those
+  should be ignored. stderr is diagnostics only (PowerShell may write `#< CLIXML` records there); the
   bridge itself writes no screen text to stderr. Log it at debug level, never parse it.
 
 ### The first line
@@ -54,12 +58,17 @@ listed under "Methods" are exactly the ones in the bridge's dispatch table.
 Exactly one of:
 
 ```json
-{"ready":true,"version":1,"dpi":"per-monitor-v2"}
+{"ready":true,"version":1,"dpi":"per-monitor-v2","processDpi":"per-monitor-v2"}
 ```
 
 `dpi` is the DPI awareness the bridge's UIA threads run with: `"per-monitor-v2"` (expected), `"per-monitor"`,
 `"system"` or `"unaware"`. Anything but `per-monitor-v2` means bounds may be scaled for some monitors; the host
-should log it once.
+should log it once. `processDpi` is the process's own awareness, in the same words (from
+`GetDpiAwarenessContextForProcess` where Windows has it, Windows 10 1803 and later, else `GetProcessDpiAwareness`,
+which can't tell `per-monitor-v2` from `per-monitor`). The bridge makes the whole process Per-Monitor-V2 when it can;
+when `powershell.exe`'s manifest had already fixed the process's awareness it can only set its threads', and the two
+differ. UI Automation may then convert some coordinates by the process's awareness, so the host logs the difference
+once (`uia.dpi_mixed`) and reports both.
 
 ```json
 {"fatal":"Cannot add type. Definition of new types is not supported in this language mode.","languageMode":"ConstrainedLanguage"}
@@ -113,15 +122,37 @@ line.
   with `SMTO_ABORTIFHUNG`, 300 ms): a button that opens a modal dialog keeps its `Invoke` call waiting until the
   dialog closes, and the dialog must stay readable and actionable meanwhile.
 - The target process of a request is: the handle's process (handles), the window's process (`hwnd`), `pid`, the
-  process of the top-level window under the point (`elementsAt`), or of the foreground window (`focused`).
-- `topWindows` never waits for one process: each process is read on its own worker with the request's deadline less
-  60 ms, and a process that is busy or doesn't answer in time is listed from Win32 facts alone with `busy: true`.
+  process of the top-level window under the point (`elementsAt`), or of the foreground window (`focused`). The
+  top-level window under the point is the front-most visible, uncloaked window whose rectangle holds it, leaving out
+  click-through (`WS_EX_TRANSPARENT`) windows, read from Win32 alone (no message is sent).
+- **Busy keys.** A request counts against its target process, with one exception: a UWP app's frame (class
+  `ApplicationFrameWindow`, drawn by `ApplicationFrameHost`, which is one process for every UWP window) counts against
+  the app it hosts (the process of its `Windows.UI.Core.CoreWindow` child), or its own process when it hosts none.
+  So one hung UWP app makes only its own windows busy. Handles count the same way: an element counts against its own
+  `ProcessId` (an element inside a hosted app's CoreWindow, against that app), and the frame window itself against
+  the app it hosts. An error's `pid` and `status.busyPids` give these keys; the `pid` of windows and nodes is
+  unchanged (the frame's own process for a frame: `GetWindowThreadProcessId`, as Ember's window stack reports it).
+- `topWindows` never waits for one process: each process (each busy key) is read on its own worker with the
+  request's deadline less 60 ms, and a process that is busy or doesn't answer in time is listed from Win32 facts
+  alone with `busy: true`.
 
 ### Exit
 
-The bridge exits with code 0 when stdin reaches end of file, within about 300 ms even if a worker is stuck in a hung
-app (`Environment.Exit`, then `TerminateProcess` as a backstop). Close stdin to stop it; kill it only if it doesn't
-exit.
+When stdin reaches end of file the bridge writes one last line,
+
+```json
+{"exit":0}
+```
+
+and ends its process at once with exit code 0 (`TerminateProcess`), even if a worker is stuck in a hung app. Every
+answer was flushed as it was written, so nothing is lost. The exit line has no `id`: a client ignores it, or uses it
+to tell when the bridge saw its input end apart from when the process was gone. It is written only while stdout still
+takes it (the bridge waits at most 200 ms), and never when stdout itself broke (the bridge then ends the same way,
+with code 0). The bridge doesn't use `Environment.Exit`: on windows-2022 the exit came 2.3 s after end of input, the
+same with a thread set to end the process after 1.5 s or after 300 ms, which by the timings never got to run. The
+.NET Framework's orderly shutdown stops every other managed thread and then waits up to 2 s for `ProcessExit`
+handlers and finalizers, and `ExitProcess` ends every other thread before it runs each DLL's detach code;
+`TerminateProcess` does neither. Close stdin to stop the bridge; kill it only if it doesn't exit.
 
 ## Handles
 
@@ -206,10 +237,12 @@ No params. Result: `{"version": 1}`. Answered at once on the reader thread.
 No params. Result:
 
 ```json
-{"version":1,"dpi":"per-monitor-v2","handles":1234,"busyPids":[4242],"workers":9,"idleWorkers":7,"clr":"4.0.30319.42000","os":"Microsoft Windows NT 10.0.22631.0"}
+{"version":1,"dpi":"per-monitor-v2","processDpi":"per-monitor-v2","handles":1234,"busyPids":[4242],"workers":9,"idleWorkers":7,"clr":"4.0.30319.42000","os":"Microsoft Windows NT 10.0.22631.0"}
 ```
 
-`workers` is how many worker threads exist (at most 64), `idleWorkers` how many are free. Answered at once.
+`dpi` and `processDpi` are the ready line's. `busyPids` lists the busy keys (see "Deadlines, busy processes and hung
+apps": a hung UWP app's own process, not `ApplicationFrameHost`). `workers` is how many worker threads exist (at
+most 64), `idleWorkers` how many are free. Answered at once.
 
 ### `release`
 
@@ -217,11 +250,13 @@ Params: `{handles: number[]}`. Frees those handles; unknown ones are ignored. Re
 
 ### `topWindows`
 
-Params: `{pid?: number, deadlineMs?}`. Lists the top-level windows: the children of the desktop root element in the
-control view, enumerated through Win32 in z-order (front-most first, `GetTopWindow`/`GetWindow(GW_HWNDNEXT)`) so a
-hung app can't stall the listing. Windows that aren't visible (`IsWindowVisible`), are cloaked (`DWMWA_CLOAKED`: other
-virtual desktops, suspended UWP frames), have no area, or aren't control elements are left out. With `pid`, only that
-process's windows.
+Params: `{pid?: number, skipPids?: number[], deadlineMs?}`. Lists the top-level windows: the children of the desktop
+root element in the control view, enumerated through Win32 in z-order (front-most first,
+`GetTopWindow`/`GetWindow(GW_HWNDNEXT)`) so a hung app can't stall the listing. Windows that aren't visible
+(`IsWindowVisible`), are cloaked (`DWMWA_CLOAKED`: other virtual desktops, suspended UWP frames), have no area, or
+aren't control elements are left out. With `pid`, only that process's windows. The windows of a process in
+`skipPids` (Ember's own, so that UI Automation never switches Chromium's accessibility on in Ember's renderers) are
+listed from Win32 facts alone with `skipped: true`: no UI Automation call goes into that process.
 
 Result: `{"windows": Window[]}`, front-most first. A `Window` is a RawNode of the window (values not read) plus:
 
@@ -229,15 +264,18 @@ Result: `{"windows": Window[]}`, front-most first. A `Window` is a RawNode of th
 |---|---|---|
 | `hwnd` | number | the window handle (always present) |
 | `pid` | number | the process that owns the window (`GetWindowThreadProcessId`). For a UWP app this is the frame's process (`ApplicationFrameHost`), so it matches Ember's window stack |
-| `processName` | string | the program's file name without `.exe`, as Windows reports it (`QueryFullProcessImageNameW`: `notepad`, `msedge`, `WINWORD`). For an `ApplicationFrameHost` frame, the hosted app's program (the `Windows.UI.Core.CoreWindow` child of another process: `CalculatorApp`, `SystemSettings`); `ApplicationFrameHost` when it has none. The same rule as `wmClass` in `app/main/platform/types.ts` |
-| `hostedPid` | number | the hosted app's process, for an `ApplicationFrameHost` frame |
+| `processName` | string | the program's file name without `.exe`, as Windows reports it (`QueryFullProcessImageNameW`: `notepad`, `msedge`, `WINWORD`). For an `ApplicationFrameHost` frame (class `ApplicationFrameWindow`), the hosted app's program (the `Windows.UI.Core.CoreWindow` child of another process: `CalculatorApp`, `SystemSettings`); `ApplicationFrameHost` when it has none. For a console window (class `ConsoleWindowClass`, or `PseudoConsoleWindow`), `conhost`, the program that draws it: Windows reports such a window's `pid` as its first client's (python, cmd, ssh...), whose program goes to `clientProgram`. The same rule as `wmClass` in `app/main/platform/types.ts` |
+| `clientProgram` | string | a console window only: the program of the client Windows reports for it (`python`, `cmd`), when there is one other than `conhost` itself. For display only: the window's program is `conhost`, a terminal |
+| `hostedPid` | number | the hosted app's process, for an `ApplicationFrameHost` frame (its busy key) |
 | `owner` | number | the owner window's handle (`GetWindow(GW_OWNER)`), when it has one |
 | `isModal` | boolean | `WindowPattern.IsModal` |
 | `windowState` | string | `WindowPattern.WindowVisualState` |
 | `isTopmost` | boolean | `WS_EX_TOPMOST` |
 | `focused` | boolean | it is the foreground window (`GetForegroundWindow`), which holds the keyboard focus |
 | `z` | number | position in the z-order among the windows listed, 0 = front-most |
-| `busy` | `true` | the process is busy or didn't answer in time (or this window's provider failed): the entry has **no `h`**, and only `hwnd`, `pid`, `processName`, `hostedPid`, `owner`, `name` (the Win32 title, `GetWindowTextW`, which sends no message), `className`, `bounds` (`GetWindowRect`), `isTopmost`, `focused` and `z` |
+| `busy` | `true` | the process is busy or didn't answer in time (or this window's provider failed, also when asked a second time 100 ms later): the entry has **no `h`**, and only `hwnd`, `pid`, `processName`, `clientProgram`, `hostedPid`, `owner`, `name` (the Win32 title, `GetWindowTextW`, which sends no message), `className`, `bounds` (`GetWindowRect`), `isTopmost`, `focused`, `z` and `reason` |
+| `reason` | string | with `busy`: why, for logs. One of the `busy` messages under "Errors" (`the app did not answer in time`, `the app is not answering`, `too many requests are waiting for apps that do not answer`), the provider's failure as `<ExceptionType> 0x<HRESULT>` (`COMException 0x80004005`), or only the error's code (`failed`, `gone`, `denied`) when the read of the window's whole process failed otherwise; never an exception's message |
+| `skipped` | `true` | the process is in `skipPids`: the entry has the same Win32 facts as a busy one (no `h`, no `reason`) |
 
 ### `snapshot`
 
@@ -279,17 +317,24 @@ it), `busy`.
 
 ### `elementsAt`
 
-Params: `{x, y, values?: true, legacy?: false, deadlineMs?}` in physical pixels. Result: `RawNode[]`, the chain from the
-top-level window down to the deepest control element at that point (`AutomationElement.FromPoint`, normalised to the
-control view, then its parents up to the child of the desktop, reversed). Node `i` has `parent: i - 1` and
-`depth: i`. An empty array when the point is on the desktop itself. Errors: `busy`, `gone`.
+Params: `{x, y, skipPids?: number[], values?: true, legacy?: false, deadlineMs?}` in physical pixels. Result:
+`RawNode[]`, the chain from the top-level window down to the deepest control element at that point
+(`AutomationElement.FromPoint`, normalised to the control view, then its parents up to the child of the desktop,
+reversed). Node `i` has `parent: i - 1` and `depth: i`. An empty array when the point is on the desktop itself, and
+when the top-level window under the point (as under "Deadlines, busy processes and hung apps") belongs to a process in
+`skipPids`: then no UI Automation call is made at all. Should UI Automation's own hit test still land in such a
+process (a window Win32 didn't find on top), the answer is an empty array too, and nothing more is asked of it.
+Errors: `busy`, `gone`, `bad_request`.
 
 ### `focused`
 
-Params: `{values?: true, legacy?: false, deadlineMs?}`. Result: `{"element": RawNode | null, "window": number | null,
-"hwnd": number | null}`: the element with the keyboard focus (`AutomationElement.FocusedElement`), the handle of its
-top-level window (the ancestor whose parent is the desktop) and that window's `hwnd`. `element` is null when nothing
-has the focus (the desktop root). Errors: `busy`.
+Params: `{skipPids?: number[], values?: true, legacy?: false, deadlineMs?}`. Result: `{"element": RawNode | null,
+"window": number | null, "hwnd": number | null}`: the element with the keyboard focus
+(`AutomationElement.FocusedElement`), the handle of its top-level window (the ancestor whose parent is the desktop)
+and that window's `hwnd`. `element` is null when nothing has the focus (the desktop root). When the foreground window
+belongs to a process in `skipPids`, the answer is `{"element": null, "window": null, "hwnd": <the foreground
+window>, "skipped": true}` and no UI Automation call is made; when the focused element turns out to be in such a
+process anyway, `{"element": null, "window": null, "hwnd": null, "skipped": true}`. Errors: `busy`, `bad_request`.
 
 ### `children`
 
