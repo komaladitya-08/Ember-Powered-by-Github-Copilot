@@ -71,6 +71,8 @@ export class DesktopController {
   private cached: { at: number; found: DesktopFound | NoDesktop } | null = null;
   private paused = false;
   private starting: Promise<DesktopState> | null = null;
+  /** Bumped by every stop() from outside (Stop, the console's Stop, a policy that turns the desktop off, the exit). */
+  private gen = 0;
   /** The look every WATCH_MS while a child runs, and whether one is under way. */
   private watch: { stop(): void } | null = null;
   private looking = false;
@@ -121,18 +123,25 @@ export class DesktopController {
    * its notice showing; none with why when anything fails.
    */
   ensure(ask: DesktopAsk): Promise<DesktopState> {
-    this.starting ??= this.ensureNow(ask).finally(() => { this.starting = null; });
-    return this.starting;
+    if (this.starting) return this.starting;
+    const p: Promise<DesktopState> = this.ensureNow(ask).finally(() => { if (this.starting === p) this.starting = null; });
+    this.starting = p;
+    return p;
   }
 
   private async ensureNow(ask: DesktopAsk): Promise<DesktopState> {
+    // A stop while this waits (Stop, the console's Stop, the policy turning the desktop off: each decided after `ask`
+    // was) wins: nothing is started or resumed for a request from before it.
+    const gen = this.gen;
     if (this.d.unavailable) return this.lower({ access: "none", why: this.d.unavailable, notice: "off" });
     if (!ask.allowed) return this.lower({ access: "none", why: this.offWhy(), notice: "off" });
     const f = await this.discover(true);
+    if (gen !== this.gen) return this.stoppedMeanwhile();
     if (f.access === "none") return this.lower({ access: "none", why: f.why, ...(f.session ? { session: f.session } : {}), notice: "off" });
     const c = this.child;
     if (c && c.session === f.session.id && c.access === f.access) {
       await c.rpc.request("policy", ask.policy, OP_MS).catch(() => undefined);
+      if (gen !== this.gen || this.child !== c) return this.stoppedMeanwhile();
       if (this.paused) {
         try {
           await c.rpc.request("resume", {}, OP_MS);
@@ -140,12 +149,22 @@ export class DesktopController {
         } catch (err) {
           return this.lower({ access: "none", why: err instanceof Error ? err.message : `${this.d.host}'s screen can't be used now.`, notice: "off" });
         }
+        if (gen !== this.gen || this.child !== c) return this.stoppedMeanwhile();
       }
       this.watching();
       return (this.last = { access: f.access, session: { type: f.session.type, locked: false, active: true }, notice: "shown" });
     }
-    this.stop();
+    this.halt();
     return this.startChild(f, ask);
+  }
+
+  /**
+   * What a desktop.state from before a stop answers: no desktop (the next one starts afresh). A newer one may be under
+   * way or have started a helper since (its look answered first): what it found stays the desktop's state, untold.
+   */
+  private stoppedMeanwhile(): DesktopState {
+    const s: DesktopState = { access: "none", why: `Ember stopped using ${this.d.host}'s screen.`, notice: "off" };
+    return this.child || this.starting ? s : this.lower(s);
   }
 
   /** Looks at the desktop every WATCH_MS while a child runs (recheck stops it and tells the PC when it has gone). */
@@ -203,11 +222,12 @@ export class DesktopController {
         atspi: this.d.scripts.atspi, notice: this.d.scripts.notice,
       }, ask.consent ? INIT_CONSENT_MS : INIT_MS) as InitResult;
     } catch (err) {
-      this.stop();
+      // (Only this request's own helper: a stop may have ended it, and a newer request started another.)
+      if (this.child === child) this.halt();
       return this.lower({ access: "none", why: err instanceof Error ? err.message : `Ember's desktop helper on ${this.d.host} didn't start.`, notice: "failed" });
     }
     if (r.access === "none") {
-      this.stop();
+      if (this.child === child) this.halt();
       return this.lower({ access: "none", ...(r.why ? { why: r.why } : {}), notice: r.notice });
     }
     this.watching();
@@ -217,7 +237,7 @@ export class DesktopController {
   /** The desktop went away under a running child: stop it and tell the PC. */
   private lost(why: string, _d?: unknown): void {
     if (!this.child) return;
-    this.stop();
+    this.halt();
     this.lower({ access: "none", why, notice: "failed" });
   }
 
@@ -237,9 +257,11 @@ export class DesktopController {
     if (!this.child) return this.last.why ?? `Ember isn't using ${this.d.host}'s screen now.`;
     if (this.paused) return `Ember stopped using ${this.d.host}'s screen while the connection was silent.`;
     const f = await this.discover();
+    // Stopped while it looked: nothing to stop, and what it found no longer matters.
+    if (!this.child) return this.last.why ?? `Ember isn't using ${this.d.host}'s screen now.`;
     if (f.access === "none" || f.session.id !== this.child.session) {
       const why = f.access === "none" ? f.why : `${this.d.host}'s desktop session changed.`;
-      this.stop();
+      this.halt();
       this.lower({ access: "none", why, ...(f.access === "none" && f.session ? { session: f.session } : {}), notice: "off" });
       return why;
     }
@@ -264,8 +286,18 @@ export class DesktopController {
     this.child.rpc.request("pause", {}, OP_MS).catch(() => undefined);
   }
 
-  /** Stops the child (its notice closes with it). */
+  /**
+   * Stops the child (its notice closes with it), and with it any desktop.state still under way: that one starts
+   * nothing (Stop, the console's Stop, a policy that turns the desktop off, the agent's exit).
+   */
   stop(): void {
+    this.gen++;
+    this.starting = null;
+    this.halt();
+  }
+
+  /** Stops the child, for the controller's own reasons (the session changed or went, a child that failed). */
+  private halt(): void {
     this.watch?.stop();
     this.watch = null;
     const c = this.child;

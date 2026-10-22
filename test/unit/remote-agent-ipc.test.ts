@@ -125,6 +125,78 @@ describe("watching the desktop while it is in use (§5.3.4 step 8, INT)", () => 
     expect(r.c.pid).toBeNull();
   });
 
+  it("starts no helper (and no notice) for a desktop.state that was still looking when Stop came", async () => {
+    let finish: () => void = () => {};
+    let spawned = 0;
+    const proc = () => {
+      spawned++;
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      readline.createInterface({ input: stdin }).on("line", l => {
+        const m = JSON.parse(l) as { t: string; id: number; op: string };
+        if (m.t === "req") stdout.write(`${JSON.stringify({ t: "res", id: m.id, ok: true, v: m.op === "init" ? { access: "screen", notice: "shown" } : {} })}\n`);
+      });
+      return Object.assign(new EventEmitter(), { stdin, stdout, stderr, pid: undefined }) as unknown as ChildProcess;
+    };
+    const session = { id: "2", type: "x11" as const, locked: false as const, active: true as const };
+    const c = new DesktopController({
+      unavailable: null, host: "build-01", baseEnv: {}, spawnChild: proc,
+      // loginctl and busctl take their time.
+      discover: () => new Promise(r => { finish = () => r({ access: "screen", session, env: { DISPLAY: ":0" } }); }),
+      scripts: { atspi: "/a.py", notice: "/n.py" }, audit: async () => {}, changed: () => {}, consoleStop: () => {}, log: quiet, now: () => Date.now(),
+      every: () => ({ stop: () => {} }),
+    });
+    const policy = { neverLook: [], actionsAllowed: true, confirmEveryAction: true, screenImages: true };
+    const asked = c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy });
+    c.stop();
+    finish();
+    expect(await asked).toEqual({ access: "none", why: "Ember stopped using build-01's screen.", notice: "off" });
+    expect(spawned).toBe(0);
+    expect(c.pid).toBeNull();
+    // The next desktop.state (a new task) starts afresh, not the stopped one's answer.
+    const next = c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy });
+    finish();
+    expect(await next).toMatchObject({ access: "screen", notice: "shown" });
+    expect(spawned).toBe(1);
+    // A look between steps that Stop overtakes says why, and never trips over the child it stopped.
+    const looking = c.recheck();
+    c.stop();
+    expect(await looking).toBe("Ember isn't using build-01's screen now.");
+  });
+
+  it("lets a desktop.state that Stop overtook say nothing about the desktop a newer one has started since", async () => {
+    const finishes: (() => void)[] = [];
+    const changed: unknown[] = [];
+    const proc = () => {
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      readline.createInterface({ input: stdin }).on("line", l => {
+        const m = JSON.parse(l) as { t: string; id: number; op: string };
+        if (m.t === "req") stdout.write(`${JSON.stringify({ t: "res", id: m.id, ok: true, v: m.op === "init" ? { access: "screen", notice: "shown" } : {} })}\n`);
+      });
+      return Object.assign(new EventEmitter(), { stdin, stdout, stderr, pid: 4242 }) as unknown as ChildProcess;
+    };
+    const session = { id: "2", type: "x11" as const, locked: false as const, active: true as const };
+    const c = new DesktopController({
+      unavailable: null, host: "build-01", baseEnv: {}, spawnChild: proc,
+      // Each look answers when the test says: the first (a slow loginctl) only after the second.
+      discover: () => new Promise(r => { finishes.push(() => r({ access: "screen", session, env: { DISPLAY: ":0" } })); }),
+      scripts: { atspi: "/a.py", notice: "/n.py" }, audit: async () => {}, changed: s => { changed.push(s); }, consoleStop: () => {}, log: quiet, now: () => Date.now(),
+      every: () => ({ stop: () => {} }),
+    });
+    const policy = { neverLook: [], actionsAllowed: true, confirmEveryAction: true, screenImages: true };
+    const stale = c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy });
+    c.stop();
+    const fresh = c.ensure({ pc: "ana-laptop", allowed: true, consent: false, policy });
+    finishes[1]();
+    expect(await fresh).toMatchObject({ access: "screen", notice: "shown" });
+    finishes[0]();
+    expect(await stale).toMatchObject({ access: "none", notice: "off" });
+    // The helper the newer request started runs on, and nobody is told it went.
+    expect(c.pid).toBe(4242);
+    expect(c.state).toMatchObject({ access: "screen", notice: "shown" });
+    expect(changed).toEqual([]);
+    c.stop();
+  });
+
   it("looks only while a child runs: never before desktop.state, nor after Stop", async () => {
     const r = rig();
     expect(r.ticks).toEqual([]);

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
-import { BOOTSTRAP_SCRIPT, BOOTSTRAP_SH, runBootstrap, UNINSTALL_SH, writeAll, type Decision } from "../../app/main/remote/bootstrap";
+import { describe, expect, it, vi } from "vitest";
+import { BOOTSTRAP_LIMITS, BOOTSTRAP_SCRIPT, BOOTSTRAP_SH, runBootstrap, StreamReader, UNINSTALL_SH, writeAll, type Decision } from "../../app/main/remote/bootstrap";
 
 const PC = "0123456789abcdef0123456789abcdef";
 const tick = () => new Promise<void>(r => setImmediate(r));
@@ -223,6 +223,93 @@ describe("the bootstrap's I/O order (§5.1.9; critique remote-1, remote-17)", ()
     ssh.stdin.resume();
     setTimeout(() => ssh.stdout.end("Permission denied (publickey).\n"), 10);
     expect(await runBootstrap(ssh, { decide: async () => ({ kind: "quit" }) })).toEqual({ kind: "eof", probe: null, probeBegan: false });
+  });
+});
+
+/**
+ * A hostile remote (design T9): it takes the script and prints a probe, then floods its output with bytes and no line
+ * end, either at once (while Ember decides) or after asking for the runtime, when it also stops reading its stdin.
+ */
+class Hostile {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  private got = 0;
+  private line = "";
+  private phase: "script" | "decision" | "stuck" = "script";
+  flooded = 0;
+
+  constructor(private readonly when: "decide" | "upload") {
+    this.stdin.on("data", this.take);
+  }
+
+  private readonly take = (c: Buffer) => {
+    if (this.phase === "script") {
+      this.got += c.length;
+      if (this.got < Buffer.byteLength(BOOTSTRAP_SCRIPT)) return;
+      this.phase = "decision";
+      this.stdout.write("\0EMBER-PROBE-BEGIN\nos=Linux\narch=x86_64\nEMBER-PROBE-END\n");
+      if (this.when === "decide") void this.flood();
+      return;
+    }
+    if (this.phase === "decision") {
+      this.line += c.toString();
+      if (!this.line.includes("\n")) return;
+      this.phase = "stuck";
+      // Stops reading its stdin (the PC's writes then wait for a drain that never comes) and floods instead.
+      this.stdin.off("data", this.take);
+      this.stdin.pause();
+      this.stdout.write("EMBER-READY runtime\n");
+      void this.flood();
+    }
+  };
+
+  private async flood(): Promise<void> {
+    for (let i = 0; i < 64; i++) {
+      this.stdout.write(Buffer.alloc(64 * 1024, 0x41));
+      this.flooded += 64 * 1024;
+      await tick();
+    }
+  }
+}
+
+const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<"hung">(r => setTimeout(() => r("hung"), ms))]);
+
+describe("a remote that floods what nobody reads (design T9: bounded bootstrap text)", () => {
+  it("fails as noise when it floods while Ember decides, without waiting for the decision, and stops reading", async () => {
+    const ssh = new Hostile("decide");
+    let asked = false;
+    const out = await within(runBootstrap(ssh, { decide: () => new Promise<Decision>(() => { asked = true; }) }), 3000);
+    expect(asked).toBe(true);
+    expect(out).toMatchObject({ kind: "error", code: "noise", probeBegan: true });
+    // Nothing reads ssh's output any more: ssh waits on its pipe until it is ended.
+    expect(ssh.stdout.listenerCount("data")).toBe(0);
+  });
+
+  it("fails as noise when it asks for an archive, stops reading and floods instead", async () => {
+    const ssh = new Hostile("upload");
+    const out = await within(runBootstrap(ssh, { decide: async () => install() }), 3000);
+    expect(out).toMatchObject({ kind: "error", code: "noise", probeBegan: true });
+    expect(ssh.stdout.listenerCount("data")).toBe(0);
+  });
+
+  it("holds at most its cap unread, and joins nothing while nobody reads", async () => {
+    expect(BOOTSTRAP_LIMITS.bufferBytes).toBeGreaterThanOrEqual(BOOTSTRAP_LIMITS.probeBytes + BOOTSTRAP_LIMITS.lineBytes);
+    const s = new PassThrough();
+    const r = new StreamReader(s, 1000);
+    const concat = vi.spyOn(Buffer, "concat");
+    try {
+      for (let i = 0; i < 200; i++) s.write(Buffer.from("abcd"));
+      await tick();
+      expect(concat).not.toHaveBeenCalled();
+      expect(r.overflowed).toBe(false);
+      for (let i = 0; i < 60; i++) s.write(Buffer.from("abcd"));
+      await tick();
+      expect(r.overflowed).toBe(true);
+      expect(s.listenerCount("data")).toBe(0);
+      expect(await r.line(100)).toBeNull();
+    } finally {
+      concat.mockRestore();
+    }
   });
 });
 

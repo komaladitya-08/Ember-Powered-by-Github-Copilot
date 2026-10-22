@@ -647,7 +647,31 @@ describe("SSH targets", () => {
     expect(h.hands.commands!.capability().askEvery).toBe("root");
     const off = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") }, welcome: welcome({ desktop: { access: "none", notice: "off" }, remoteAdmin: { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "off" } } }) });
     await connected(off);
-    expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
+    expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Your organisation has turned off commands on computers reached over SSH." });
+    // The connected bubble says so, with nothing to turn on.
+    expect(off.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "Ember is on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
+    }) });
+  });
+
+  it("never says it will run commands on a headless host whose commands are off: it offers to turn them on (the card first)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "none", why: "build-01 has no desktop.", notice: "off" } }) });
+    await connected(r);
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "Ember is on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
+      actions: [{ id: "conn:build-01:commands", label: "Turn on commands", primary: true }],
+    }) });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
+    expect(r.t.bubbleAction("conn:build-01:commands")).toBe(true);
+    await flush(); await flush();
+    expect(r.cards.at(-1)?.feature).toBe("commands");
+    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: 1 } });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Commands are on for build-01", thought: "Ask away: I'll run commands there." }) });
+    expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
+    // With commands on, the old words are true.
+    const on = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") }, welcome: welcome({ desktop: { access: "none", notice: "off" } }) });
+    await connected(on);
+    expect(on.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ thought: "build-01 has no desktop, so I'll run commands there.", actions: [] }) });
   });
 
   it("lets a remote's newly read policy only tighten commands for the link, never loosen them", async () => {
@@ -677,7 +701,10 @@ describe("SSH targets", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);
     l.move("stalled");
-    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "build-01 isn't answering", actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }] }) });
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 isn't answering", thought: "Its running commands stop in 15 s unless the link comes back. Nothing new is sent meanwhile.",
+      actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }],
+    }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
     l.move("ready");
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
@@ -687,6 +714,30 @@ describe("SSH targets", () => {
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Lost build-01", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }, { id: "conn:build-01:stop", label: "Stop trying" }] }) });
     expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Reconnect it from Ember's menu first." });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
+  });
+
+  it("stops saying \"trying again\" once SA gives up reconnecting, and asks for a sign-in when that is what it needs (§8.2)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01"), hostRecord("build-02")]) });
+    const l = await connected(r);
+    l.move("lost");
+    const failed = (hostId: string, kind: string, retry: boolean, message = "build-01 didn't accept your key.") => { for (const p of r.progress) p(hostId, { step: "failed", message, retry, kind }); };
+    failed("build-01", "network", true);
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
+    failed("build-01", "auth", false);
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
+    }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu first." });
+    // Ten minutes of network failures: said as it is, with Reconnect.
+    const l2 = await connected(r, "build-02");
+    l2.move("lost");
+    failed("build-02", "network", false, "Ember can't reach build-02 (no route).");
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "Ember can't reach build-02 (no route).", mood: "error" }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-02")!.state).toBe("off");
+    // A connect's own failure (not a reconnect's) is connect()'s to say.
+    failed("build-02", "auth", false);
+    expect(r.showState).not.toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "build-02 needs you to sign in again" }) });
   });
 
   it("adopts the link SA brought back by itself after a loss", async () => {
@@ -1189,6 +1240,32 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(running.r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-02 from Debian" }) });
   });
 
+  it("says why Bring Ember can't connect when the check before connecting refuses the host (never just a vanished offer)", async () => {
+    const r = rig({ notice, cursor: true });
+    r.conns.resolve.mockRejectedValueOnce(new ConnectError("Your organisation doesn't allow Ember to connect to build-01.", "not-allowed"));
+    r.ticks[0]();
+    await flush();
+    expect(r.t.bubbleAction("offer:1:bring")).toBe(true);
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "Can't connect to build-01", thought: "Your organisation doesn't allow Ember to connect to build-01.", mood: "error",
+    }) });
+    expect(r.conns.connect).not.toHaveBeenCalled();
+    // offer_connect's Connect for an alias of the user's ssh config says so too.
+    r.conns.resolve.mockRejectedValueOnce(new ConnectError("build-02's SSH settings throw host keys away (UserKnownHostsFile /dev/null).", "known-hosts"));
+    expect(r.t.agent.offerConnect("build-02", "connect to build-02 please")).toMatch(/Connect button for build-02/);
+    r.t.bubbleAction("offer:2:connect");
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-02", thought: expect.stringContaining("throw host keys away") }) });
+    // The user's own Not now on the card says nothing more.
+    const no = rig({ notice, cursor: true, consent: "no" });
+    no.ticks[0]();
+    await flush();
+    no.t.bubbleAction("offer:1:bring");
+    await flush(); await flush();
+    expect(no.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
+  });
+
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {
     const r = rig({ notice, cursor: true });
     r.ticks[0]();
@@ -1431,7 +1508,7 @@ describe("the remote and WSL seams (INT)", () => {
     expect(r.t.agent.describeTargets()).toContain("no desktop session");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
     // (With commands off there, a task needs the desktop: refused now, while the question goes out.)
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use, and commands are off there." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
     expect(r.refreshes).toHaveLength(2);
     r.refreshes[1].release();
     await flush();

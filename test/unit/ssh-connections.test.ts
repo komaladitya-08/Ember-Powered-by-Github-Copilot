@@ -4,11 +4,11 @@ import { Duplex, PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAskpass } from "../../app/askpass/main";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
-import { BOOTSTRAP_SCRIPT } from "../../app/main/remote/bootstrap";
+import { BOOTSTRAP_SCRIPT, writeAll } from "../../app/main/remote/bootstrap";
 import { createConnections, type ConnectionsInternals, type ExecResult } from "../../app/main/remote/connections";
-import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
+import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, runAttempt, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
 import { acquireLock, type LockIo } from "../../app/remote/lock";
-import { checkIncoming, Deadline, escalationMs, runLinkCore, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
+import { AFTER_DECISION_IDLE_MS, checkIncoming, Deadline, escalationMs, runLinkCore, SETTLE_AFTER_EXIT_MS, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
 import type { Msg } from "../../app/main/remote/protocol";
 import { ConnectError, type ConnectProgress, type HostRecord, type Mux, type PromptUi } from "../../app/main/remote/types";
 import type { PromptAnswer, PromptCard } from "../../app/shared/remote-ui";
@@ -126,7 +126,8 @@ class FakeChild implements ChildLike {
     this.done = true;
     this.stdout.end();
     this.stderr.end();
-    setImmediate(() => { for (const f of this.exitFns) f(code, signal); });
+    // As Node does when a child exits: its stdin is destroyed before 'exit' (a later write emits nothing at all).
+    setImmediate(() => { this.stdin.destroy(); for (const f of this.exitFns) f(code, signal); });
   }
 
   private take(c: Buffer): void {
@@ -238,6 +239,8 @@ function rig(o: {
   internals?: Partial<ConnectionsInternals>;
   allowLoopback?: boolean;
   archive?: (path: string) => Buffer;
+  /** What `ssh -V` prints (default: a current client for the OS). */
+  sshV?: string;
 } = {}) {
   const spawned: FakeChild[] = [];
   const muxes: FakeMux[] = [];
@@ -250,7 +253,7 @@ function rig(o: {
   const listeners = new Map<string, (c: net.Socket) => void>();
   const exec = async (argv: readonly string[]): Promise<ExecResult> => {
     execs.push(argv);
-    if (argv.includes("-V")) return { code: 0, stdout: "", stderr: o.os === "win32" ? "OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2\r\n" : "OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n" };
+    if (argv.includes("-V")) return { code: 0, stdout: "", stderr: o.sshV ?? (o.os === "win32" ? "OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2\r\n" : "OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n") };
     if (argv.includes("-G")) return { code: 0, stdout: o.g ? o.g(argv) : gOut(), stderr: "" };
     if (argv.includes("-O")) return { code: 255, stdout: "", stderr: "Control socket connect(/x): No such file or directory\n" };
     return { code: 1, stdout: "", stderr: "" };
@@ -413,6 +416,20 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(r.cards[0]).toMatchObject({ kind: "secret", secret: "password", login: "deploy" });
     const c = ref.c = track(rig({ remotes: [{ fail: () => auth }, { fail: async (run): Promise<typeof auth | null> => ((await (ref.c as Rig).askpass(run, "Password: ")) ? null : auth) }] }));
     await expect(c.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "cancelled", message: "Connection cancelled" });
+  });
+
+  it("on RHEL 8's ssh (8.0) a server asking in ssh's words gets the host's quoted question, never \"Unlock your SSH key\"", async () => {
+    const auth = { stderr: "alice@build-01.example.com: Permission denied (publickey,keyboard-interactive).\n", code: 255 };
+    const spoof = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";
+    type Rig = ReturnType<typeof rig>;
+    const ref: { r?: Rig } = {};
+    const r = ref.r = track(rig({
+      sshV: "OpenSSH_8.0p1, OpenSSL 1.1.1k  FIPS 25 Mar 2021\n",
+      remotes: [{ fail: () => auth }, { fail: async (run): Promise<typeof auth | null> => { await (ref.r as Rig).askpass(run, spoof); return auth; } }],
+    }));
+    await r.conns.connect(record(), { interactive: true }).catch(() => undefined);
+    expect(r.cards).toEqual([expect.objectContaining({ kind: "secret", secret: "other", host: "build-01", prompt: spoof })]);
+    expect(r.cards[0]).not.toHaveProperty("via");
   });
 
   it("never offers to accept a changed host key", async () => {
@@ -615,8 +632,29 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     timers.shift()?.();
     await new Promise(res => setTimeout(res, 150));
     expect(timers).toHaveLength(0);
-    expect(r.progress.at(-1)?.[1]).toMatchObject({ step: "failed", kind: "auth" });
+    expect(r.progress.at(-1)?.[1]).toMatchObject({ step: "failed", kind: "auth", retry: false });
     expect(r.cards).toEqual([]);
+  });
+
+  it("tells each failed reconnect with whether another try follows (the runtime says \"trying again\" only then)", async () => {
+    const timers: (() => void)[] = [];
+    const r = track(rig({
+      remotes: [{}, { fail: () => ({ stderr: "ssh: connect to host build-01.example.com port 22: Network is unreachable\n", code: 255 }) }, { fail: () => ({ stderr: "Permission denied (publickey,password).\n", code: 255 }) }],
+      internals: { setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => undefined },
+    }));
+    const link = await r.conns.connect(record(), { interactive: true });
+    r.muxes[0].close("ssh exited");
+    await settle();
+    expect(link.state).toBe("lost");
+    timers.shift()?.();
+    await new Promise(res => setTimeout(res, 150));
+    const failed = () => r.progress.filter(([, p]) => p.step === "failed").map(([, p]) => p as Extract<ConnectProgress, { step: "failed" }>);
+    expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true]]);
+    expect(timers).toHaveLength(1);
+    timers.shift()?.();
+    await new Promise(res => setTimeout(res, 150));
+    expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true], ["auth", false]]);
+    expect(timers).toHaveLength(0);
   });
 
   it("disconnects with bye and EOF, and doesn't reconnect", async () => {
@@ -666,6 +704,138 @@ describe("the link's pieces", () => {
     expect(fired).toBe(false);
     t = 115_001; vi.advanceTimersByTime(1_001);
     expect(fired).toBe(true);
+  });
+
+  it("settles an attempt whose ssh ends while Ember decides: Cancel during the runtime's download, or a dropped network", async () => {
+    const start: Extract<ToWorker, { t: "start" }> = {
+      t: "start", argv: ["/usr/bin/ssh", "deploy@build-01"], env: {}, spawn: { detached: true, windowsHide: true }, script: BOOTSTRAP_SCRIPT,
+      deadlineMs: 45_000, probeMs: 60_000, stallMs: 5000, graceMs: 20_000,
+    };
+    const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<"hung">(r => setTimeout(() => r("hung"), ms))]);
+    // Cancel: the worker kills ssh (Node destroys its stdin), then the aborted download makes the decision QUIT.
+    const spawned: FakeChild[] = [];
+    const abort = new AbortController();
+    let deciding = false;
+    const cancelled = runAttempt(inProcess(spawned, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+      decide: () => new Promise(resolve => {
+        deciding = true;
+        abort.signal.addEventListener("abort", () => setTimeout(() => resolve({ kind: "quit" }), 30), { once: true });
+      }),
+      signal: abort.signal,
+    });
+    for (let i = 0; i < 200 && !deciding; i++) await tick();
+    expect(deciding).toBe(true);
+    abort.abort();
+    const r1 = await within(cancelled.result, 1500);
+    expect(r1).toMatchObject({ kind: "failed", cancelled: true, probeBegan: true });
+    expect(spawned[0].killed).toBe(true);
+    // A dropped network: ssh exits by itself while the download goes on (the decision never comes).
+    const spawned2: FakeChild[] = [];
+    let deciding2 = false;
+    const dropped = runAttempt(inProcess(spawned2, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+      decide: () => new Promise(() => { deciding2 = true; }),
+    });
+    for (let i = 0; i < 200 && !deciding2; i++) await tick();
+    spawned2[0].stderr.write("client_loop: send disconnect: Broken pipe\n");
+    spawned2[0].exit(255, null);
+    const r2 = await within(dropped.result, 1500);
+    expect(r2).toMatchObject({ kind: "failed", cancelled: false, probeBegan: true, exit: { code: 255 } });
+    // ssh gone but its stdout held open (a process it started keeps the pipe): Cancel ends the attempt at once, and
+    // without one it ends SETTLE_AFTER_EXIT_MS after ssh's exit.
+    for (const cancel of [true, false]) {
+      const kids: FakeChild[] = [];
+      const ac = new AbortController();
+      let asked = false;
+      const held = runAttempt(inProcess(kids, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+        decide: () => new Promise(() => { asked = true; }), signal: ac.signal,
+      });
+      for (let i = 0; i < 200 && !asked; i++) await tick();
+      kids[0].stdout.end = (() => kids[0].stdout) as never;
+      kids[0].exit(255, null);
+      await settle();
+      if (cancel) ac.abort();
+      const r = await within(held.result, cancel ? 500 : SETTLE_AFTER_EXIT_MS + 1000);
+      expect(r).toMatchObject({ kind: "failed", cancelled: cancel, probeBegan: true, exit: { code: 255 } });
+    }
+  });
+
+  it("ends an attempt whose remote stops taking an archive's bytes, after the post-decision wait (no hang)", async () => {
+    /** A remote that asks for the runtime and then never reads its stdin again. */
+    class StuckChild implements ChildLike {
+      readonly stdin = new PassThrough();
+      readonly stdout = new PassThrough();
+      readonly stderr = new PassThrough();
+      readonly pid = 4999;
+      killed = false;
+      private got = 0;
+      private line = "";
+      private exitFns: ((c: number | null, s: NodeJS.Signals | null) => void)[] = [];
+      constructor() { this.stdin.on("data", this.take); }
+      private readonly take = (c: Buffer) => {
+        if (this.got < Buffer.byteLength(BOOTSTRAP_SCRIPT)) {
+          this.got += c.length;
+          if (this.got >= Buffer.byteLength(BOOTSTRAP_SCRIPT)) this.stdout.write("\0EMBER-PROBE-BEGIN\nos=Linux\nEMBER-PROBE-END\n");
+          return;
+        }
+        this.line += c.toString();
+        if (!this.line.includes("\n")) return;
+        this.stdin.off("data", this.take);
+        this.stdin.pause();
+        this.stdout.write("EMBER-READY runtime\n");
+      };
+      on(ev: "exit" | "error", fn: (...a: never[]) => void): this {
+        if (ev === "exit") this.exitFns.push(fn as (c: number | null, s: NodeJS.Signals | null) => void);
+        return this;
+      }
+      kill(): boolean {
+        this.killed = true;
+        this.stdout.end();
+        this.stderr.end();
+        setImmediate(() => { this.stdin.destroy(); for (const f of this.exitFns) f(null, "SIGKILL"); });
+        return true;
+      }
+    }
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const child = new StuckChild();
+    const toMain = new Set<(m: FromWorker) => void>();
+    const toWorker: ((m: ToWorker) => void)[] = [];
+    runLinkCore({ post: m => setImmediate(() => { for (const f of toMain) f(m); }), on: fn => { toWorker.push(fn); } }, {
+      spawn: () => child,
+      createMux: () => { throw new Error("never serves"); },
+      openArchive: () => (async function* () { yield Buffer.alloc(1024 * 1024, 7); })(),
+      kill: c => { c.kill("SIGKILL"); },
+    });
+    const port: LinkPort = {
+      post: m => setImmediate(() => { for (const f of toWorker) f(m); }),
+      onMessage: fn => { toMain.add(fn); return () => { toMain.delete(fn); }; },
+      onExit: () => () => undefined,
+      terminate: async () => undefined,
+    };
+    const line = `INSTALL ${PC_ID} v24.11.1-linux-x64 ${1024 * 1024} ${H("a")} xz ${PARTS_ID} 0 ${H("b")}`;
+    const control = runAttempt(port, {
+      t: "start", argv: ["/usr/bin/ssh", "deploy@build-01"], env: {}, spawn: { detached: true, windowsHide: true }, script: BOOTSTRAP_SCRIPT,
+      deadlineMs: 45_000, probeMs: 60_000, stallMs: 5000, graceMs: 20_000,
+    }, { decide: async () => ({ kind: "install", line, partsId: PARTS_ID, archives: [{ name: "runtime", bytes: 1024 * 1024, path: "/x/runtime" }] }) });
+    let result: unknown = null;
+    void control.result.then(r => { result = r; });
+    await settle(60);
+    expect(result).toBeNull();
+    await vi.advanceTimersByTimeAsync(AFTER_DECISION_IDLE_MS - 1000);
+    await settle(20);
+    expect(result).toBeNull();
+    await vi.advanceTimersByTimeAsync(2000);
+    for (let i = 0; i < 20 && result === null; i++) { await settle(20); await vi.advanceTimersByTimeAsync(50); }
+    expect(child.killed).toBe(true);
+    expect(result).toMatchObject({ kind: "failed", deadline: true, probeBegan: true });
+  });
+
+  it("never waits on a write to a stream that is closed already (Node destroys a child's stdin when it exits)", async () => {
+    const w = new PassThrough();
+    w.destroy();
+    await expect(writeAll(w, "QUIT\n")).rejects.toThrow("ssh's stdin closed");
+    const ended = new PassThrough();
+    ended.end();
+    await expect(writeAll(ended, "x")).rejects.toThrow("ssh's stdin closed");
   });
 
   it("escalates after min(10 s, max(1 s, 3 × RTT + in flight ÷ throughput)) (critique remote-23)", () => {

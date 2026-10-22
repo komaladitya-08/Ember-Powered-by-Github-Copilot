@@ -28,6 +28,13 @@ const STDERR_KEEP = 8 * 1024;
 /** RunExit.error's cap (protocol CAPS.str.reason). */
 const ERROR_MAX = 500;
 
+/**
+ * Output waiting on the link's bulk stream past which every live run's output is paused (a fast printer over a slow
+ * link: the mux queues without limit, and the queue is one line for every channel, screenshots too), and below which
+ * it flows again; looked at every `pollMs` while paused. A paused run blocks on its pipe, as on a slow terminal.
+ */
+export const BACKLOG = { high: 1024 * 1024, low: 256 * 1024, pollMs: 50 } as const;
+
 /** The ladder's steps after Stop (ms). */
 export const LADDER = { term: 300, kill: 1000, last: 1500 } as const;
 /** The ladder when nobody is watching: SIGTERM at once, SIGKILL at 300 ms, the last sweep at 1.5 s. */
@@ -54,6 +61,10 @@ export interface RunsDeps {
   watch: { add(runId: string, pgid: number): number | null; session(slot: number, sid: number): void; remove(slot: number): void } | null;
   /** A run's output bytes, on its bulk channel. */
   send: (channel: number, bytes: Uint8Array) => void;
+  /** Bytes waiting on the link's bulk stream (the mux's backlog); absent: output is never paused. */
+  backlog?: () => number;
+  /** Drops what is still queued of a channel's bytes, returning how many (the mux's dropBulk). */
+  drop?: (channel: number) => number;
   /** A run ended: its exit and how many output bytes went on its channel. */
   exited: (runId: string, exit: RunExit, outBytes: number) => void;
   log: Logger;
@@ -73,6 +84,11 @@ interface Run {
   stderr: string;
   exitMark: number | null;
   outBytes: number;
+  /**
+   * Its output is dropped: the kill switch stopped it (nobody reads it), or it printed past the cap while being stopped,
+   * so it can't hold the link for later work.
+   */
+  discard: boolean;
   t0: number;
   stopWhy: StopWhy | null;
   ladder: Promise<void> | null;
@@ -96,6 +112,9 @@ export class RemoteRuns {
   private runs = new Map<string, Run>();
   /** Ended runs, kept briefly so a late cmd.stop or cmd.input for one isn't "gone". */
   private ended = new Set<string>();
+  /** Output is paused while the link's bulk backlog is high (BACKLOG), and the look that resumes it. */
+  private paused = false;
+  private poll: NodeJS.Timeout | null = null;
 
   constructor(private d: RunsDeps) {}
 
@@ -124,7 +143,7 @@ export class RemoteRuns {
     const ended = new Promise<void>(r => { end = r; });
     const run: Run = {
       spec, channel, child: null, pid: null, sid: null, slot: null, interactive: false, started: false, tail: Buffer.alloc(0), stderr: "",
-      exitMark: null, outBytes: 0, t0: this.d.now(), stopWhy: null, ladder: null, timers: [], ended, end,
+      exitMark: null, outBytes: 0, discard: false, t0: this.d.now(), stopWhy: null, ladder: null, timers: [], ended, end,
     };
     this.runs.set(spec.runId, run);
     let launch: ReturnType<AgentContracts["launchArgv"]>;
@@ -157,13 +176,23 @@ export class RemoteRuns {
       if (pty) for (const ms of [100, 600]) run.timers.push(setTimeout(() => void this.findSession(run), ms));
     }
     const out = (chunk: Buffer, isErr: boolean) => {
-      run.outBytes += chunk.length;
       if (isErr && run.stderr.length < STDERR_KEEP) run.stderr += chunk.toString("utf8");
       if (!run.started || run.exitMark === null) this.scan(run, chunk);
+      if (run.discard) return;
+      if (run.stopWhy && this.d.backlog && this.d.backlog() > BACKLOG.high) {
+        // Being stopped it flows (its end must be seen), so what it prints past the cap is dropped, and nothing after
+        // that gap: one that ignores ^C and SIGTERM would otherwise queue all it prints until its SIGKILL.
+        run.discard = true;
+        return;
+      }
+      run.outBytes += chunk.length;
       this.d.send(run.channel, chunk);
+      this.throttle();
     };
     child.stdout?.on("data", (c: Buffer) => out(c, false));
     child.stderr?.on("data", (c: Buffer) => out(c, true));
+    // Started while output waits: it waits too ('data' listeners set a stream flowing).
+    if (this.paused) this.hold(run, true);
     child.on("error", err => {
       const errno = (err as NodeJS.ErrnoException).code;
       // A spawn that failed names the program, not the folder: say both (an ENOENT is either).
@@ -189,19 +218,61 @@ export class RemoteRuns {
     const run = this.runs.get(runId);
     if (!run) return false;
     if (!run.stopWhy) run.stopWhy = why;
+    if (why === "killswitch") this.discard(run);
+    // A run being stopped isn't held back: what it prints as it ends flows, so its end is seen without delay.
+    this.hold(run, false);
     run.ladder ??= this.ladder(run, true);
     return true;
   }
 
   /**
    * Stops every run: attended (^C first) or not (SIGTERM first). Resolves once each was signalled; `ladders()` resolves
-   * when every ladder's last sweep has run.
+   * when every ladder's last sweep has run. The kill switch's runs drop their output still queued and send no more.
    */
   async stopAll(why: StopWhy, attended: boolean): Promise<void> {
     for (const run of this.runs.values()) {
       if (!run.stopWhy) run.stopWhy = why;
+      if (why === "killswitch") this.discard(run);
+      this.hold(run, false);
       run.ladder ??= this.ladder(run, attended);
     }
+  }
+
+  /** The kill switch's run: its queued output is dropped and none follows; outBytes counts only what went. */
+  private discard(run: Run): void {
+    if (run.discard) return;
+    run.discard = true;
+    const dropped = this.d.drop?.(run.channel) ?? 0;
+    run.outBytes = Math.max(0, run.outBytes - dropped);
+  }
+
+  /** Pauses (or resumes) a run's output streams; a stopped run is never paused. */
+  private hold(run: Run, pause: boolean): void {
+    const streams = [run.child?.stdout, run.child?.stderr];
+    for (const s of streams) {
+      try {
+        if (pause && !run.stopWhy) s?.pause?.();
+        else s?.resume?.();
+      } catch {
+        // a stream that's gone holds nothing back
+      }
+    }
+  }
+
+  /** After a send: past BACKLOG.high, every live run's output pauses until the backlog is under BACKLOG.low. */
+  private throttle(): void {
+    const backlog = this.d.backlog;
+    if (!backlog || this.paused || backlog() <= BACKLOG.high) return;
+    this.paused = true;
+    this.d.log.info("remote.runs_output_paused", { backlog: backlog() });
+    for (const r of this.runs.values()) this.hold(r, true);
+    this.poll = setInterval(() => {
+      if (backlog() > BACKLOG.low) return;
+      if (this.poll) clearInterval(this.poll);
+      this.poll = null;
+      this.paused = false;
+      for (const r of this.runs.values()) this.hold(r, false);
+    }, BACKLOG.pollMs);
   }
 
   /** Resolves when every run that is live now has ended. */

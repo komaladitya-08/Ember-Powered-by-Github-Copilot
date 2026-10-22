@@ -15,6 +15,7 @@ import type { OS } from "../../shared/shortcuts";
 import type { PromptCard } from "../../shared/remote-ui";
 import type { Logger } from "../logger";
 import { shQuote } from "./ssh-argv";
+import { versionAtLeast, type SshVersion } from "./ssh-config";
 
 /** The longest prompt kept (ssh's text, cut): §5.1.6's 2 KiB. */
 export const PROMPT_MAX = 2048;
@@ -71,8 +72,19 @@ export function parseRequest(line: string, nonce: string): AskpassRequest | null
   return { prompt: r.prompt.slice(0, PROMPT_MAX), mode };
 }
 
-/** The names that mean the target host itself (its label, alias, resolved host name, HostKeyAlias), compared in lower case. */
-export interface PromptContext { id: string; host: string; names: readonly string[] }
+/**
+ * The names that mean the target host itself (its label, alias, resolved host name, HostKeyAlias), compared in lower
+ * case, and the version of the ssh client that asks (unknown counts as one that doesn't mark a server's prompts).
+ */
+export interface PromptContext { id: string; host: string; names: readonly string[]; client?: Pick<SshVersion, "major" | "minor"> }
+
+/**
+ * Does this client mark a server's keyboard-interactive prompts as the server's? OpenSSH puts "(user@host) " before
+ * them from 8.5 on; older clients hand the server's text to askpass as it came, so it can't be told from ssh's own.
+ */
+export function serverPromptsMarked(client: Pick<SshVersion, "major" | "minor"> | undefined): boolean {
+  return !!client && versionAtLeast(client, 8, 5);
+}
 
 const named = (ctx: PromptContext, h: string) => ctx.names.some(n => n.toLowerCase() === h.toLowerCase()) || ctx.host.toLowerCase() === h.toLowerCase();
 
@@ -80,6 +92,7 @@ const named = (ctx: PromptContext, h: string) => ctx.names.some(n => n.toLowerCa
  * The prompt window's card for one of ssh's prompts (§5.1.6, §8.6), by pattern: a host key (`SHA256:`), a key's
  * passphrase, a password (`user@host's password:` or `(user@host) Password:`), a code (keyboard-interactive), a
  * security key's touch, or anything else. A prompt that names another host than the target (a jump hop's) gets `via`.
+ * On a client that doesn't mark a server's prompts (before 8.5), every secret is the host's question, quoted.
  */
 export function promptCard(req: AskpassRequest, ctx: PromptContext): PromptCard {
   const p = req.prompt;
@@ -92,8 +105,13 @@ export function promptCard(req: AskpassRequest, ctx: PromptContext): PromptCard 
   if (req.mode === "notify" || /Confirm user presence|touch your (security )?key|Touch (the )?(security )?key/i.test(p)) {
     return { id: ctx.id, kind: "touch", host: ctx.host };
   }
+  // Before 8.5 a hostile server (the target or a hop) can ask in ssh's own words: "Enter passphrase for key …" would
+  // be "Unlock your SSH key", and another host's "user@host's password:" a sign-in to that host, each answer going to
+  // the server. So no secret there is worded as ssh's or a hop's: the host asks, its text quoted. A host key's card
+  // stays (its answer is only "yes", nothing a server could use), and so does a touch (it answers nothing).
+  if (!serverPromptsMarked(ctx.client)) return { id: ctx.id, kind: "secret", secret: "other", host: ctx.host, prompt: p };
   // ssh's own prompt for a key starts the text; a server's keyboard-interactive prompt that only says the same words
-  // (ssh 8.4+ puts "(user@host) " before it) is the server asking, never "Unlock your SSH key".
+  // (ssh 8.5+ puts "(user@host) " before it) is the server asking, never "Unlock your SSH key".
   if (/^Enter passphrase for key '/.test(p)) {
     return { id: ctx.id, kind: "secret", secret: "passphrase", host: ctx.host, prompt: p };
   }

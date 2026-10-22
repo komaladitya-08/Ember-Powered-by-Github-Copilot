@@ -49,6 +49,7 @@ import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } 
 import type { WslRunner } from "../wsl/runner";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
+import { signInAgain } from "../../renderer/overlay/target-copy";
 import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception, wslBinding, type HandsBase } from "./hands";
@@ -499,7 +500,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const m = new Map<string, LinkView>();
     for (const [hostId, c] of conns) {
       const t = c.target;
-      m.set(hostId, { state: c.state, ...(t ? { desktop: t.desktop(), commands: safeState(t.service) } : {}) });
+      const why = t ? safeCap(t.service)?.why : undefined;
+      m.set(hostId, { state: c.state, ...(t ? { desktop: t.desktop(), commands: safeState(t.service), ...(why ? { commandsWhy: why } : {}) } : {}) });
     }
     return m;
   };
@@ -640,7 +642,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (s === "stalled") {
       c.state = "stalled";
       bubble(`stalled:${hostId}`, {
-        title: `${hostId} isn't answering`, thought: `Its running commands stop in ${link.welcome.graceSeconds} s unless the link comes back. Nothing new is sent meanwhile.`,
+        // Stalled at 5 s of silence; the grace counts from the last frame, as the command tabs' countdown does.
+        title: `${hostId} isn't answering`, thought: `Its running commands stop in ${Math.max(0, link.welcome.graceSeconds - 5)} s unless the link comes back. Nothing new is sent meanwhile.`,
         actions: [{ id: `conn:${hostId}:disconnect`, label: "Disconnect" }], mood: "attention",
       });
     } else if (s === "ready") {
@@ -729,11 +732,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       }
       if (c.activate) setActive(targetIdOf("ssh", hostId)); else refresh();
       const headless = c.target?.desktop() === "none";
+      // A headless host is worked on through commands only: said so only when they aren't off there (L1: off until
+      // the user's card), else what turns them on.
+      const off = headless && safeState(c.target?.service ?? null) === "off";
+      let byAdmin = false;
+      try { byAdmin = off && c.target?.service.mode() === "off"; } catch { byAdmin = true; } // a mode that can't be read is off
       bubble(`connected:${hostId}`, {
         title: `Ember is on ${label}`,
-        thought: headless ? `${label} has no desktop, so I'll run commands there.` : "Ask away: I'll work there. Your voice and your sign-in stay on this computer.",
-        actions: [], mood: "done",
-      }, INFO_MS);
+        thought: !headless ? "Ask away: I'll work there. Your voice and your sign-in stay on this computer."
+          : !off ? `${label} has no desktop, so I'll run commands there.`
+            : byAdmin ? `${label} has no desktop, and your organisation has turned off commands there, so I can't work on it.`
+              : `${label} has no desktop, and commands are off there. Turn them on so I can work there.`,
+        actions: off && !byAdmin ? [{ id: `conn:${hostId}:commands`, label: "Turn on commands", primary: true }] : [], mood: off ? "attention" : "done",
+      }, off && !byAdmin ? undefined : INFO_MS);
       return { ok: true };
     } catch (err) {
       if (abort.signal.aborted) return stopped("Cancelled.");
@@ -764,10 +775,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (settings.get().targets.active === targetIdOf("ssh", hostId)) setActive(LOCAL_TARGET);
     refresh();
   }
-  /** A destination the user typed (settings' Add) or Ember saw them use: its record, then its card, then the link. */
-  async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }): Promise<ActResult> {
-    if (!sshAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember on other computers." };
-    if (!connections) return { ok: false, message: "Ember can't connect to other computers here." };
+  /**
+   * A destination the user typed (settings' Add) or Ember saw them use: its record, then its card, then the link.
+   * `bubble`: asked from a bubble's button (Bring Ember, offer_connect's Connect), where nothing else shows the answer,
+   * so a refusal before connect() (which bubbles its own) gets connect()'s failure bubble; Not now says nothing.
+   */
+  async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }, o: { bubble?: boolean } = {}): Promise<ActResult> {
+    const refused = (message: string): ActResult => {
+      const label = hostPart(raw.dest);
+      if (o.bubble) bubble(`fail:${label}`, { title: `Can't connect to ${label}`, thought: message, actions: [], mood: "error" }, 2 * INFO_MS);
+      return { ok: false, message };
+    };
+    if (!sshAllowed(admin())) return refused("Your organisation doesn't allow Ember on other computers.");
+    if (!connections) return refused("Ember can't connect to other computers here.");
     const existing = settings.get().targets.hosts.find(h => sameDest(h, raw.dest, raw.port));
     if (existing) return connect(existing.id, { interactive: true, activate: true });
     let resolved: HostRecord["resolved"];
@@ -776,7 +796,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       resolved = { user: r.user, hostname: r.hostname, port: r.port, jump: [...r.jump] };
     } catch (err) {
       if (!(err instanceof ConnectError)) log.warn("targets.resolve_failed", { err });
-      return { ok: false, message: err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up." };
+      return refused(err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up.");
     }
     const id = hostIdFor(hostPart(raw.dest), new Set(settings.get().targets.hosts.map(h => h.id)));
     const host: HostRecord = {
@@ -787,7 +807,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!(await askCard(card))) return { ok: false, message: "Not now." };
     try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
       log.warn("targets.host_save_failed", { err });
-      return { ok: false, message: "Ember couldn't save that computer." };
+      return refused("Ember couldn't save that computer.");
     }
     return connect(id, { interactive: true, activate: true });
   }
@@ -961,7 +981,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     void addAndConnect({
       dest: seenDest(s), ...(s.port ? { port: s.port } : {}), ...(Object.keys(extra).length ? { extra } : {}),
       ...(s.via && s.via !== "local" && WSL_SSH_PROVEN ? { via: s.via } : {}),
-    });
+    }, { bubble: true });
   };
   const dismissSeen = (s: SshSeen) => {
     const own = settings.own().targets;
@@ -1071,6 +1091,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           if (adopt(hostId, link)) { hideBubble(`lost:${hostId}`); refresh(); }
           return;
         }
+        if (p.step === "failed" && c?.state === "lost" && !p.retry) {
+          // SA stopped reconnecting after a loss: no more "trying again". A sign-in it can't do in batch mode (a
+          // password, a passphrase outside the agent, a host key to accept) is §8.2's "sign in again".
+          c.state = "closed";
+          const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
+          const words = signIn ? signInAgain(hostId) : null;
+          bubble(`lost:${hostId}`, {
+            title: words?.title ?? `Can't reconnect to ${hostId}`, thought: words?.text ?? (p.fix ? `${p.message} ${p.fix}` : p.message),
+            actions: [{ id: `conn:${hostId}:reconnect`, label: "Reconnect", primary: true }], mood: signIn ? "attention" : "error",
+          });
+          refresh();
+          return;
+        }
         if (c?.state !== "connecting") return;
         const words = progressWords(hostId, p);
         if (words) bubble(`connecting:${hostId}`, { title: `Connecting to ${hostId}…`, thought: words, actions: [{ id: `conn:${hostId}:cancel`, label: "Cancel" }], mood: "thinking" });
@@ -1160,7 +1193,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const commands = liveCommands(t.service, id);
         // Reads and steps wait for the desktop's answer.
         const hands = remoteHands({ hostId: t.hostId, parts: t.parts, base: { audit, confirmer }, commands, ready: () => asking });
-        if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use, and commands are off there.`);
+        if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use. ${safeCap(t.service)?.why ?? "Commands are off there."}`);
         return { ok: true, hands };
       }
       const binding = bindingOf(e);
@@ -1403,11 +1436,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         if (parseTargetId(t)) pick(t as TargetId);
         return true;
       }
-      m = /^conn:([a-z0-9][a-z0-9._-]{0,63}):(cancel|disconnect|reconnect|stop)$/.exec(id);
+      m = /^conn:([a-z0-9][a-z0-9._-]{0,63}):(cancel|disconnect|reconnect|stop|commands)$/.exec(id);
       if (m) {
         const [, hostId, what] = m;
         if (what === "cancel") { conns.get(hostId)?.abort?.abort(); hideBubble(`connecting:${hostId}`); }
         else if (what === "reconnect") { hideBubble(); void connect(hostId, { interactive: true, activate: true }); }
+        else if (what === "commands") {
+          // A headless host's commands, turned on from its connected bubble: the commands card first (setCommands).
+          hideBubble(`connected:${hostId}`);
+          void setCommands(targetIdOf("ssh", hostId), true).then(r => {
+            if (r.ok) bubble(`connected:${hostId}`, { title: `Commands are on for ${hostId}`, thought: "Ask away: I'll run commands there.", actions: [], mood: "done" }, INFO_MS);
+            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, { title: `Commands stay off on ${hostId}`, thought: r.message ?? "", actions: [], mood: "error" }, INFO_MS);
+          }, err => log.warn("targets.commands_switch_failed", { err }));
+        }
         else { hideBubble(); void disconnect(hostId); }
         return true;
       }
@@ -1423,7 +1464,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           if (m[2] === "bring" && (!o.seen.via || o.seen.via === "local" || WSL_SSH_PROVEN)) bringSeen(o.seen);
           else if (m[2] === "never") dismissSeen(o.seen);
         } else if (o?.kind === "connect" && m[2] === "connect") {
-          void (o.hostId ? connect(o.hostId, { interactive: true, activate: true }) : addAndConnect({ dest: o.alias }));
+          void (o.hostId ? connect(o.hostId, { interactive: true, activate: true }) : addAndConnect({ dest: o.alias }, { bubble: true }));
         }
         return true;
       }

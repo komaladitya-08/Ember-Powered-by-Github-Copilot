@@ -5,7 +5,9 @@ import { runAskpass } from "../../app/askpass/main";
 import { answerFor, answerLine, createAskpassServer, parseRequest, pickSocketBase, promptCard, serveConnections, socketBases, writeAskpassWrapper, type AskpassFs, type AskpassHandler } from "../../app/main/remote/askpass-server";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
-const ctx = { id: "p1", host: "build-01", names: ["build-01", "build-01.example.com", "203.0.113.7"] };
+const ctx = { id: "p1", host: "build-01", names: ["build-01", "build-01.example.com", "203.0.113.7"], client: { major: 9, minor: 6 } };
+/** RHEL 8's client (8.0p1): it hands a server's keyboard-interactive prompts to askpass unmarked. */
+const old = { ...ctx, client: { major: 8, minor: 0 } };
 
 /** Two in-memory sockets wired to each other (a helper's end and the server's end). */
 function socketPair(): [Duplex, Duplex] {
@@ -55,6 +57,24 @@ describe("the prompt cards for ssh's prompts (§5.1.6, §8.6)", () => {
     expect(promptCard({ prompt: "Favourite colour? ", mode: "secret" }, ctx)).toMatchObject({ secret: "other" });
     // A server asking in the words of ssh's own passphrase prompt is still the server asking, under its own name.
     expect(promptCard({ prompt: "(deploy@build-01) Enter passphrase for key '/home/ana/.ssh/id_ed25519': ", mode: "secret" }, ctx)).toMatchObject({ secret: "other", login: "deploy" });
+  });
+
+  it("quotes every secret as the host's question on a client before 8.5, where a server can ask in ssh's own words", () => {
+    const passphrase = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";
+    const other = "alice@corp-sso.example.com's password: ";
+    for (const c of [old, { ...ctx, client: { major: 8, minor: 4 } }, { id: "p1", host: "build-01", names: ctx.names }]) {
+      expect(promptCard({ prompt: passphrase, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: passphrase });
+      // Never "Sign in to corp-sso on the way to build-01": no via, no login.
+      expect(promptCard({ prompt: other, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: other });
+      expect(promptCard({ prompt: "deploy@build-01.example.com's password: ", mode: "secret" }, c)).toMatchObject({ secret: "other" });
+    }
+    // 8.5 marks the server's prompts, so ssh's own unmarked ones are ssh's.
+    expect(promptCard({ prompt: passphrase, mode: "secret" }, { ...ctx, client: { major: 8, minor: 5 } })).toMatchObject({ secret: "passphrase" });
+    expect(promptCard({ prompt: other, mode: "secret" }, { ...ctx, client: { major: 8, minor: 5 } })).toMatchObject({ secret: "password", via: "corp-sso.example.com" });
+    // A host key's card hands ssh only "yes"; a touch answers nothing: both stay.
+    const hostKey = "The authenticity of host 'build-01.example.com (203.0.113.7)' can't be established.\nED25519 key fingerprint is SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ";
+    expect(promptCard({ prompt: hostKey, mode: "secret" }, old)).toMatchObject({ kind: "host-key" });
+    expect(promptCard({ prompt: "Confirm user presence for key ED25519-SK SHA256:abc", mode: "secret" }, old)).toMatchObject({ kind: "touch" });
   });
 
   it("shows a security key's touch as a notice", () => {

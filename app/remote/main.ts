@@ -185,6 +185,8 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     stamps: { write: id => stamps.write(id, stampText(process.pid, myStart)), remove: id => stamps.remove(id) },
     watch: table,
     send: (channel, bytes) => mux.sendBytes(channel, bytes),
+    backlog: () => mux.backlog().bulk,
+    drop: channel => mux.dropBulk(channel),
     exited: (runId, exit, outBytes) => server?.runExited(runId, exit, outBytes),
     log: log.child("runs"), now: () => Date.now(),
   });

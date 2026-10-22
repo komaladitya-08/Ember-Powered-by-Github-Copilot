@@ -18,10 +18,21 @@ import { runBootstrap, type Decision } from "./bootstrap";
 import { createMux } from "./mux";
 import { CAPS, ERR_CODES, EV_SCHEMAS, OP_SCHEMAS, type EvName, type Msg, type Op } from "./protocol";
 import type { Mux } from "./types";
-import type { FromWorker, ToWorker, WorkerDecision } from "./link";
+import type { FromWorker, ToWorker, WorkerDecision, WorkerOutcome } from "./link";
 
 /** The most of ssh's stderr kept (its tail), for classifying a failure; never logged. */
 export const STDERR_MAX = 16 * 1024;
+/**
+ * After ssh exits before serving, how long the bootstrap has to see the end of its output and say how it ended; past
+ * it (a process that kept ssh's stdout open, say) the attempt is ended here as ssh's end, so it never hangs.
+ */
+export const SETTLE_AFTER_EXIT_MS = 2000;
+/**
+ * After Ember's decision, how long the remote may go without taking an archive's next bytes or reaching the agent's
+ * preamble (the probe's deadline ends when the probe does). Generous for a slow board unpacking the runtime; a remote
+ * that stops reading its stdin is ended here instead of holding the attempt open for ever.
+ */
+export const AFTER_DECISION_IDLE_MS = 120_000;
 
 /** The child process the core drives (node's ChildProcess, or a fake). */
 export interface ChildLike {
@@ -139,6 +150,7 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
   let killedWhy: string | null = null;
   let deadline: Deadline | null = null;
   let probeTimer: NodeJS.Timeout | null = null;
+  let idleTimer: NodeJS.Timeout | null = null;
   let tick: NodeJS.Timeout | null = null;
   let graceMs = 20_000;
   let stallMs = 5_000;
@@ -146,9 +158,33 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
   const pending = new Map<number, Op>();
   const stops = new Map<number, NodeJS.Timeout>();
   let exited = false;
+  /** The bootstrap's end as told to the main thread (once), and whether the probe had begun. */
+  let outcomePosted = false;
+  let probeBegan = false;
+  /** Ends an attempt whose ssh exited before serving, when the bootstrap hasn't said how it ended (set in start()). */
+  let settleExited: () => void = () => undefined;
+
+  /** (Re)starts the wait for the remote's next step after the decision; stopped when the bootstrap ends or ssh exits. */
+  const idle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { idleTimer = null; port.post({ t: "deadline" }); kill("stalled"); }, AFTER_DECISION_IDLE_MS);
+  };
+  const unidle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = null;
+  };
+
+  const postOutcome = (outcome: WorkerOutcome): boolean => {
+    if (outcomePosted) return false;
+    outcomePosted = true;
+    port.post({ t: "outcome", outcome });
+    return true;
+  };
 
   const kill = (why: string) => {
-    if (!child || exited) return;
+    if (!child) return;
+    // ssh is gone already: a Cancel or the kill switch still ends an attempt the bootstrap hasn't ended.
+    if (exited) { settleExited(); return; }
     killedWhy ??= why;
     try { deps.kill(child, detached); } catch { /* gone already */ }
   };
@@ -223,41 +259,55 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
     try {
       child = deps.spawn(msg.argv[0], msg.argv.slice(1), { env: msg.env, detached: msg.spawn.detached, windowsHide: msg.spawn.windowsHide });
     } catch (err) {
-      port.post({ t: "outcome", outcome: { kind: "eof", probeBegan: false } });
+      postOutcome({ kind: "eof", probeBegan: false });
       port.post({ t: "exit", code: null, signal: null, stderr: String((err as Error)?.message ?? err).slice(0, 200), spawnFailed: true });
       return;
     }
     const c = child;
     port.post({ t: "spawned", pid: c.pid ?? null });
+    // A write's failure (EPIPE as ssh dies) is seen by the write waiting for it, or by ssh's exit: never a crash of
+    // this thread for an 'error' that came between writes.
+    c.stdin.on("error", () => { /* handled by writeAll's own listener or the exit */ });
     c.stderr.on("data", (d: Buffer | string) => {
       stderr += typeof d === "string" ? d : d.toString("utf8");
       if (stderr.length > STDERR_MAX * 2) stderr = stderr.slice(-STDERR_MAX);
     });
     let exitInfo: { code: number | null; signal: string | null } | null = null;
     const exitWaiters: (() => void)[] = [];
+    let exitReported = false;
+    const afterExit = () => new Promise<void>(resolve => (exited ? resolve() : exitWaiters.push(resolve)));
+    const reportExit = async () => {
+      await afterExit();
+      // Let stderr's last bytes arrive.
+      await new Promise(r => setTimeout(r, 20));
+      if (exitReported) return;
+      exitReported = true;
+      const info = exitInfo ?? { code: null, signal: null };
+      port.post({ t: "exit", code: info.code, signal: info.signal, stderr: stderr.slice(-STDERR_MAX), ...(killedWhy ? { killed: killedWhy } : {}) });
+    };
+    settleExited = () => {
+      if (outcomePosted || state !== "starting") return;
+      postOutcome({ kind: "eof", probeBegan });
+      void reportExit();
+    };
     const onExit = (code: number | null, signal: string | null) => {
       if (exited) return;
       exited = true;
       exitInfo = { code, signal };
       deadline?.cancel();
       if (probeTimer) clearTimeout(probeTimer);
+      unidle();
       if (state === "ready" || state === "stalled") lost("ssh exited");
+      else if (state === "starting") setTimeout(() => settleExited(), SETTLE_AFTER_EXIT_MS);
       for (const w of exitWaiters.splice(0)) w();
     };
     c.on("exit", onExit);
     c.on("error", () => onExit(null, null));
-    const afterExit = () => new Promise<void>(resolve => (exited ? resolve() : exitWaiters.push(resolve)));
-    const reportExit = async () => {
-      await afterExit();
-      // Let stderr's last bytes arrive.
-      await new Promise(r => setTimeout(r, 20));
-      const info = exitInfo ?? { code: null, signal: null };
-      port.post({ t: "exit", code: info.code, signal: info.signal, stderr: stderr.slice(-STDERR_MAX), ...(killedWhy ? { killed: killedWhy } : {}) });
-    };
     deadline = new Deadline(msg.deadlineMs, () => { port.post({ t: "deadline" }); kill("deadline"); });
     void runBootstrap({ stdin: c.stdin, stdout: c.stdout }, {
       script: msg.script,
       onProbeBegin: () => {
+        probeBegan = true;
         deadline?.cancel();
         port.post({ t: "probe-begin" });
         probeTimer = setTimeout(() => { port.post({ t: "deadline" }); kill("probe"); }, msg.probeMs);
@@ -269,6 +319,8 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
         return new Promise<Decision>(resolve => {
           decide = d => {
             decide = null;
+            // (An attempt that ended while Ember decided, ssh gone, waits for nothing more.)
+            if (!outcomePosted && !exited) idle();
             if (d.kind === "install") {
               resolve({ kind: "install", line: d.line, archives: d.archives.map(a => ({ name: a.name, bytes: a.bytes, open: () => deps.openArchive(a.path) })) });
             } else if (d.kind === "serve") {
@@ -279,27 +331,35 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
           };
         });
       },
-      progress: (done, total) => port.post({ t: "progress", done, total }),
+      progress: (done, total) => {
+        idle();
+        port.post({ t: "progress", done, total });
+      },
     }).then(outcome => {
       deadline?.cancel();
+      unidle();
+      if (outcomePosted) {
+        // Ended already as ssh's exit (settleExited): nothing more to say, only ssh to see off.
+        kill("ended");
+        void reportExit();
+        return;
+      }
       if (outcome.kind === "serving") {
-        port.post({ t: "outcome", outcome: { kind: "serving" } });
+        postOutcome({ kind: "serving" });
         startServing(outcome.rest, partsId);
         void reportExit();
         return;
       }
-      port.post({
-        t: "outcome",
-        outcome: outcome.kind === "done" ? { kind: "done", uninstalled: outcome.uninstalled }
-          : outcome.kind === "error" ? { kind: "error", code: outcome.code, ...(outcome.detail ? { detail: outcome.detail } : {}), probeBegan: outcome.probeBegan }
-          : { kind: "eof", probeBegan: outcome.probeBegan },
-      });
+      postOutcome(outcome.kind === "done" ? { kind: "done", uninstalled: outcome.uninstalled }
+        : outcome.kind === "error" ? { kind: "error", code: outcome.code, ...(outcome.detail ? { detail: outcome.detail } : {}), probeBegan: outcome.probeBegan }
+        : { kind: "eof", probeBegan: outcome.probeBegan });
       // The script ends by itself; ssh with it. A stuck one is ended.
       try { c.stdin.end(); } catch { /* closed already */ }
       const stuck = setTimeout(() => kill("ended"), 5_000);
       void afterExit().then(() => clearTimeout(stuck));
       void reportExit();
     }, () => {
+      unidle();
       kill("bootstrap");
       void reportExit();
     });

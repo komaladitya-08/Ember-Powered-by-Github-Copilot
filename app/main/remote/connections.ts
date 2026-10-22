@@ -459,7 +459,7 @@ export function createConnections(o: {
     let runEnv: Record<string, string>;
     if (mode === "interactive") {
       const handler: AskpassHandler = async (req, sig) => {
-        const card = promptCard(req, { id: `ssh-${randomUUID()}`, host: h, names: p.names });
+        const card = promptCard(req, { id: `ssh-${randomUUID()}`, host: h, names: p.names, client: p.client.version });
         audit({ step: "prompt", host: host.id, kind: card.kind === "secret" ? card.secret : card.kind });
         control?.pause();
         const onAbort = () => o.prompts.dismiss(card.id);
@@ -613,12 +613,17 @@ export function createConnections(o: {
       if (!(err instanceof ConnectError)) log?.warn("remote.connect_crashed", { err });
       audit({ step: "failed", host: host.id, kind: e.kind });
       log?.info("remote.connect_failed", { host: host.id, kind: e.kind });
-      progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
+      // A reconnect's failure is told by onLost, which knows whether it tries again.
+      if (!mode.reconnect) progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
       throw e;
     }
   }
 
-  /** After a loss (not a Disconnect): batch reconnects with backoff, ending at a failure that needs the user (§5.1.13). */
+  /**
+   * After a loss (not a Disconnect): batch reconnects with backoff, ending at a failure that needs the user (§5.1.13).
+   * Each failed try is told as progress `failed` whose `retry` says whether another try follows: false once it gives
+   * up, so the runtime stops saying "trying again" (and asks the user to sign in when that is what it needs).
+   */
   async function onLost(hostId: string, link: WorkerLink, why: string | undefined): Promise<void> {
     audit({ step: "lost", host: hostId });
     log?.info("remote.lost", { host: hostId, why: why?.slice(0, 60) });
@@ -643,8 +648,11 @@ export function createConnections(o: {
         await doConnect(host, { interactive: false, reconnect: true }, abort.signal);
         end();
       } catch (err) {
-        const kind = err instanceof ConnectError ? err.kind : "unknown";
-        if (abort.signal.aborted || !RETRYABLE.has(kind) || now() - since >= RECONNECT_GIVE_UP_MS) return end();
+        if (abort.signal.aborted || disposed) return end();
+        const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(hostLabel(host.dest)), "unknown", undefined, true);
+        const again = RETRYABLE.has(e.kind) && now() - since < RECONNECT_GIVE_UP_MS;
+        progress(hostId, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: again, kind: e.kind });
+        if (!again) return end();
         next();
       }
     };

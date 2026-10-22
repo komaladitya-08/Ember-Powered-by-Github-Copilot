@@ -21,6 +21,7 @@ import type { CommandRunner, GitFacts, PathFact, RunExit, RunnerFacts, RunningCo
 import type { Logger } from "../logger";
 import type { RemoteLink } from "./types";
 import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
+import { stalledText } from "../../renderer/command/copy";
 
 /** CL's secret-prompt tracker (§3.11 step 2; commands/prompts.ts). */
 export type { SecretTracker };
@@ -39,6 +40,13 @@ export interface RemoteRunner extends CommandRunner {
   start(spec: RunSpec): RemoteRunningCommand;
   /** Tells the agent to stop every run still going, ends each as "lost" here, and stops listening to the link. */
   dispose(): void;
+  /**
+   * The line a running command's tab shows in place of "Running…" (§8.5), as the flow's followStatus reads a runner's
+   * status: while the link is stalled, "<host> isn't answering. This command stops in N s unless the link comes back.",
+   * counting down each second to the grace; null otherwise.
+   */
+  status(): string | null;
+  onStatus(fn: (text: string | null) => void): () => void;
 }
 
 /** What createRemoteRunner needs. */
@@ -60,8 +68,13 @@ export interface RemoteRunnerOptions {
 const INPUT_CHUNK = 4096;
 /** Typing held while the run is starting, at most. */
 const QUEUE_MAX = 64 * 1024;
-/** After cmd.exit, how long the run's last bytes may take to arrive (bulk travels behind ctl), plus the round trip. */
+/**
+ * After cmd.exit, how long the run's last bytes may take to arrive (bulk travels behind ctl), plus the round trip:
+ * counted again from each chunk that still comes (a slow link drains the agent's queue of a fast printer's output,
+ * up to about 1 MiB), and never more than TAIL_MAX_MS in all.
+ */
 const TAIL_MS = 2000;
+const TAIL_MAX_MS = 120_000;
 /** After a Stop, how long the agent has to say the run ended before the PC ends it itself, plus the round trip. */
 const STOP_WAIT_MS = 10_000;
 /** A run the agent hasn't ended this long after its own time limit is stopped from here (an agent that never says). */
@@ -73,6 +86,8 @@ const MAX_TYPED_LINES = 1000;
 const MAX_TYPED_LINE = 4096;
 /** The remote's own card lines passed on with a needs_confirm, at most (the flow shows ten). */
 const SAYS_MAX = 10;
+/** The silence after which a link is stalled (§5.1.11): the grace counts from the last frame, this much earlier. */
+const STALL_S = 5;
 
 type StopWhy = "user" | "task" | "killswitch" | "timeout";
 /** How a run the PC stopped ended, by who stopped it. */
@@ -112,6 +127,8 @@ class RemoteRun implements RemoteRunningCommand {
   private tracker: SecretTracker | null = null;
   private received = 0;
   private exitEvent: EvMap["cmd.exit"] | null = null;
+  /** When the agent's cmd.exit was taken up here (the tail's own limit counts from it). */
+  private exitAt = 0;
   private stopWhy: StopWhy | null = null;
   private stopSent = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -204,6 +221,14 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.state !== "starting") return;
     const { link, o } = this.ctx;
     if (link.state === "lost" || link.state === "closed") return this.lose();
+    // Unless the agent's own answer said it didn't start the run (refused, wanted a yes, was stopped), it may have
+    // started it, or may yet (gate 2 still checking when the PC stopped waiting; the answer then goes nowhere): it is
+    // told to stop that run, which it then never starts, so nothing runs there without a tab and a Stop.
+    const agentSaidNo = err instanceof RemoteStepError && (err.code === "deny" || err.code === "needs_confirm" || err.code === "stopped");
+    if (!agentSaidNo && !this.stopSent) {
+      this.stopSent = true;
+      askRemote(link, "cmd.stop", { runId: this.runId, why: "task" }, { label: o.label, whileStalled: true }).catch(() => undefined);
+    }
     if (err instanceof RemoteStepError) {
       switch (err.code) {
         // linkFailure's sentence, with the remote's own words quoted in it.
@@ -241,7 +266,13 @@ class RemoteRun implements RemoteRunningCommand {
         this.ctx.o.log.warn("remote.cmd_output_listener_failed", { runId: this.runId, err: err instanceof Error ? err.name : "error" });
       }
     }
-    if (this.exitEvent && this.received >= this.exitEvent.outBytes) this.finishExit();
+    if (!this.exitEvent) return;
+    if (this.received >= this.exitEvent.outBytes) return this.finishExit();
+    // Still coming: the wait for the rest starts again from this chunk, within the tail's own limit.
+    if (this.ctx.now() - this.exitAt < TAIL_MAX_MS) {
+      this.clearTimer();
+      this.timer = this.later(() => this.finishExit(), TAIL_MS);
+    }
   }
 
   private track(text: string): void {
@@ -257,6 +288,7 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.state === "ended") return;
     this.exitEvent = d;
     if (this.state === "starting") return; // ended before its answer came: taken up when it does
+    this.exitAt = this.ctx.now();
     if (this.received >= d.outBytes) return this.finishExit();
     this.clearTimer();
     this.timer = this.later(() => this.finishExit(), TAIL_MS);
@@ -472,7 +504,37 @@ export function createRemoteRunner(link: RemoteLink, o: RemoteRunnerOptions): Re
     if (!checked.success) return o.log.warn("remote.cmd_exit_unchecked", {});
     runs.get(checked.data.runId)?.exited(checked.data);
   });
+  // The stalled link's countdown on every running command's tab (§8.5): the agent ends its commands at the grace.
+  let statusText: string | null = null;
+  const statusFns = new Set<(text: string | null) => void>();
+  let countdown: ReturnType<typeof setTimeout> | null = null;
+  const setStatus = (text: string | null) => {
+    if (text === statusText) return;
+    statusText = text;
+    for (const fn of [...statusFns]) {
+      try { fn(text); } catch { /* a listener's failure leaves the others told */ }
+    }
+  };
+  const stopCountdown = () => {
+    if (countdown) timers.clearTimeout(countdown);
+    countdown = null;
+    setStatus(null);
+  };
+  const startCountdown = () => {
+    if (countdown) return;
+    const grace = Number.isFinite(link.welcome?.graceSeconds) ? link.welcome.graceSeconds : 20;
+    const ends = now() + Math.max(0, grace - STALL_S) * 1000;
+    const step = () => {
+      const left = Math.max(0, (ends - now()) / 1000);
+      setStatus(stalledText(o.label, left));
+      countdown = left > 0 ? timers.setTimeout(step, Math.min(1000, Math.ceil(left * 1000))) : null;
+      (countdown as { unref?: () => void } | null)?.unref?.();
+    };
+    step();
+  };
   const offState = link.onState(s => {
+    if (s === "stalled") startCountdown();
+    else stopCountdown();
     if (s === "lost" || s === "closed") for (const r of [...runs.values()]) r.lose();
   });
 
@@ -532,7 +594,15 @@ export function createRemoteRunner(link: RemoteLink, o: RemoteRunnerOptions): Re
     dispose(): void {
       offExit();
       offState();
+      stopCountdown();
       for (const r of [...runs.values()]) r.abandon();
+    },
+
+    status: () => statusText,
+
+    onStatus(fn) {
+      statusFns.add(fn);
+      return () => { statusFns.delete(fn); };
     },
   };
 }
