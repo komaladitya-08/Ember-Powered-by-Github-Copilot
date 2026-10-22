@@ -100,7 +100,7 @@ export const SHELL_APP: Readonly<Record<OS, RegExp>> = {
     + "|cursor|windsurf|devenv|powershell_ise|notepad\\+\\+|atom|pulsar|subl|sublime_text|kate|geany|qtcreator|kdevelop|monodevelop|lazarus(-ide)?"
     + "|netbeans(64)?|arduino( ide|-?ide)?|rstudio|octave(-gui|-cli)?|matlab|jupyter[\\w-]*|eclipse|idea|intellij[\\w-]*|pycharm|clion|goland|webstorm|rider"
     + "|phpstorm|rubymine|datagrip|dataspell|studio64|android-?studio|jetbrains[\\w-]*|fleet|zed|lapce|codeblocks|gnvim"
-    + "|searchhost|searchapp|searchui|startmenuexperiencehost|taskmgr|powertoys\\.powerlauncher)"
+    + "|searchhost|searchapp|searchui|startmenuexperiencehost|taskmgr|(powertoys\\.)?powerlauncher)"
     // The 64-bit launchers' suffix and versions (pycharm64, idea64, emacs-29.1), and IDLE run as idle.pyw.
     + "(64|[-_]?\\d[\\w.]*)?(\\.pyw?)?$"),
   // macOS: Xcode, the programmers' editors, the AI editors, and the automation apps whose documents run shell scripts
@@ -115,8 +115,9 @@ export const SHELL_APP: Readonly<Record<OS, RegExp>> = {
 /** Desktop ids (reverse DNS, lower case) of apps with a shell built in. */
 export const SHELL_APP_ID: Readonly<Record<OS, RegExp>> = {
   linux: /^(org\.gnome\.builder|com\.visualstudio\.code.*|com\.vscodium\.codium|org\.kde\.kate|cc\.arduino\..*|org\.qt-project\.qtcreator|com\.jetbrains\..*|com\.google\.androidstudio|org\.octave\.octave|org\.jupyter\..*)$/,
-  // Packaged apps' ids (Windows Terminal, PowerShell, the WSL distributions, VS Code from the Store).
-  win32: /^(microsoft\.windowsterminal.*|microsoft\.powershell.*|canonicalgroup.*ubuntu.*|thedebianproject\..*|kalilinux\..*|microsoftcorporationii\.windowssubsystemforlinux.*|microsoft\.visualstudiocode.*|microsoft\.vscode.*)$/,
+  // Packaged apps' ids (Windows Terminal, PowerShell, the WSL distributions, VS Code from the Store), and the programs
+  // with "_" in their names, whose words an id is split into ("powershell_ise" is no "ise").
+  win32: /^(microsoft\.windowsterminal.*|microsoft\.powershell.*|canonicalgroup.*ubuntu.*|thedebianproject\..*|kalilinux\..*|microsoftcorporationii\.windowssubsystemforlinux.*|microsoft\.visualstudiocode.*|microsoft\.vscode.*|(powershell_ise|sublime_text)(\.exe)?)$/,
   // Bundle ids of the terminals and of the apps above (Automator's own applets are com.apple.automator.<name>).
   darwin: new RegExp("^(com\\.apple\\.terminal|com\\.googlecode\\.iterm2|dev\\.warp\\..*|org\\.xquartz\\..*|org\\.macosforge\\.xquartz\\..*|com\\.mitchellh\\.ghostty"
     + "|net\\.kovidgoyal\\.kitty|org\\.alacritty|com\\.github\\.wez\\.wezterm|co\\.zeit\\.hyper|org\\.tabby|com\\.raphaelamorim\\.rio"

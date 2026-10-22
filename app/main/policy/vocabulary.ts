@@ -192,7 +192,7 @@ const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?$`
   + String.raw`|^"?[a-z][\w+.-]+:`, "i");
 
 /** File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' main languages. */
-const ADDRESS_BOX = /^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|주소)(?=$|[\s:：])/iu;
+const ADDRESS_BOX = /^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|주소)(\s*[:：].*)?$/iu;
 /** The Run dialog's "Open:" box, in Windows' main languages (an access key may follow: "打开(O):"). */
 const RUN_BOX = /^(open|öffnen|ouvrir|abrir|apri|openen|打开|開啟|열기)\s*(\(\w\))?\s*[:：]?$/iu;
 
