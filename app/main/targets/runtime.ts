@@ -48,13 +48,13 @@ import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
 import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
+import { signInAgain } from "../../renderer/overlay/target-copy";
 import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception, wslBinding, type HandsBase } from "./hands";
 import { registerTargetsIpc, type ActResult } from "./ipc";
 import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, withFlowExtras, type WarmService } from "./local-service";
 import { targetMenu } from "./menu";
-import { signInAgain } from "../../renderer/overlay/target-copy";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
