@@ -106,7 +106,7 @@ async function findScript(os: "linux" | "darwin", dirs: readonly string[], probe
     const path = await firstExecutable(["/usr/bin/script"], probes);
     return path ? { path, kind: "bsd" } : null;
   }
-  for (const dir of ["/usr/bin", "/bin", ...dirs]) {
+  for (const dir of new Set(["/usr/bin", "/bin", ...dirs])) {
     const path = `${dir}/script`;
     if (!SAFE_POSIX_PATH.test(path)) continue;
     if (!(await probes.executable(path).catch(() => false))) continue;
