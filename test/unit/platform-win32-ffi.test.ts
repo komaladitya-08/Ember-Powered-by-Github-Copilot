@@ -343,6 +343,10 @@ describe("the Win32 wrappers", () => {
     expect(cleanup()).toEqual([4, 2, 2, 2]);
     expect(api.blit(0, 0, 0, 2)).toBeNull();
     expect(f.called("GetDC")).toHaveLength(2);
+    // SRCCOPY alone only when asked (the integration test's CAPTUREBLT measurement).
+    blt = 1;
+    expect(api.blit(1, 2, 3, 2, false)).not.toBeNull();
+    expect(f.called("BitBlt").map(c => c.args[8])).toEqual([0x40cc0020, 0x40cc0020, 0x00cc0020]);
   });
 
   it("frees the bitmap and never reads an untouched DIB when the bitmap can't be selected or has no bits", () => {

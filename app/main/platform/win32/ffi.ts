@@ -107,8 +107,13 @@ export interface Win32Api {
   setFocus(hwnd: number): void;
   /** The input desktop's name ("Default", "Winlogon"…), or null when it can't be opened (the secure desktop). */
   inputDesktopName(): string | null;
-  /** BitBlt of a screen rectangle (virtual-desktop pixels) into a top-down 32-bit DIB: BGRA, stride width × 4. */
-  blit(x: number, y: number, width: number, height: number): Buffer | null;
+  /**
+   * BitBlt of a screen rectangle (virtual-desktop pixels) into a top-down 32-bit DIB: BGRA, stride width × 4.
+   * `captureBlt` (default true) adds CAPTUREBLT, which includes layered windows as they are composed on screen; false
+   * copies with SRCCOPY alone, which the Windows integration test uses to measure whether DWM's composed screen DC
+   * already includes layered windows without it (if so, the flag can go: it hides and redraws a software cursor).
+   */
+  blit(x: number, y: number, width: number, height: number, captureBlt?: boolean): Buffer | null;
 }
 
 /** GetSystemMetrics indices. */
@@ -491,7 +496,7 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
         CloseDesktop(desktop);
       }
     },
-    blit(x, y, width, height) {
+    blit(x, y, width, height, captureBlt = true) {
       if (width <= 0 || height <= 0) return null;
       // The screen DC covers the whole virtual desktop, with the primary monitor's top-left at (0, 0).
       const screen = GetDC(null);
@@ -509,8 +514,9 @@ export function bindWin32(koffi: Koffi, load: (name: string) => Pick<import("kof
           const old = SelectObject(memory, bitmap);
           if (!old) return null; // NULL is SelectObject's failure for a bitmap
           try {
-            // CAPTUREBLT includes layered windows the way they are composed on screen.
-            if (!BitBlt(memory, 0, 0, width, height, screen, x, y, SRCCOPY | CAPTUREBLT)) return null;
+            // CAPTUREBLT includes layered windows the way they are composed on screen (kept until the integration
+            // test's measurement shows DWM's screen DC has them without it).
+            if (!BitBlt(memory, 0, 0, width, height, screen, x, y, captureBlt ? SRCCOPY | CAPTUREBLT : SRCCOPY)) return null;
             GdiFlush();
             const pixels = koffi.decode(bits[0], "uint8_t", width * height * 4) as Uint8Array;
             return Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength); // a copy: safe after DeleteObject
