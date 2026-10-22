@@ -140,9 +140,16 @@ export const RISKY_ASSIGNMENTS = new Set([
   "SUDO_ASKPASS", "PYTHONSTARTUP", "PYTHONPATH", "NODE_OPTIONS", "PERL5OPT", "RUBYOPT", "DOCKER_HOST", "KUBECONFIG", "PSModulePath",
   "SHELLOPTS", "BASHOPTS", "CDPATH", "FPATH", "PYTHONHOME", "PERL5LIB", "RUBYLIB", "NODE_PATH", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS",
   "GIT_DIR", "GIT_WORK_TREE", "GIT_TEMPLATE_DIR", "LESSOPEN", "LESSCLOSE", "MANPAGER", "SYSTEMD_PAGER", "BROWSER", "TERMINAL",
+  // Prompts bash expands, command substitutions included (PS4 with `set -x` or `bash -x`).
+  "PS0", "PS1", "PS2", "PS3", "PS4",
+  // Where tools read settings that can name a program to run (a pager in ~/.gitconfig, a credential helper, an exec
+  // plugin in a kubeconfig, credential_process in AWS's config, a gconv module, make's own flags).
+  "HOME", "XDG_CONFIG_HOME", "GIT_CONFIG", "DOCKER_CONFIG", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "GCONV_PATH",
+  "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_HOME", "GRADLE_USER_HOME",
+  "PIP_CONFIG_FILE", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS",
 ]);
-/** Prefixes of such variables (`DYLD_*`, `GIT_CONFIG_KEY_*`, `GIT_CONFIG_VALUE_*`). */
-export const RISKY_ASSIGNMENT_PREFIX = /^(DYLD_|GIT_CONFIG_KEY_|GIT_CONFIG_VALUE_|LD_)/;
+/** Prefixes of such variables (`DYLD_*`, `GIT_CONFIG_KEY_*`, `GIT_CONFIG_VALUE_*`, bash's exported functions, npm's settings). */
+export const RISKY_ASSIGNMENT_PREFIX = /^(DYLD_|GIT_CONFIG_KEY_|GIT_CONFIG_VALUE_|LD_|BASH_FUNC_|NPM_CONFIG_|YARN_)/i;
 
 /** A variable name that may hold a secret (§3.5.4 "printing the environment"). */
 export const SECRET_VAR = /(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|CREDENTIAL|AUTH|SESSION|COOKIE|PRIVATE)/i;

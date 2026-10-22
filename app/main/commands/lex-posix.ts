@@ -516,6 +516,8 @@ class Parser {
         if (k >= this.s.length) this.fatal("unterminated $((");
         const body = this.s.slice(this.i + 3, k - 1);
         if (/\$\(|`/.test(body)) this.note("arith-command", "It hides a command inside arithmetic.");
+        // bash evaluates a variable's value as arithmetic too, and `a[$(…)]` in that value runs a command.
+        else if (/[A-Za-z_]/.test(body)) this.note("arith-variable", "Its arithmetic reads a variable whose value could run a command.");
         this.i = k + 1;
         return { segs: [{ t: "unres", why: "arithmetic" }], subs: [], quoted: false };
       }
@@ -542,6 +544,11 @@ class Parser {
       this.i = k + 1;
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(body)) return { segs: [{ t: "var", name: body }], subs: [], quoted: false };
       if (/\$\(|`/.test(body)) this.note("hidden-command", "It hides a command inside a variable's expansion.");
+      // Forms that evaluate a value as code: indirection (`${!x}`), prompt expansion (`${x@P}`), an array subscript
+      // or a substring offset that isn't a plain number (`${a[i]}`, `${x:n}`: arithmetic on a variable).
+      else if (/^!/.test(body) || /@P$/.test(body) || /\[(?![@*]\]|\d+\])/.test(body) || /^[A-Za-z_][A-Za-z0-9_]*:(?![-=?+])[^}]*[A-Za-z_]/.test(body)) {
+        this.note("expansion-evaluates", "It expands a variable in a way that could run a command hidden in its value.");
+      }
       if (this.shell === "zsh" && /^[(=~^]/.test(body)) this.note("zsh", "It uses zsh-only syntax.");
       return { segs: [{ t: "unres", why: "expansion" }], subs: [], quoted: false };
     }

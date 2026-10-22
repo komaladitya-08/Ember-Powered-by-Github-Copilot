@@ -8775,6 +8775,205 @@
    "classes": [
     "publish"
    ]
+  },
+  {
+   "cmd": "x='$(rm y)'; echo ${x@P}",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.expansion-evaluates"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm y)]'; echo $((x))",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.arith-variable"
+   ]
+  },
+  {
+   "cmd": "echo ${!x}",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "echo ${a[i]}",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "echo ${x:n}",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm y)]'; let x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "declare -i x=y",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "declare -n r=y",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "printf -v 'a[$(rm y)]' %s x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "unset 'a[$(rm y)]'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "hash -p /bin/rm ls; ls x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hash"
+   ]
+  },
+  {
+   "cmd": "mapfile -C 'rm x' -c 1 < f",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "PS4='$(rm x)' bash -xc 'echo hi'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "export PS4='$(rm x)'; set -x; echo hi",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "HOME=/tmp/evil git log",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "npm_config_script_shell=/tmp/evil npm test",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "make SHELL='rm x' build",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.make-variable"
+   ]
+  },
+  {
+   "cmd": "make CC='sh -c \"rm -rf ~\"' build",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.make-variable"
+   ]
+  },
+  {
+   "cmd": "make --eval='x: ; rm y' x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.make-eval"
+   ]
+  },
+  {
+   "cmd": "rake -e 'system(\"rm x\")'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "make CC=clang build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "make -j4 CFLAGS=\"-O2 -g\" all",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo $((2*3))",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo ${x:-default} ${#arr[@]} ${x%.txt}",
+   "verdict": "run"
+  },
+  {
+   "cmd": "set -x",
+   "verdict": "run"
   }
  ]
 }

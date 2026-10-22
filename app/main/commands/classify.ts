@@ -439,6 +439,9 @@ const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handl
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const SCP_LIKE = /^(?:[A-Za-z0-9._%+-]+@)?[A-Za-z0-9.-]+:(?![\\/]{2})/;
 
+/** bash built-ins that take a variable's name (a subscript in it is evaluated as arithmetic). */
+const NAME_TAKERS = new Set(["printf", "read", "unset", "test", "[", "mapfile", "readarray", "declare", "typeset", "local", "export", "readonly", "wait", "getopts", "let", "eval"]);
+
 /** Words that name the null device or the terminal (redirecting to them writes no file). */
 const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "$null", "con", "nul:"]);
 
@@ -984,6 +987,10 @@ class Engine extends Classifier {
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     this.afterArgs(args);
+    // A variable name with a subscript that runs a command (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`, `test -v …`).
+    if (sc.family === "posix" && NAME_TAKERS.has(key) && args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v))) {
+      this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
+    }
     this.pipe.program = key;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
   }
@@ -2059,7 +2066,14 @@ reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bi
   // A keyword in front of a command (`then rm x`, `do rm x`): the command after it is classified too.
   if (["then", "elif", "else", "do", "if", "while", "until", "!"].includes(h.key) && h.args.length) h.e.unwrap(h, h.args, h.key);
 });
-reg(NATIVE, ["read", "mapfile", "readarray"], h => { if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive); });
+reg(NATIVE, ["read", "mapfile", "readarray"], h => {
+  if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
+  // mapfile's callback (-C) is shell text it runs for every line.
+  if (h.key !== "read" && h.args.some(a => a.v !== null && /^-[A-Za-z]*C/.test(a.v))) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+});
+// bash evaluates these as arithmetic or follows them as names, and a subscript in a value runs a command (`a[$(…)]`).
+reg(NATIVE, ["let"], h => { h.e.unclear("unclear.arithmetic-command", "Its arithmetic reads a variable whose value could run a command."); });
+reg(NATIVE, ["hash"], h => { if (h.args.some(a => a.v !== null && /^-[A-Za-z]*p/.test(a.v))) h.e.unclear("unclear.hash", "It changes which program a name runs."); });
 
 reg(NATIVE, ["command"], h => {
   if (h.args.some(a => a.v === "-p")) { h.e.unclear("unclear.command-p", "Ember can't tell which program this runs."); return; }
@@ -2110,6 +2124,7 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   if (names.length === 0 && (h.key === "export" || h.key === "declare" || h.key === "typeset" || has(p, "p", "x"))) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (has(p, "p") && names.some(n => n.v === null || SECRET_VAR.test(n.v))) h.e.add("secret", "secret.env", SAYS.env);
   if (names.length && !has(p, "p")) h.e.envChanged = true;
+  if (has(p, "i", "n")) h.e.unclear("unclear.arithmetic-command", "Its arithmetic reads a variable whose value could run a command.");
   for (const n of names) {
     const name = (n.v ?? n.raw).split("=")[0];
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
@@ -3123,6 +3138,19 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl" };
   const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the
+  // makefile's recipes (`make SHELL='rm -rf ~' build`, `make CC='sh -c …'`).
+  if (/make$/.test(h.key)) {
+    if (has(p, "eval") || values(p, "E").length || h.args.some(a => /^--eval/.test(a.v ?? ""))) h.e.unclear("unclear.make-eval", "It adds make rules Ember can't see.");
+    for (const a of p.operands) {
+      const m = a.v === null ? null : /^([A-Za-z_.][A-Za-z0-9_.]*)\s*[:+?!]?=(.*)$/s.exec(a.v);
+      if (a.v !== null && !m) continue;
+      if (a.v === null || /^(\.?SHELL|\.SHELLFLAGS|MAKESHELL|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|\.RECIPEPREFIX)$/.test(m![1]) || /[$`;|&<>()\n"']/.test(m![2]) || /^\s*(sh|bash|zsh|dash|ksh|fish|python\d*(\.\d+)?|perl|ruby|node|env|eval|exec|busybox|xargs)(\s|$)/.test(m![2])) {
+        h.e.unclear("unclear.make-variable", "It sets a make variable to text that could run as a command.");
+      }
+    }
+  }
+  if (h.key === "rake" && (values(p, "e", "p", "E").length || has(p, "execute", "execute-print", "execute-continue"))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
   let targets = p.operands.filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
   if (h.key === "nox") targets = values(p, "s", "session", "sessions").map(v => lit(v ?? "?"));
   if (h.key === "tox") targets = values(p, "e", "environment", "envlist").map(v => lit(v ?? "?"));
