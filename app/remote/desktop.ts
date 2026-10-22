@@ -158,9 +158,13 @@ export class DesktopController {
     return this.startChild(f, ask);
   }
 
-  /** What a desktop.state from before a stop answers: no desktop (the next one starts afresh). */
+  /**
+   * What a desktop.state from before a stop answers: no desktop (the next one starts afresh). A newer one may be under
+   * way or have started a helper since (its look answered first): what it found stays the desktop's state, untold.
+   */
   private stoppedMeanwhile(): DesktopState {
-    return this.lower({ access: "none", why: `Ember stopped using ${this.d.host}'s screen.`, notice: "off" });
+    const s: DesktopState = { access: "none", why: `Ember stopped using ${this.d.host}'s screen.`, notice: "off" };
+    return this.child || this.starting ? s : this.lower(s);
   }
 
   /** Looks at the desktop every WATCH_MS while a child runs (recheck stops it and tells the PC when it has gone). */
@@ -218,11 +222,12 @@ export class DesktopController {
         atspi: this.d.scripts.atspi, notice: this.d.scripts.notice,
       }, ask.consent ? INIT_CONSENT_MS : INIT_MS) as InitResult;
     } catch (err) {
-      this.halt();
+      // (Only this request's own helper: a stop may have ended it, and a newer request started another.)
+      if (this.child === child) this.halt();
       return this.lower({ access: "none", why: err instanceof Error ? err.message : `Ember's desktop helper on ${this.d.host} didn't start.`, notice: "failed" });
     }
     if (r.access === "none") {
-      this.halt();
+      if (this.child === child) this.halt();
       return this.lower({ access: "none", ...(r.why ? { why: r.why } : {}), notice: r.notice });
     }
     this.watching();
