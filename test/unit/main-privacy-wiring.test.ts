@@ -94,9 +94,9 @@ describe("main.ts's privacy wiring (critique integration-1)", () => {
 describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's stubs", () => {
   const hooks: [string, string[]][] = [
     ["1: the imports and the runtime beside the agent", [
-      'import { createTargets, targetDoctorRows, wslSwitchOn } from "./targets/runtime";', 'import { wrapForWsl } from "./wsl/routed-sidecar";',
+      'import { createTargets, targetDoctorRows, wslSwitchOn, type TargetsRuntimeExtra } from "./targets/runtime";', 'import { wrapForWsl } from "./wsl/routed-sidecar";',
       'import { wrapWindowsForWsl } from "./wsl/routed-windows";', 'import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";',
-      "let targets: TargetsRuntime | null = null;",
+      "let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;",
     ]],
     ["2: the routed sidecar and window system for Perception and the hands", [
       "const wslOptions = { os: platform.os, log: log.child(\"wsl\"), ws: () => wsRef, wsl: () => targets?.wsl ?? null, settings };",
