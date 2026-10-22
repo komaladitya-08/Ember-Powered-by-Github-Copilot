@@ -193,8 +193,11 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
   it("asks for a script of the task's own that it can't read in full, and judges the task's downloads", async () => {
     const written = newTaskWrites();
     written.paths.add(`${P}/t.sh`);
-    const own = reading("sh t.sh", {}, { task: { downloaded: new Set(), written } });
+    const there = async (paths: string[]) => paths.map((p): PathFact => ({ exists: p === `${P}/t.sh`, real: null }));
+    const own = reading("sh t.sh", {}, { task: { downloaded: new Set(), written }, inspect: there });
     expect(await own.gate()).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
+    // Nothing there: nothing to read, nothing to ask.
+    expect((await reading("sh t.sh", {}, { task: { downloaded: new Set(), written } }).gate()).status).toBe("ok");
     const dl = reading("sh x.sh", {}, { task: { downloaded: new Set([`${P}/x.sh`]), written: newTaskWrites() } });
     expect(await dl.gate()).toMatchObject({ status: "needs_confirm", rules: expect.arrayContaining(["escape.run-downloaded"]) });
   });
@@ -212,6 +215,7 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
       const own = gateCommand(input({
         spec: spec({}, { command: "sh a.sh; sh b.sh" }), classify: classifyCommand, readScript: hang, task: { downloaded: new Set(), written }, now: () => Date.now(),
       }));
+      // (b.sh is there: the default inspect says every path exists.)
       await vi.advanceTimersByTimeAsync(SCRIPTS_MS);
       expect(await own).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-unread"] });
     } finally {

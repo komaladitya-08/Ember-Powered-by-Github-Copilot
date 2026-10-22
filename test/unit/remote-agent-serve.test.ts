@@ -213,7 +213,8 @@ describe("serve (§5.3, §5.4)", () => {
   });
 
   it("remembers what each task's commands wrote here: a script of the task's own it can't read in full asks", async () => {
-    const t = server({ deps: { readScript: async () => null, inspect: async paths => paths.map(() => ({ exists: false, real: null })) } });
+    const made = new Set<string>();
+    const t = server({ deps: { readScript: async () => null, inspect: async paths => paths.map(p => ({ exists: made.has(p), real: null })) } });
     await t.m.req("hello", helloArgs());
     const inTask = (text: string, taskId: string) => {
       const r = run(text);
@@ -223,6 +224,7 @@ describe("serve (§5.3, §5.4)", () => {
     expect(res(await t.m.req("cmd.run", inTask("sh configure", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
     // …but once the task padded and wrote t.sh, running it asks.
     expect(res(await t.m.req("cmd.run", inTask("printf '%70000s' > t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    made.add("/home/deploy/t.sh");
     expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "needs_confirm", rules: ["unclear.script-unread"] } });
     // Another task didn't write it.
     expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "2-u")))).toMatchObject({ ok: true, v: { status: "started" } });

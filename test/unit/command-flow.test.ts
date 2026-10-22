@@ -380,13 +380,15 @@ describe("a script of the task's own that can't be read in full (L8's padding by
   const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {
     setCommandJudge(null);
     const reads: string[] = [];
+    /** Paths the target says exist (a test adds what its earlier commands made). */
+    const existing = new Set<string>();
     const h = harness({
       binding: LOCAL, answers: o.answers ?? ["deny", "deny", "deny"], state: o.state ?? { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
-      paths: p => ({ exists: o.exists ? o.exists(p) : false, real: p }),
+      paths: p => ({ exists: existing.has(p) || (o.exists ? o.exists(p) : false), real: p }),
       readScript: async path => { reads.push(path); return texts[path] ?? null; },
       run: () => ({ output: ["done\n"] }),
     });
-    return Object.assign(h, { reads });
+    return Object.assign(h, { reads, existing });
   };
   const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
   const UNREAD = "It runs t.sh, which this task wrote or downloaded, and Ember can't read all of it first.";
@@ -398,6 +400,7 @@ describe("a script of the task's own that can't be read in full (L8's padding by
       expect((await local(h, "printf '%70000s' > t.sh")).resultType, run).toBe("success");
       expect((await local(h, "echo 'rm -rf ~' >> t.sh")).resultType, run).toBe("success");
       expect([...h.ctx.state.written!.paths], run).toEqual(["/home/ana/proj/t.sh"]);
+      h.existing.add("/home/ana/proj/t.sh");
       const r = await local(h, run);
       expect(r.resultType, run).toBe("denied");
       expect(h.starts, run).toHaveLength(2);
@@ -429,17 +432,20 @@ describe("a script of the task's own that can't be read in full (L8's padding by
   });
 
   it("counts what cp, mv, tee and sed -i wrote, and the folders an archive unpacked into", async () => {
-    for (const [first, second] of [
-      ["cp /tmp/pad.sh t.sh", "sh t.sh"], ["mv /tmp/pad.sh t.sh", "./t.sh"], ["echo x | tee t.sh", "sh t.sh"], ["sed -i 's/a/b/' t.sh", "sh t.sh"],
-      ["tar -xzf deps.tgz -C /tmp/deps", "sh /tmp/deps/t.sh"], ["unzip a.zip -d /tmp/a", "sh /tmp/a/t.sh"], ["gunzip -k /tmp/data/t.sh.gz", "sh /tmp/data/t.sh"],
+    const T = "/home/ana/proj/t.sh";
+    for (const [first, second, made] of [
+      ["cp /tmp/pad.sh t.sh", "sh t.sh", T], ["mv /tmp/pad.sh t.sh", "./t.sh", T], ["echo x | tee t.sh", "sh t.sh", T], ["sed -i 's/a/b/' t.sh", "sh t.sh", T],
+      ["tar -xzf deps.tgz -C /tmp/deps", "sh /tmp/deps/t.sh", "/tmp/deps/t.sh"], ["unzip a.zip -d /tmp/a", "sh /tmp/a/t.sh", "/tmp/a/t.sh"],
+      ["gunzip -k /tmp/data/t.sh.gz", "sh /tmp/data/t.sh", "/tmp/data/t.sh"],
     ]) {
       const h = own({}, { exists: p => p === "/tmp/pad.sh" });
       expect((await local(h, first)).resultType, first).toBe("success");
+      h.existing.add(made);
       expect((await local(h, second)).resultType, `${first}; ${second}`).toBe("denied");
       expect(h0rules(h), `${first}; ${second}`).toContain("unclear.script-unread");
     }
     // An unpack into /tmp/deps leaves another folder's script alone.
-    const other = own();
+    const other = own({}, { exists: () => true });
     await local(other, "tar -xzf deps.tgz -C /tmp/deps");
     expect([...other.ctx.state.written!.paths].sort()).toEqual(["/home/ana/proj", "/tmp/deps"]);
     expect((await local(other, "sh /srv/tools/big.sh")).resultType).toBe("success");
@@ -449,13 +455,16 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     const h = own();
     expect((await local(h, "git pull")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
+    // Nothing there (PowerShell's `.\\t` names t.bat and t.cmd too): nothing to read, nothing to ask.
+    expect((await local(h, "sh missing.sh")).resultType).toBe("success");
+    h.existing.add("/home/ana/proj/configure");
     expect((await local(h, "./configure")).resultType).toBe("denied");
     expect(h0rules(h)).toContain("unclear.script-unread");
   });
 
   it("counts a script inside a folder this task downloaded, reached through a #! line", async () => {
     const h = own({ "/home/ana/proj/t": "#!/home/ana/tools/i.sh\necho hi\n" }, {
-      state: { cwd: "/home/ana/proj", downloaded: new Set(["/home/ana/tools"]), running: false },
+      state: { cwd: "/home/ana/proj", downloaded: new Set(["/home/ana/tools"]), running: false }, exists: () => true,
     });
     expect((await local(h, "./t")).resultType).toBe("denied");
     expect(h0rules(h)).toContain("unclear.script-unread");

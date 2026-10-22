@@ -210,6 +210,16 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const unclear = (rule: string, says: string): void => {
     if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening: ["in-script"], at: -1 });
   };
+  /** What the target says of one path (asked once; "couldn't tell" when time is up). */
+  const factOf = async (p: string, cwd: string): Promise<PathFact> => {
+    const known = env.paths.get(p);
+    if (known) return known;
+    const unknown: PathFact = { exists: null, real: null };
+    const ms = left();
+    const got = ms > 0 ? (await within(io.inspect([p], cwd), ms, [unknown]))[0] ?? unknown : unknown;
+    env.paths.set(p, got);
+    return got;
+  };
   const queue = refs.map(ref => ({ ref, depth: 1 }));
   const seen = new Set<string>();
   let reads = 0;
@@ -227,8 +237,11 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     const ms = left();
     const raw = ms > 0 ? await within(io.read(ref.path, ref.cwd || flavour.dirname(ref.path)), ms, null) : null;
     if (typeof raw !== "string") {
-      // Padded past the cap, a FIFO, unreadable: L8 for a script the task didn't write; its own asks.
-      if (taskWrote(ref.path, env.written, env.downloaded, cmp)) unclear("unclear.script-unread", unreadOwnScript(name));
+      // Padded past the cap, a FIFO, unreadable: L8 for a script the task didn't write; its own asks, unless the target
+      // says nothing is there (PowerShell's `.\t` names t.bat and t.cmd too; a file this same command makes asks anyway).
+      if (taskWrote(ref.path, env.written, env.downloaded, cmp) && (await factOf(ref.path, ref.cwd || flavour.dirname(ref.path))).exists !== false) {
+        unclear("unclear.script-unread", unreadOwnScript(name));
+      }
       continue;
     }
     if (raw === "") continue;
