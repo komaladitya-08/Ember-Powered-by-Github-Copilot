@@ -119,7 +119,7 @@ line.
 
 ### Exit
 
-The bridge exits with code 0 when stdin reaches end of file, within about 1.5 s even if a worker is stuck in a hung
+The bridge exits with code 0 when stdin reaches end of file, within about 300 ms even if a worker is stuck in a hung
 app (`Environment.Exit`, then `TerminateProcess` as a backstop). Close stdin to stop it; kill it only if it doesn't
 exit.
 

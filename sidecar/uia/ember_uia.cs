@@ -732,7 +732,7 @@ namespace Ember.Uia
     internal Func<Exception, BridgeError> MapError;
     /// <summary>Has the call's process stopped answering? Asked after an action times out.</summary>
     internal Func<Call, bool> Hung;
-    /// <summary>Ends the process when Environment.Exit doesn't within 1.5 s (a worker stuck in a hung app).</summary>
+    /// <summary>Ends the process when Environment.Exit doesn't within 300 ms (a worker stuck in a hung app).</summary>
     internal Action<int> HardExit;
     /// <summary>Called on stdin EOF; tests replace it.</summary>
     internal Action<int> Exit;
@@ -995,9 +995,11 @@ namespace Ember.Uia
 
     private void ExitProcess(int code)
     {
+      // Every answer is flushed as it is written, so nothing is lost by ending at once. Under Windows PowerShell 5.1,
+      // Environment.Exit waited for the host's own shutdown for over 1.5 s on windows-2022 (CI run 113).
       Thread backstop = new Thread(delegate ()
       {
-        Thread.Sleep(1500);
+        Thread.Sleep(300);
         try
         {
           if (HardExit != null) HardExit(code);
