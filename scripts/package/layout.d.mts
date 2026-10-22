@@ -44,6 +44,11 @@ export interface Layout {
   excludeDist: string[];
   /** The app icon stage.mjs writes, relative to the app folder (null: none). */
   icon: null | { kind: "ico"; file: string } | { kind: "icns"; file: string; replaces: string };
+  /**
+   * true: stage.mjs writes Ember's version resource and the ico icon into the executable and leaves out its certificate
+   * table, before the fuses are flipped (Windows; exe-resources.mjs).
+   */
+  exeResources: boolean;
   /** "adhoc": the bundle is re-signed ad hoc after every byte has changed (macOS). */
   signing: null | "adhoc";
   /** "beside": dist/package/voice-models (the RPM sub-package); "inside": resources/voice-models, with --with-models. */

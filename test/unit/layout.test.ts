@@ -17,7 +17,7 @@ describe("the Linux layout", () => {
       appDir: "ember", exe: "ember", renames: [["electron", "ember"]], electronSource: ".", electronExe: "electron",
       resourcesDir: "resources", noticesDir: ".", electronNotices: [], fuseFile: "ember", remove: ["resources/default_app.asar"],
       sidecarFiles: [{ from: "sidecar/atspi/ember_atspi.py", to: "sidecar/atspi/ember_atspi.py" }],
-      icon: null, signing: null, voiceModels: "beside",
+      icon: null, exeResources: false, signing: null, voiceModels: "beside",
     });
     expect(linux.requiredDist.slice(0, 2)).toEqual(["main.cjs", "desk-agent.cjs"]);
     expect(linux.requiredDist).toEqual(expect.arrayContaining(["renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "preload/", "renderer/"]));
@@ -53,6 +53,8 @@ describe("the Windows layout", () => {
         label: `win-${arch}`, appDir: "Ember", exe: "Ember.exe", renames: [["electron.exe", "Ember.exe"]], electronSource: ".",
         electronExe: "electron.exe", fuseFile: "Ember.exe", resourcesDir: "resources", noticesDir: ".", electronNotices: [],
         remove: ["resources/default_app.asar"], signing: null, voiceModels: "inside", icon: { kind: "ico", file: "resources/ember.ico" },
+        // Ember.exe gets Ember's version resource and that icon (exe-resources.mjs).
+        exeResources: true,
       });
       expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs"]);
       expect(win.sidecarFiles.every(s => s.from === s.to)).toBe(true);
@@ -95,6 +97,8 @@ describe("the macOS layout", () => {
       expect(mac.electronFuseFile).toBe(`Electron.app/${mac.fuseFile}`);
       expect(mac.signing).toBe("adhoc");
       expect(mac.icon).toEqual({ kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" });
+      // Info.plist names the bundle; there is no PE resource to rewrite.
+      expect(mac.exeResources).toBe(false);
     });
 
     it(`puts the notices and Electron's licences inside the bundle (${arch})`, () => {

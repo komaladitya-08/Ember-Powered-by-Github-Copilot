@@ -54,7 +54,7 @@ export function layoutFor(platform, arch) {
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
       excludeDist: ["ax-sidecar.cjs"],
-      icon: null, signing: null, voiceModels: "beside",
+      icon: null, exeResources: false, signing: null, voiceModels: "beside",
     };
   }
   if (platform === "win32") {
@@ -78,9 +78,9 @@ export function layoutFor(platform, arch) {
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],
       excludeDist: ["desk-agent.cjs"],
-      // For shortcuts and windows: Ember.exe itself keeps Electron's icon until a resource editor is added.
+      // For shortcuts and windows, and written into Ember.exe with its version resource (exe-resources.mjs).
       icon: { kind: "ico", file: "resources/ember.ico" },
-      signing: null, voiceModels: "inside",
+      exeResources: true, signing: null, voiceModels: "inside",
     };
   }
   return {
@@ -108,6 +108,8 @@ export function layoutFor(platform, arch) {
     sidecarDist: ["ax-sidecar.cjs"],
     excludeDist: ["desk-agent.cjs"],
     icon: { kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" },
+    // Info.plist names the bundle (mac-bundle.mjs); there is no PE resource to rewrite.
+    exeResources: false,
     // Flipping the fuses breaks Electron's signature, and arm64 macOS kills unsigned code: re-signed ad hoc.
     signing: "adhoc", voiceModels: "inside",
   };
