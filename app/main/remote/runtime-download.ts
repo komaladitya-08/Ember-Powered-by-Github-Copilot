@@ -71,6 +71,15 @@ export async function cachedOk(fs: RuntimeFs, file: string, want: { sha256: stri
   return (await sha256File(fs, file).catch(() => "")) === want.sha256;
 }
 
+/** Lets the server's connection go without waiting on it: a body that ignores its cancel can't hold the attempt. */
+function release(body: { cancel(): Promise<void> } | null | undefined): void {
+  try {
+    body?.cancel().catch(() => undefined);
+  } catch {
+    // nothing more to let go
+  }
+}
+
 /**
  * The pinned runtime archive for `target` in `format`, downloaded if the cache doesn't hold it (§5.2.1). `file` is the
  * cache path (`<userData>/remote/runtime/<name>`), `dir` its folder. Resolves the path of a file whose bytes match;
@@ -110,7 +119,7 @@ export async function ensureRuntime(o: {
   ended.catch(() => { /* seen by whichever wait it ends */ });
   let stalled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  /** (Re)starts the stall limit: before the request, and as each piece of the file arrives. */
+  /** (Re)starts the stall limit: before the request, at its answer, and as each piece of the file arrives. */
   const watch = () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => { timer = null; stalled = true; ac.abort(); }, o.stallMs ?? RUNTIME_STALL_MS);
@@ -122,21 +131,32 @@ export async function ensureRuntime(o: {
   try {
     watch();
     let res: Awaited<ReturnType<TargetsDeps["fetch"]>>;
+    let request: ReturnType<TargetsDeps["fetch"]> | null = null;
     try {
-      res = await Promise.race([o.fetch(url, { signal: ac.signal }), ended]);
+      request = o.fetch(url, { signal: ac.signal });
+      res = await Promise.race([request, ended]);
     } catch {
+      // An answer that still comes (a fetch that ignored the abort) is let go unread.
+      request?.then(late => release(late.body), () => undefined);
       throw why("no connection");
     }
-    if (!res.ok || !res.body) throw new RuntimeError("download", `the server answered ${res.status}`);
+    // The answer is bytes from the server too: the limit counts again from it, so it now waits for the first piece.
+    watch();
+    if (!res.ok || !res.body) {
+      release(res.body);
+      throw new RuntimeError("download", `the server answered ${res.status}`);
+    }
     const reader = res.body.getReader();
+    const letGo = () => release(reader);
     part = o.file(`${entry.file}.${randomBytes(4).toString("hex")}.part`);
-    const out = await o.fs.open(part, "w").catch(async (err: unknown) => {
-      await reader.cancel().catch(() => undefined);
+    const out = await o.fs.open(part, "w").catch((err: unknown) => {
+      letGo();
       throw err;
     });
     const h = createHash("sha256");
     let got = 0;
     let failed: RuntimeError | null = null;
+    let complete = false;
     try {
       for (;;) {
         if (ac.signal.aborted) { failed = why("cancelled"); break; }
@@ -147,7 +167,7 @@ export async function ensureRuntime(o: {
           failed = why("the download broke off");
           break;
         }
-        if (r.done) break;
+        if (r.done) { complete = true; break; }
         if (r.value.length) watch();
         got += r.value.length;
         if (got > entry.bytes) { failed = new RuntimeError("mismatch", "larger than expected"); break; }
@@ -157,8 +177,8 @@ export async function ensureRuntime(o: {
       }
     } finally {
       await out.close().catch(() => undefined);
-      // The server's connection is let go whatever ended the loop early (a stall, Cancel, too many bytes).
-      if (failed) await reader.cancel().catch(() => undefined);
+      // Whatever ended the loop early (a stall, Cancel, too many bytes, a write that failed) lets the server go.
+      if (!complete) letGo();
     }
     if (!failed && (got !== entry.bytes || h.digest("hex") !== entry.sha256)) failed = new RuntimeError("mismatch", "doesn't match the expected file");
     if (failed) throw failed;

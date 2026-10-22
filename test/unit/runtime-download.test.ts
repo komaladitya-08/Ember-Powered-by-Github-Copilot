@@ -186,6 +186,49 @@ describe("the Node runtime for remotes (§5.2.1)", () => {
     expect([...m.files.keys()]).toEqual(["/c/node-v24.11.1-linux-x64.tar.xz"]);
   });
 
+  it("counts the limit again from the server's answer, so a slow answer and a slow first piece finish", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const m = memFs();
+    // The answer after 50 s, its first (and only) piece 50 s later: never 60 s without a byte, 100 s in all.
+    const fetch = async () => {
+      await new Promise(r => setTimeout(r, 50_000));
+      return {
+        ok: true, status: 200,
+        body: new ReadableStream<Uint8Array>({
+          async start(c) {
+            await new Promise(r => setTimeout(r, 50_000));
+            c.enqueue(new Uint8Array(BODY));
+            c.close();
+          },
+        }),
+      };
+    };
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch })
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(await p).toEqual({ path: "/c/node-v24.11.1-linux-x64.tar.xz", sha256: sha(BODY), bytes: BODY.length });
+  });
+
+  it("lets go of an answer that comes after the stall, and of a refused answer's body, unread", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const m = memFs();
+    const cancelled: string[] = [];
+    const body = (name: string) => new ReadableStream<Uint8Array>({ cancel() { cancelled.push(name); } });
+    // The server answers only after 70 s, ignoring the abort at 60 s (a wedged proxy).
+    const late = async () => { await new Promise(r => setTimeout(r, 70_000)); return { ok: true, status: 200, body: body("late") }; };
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch: late })
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(RUNTIME_STALL_MS);
+    expect(await p).toMatchObject({ kind: "stalled" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(cancelled).toEqual(["late"]);
+    const refused = await ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch: async () => ({ ok: false, status: 503, body: body("refused") }) })
+      .catch((e: unknown) => e);
+    expect(refused).toMatchObject({ kind: "download", reason: "the server answered 503" });
+    expect(cancelled).toEqual(["late", "refused"]);
+    expect(m.files.size).toBe(0);
+  });
+
   it("still says \"cancelled\" when the user cancels a download that is waiting for bytes", async () => {
     const m = memFs();
     const { fetch, seen } = stallingFetch(BODY.subarray(0, 1000));
