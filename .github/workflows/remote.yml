@@ -88,6 +88,12 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
+      - name: The tools the suite runs (script, the shells, pgrep and pkill, git), for the log
+        run: |
+          script --version
+          bash --version | head -1
+          pgrep --version | head -1
+          git --version
       - name: Commands with util-linux script, pipes without it, the stop ladder and the sweep
         run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
         env:
@@ -102,9 +108,9 @@ jobs:
     container:
       image: rockylinux:8
     steps:
-      - name: System packages (build tools, util-linux's script, procps for the sweep)
+      - name: System packages (build tools, util-linux's script, procps for the sweep, file and binutils for the binary check)
         run: |
-          dnf -y -q install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3
+          dnf -y -q install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3 file binutils
           useradd -m ci
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -116,7 +122,15 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
+      - name: Rebuild native modules on glibc 2.28 and check every binary (as ci.yml's el8 job does)
+        run: scripts/rebuild-el8.sh --here
       - run: npm run build
+      - name: The tools the suite runs (util-linux 2.32's script, the shells, pgrep and pkill, git), for the log
+        run: |
+          script --version
+          bash --version | head -1
+          pgrep --version | head -1
+          git --version
       - name: Commands as a normal user (root would make every command ask)
         run: |
           chown -R ci .

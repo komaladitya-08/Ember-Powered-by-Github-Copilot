@@ -320,7 +320,9 @@ describe.runIf(required && platform === "linux")("commands on Linux", () => {
     expect(viaLink).toEqual({ exists: false, real: path.join(fs.realpathSync(target), "key") });
     expect(missing).toEqual({ exists: false, real: path.join(fs.realpathSync(tmp), "nope", "x") });
     const repo = fs.mkdtempSync(path.join(tmp, "push-"));
-    execFileSync("git", ["init", "-q", "-b", "feature-x"], { cwd: repo });
+    // `checkout -b` rather than `init -b`: RHEL 8's git may predate init's -b.
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "feature-x"], { cwd: repo });
     execFileSync("git", ["-c", "user.name=E", "-c", "user.email=e@example.com", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: repo });
     execFileSync("git", ["config", "push.default", "current"], { cwd: repo });
     await expect(runner.gitFacts(repo)).resolves.toEqual({ branch: "feature-x", pushDefault: "current", upstream: null });
