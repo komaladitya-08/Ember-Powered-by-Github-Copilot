@@ -3271,7 +3271,9 @@ export class Worker {
    */
   private remoteRefusal(err: unknown): ToolResultObject | null {
     if (this.d.target?.kind !== "ssh") return null;
-    const code = (err as { code?: unknown } | null)?.code;
+    // SC's own refusals before anything is sent (a password field's value) carry `remoteCode` "denied": refusals too.
+    const ownDenial = err instanceof Error && err.name === "RemoteError" && (err as { remoteCode?: unknown }).remoteCode === "denied";
+    const code = ownDenial ? "denied" : (err as { code?: unknown } | null)?.code;
     if (typeof code !== "string" || !REMOTE_CODES.has(code)) return null;
     const name = this.targetName;
     switch (code) {
@@ -3281,7 +3283,7 @@ export class Worker {
       case "stopped": return STOPPED();
       default: {
         const said = remoteSaid(err);
-        if (said !== null) return denied(`Not allowed: ${said}. Don't try another way; tell the user in finish_task.`);
+        if (said !== null) return denied(`Not allowed: ${said.replace(/^Not allowed: /, "")}. Don't try another way; tell the user in finish_task.`);
         const msg = err instanceof Error ? err.message : String(err);
         return denied(`Not allowed: ${name} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`);
       }

@@ -311,6 +311,8 @@ describe("a remote's own sentences (SC's errors, INT)", () => {
       [new RemoteStepError("deny", "build-01 refused it: \"no acting in apps\""), "denied", "Not allowed: build-01 refused it: \"no acting in apps\". Don't try another way; tell the user in finish_task."],
       [new RemoteStepError("deny", "build-01 refused it."), "denied", "Not allowed: build-01 refused it. Don't try another way; tell the user in finish_task."],
       [new RemoteError("gone", "It is gone on build-01: \"no such element\""), "failure", "It is gone on build-01: \"no such element\". Call perceive_window to see the window as it is now."],
+      // SC's own refusal before anything is sent (a password field's value): a refusal, never "it didn't work".
+      [new RemoteError("denied", "Not allowed: this looks like a password or payment field."), "denied", "Not allowed: this looks like a password or payment field. Don't try another way; tell the user in finish_task."],
       // A step nobody answered may still have happened there.
       [new RemoteError("link", "build-01 did not answer in time"), "failure", "The app didn't answer in time, so it's unknown whether this happened. Call perceive_window to check before trying again."],
     ];
