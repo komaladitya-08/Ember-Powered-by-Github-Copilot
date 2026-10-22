@@ -5,7 +5,8 @@
  * LinkInfo's local or network path, the StringData (description, working folder, arguments), and three extra-data
  * blocks: EnvironmentVariableDataBlock (a target written with %VARIABLES%), DarwinDataBlock (an MSI "advertised"
  * shortcut) and the PropertyStoreDataBlock's System.AppUserModel.ID. Every read is bounds-checked: a file that
- * doesn't parse throws LnkError and the catalogue skips it. Pure.
+ * doesn't parse throws LnkError and the catalogue skips it. A shortcut without a LinkInfo (written by other tools) is
+ * read from its LinkTargetIDList when that is a plain file-system path (This PC, a drive, file entries). Pure.
  */
 
 /** A shortcut that isn't a valid MS-SHLLINK file (or is cut short). */
@@ -113,6 +114,68 @@ function linkInfoPath(r: Reader, at: number): string | null {
 
 const joinSuffix = (base: string, suffix: string) => (!suffix ? base : base.endsWith("\\") ? base + suffix : `${base}\\${suffix}`);
 
+/** {20D04FE0-3AEA-1069-A2D8-08002B30309D} (This PC) as stored in a root folder shell item. */
+const MY_COMPUTER = Buffer.from("e04fd020ea3a6910a2d808002b30309d", "hex");
+const BEEF0004 = 0xbeef0004;
+
+/**
+ * A file entry shell item's long name: the 0xBEEF0004 extension block's Unicode name (whose position depends on the
+ * block's version), else the item's own short name. null when the item isn't a file entry.
+ */
+function fileEntryName(r: Reader, at: number, end: number): string | null {
+  const type = r.buf[at + 2];
+  if ((type & 0x70) !== 0x30) return null; // not a file entry (0x31 folder, 0x32 file, 0x35/0x36 with a Unicode short name)
+  const unicodeShort = (type & 0x04) !== 0;
+  const nameAt = at + 2 + 12; // size(2) type(1) unknown(1) file size(4) modified(4) attributes(2)
+  // The last two bytes of the item give the extension block's offset from the item's start.
+  const extAt = at + r.u16(end - 2);
+  if (extAt + 8 <= end - 2 && r.u32(extAt + 4) === BEEF0004) {
+    const version = r.u16(extAt + 2);
+    if (version >= 3) {
+      let p = extAt + 8 + 4 + 4 + 2; // signature, created, accessed, identifier
+      if (version >= 7) p += 2 + 8 + 8;
+      p += 2; // long string size
+      if (version >= 9) p += 4;
+      if (version >= 8) p += 4;
+      const name = r.wstrz(p, end);
+      if (name) return name;
+    }
+  }
+  return unicodeShort ? r.wstrz(nameAt, end) : r.ansiz(nameAt, end);
+}
+
+/**
+ * The file-system path a LinkTargetIDList points at, for the shape shortcuts to programs take: This PC, a drive
+ * ("C:\"), then file entries. null for anything else (a known folder, a control panel item, a packaged app).
+ */
+function idListPath(r: Reader, at: number, end: number): string | null {
+  let p = at;
+  let drive: string | null = null;
+  const names: string[] = [];
+  let first = true;
+  while (p + 2 <= end) {
+    const size = r.u16(p);
+    if (size === 0) break;
+    if (size < 3 || p + size > end) throw new LnkError("bad shell item");
+    const type = r.buf[p + 2];
+    if (first) {
+      first = false;
+      if (type !== 0x1f || size < 20 || !r.bytes(p + 4, 16).equals(MY_COMPUTER)) return null;
+    } else if (drive === null) {
+      if ((type & 0x70) !== 0x20) return null; // a volume item ("C:\")
+      const letter = r.ansiz(p + 3, p + size);
+      if (!/^[A-Za-z]:\\?$/.test(letter)) return null;
+      drive = letter.endsWith("\\") ? letter : `${letter}\\`;
+    } else {
+      const name = fileEntryName(r, p, p + size);
+      if (name === null) return null;
+      names.push(name);
+    }
+    p += size;
+  }
+  return drive && names.length ? drive + names.join("\\") : null;
+}
+
 /** System.AppUserModel.ID from a serialized property store (MS-PROPSTORE), or null. */
 function aumidOf(r: Reader, at: number, end: number): string | null {
   let p = at;
@@ -151,7 +214,18 @@ export function parseShellLink(buf: Buffer): ShellLink {
   if (r.u32(0) !== HEADER_SIZE || !r.bytes(4, 16).equals(LINK_CLSID)) throw new LnkError("not a shortcut");
   const flags = r.u32(20);
   let p = HEADER_SIZE;
-  if (flags & FLAG.HasLinkTargetIDList) p += 2 + r.u16(p);
+  let idTarget: string | null = null;
+  if (flags & FLAG.HasLinkTargetIDList) {
+    const size = r.u16(p);
+    r.need(p + 2, size);
+    try {
+      idTarget = idListPath(r, p + 2, p + 2 + size);
+    } catch (err) {
+      if (!(err instanceof LnkError)) throw err;
+      idTarget = null; // a shell item Ember doesn't know: the LinkInfo may still name the target
+    }
+    p += 2 + size;
+  }
 
   let target: string | null = null;
   if ((flags & FLAG.HasLinkInfo) && !(flags & FLAG.ForceNoLinkInfo)) {
@@ -194,7 +268,7 @@ export function parseShellLink(buf: Buffer): ShellLink {
   }
 
   return {
-    target: (flags & FLAG.HasExpString) && envTarget ? envTarget : target ?? envTarget,
+    target: (flags & FLAG.HasExpString) && envTarget ? envTarget : target ?? idTarget ?? envTarget,
     arguments: args,
     description,
     workingDir,

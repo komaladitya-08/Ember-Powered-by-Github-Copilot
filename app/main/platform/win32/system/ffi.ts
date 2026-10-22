@@ -188,7 +188,7 @@ export function bindWin32System(koffi: Koffi, load: (name: string) => Pick<impor
       const n = call(buf, units) as number;
       if (!n) return null;
       if (n < units) return buf.toString("utf16le", 0, n * 2);
-      units = n + 1; // too small: n is the size needed, with its NUL
+      units = n; // too small: n is the size needed, its NUL included
     }
     return null;
   };
