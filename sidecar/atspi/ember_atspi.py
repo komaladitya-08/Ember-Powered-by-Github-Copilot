@@ -4836,16 +4836,18 @@ def find_bus(params, candidates=None, look=probe, choose=choose_bus):
     cands = bus_candidates() if candidates is None else candidates
     ranked = rank(cands, titles, look)
     best = best_of(ranked)
+    # What each candidate scored, by where it was found (for the doctor and the wslg-probe job; no addresses).
+    scores = [[c["source"], n] for n, c in ranked]
     if BUS["chosen"]:
         mine = [n for n, c in ranked if (c["session"], c["a11y"]) == (BUS["session"], BUS["a11y"])
                 or (c["session"] and c["session"] == BUS["session"])]
         if best is not None and best[0] > (mine[0] if mine else 0):
-            return {"bus": best[1]["source"], "score": best[0], "restart": True}
-        return {"bus": BUS["source"], "score": mine[0] if mine else 0}
+            return {"bus": best[1]["source"], "score": best[0], "restart": True, "scores": scores}
+        return {"bus": BUS["source"], "score": mine[0] if mine else 0, "scores": scores}
     if best is None or not choose(best[1]):
         BUS["source"] = "none"
-        return {"bus": "none", "candidates": len(cands)}
-    return {"bus": best[1]["source"], "score": best[0]}
+        return {"bus": "none", "candidates": len(cands), "scores": scores}
+    return {"bus": best[1]["source"], "score": best[0], "scores": scores}
 
 
 def pyatspi_installed():
@@ -4912,8 +4914,9 @@ def child_extents(win, limit=16):
     return out
 
 
-# How long requests already sent may still be answered after stdin hung up (a socket's end reads as input too).
-HUP_GRACE_S = 5.0
+# How long the main loop has, after stdin hung up, to answer what was already sent and see the end of its input itself
+# (it may hold those lines in its own buffer, where poll can't see them); one stuck in a hung app is ended then.
+HUP_GRACE_S = 2.0
 
 
 def stdin_state(fd):
@@ -4937,14 +4940,13 @@ def stdin_hung_up(fd):
 
 
 def watch_once(fd, parent, getppid=os.getppid, waited=0.0):
-    """Why this process should end now: "parent" (it changed), "stdin" (hung up with nothing left to read, or what is
-    left has waited HUP_GRACE_S); "draining" (hung up, the requests still in it being answered); None to go on."""
+    """Why this process should end now: "parent" (it changed), "stdin" (hung up for HUP_GRACE_S); "draining" (hung up
+    for less: what was sent is still being answered); None to go on."""
     if getppid() != parent:
         return "parent"
-    hung, pending = stdin_state(fd)
-    if not hung:
+    if not stdin_hung_up(fd):
         return None
-    return "stdin" if not pending or waited >= HUP_GRACE_S else "draining"
+    return "stdin" if waited >= HUP_GRACE_S else "draining"
 
 
 def start_watchdog(fd, interval=0.5):

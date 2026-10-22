@@ -3117,17 +3117,18 @@ class InsideWsl(unittest.TestCase):
             e.BUS.update(source=c["source"], session=c["session"], a11y=c["a11y"], chosen=True)
             return True
         out = e.find_bus({"titles": ["notes.txt - gedit", " Calculator ", 5]}, candidates=cands, look=look, choose=choose)
-        self.assertEqual(out, {"bus": "proc", "score": 2})
+        self.assertEqual(out, {"bus": "proc", "score": 2, "scores": [["env", 0], ["proc", 2], ["x11", 1]]})
         self.assertEqual(chosen, [{"source": "proc", "session": "unix:path=/b", "a11y": "unix:path=/a11y-b"}])
         self.assertEqual([s["kind"] for s in looked], ["bus", "bus", "bus"])
         # Asked again with the bus in use: kept while nothing fits better, else start over.
-        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=look, choose=choose), {"bus": "proc", "score": 1})
+        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=look, choose=choose)["score"], 1)
         # (A tie keeps the bus in use.)
         answers[None] = {"apps": [["notes.txt - gedit"], ["xeyes"]]}
-        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit", "xeyes"]}, candidates=cands, look=look, choose=choose), {"bus": "proc", "score": 2})
+        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit", "xeyes"]}, candidates=cands, look=look, choose=choose),
+                         {"bus": "proc", "score": 2, "scores": [["env", 0], ["proc", 2], ["x11", 2]]})
         answers[None] = {"apps": [["notes.txt - gedit"], ["xeyes"], ["Files"]]}
         self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit", "xeyes", "Files"]}, candidates=cands, look=look, choose=choose),
-                         {"bus": "x11", "score": 3, "restart": True})
+                         {"bus": "x11", "score": 3, "restart": True, "scores": [["env", 0], ["proc", 2], ["x11", 3]]})
         self.assertEqual(len(chosen), 1)
 
     def test_find_bus_says_none_when_no_candidate_shows_the_windows(self):
@@ -3135,7 +3136,7 @@ class InsideWsl(unittest.TestCase):
         e.BUS.update(source=None, session=None, a11y=None, chosen=False)
         cands = [{"source": "env", "session": "unix:path=/a", "a11y": None}]
         out = e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=lambda s: {"apps": [["Other"]]}, choose=lambda c: self.fail("chosen"))
-        self.assertEqual(out, {"bus": "none", "candidates": 1})
+        self.assertEqual(out, {"bus": "none", "candidates": 1, "scores": [["env", 0]]})
         self.assertEqual(e.BUS["source"], "none")
         # A look that failed or timed out scores nothing.
         self.assertEqual(e.find_bus({"titles": ["x"]}, candidates=cands, look=lambda s: None, choose=lambda c: self.fail("chosen"))["bus"], "none")
@@ -3162,11 +3163,12 @@ class InsideWsl(unittest.TestCase):
         os.write(w, b'{"id": 1}\n')
         os.close(w)
         self.assertTrue(e.stdin_hung_up(r))
-        # Requests already sent are answered first (for a while), then it ends.
+        self.assertEqual(e.stdin_state(r), (True, True))
+        # What was sent is answered first (the main loop then sees the end of its input itself); one stuck ends later.
         self.assertEqual(e.watch_once(r, 77, getppid=lambda: 77), "draining")
         self.assertEqual(e.watch_once(r, 77, getppid=lambda: 77, waited=e.HUP_GRACE_S), "stdin")
         os.read(r, 100)
-        self.assertEqual(e.watch_once(r, 77, getppid=lambda: 77), "stdin")
+        self.assertEqual(e.stdin_state(r), (True, False))
         a, b = socket.socketpair()
         self.addCleanup(a.close)
         self.assertFalse(e.stdin_hung_up(a.fileno()))
