@@ -197,17 +197,17 @@ const requireCjs = createRequire(__filename);
 let loaded: RegistryReader | null | undefined;
 
 /**
- * The registry reader, or null off Windows or when koffi or advapi32 can't be loaded (discovery then asks wsl.exe).
- * koffi is required here, on the first call, never at import: a macOS remote's agent ships no koffi.
+ * The registry reader, or null when koffi or advapi32 can't be loaded (discovery then asks wsl.exe). Only the WSL
+ * service calls it, and createWsl makes that service only on Windows. koffi is required here, on the first call, never
+ * at import: a macOS remote's agent ships no koffi.
  */
 export function loadLxssRegistry(): RegistryReader | null {
   if (loaded !== undefined) return loaded;
   loaded = null;
-  if (process.platform !== "win32") return null;
   try {
     loaded = bindLxssRegistry(requireCjs("koffi") as KoffiLike);
   } catch {
-    loaded = null; // no koffi or no advapi32 export: wsl.exe --list --verbose answers instead
+    loaded = null; // no koffi, no advapi32 (not Windows) or a 32-bit process: wsl.exe --list --verbose answers instead
   }
   return loaded;
 }

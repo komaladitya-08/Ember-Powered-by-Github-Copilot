@@ -160,7 +160,7 @@ export function createWslExec(o: { exe: () => string | null; env: NodeJS.Process
         };
         const timer = setTimeout(() => {
           timedOut = true;
-          o.log.warn("wsl.probe_timeout", { args: args.slice(0, 4), ms: r.timeoutMs });
+          o.log.warn("wsl.probe_timeout", { args: args.slice(0, 2), ms: r.timeoutMs }); // never a folder or a script
           try {
             child.kill();
           } catch {
