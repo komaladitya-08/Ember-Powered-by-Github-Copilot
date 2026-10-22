@@ -400,12 +400,17 @@ export class StreamReader {
   private buf: Buffer = Buffer.alloc(0);
   private ended = false;
   private wake: (() => void) | null = null;
+  private readonly endWaiters: (() => void)[] = [];
   private readonly onData = (c: Buffer | string) => {
     const b = typeof c === "string" ? Buffer.from(c) : c;
     this.buf = this.buf.length ? Buffer.concat([this.buf, b]) : b;
     this.notify();
   };
-  private readonly onEnd = () => { this.ended = true; this.notify(); };
+  private readonly onEnd = () => {
+    this.ended = true;
+    this.notify();
+    for (const w of this.endWaiters.splice(0)) w();
+  };
 
   constructor(private readonly s: NodeJS.ReadableStream) {
     s.on("data", this.onData);
@@ -466,6 +471,11 @@ export class StreamReader {
     return this.buf.subarray(0, prefix.length).equals(prefix);
   }
 
+  /** Resolves when the stream has ended (ssh's stdout closed: ssh exited or was killed). */
+  whenEnded(): Promise<void> {
+    return this.ended ? Promise.resolve() : new Promise(resolve => { this.endWaiters.push(resolve); });
+  }
+
   /** Stops reading and hands back what is buffered; the stream is paused for the next reader (pipe resumes it). */
   detach(): Buffer {
     this.s.removeListener("data", this.onData);
@@ -479,8 +489,14 @@ export class StreamReader {
   }
 }
 
-/** Writes `data` and waits while the stream asks it to (drain); rejects when it closes or fails first. */
+/**
+ * Writes `data` and waits while the stream asks it to (drain); rejects when it closes or fails first, and at once when
+ * it is closed already: Node destroys a child's stdin when the child exits, and a write to a destroyed stream emits no
+ * 'error', 'close' or 'drain', so waiting there would never end.
+ */
 export function writeAll(w: NodeJS.WritableStream, data: Uint8Array | string): Promise<void> {
+  const state = w as NodeJS.WritableStream & { destroyed?: boolean; writableEnded?: boolean; closed?: boolean };
+  if (state.destroyed || state.writableEnded || state.closed) return Promise.reject(new Error("ssh's stdin closed"));
   return new Promise((resolve, reject) => {
     let done = false;
     const finish = (err?: Error) => {
@@ -558,7 +574,13 @@ export async function runBootstrap(
     probe[key] = l.slice(eq + 1, eq + 1 + BOOTSTRAP_LIMITS.valueBytes);
   }
   const plain = { ...probe };
-  const decision = await hooks.decide(plain);
+  // ssh may end while Ember decides (a dropped network, the user's Cancel during the runtime's download): its stdout's
+  // end answers for it, so a decision nobody can read is never waited for.
+  const decision = await Promise.race([hooks.decide(plain), reader.whenEnded().then(() => null)]);
+  if (decision === null) {
+    reader.detach();
+    return { kind: "eof", probe: plain, probeBegan: true };
+  }
   const line = decision.kind === "quit" ? "QUIT" : decision.kind === "uninstall" ? "UNINSTALL" : decision.line;
   if (!/^[A-Z]+( [A-Za-z0-9._+-]{1,100}){0,8}$/.test(line)) return fail("decision", plain, true);
   try {

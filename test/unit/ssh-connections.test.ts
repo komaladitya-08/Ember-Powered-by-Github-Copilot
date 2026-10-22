@@ -4,11 +4,11 @@ import { Duplex, PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAskpass } from "../../app/askpass/main";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
-import { BOOTSTRAP_SCRIPT } from "../../app/main/remote/bootstrap";
+import { BOOTSTRAP_SCRIPT, writeAll } from "../../app/main/remote/bootstrap";
 import { createConnections, type ConnectionsInternals, type ExecResult } from "../../app/main/remote/connections";
-import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
+import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, runAttempt, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
 import { acquireLock, type LockIo } from "../../app/remote/lock";
-import { checkIncoming, Deadline, escalationMs, runLinkCore, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
+import { checkIncoming, Deadline, escalationMs, runLinkCore, SETTLE_AFTER_EXIT_MS, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
 import type { Msg } from "../../app/main/remote/protocol";
 import { ConnectError, type ConnectProgress, type HostRecord, type Mux, type PromptUi } from "../../app/main/remote/types";
 import type { PromptAnswer, PromptCard } from "../../app/shared/remote-ui";
@@ -126,7 +126,8 @@ class FakeChild implements ChildLike {
     this.done = true;
     this.stdout.end();
     this.stderr.end();
-    setImmediate(() => { for (const f of this.exitFns) f(code, signal); });
+    // As Node does when a child exits: its stdin is destroyed before 'exit' (a later write emits nothing at all).
+    setImmediate(() => { this.stdin.destroy(); for (const f of this.exitFns) f(code, signal); });
   }
 
   private take(c: Buffer): void {
@@ -682,6 +683,68 @@ describe("the link's pieces", () => {
     expect(fired).toBe(false);
     t = 115_001; vi.advanceTimersByTime(1_001);
     expect(fired).toBe(true);
+  });
+
+  it("settles an attempt whose ssh ends while Ember decides: Cancel during the runtime's download, or a dropped network", async () => {
+    const start: Extract<ToWorker, { t: "start" }> = {
+      t: "start", argv: ["/usr/bin/ssh", "deploy@build-01"], env: {}, spawn: { detached: true, windowsHide: true }, script: BOOTSTRAP_SCRIPT,
+      deadlineMs: 45_000, probeMs: 60_000, stallMs: 5000, graceMs: 20_000,
+    };
+    const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<"hung">(r => setTimeout(() => r("hung"), ms))]);
+    // Cancel: the worker kills ssh (Node destroys its stdin), then the aborted download makes the decision QUIT.
+    const spawned: FakeChild[] = [];
+    const abort = new AbortController();
+    let deciding = false;
+    const cancelled = runAttempt(inProcess(spawned, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+      decide: () => new Promise(resolve => {
+        deciding = true;
+        abort.signal.addEventListener("abort", () => setTimeout(() => resolve({ kind: "quit" }), 30), { once: true });
+      }),
+      signal: abort.signal,
+    });
+    for (let i = 0; i < 200 && !deciding; i++) await tick();
+    expect(deciding).toBe(true);
+    abort.abort();
+    const r1 = await within(cancelled.result, 1500);
+    expect(r1).toMatchObject({ kind: "failed", cancelled: true, probeBegan: true });
+    expect(spawned[0].killed).toBe(true);
+    // A dropped network: ssh exits by itself while the download goes on (the decision never comes).
+    const spawned2: FakeChild[] = [];
+    let deciding2 = false;
+    const dropped = runAttempt(inProcess(spawned2, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+      decide: () => new Promise(() => { deciding2 = true; }),
+    });
+    for (let i = 0; i < 200 && !deciding2; i++) await tick();
+    spawned2[0].stderr.write("client_loop: send disconnect: Broken pipe\n");
+    spawned2[0].exit(255, null);
+    const r2 = await within(dropped.result, 1500);
+    expect(r2).toMatchObject({ kind: "failed", cancelled: false, probeBegan: true, exit: { code: 255 } });
+    // ssh gone but its stdout held open (a process it started keeps the pipe): Cancel ends the attempt at once, and
+    // without one it ends SETTLE_AFTER_EXIT_MS after ssh's exit.
+    for (const cancel of [true, false]) {
+      const kids: FakeChild[] = [];
+      const ac = new AbortController();
+      let asked = false;
+      const held = runAttempt(inProcess(kids, [{}], () => agent(), [], () => Buffer.alloc(0))(), start, {
+        decide: () => new Promise(() => { asked = true; }), signal: ac.signal,
+      });
+      for (let i = 0; i < 200 && !asked; i++) await tick();
+      kids[0].stdout.end = (() => kids[0].stdout) as never;
+      kids[0].exit(255, null);
+      await settle();
+      if (cancel) ac.abort();
+      const r = await within(held.result, cancel ? 500 : SETTLE_AFTER_EXIT_MS + 1000);
+      expect(r).toMatchObject({ kind: "failed", cancelled: cancel, probeBegan: true, exit: { code: 255 } });
+    }
+  });
+
+  it("never waits on a write to a stream that is closed already (Node destroys a child's stdin when it exits)", async () => {
+    const w = new PassThrough();
+    w.destroy();
+    await expect(writeAll(w, "QUIT\n")).rejects.toThrow("ssh's stdin closed");
+    const ended = new PassThrough();
+    ended.end();
+    await expect(writeAll(ended, "x")).rejects.toThrow("ssh's stdin closed");
   });
 
   it("escalates after min(10 s, max(1 s, 3 × RTT + in flight ÷ throughput)) (critique remote-23)", () => {

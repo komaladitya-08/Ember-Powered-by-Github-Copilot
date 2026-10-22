@@ -444,10 +444,11 @@ export function runAttempt(port: LinkPort, start: Extract<ToWorker, { t: "start"
         case "probe":
           probe = m.probe;
           o.progress?.({ step: "checking" });
-          o.decide(m.probe).then(d => port.post({ t: "decision", decision: d }), err => {
+          // A decision that comes after the attempt ended (ssh went while Ember decided) has nobody to go to.
+          o.decide(m.probe).then(d => { if (!finished) port.post({ t: "decision", decision: d }); }, err => {
             o.log?.warn("remote.decide_failed", { err });
-            port.post({ t: "decision", decision: { kind: "quit" } });
-          });
+            if (!finished) port.post({ t: "decision", decision: { kind: "quit" } });
+          }).catch(() => undefined);
           return;
         case "progress":
           o.progress?.({ step: "copying", done: m.done, total: m.total });
