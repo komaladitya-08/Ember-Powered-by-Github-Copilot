@@ -1716,6 +1716,12 @@ export function refusesTyping(rules: readonly TypingRefusal[], r: Pick<ActionReq
 const COMMAND_ROLES = /^(menu|menu item|push button|toggle button|link)$/;
 /** Enter, also with Ctrl or Shift, opens the focused item (Alt+Enter only shows its Properties). */
 const OPEN_KEY = /^(ctrl\+)?(shift\+)?return$/;
+/** The views that hold those items (File Explorer's and the desktop's are lists): Enter there opens what is selected. */
+const ITEM_VIEW_ROLES = /^(list|table)$/;
+/** Keys that move the keyboard off what is selected, or add the focused item to it (Ctrl and an arrow, Ctrl+Space). */
+const SPLITS_SELECTION = /^ctrl\+(up|down|left|right|home|end|prior|next|space)$/;
+/** In an open menu a plain letter picks the item with that access key (as riskOf's menu rule says). */
+const MENU_LETTER = /^(shift\+)?[a-z0-9]$/;
 /** A rule's commands as one expression on a folded label: the whole label, an access key ("(O)") or "…" ("...") after it. */
 const commandsOf = (rule: OpensPrograms) => new RegExp(`^\\s*(${foldLabel(rule.commands.join("|"))})\\s*(\\(\\w\\))?\\s*(\\.\\.\\.)?\\s*$`, "u");
 const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
@@ -1724,19 +1730,26 @@ const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
  * Does `r` open a program or script in an app that runs what it opens with no dialog (`rules`: OPENS_PROGRAMS[os],
  * File Explorer on Windows)? "item": an item named like one (an icon, a list's or grid's item), opened by a click that
  * does more than select it (its own action, a double click), by the borrowed mouse (a single click opens where Explorer
- * is set to open items that way, which Ember can't tell) or by Enter. "command": a command that opens or runs whatever
- * is selected (Open, Run as administrator), clicked or pressed with Enter or Space: what is selected isn't known.
- * Selecting an item by accessibility, and reading, stay allowed.
+ * is set to open items that way, which Ember can't tell) or by Enter. "selection": Enter opens every item selected, not
+ * only the focused one it is judged by, so Enter where the selection may hold others (on the view itself, or after keys
+ * selected several there: Ctrl+A, Shift and an arrow), and the keys that move the keyboard off the selection or add the
+ * focused item to it (Ctrl and an arrow, Ctrl+Space). "command": a command that opens or runs whatever is selected
+ * (Open, Run as administrator), clicked, pressed with Enter or Space, or picked in its menu by a letter (Open's "O"):
+ * what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
  */
-export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects">, kc: KeyConventions = KEYS.linux): "item" | "command" | null {
+export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects" | "afterSelectAll" | "afterSelecting">,
+  kc: KeyConventions = KEYS.linux): "item" | "selection" | "command" | null {
   const rule = r.element && rules.find(x => x.app.test(r.app.trim()));
   if (!rule || !r.element) return null;
   const { role, name } = r.element;
   const key = r.kind === "keys" ? keyFamily(canonicalKeys(r.value ?? "", kc) ?? "") : "";
-  if (CONTENT_ROLES.test(role)) {
+  const item = CONTENT_ROLES.test(role);
+  if (item || ITEM_VIEW_ROLES.test(role)) {
+    if (SPLITS_SELECTION.test(key) || (OPEN_KEY.test(key) && (!item || r.afterSelectAll || r.afterSelecting))) return "selection";
     const opens = (r.kind === "click" && !r.clickSelects) || r.kind === "cursor_click" || OPEN_KEY.test(key);
-    return opens && rule.item.test(normalizeLabel(name).trim()) ? "item" : null;
+    return item && opens && rule.item.test(normalizeLabel(name).trim()) ? "item" : null;
   }
+  if (/menu/.test(role) && MENU_LETTER.test(key)) return "command";
   if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key))) return null;
   let commands = commandExpressions.get(rule);
   if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
@@ -2008,6 +2021,9 @@ export class PolicyEngine {
     // File Explorer runs a program or script it opens with no dialog (OPENS_PROGRAMS; none on Linux and macOS).
     const opens = r.kind !== "read" ? opensProgram(OPENS_PROGRAMS[os], r, kc) : null;
     if (opens === "item") return never("Ember doesn't run programs, so it never opens programs or scripts from File Explorer");
+    if (opens === "selection") {
+      return never("Ember doesn't run programs, and Enter in File Explorer opens every item selected, so it never opens a selection it can't name or moves the keyboard off one");
+    }
     if (opens === "command") return never("Ember doesn't run programs, and File Explorer's Open and Run as commands may start one, so it never uses them");
     if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog, os)) {
       return never("Ember doesn't run programs, so it never makes files executable or runs them");

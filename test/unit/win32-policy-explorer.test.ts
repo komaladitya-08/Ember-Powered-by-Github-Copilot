@@ -40,6 +40,33 @@ describe("File Explorer opening programs on Windows", () => {
     for (const role of ["icon", "table cell", "tree item"]) expect(engine().decide(enter("setup.exe", "Return", role)).reason, role).toBe(ITEM);
   });
 
+  it("never presses Enter where the selection may hold an item other than the one focused, nor splits the keyboard from it", () => {
+    const SELECTION = "Ember doesn't run programs, and Enter in File Explorer opens every item selected, so it never opens a selection it can't name or moves the keyboard off one";
+    // After Ctrl+A or Shift and an arrow here, Enter on a document opens every item selected (a program among them).
+    for (const more of [{ afterSelectAll: true }, { afterSelecting: true }]) {
+      expect(engine().decide({ ...enter("notes.txt"), ...more }), JSON.stringify(more)).toMatchObject({ tier: "never", reason: SELECTION });
+    }
+    // Enter on the view itself (File Explorer's items, the desktop's) opens what is selected there.
+    for (const role of ["list", "table"]) expect(engine().decide(enter("Items View", "Return", role)).reason, role).toBe(SELECTION);
+    // Ctrl and an arrow move the keyboard off the selection, Ctrl+Space adds the focused item to it.
+    for (const keys of ["ctrl+Down", "ctrl+Up", "ctrl+Home", "ctrl+End", "ctrl+Next", "ctrl+space", "ctrl+KP_Down"]) {
+      expect(engine().decide(enter("notes.txt", keys)).reason, keys).toBe(SELECTION);
+      expect(engine().decide(enter("Items View", keys, "list")).reason, keys).toBe(SELECTION);
+    }
+    // Moving with the arrows, Space, and Enter on a document alone stay as they were.
+    for (const keys of ["Down", "shift+Down", "space", "Return"]) expect(engine().decide(enter("notes.txt", keys)).reason, keys).not.toBe(SELECTION);
+    expect(engine().decide(enter("Items View", "Down", "list")).reason).not.toBe(SELECTION);
+  });
+
+  it("never picks a command in Explorer's menus by its letter (Open's \"O\", Run as administrator's \"A\")", () => {
+    for (const role of ["menu", "menu item"]) {
+      for (const keys of ["o", "a", "shift+o", "1"]) expect(engine().decide(enter("Cut", keys, role)), `${role} ${keys}`).toMatchObject({ tier: "never", reason: COMMAND });
+    }
+    // Elsewhere in Explorer a letter types or selects by name; in other apps' menus it is asked about, as before.
+    expect(engine().decide(enter("notes.txt", "o")).reason).not.toBe(COMMAND);
+    expect(engine().decide({ ...enter("Cut", "o", "menu item"), app: "notepad" }).reason).not.toBe(COMMAND);
+  });
+
   it("still selects and reads one: a click that only selects it, Alt+Enter (Properties), Space, reading", () => {
     expect(engine().decide(open("setup.exe", { clickSelects: true })).tier).not.toBe("never");
     for (const keys of ["alt+Return", "space", "Down", "F2"]) expect(engine().decide(enter("setup.exe", keys)).reason, keys).not.toBe(ITEM);
