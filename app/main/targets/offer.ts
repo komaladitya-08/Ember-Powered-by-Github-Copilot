@@ -122,7 +122,8 @@ export function createNoticer(d: NoticerDeps): Noticer {
     const changed = w.title !== lastTitle;
     lastTitle = w.title;
     if (!changed && !pending) return;
-    if (d.now() - lastCheck < NOTICE_INTERVAL_MS) { pending = true; return; }
+    // Within the 10 s, or while the last look is still reading: one look later, when they are over.
+    if (running || d.now() - lastCheck < NOTICE_INTERVAL_MS) { pending = true; return; }
     pending = false;
     // Windows: a PowerShell start per look, so only for a title that looks like SSH and while it may still help.
     if (d.os === "win32" && (!sshLookingTitle(w.title) || !d.cimAllowed())) return;
