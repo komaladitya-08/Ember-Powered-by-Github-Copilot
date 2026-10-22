@@ -243,7 +243,7 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
       for (const s of walk(root, folders, budget)) {
         const link = readLink(s.file);
         if (!link) continue;
-        const v = appFromShortcut(link, { file: s.file, id: s.id, env: d.env, execPath: d.execPath, exists: files.exists });
+        const v = appFromShortcut(link, { file: s.file, id: s.id, env: d.env, execPath: d.execPath, exists: p => files.exists(p) });
         if ("app" in v) add(v.app);
       }
     }
@@ -265,7 +265,7 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
     if (/\.lnk$/i.test(app.file)) {
       const link = files.exists(app.file) ? readLink(app.file) : null;
       if (!link) throw new Error("That app's shortcut isn't there any more.");
-      const v = appFromShortcut(link, { file: app.file, id: app.id, env: d.env, execPath: d.execPath, exists: files.exists });
+      const v = appFromShortcut(link, { file: app.file, id: app.id, env: d.env, execPath: d.execPath, exists: p => files.exists(p) });
       if (!("app" in v)) throw new Error(v.skip === "missing" || v.skip === "no-target" ? "That app's shortcut points at a program that isn't there any more." : "Ember can't open that shortcut.");
       if (isTerminalApp(v.app, "win32")) throw new Error(terminal);
       return;
