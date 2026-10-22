@@ -1069,11 +1069,12 @@ namespace Ember.Uia
 
     /// <summary>
     /// Ends the process: writes the exit line, then terminates it at once. Every answer was flushed as it was written,
-    /// so ending without the runtime's orderly shutdown loses nothing. That shutdown (Environment.Exit) is where the
-    /// 2.3 s from end of input to exit went on windows-2022 (CI runs 113 and 114): the time was the same with a
-    /// backstop thread set to end the process after 1.5 s and after 300 ms, so that thread never got to run. The .NET
-    /// Framework's shutdown suspends the other managed threads and then waits up to its 2 s limit for ProcessExit
-    /// handlers and finalizers (UI Automation's nodes and COM objects among them).
+    /// so ending without an orderly shutdown loses nothing. On windows-2022 (CI runs 113 and 114) the exit came 2.3 s
+    /// after end of input, the same with a backstop thread set to end the process after 1.5 s and after 300 ms, so by
+    /// the timings that thread never got to run: the .NET Framework's shutdown (Environment.Exit) stops the other
+    /// managed threads and then waits up to 2 s for ProcessExit handlers and finalizers, and ExitProcess ends every
+    /// other thread before it runs each DLL's detach code (UI Automation's and COM's among them). TerminateProcess does
+    /// neither. The exit line tells the one other explanation, a late end of input, apart.
     /// </summary>
     private void ExitProcess(int code)
     {
@@ -2529,7 +2530,9 @@ namespace Ember.Uia
           {
             captured.Done = true;
             captured.Found = error == null ? result as Dictionary<long, WindowRead> : null;
-            captured.Error = error != null ? error.Message : null;
+            // A busy message is one of the bridge's own; any other error's message may quote an exception's (and so
+            // what is on the screen), so the reason is then only the error's code.
+            captured.Error = error == null ? null : error.Code == "busy" ? error.Message : error.Code;
           }
         });
       }

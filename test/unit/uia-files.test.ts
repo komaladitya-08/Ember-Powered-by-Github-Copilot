@@ -258,6 +258,10 @@ describe("the bridge's C# (ember_uia.cs)", () => {
     const read = cs.slice(cs.indexOf("private static WindowRead ReadWindow("), cs.indexOf("private static string ProgramOf("));
     expect(read).toContain("if (attempt == 0 && !s.Abandoned && s.RemainingMs > RetryPauseMs + 300)");
     expect(read).toContain("return new WindowRead(null, Faults.Describe(e));");
+    // A whole process's failed read gives its busy message (the bridge's own words) or only its code, never the
+    // message of a "failed" error, which quotes the exception's.
+    const top = cs.slice(cs.indexOf("private static object TopWindows(Call c)"), cs.indexOf("private static Dictionary<long, WindowRead> ReadWindows"));
+    expect(top).toContain("captured.Error = error == null ? null : error.Code == \"busy\" ? error.Message : error.Code;");
     expect(cs).toContain("if (reason != null) entry.Add(\"reason\", reason);");
     expect(protocol).toContain("| `reason` | string |");
   });

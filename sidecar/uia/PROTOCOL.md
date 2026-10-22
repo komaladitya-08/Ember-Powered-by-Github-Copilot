@@ -148,10 +148,11 @@ and ends its process at once with exit code 0 (`TerminateProcess`), even if a wo
 answer was flushed as it was written, so nothing is lost. The exit line has no `id`: a client ignores it, or uses it
 to tell when the bridge saw its input end apart from when the process was gone. It is written only while stdout still
 takes it (the bridge waits at most 200 ms), and never when stdout itself broke (the bridge then ends the same way,
-with code 0). The bridge doesn't use `Environment.Exit`: the .NET Framework's orderly shutdown suspends every other
-managed thread and then waits up to 2 s for `ProcessExit` handlers and finalizers. On windows-2022 that took the exit
-to 2.3 s after end of input, the same with a thread set to end the process after 1.5 s or after 300 ms (which never
-got to run). Close stdin to stop the bridge; kill it only if it doesn't exit.
+with code 0). The bridge doesn't use `Environment.Exit`: on windows-2022 the exit came 2.3 s after end of input, the
+same with a thread set to end the process after 1.5 s or after 300 ms, which by the timings never got to run. The
+.NET Framework's orderly shutdown stops every other managed thread and then waits up to 2 s for `ProcessExit`
+handlers and finalizers, and `ExitProcess` ends every other thread before it runs each DLL's detach code;
+`TerminateProcess` does neither. Close stdin to stop the bridge; kill it only if it doesn't exit.
 
 ## Handles
 
@@ -273,7 +274,7 @@ Result: `{"windows": Window[]}`, front-most first. A `Window` is a RawNode of th
 | `focused` | boolean | it is the foreground window (`GetForegroundWindow`), which holds the keyboard focus |
 | `z` | number | position in the z-order among the windows listed, 0 = front-most |
 | `busy` | `true` | the process is busy or didn't answer in time (or this window's provider failed, also when asked a second time 100 ms later): the entry has **no `h`**, and only `hwnd`, `pid`, `processName`, `clientProgram`, `hostedPid`, `owner`, `name` (the Win32 title, `GetWindowTextW`, which sends no message), `className`, `bounds` (`GetWindowRect`), `isTopmost`, `focused`, `z` and `reason` |
-| `reason` | string | with `busy`: why, for logs. One of the `busy` messages under "Errors" (`the app did not answer in time`, `the app is not answering`, `too many requests are waiting for apps that do not answer`), or the provider's failure as `<ExceptionType> 0x<HRESULT>` (`COMException 0x80004005`), never its message |
+| `reason` | string | with `busy`: why, for logs. One of the `busy` messages under "Errors" (`the app did not answer in time`, `the app is not answering`, `too many requests are waiting for apps that do not answer`), the provider's failure as `<ExceptionType> 0x<HRESULT>` (`COMException 0x80004005`), or only the error's code (`failed`, `gone`, `denied`) when the read of the window's whole process failed otherwise; never an exception's message |
 | `skipped` | `true` | the process is in `skipPids`: the entry has the same Win32 facts as a busy one (no `h`, no `reason`) |
 
 ### `snapshot`

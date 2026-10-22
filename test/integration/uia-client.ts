@@ -220,8 +220,11 @@ export class UiaBridge {
     const start = Date.now();
     this.child.stdin.end();
     const exit = await this.exited;
-    // The exit event can come before the last of stdout has been read.
-    await this.closed;
+    // The exit event can come before the last of stdout has been read. Bounded: a process that inherited the bridge's
+    // stdout would hold it open, and the timings are worth more to a failing run than waiting for it.
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.closed, new Promise<void>(resolve => { timer = setTimeout(resolve, 5000); })]);
+    clearTimeout(timer);
     return { code: exit.code, ms: exit.at - start, lineMs: this.exitLineAt === null ? null : this.exitLineAt - start };
   }
 

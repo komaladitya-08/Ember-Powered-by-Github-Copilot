@@ -539,6 +539,8 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     stopBench(bench);
     bench = undefined;
     x86 = await startBench(path.join(dir, "bench-x86.log"), args!);
+    // Otherwise this would only read the 64-bit build a second time.
+    expect(logged(x86.log, { event: "ready" })?.bits, "the bench's ready line says it runs as a 32-bit process").toBe(32);
     const { w } = await listedRead(x86.hwnd);
     expect(w, "the 32-bit bench among the top-level windows").toBeTruthy();
     expect(w!.busy, `listed from Win32 facts only: ${JSON.stringify(w)}`).toBeUndefined();
@@ -559,7 +561,7 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     const text = "x86 é";
     expect(await ui().call("perform", { handle: control(read, "Edit", "Name").h, op: "setValue", value: text })).toEqual({ ok: true });
     await waitFor("the 32-bit bench's text event", () => logged(x86!.log, { event: "text", control: "Name", length: text.length }));
-  });
+  }, 180_000); // the first 32-bit build compiles (and Defender scans it) within the test
 
   it("writes its exit line and ends at once with code 0 when stdin closes", async () => {
     const exit = await ui().close();
