@@ -34,11 +34,12 @@ the active computer's name beside "Ready", and the ask box shows a chip such as 
 
 **Naming one in a request.** Say or type where: "on build-01, check the disk", "in Ubuntu, list my home folder",
 "build-01: restart the web server". "WSL", "in Linux" and "the Linux side" mean your default distro. "This computer",
-"here" and "locally" mean this one. A name counts only after a place word (on, in, at, inside, over, via, into,
-onto), as the request's first words followed by a colon or a comma ("build-01: …", "build-01, …"), or before "'s
-desktop", "'s screen", "'s server" and the like. So "send build-01's report to Ana" names no computer, and neither does
-"build-01 restart the web server": without the colon, that task goes to the computer Ember is set to work on. Only
-your own words choose: never text on a screen, in a file or in a command's output.
+"here" and "locally" mean this one. A name counts only after a place word (on, in, at, inside, over, via, into, onto),
+as the request's first words followed by a colon or a comma ("build-01: …", "build-01, …"), or before "'s desktop", "'s
+screen", "'s server" and the like. So "send build-01's report to Ana" names no computer, and neither does "build-01
+restart the web server": without the colon, that task goes to the computer Ember is set to work on (and nothing
+dangerous in it runs on an announcement: §2.5). Only your own words choose: never text on a screen, in a file or in a
+command's output.
 
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
@@ -137,7 +138,17 @@ chord or "Ember, stop" within those 4 seconds cancels it. The audit log records 
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. Anything broader than what you named asks: a force flag, a
-wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer.
+wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
+as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
+build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
+
+**When your words name another computer.** If your words for the task also name a computer other than the one the
+task runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
+looks like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5": a name with a dot, a
+hyphen or a digit, or `user@host`, after on, in, at, onto or into), nothing in that task runs on an announcement:
+every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but this runs on this
+computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still run. Everyday places
+("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count.
 
 These **always ask, even when you asked for them**: secrets (anything in §2.4's secrets item), downloading and
 running code, commands that keep running after Ember stops, and anything Ember can't read with certainty. Every
@@ -147,20 +158,21 @@ when the command may carry text Ember read in another app.
 
 ### 2.6 What Ember never runs
 
-A command that would change Ember's own safety settings, records or programs (its organisation policy, audit log,
-sign-in, settings or install folder, here or on the other computer), stop or debug Ember's own processes, or press
+A command that would read or change Ember's own safety settings, records or programs (its organisation policy, audit
+log, sign-in, settings or install folder, here or on the other computer), stop or debug Ember's own processes, or press
 keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes). Ember says: "Ember won't run this:
-it would change Ember's own safety settings, records or programs." or "Ember won't run this: it could press keys or
-click in Ember's own windows."
+it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
+them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
 
 ### 2.7 What Copilot gets back
 
-A command's output goes to Copilot as part of the task, marked as untrusted data, at most 200 lines (the first 40 and
-the last 160). Before it leaves this computer Ember removes terminal codes, cuts out every line you typed, withholds
-what follows a password-like prompt (until the program's next line after you press Enter, or to the end when the
-command can't take typing), and hides the passwords, keys and tokens it recognises (GitHub, AWS, Slack, Google and npm
-tokens, private keys, JWTs, `password=` values and the like). Hiding is best effort: a secret in a form Ember doesn't
-recognise can get through, so don't print secrets on purpose.
+A command's output goes to Copilot as part of the task, marked as untrusted data, at most 200 lines and 16 KB (the first
+40 lines and the last 160, with very long lines cut). Before it leaves this computer Ember removes terminal codes, cuts
+out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
+Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
+(GitHub, AWS, Slack, Google and npm tokens, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
+in URLs and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
+secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
 sh`) is not followed: it marks the task, and every further command in that task asks you ("I'm checking each step: an
@@ -174,6 +186,8 @@ earlier command printed text that looked like instructions.").
   forms it recognises (`nohup`, `setsid`, `&`, `sudo`, `docker run -d`, `systemd-run` and the like), but a program
   that detaches by itself can't be told from the command line; the window names any program it started that is still
   running.
+- If Ember itself crashes, a command on Windows ends with it, but one on Linux or macOS (or in WSL) runs on until it
+  writes output or ends by itself: newer versions of `script` don't end it when Ember goes (§7, L10).
 - A command stops after 2 minutes unless the task gives it longer (at most 15 minutes): "Stopped after 2 min: it took
   too long."
 - Each task keeps one folder per computer, starting at your home folder. A command that is only `cd <folder>` changes
@@ -244,8 +258,11 @@ Ember never installs anything itself; the check-up names the command. In each di
 | Arch | `sudo pacman -S python-atspi at-spi2-core` |
 | openSUSE | `sudo zypper install python3-pyatspi at-spi2-core` |
 
-Then turn on accessibility for Linux apps (the check-up's **Accessibility in Ubuntu** row has a button that runs
-`gsettings set org.gnome.desktop.interface toolkit-accessibility true` in the distro) and restart those apps. Some
+Then turn on accessibility for Linux apps (the **Accessibility in Ubuntu** row of the settings window's setup check has
+a button that runs `gsettings set org.gnome.desktop.interface toolkit-accessibility true` in the distro) and restart
+those apps. The button runs nothing when your organisation has turned WSL or commands in WSL off ("Your organisation
+has turned this off."), when WSL is off in Ember's settings, or when the distro isn't running (Ember doesn't start it
+to change its settings). Some
 apps stay unreadable: Qt apps need `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in their environment, Chromium, Electron and
 Firefox apps need their own accessibility switch, and if Ember can't find the session bus your Linux apps use, it
 says so ("Ember can't find the session bus your Linux apps use in Ubuntu, so it can't read them. Commands in Ubuntu
@@ -335,8 +352,10 @@ first click **Allow**.
 - **Every step there is asked**, Ember never borrows build-01's mouse and keyboard, and you aren't shown its screen.
   Screenshots taken there are masked on build-01 (never-look windows, password fields) before they leave it, and go
   only to the model. A live view of the remote screen may come later.
-- **The screen locks, or that session stops being the active one**: Ember stops working there ("build-01's screen
-  locked, so I stopped working there.").
+- **The screen locks, or that session stops being the active one**: the tasks using build-01's screen stop
+  ("build-01's screen locked, so I stopped working on its screen.", or "build-01's desktop session isn't active any
+  more, …"). A task that has only run commands there goes on: its command window is on this computer. A click on the
+  notice's **Stop**, a lost connection, **Disconnect** and the stop chord still stop everything there.
 - **No desktop, or only a VNC or xrdp session**: commands only ("build-01's desktop is a remote session: Ember will run
   commands only."). VNC and xrdp desktops aren't used because Ember can't be sure who sees its notice there.
 - **Wayland**: reading and using controls only, no screenshots. Until Ember's own test of it passes, a Wayland desktop
@@ -411,17 +430,18 @@ within those 20 seconds (an administrator can set 3 to 120).
 
 ## 5. The check-up
 
-`ember doctor` and the setup check gain these rows:
+`ember doctor` and the settings window's setup check gain these rows:
 
 | Row | Warns or fails when | What to do |
 |---|---|---|
-| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". A missing client is a warning until you add a computer to connect to | Install or update OpenSSH (§4.8) |
+| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". Only ever a warning: SSH is optional | Install or update OpenSSH (§4.8) |
 | **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | `sudo dnf install util-linux` |
 | **PowerShell for commands** (Windows, while your organisation allows commands here) | Windows PowerShell missing, or Constrained Language Mode ("command output may not be UTF-8, and SSH passwords can't be asked") | Turn on Windows PowerShell in Windows features |
 | **WSL** (Windows) | No distros; WSLg off ("Remove `guiApplications=false` from `%USERPROFILE%\.wslconfig`."); the built-in WSL ("Run `wsl --update`."); an X server showing Linux apps | As the row says |
-| **Linux apps in Ubuntu** | The helper, Python 3, pyatspi or the session bus is missing, or the distro runs as root | §3.3 |
-| **Accessibility in Ubuntu** | Toolkit accessibility is off | The row's button, then restart your Linux apps |
-| **Helper for other computers** (an installed Ember, while SSH is allowed) | Missing from this install: a warning until you add a computer to connect to | Reinstall Ember |
+| **Linux apps in Ubuntu** (a running distro, while WSL is on in Ember) | The helper, Python 3, pyatspi or the session bus is missing, or the distro runs as root | §3.3 |
+| **Accessibility in Ubuntu** (likewise) | Toolkit accessibility is off | The row's button in the setup check (§3.3), then restart your Linux apps |
+| **Linux apps in WSL** (while WSL is off in Ember) | Never: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" | Turn WSL on in Settings › **Computers** to check them |
+| **Helper for other computers** (an installed Ember, while SSH is allowed) | Missing from this install (only a warning: SSH is optional) | Reinstall Ember |
 | **Folders on build-01** (a connected Mac) | Commands can't open Desktop, Documents or Downloads | "Allow full disk access for remote users" on that Mac |
 
 ## 6. For administrators
@@ -552,7 +572,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
 | L8 | Ember judges the command line, not what a script does inside | Builds and scripts run as ordinary unless their name says publish, delete, install and the like |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
-| L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, Linux programs of a WSL command run on until they write output or the distro stops |
+| L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured |
 | L12 | The remote account (and root there) can lie to Ember's helper or change it | Nothing from a remote can approve anything or run anything on the PC; its words are shown as untrusted |
 | L14 | Other programs of yours on the PC can reach Ember's SSH password channel, a shared SSH connection and a running command's text | They could already use your keys and SSH agent |
