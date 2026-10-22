@@ -18,8 +18,9 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 - **Shell scripts are read before they run.** When a command runs a shell script (`sh t.sh`, `./t.sh`, `source`,
   `powershell -File`, a `.bat`), Ember reads it first on the computer that runs it (on another computer over SSH,
   Ember's helper there does) and judges its text like a command: a dangerous script asks, even when you asked for that
-  kind of operation. A script the same command writes first, or one this task wrote or downloaded earlier that can't
-  be read in full, asks; other scripts too big to read (over 64 KB) are judged by their name as before.
+  kind of operation. A script the same command writes first, or one this task downloaded, always asks; one this task
+  wrote earlier asks when it can't be read in full; other scripts too big to read (over 64 KB) are judged by their
+  name as before.
 - **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
   ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
   name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
@@ -127,7 +128,7 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
   apps shown by an X server at all.
 - Ember judges the command line it can see and the shell scripts it can read (up to 64 KB): a build file, a program, a
   script in another language or a larger shell script runs like a build unless its name says publish, delete, install
-  or the like (a script this task wrote or downloaded asks when it can't be read in full).
+  or the like (a script this task downloaded always asks, and one it wrote asks when it can't be read in full).
 - Commands run without your shell profile, so aliases and tools set up there (conda, nvm, pyenv) are missing; on a Mac
   Homebrew's folders are added.
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks

@@ -714,7 +714,7 @@ window (`app/main/policy/target-rules.ts`) until the Windows backend checks a RA
 scancode there. The Windows X servers `vcxsrv`, `x410`, `xming`, `xwin` (Cygwin/X) and GWSL's programs (`gwsl` and
 every `gwsl_*`: `GWSL_vcxsrv` and `GWSL_vcxsrv_lowdpi`, the X server whose windows the Linux apps are, and
 `GWSL_service`) join the remote surfaces: their windows are Linux apps Ember can't identify. The WSL check-up row
-(`app/main/wsl/doctor.ts`) names the same programs when it says an X server shows Linux apps.
+(`app/main/wsl/doctor.ts`) recognises the same programs when it says an X server shows Linux apps.
 
 ### 10.9 Troubleshooting
 
