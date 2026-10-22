@@ -304,6 +304,8 @@ running Ember: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/p
 `scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime). CI builds both packages on
 `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
 fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user.
+It uploads the packages only when asked: **Actions › ci › Run workflow** with **packages** ticked (kept 3 days); at
+about 340 MB a run, uploading them every time filled the account's artifact storage.
 Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a
 bundled package's licence isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only
 for the root check-up).
