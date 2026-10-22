@@ -1125,6 +1125,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     });
   };
   const refuse = (why: string) => ({ ok: false as const, why });
+  /**
+   * Why this computer can't take a task without a screen and with commands off: the user can turn commands on only
+   * where the administrator hasn't turned them off.
+   */
+  const noScreenWhy = (): string => commandMode(admin(), "local") === "off"
+    ? "Ember can't use this computer's screen here, and your organisation has turned off commands on it. Tell the user."
+    : "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings.";
   /** SC's desktop.state request for a remote (it never rejects; a failure leaves the binding as it was). */
   const desktopNow = (t: RemoteTarget): Promise<unknown> => {
     const refresh = (t.parts as Partial<RemoteTargetExtras>).refreshDesktop;
@@ -1141,6 +1148,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // notice there, and is the only way access comes back after a lock, so it goes out even when this one is refused.
       const live = e.kind === "ssh" && e.host ? conns.get(e.host.id) : undefined;
       const asking = live?.target && live.state === "ready" && live.target.link.state === "ready" ? desktopNow(live.target) : null;
+      if (e.kind === "local" && !e.usable) return refuse(noScreenWhy());
       if (e.listedOnly || !e.usable) return refuse(e.why ?? `Ember can't work on ${e.label} now.`);
       if (e.kind === "ssh") {
         const c = e.host ? conns.get(e.host.id) : undefined;
@@ -1158,9 +1166,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const binding = bindingOf(e);
       const commands = liveCommands(commandsOf(id), id);
       if (binding.desktop === "none" && !commands) {
-        return refuse(e.kind === "local"
-          ? "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings."
-          : `${binding.desktopWhy ?? `Ember can't use ${e.label}'s screen.`} Commands are off there; the user can turn them on in Ember's settings.`);
+        return refuse(e.kind === "local" ? noScreenWhy()
+          : `${binding.desktopWhy ?? `Ember can't use ${e.label}'s screen.`} ${commandMode(admin(), "wsl") === "off" ? "Your organisation has turned off commands in WSL." : "Commands are off there; the user can turn them on in Ember's settings."}`);
       }
       const hands = screenHands({ hands: deps.localHands, base: deps.localHands ? null : handsBase(), binding, system, commands });
       if (!hands) return refuse("Ember can't keep its record of what it does, so it won't work here.");

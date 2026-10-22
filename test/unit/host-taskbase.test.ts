@@ -78,7 +78,7 @@ const commandsOnly = (): TargetHands => ({
 });
 
 /** A targets runtime's view for the host that gives (or refuses) hands, noting each target it is asked about. */
-function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok: false; why: string }) {
+function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok: false; why: string }, caps: () => { commands: boolean; targets: boolean } = () => ({ commands: true, targets: false })) {
   const asked: TargetId[] = [];
   const agent: TargetsForAgent = {
     active: "local",
@@ -88,7 +88,7 @@ function targets(give: (id: TargetId) => { ok: true; hands: TargetHands } | { ok
     describeScreen: () => null,
     offerConnect: () => "",
     activeLine: () => "",
-    caps: () => ({ commands: true, targets: false }),
+    caps,
   };
   return { agent, asked };
 }
@@ -166,6 +166,46 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     expect(host.tasks).toBeNull();
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
     expect(tool(conductor(), "list_tasks")).toBeUndefined();
+    await host.stop();
+  });
+
+  it("has today's tools and words when nothing can take a task (no screen, commands off, no other computer)", async () => {
+    const t = targets(() => ({ ok: false, why: "Ember can't use this computer's screen here, and commands are off." }), () => ({ commands: false, targets: false }));
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    expect(host.tasks).toBeNull();
+    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me"]);
+    expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
+    expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
+    expect(taskSessions()).toEqual([]);
+    await host.stop();
+  });
+
+  it("reconnects before the next request once a computer can take a task, so the conversation has the task tools", async () => {
+    let caps = { commands: false, targets: false };
+    const t = targets(() => ({ ok: true, hands: commandsOnly() }), () => caps);
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    const first = conductor();
+    expect(host.tasks).toBeNull();
+    caps = { commands: true, targets: false };
+    await host.ask("run the tests in ~/project");
+    expect(conductor()).not.toBe(first);
+    expect(conductor().sessionId).toBe(first.sessionId); // the same conversation, resumed
+    expect(host.tasks).not.toBeNull();
+    expect(tool(conductor(), "list_tasks")).toBeDefined();
+    expect(conductor().sent.join("\n")).toContain("run the tests in ~/project");
+    expect(first.sent).toEqual([]);
+    await host.stop();
+  });
+
+  it("refuses a guide before anything is queued where the bound computer has no screen", async () => {
+    const t = targets(() => ({ ok: true, hands: commandsOnly() }));
+    const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
+    expect(host.tasks!.list()).toEqual([]);
+    expect(taskSessions()).toEqual([]);
     await host.stop();
   });
 

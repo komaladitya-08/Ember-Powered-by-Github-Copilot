@@ -327,6 +327,15 @@ describe("with nothing set up", () => {
     if (!got.ok) expect(got.why).toMatch(/commands are off/);
   });
 
+  it("without a window system, says the user can turn commands on only where the administrator hasn't turned them off", () => {
+    expect(rig({ hands: null }).t.agent.handsFor("local")).toEqual({ ok: false, why: "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings." });
+    // A policy that doesn't mention commands turns them off (R5), as does one that says so.
+    for (const admin of [policy({}), policy({ commands: { local: "off" } })]) {
+      const got = rig({ hands: null, admin, settings: commandsOn("local") }).t.agent.handsFor("local");
+      expect(got).toEqual({ ok: false, why: "Ember can't use this computer's screen here, and your organisation has turned off commands on it. Tell the user." });
+    }
+  });
+
   it("keeps today's behaviour when the administrator turns WSL, SSH and commands off", () => {
     const r = rig({ os: "win32", admin: policy({ features: { wsl: false, ssh: false }, commands: { local: "off", wsl: "off", ssh: "off" } }), settings: { ...commandsOn("local"), ...withHosts([hostRecord("build-01")]) } });
     expect(r.t.agent.caps()).toEqual({ commands: false, targets: false });
