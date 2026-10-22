@@ -6,11 +6,10 @@
  * forgotten, so an id from before can only be "no longer known", never another element.
  */
 
-import type { AxNode } from "../main/perception/sidecar";
-import { HandleRefs, Snapshots, firstId, type IdEntry, type ReadRecord } from "./ids";
+import { HandleRefs, Snapshots, firstId, type ReadRecord } from "./ids";
 import { isProviderError, type AxProvider, type Handle, type RawNode, type RawWindow } from "./provider";
 import { BUSY, BusyError, KeyError, encodeError, encodeResult, parseRequest } from "./protocol";
-import { TOP, atspiRole, statesOf, type RoleContext } from "./roles";
+import { TOP, atspiRole, type RoleContext } from "./roles";
 import { Secrets, type WireKey } from "./secrets";
 import { KnownWindows } from "./windows";
 import { READING } from "./reading";
@@ -156,14 +155,6 @@ export class Host {
     return atspiRole(this.vocabulary, n, ctx);
   }
 
-  /** What an id's element was read as, and where. */
-  entryOf(id: number): { entry: IdEntry; raw: RawNode; ctx: RoleContext; role: string } {
-    const entry = this.snapshots.get(id);
-    const raw = entry.read.raw[entry.index];
-    const ctx = entry.read.ctx[entry.index] ?? TOP;
-    return { entry, raw, ctx, role: entry.read.roles[entry.index] || this.roleOf(raw, ctx) };
-  }
-
   /** Is the window `read` was taken in the one the user is in now (null: it can't be told, or it is gone)? */
   async windowActive(read: ReadRecord): Promise<boolean | null> {
     try {
@@ -178,11 +169,4 @@ export class Host {
   settle(): Promise<void> {
     return new Promise(r => setTimeout(r, this.settleMs));
   }
-
-  /** A node's states (for a node read again outside a read). */
-  statesOf(n: RawNode, role: string): string[] {
-    return statesOf(n, role);
-  }
 }
-
-export type { AxNode };

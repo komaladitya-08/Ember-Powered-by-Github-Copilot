@@ -48,7 +48,7 @@ export type SecretValues = Pick<AxNode, "name" | "role" | "text" | "selected" | 
 /** Apps whose secret fields' values are remembered (for options and choices read later). */
 const VALUE_APPS = 8;
 
-/** Keys of keys sent back from one read, and the ids it no longer lists. */
+/** A read after its last checks: its nodes, the keys it sends back (secret fields, withheld names), and the ids it no longer lists. */
 export interface Redaction { nodes: AxNode[]; secretKeys: WireKey[]; withheldKeys: WireKey[]; removed: number[] }
 
 /** What the host knows about secrets, for as long as it runs (and what Ember hands to its next process). */
