@@ -257,7 +257,7 @@ const CONTROL = /[\u0000-\u001f\u007f]+/g;
 function plainText(s: string, max: number): string {
   const t = s.replace(CONTROL, " ");
   const b = Buffer.from(t, "utf8");
-  return b.length <= max ? t : b.subarray(0, max).toString("utf8").replace(/�+$/, "");
+  return b.length <= max ? t : b.subarray(0, max).toString("utf8").replace(/\uFFFD+$/, "");
 }
 
 /** Where a schema failed (paths and codes only: never a value, which may be a window title or typed text). */
@@ -303,7 +303,8 @@ class FramedMux implements Mux {
 
   private readonly inq = new ByteQueue();
   private lastFrameAt: number;
-  private assembling: { id: number; parts: Buffer[]; bytes: number } | null = null;
+  /** The data message being reassembled: one buffer grown by doubling, so its memory stays near its size however it is cut. */
+  private assembling: { id: number; buf: Buffer; len: number } | null = null;
   /** Reader side of the credits: what this end granted, received and aims to keep granted, per stream. */
   private readonly granted: Record<Limited, number> = { 1: WINDOW_START, 2: WINDOW_START };
   private readonly received: Record<Limited, number> = { 1: 0, 2: 0 };
@@ -785,14 +786,20 @@ class FramedMux implements Mux {
     const last = payload[4];
     if (last !== 0 && last !== 1) return this.fail(RESET_CODE.protocol, "a data chunk whose last flag isn't 0 or 1");
     if (this.assembling && this.assembling.id !== id) return this.fail(RESET_CODE.protocol, "a data message started before the last one ended");
-    const a = this.assembling ?? (this.assembling = { id, parts: [], bytes: 0 });
-    const bytes = payload.subarray(DATA_HEAD);
-    a.bytes += bytes.length;
-    if (a.bytes > CAPS.dataMessageBytes) return this.fail(RESET_CODE.tooLarge, `a data message over ${CAPS.dataMessageBytes} bytes`);
-    a.parts.push(bytes);
+    const a = this.assembling ?? (this.assembling = { id, buf: Buffer.allocUnsafe(WINDOW_START), len: 0 });
+    const n = payload.length - DATA_HEAD;
+    const need = a.len + n;
+    if (need > CAPS.dataMessageBytes) return this.fail(RESET_CODE.tooLarge, `a data message over ${CAPS.dataMessageBytes} bytes`);
+    if (need > a.buf.length) {
+      const grown = Buffer.allocUnsafe(Math.min(CAPS.dataMessageBytes, Math.max(need, a.buf.length * 2)));
+      a.buf.copy(grown, 0, 0, a.len);
+      a.buf = grown;
+    }
+    payload.copy(a.buf, a.len, DATA_HEAD);
+    a.len = need;
     if (!last) return;
     this.assembling = null;
-    this.onJson(Buffer.concat(a.parts, a.bytes), false);
+    this.onJson(a.buf.subarray(0, a.len), false);
   }
 
   private onCredit(payload: Buffer): void {

@@ -268,7 +268,7 @@ function allBytes(times: number): Buffer {
 }
 
 /** Every character from U+0000 to U+00FF, then astral, line-separator, BOM and lone-surrogate code units. */
-const EVERY_CHAR = Array.from({ length: 256 }, (_, i) => String.fromCharCode(i)).join("") + "😀  ﻿\ud800x\udfff";
+const EVERY_CHAR = Array.from({ length: 256 }, (_, i) => String.fromCharCode(i)).join("") + "\u{1F600}\u2028\u2029\uFEFF\ud800x\udfff";
 
 // ─────────────── createMux ───────────────
 
@@ -664,6 +664,26 @@ describe("data messages", () => {
     await settle();
     expect(p.reader.resets().map(r => r.code)).toEqual([RESET_CODE.tooLarge]);
     expect(p.closed[0]).toMatch(/a data message over 4194304 bytes/);
+  });
+
+  it("reassemble a message the other end cut into chunks of any size, down to single bytes", async () => {
+    const p = await openPc();
+    p.mux.send({ t: "req", id: 1, op: "audit.recent", a: { limit: 10 } });
+    const result = auditResult(100 * KiB);
+    const body = jsonBytes({ t: "res", id: 1, ok: true, v: result });
+    const rand = mulberry32(5);
+    let payload = 0;
+    for (let at = 0; at < body.length;) {
+      const n = Math.min(body.length - at, at < 2000 ? 1 : 1 + Math.floor(rand() * 3000));
+      await until(() => WINDOW_START + p.reader.credited(1) - payload >= n + 5, "credit");
+      p.send(dataChunk(42, at + n === body.length, body.subarray(at, at + n)));
+      payload += n + 5;
+      at += n;
+      await settle(1);
+    }
+    await until(() => p.msgs.length === 1, "the answer");
+    expect(p.msgs).toEqual([{ t: "res", id: 1, ok: true, v: result }]);
+    expect(p.closed).toEqual([]);
   });
 
   it("reset the link when a data message starts before the last one ended", async () => {
