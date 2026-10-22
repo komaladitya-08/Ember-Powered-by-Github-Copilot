@@ -2003,38 +2003,54 @@ namespace Ember.Uia
     private const uint WmCommand = 0x0111;
     private const int LbnSelChange = 1;
 
-    /// <summary>The window of the classic single-selection list box with LBS_NOTIFY this item is in, else zero.</summary>
-    internal static IntPtr NotifyingSingle(SelectionItemPattern item)
+    /// <summary>
+    /// The window of the classic single-selection list box with LBS_NOTIFY this item is in, else zero: the selection
+    /// container's window, or else the nearest ancestor that has one.
+    /// </summary>
+    internal static IntPtr NotifyingSingle(AutomationElement el, SelectionItemPattern item)
     {
       try
       {
+        IntPtr hwnd = IntPtr.Zero;
         AutomationElement container = item.Current.SelectionContainer;
-        if (container == null) return IntPtr.Zero;
-        IntPtr hwnd = new IntPtr(container.Current.NativeWindowHandle);
-        if (hwnd == IntPtr.Zero) return IntPtr.Zero;
+        if (container != null) hwnd = new IntPtr(container.Current.NativeWindowHandle);
+        AutomationElement up = el;
+        for (int i = 0; i < 3 && hwnd == IntPtr.Zero && up != null; i++)
+        {
+          up = TreeWalker.RawViewWalker.GetParent(up);
+          if (up != null) hwnd = new IntPtr(up.Current.NativeWindowHandle);
+        }
+        if (hwnd == IntPtr.Zero) return Skip("no list box window");
         StringBuilder name = new StringBuilder(256);
         Native.GetClassNameW(hwnd, name, name.Capacity);
         string cls = name.ToString();
         bool classic = string.Equals(cls, "ListBox", StringComparison.OrdinalIgnoreCase)
           || cls.StartsWith("WindowsForms10.LISTBOX.", StringComparison.OrdinalIgnoreCase);
-        if (!classic) return IntPtr.Zero;
+        if (!classic) return Skip("class " + cls);
         int style = Native.GetWindowLongW(hwnd, GwlStyle);
-        if ((style & LbsNotify) == 0 || (style & (LbsMultipleSel | LbsExtendedSel)) != 0) return IntPtr.Zero;
+        if ((style & LbsNotify) == 0 || (style & (LbsMultipleSel | LbsExtendedSel)) != 0) return Skip("style 0x" + style.ToString("x", CultureInfo.InvariantCulture));
         return hwnd;
       }
-      catch (Exception)
+      catch (Exception ex)
       {
-        return IntPtr.Zero; // not a list box the bridge can tell about: the select goes ahead as before
+        return Skip(ex.GetType().Name); // not a list box the bridge can tell about: the select goes ahead as before
       }
+    }
+
+    // TODO(port): diagnostics for the Windows runner while the list box notification is proven; removed after.
+    private static IntPtr Skip(string why)
+    {
+      Console.Error.WriteLine("ember_uia: list box select not notified: " + why);
+      return IntPtr.Zero;
     }
 
     /// <summary>Tells the list box's parent its selection changed, as the list box does after a click.</summary>
     internal static void SelectionChanged(IntPtr list)
     {
       IntPtr parent = Native.GetParent(list);
-      if (parent == IntPtr.Zero) return;
       int id = Native.GetWindowLongW(list, GwlId) & 0xFFFF;
-      Native.PostMessageW(parent, WmCommand, new IntPtr((LbnSelChange << 16) | id), list);
+      bool posted = parent != IntPtr.Zero && Native.PostMessageW(parent, WmCommand, new IntPtr((LbnSelChange << 16) | id), list);
+      Console.Error.WriteLine("ember_uia: list box select notified: parent " + Win.Number(parent).ToString(CultureInfo.InvariantCulture) + " id " + id.ToString(CultureInfo.InvariantCulture) + " posted " + (posted ? "yes" : "no"));
     }
   }
 
@@ -2921,10 +2937,11 @@ namespace Ember.Uia
         case "select":
           {
             SelectionItemPattern item = (SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op);
-            IntPtr list = ListBoxes.NotifyingSingle(item);
+            IntPtr list = ListBoxes.NotifyingSingle(el, item);
             bool was = list != IntPtr.Zero && item.Current.IsSelected;
             item.Select();
             if (list != IntPtr.Zero && !was) ListBoxes.SelectionChanged(list);
+            else if (list != IntPtr.Zero) Console.Error.WriteLine("ember_uia: list box select not notified: already selected");
             break;
           }
         case "addToSelection": ((SelectionItemPattern)Pattern(el, SelectionItemPattern.Pattern, op)).AddToSelection(); break;

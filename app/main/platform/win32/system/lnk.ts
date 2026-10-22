@@ -267,8 +267,11 @@ export function parseShellLink(buf: Buffer): ShellLink {
     p += size;
   }
 
+  const chosen = (flags & FLAG.HasExpString) && envTarget ? envTarget : target ?? idTarget ?? envTarget;
   return {
-    target: (flags & FLAG.HasExpString) && envTarget ? envTarget : target ?? idTarget ?? envTarget,
+    // Some installers (Anaconda's menuinst) write the target in quotes; Windows reads the path inside them, as
+    // WScript.Shell's TargetPath shows (the runner's Start Menu has two such shortcuts).
+    target: chosen && /^"[^"]*"$/.test(chosen.trim()) ? chosen.trim().slice(1, -1) : chosen,
     arguments: args,
     description,
     workingDir,
