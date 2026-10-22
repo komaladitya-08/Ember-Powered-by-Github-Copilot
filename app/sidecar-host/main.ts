@@ -30,10 +30,16 @@ function note(event: string, fields: Record<string, unknown> = {}): void {
 console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
 process.on("uncaughtException", err => note("host.uncaught", { error: err instanceof Error ? err.message : String(err) }));
 process.on("unhandledRejection", err => note("host.unhandled", { error: err instanceof Error ? err.message : String(err) }));
-// Ember went away while an answer was on its way: nobody is left to answer.
-process.stdout.on("error", () => process.exit(0));
-
 const provider = openProvider();
+// Ember went away while an answer was on its way: nobody is left to answer (the Windows bridge stops with the host).
+process.stdout.on("error", () => {
+  try {
+    provider.stop();
+  } catch {
+    // Stopping it failed too: it exits when its input closes with this process.
+  }
+  process.exit(0);
+});
 const host = new Host(provider, { note });
 const queue: string[] = [];
 let working = false;

@@ -76,9 +76,10 @@ describe.skipIf(process.platform !== "darwin")("the accessibility sidecar host o
 });
 
 describe.skipIf(process.platform === "darwin" || (!available && !required))("the accessibility sidecar host on a real WinForms window", { timeout: 180_000 }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-"));
-  const cache = path.join(dir, "uia-cache");
-  const log = path.join(dir, "bench.log");
+  // Made when the tests run, not when they are collected (skipped ones too, on every platform).
+  let dir = "";
+  let cache = "";
+  let log = "";
   const note = (msg: string, fields?: Record<string, unknown>) => { if (process.env.EMBER_TEST_VERBOSE) console.error(msg, fields ?? ""); };
   const logger = { debug: note, info: note, warn: note, error: note, child: () => logger } as unknown as Logger;
   let bench: ChildProcess | undefined;
@@ -103,6 +104,9 @@ describe.skipIf(process.platform === "darwin" || (!available && !required))("the
     expect(fs.existsSync(POWERSHELL), `Windows PowerShell 5.1 at ${POWERSHELL}`).toBe(true);
     expect(fs.existsSync(SCRIPT), "the UI Automation bridge, sidecar/uia/ember_uia.ps1").toBe(true);
     expect(fs.existsSync(BENCH), "the shared WinForms bench, test/fixtures/win_bench.ps1").toBe(true);
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-"));
+    cache = path.join(dir, "uia-cache");
+    log = path.join(dir, "bench.log");
     const host = buildHost();
     // Not windowsHide: that hides the first window the process shows, which would be the bench itself.
     bench = spawn(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Sta", "-File", BENCH, "-Log", log, "-Seconds", "900"], { stdio: "ignore", env: bridgeEnv(process.env) });
@@ -119,7 +123,7 @@ describe.skipIf(process.platform === "darwin" || (!available && !required))("the
     s?.stop();
     if (bench && bench.exitCode === null) bench.kill();
     await sleep(500);
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
   it("lists the bench's window by its program, its pid and its HWND", async () => {
