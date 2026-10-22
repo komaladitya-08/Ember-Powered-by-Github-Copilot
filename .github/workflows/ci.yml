@@ -16,6 +16,11 @@ on:
         description: "Also build and check Ember on an Intel Mac (otherwise only on the default branch and tags: macOS minutes cost ten times Linux's)"
         type: boolean
         default: false
+      only:
+        description: "Run only one platform's jobs (pushes and pull requests always run them all; macOS minutes cost ten times Linux's)"
+        type: choice
+        options: [all, linux, windows, macos]
+        default: all
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ concurrency:
 jobs:
   checks:
     name: Lint, typecheck, unit tests, build
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -61,6 +67,7 @@ jobs:
 
   el8:
     name: RHEL 8 compatibility (rockylinux:8)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     container:
@@ -102,6 +109,7 @@ jobs:
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     container:
@@ -186,6 +194,7 @@ jobs:
 
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
@@ -233,6 +242,7 @@ jobs:
 
   windows:
     name: Windows (unit tests, build, smoke, UI Automation, zip)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
     runs-on: windows-2022
     timeout-minutes: 30
     defaults:
@@ -383,6 +393,7 @@ jobs:
 
   macos:
     name: macOS (unit tests, build, smoke, accessibility, app bundle)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'macos'
     # Kept lean: macOS minutes cost ten times Linux's on a private repository.
     runs-on: macos-15
     timeout-minutes: 30
@@ -502,7 +513,7 @@ jobs:
     # built here. macOS minutes cost ten times Linux's: this runs on the default branch, on tags, and when asked.
     if: >-
       (github.event_name == 'push' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')))
-      || (github.event_name == 'workflow_dispatch' && inputs.intel)
+      || (github.event_name == 'workflow_dispatch' && inputs.intel && (inputs.only == 'all' || inputs.only == 'macos'))
     runs-on: macos-15-intel
     timeout-minutes: 30
     defaults:
