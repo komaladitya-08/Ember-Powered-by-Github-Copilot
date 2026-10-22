@@ -14,6 +14,7 @@ import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard 
 import type { Settings } from "../../main/settings";
 import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
+import { whereText } from "../handle/badge";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -124,6 +125,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   if (s.talking || s.bubble.visible) rig.wake();
   const b = s.bubble;
   bubble.setMood(b.mood);
+  showWhere(b.where, b.title);
   bubble.setTitle(b.title);
   // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
   bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
@@ -153,6 +155,23 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   else if (keepOffKey(s) !== avoidKey) measureTasks();
   requestDraw();
 });
+
+// ── Where a task acts (§2.4): a badge before the bubble's title, "on build-01"; nothing for this computer ──
+const bubbleHead = document.querySelector<HTMLElement>("#bubble-host .eb-head");
+const whereBadge = Object.assign(document.createElement("span"), { className: "where", hidden: true });
+let whereShown = "";
+/** Puts (or takes away) the badge before the title; when only it changed, the bubble is told its size changed. */
+function showWhere(where: string | undefined, title: string): void {
+  const w = whereText(where) ?? "";
+  if (w === whereShown || !bubbleHead) return;
+  whereShown = w;
+  whereBadge.textContent = w;
+  whereBadge.hidden = !w;
+  if (!whereBadge.isConnected) bubbleHead.insertBefore(whereBadge, bubbleHead.querySelector(".eb-title"));
+  // The bubble re-measures on a change it makes itself: setting the title anew marks it changed.
+  bubble.setTitle("");
+  bubble.setTitle(title);
+}
 
 // ── Task cards: stacked just above the handle; kept (not rebuilt) across updates, so a click is never lost to a re-render ──
 // Tasks under way sit nearest the handle; when the stack would run off the top of the screen, the oldest ended
@@ -212,7 +231,7 @@ function measureTasks(): void {
   reportInteractive();
 }
 
-interface CardEls { li: HTMLLIElement; state: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
+interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
 /** A card's state in words, for screen readers (its symbol says it to the eye). */
 const STATE_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
@@ -290,17 +309,21 @@ function renderTasks(tasks: TaskCard[]): boolean {
       li.dataset.fresh = "";
       setTimeout(() => { delete li.dataset.fresh; }, 400);
       const state = Object.assign(document.createElement("span"), { className: "sr" });
+      const where = Object.assign(document.createElement("span"), { className: "where", hidden: true });
       const title = document.createElement("b");
       const detail = document.createElement("span");
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;
-      li.append(state, title, detail, actions);
-      c = { li, state, title, detail, actions, actionsKey: "", armedAt: 0 };
+      li.append(state, where, title, detail, actions);
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0 };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
     if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
+    const where = whereText(t.where) ?? "";
+    if (c.where.textContent !== where) c.where.textContent = where;
+    c.where.hidden = !where;
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
     if (c.detail.textContent !== t.detail) c.detail.textContent = t.detail;
     c.detail.hidden = !t.detail;

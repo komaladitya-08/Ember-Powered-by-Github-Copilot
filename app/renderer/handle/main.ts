@@ -2,9 +2,10 @@
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
 import { announcement, onPress, plainStream } from "@ember/bubble";
-import type { BubbleState, HandleApi, TaskCard } from "../../shared/overlay";
+import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
+import { targetBadge } from "./badge";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -89,7 +90,24 @@ function announce(b: BubbleState, status: string | null): void {
   }
   if (parts.length) $("live").textContent = parts.join(" ");
 }
+/** The picker's target beside Ember's name (§8.1): nothing for this computer. */
+let badgeKey = "";
+function renderTarget(s: EmberState): void {
+  const badge = targetBadge(s.target);
+  const key = badge ? `${badge.state}|${badge.text}` : "";
+  if (key === badgeKey) return;
+  badgeKey = key;
+  const el = $("target");
+  el.hidden = !badge;
+  if (!badge) return;
+  el.dataset.state = badge.state;
+  el.title = badge.label;
+  el.setAttribute("aria-label", badge.label);
+  $("target-text").textContent = badge.text;
+}
+
 api.onState(s => {
+  renderTarget(s);
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
