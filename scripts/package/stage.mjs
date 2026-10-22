@@ -24,7 +24,6 @@
 //   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +35,7 @@ import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, selectPack
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
+import { stageParts } from "./remote-parts.mjs";
 
 const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models"];
 const flags = process.argv.slice(2);
@@ -189,17 +189,11 @@ for (const s of sidecars) {
 }
 
 // 3b. The remote agent's parts (design §5.2.2): every archive remote-parts.json names, checked against its size and
-//     SHA-256 as the PC will check it before sending, then remote-parts.json itself.
+//     SHA-256 as the PC will check it before sending, then remote-parts.json and the Node runtime policy
+//     (remote-runtime.json, which a packaged Ember reads beside them before it sends a remote its runtime).
 const partsSrc = path.join(root, "dist/remote-parts");
 if (fs.existsSync(path.join(partsSrc, "remote-parts.json"))) {
-  const partsDest = path.join(resources, REMOTE_PARTS_DIR);
-  fs.mkdirSync(partsDest, { recursive: true });
-  for (const t of Object.values(JSON.parse(fs.readFileSync(path.join(partsSrc, "remote-parts.json"), "utf8")).targets)) {
-    const bytes = fs.readFileSync(path.join(partsSrc, path.basename(t.file)));
-    if (bytes.length !== t.bytes || createHash("sha256").update(bytes).digest("hex") !== t.sha256) throw new Error(`dist/remote-parts/${t.file} doesn't match remote-parts.json: run node scripts/package/remote-parts.mjs again`);
-    fs.writeFileSync(path.join(partsDest, path.basename(t.file)), bytes);
-  }
-  fs.copyFileSync(path.join(partsSrc, "remote-parts.json"), path.join(partsDest, "remote-parts.json"));
+  stageParts(partsSrc, path.join(resources, REMOTE_PARTS_DIR));
 } else if (flags.includes("--allow-missing-remote-parts")) {
   console.warn("warning: dist/remote-parts isn't staged (--allow-missing-remote-parts): this package can't work on computers reached over SSH");
 } else {

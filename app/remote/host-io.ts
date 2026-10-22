@@ -6,6 +6,7 @@
  */
 
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path/posix";
@@ -33,19 +34,32 @@ function readText(p: string): string | null {
   try { return fs.readFileSync(p, "utf8"); } catch { return null; }
 }
 
-/** The machine-id hash (§5.1.9's `machine`): /etc/machine-id (Linux) or the platform UUID (macOS), as sha256sum hashes it. */
-export async function machineHash(agentOs: AgentOs): Promise<string> {
-  if (agentOs === "linux") {
-    // An empty /etc/machine-id (a container's, or a first boot's) falls through to D-Bus's.
-    const id = ["/etc/machine-id", "/var/lib/dbus/machine-id"].map(readText).find(t => t?.trim());
-    if (id) return hashLine(id);
-  } else {
-    const r = await run("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]);
-    const m = /"IOPlatformUUID" = "([^"]+)"/.exec(r.stdout);
-    if (m) return hashLine(m[1]);
+/**
+ * The machine-id hash exactly as the bootstrap's probe makes it (§5.1.9's `ember_machine`): the PC compares the probe's
+ * value, Welcome.machineIdHash and the host record's (a difference asks the user again, §7.4), and the uninstall script
+ * names this machine's state folder from it. So: sha256 of the raw bytes of the first readable of /etc/machine-id and
+ * /var/lib/dbus/machine-id (an empty one too, as `[ -r ]` takes it), else of ioreg's IOPlatformUUID lines as `awk -F'"'
+ * '{ print $4 }'` prints them (`ioreg`: its output, null when it couldn't run); null when the probe would say nothing.
+ */
+export function probeMachineHash(o: { readFile: (p: string) => Uint8Array | null; ioreg: string | null }): string | null {
+  for (const p of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+    const bytes = o.readFile(p);
+    if (bytes) return createHash("sha256").update(bytes).digest("hex");
   }
-  // No machine id: the host name stands in (the state folder still keeps machines apart by it).
-  return hashLine(`no-machine-id ${os.hostname()}`);
+  if (o.ioreg === null) return null;
+  const printed = o.ioreg.split("\n").filter(l => l.includes("IOPlatformUUID")).map(l => `${l.split("\"")[3] ?? ""}\n`).join("");
+  return createHash("sha256").update(printed, "utf8").digest("hex");
+}
+
+/** The machine-id hash (§5.1.9's `machine`), as the probe makes it (probeMachineHash). */
+export async function machineHash(agentOs: AgentOs): Promise<string> {
+  const ioreg = agentOs === "darwin" ? await run("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]) : null;
+  const hash = probeMachineHash({
+    readFile: p => { try { return fs.readFileSync(p); } catch { return null; } },
+    ioreg: ioreg && (ioreg.ok || ioreg.stdout) ? ioreg.stdout : null,
+  });
+  // No machine id at all (the probe said nothing): the host name stands in (the state folder still keeps machines apart).
+  return hash ?? hashLine(`no-machine-id ${os.hostname()}`);
 }
 
 /** Is this Linux WSL on some Windows PC (§5.1.9's `wsl`)? */

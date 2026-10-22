@@ -849,6 +849,27 @@ export async function wslHelperDoctorRows(): Promise<PlatformDoctorRow[]> {
   return latest ? latest.doctorRows() : [];
 }
 
+/**
+ * The same rows where no router runs (`ember --doctor`, a process of its own): a short-lived router over `wsl` with no
+ * window probe and nothing to read settings from (its rows need neither), let go at once. Like a running router's, it
+ * only looks inside distros already running (the diagnosis script); nothing is started there and no distro is booted.
+ */
+export async function doctorHelperRows(o: {
+  os: WrapForWslOptions["os"]; log: WrapForWslOptions["log"]; wsl: WslService; resourcesPath: string | null; appDir: string | null; env: NodeJS.ProcessEnv;
+  /** The router's parts (tests); default: the real helper factory without a job host, no RAIL probe. */
+  helpers?: RouterDeps["helpers"];
+}): Promise<PlatformDoctorRow[]> {
+  if (o.os !== "win32") return [];
+  const settings = { get: () => { throw new Error("the doctor reads no settings"); } } as unknown as WrapForWslOptions["settings"];
+  const helpers = o.helpers ?? helperFactory({ os: o.os, log: o.log, script: () => helperScriptPath({ resourcesPath: o.resourcesPath, appDir: o.appDir }), jobHost: null, env: o.env });
+  const r = new WslRouter({ os: o.os, log: o.log, ws: () => null, wsl: () => o.wsl, settings }, { rail: null, helpers, now: () => Date.now(), every: () => ({ stop: () => undefined }) });
+  try {
+    return await r.doctorRows();
+  } finally {
+    r.dispose();
+  }
+}
+
 /** Forgets a router (its routed sidecar was stopped). */
 export function dropRouter(r: WslRouter): void {
   r.dispose();

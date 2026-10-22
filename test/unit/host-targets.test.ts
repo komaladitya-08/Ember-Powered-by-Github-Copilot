@@ -202,6 +202,25 @@ describe("binding a task before it is queued (§2.3, §2.6)", () => {
   });
 });
 
+describe("stopping the tasks on one computer (INT: §5.3.9, §5.1.11)", () => {
+  it("cancels the tasks bound to that computer, queued or running, and leaves the others alone", async () => {
+    const { t } = fakeTargets();
+    const { host, specs, tool } = await started({ hands: hands(), targets: t });
+    await host.ask("on build-01, check the disk space");
+    await tool("start_task")({ goal: "check the disk space" });
+    await host.ask("tidy my downloads on this computer");
+    await tool("start_task")({ goal: "tidy the downloads" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    const [remote, local] = host.tasks!.list();
+    expect([remote.targetId, local.targetId ?? "local"]).toEqual(["ssh:build-01", "local"]);
+    expect(host.cancelTasksOn("ssh:build-01")).toBe(1);
+    await vi.waitFor(() => expect(host.tasks!.get(remote.id)!.status).toBe("cancelled"));
+    expect(host.tasks!.get(local.id)!.status).toBe("running");
+    expect(host.cancelTasksOn("ssh:build-01")).toBe(0);
+    await host.stop();
+  });
+});
+
 describe("the window a task starts in (§2.6, G14)", () => {
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
 

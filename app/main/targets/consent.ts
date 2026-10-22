@@ -88,13 +88,28 @@ export interface SshCardFacts {
 }
 
 /** "the key ~/.ssh/a and the settings file ~/.ssh/b" from the carried options, or "". */
-function carriedWords(extra: HostRecord["extra"] | undefined): string {
-  const keys = extra?.identityFiles ?? [];
+function carriedWords(extra: HostRecord["extra"] | undefined, shown: (p: string) => string = p => p): string {
+  const keys = (extra?.identityFiles ?? []).map(shown);
   const parts: string[] = [];
   if (keys.length === 1) parts.push(`the key ${keys[0]}`);
   else if (keys.length > 1) parts.push(`the keys ${keys.slice(0, -1).join(", ")} and ${keys[keys.length - 1]}`);
-  if (extra?.configFile) parts.push(`the settings file ${extra.configFile}`);
+  if (extra?.configFile) parts.push(`the settings file ${shown(extra.configFile)}`);
   return parts.join(" and ");
+}
+
+/** The longest line a card may have: the prompt window shows none longer (prompt-window.ts validCard). */
+export const CARD_LINE_MAX = 2000;
+
+/** The carried options' line, within CARD_LINE_MAX: long paths (up to 16 keys of 1024 characters) shortened in the middle. */
+function carriedLine(extra: HostRecord["extra"] | undefined): string | null {
+  for (const keep of [Infinity, 200, 60]) {
+    const shown = (p: string) => (p.length > keep ? `${p.slice(0, Math.ceil(keep / 2))}…${p.slice(-Math.floor(keep / 2))}` : p);
+    const carried = carriedWords(extra, shown);
+    if (!carried) return null;
+    const line = `It uses ${carried}, as your own ssh did.`;
+    if (line.length <= CARD_LINE_MAX) return line;
+  }
+  return `It uses ${extra?.identityFiles?.length ?? 0} keys${extra?.configFile ? " and a settings file" : ""} from your own ssh command, as it did.`;
 }
 
 /** The SSH card for one host (§8.4.2), before the first connection (or a changed resolution or machine). */
@@ -105,8 +120,8 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts })
   const body: string[] = [];
   if (f.machineChanged) body.push(`${f.label} isn't the computer Ember connected to before under this name. Connect only if you know why it changed.`);
   body.push(`Ember will connect to ${f.label} as ${r.user} (${r.user}@${r.hostname}, port ${r.port}${through}) with your own SSH settings and keys.`);
-  const carried = carriedWords(f.extra);
-  if (carried) body.push(`It uses ${carried}, as your own ssh did.`);
+  const carried = carriedLine(f.extra);
+  if (carried) body.push(carried);
   if (f.viaLabel) body.push(`It connects from ${f.viaLabel}, with ${f.viaLabel.replace(/ \(WSL\)$/, "")}'s SSH keys.`);
   body.push(
     `It copies a small helper there: about 31 MB, unpacked to about 125 MB in ~/.local/share/ember-remote. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,

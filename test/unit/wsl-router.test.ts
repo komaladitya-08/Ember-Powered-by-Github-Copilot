@@ -15,8 +15,11 @@ import {
 } from "../../app/main/wsl/launch-sidecar";
 import { geditScene, harness, RDP_MSRDC, stacked, WSLG_MSRDC, type FrameSpec } from "./wsl-fakes";
 import {
-  IDENTITY_MS, IDLE_MS, linuxApp, linuxFrame, linuxNames, parseWslPath, routerFor, stopWslHelpers, wslHelperPids, wslNamesOf, dropRouter, WslRouter,
+  doctorHelperRows, IDENTITY_MS, IDLE_MS, linuxApp, linuxFrame, linuxNames, parseWslPath, routerFor, stopWslHelpers, wslHelperPids, wslNamesOf, dropRouter, WslRouter,
 } from "../../app/main/wsl/router";
+import type { Logger } from "../../app/main/logger";
+
+const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
 
 const made: WslRouter[] = [];
 function router(h: ReturnType<typeof harness>): WslRouter {
@@ -410,6 +413,19 @@ describe("the doctor's rows", () => {
       { id: "wsl-helper:Ubuntu", status: "ok", label: "Linux apps in Ubuntu", detail: "Ember can read Linux apps in Ubuntu" },
       { id: "wsl-a11y:Ubuntu", status: "ok", label: "Accessibility in Ubuntu", detail: "Linux apps in Ubuntu share their controls" },
     ]);
+  });
+});
+
+describe("the doctor's rows without a running router (ember --doctor, INT)", () => {
+  it("looks inside running distros through a short-lived router and lets it go", async () => {
+    const h = harness({ diag: { uid: 1000, wslg: true, python3: true, pyatspi: true, a11y: false, pm: "apt-get" } });
+    h.wsl.add("Ubuntu");
+    const rows = await doctorHelperRows({ os: "win32", log: quiet, wsl: h.wsl.service, resourcesPath: null, appDir: null, env: {}, helpers: h.deps.helpers });
+    expect(rows.map(r => [r.id, r.status])).toEqual([["wsl-helper:Ubuntu", "ok"], ["wsl-a11y:Ubuntu", "warn"]]);
+    // It stops watching WSL when it is done, and starts no helper.
+    expect(h.wsl.listeners).toEqual([]);
+    expect(h.created).toEqual([]);
+    expect(await doctorHelperRows({ os: "linux", log: quiet, wsl: h.wsl.service, resourcesPath: null, appDir: null, env: {}, helpers: h.deps.helpers })).toEqual([]);
   });
 });
 

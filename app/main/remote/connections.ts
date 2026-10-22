@@ -35,7 +35,7 @@ import { createAskpassPipe, loadPipeApi, type PipeApi } from "./askpass-pipe";
 import { askpassSourceCandidates, ensureAskpassHelper, powershellPath, type AskpassWinDeps } from "./askpass-win";
 import { BOOTSTRAP_SCRIPT } from "./bootstrap";
 import { hopDest, hostLabel, validDest, validExtra, validPort, type Hop } from "./destination";
-import { RemoteError, runAttempt, WorkerLink, type AttemptResult, type LinkPort, type ToWorker, type WorkerDecision } from "./link";
+import { helloTimeoutMs, RemoteError, runAttempt, WorkerLink, type AttemptResult, type LinkPort, type ToWorker, type WorkerDecision } from "./link";
 import { loadShipped, partsArchive, planShipped, shippedCandidates, type Shipped } from "./parts-cache";
 import { planInstall, type Plan } from "./plan";
 import { ensureRuntime, RuntimeError, type RuntimeFs } from "./runtime-download";
@@ -514,10 +514,13 @@ export function createConnections(o: {
     };
     let w: Welcome;
     try {
-      w = await link.request("hello", args);
+      // Longer than the agent may wait for this PC's previous agent to let go of its lock (a reconnect's takeover).
+      w = await link.request("hello", args, { timeoutMs: helloTimeoutMs(admin.policy.ssh?.commandGraceSeconds ?? GRACE_DEFAULT_S) });
     } catch (err) {
       if (err instanceof RemoteError && err.code === "busy") throw new ConnectError(MESSAGES.busy(h), "busy", undefined, true);
       if (err instanceof RemoteError && err.code === "denied") throw new ConnectError(MESSAGES.remoteNotAllowed(h), "remote-policy");
+      // No answer in time is the network's or a busy remote's: a reconnect tries again (an odd answer never does).
+      if (err instanceof RemoteError && err.code === "timeout") throw new ConnectError(MESSAGES.timeout(h), "timeout", undefined, true);
       throw new ConnectError(MESSAGES.answeredOddly(h), "protocol");
     }
     const me = await self();

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { gzip, readTar, tarArchive } from "../../scripts/package/tar-writer.mjs";
-import { buildParts, elfVersionNeeds, manifestText, matchesIntegrity, PARTS_TARGETS, partsIdOf, tooNew } from "../../scripts/package/remote-parts.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { buildParts, elfVersionNeeds, manifestText, matchesIntegrity, PARTS_TARGETS, partsIdOf, RUNTIME_FILE, stageParts, tooNew, writeParts } from "../../scripts/package/remote-parts.mjs";
+import { REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
+import { loadShipped, shippedCandidates } from "../../app/main/remote/parts-cache";
 import type { PartsInputs } from "../../scripts/package/remote-parts.mjs";
 import { TarReader } from "../../app/voice/untar";
 
@@ -213,5 +218,33 @@ describe("buildParts", () => {
 
   it("refuses a Linux target without koffi", () => {
     expect(() => buildParts({ ...inputs, koffi: { "linux-x64": koffi("x64") } })).toThrow(/no koffi files for linux-arm64/);
+  });
+
+  it("writes and stages the runtime policy beside the parts, where a packaged Ember looks for both (SA's parts-cache)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-parts-"));
+    try {
+      const built = buildParts(inputs);
+      const runtime = fs.readFileSync(path.resolve("scripts/package/remote-runtime.json"), "utf8");
+      const dist = path.join(tmp, "dist", "remote-parts");
+      writeParts(dist, built, runtime);
+      expect(fs.readFileSync(path.join(dist, RUNTIME_FILE), "utf8")).toBe(runtime);
+      const resourcesPath = path.join(tmp, "Ember", "resources");
+      stageParts(dist, path.join(resourcesPath, REMOTE_PARTS_DIR));
+      // What connections.ts reads before it sends anything: a packaged app finds both manifests in its resources only.
+      const shipped = await loadShipped({
+        candidates: shippedCandidates({ resourcesPath, appDir: path.join(tmp, "nowhere", "app"), join: path.join }),
+        readFile: p => fs.promises.readFile(p, "utf8"), join: path.join,
+      });
+      expect(shipped.parts?.manifest.partsId).toBe(built.partsId);
+      expect(shipped.runtime?.pinned).toBe(JSON.parse(runtime).pinned);
+      // A staged folder without the runtime policy, or with an archive that differs, isn't staged.
+      fs.rmSync(path.join(dist, RUNTIME_FILE));
+      expect(() => stageParts(dist, path.join(tmp, "other"))).toThrow(/remote-runtime\.json is missing/);
+      writeParts(dist, built, runtime);
+      fs.appendFileSync(path.join(dist, built.archives[0].file), "x");
+      expect(() => stageParts(dist, path.join(tmp, "third"))).toThrow(/doesn't match remote-parts\.json/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

@@ -88,10 +88,14 @@ export const sha256Hex = (s: string) => crypto.createHash("sha256").update(s, "u
 // ---------------------------------------------------------------------------------------------------------------------
 // Asking the link.
 
-/** How long each op may take before the PC gives up on it, without the round trip (§5.4's timeouts). */
+/**
+ * How long each op may take before the PC gives up on it, without the round trip (§5.4's timeouts). desktop.state may
+ * start the remote's desktop helper, which has 30 s to verify the desktop and show its notice (app/remote/desktop.ts),
+ * so it gets a little more (and the console's two minutes more where the remote's administrator asks for that).
+ */
 const OP_MS: Partial<Record<Op, number>> = {
   "perceive.read": 10_000, "perceive.focused": 10_000, "perceive.perceive": 10_000, "perceive.atPoint": 10_000,
-  "perceive.windows": 10_000, "perceive.openWindows": 10_000, "perceive.systemDialog": 10_000, "desktop.state": 10_000,
+  "perceive.windows": 10_000, "perceive.openWindows": 10_000, "perceive.systemDialog": 10_000, "desktop.state": 35_000,
   "ax.readElement": 10_000, "ax.canDo": 10_000, "ax.listOptions": 10_000, "act": 10_000, "apps.launch": 10_000,
   "cmd.facts": 5000, "cmd.inspect": 5000, "cmd.git": 5000, "cmd.run": 5000, "cmd.input": 5000, "cmd.stop": 5000, "policy.sync": 5000,
 };

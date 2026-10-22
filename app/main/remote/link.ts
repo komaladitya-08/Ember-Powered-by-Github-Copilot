@@ -8,8 +8,21 @@
  */
 
 import type { Logger } from "../logger";
-import { OP_SCHEMAS, type ErrCode, type EvMap, type EvName, type Msg, type Op, type OpArgs, type OpResult, type Welcome } from "./protocol";
+import { CAPS, OP_SCHEMAS, type ErrCode, type EvMap, type EvName, type Msg, type Op, type OpArgs, type OpResult, type Welcome } from "./protocol";
 import type { RemoteLink } from "./types";
+
+/**
+ * Bytes that come for a bulk channel nobody listens to yet are held for its first listener (§5.4: a screenshot's bytes
+ * travel before the answer that names their channel, and a command's output may come before cmd.run's answer is read),
+ * up to these bounds: one channel's largest legitimate payload (a screenshot) and three of them in all. A channel past
+ * its own bound is dropped (its reader then times out: fail closed); past the total, the channels held longest are
+ * dropped first; and so is every byte for a channel whose listeners have all left: it was taken, and nothing holds
+ * bytes nobody will ask for.
+ */
+export const HELD_CHANNEL_BYTES = CAPS.image.bytes;
+export const HELD_TOTAL_BYTES = 3 * CAPS.image.bytes;
+/** How many taken or dropped channels are remembered (channel numbers only grow on a link). */
+const DONE_CHANNELS = 4096;
 
 /** A decision the worker writes after the probe (paths, not bytes: the worker streams the archives itself). */
 export type WorkerDecision =
@@ -78,6 +91,18 @@ export function opTimeout(op: Op): { ms: number; plusRtt: boolean } {
   return { ms: 10_000, plusRtt: true };
 }
 
+/**
+ * How long the PC waits for `hello`'s answer: longer than the agent may wait before it answers. On a reconnect the new
+ * agent may find this PC's previous agent still holding the lock (its link died without an EOF reaching it): it waits up
+ * to the command grace + 3 s, then 2 s more after SIGTERM (§5.3.10, lock.ts), then sweeps orphans, reads its facts and
+ * looks for a desktop. The agent's grace is the smaller of both machines' (never more than this PC's `graceSeconds`),
+ * so with 10 s for the rest no reconnect can time out by design; never less than §5.4's 20 s.
+ */
+export function helloTimeoutMs(graceSeconds: number): number {
+  const grace = Number.isFinite(graceSeconds) ? Math.min(120, Math.max(3, graceSeconds)) : 120;
+  return Math.max(20_000, (grace + 3 + 2 + 10) * 1000);
+}
+
 /** Ops a stalled link doesn't send (§5.1.11: no new step or command while the remote is silent). */
 const STEPS: ReadonlySet<Op> = new Set<Op>(["act", "apps.launch", "cmd.run", "cmd.input"]);
 
@@ -94,6 +119,11 @@ export class WorkerLink implements RemoteLink {
   private readonly stopping = new Map<number, { started: number; resolve: (r: { ms: number; escalated: boolean }) => void }>();
   private readonly evs = new Map<string, Set<(d: unknown) => void>>();
   private readonly bytes = new Map<number, Set<(b: Uint8Array) => void>>();
+  /** Bytes held for channels nobody listens to yet (HELD_CHANNEL_BYTES), and their total. */
+  private readonly held = new Map<number, { chunks: Uint8Array[]; size: number }>();
+  private heldSize = 0;
+  /** Channels taken (every listener left) or dropped (past a bound): their later bytes go nowhere. */
+  private readonly doneChannels = new Set<number>();
   private readonly states = new Set<(s: "ready" | "stalled" | "lost" | "closed", why?: string) => void>();
   private readonly off: (() => void)[] = [];
   private sshGone: () => void = () => undefined;
@@ -144,11 +174,17 @@ export class WorkerLink implements RemoteLink {
         }
         return;
       }
-      case "bytes":
-        for (const fn of this.bytes.get(m.channel) ?? []) {
-          try { fn(new Uint8Array(m.bytes)); } catch (err) { this.log?.warn("remote.listener_failed", { channel: m.channel, err }); }
+      case "bytes": {
+        const fns = this.bytes.get(m.channel);
+        if (fns?.size) {
+          for (const fn of fns) {
+            try { fn(new Uint8Array(m.bytes)); } catch (err) { this.log?.warn("remote.listener_failed", { channel: m.channel, err }); }
+          }
+        } else {
+          this.hold(m.channel, new Uint8Array(m.bytes));
         }
         return;
+      }
       case "state":
         this.setState(m.state, m.why);
         return;
@@ -182,6 +218,8 @@ export class WorkerLink implements RemoteLink {
     if (this.st === s || this.st === "lost" || this.st === "closed") return;
     this.st = s;
     if (s === "lost" || s === "closed") {
+      this.held.clear();
+      this.heldSize = 0;
       for (const [id, p] of this.pending) {
         if (p.timer) clearTimeout(p.timer);
         p.abort?.();
@@ -240,14 +278,61 @@ export class WorkerLink implements RemoteLink {
     return () => { set.delete(f); };
   }
 
+  /**
+   * A bulk channel's bytes. The first listener gets the bytes already held for the channel at once, in order, before
+   * this returns; once every listener has left, the channel is taken and its later bytes are dropped.
+   */
   onBytes(channel: number, fn: (b: Uint8Array) => void): () => void {
     const set = this.bytes.get(channel) ?? new Set();
     this.bytes.set(channel, set);
     set.add(fn);
+    const kept = this.held.get(channel);
+    if (kept) {
+      this.held.delete(channel);
+      this.heldSize -= kept.size;
+      for (const b of kept.chunks) {
+        try { fn(b); } catch (err) { this.log?.warn("remote.listener_failed", { channel, err }); }
+      }
+    }
     return () => {
       set.delete(fn);
-      if (!set.size) this.bytes.delete(channel);
+      if (!set.size && this.bytes.get(channel) === set) {
+        this.bytes.delete(channel);
+        this.done(channel);
+      }
     };
+  }
+
+  /**
+   * Holds bytes for a channel nobody listens to yet, within the bounds. A channel past its own bound is dropped; past
+   * the total, the channels held longest go first (their readers gave up or never came: a picture whose answer came
+   * after its request timed out, a command the PC stopped waiting for), so stale bytes never starve a fresh reader.
+   */
+  private hold(channel: number, b: Uint8Array): void {
+    if (this.st === "lost" || this.st === "closed" || this.doneChannels.has(channel)) return;
+    const kept = this.held.get(channel) ?? { chunks: [], size: 0 };
+    const drop = (ch: number, size: number, bytes: number): void => {
+      this.log?.warn("remote.bytes_dropped", { channel: ch, bytes });
+      this.held.delete(ch);
+      this.heldSize -= size;
+      this.done(ch);
+    };
+    if (kept.size + b.length > HELD_CHANNEL_BYTES) return drop(channel, kept.size, kept.size + b.length);
+    for (const [ch, k] of this.held) {
+      if (this.heldSize + b.length <= HELD_TOTAL_BYTES) break;
+      if (ch !== channel) drop(ch, k.size, k.size);
+    }
+    if (this.heldSize + b.length > HELD_TOTAL_BYTES) return drop(channel, kept.size, kept.size + b.length);
+    kept.chunks.push(b);
+    kept.size += b.length;
+    this.heldSize += b.length;
+    this.held.set(channel, kept);
+  }
+
+  /** Marks a channel taken or dropped (the oldest marks go first: channel numbers only grow). */
+  private done(channel: number): void {
+    this.doneChannels.add(channel);
+    if (this.doneChannels.size > DONE_CHANNELS) this.doneChannels.delete(this.doneChannels.values().next().value!);
   }
 
   /** §5.1.11: the epoch at once (nothing older is sent after), the stop frame, the worker's escalation. Never throws. */

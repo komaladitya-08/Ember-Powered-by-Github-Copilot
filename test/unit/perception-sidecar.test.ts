@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { AtspiSidecar, ID_BLOCK } from "../../app/main/perception/sidecar";
+import { PassThrough } from "node:stream";
+import { AtspiSidecar, boundedLines, ID_BLOCK, MAX_LINE_BYTES } from "../../app/main/perception/sidecar";
 import type { Logger } from "../../app/main/logger";
 
 /**
@@ -25,6 +26,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       if (process.env.EMBER_FAKE_STATUS_LOG) require("node:fs").appendFileSync(process.env.EMBER_FAKE_STATUS_LOG, process.pid + "\\n");
       return ok({ version: 3, python: "fake", toolkitAccessibility: null, apps: 0 });
     case "hang": stuck = true; return;
+    case "flood": process.stdout.write("x".repeat(9 * 1024 * 1024)); return;
     case "slow": return setTimeout(() => ok("slow"), req.params.ms);
     case "die": return process.kill(process.pid, "SIGTERM");
     case "noise":
@@ -72,7 +74,51 @@ afterEach(() => { for (const s of running.splice(0)) s.stop(); });
 type Who = { pid: number; base: string; enc: string };
 const failure = (p: Promise<unknown>) => p.then(() => "resolved", (e: Error) => e.message);
 
+describe("boundedLines", () => {
+  const lines = (max: number) => {
+    const input = new PassThrough();
+    const got: string[] = [];
+    let tooLong = 0;
+    boundedLines(input, max, l => got.push(l), () => { tooLong++; });
+    return { input, got, tooLong: () => tooLong };
+  };
+
+  it("splits as readline does: LF and CR LF, characters split across chunks, the last line at the end", async () => {
+    const r = lines(1024);
+    const euro = Buffer.from("€");
+    r.input.write(Buffer.concat([Buffer.from("{\"a\":1}\r\nprice "), euro.subarray(0, 1)]));
+    r.input.write(Buffer.concat([euro.subarray(1), Buffer.from("\n\nlast")]));
+    r.input.end();
+    await new Promise(res => r.input.once("end", res));
+    expect(r.got).toEqual(["{\"a\":1}", "price €", "", "last"]);
+    expect(r.tooLong()).toBe(0);
+  });
+
+  it("never holds more than max bytes of a line: one past it is dropped up to its newline, and reading goes on", async () => {
+    const r = lines(10);
+    r.input.write("0123456789");
+    r.input.write("abc");
+    r.input.write("def\nok\n");
+    r.input.write("x".repeat(11));
+    r.input.write("\n");
+    r.input.end("tail-too-long");
+    await new Promise(res => r.input.once("end", res));
+    expect(r.got).toEqual(["ok"]);
+    expect(r.tooLong()).toBe(3);
+    expect(MAX_LINE_BYTES).toBe(8 * 1024 * 1024);
+  });
+});
+
 describe("AtspiSidecar", () => {
+  it("ends a helper that sends an endless line and starts a fresh one (a hostile distro's helper can't fill memory)", async () => {
+    const { s, lines } = sidecar();
+    const first = await s.request<Who>("whoami");
+    expect(await failure(s.request("flood", {}, 10_000))).toMatch(/restarted/);
+    expect(lines.some(l => l.msg === "sidecar.line_too_long")).toBe(true);
+    const next = await s.request<Who>("whoami");
+    expect(next.pid).not.toBe(first.pid);
+  });
+
   it("starts a new helper after one is killed by a signal", async () => {
     const { s } = sidecar();
     const first = await s.request<Who>("whoami");
