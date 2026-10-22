@@ -10,10 +10,10 @@ import path from "node:path";
 import type { Logger } from "../../../logger";
 import type { AppLifecycle, ShellLike } from "../../types";
 import { NODE_FS, samePath, type AppsFs } from "./apps";
+import { AUMID } from "./identity";
 import { LnkError, parseShellLink } from "./lnk";
 
-/** Ember's AppUserModelId: the bundle identifier macOS uses too. */
-export const AUMID = "io.github.komaladitya08.ember";
+export { AUMID };
 
 /** What ensureShortcut needs (injected for tests). */
 export interface ShortcutDeps {

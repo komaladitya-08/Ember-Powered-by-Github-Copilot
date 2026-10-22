@@ -9,7 +9,7 @@
  */
 
 import type { AppLike, Autostart } from "../../types";
-import { AUMID } from "./lifecycle";
+import { AUMID } from "./identity";
 
 /** A path as one argument when Electron joins `args` with spaces. */
 export const quoteArg = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
