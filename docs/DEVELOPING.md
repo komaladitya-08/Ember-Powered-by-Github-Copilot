@@ -440,9 +440,10 @@ accessibility helper, which takes a few seconds once per version of the helper (
 ### 10.2 Commands
 
 These work as in §5, from Command Prompt, PowerShell or Git Bash: `npm run dev`, `npm test`, `npm run lint`,
-`npm run typecheck`, `npm run build`, `npm run test:smoke`, `npm run test:integration` and `npm run doctor` (the
-check-up, printed in the terminal). Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`,
-`npm run package`, Ember's desk and the eval.
+`npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the check-up, printed in the
+terminal). CI runs the Copilot-runtime and voice integration suites on Linux only; on Windows it runs the suites in
+§10.3. Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`, `npm run package`, Ember's
+desk and the eval.
 
 | Command | What it does |
 |---|---|
@@ -956,10 +957,10 @@ Rules for code under `app/main/platform/` and `app/sidecar-host/`:
 
 To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run ci.yml --ref <branch> -f only=windows`.
 
-| Input | Default | What it does | Why it is off by default |
+| Input | Default | What it does | Why |
 |---|---|---|---|
 | `packages` | off | Uploads the packages as artifacts, kept 3 days: `ember-packages` (RPM and AppImage), `ember-windows` (the zip), `ember-macos` (zip and dmg), `ember-macos-x64` | They are 200–400 MB each, and uploading them on every run filled the account's artifact storage, after which no artifact could be uploaded at all |
-| `intel` | off | Also runs `macos-x64` | macOS minutes cost ten times Linux's on a private repository |
+| `intel` | off | Also runs `macos-x64` | macOS minutes cost ten times Linux's on a private repository, so the Intel job runs only on the default branch and tags unless asked |
 | `only` | `all` | Runs only one platform's jobs: `linux` (the four Linux jobs), `windows` or `macos`. Pushes and pull requests always run them all | The same cost: after a fix for one OS, rerun only that OS |
 
 The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
