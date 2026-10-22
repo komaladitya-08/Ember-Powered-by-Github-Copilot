@@ -3,7 +3,8 @@
  * the tests pin them on every OS. It starts from the environment Ember itself was started with (`process.env` here,
  * the agent's sanitised one on a remote) and removes what a command must never get: Ember's own variables, Electron's
  * and Node's switches, the token that powers Ember's sign-in, and every variable that runs hidden code when a shell or
- * a program starts (rc files, loader injection); on a remote also SSH's session variables. It repairs what Electron
+ * a program starts (rc files, exported functions, loader injection) or makes the shell read the command differently
+ * from how it was classified (CDPATH, bash's option sets); on a remote also SSH's session variables. It repairs what Electron
  * changed for GUI apps (as `appEnv` does), adds the run's marker and the extra PATH folders, and on runs nobody can type
  * into makes a program that wants a password fail at once instead of waiting. Windows compares names without regard
  * to case (its environment is case-insensitive; Node keeps the stored spelling, such as "Path").
@@ -18,12 +19,19 @@ const REMOVE = [
   "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
   // No hidden code at a shell's start.
   "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND", "PS1", "PS2", "PS3", "PS4",
+  // Nor a shell that reads the classified text differently (L9's reason for no rc files): bash and zsh take CDPATH from
+  // the environment (`cd build` could land in $CDPATH/build, not the folder the decision judged), bash takes its option
+  // sets (SHELLOPTS, BASHOPTS: extglob changes the grammar) and GLOBIGNORE; IFS is reset by every shell Ember starts.
+  "CDPATH", "SHELLOPTS", "BASHOPTS", "GLOBIGNORE", "IFS",
   "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
   // Electron's and an AppImage's markers (appEnv's repairs): GUI apps a command starts stay readable by Ember.
   "ORIGINAL_XDG_CURRENT_DESKTOP", "CHROME_DESKTOP", "NO_AT_BRIDGE", "APPDIR", "APPIMAGE", "ARGV0", "OWD",
 ];
-/** Removed by prefix: Ember's own, Electron's, Copilot's, and the macOS loader's (L9: every DYLD_*). */
-const REMOVE_PREFIXES = ["EMBER_", "ELECTRON_", "COPILOT_", "DYLD_"];
+/**
+ * Removed by prefix: Ember's own, Electron's, Copilot's, the macOS loader's (L9: every DYLD_*), and bash's exported
+ * functions (`BASH_FUNC_ls%%=() { … }` makes every `ls` in the command run that hidden body instead).
+ */
+const REMOVE_PREFIXES = ["EMBER_", "ELECTRON_", "COPILOT_", "DYLD_", "BASH_FUNC_"];
 /** Removed on a remote: the SSH session's own variables. */
 const REMOTE_REMOVE = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "SSH_ORIGINAL_COMMAND"];
 /** Removed on runs without a PTY: helpers that would put up a password prompt nobody can answer. */

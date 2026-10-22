@@ -5,7 +5,8 @@
  * doesn't exist gets the real path of its nearest existing parent plus the rest, and a dangling symlink the real path
  * of what it points to. Asynchronous (fs.promises.realpath has realpathSync.native's semantics), so a hung network
  * mount stalls a worker thread, never Ember's main thread; the flow bounds the wait. Never throws: what can't be told
- * is null. Paths follow the target's rules (node:path/posix or node:path/win32 by `os`).
+ * is null. Windows UNC and device paths are never touched (a lookup there reaches another host). Paths follow the
+ * target's rules (node:path/posix or node:path/win32 by `os`).
  */
 
 import fs from "node:fs";
@@ -78,6 +79,9 @@ export async function inspectPaths(paths: readonly string[], cwd: string, o: { o
     if (P.isAbsolute(raw)) abs = P.normalize(raw);
     else if (P.isAbsolute(cwd)) abs = P.join(cwd, raw);
     else return unknown;
+    // A UNC or device path (\\host\share, \\?\, \\.\, //host) would make Windows open a connection to that host, and
+    // hand it the user's sign-in (NTLM), before the user was asked anything: it is answered "can't tell", untouched.
+    if (o.os === "win32" && /^[\\/]{2}/.test(abs)) return unknown;
     let exists: boolean | null;
     try {
       await files.lstat(abs);

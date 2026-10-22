@@ -4,7 +4,7 @@ import win32 from "node:path/win32";
 import type { RunnerFacts } from "../../app/main/commands/types";
 import { localFactsWith, powershellPath, type FactProbes } from "../../app/main/commands/run/facts";
 import { inspectPaths, MAX_INSPECT, type InspectFs } from "../../app/main/commands/run/inspect";
-import { GIT_ARGV, GIT_FACTS_MS, readGitFacts, type GitRun } from "../../app/main/commands/run/git-facts";
+import { findGit, GIT_ARGV, GIT_FACTS_MS, readGitFacts, type GitRun } from "../../app/main/commands/run/git-facts";
 
 const ember: RunnerFacts["ember"] = { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ };
 
@@ -182,6 +182,19 @@ describe("inspectPaths", () => {
       { exists: false, real: "C:\\Users\\ana\\.aws\\new.txt" },
     ]);
   });
+
+  it("never touches a UNC or device path on Windows (a lookup there reaches another host with the user's sign-in)", async () => {
+    const touched: string[] = [];
+    const spy: InspectFs = {
+      lstat: async p => { touched.push(p); throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
+      realpath: async p => { touched.push(p); throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
+      readlink: async p => { touched.push(p); throw Object.assign(new Error("EINVAL"), { code: "EINVAL" }); },
+    };
+    const paths = ["\\\\evil.example\\share\\x", "//evil.example/share/x", "\\\\?\\UNC\\evil.example\\s\\x", "\\\\.\\pipe\\x", "x.txt"];
+    const got = await inspectPaths(paths, "\\\\fileserver\\work", { os: "win32", fs: spy });
+    expect(got).toEqual(paths.map(() => ({ exists: null, real: null })));
+    expect(touched).toEqual([]);
+  });
 });
 
 // ─────────────── git push facts ───────────────
@@ -215,5 +228,28 @@ describe("readGitFacts", () => {
     await expect(readGitFacts("/r", git({ branch: { code: 0, stdout: "main\n" }, pushDefault: { code: null, stdout: "" } }))).resolves.toBeNull();
     await expect(readGitFacts("/r", git({ branch: { code: 0, stdout: "main\n" }, pushDefault: { code: 3, stdout: "" } }))).resolves.toBeNull();
     await expect(readGitFacts("/r", (async () => { throw new Error("no git"); }) as GitRun)).resolves.toBeNull();
+  });
+});
+
+describe("findGit", () => {
+  const files = (list: string[]) => {
+    const asked: string[] = [];
+    return { asked, isFile: async (p: string) => (asked.push(p), list.includes(p)) };
+  };
+
+  it("finds git in PATH's absolute folders only, never the command's folder (no bare spawn by name)", async () => {
+    const f = files(["/opt/git/bin/git", "/usr/bin/git"]);
+    await expect(findGit({ PATH: ":.:bin:/opt/git/bin:/usr/bin" }, "linux", f.isFile)).resolves.toBe("/opt/git/bin/git");
+    expect(f.asked).toEqual(["/opt/git/bin/git"]);
+    await expect(findGit({ PATH: ".:bin" }, "linux", files(["./git", "bin/git"]).isFile)).resolves.toBeNull();
+    await expect(findGit({}, "darwin", files(["/usr/bin/git"]).isFile)).resolves.toBeNull();
+  });
+
+  it("looks for git.exe in Windows' Path (any case, quoted folders), never a relative or drive-relative folder", async () => {
+    const f = files(["C:\\Program Files\\Git\\cmd\\git.exe"]);
+    const env = { Path: ".;tools;\\tools;C:tools;\\\\?\\C:\\x;\"C:\\Program Files\\Git\\cmd\";C:\\Windows" };
+    await expect(findGit(env, "win32", f.isFile)).resolves.toBe("C:\\Program Files\\Git\\cmd\\git.exe");
+    expect(f.asked).toEqual(["C:\\Program Files\\Git\\cmd\\git.exe"]);
+    await expect(findGit({ PATH: "C:\\Windows" }, "win32", files([]).isFile)).resolves.toBeNull();
   });
 });

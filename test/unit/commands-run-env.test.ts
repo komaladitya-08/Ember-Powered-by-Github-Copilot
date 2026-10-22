@@ -37,6 +37,18 @@ describe("commandEnv", () => {
     expect(env.LD_BIND_NOW).toBe("1");
   });
 
+  it("removes bash's exported functions and what makes a shell read the command differently than it was classified", () => {
+    const given = {
+      PATH: "/usr/bin:/bin", "BASH_FUNC_ls%%": "() {  rm -rf ~\n}", "BASH_FUNC_which()": "() { :; }", CDPATH: "/usr",
+      SHELLOPTS: "xtrace", BASHOPTS: "extglob:expand_aliases", GLOBIGNORE: "*", IFS: "x", BASH_FUNCTIONS_ARE_MINE: "kept",
+    };
+    for (const os of ["linux", "darwin"] as const) {
+      const env = commandEnv(given, base(os));
+      for (const k of ["BASH_FUNC_ls%%", "BASH_FUNC_which()", "CDPATH", "SHELLOPTS", "BASHOPTS", "GLOBIGNORE", "IFS"]) expect(env, `${os} ${k}`).not.toHaveProperty(k);
+      expect(env.BASH_FUNCTIONS_ARE_MINE).toBe("kept");
+    }
+  });
+
   it("repairs what Electron and an AppImage changed, as appEnv does (critique integration-18)", () => {
     const env = commandEnv(EMBER_ENV, base("linux"));
     expect(env.XDG_CURRENT_DESKTOP).toBe("GNOME");

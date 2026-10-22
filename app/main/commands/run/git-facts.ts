@@ -7,6 +7,9 @@
  */
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import posix from "node:path/posix";
+import win32 from "node:path/win32";
 import type { OS } from "../../../shared/shortcuts";
 import type { GitFacts } from "../types";
 import { commandEnv } from "./env";
@@ -49,12 +52,51 @@ function firstLine(s: string): string {
   return (s.split(/\r?\n/)[0] ?? "").trim();
 }
 
-/** The real GitRun: `git` from the command environment's PATH, stdin closed, killed at the deadline. */
+/**
+ * git's absolute path from PATH's absolute folders (Windows: `git.exe` in each, PATH's name and quotes as Windows reads
+ * them), never the command's folder: a bare `spawn("git", { cwd })` on Windows tries `<cwd>\git.exe` (and `git.com`)
+ * before PATH (libuv's search_path), so a work tree holding its own git.exe would run it before the user was asked
+ * anything; a relative or empty PATH entry does the same on POSIX. Null when no git is found (the facts are then null).
+ */
+export async function findGit(env: Record<string, string>, os: OS, isFile: (p: string) => Promise<boolean>): Promise<string | null> {
+  const P = os === "win32" ? win32 : posix;
+  const path = os === "win32" ? Object.entries(env).find(([k]) => k.toUpperCase() === "PATH")?.[1] : env.PATH;
+  for (const raw of (path ?? "").split(os === "win32" ? ";" : ":")) {
+    const dir = os === "win32" ? raw.trim().replace(/^"(.*)"$/, "$1") : raw;
+    // Relative entries ("", ".", "bin") are the command's folder or under it: never searched.
+    if (dir === "" || !P.isAbsolute(dir) || dir.includes("\0") || (os === "win32" && !/^(?:[A-Za-z]:[\\/]|\\\\[^\\/?.])/.test(dir))) continue;
+    const file = P.join(dir, os === "win32" ? "git.exe" : "git");
+    try {
+      if (await isFile(file)) return file;
+    } catch {
+      // unreadable: the next folder
+    }
+  }
+  return null;
+}
+
+/** An executable regular file (Windows: a regular file; X_OK says nothing there). */
+async function isExecutableFile(p: string): Promise<boolean> {
+  try {
+    const st = await fs.promises.stat(p);
+    if (!st.isFile()) return false;
+    await fs.promises.access(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The real GitRun: `git` by its absolute path from the command environment's PATH, stdin closed, killed at the deadline. */
 export function gitRunner(o: { os: OS; env: NodeJS.ProcessEnv; extraPath: string[] }): GitRun {
   const env = commandEnv(o.env, { os: o.os, pty: false, remote: false, extraPath: o.extraPath, runId: "" });
   delete env.EMBER_RUN_ID;
   Object.assign(env, { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" });
-  return (args, { cwd, timeoutMs }) => new Promise(resolve => {
+  return (args, { cwd, timeoutMs }) => findGit(env, o.os, isExecutableFile).then(git => new Promise(resolve => {
+    if (git === null) {
+      resolve({ code: null, stdout: "" });
+      return;
+    }
     let stdout = "";
     let settled = false;
     const done = (code: number | null) => {
@@ -65,7 +107,7 @@ export function gitRunner(o: { os: OS; env: NodeJS.ProcessEnv; extraPath: string
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("git", [...args], { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      child = spawn(git, [...args], { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     } catch {
       resolve({ code: null, stdout: "" });
       return;
@@ -80,5 +122,5 @@ export function gitRunner(o: { os: OS; env: NodeJS.ProcessEnv; extraPath: string
     });
     child.on("error", () => done(null));
     child.on("close", code => done(code));
-  });
+  }), () => ({ code: null, stdout: "" }));
 }
