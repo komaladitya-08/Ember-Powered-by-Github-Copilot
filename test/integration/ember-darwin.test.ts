@@ -3,10 +3,11 @@
  * the macOS platform loadPlatform gives it, as a login start with an onboarded profile (only the greeting: no settings
  * window), driven through its test hooks (EMBER_TEST_HOOKS) by Playwright. Against TextEdit as the user's app (Finder
  * when TextEdit can't start, with a warning and the reason) and the AppKit bench (test/fixtures/mac_bench.js):
- * - M1: Ember's overlay and handle show without taking the user's app's place: it stays frontmost (the system-wide
- *   AXFocusedApplication), and Ember keeps its Dock icon and its app menu with Quit on Command+Q;
- * - M2: the ask box takes the keys typed while the user's app stays the active one, and hides when the user clicks
- *   back into their app (blur);
+ * - M1: Ember's overlay and handle show without taking the user's app's place: it stays the active app (LaunchServices'
+ *   front app, whose menu bar shows) and AX's focused application, and Ember keeps its Dock icon and its app menu with
+ *   Quit on Command+Q;
+ * - M2: the ask box takes the keys typed while the user's app stays the active one (AX's focused application may be
+ *   Ember's while its panel has the keyboard: logged), and hides when the user clicks back into their app (blur);
  * - no system dialog is open at rest, as the window system and as Perception see it;
  * - a window-scope screenshot of the bench through Ember's Perception (its accessibility host started as Ember starts
  *   it) has the bench's pixels and its password field blacked out;
@@ -32,7 +33,7 @@ import sharp from "sharp";
 import type { Rect, ScreenLike } from "../../app/main/platform/types";
 import { openDarwinInput, openDarwinWindows, type DarwinInput, type DarwinWindowSystem } from "../../app/main/platform/darwin";
 import {
-  BENCH_TITLE, ROOT, alertReport, appWindow, frontmostPid, pidsOf, sleep, startBench, waitFor, warn, whyNoWindow, type Bench,
+  BENCH_TITLE, ROOT, activePid, alertReport, appWindow, frontmostPid, pidsOf, sleep, startBench, waitFor, warn, whyNoWindow, type Bench,
 } from "./darwin-support";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
@@ -121,7 +122,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
       const finder = await waitFor("Finder", () => pidsOf("Finder")[0], 10_000);
       user = { name: "Finder", pid: finder };
     }
-    await waitFor(() => `${user.name} in front (frontmost: ${frontmostPid()}; alerts: ${alertReport() || "none"})`, () => frontmostPid() === user.pid, 15_000);
+    await waitFor(() => `${user.name} in front (active: ${activePid()}, AX: ${frontmostPid()}; alerts: ${alertReport() || "none"})`, () => activePid() === user.pid, 15_000);
 
     // Ember as a login start with an onboarded profile: only the greeting, as after a restart.
     const userData = path.join(dir, "userData");
@@ -164,10 +165,12 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
-  it("starts beside the user's app: it stays frontmost, and Ember keeps its Dock icon and its app menu (M1)", async () => {
+  it("starts beside the user's app: it stays the active app, and Ember keeps its Dock icon and its app menu (M1)", async () => {
     // A start that activated Ember would have done so by now.
     await sleep(1500);
-    expect(frontmostPid(), `the frontmost app (Ember is ${emberPid}, ${user.name} ${user.pid})`).toBe(user.pid);
+    console.log(`ember-darwin: after Ember's start the active app is ${activePid()}, AX's focused app ${frontmostPid()} (Ember ${emberPid}, ${user.name} ${user.pid})`);
+    expect(activePid(), `the active app (Ember is ${emberPid}, ${user.name} ${user.pid})`).toBe(user.pid);
+    expect(frontmostPid(), "AX's focused application").toBe(user.pid);
     const shell = await inEmber(({ app, Menu }) => {
       const menu = Menu.getApplicationMenu();
       const items = (menu?.items ?? []).flatMap(i => [i, ...(i.submenu?.items ?? [])]);
@@ -185,7 +188,10 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
   it("takes typed keys in the ask box while the user's app stays the active one, and hides it when the user clicks back (M2)", async () => {
     await inEmber(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk(), null);
     const ask = await waitFor(async () => `the ask box shown with the keyboard (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).find(w => w.title === "Ask Ember" && w.visible && w.focused), 10_000);
-    expect(frontmostPid(), "the frontmost app while the ask box is up").toBe(user.pid);
+    // AX's focused application may be Ember's now (its panel has the keyboard); the active app, whose menu bar shows,
+    // must still be the user's.
+    console.log(`ember-darwin: with the ask box up the active app is ${activePid()}, AX's focused app ${frontmostPid()} (Ember ${emberPid}, ${user.name} ${user.pid})`);
+    expect(activePid(), "the active app while the ask box is up").toBe(user.pid);
     for (const ch of TYPED) {
       expect(input!.textKey(ch, true)).toBe(true);
       expect(input!.textKey(ch, false)).toBe(true);
@@ -196,7 +202,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
       return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : null;
     }, null);
     await waitFor(async () => `"${TYPED}" in the ask box (it holds ${JSON.stringify(await typed())})`, async () => (await typed()) === TYPED, 5_000);
-    expect(frontmostPid(), "the frontmost app after typing").toBe(user.pid);
+    expect(activePid(), "the active app after typing").toBe(user.pid);
     // The user clicks back into their app, away from the box: the box loses the keyboard and hides.
     const target = appWindow(user.pid);
     expect(target, `a window of ${user.name}`).toBeTruthy();
@@ -210,6 +216,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     await sleep(60);
     input!.button(1, false);
     await waitFor(async () => `the ask box to hide after a click at ${at.x},${at.y} (${JSON.stringify(await emberWindows())})`, async () => !(await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
+    expect(activePid()).toBe(user.pid);
     expect(frontmostPid()).toBe(user.pid);
   });
 

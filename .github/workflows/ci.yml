@@ -512,16 +512,18 @@ jobs:
           rows="$RUNNER_TEMP/listen-rows.sql"
           sudo sqlite3 "$db" ".mode insert access" "SELECT * FROM access WHERE service='kTCCServiceListenEvent'" > "$rows"
           echo "Input Monitoring rows set aside: $(grep -c . "$rows")"
+          # The rows come back whatever happens below (the steps after need the grant).
+          restore() {
+            sudo sqlite3 "$db" "DELETE FROM access WHERE service='kTCCServiceListenEvent'"
+            sudo sqlite3 "$db" < "$rows"
+            sudo launchctl kickstart -k system/com.apple.tccd.system || sudo pkill -x tccd || true
+            echo "Input Monitoring rows back: $(sudo sqlite3 "$db" "SELECT count(*) FROM access WHERE service='kTCCServiceListenEvent'")"
+          }
+          trap restore EXIT
           sudo sqlite3 "$db" "DELETE FROM access WHERE service='kTCCServiceListenEvent'"
-          sudo launchctl kickstart -k system/com.apple.tccd
-          launchctl kickstart -k "gui/$(id -u)/com.apple.tccd"
+          sudo launchctl kickstart -k system/com.apple.tccd.system || sudo pkill -x tccd
           sleep 2
-          status=0
-          EMBER_DARWIN_TEST=1 node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts -t "sees a key another process holds down" || status=$?
-          sudo sqlite3 "$db" < "$rows"
-          sudo launchctl kickstart -k system/com.apple.tccd
-          echo "Input Monitoring rows back: $(sudo sqlite3 "$db" "SELECT count(*) FROM access WHERE service='kTCCServiceListenEvent'")"
-          exit $status
+          EMBER_DARWIN_TEST=1 node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts -t "sees a key another process holds down"
       - name: "Attribution, before Ember.app's grant: opened as users open it, Ember can't read apps (nothing is borrowed from the runner's granted processes)"
         # Started through LaunchServices, Ember.app is its own responsible process to TCC, as when a user opens it; the
         # tests above ran under the runner's processes, whose grants prove nothing about Ember's.
@@ -550,20 +552,12 @@ jobs:
           cat "$report"
           # Copilot warns (not signed in on a runner) rather than failing: a missing runtime is the failure.
           node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
-      - name: What was on screen when something failed (a picture, the system's alerts, crash reports)
+      - name: What the system said when something failed (crash reports, alerts)
         if: failure()
         continue-on-error: true
         run: |
-          screencapture -x "$RUNNER_TEMP/screen.png" || true
           ls -lt "$HOME/Library/Logs/DiagnosticReports" 2>/dev/null | head -20 || true
-          /usr/bin/log show --last 15m --style compact --predicate 'process == "UserNotificationCenter" OR process == "TextEdit" OR process == "ReportCrash"' 2>/dev/null | tail -80 || true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure()
-        continue-on-error: true
-        with:
-          name: macos-screen
-          path: ${{ runner.temp }}/screen.png
-          retention-days: 1
+          /usr/bin/log show --last 15m --style compact --predicate 'process == "UserNotificationCenter" OR process == "ReportCrash"' 2>/dev/null | tail -60 || true
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
@@ -593,6 +587,8 @@ jobs:
           sw_vers
           echo "architecture: $(uname -m)"
           test "$(uname -m)" = x86_64
+      - name: No crash dialogs on screen (an app that dies would leave one over every later test)
+        run: defaults write com.apple.CrashReporter DialogType none
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false

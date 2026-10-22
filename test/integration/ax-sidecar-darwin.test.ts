@@ -26,6 +26,7 @@ import { AxDarwinProvider } from "../../app/sidecar-host/providers/ax-darwin";
 import { axApiError, openAxApi } from "../../app/sidecar-host/providers/ax-darwin-api";
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import type { Logger } from "../../app/main/logger";
+import { windowsNow } from "./darwin-support";
 
 const BENCH = path.resolve("test/fixtures/mac_bench.js");
 const OSASCRIPT = "/usr/bin/osascript";
@@ -291,6 +292,40 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
       console.log(`ax-sidecar-darwin: system overlays at rest ${JSON.stringify(overlays.map(o => [o.app, o.key, axOverlayRole(o)]))}`);
     } finally {
       p.stop();
+    }
+  });
+
+  it("reports nothing over the desktop at rest, and Mission Control as an overview while it is up", async () => {
+    const dockWindows = () => JSON.stringify(windowsNow().filter(e => e.owner === "Dock").map(e => ({ id: e.id, title: e.title, layer: e.layer, alpha: e.alpha, ...e.bounds })));
+    // Which windows the Dock has, by id and level (the strip's own size changes with the apps in it).
+    const dockKey = () => windowsNow().filter(e => e.owner === "Dock").map(e => `${e.id}/${e.layer}`).join(",");
+    const rest = dockKey();
+    console.log(`ax-sidecar-darwin: the Dock's windows at rest ${dockWindows()}`);
+    expect((await s.shellOverlays()).overlays).toEqual([]);
+    const mc = "/System/Applications/Mission Control.app";
+    if (!fs.existsSync(mc)) {
+      console.log(`ax-sidecar-darwin: not testable on this runner: Mission Control (no ${mc})`);
+      return;
+    }
+    spawnSync("/usr/bin/open", ["-a", mc]);
+    let opened = false;
+    try {
+      // Up: the Dock's windows change; told apart: shell_overlays says overview.
+      opened = await waitFor("Mission Control to open", () => dockKey() !== rest, 8_000).then(() => true, () => false);
+      const told = opened && await waitFor("Mission Control as an overview in shell_overlays", async () => (await s.shellOverlays()).overlays.some(o => o.role === "overview"), 5_000).then(() => true, () => false);
+      console.log(`ax-sidecar-darwin: Mission Control asked for (opened: ${opened}); the Dock's windows ${dockWindows()}; shell_overlays ${JSON.stringify(await s.shellOverlays())}`);
+      if (!opened) console.log("ax-sidecar-darwin: not testable on this runner: Mission Control didn't open (the Dock's windows didn't change)");
+      else expect(told, "Mission Control told apart from the Dock at rest (else: dialogs only, design §5.3's fallback)").toBe(true);
+    } finally {
+      // The same app again closes it; else Escape, as the user would (a Mission Control left up covers every later test).
+      if (opened || dockKey() !== rest) {
+        spawnSync("/usr/bin/open", ["-a", mc]);
+        const closed = () => waitFor("Mission Control to close", () => dockKey() === rest, 8_000).then(() => true, () => false);
+        if (!(await closed())) {
+          spawnSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to key code 53'], { timeout: 10_000 });
+          if (!(await closed())) console.log(`ax-sidecar-darwin: Mission Control may still be up: ${dockWindows()}`);
+        }
+      }
     }
   });
 

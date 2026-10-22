@@ -79,6 +79,18 @@ export function frontmostPid(): number | null {
   }
 }
 
+/**
+ * The pid of the active app as LaunchServices names it (`lsappinfo front`: the app whose menu bar shows), or null.
+ * AXFocusedApplication can differ: a panel that takes the keyboard without activating its app (Ember's ask box).
+ */
+export function activePid(): number | null {
+  const front = spawnSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8" }).stdout?.trim();
+  if (!front) return null;
+  const info = spawnSync("/usr/bin/lsappinfo", ["info", "-only", "pid", front], { encoding: "utf8" }).stdout ?? "";
+  const m = /"pid"\s*=\s*(\d+)/.exec(info);
+  return m ? Number(m[1]) : null;
+}
+
 /** The texts of an element and its descendants over AX (static texts' values, titles and descriptions), depth first. */
 function axTexts(pid: number, max = 40): string[] {
   const cf = openCoreFoundation();
