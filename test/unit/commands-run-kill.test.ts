@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import type { RunnerFacts, RunSpec } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
-import { LADDER_MS, startLadder, stragglerText, type LadderKind, type LadderOps, type Timers } from "../../app/main/commands/run/kill";
+import { LADDER_MS, REAL_TIMERS, startLadder, stragglerText, type LadderKind, type LadderOps, type Timers } from "../../app/main/commands/run/kill";
 import { createRunner, isKeptRun, START_MARKER, type ChildLike, type RunnerDeps } from "../../app/main/commands/run/local";
 
 class FakeTimers implements Timers {
@@ -153,6 +153,15 @@ describe("the kill ladder", () => {
     await expect(ladder.killed).resolves.toBeUndefined();
   });
 
+  it("runs on timers that keep the process alive, so a remote agent can't exit before SIGKILL and the last sweep", () => {
+    const t = REAL_TIMERS.setTimeout(() => undefined, 60_000) as NodeJS.Timeout;
+    try {
+      expect(t.hasRef()).toBe(true);
+    } finally {
+      REAL_TIMERS.clearTimeout(t);
+    }
+  });
+
   it("names what is left in the status line's words", () => {
     expect(stragglerText([])).toBe("");
     expect(stragglerText(["sleep"])).toBe("1 program it started is still running: sleep.");
@@ -252,9 +261,10 @@ describe("stopping a local run", () => {
     c.exit(130);
     await expect(run.done).resolves.toMatchObject({ ended: "stopped-user", code: 130 });
     await s.timers.advance(700);
-    expect(s.record.slice(4)).toEqual(["1000 kill -5000 SIGKILL", `1000 sweep ${RUN_ID} SIGKILL`, "1000 kill 5000 SIGKILL", "1000 pkill -KILL -s 5001"]);
+    // script exited (and was reaped) at 300 ms: its pid may be another program's now, so only its group and session.
+    expect(s.record.slice(4)).toEqual(["1000 kill -5000 SIGKILL", `1000 sweep ${RUN_ID} SIGKILL`, "1000 pkill -KILL -s 5001"]);
     await s.timers.advance(500);
-    expect(s.record.slice(8)).toEqual([`1500 sweep ${RUN_ID} SIGKILL`]);
+    expect(s.record.slice(7)).toEqual([`1500 sweep ${RUN_ID} SIGKILL`]);
     if (!isKeptRun(run)) throw new Error("not kept");
     await expect(run.stragglers).resolves.toEqual(["sleep"]);
     expect(s.warned).toEqual([["commands.straggler", { runId: RUN_ID, count: 1 }]]);
@@ -309,6 +319,8 @@ describe("stopping a local run", () => {
     expect(quit).toBe(false);
     await q.timers.advance(1);
     expect(quit).toBe(true);
+    // Still running at 1000 ms: script itself gets SIGKILL too (its exit hangs up the PTY).
+    expect(q.record).toContain("1000 kill 5000 SIGKILL");
     q.children[0].exit(null, "SIGKILL");
     await expect(c.done).resolves.toMatchObject({ ended: "stopped-task" });
   });

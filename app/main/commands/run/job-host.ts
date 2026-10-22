@@ -128,5 +128,11 @@ export function main(): void {
   });
 }
 
-// Only when run as dist/app/job-host.cjs (esbuild's CommonJS entry), never when a test imports the module.
-if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) main();
+/** Whether this process was started as the job host: its entry module is this one, and the script it was given is job-host.cjs. */
+export function isJobHostProcess(o: { isMain: boolean; script: string | undefined }): boolean {
+  return o.isMain && /(^|[\\/])job-host\.cjs$/i.test(o.script ?? "");
+}
+
+// Only when run as dist/app/job-host.cjs (esbuild's CommonJS entry): never when a test imports the module, nor if a
+// bundle that wrongly took this module in (whose `module` is then the bundle's own) is what runs.
+if (typeof require !== "undefined" && typeof module !== "undefined" && isJobHostProcess({ isMain: require.main === module, script: process.argv[1] })) main();

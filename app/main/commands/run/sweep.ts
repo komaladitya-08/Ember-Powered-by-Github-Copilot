@@ -33,6 +33,19 @@ export function environHasRun(environ: Uint8Array, runId: string): boolean {
 /** One process the sweep found. */
 export interface Swept { pid: number; name: string }
 
+/** The longest program name the status line repeats. */
+const NAME_MAX = 40;
+
+/**
+ * A straggler's name as the status line may repeat it. The process chose it (`comm`, argv[0]): control, bidi and
+ * zero-width characters go, and it is cut short, so it can't pass for Ember's own words or reorder the line.
+ */
+export function programName(raw: string): string {
+  // eslint-disable-next-line no-control-regex -- control characters are what's removed
+  const clean = raw.replace(/[\0-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "").trim();
+  return [...clean].length > NAME_MAX ? `${[...clean].slice(0, NAME_MAX - 1).join("")}…` : clean;
+}
+
 /**
  * The processes `ps -E -ww -U <uid> -o pid=,command=` lists with ` EMBER_RUN_ID=<runId>` among their environment (macOS
  * appends each process's environment to its command, space-separated). The name is the command's first word's base name.
@@ -44,9 +57,45 @@ export function psEnvironmentPids(text: string, runId: string): Swept[] {
     const m = /^\s*(\d+)\s+(.*)$/.exec(line);
     if (!m || !marker.test(m[2])) continue;
     const first = m[2].split(/\s+/)[0] ?? "";
-    out.push({ pid: Number(m[1]), name: first.slice(first.lastIndexOf("/") + 1) || first });
+    out.push({ pid: Number(m[1]), name: programName(first.slice(first.lastIndexOf("/") + 1)) || m[1] });
   }
   return out;
+}
+
+/** The longest output line kept whole (macOS caps a process's argv and environment together at 1 MiB). */
+export const LINE_MAX = 4 * 1024 * 1024;
+
+/**
+ * A helper's output as it streams in, keeping only the whole lines `keep` accepts (at most 1 MiB of them), so a long
+ * `ps -E -ww` listing can't push the run's own lines past a cap. A line longer than LINE_MAX is dropped whole, never
+ * cut: the tail of a cut line would read as another pid.
+ */
+export function linesKept(keep: (line: string) => boolean): { push(text: string): void; end(): string } {
+  let out = "";
+  let partial = "";
+  let overlong = false;
+  const take = (line: string) => {
+    if (keep(line) && out.length < 1024 * 1024) out += `${line}\n`;
+  };
+  return {
+    push(text) {
+      const lines = (partial + text).split("\n");
+      partial = lines.pop() ?? "";
+      lines.forEach((line, i) => {
+        if (i === 0 && overlong) overlong = false;
+        else take(line);
+      });
+      if (partial.length > LINE_MAX) {
+        partial = "";
+        overlong = true;
+      }
+    },
+    end() {
+      if (!overlong && partial !== "") take(partial);
+      partial = "";
+      return out;
+    },
+  };
 }
 
 /** What the local sweep reads and does (fakes in the unit tests). */
@@ -96,11 +145,17 @@ export async function sweepLocal(runId: string, signal: NodeJS.Signals | null, d
   return found;
 }
 
+/**
+ * /proc files read at once. Reading every process's environ together opens one descriptor per process, and an EMFILE
+ * on a busy machine (Ember holds many already) would pass for "gone": a straggler would escape the sweep.
+ */
+export const SWEEP_PARALLEL = 32;
+
 /** Linux: every readable /proc/<pid>/environ holding the marker (another user's isn't readable). */
 async function sweepProc(runId: string, deps: SweepDeps): Promise<Swept[]> {
   const pids = (await deps.readdir("/proc")).filter(n => /^\d+$/.test(n));
   const out: Swept[] = [];
-  await Promise.all(pids.map(async name => {
+  const one = async (name: string): Promise<void> => {
     let environ: Uint8Array;
     try {
       environ = await deps.readFile(`/proc/${name}/environ`);
@@ -114,7 +169,12 @@ async function sweepProc(runId: string, deps: SweepDeps): Promise<Swept[]> {
     } catch {
       // gone since: named by its pid
     }
-    out.push({ pid: Number(name), name: comm || name });
-  }));
+    out.push({ pid: Number(name), name: programName(comm) || name });
+  };
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < pids.length) await one(pids[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(SWEEP_PARALLEL, pids.length) }, worker));
   return out.sort((a, b) => a.pid - b.pid);
 }

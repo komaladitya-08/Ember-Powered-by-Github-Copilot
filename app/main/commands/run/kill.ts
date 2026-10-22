@@ -21,13 +21,13 @@ export interface Timers {
   clearTimeout(handle: unknown): void;
 }
 
-/** The real timers, never keeping a process alive on their own. */
+/**
+ * The real timers. They keep the process alive (they are never unref'd): once the run's own process has exited, the
+ * ladder's later steps are all that is left to reach what it left behind, and a remote agent whose link ended must not
+ * exit before its SIGKILL step and last sweep (§3.13). A run's time limit is cleared when it ends; the ladder lasts 1.5 s.
+ */
 export const REAL_TIMERS: Timers = {
-  setTimeout: (fn, ms) => {
-    const t = setTimeout(fn, ms);
-    t.unref?.();
-    return t;
-  },
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
   clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 

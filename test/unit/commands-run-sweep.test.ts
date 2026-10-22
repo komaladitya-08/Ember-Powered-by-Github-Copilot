@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environHasRun, psEnvironmentPids, sweepLocal, sweepScript, type SweepDeps } from "../../app/main/commands/run/sweep";
+import { environHasRun, LINE_MAX, linesKept, programName, psEnvironmentPids, sweepLocal, sweepScript, SWEEP_PARALLEL, type SweepDeps } from "../../app/main/commands/run/sweep";
 
 const RUN = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
@@ -81,6 +81,42 @@ function fakeDeps(over: Partial<SweepDeps> = {}) {
   return { deps, killed, runs };
 }
 
+describe("linesKept", () => {
+  it("keeps only the run's lines of a long ps -E listing, however it is chunked", () => {
+    const k = linesKept(l => l.includes(`EMBER_RUN_ID=${RUN}`));
+    const noise = `  1 /sbin/launchd ${"X=".padEnd(5000, "y")}\n`.repeat(400); // ~2 MB of other processes
+    k.push(noise.slice(0, 7777));
+    k.push(`${noise.slice(7777)}  70`);
+    k.push(`0 sleep 1000 EMBER_RUN_ID=${RUN}\n${noise}  701 zsh EMBER_RUN_ID=${RUN}`);
+    expect(k.end()).toBe(`  700 sleep 1000 EMBER_RUN_ID=${RUN}\n  701 zsh EMBER_RUN_ID=${RUN}\n`);
+  });
+
+  it("drops a line too long to be one process whole, never keeping its tail as a line of its own", () => {
+    const k = linesKept(l => l.includes(`EMBER_RUN_ID=${RUN}`));
+    k.push(`  5 ${"z".repeat(LINE_MAX)}`);
+    k.push(` 4242 EMBER_RUN_ID=${RUN}\n  77 sleep EMBER_RUN_ID=${RUN}\n`);
+    expect(k.end()).toBe(`  77 sleep EMBER_RUN_ID=${RUN}\n`);
+  });
+});
+
+describe("programName", () => {
+  it("keeps a straggler's chosen name from passing for Ember's words: no controls, bidi or zero-width marks, cut short", () => {
+    expect(programName("sleep")).toBe("sleep");
+    expect(programName("a\u202eb\x1b[2Jc\u200bd\x85")).toBe("ab[2Jcd");
+    expect(programName("x".repeat(100))).toBe(`${"x".repeat(39)}…`);
+    expect(programName("\u0000\u202e")).toBe("");
+  });
+
+  it("is applied to what /proc and ps -E name", async () => {
+    expect(psEnvironmentPids(`  700 /tmp/Click\u202eAllow EMBER_RUN_ID=${RUN}\n`, RUN)).toEqual([{ pid: 700, name: "ClickAllow" }]);
+    const f = fakeDeps({
+      readdir: async () => ["300"],
+      readFile: async file => (file.endsWith("/comm") ? Buffer.from("\u202e\x07\n") : env(`EMBER_RUN_ID=${RUN}`)),
+    });
+    await expect(sweepLocal(RUN, null, f.deps)).resolves.toEqual([{ pid: 300, name: "300" }]);
+  });
+});
+
 describe("sweepLocal", () => {
   it("finds the run's processes in /proc on Linux and signals each, never pid 1 or Ember itself", async () => {
     const f = fakeDeps();
@@ -96,6 +132,25 @@ describe("sweepLocal", () => {
     const g = fakeDeps();
     await expect(sweepLocal(RUN, "SIGTERM", g.deps)).resolves.toHaveLength(3);
     expect(g.killed.map(k => k[0]).sort()).toEqual([100, 105]);
+  });
+
+  it("reads /proc a few files at a time, so a busy machine's descriptor limit can't hide a straggler", async () => {
+    const pids = Array.from({ length: 2000 }, (_, i) => String(1000 + i));
+    let open = 0, most = 0;
+    const f = fakeDeps({
+      readdir: async () => pids,
+      readFile: async file => {
+        open++;
+        most = Math.max(most, open);
+        await new Promise(resolve => setImmediate(resolve));
+        open--;
+        if (file.endsWith("/comm")) return Buffer.from("sleep\n");
+        return file === "/proc/2999/environ" || file === "/proc/1000/environ" ? env(`EMBER_RUN_ID=${RUN}`) : env("A=1");
+      },
+    });
+    await expect(sweepLocal(RUN, null, f.deps)).resolves.toEqual([{ pid: 1000, name: "sleep" }, { pid: 2999, name: "sleep" }]);
+    expect(most).toBeLessThanOrEqual(SWEEP_PARALLEL);
+    expect(most).toBeGreaterThan(1);
   });
 
   it("asks ps -E for the user's own processes on macOS", async () => {

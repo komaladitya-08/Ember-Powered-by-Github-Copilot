@@ -27,7 +27,7 @@ import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths } from "./inspect";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "./shells";
-import { RUN_ID, sweepLocal } from "./sweep";
+import { linesKept, RUN_ID, sweepLocal } from "./sweep";
 import { JOB_FAILED, JOB_FAILED_PREFIX, jobHostArgv } from "./win32-job";
 
 export { jobHostArgv };
@@ -65,6 +65,9 @@ const DISTRO_NAME = /^[A-Za-z0-9._-]+$/;
 /** An absolute Windows path Ember can hand to CreateProcess as a program. */
 const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
 
+/** A UTF-16 surrogate without its pair: it can't be encoded as UTF-8, and Node would hand the shell U+FFFD in its place. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
 const posixShell = (shell: string): shell is "bash" | "zsh" | "sh" => shell === "bash" || shell === "zsh" || shell === "sh";
 const size = (n: number, fallback: number) => (Number.isFinite(n) && n >= 1 ? String(Math.min(1000, Math.trunc(n))) : String(fallback));
 
@@ -76,6 +79,10 @@ export function launchArgv(
 ): { command: string; args: string[]; options: LaunchOptions; env: Record<string, string> } {
   if (!RUN_ID.test(spec.runId)) throw new LaunchError("The run has no valid id.");
   if (typeof spec.command !== "string" || spec.command.includes("\0")) throw new LaunchError("The command holds a NUL character, which can't be handed to a shell.");
+  // The bytes that run must be the text that was shown and decided: an unpaired surrogate would arrive changed.
+  if (LONE_SURROGATE.test(spec.command) || typeof spec.cwd !== "string" || LONE_SURROGATE.test(spec.cwd) || spec.cwd.includes("\0")) {
+    throw new LaunchError("The command or its folder holds a character that can't be passed on exactly as shown.");
+  }
   const cols = size(spec.cols, 80), rows = size(spec.rows, 24);
 
   const posixPath = (): { shell: "bash" | "zsh" | "sh"; path: string } => {
@@ -332,7 +339,8 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
         self: [process.pid],
         readdir: dir => fs.promises.readdir(dir),
         readFile: file => fs.promises.readFile(file),
-        run: async (file, args) => exec(file, args),
+        // `ps -E -ww` lists every process's whole environment: only the run's lines are kept, so none is cut off.
+        run: async (file, args) => helperExec(file, args, line => line.includes(`EMBER_RUN_ID=${runId}`)),
         kill,
       });
       return found.map(p => p.name);
@@ -345,16 +353,20 @@ function defaultDeps(o: RunnerOptions): RunnerDeps {
   };
 }
 
-/** pgrep, pkill and ps from the system's folders with a fixed environment, stdin closed, at most HELPER_MS. */
-function helperExec(file: string, args: string[]): Promise<{ code: number | null; stdout: string }> {
+/**
+ * pgrep, pkill and ps from the system's folders with a fixed environment, stdin closed, at most HELPER_MS. With
+ * `keepLine`, only the stdout lines it accepts are kept (no cap applies to what it drops); otherwise at most 1 MiB.
+ */
+function helperExec(file: string, args: string[], keepLine?: (line: string) => boolean): Promise<{ code: number | null; stdout: string }> {
   return new Promise(resolve => {
     let stdout = "";
+    const lines = keepLine ? linesKept(keepLine) : null;
     let settled = false;
     const done = (code: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code, stdout });
+      resolve({ code, stdout: lines ? lines.end() : stdout });
     };
     let child: ReturnType<typeof nodeSpawn>;
     try {
@@ -370,7 +382,8 @@ function helperExec(file: string, args: string[]): Promise<{ code: number | null
     timer.unref?.();
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (s: string) => {
-      if (stdout.length < 1024 * 1024) stdout += s;
+      if (lines) lines.push(s);
+      else if (stdout.length < 1024 * 1024) stdout += s;
     });
     child.on("error", () => done(null));
     child.on("close", code => done(code));
@@ -665,7 +678,8 @@ class LocalRun implements KeptRun {
       sweep: signal => d.sweep(this.runId, signal),
       terminate: () => {
         if (this.kind === "windows") child.kill();
-        else if (pid !== undefined) d.kill(pid, "SIGKILL");
+        // Once it exited (and was reaped) its pid is free for another program: only its group and session remain.
+        else if (pid !== undefined && !this.exited) d.kill(pid, "SIGKILL");
       },
     };
     this.ladder = startLadder(this.kind, ops, d.timers);
@@ -719,7 +733,8 @@ class LocalRun implements KeptRun {
     if (this.failure !== null) return { ...base, ended: "failed-to-start", error: this.failure };
     if (this.stopWhy) return { ...base, ended: STOP_ENDED[this.stopWhy] };
     if (this.kind === "windows" && this.exitCode === JOB_FAILED && this.stderrText.startsWith(JOB_FAILED_PREFIX)) {
-      return { ...base, ended: "failed-to-start", error: "Ember couldn't set up the job object it runs commands in, so the command didn't run." };
+      const why = this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim().slice(0, 300);
+      return { ...base, ended: "failed-to-start", error: `Ember's job host couldn't start the command, so it didn't run${why ? ` (${why})` : ""}.` };
     }
     if (this.kind !== "windows" && !this.markerSeen) return { ...base, ended: "failed-to-start", error: this.startFailure() };
     return { ...base, ended: "exit" };

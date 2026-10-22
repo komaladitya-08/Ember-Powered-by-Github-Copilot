@@ -292,6 +292,10 @@ describe("launchArgv", () => {
     refuse(() => launchArgv(spec({ shell: "powershell" }), windows, { jobHost: null }), /job host/);
     refuse(() => launchArgv(spec({ shell: "powershell" }), { ...windows, shellPaths: { powershell: "powershell.exe" } }, { jobHost: JOB_HOST }), /PowerShell/);
     refuse(() => launchArgv(spec({ command: "echo a\0b" }), linux, { jobHost: null }), /NUL/);
+    // An unpaired surrogate would reach the shell as U+FFFD: not the text that was shown.
+    for (const command of ["echo \uD800", "echo \uDC00x", "rm \uDBFF"]) refuse(() => launchArgv(spec({ command }), linux, { jobHost: null }), /exactly as shown/);
+    refuse(() => launchArgv(spec({ cwd: "/home/ana/\uD800" }), linux, { jobHost: null }), /exactly as shown/);
+    expect(launchArgv(spec({ command: "echo \u{1F600} \uD83D\uDE00" }), linux, { jobHost: null }).env.EMBER_CMD).toBe("echo \u{1F600} \u{1F600}");
     refuse(() => launchArgv(spec({ runId: "../../etc" }), linux, { jobHost: null }), /id/);
     const wsl = { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu" };
     for (const cwd of ['/home/ana/"x"', "/home/ana/a\\b", "/home/ana/a\nb", "/home/ana/\x1b[2J", "relative/dir"]) {
@@ -446,7 +450,12 @@ describe("a local run", () => {
     child.end(125);
     const exit = await run.done;
     expect(exit.ended).toBe("failed-to-start");
-    expect(exit.error).toMatch(/job object/);
+    expect(exit.error).toBe("Ember's job host couldn't start the command, so it didn't run (AssignProcessToJobObject failed (error 5)).");
+    // A job host that couldn't start PowerShell says so, not that the job failed.
+    const ps = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));
+    ps.child.err("job: can't start C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe: ENOENT\n");
+    ps.child.end(125);
+    await expect(ps.run.done).resolves.toMatchObject({ ended: "failed-to-start", error: expect.stringContaining("can't start C:\\Windows") });
     // A command's own `exit 125` is its exit.
     const own = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));
     own.child.end(125);

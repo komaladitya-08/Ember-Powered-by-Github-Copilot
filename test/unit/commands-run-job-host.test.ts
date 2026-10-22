@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { SpawnOptions } from "node:child_process";
-import { JOB_FAILED, parseJobHostArgs, runJobHost, type JobChild, type JobHostDeps } from "../../app/main/commands/run/job-host";
+import { isJobHostProcess, JOB_FAILED, parseJobHostArgs, runJobHost, type JobChild, type JobHostDeps } from "../../app/main/commands/run/job-host";
 import {
   bindJobApi, EXTENDED_LIMIT_INFORMATION_SIZE, JOB_FUNCTIONS, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
   jobHostArgv, killOnCloseInfo, type JobApi,
@@ -16,6 +16,15 @@ describe("the job host's argv", () => {
   it("is Ember's binary on job-host.cjs, the mode, --, then the program and its arguments (§3.3)", () => {
     expect(jobHostArgv(REF, PS, ["-NoLogo", "-Command", "x"], false)).toEqual([REF.execPath, REF.script, "--batch", "--", PS, "-NoLogo", "-Command", "x"]);
     expect(jobHostArgv(REF, "C:\\Windows\\System32\\wsl.exe", ["-d", "Ubuntu"], true)).toEqual([REF.execPath, REF.script, "--interactive", "--", "C:\\Windows\\System32\\wsl.exe", "-d", "Ubuntu"]);
+  });
+
+  it("runs as a program only when started on job-host.cjs, never inside another bundle that took the module in", () => {
+    expect(isJobHostProcess({ isMain: true, script: REF.script })).toBe(true);
+    expect(isJobHostProcess({ isMain: true, script: "/opt/Ember/resources/app/dist/app/job-host.cjs" })).toBe(true);
+    expect(isJobHostProcess({ isMain: true, script: "C:\\Program Files\\Ember\\resources\\app\\dist\\app\\main.cjs" })).toBe(false);
+    expect(isJobHostProcess({ isMain: true, script: "C:\\x\\not-job-host.cjs.js" })).toBe(false);
+    expect(isJobHostProcess({ isMain: true, script: undefined })).toBe(false);
+    expect(isJobHostProcess({ isMain: false, script: REF.script })).toBe(false);
   });
 
   it("parses back what jobHostArgv wrote and nothing else", () => {
