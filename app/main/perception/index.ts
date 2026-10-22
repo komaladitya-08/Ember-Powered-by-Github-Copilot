@@ -439,11 +439,11 @@ export class Perception {
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
     // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
     // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next).
-    if (this.platformDialog()) return noShot("a system dialog is open, so Ember looks away until it's done");
+    if (this.platformDialog()) return noShot(SYSTEM_DIALOG);
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
     if (shell.unchecked) return noShot(this.words.shellUnchecked);
-    if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
+    if (shell.dialog) return noShot(SYSTEM_DIALOG);
     if (shell.overview) return noShot(this.words.overviewOpen);
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
@@ -481,10 +481,17 @@ export class Perception {
     }
     const blacked = [...mask, ...covers, ...shell.masks];
     let coveredAfter = false;
+    let dialogAfter = false;
     const capture = await captureRect(x11, rect, {
       mask: [...blacked, ...secrets.map(n => pad(n.bounds!)), ...unread.flatMap(f => physical(f.bounds, k).map(pad))],
       // Windows can move or open, and fields scroll, while the picture is taken: black out where they are afterwards too.
       maskAfter: async () => {
+        // A system dialog may have come up while the picture was taken (macOS's capture takes 100-300 ms): then the
+        // picture may show it, so there is none. Always false on Linux, which has no such check.
+        if (this.platformDialog()) {
+          dialogAfter = true;
+          return null;
+        }
         const now = this.stackNow();
         const priv = await this.privateWindows(now);
         if (priv === null) return null;
@@ -510,7 +517,7 @@ export class Perception {
       // No marks on what is blacked out (an element under another window can't be clicked either).
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
-    if (!capture) return noShot("the window is off screen, or the screen couldn't be captured safely");
+    if (!capture) return noShot(dialogAfter ? SYSTEM_DIALOG : "the window is off screen, or the screen couldn't be captured safely");
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
     return { ...seen, text: text + note, capture };
   }
@@ -659,6 +666,7 @@ export class Perception {
   }
 }
 
+const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
 

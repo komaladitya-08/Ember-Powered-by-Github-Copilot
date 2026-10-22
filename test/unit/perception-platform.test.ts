@@ -260,6 +260,34 @@ describe("Perception and the window system's system-dialog check (fails closed)"
     expect(warnings).toContain("perception.system_dialog_check_failed");
   });
 
+  it("sends no picture when a system dialog comes up while it is taken, and shows Ember again", async () => {
+    let dialog = false, shows = 0;
+    const screen = { x: 0, y: 0, width: 300, height: 200 };
+    const { perception, captures } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => dialog,
+      capture: async (x, y, w, h) => { await later(10); dialog = true; return greyImage(screen, x, y, w, h); },
+      hideOverlay: async () => () => { shows++; },
+    });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain(NO_DIALOG);
+    expect(shows).toBe(1);
+  });
+
+  it("sends no picture when the check fails once the picture is taken", async () => {
+    let asked = 0;
+    const { perception, captures, warnings } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"),
+      systemDialogOpen: () => { if (++asked > 1) throw new Error("CGWindowListCopyWindowInfo failed"); return false; },
+    });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain(NO_DIALOG);
+    expect(warnings).toContain("perception.system_dialog_check_failed");
+  });
+
   it("takes the screenshot when the window system reports no dialog, or has no such check (Linux)", async () => {
     const clear = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => false });
     expect((await clear.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
