@@ -1,10 +1,11 @@
-/** M9: the installed Ember's fuses (scripts/package/fuses.mjs): no --inspect, no NODE_OPTIONS, plain Node kept for the desk helper. */
+/** M9: the installed Ember's fuses (scripts/package/fuses.mjs): no --inspect, no NODE_OPTIONS, plain Node kept for the desk helper and the accessibility host. */
 
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { EMBER_FUSES, FUSES, SENTINEL, findWire, flipFuses, fuseMismatches, readFuses, setFuses } from "../../scripts/package/fuses.mjs";
+import { EMBER_FUSES, FUSES, SENTINEL, fatArchCount, findWire, flipFuses, fuseMismatches, readFuses, setFuses } from "../../scripts/package/fuses.mjs";
+import { layoutFor } from "../../scripts/package/layout.mjs";
 
 /** A fake binary: junk, the fuse wire (Electron 44's defaults unless given), more junk. */
 const fake = (wire = "101100011", o: { version?: number; sentinels?: number } = {}) => Buffer.concat([
@@ -62,6 +63,28 @@ describe("the fuse wire", () => {
     expect(() => setFuses(fake(), { NoSuchFuse: false })).toThrow(/no fuse named NoSuchFuse/);
   });
 
+  it("refuses a universal macOS binary, which has one wire per architecture, and changes nothing", () => {
+    // A fat header (big-endian magic, slice count) and two slices, each with Electron's default wire.
+    const fat = (magic: number, slices: number) => {
+      const header = Buffer.alloc(8);
+      header.writeUInt32BE(magic, 0);
+      header.writeUInt32BE(slices, 4);
+      return Buffer.concat([header, ...Array.from({ length: slices }, () => fake())]);
+    };
+    const universal = fat(0xcafebabe, 2);
+    expect(fatArchCount(universal)).toBe(2);
+    expect(fatArchCount(fat(0xcafebabf, 2))).toBe(2);
+    expect(() => readFuses(universal)).toThrow(/universal binary \(2 architectures/);
+    expect(() => setFuses(universal, EMBER_FUSES)).toThrow(/stage one architecture per build/);
+    expect(universal.equals(fat(0xcafebabe, 2))).toBe(true);
+    // Not fat: an ordinary binary, and a Java class file (same magic, then its version: 52 for Java 8).
+    expect(fatArchCount(fake())).toBe(0);
+    const javaLike = Buffer.concat([Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 52]), fake()]);
+    expect(fatArchCount(javaLike)).toBe(0);
+    expect(readFuses(javaLike).RunAsNode).toBe(true);
+    expect(fatArchCount(Buffer.from([0xca, 0xfe]))).toBe(0);
+  });
+
   it("flips a file in place, keeping its mode", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-fuses-"));
     try {
@@ -69,16 +92,20 @@ describe("the fuse wire", () => {
       fs.writeFileSync(file, fake(), { mode: 0o755 });
       expect(fuseMismatches(flipFuses(file, EMBER_FUSES), EMBER_FUSES)).toEqual([]);
       expect(fuseMismatches(readFuses(fs.readFileSync(file)), EMBER_FUSES)).toEqual([]);
-      expect(fs.statSync(file).mode & 0o777).toBe(0o755);
+      // Windows has no POSIX modes to keep (stat reports 0o666 for any writable file).
+      if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o755);
       expect(fs.statSync(file).size).toBe(fake().length);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("matches the Electron in node_modules (when it is downloaded)", () => {
-    const electron = path.resolve("node_modules/electron/dist/electron");
+  it("matches the Electron in node_modules (when it is downloaded): the binary itself, or macOS's framework", () => {
+    const layout = layoutFor(process.platform, process.arch);
+    const electron = path.resolve("node_modules/electron/dist", layout.electronFuseFile);
     if (!fs.existsSync(electron)) return;
+    // Electron's path.txt names its executable as stage.mjs expects to find it (require("electron") reads it).
+    expect(fs.readFileSync(path.resolve("node_modules/electron/path.txt"), "utf8").trim()).toBe(layout.electronExe);
     const fuses = readFuses(fs.readFileSync(electron));
     // Electron's defaults: what stage.mjs turns off is on, and plain Node is there to keep.
     expect(fuses).toMatchObject({ RunAsNode: true, EnableNodeOptionsEnvironmentVariable: true, EnableNodeCliInspectArguments: true });
