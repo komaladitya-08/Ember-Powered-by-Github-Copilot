@@ -192,7 +192,7 @@ export const WRITTEN_FIRST = "It runs a script that this command writes first, s
 export async function judgeScripts(cls: Classification, io: ScriptIo | null, classify: ScriptClassifier, env: ScriptJudgeEnv): Promise<Classification> {
   const outer = cls as Partial<ClassificationExtra>;
   const refs = outer.scripts ?? [];
-  if (refs.length === 0 || !io) return cls;
+  if (refs.length === 0 || !io) return withRealPaths(cls, env.paths);
   const flavour = env.os === "win32" ? win32 : posix;
   const cmp = comparePaths(env.os, env.wsl?.mountRoot ?? null);
   const probeMs = env.probeMs ?? SCRIPT_PROBE_MS;
@@ -239,8 +239,11 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     if (typeof raw !== "string") {
       // Padded past the cap, a FIFO, unreadable: L8 for a script the task didn't write; its own asks, unless the target
       // says nothing is there (PowerShell's `.\t` names t.bat and t.cmd too; a file this same command makes asks anyway).
-      if (taskWrote(ref.path, env.written, env.downloaded, cmp) && (await factOf(ref.path, ref.cwd || flavour.dirname(ref.path))).exists !== false) {
-        unclear("unclear.script-unread", unreadOwnScript(name));
+      // Its own by either name: a write through a link (`> l/t.sh`, l → .) is remembered where it landed too.
+      const own = (p: string | null): boolean => p !== null && taskWrote(p, env.written, env.downloaded, cmp);
+      if (own(ref.path) || (env.written?.paths.size ?? 0) > 0 || env.downloaded.size > 0) {
+        const fact = await factOf(ref.path, ref.cwd || flavour.dirname(ref.path));
+        if (fact.exists !== false && (own(ref.path) || own(fact.real))) unclear("unclear.script-unread", unreadOwnScript(name));
       }
       continue;
     }
@@ -298,9 +301,30 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     if (byScript || byLine) { unclear("unclear.script-written", WRITTEN_FIRST); break; }
   }
   const moreWrites = writes.size !== (outer.writes ?? []).length || anywhere !== outerAnywhere;
-  if (!refuse && extra.length === 0 && downloads.length === 0 && !moreWrites) return cls;
-  return {
+  if (!refuse && extra.length === 0 && downloads.length === 0 && !moreWrites) return withRealPaths(cls, env.paths);
+  return withRealPaths({
     ...cls, refuse, findings: [...cls.findings, ...extra], downloads: [...new Set([...cls.downloads, ...downloads])],
     writes: [...writes], writesAnywhere: anywhere,
-  } as Classification;
+  } as Classification, env.paths);
+}
+
+/**
+ * `cls` with the real path the target reported for each file it writes or downloads added beside the written one, so
+ * the task remembers a write through a link (`printf … > l/t.sh` with l → .) where it lands: a later `sh t.sh` is the
+ * task's own (the padding bypass), and running the download by its other name is still running a download.
+ */
+export function withRealPaths(cls: Classification, paths: ReadonlyMap<string, PathFact>): Classification {
+  const x = cls as Partial<ClassificationExtra>;
+  const add = (list: readonly string[]): string[] => {
+    const out = new Set(list);
+    for (const p of list) {
+      const r = paths.get(p)?.real;
+      if (typeof r === "string" && r !== "") out.add(r);
+    }
+    return [...out];
+  };
+  const writes = Array.isArray(x.writes) ? add(x.writes) : null;
+  const downloads = add(cls.downloads);
+  if ((writes === null || writes.length === x.writes!.length) && downloads.length === cls.downloads.length) return cls;
+  return { ...cls, downloads, ...(writes ? { writes } : {}) } as Classification;
 }

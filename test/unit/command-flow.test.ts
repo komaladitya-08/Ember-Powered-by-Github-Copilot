@@ -377,14 +377,14 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
 
 describe("a script of the task's own that can't be read in full (L8's padding bypass)", () => {
   /** CL's own judge on this computer; `texts` serves readScript by path (missing: unreadable, as past the cap). */
-  const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {
+  const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; real?: (p: string) => string; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {
     setCommandJudge(null);
     const reads: string[] = [];
     /** Paths the target says exist (a test adds what its earlier commands made). */
     const existing = new Set<string>();
     const h = harness({
       binding: LOCAL, answers: o.answers ?? ["deny", "deny", "deny"], state: o.state ?? { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
-      paths: p => ({ exists: existing.has(p) || (o.exists ? o.exists(p) : false), real: p }),
+      paths: p => ({ exists: existing.has(p) || (o.exists ? o.exists(p) : false), real: o.real ? o.real(p) : p }),
       readScript: async path => { reads.push(path); return texts[path] ?? null; },
       run: () => ({ output: ["done\n"] }),
     });
@@ -469,6 +469,22 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     expect((await local(h, "./t")).resultType).toBe("denied");
     expect(h0rules(h)).toContain("unclear.script-unread");
     expect(h.reads).toEqual(["/home/ana/proj/t", "/home/ana/tools/i.sh"]);
+  });
+
+  it("remembers a write through a link where it lands: the script by its real name is the task's own", async () => {
+    // l → /home/ana/proj: `> l/t.sh` writes /home/ana/proj/t.sh.
+    const h = own({}, { real: p => p.replace(/^\/home\/ana\/proj\/l(?=\/|$)/, "/home/ana/proj") });
+    expect((await local(h, "printf '%70000s' > l/t.sh; echo 'rm -rf ~' >> l/t.sh")).resultType).toBe("success");
+    expect([...h.ctx.state.written!.paths].sort()).toEqual(["/home/ana/proj/l/t.sh", "/home/ana/proj/t.sh"]);
+    h.existing.add("/home/ana/proj/t.sh");
+    expect((await local(h, "sh t.sh")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    // And the other way round: written by its real name, run through the link.
+    const back = own({}, { real: p => p.replace(/^\/home\/ana\/proj\/l(?=\/|$)/, "/home/ana/proj") });
+    await local(back, "printf '%70000s' > t.sh");
+    back.existing.add("/home/ana/proj/l/t.sh");
+    expect((await local(back, "sh l/t.sh")).resultType).toBe("denied");
+    expect(h0rules(back)).toContain("unclear.script-unread");
   });
 
   it("remembers only what ran: a write the user said no to doesn't make the file the task's own", async () => {
