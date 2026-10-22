@@ -393,6 +393,14 @@ describe("announcing (D4.4, \u00a73.9.2)", () => {
     await expect(second).resolves.toBe(false);
   });
 
+  it("doesn't let a command run when there is no window to count down in", async () => {
+    const ctl = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    await expect(ctl.announce(card(), 4000, new AbortController().signal)).resolves.toBe(false);
+    ctl.showCard(1, card());
+    expect(ctl.cardReady(1)).toBe(false);
+    expect(logs.some(l => l.msg === "commands.window_failed")).toBe(true);
+  });
+
   it("refuses to announce a malformed card", async () => {
     const { ctl } = setup();
     await expect(ctl.announce({ ...card(), runId: "x" }, 4000, new AbortController().signal)).resolves.toBe(false);

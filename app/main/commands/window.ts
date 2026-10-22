@@ -266,9 +266,11 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
   function startHead(): void {
     const a = queue[0];
     if (!a || a.endsAt !== null || disposed) return;
+    reveal();
+    // No window to count down in (it couldn't be made): the command doesn't run (R1: it runs only where it's seen).
+    if (!live()) { settleAnnouncement(a, false); return; }
     a.endsAt = Date.now() + a.ms;
     a.timer = setTimeout(() => settleAnnouncement(a, true), a.ms);
-    reveal();
     push();
   }
 

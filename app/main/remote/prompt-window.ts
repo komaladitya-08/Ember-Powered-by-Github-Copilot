@@ -141,7 +141,13 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
       return;
     }
     const w = ensure();
-    if (!w) return;
+    if (!w) {
+      // No window to ask in: an SSH prompt is answered no at once (nobody can answer it, and ssh mustn't wait); a
+      // consent question stays asked and expires as "no".
+      const head = queue[0];
+      if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false });
+      return;
+    }
     push();
     safe("show", () => { w.show(); w.moveTop(); w.focus(); });
   }

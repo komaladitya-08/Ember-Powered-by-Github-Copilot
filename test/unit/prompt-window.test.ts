@@ -112,6 +112,13 @@ describe("the prompt window's queue", () => {
     await expect(ctl.ask(password("dup"))).resolves.toEqual({ id: "dup", ok: false });
   });
 
+  it("answers an SSH prompt no at once when no window can be made, so ssh never waits on it", async () => {
+    const ctl = createPromptWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux" });
+    await expect(ctl.ask(password("a"))).resolves.toEqual({ id: "a", ok: false });
+    ctl.showConsent(1, commandsCard());
+    expect(ctl.consentReady(1)).toBe(false);
+  });
+
   it("makes no window until a card needs one", () => {
     const { ctl, windows } = setup();
     expect(windows).toHaveLength(0);
