@@ -336,8 +336,12 @@ export interface ScriptResult { code: number | null; stdout: Buffer; stderr: str
 export interface WslRunningCommand extends RunningCommand {
   /** The secret prompts' spans so far (ShapeOptions.secretSpans). */
   secretSpans(): { from: number; to: number }[];
-  /** Programs carrying the run's marker that were still there at the last sweep ("1 program it started is still running: <name>"). */
-  stragglers(): string[];
+  /**
+   * Programs carrying the run's marker that were still there at the last sweep ("1 program it started is still running:
+   * <name>"), as RUN's runs report them (KeptRun.stragglers): known after the ladder's last sweep, or after the look a run
+   * that ended by itself gets; [] when nothing was looked for.
+   */
+  readonly stragglers: Promise<string[]>;
 }
 
 /** The WSL runner beyond CommandRunner (extension: the targets runtime and WB use it). */
@@ -583,7 +587,8 @@ class Run {
   private typed: string[] = [];
   private typing = "";
   private typedBytes = 0;
-  private stragglerNames: string[] = [];
+  private readonly stragglers: Promise<string[]>;
+  private setStragglers!: (names: string[]) => void;
   private readonly timers: ReturnType<typeof setTimeout>[] = [];
   private ladder: Promise<void> | null = null;
 
@@ -592,6 +597,7 @@ class Run {
     this.pty = r.lastFacts()?.pty ?? false;
     this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     this.done = new Promise<RunExit>(resolve => { this.resolveDone = resolve; });
+    this.stragglers = new Promise<string[]>(resolve => { this.setStragglers = resolve; });
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- the handle's methods close over the run
     const run = this;
     this.handle = {
@@ -610,7 +616,7 @@ class Run {
       stop: why => run.stop(why),
       done: this.done,
       secretSpans: () => run.tracker.spans(),
-      stragglers: () => [...run.stragglerNames],
+      stragglers: this.stragglers,
     };
   }
 
@@ -825,7 +831,7 @@ class Run {
       }, LADDER_MS.kill));
       this.timers.push(setTimeout(() => {
         void this.r.sweep("KILL", runId).then(names => {
-          this.stragglerNames = names;
+          this.setStragglers(names);
           if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId, count: names.length });
           resolve();
           // A job host that outlives TerminateProcess can't hold the run open: it ends as stopped all the same.
@@ -868,11 +874,14 @@ class Run {
     // the distro still runs: a command that shut it down (`poweroff`, `wsl.exe --terminate` through interop) leaves
     // nothing behind, and a sweep would start it again.
     void (async () => {
-      if (!(await this.d.runningNow()).has(this.d.distro)) return;
+      if (!(await this.d.runningNow()).has(this.d.distro)) return this.setStragglers([]);
       const names = await this.r.sweep("0", this.spec.runId);
-      this.stragglerNames = names;
+      this.setStragglers(names);
       if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
-    })().catch(err => this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err }));
+    })().catch(err => {
+      this.setStragglers([]);
+      this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err });
+    });
   }
 
   /** The process is gone: stop holding its stdin (the job host then ends its job; the ladder's sweeps go on). */
@@ -887,6 +896,8 @@ class Run {
   private end(e: Partial<RunExit> & { ended: RunExit["ended"] }): void {
     if (this.ended) return;
     this.ended = true;
+    // Nothing more is looked for unless the ladder's last sweep or a natural end's look is under way (they say).
+    if (!this.ladder && e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
     const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };

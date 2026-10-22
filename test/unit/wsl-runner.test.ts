@@ -565,7 +565,7 @@ describe("WSL runner: the stop ladder (§3.13)", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(exit).toMatchObject({ ended: "stopped-user" });
     // Named by RUN's rules: terminal codes and direction marks a process put in its own name are dropped.
-    expect(run.stragglers()).toEqual(["sleep", "[2Jfakesudo"]);
+    await expect(run.stragglers).resolves.toEqual(["sleep", "[2Jfakesudo"]);
     expect(w.log.lines.some(l => l.msg === "commands.straggler" && l.fields?.count === 2)).toBe(true);
   });
 
