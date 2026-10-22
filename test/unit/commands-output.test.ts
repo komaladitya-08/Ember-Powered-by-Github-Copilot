@@ -23,6 +23,7 @@ describe("step 1: terminal codes", () => {
     ["\x1b[31mred\x1b[0m plain", "red plain"],
     ["\x1b[1;32;40mbold\x1b[K", "bold"],
     ["\x1b]0;window title\x07after", "after"],
+    ["done\n\x1b]777;ember-exit;2\x07", "done\n"],
     ["\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\", "link"],
     ["\x1bPdevice\x1b\\text", "text"],
     ["\x1b_apc\x1b\\text", "text"],
