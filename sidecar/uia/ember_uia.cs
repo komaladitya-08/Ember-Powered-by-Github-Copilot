@@ -1491,6 +1491,25 @@ namespace Ember.Uia
       return r;
     }
 
+    /// <summary>
+    /// An element's children in the control view with every RawNode property cached; with twoLevels, each child also
+    /// brings its own children (one call for two levels). A provider that refuses that is asked for one level.
+    /// </summary>
+    internal static AutomationElementCollection FindChildren(AutomationElement el, bool twoLevels)
+    {
+      if (twoLevels)
+      {
+        try
+        {
+          using (Request(true).Activate()) return el.FindAll(TreeScope.Children, Condition.TrueCondition);
+        }
+        catch (ElementNotAvailableException) { throw; }
+        catch (TimeoutException) { throw; }
+        catch (Exception) { /* asked again below for one level, which every provider supports */ }
+      }
+      using (Request(false).Activate()) return el.FindAll(TreeScope.Children, Condition.TrueCondition);
+    }
+
     /// <summary>The element with its properties cached (some ways of getting an element ignore the active request).</summary>
     internal static AutomationElement Ensure(AutomationElement el, CacheRequest request)
     {
@@ -1984,18 +2003,37 @@ namespace Ember.Uia
         nodes.Add(node);
       }
       if (node.Has("gone")) return;
-      List<AutomationElement> kids = Children(el, node);
-      if (kids == null || kids.Count == 0) return;
       if (depth >= maxDepth)
       {
-        Cut(ref cutDepth);
+        if (HasListedChild(el)) Cut(ref cutDepth);
         return;
       }
+      List<AutomationElement> kids = Children(el, node);
+      if (kids == null) return;
       foreach (AutomationElement kid in kids)
       {
         Visit(kid, index, depth + 1);
         if (stop) return;
       }
+    }
+
+    // Below maxDepth: is there anything a deeper read would list? One level is enough to tell.
+    private bool HasListedChild(AutomationElement el)
+    {
+      AutomationElementCollection found;
+      try { found = el.CachedChildren; }
+      catch (InvalidOperationException) { found = null; }
+      if (found == null)
+      {
+        if (OutOfTime()) return false;
+        try { found = Props.FindChildren(el, false); }
+        catch (Exception) { return false; }
+      }
+      foreach (AutomationElement kid in found)
+      {
+        if (!Props.Skipped(kid)) return true;
+      }
+      return false;
     }
 
     // The children to visit: the ones that came with the element (two levels per call), or found now; without the
@@ -2008,7 +2046,7 @@ namespace Ember.Uia
       if (found == null)
       {
         if (OutOfTime()) return null;
-        try { found = el.FindAll(TreeScope.Children, Condition.TrueCondition); }
+        try { found = Props.FindChildren(el, true); }
         catch (ElementNotAvailableException)
         {
           lock (gate) node.Add("gone", true);
@@ -2183,7 +2221,6 @@ namespace Ember.Uia
     {
       internal IntPtr Hwnd;
       internal int Pid;
-      internal int Z;
       internal JObj Rect;
     }
 
@@ -2214,7 +2251,6 @@ namespace Ember.Uia
         Listed w = new Listed();
         w.Hwnd = h;
         w.Pid = pid;
-        w.Z = z;
         w.Rect = rect;
         listed.Add(w);
         Group g;
@@ -2258,7 +2294,12 @@ namespace Ember.Uia
         }
         JObj entry = null;
         bool busy = !done || found == null;
-        if (!busy && !found.TryGetValue(Win.Number(w.Hwnd), out entry)) continue;
+        if (!busy)
+        {
+          // Not there: not a control element, or it closed meanwhile. There but null: it failed to answer.
+          if (!found.TryGetValue(Win.Number(w.Hwnd), out entry)) continue;
+          busy = entry == null;
+        }
         if (busy)
         {
           entry = new JObj().Add("name", Win.Title(w.Hwnd)).Add("className", Win.ClassName(w.Hwnd)).Add("bounds", w.Rect);
@@ -2280,14 +2321,22 @@ namespace Ember.Uia
         foreach (Listed w in g.Windows)
         {
           if (s.Abandoned) break;
+          long key = Win.Number(w.Hwnd);
           AutomationElement el;
           try { el = Props.Ensure(AutomationElement.FromHandle(w.Hwnd), request); }
           catch (ElementNotAvailableException) { continue; }
           catch (ArgumentException) { continue; }
           catch (InvalidOperationException) { continue; }
+          catch (TimeoutException) { throw; }
+          catch (Exception)
+          {
+            // This window failed (a provider error): list it from Win32 facts, and read the process's others.
+            found[key] = null;
+            continue;
+          }
           if (Props.Flag(el, AutomationElement.IsControlElementProperty) == false) continue;
           int handle = Register(s, el, w.Hwnd);
-          found[Win.Number(w.Hwnd)] = Props.Node(el, handle, Props.NoTree, Props.NoTree, want);
+          found[key] = Props.Node(el, handle, Props.NoTree, Props.NoTree, want);
         }
       }
       return found;
@@ -2342,16 +2391,14 @@ namespace Ember.Uia
       int maxNodes = Args.Int(p, "maxNodes", 400, 1, 20000);
       int maxChildren = Args.Int(p, "maxChildren", 200, 1, 20000);
       Want want = WantOf(p, false);
-      CacheRequest request = Props.Request(true);
-      using (request.Activate())
-      {
-        AutomationElement root = SnapshotRoot(c, request);
-        IntPtr window = c.Window != IntPtr.Zero ? c.Window : Props.Hwnd(root);
-        Walk walk = new Walk(c, want, maxDepth, maxNodes, maxChildren, window);
-        c.Partial = walk.Partial;
-        walk.Run(root);
-        return walk.Answer();
-      }
+      CacheRequest request = Props.Request(false);
+      AutomationElement root;
+      using (request.Activate()) root = SnapshotRoot(c, request);
+      IntPtr window = c.Window != IntPtr.Zero ? c.Window : Props.Hwnd(root);
+      Walk walk = new Walk(c, want, maxDepth, maxNodes, maxChildren, window);
+      c.Partial = walk.Partial;
+      walk.Run(root);
+      return walk.Answer();
     }
 
     private static AutomationElement SnapshotRoot(Call c, CacheRequest request)
@@ -2482,12 +2529,7 @@ namespace Ember.Uia
       Entry e = (Entry)c.Target;
       int max = Args.Int(c.Params, "max", 200, 1, 10000);
       Want want = WantOf(c.Params, false);
-      CacheRequest request = Props.Request(false);
-      AutomationElementCollection found;
-      using (request.Activate())
-      {
-        found = ((AutomationElement)e.Element).FindAll(TreeScope.Children, Condition.TrueCondition);
-      }
+      AutomationElementCollection found = Props.FindChildren((AutomationElement)e.Element, false);
       List<object> result = new List<object>();
       foreach (AutomationElement kid in found)
       {

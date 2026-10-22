@@ -232,8 +232,8 @@ Result: `{"windows": Window[]}`, front-most first. A `Window` is a RawNode of th
 | `windowState` | string | `WindowPattern.WindowVisualState` |
 | `isTopmost` | boolean | `WS_EX_TOPMOST` |
 | `focused` | boolean | it is the foreground window (`GetForegroundWindow`), which holds the keyboard focus |
-| `z` | number | position in the z-order among the windows enumerated, 0 = front-most |
-| `busy` | `true` | the process is busy or didn't answer in time: the entry has **no `h`**, and only `hwnd`, `pid`, `processName`, `hostedPid`, `owner`, `name` (the Win32 title, `GetWindowTextW`, which sends no message), `className`, `bounds` (`GetWindowRect`), `isTopmost`, `focused` and `z` |
+| `z` | number | position in the z-order among the windows listed, 0 = front-most |
+| `busy` | `true` | the process is busy or didn't answer in time (or this window's provider failed): the entry has **no `h`**, and only `hwnd`, `pid`, `processName`, `hostedPid`, `owner`, `name` (the Win32 title, `GetWindowTextW`, which sends no message), `className`, `bounds` (`GetWindowRect`), `isTopmost`, `focused` and `z` |
 
 ### `snapshot`
 

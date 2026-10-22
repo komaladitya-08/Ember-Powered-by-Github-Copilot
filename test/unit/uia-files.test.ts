@@ -136,7 +136,7 @@ describe("the bridge's C# (ember_uia.cs)", () => {
       "System.Reflection", "System.Runtime.InteropServices", "System.Text", "System.Threading", "System.Windows",
       "System.Windows.Automation", "System.Windows.Automation.Text",
     ]);
-    const usings = [...cs.matchAll(/^using ([\w.]+);/gm)].map(m => m[1]);
+    const usings = [...plain.matchAll(/\busing\s+([\w.]+)\s*;/g)].map(m => m[1]);
     expect(usings.length).toBeGreaterThan(0);
     for (const u of usings) expect(allowed.has(u), u).toBe(true);
     expect(plain).not.toMatch(/\bHashSet</);
