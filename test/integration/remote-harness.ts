@@ -229,7 +229,10 @@ export function installParts(os: "linux" | "darwin", target: string): string {
   const archive = fs.readFileSync(path.join(ROOT, "dist/remote-parts", t.file));
   const d = versionsDir(os, parts.partsId);
   const check = os === "darwin" ? "shasum -a 256 -c -s manifest.sha256" : "sha256sum -c --quiet manifest.sha256";
-  const r = sshRun(`set -e; umask 077; d=${d}; rm -rf "$d.staging"; mkdir -p "$d.staging"; cd "$d.staging"; tar -xzf -; ${check}; touch .verified; rm -rf "$d"; mv "$d.staging" "$d"`, archive);
+  // .verified holds manifest.sha256's own hash, as the bootstrap writes it: its SERVE checks that before it runs the
+  // agent, so a folder with an empty one is refused there ("didn't arrive intact") for Ember's own connections.
+  const hash = os === "darwin" ? "shasum -a 256 manifest.sha256 | cut -d' ' -f1" : "sha256sum manifest.sha256 | cut -d' ' -f1";
+  const r = sshRun(`set -e; umask 077; d=${d}; rm -rf "$d.staging"; mkdir -p "$d.staging"; cd "$d.staging"; tar -xzf -; ${check}; ${hash} > .verified; rm -rf "$d"; mv "$d.staging" "$d"`, archive);
   if (r.code !== 0) throw new Error(`installing the parts failed: ${r.stderr}`);
   return parts.partsId;
 }
