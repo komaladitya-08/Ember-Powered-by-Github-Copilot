@@ -69,6 +69,23 @@ describe("the AX provider's walk of a window", () => {
     done();
   });
 
+  it("reads a label the walk didn't reach on its own, where the field's budget allows, and never past it", () => {
+    const fake = new FakeAx([app([window([
+      { role: "AXGroup", hidden: true, frame: at(0, 0, 100, 30), children: [{ role: "AXStaticText", value: "Card number", id: "far", frame: at(0, 0, 100, 30) }] },
+      { role: "AXTextField", id: "card", titleElement: "far", value: "", frame: at(110, 0, 200, 30) },
+      { role: "AXTextArea", id: "doc", titleElement: "far", value: "x", frame: at(110, 40, 200, 30) },
+    ])])]);
+    const { r, done } = walkOf(fake);
+    const card = r.nodes.find(n => n.node.platformRole === "AXTextField")!;
+    expect(card.node.labelledBy).toBe("Card number");
+    expect(fake.callsAbout("card").length).toBe(2);
+    expect(fake.callsAbout("far").map(c => c.op)).toEqual(["attrs"]);
+    // The text area spent its three round trips (batch, length, value): its label isn't read.
+    expect(r.nodes.find(n => n.node.platformRole === "AXTextArea")!.node.labelledBy).toBeUndefined();
+    done();
+    expect(fake.outstanding).toBe(0);
+  });
+
   it("reads a long document's first 2000 characters through AXStringForRange, never its whole AXValue", () => {
     const fake = new FakeAx([benchApp()]);
     fake.el("notes").spec.value = "a".repeat(1_000_000);
