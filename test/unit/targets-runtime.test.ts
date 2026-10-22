@@ -104,6 +104,8 @@ interface RigOptions {
   commandWindowExtras?: boolean;
   keyHint?: () => string | null;
   cursor?: boolean;
+  /** Main passes its window system's active window (TargetsDepsExtra.activeWindow). */
+  activeWindow?: boolean;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -248,7 +250,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -1094,6 +1096,18 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.cards.map(c => c.title)).toEqual(["Bring Ember to build-01?"]);
     expect(r.conns.connect).toHaveBeenCalled();
     expect(r.t.agent.active).toBe("ssh:build-01");
+  });
+
+  it("looks with main's window system alone: no mouse borrowing needed (an organisation's features.cursor: false)", async () => {
+    const r = rig({ notice, activeWindow: true });
+    expect(r.hands?.cursor).toBeUndefined();
+    expect(r.ticks).toHaveLength(1);
+    r.ticks[0]();
+    await flush();
+    expect(r.activeWindow).toHaveBeenCalled();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
+    // Without a window system there is nothing to look at.
+    expect(rig({ notice, hands: null }).ticks).toEqual([]);
   });
 
   it("reads the user's ssh in WSL only in distros running now (never booting one), through WA's runner", async () => {

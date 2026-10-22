@@ -1496,6 +1496,8 @@ function start(): void {
       // macOS: Homebrew's, MacPorts' and pipx's folders that exist (apps started from Finder get launchd's PATH).
       extraPath: () => platform.os === "darwin" ? extraBinDirs(app.getPath("home")).filter(d => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) : [],
       jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,
+      // The window the user is in, for the ssh noticer (§2.7): the window system's, whether or not Ember may borrow the mouse.
+      ...(wsSeen ? { activeWindow: () => { const w = wsSeen.focusWindow() ?? wsSeen.activeWindow(); return w ? { app: w.wmClass, title: w.title } : null; } } : {}),
       // The command card's key hint: only the keys Ember holds for the question up now.
       keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
       // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or

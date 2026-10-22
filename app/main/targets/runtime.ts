@@ -297,6 +297,12 @@ export interface TargetsDepsExtra {
    * bubble says which.
    */
   stopTasksOn?(target: TargetId, only?: "desktop"): void;
+  /**
+   * The window the user is in now (its program and title), from main's window system: what the ssh noticer looks at
+   * (§2.7). It needs only a window system, never the input backend or the administrator's mouse borrowing. Absent: the
+   * hands' tier-3 view of it, when they have one; neither: no noticing.
+   */
+  activeWindow?(): { app: string; title: string } | null;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -990,8 +996,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   });
   let noticer: Noticer | null = null;
   let noticeTimer: unknown = null;
-  // The window the user is in comes from the hands' tier-3 view of it (main's window system); without it, no noticing.
-  const look = deps.localHands?.cursor?.activeWindow;
+  // The window the user is in comes from main's window system (or, without that, the hands' tier-3 view of it, which
+  // exists only while Ember may borrow the mouse); without either, no noticing.
+  const look: (() => { app?: string; title?: string } | null) | undefined = deps.activeWindow ? () => deps.activeWindow!() : deps.localHands?.cursor?.activeWindow;
   if (parts.notice && look) {
     noticer = createNoticer({
       os: deps.os, log, notice: noticeOf(parts.notice),
