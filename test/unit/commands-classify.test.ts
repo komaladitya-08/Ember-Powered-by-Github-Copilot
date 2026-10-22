@@ -33,6 +33,29 @@ describe("the command corpus", () => {
   });
 });
 
+describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {
+  const withReal = (real: Record<string, string>) => ({ ...contextOf("linux"), real: new Map(Object.entries(real)) });
+  const win = (real: Record<string, string>) => ({ ...contextOf("win32"), real: new Map(Object.entries(real)) });
+
+  it("judges the real path as well as the written one, and keeps the stricter", () => {
+    expect(classifyCommand("cat notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/.ssh/id_rsa" })).findings.map(f => f.cls)).toContain("secret");
+    expect(classifyCommand("rm -rf cache", "bash", withReal({ "/home/ana/proj/cache": "/home/ana/.config/ember" })).refuse?.rule).toBe("ember.path");
+    expect(classifyCommand("echo x > notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/.bashrc" })).findings.map(f => f.rule)).toContain("path.startup");
+    expect(classifyCommand("cat notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/proj/notes" })).findings).toEqual([]);
+  });
+
+  it("marks a finding whose real path differs, so no intent row covers it", () => {
+    const cls = classifyCommand("rm notes", "bash", withReal({ "/home/ana/proj/notes": "/home/ana/other/notes" }));
+    expect(cls.findings[0].widening).toContain("real-path");
+  });
+
+  it("drops the unclear 8.3 short name once the target resolved it", () => {
+    const text = "Get-Content C:\\PROGRA~1\\x\\y.txt";
+    expect(classifyCommand(text, "powershell", contextOf("win32")).findings.map(f => f.rule)).toContain("unclear.short-name");
+    expect(classifyCommand(text, "powershell", win({ "C:\\PROGRA~1\\x\\y.txt": "C:\\Program Files\\x\\y.txt" })).findings).toEqual([]);
+  });
+});
+
 /** A small fixed-seed generator (mulberry32), so a failure can be replayed. */
 function random(seed: number): () => number {
   let a = seed >>> 0;
