@@ -625,6 +625,25 @@ describe("sending", () => {
     expect(a.mux.backlog()).toEqual({ ctl: 0, data: 0, bulk: 0, diag: 0 });
   });
 
+  it("lets go of one channel's queued bulk bytes, a part written one too, and nothing of another's", async () => {
+    const out = new HeldWritable();
+    const a = rawPeer("agent", { write: out });
+    a.send(PC_PREAMBLE);
+    await settle();
+    a.mux.sendBytes(6, Buffer.alloc(MiB, 1));
+    a.mux.sendBytes(7, Buffer.alloc(10, 2));
+    a.mux.sendBytes(6, Buffer.alloc(100, 3));
+    out.release();
+    await settle(30);
+    // Credit let 64 KiB of channel 6's first send go; the rest of it and its second send are dropped.
+    const sent6 = 2 * (CAPS.chunkBytes - 4);
+    expect(a.mux.dropBulk(6)).toBe(MiB + 100 - sent6);
+    expect(a.mux.backlog().bulk).toBe(10);
+    expect(a.mux.dropBulk(6)).toBe(0);
+    expect(a.mux.dropBulk(7)).toBe(10);
+    expect(a.mux.backlog().bulk).toBe(0);
+  });
+
   it("copies bulk bytes when they are sent, so the caller may reuse its buffer", async () => {
     const p = await openPc();
     const buf = Buffer.alloc(100 * KiB, 1);

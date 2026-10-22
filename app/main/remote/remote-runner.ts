@@ -60,8 +60,13 @@ export interface RemoteRunnerOptions {
 const INPUT_CHUNK = 4096;
 /** Typing held while the run is starting, at most. */
 const QUEUE_MAX = 64 * 1024;
-/** After cmd.exit, how long the run's last bytes may take to arrive (bulk travels behind ctl), plus the round trip. */
+/**
+ * After cmd.exit, how long the run's last bytes may take to arrive (bulk travels behind ctl), plus the round trip:
+ * counted again from each chunk that still comes (a slow link drains the agent's queue of a fast printer's output,
+ * up to about 1 MiB), and never more than TAIL_MAX_MS in all.
+ */
 const TAIL_MS = 2000;
+const TAIL_MAX_MS = 120_000;
 /** After a Stop, how long the agent has to say the run ended before the PC ends it itself, plus the round trip. */
 const STOP_WAIT_MS = 10_000;
 /** A run the agent hasn't ended this long after its own time limit is stopped from here (an agent that never says). */
@@ -112,6 +117,8 @@ class RemoteRun implements RemoteRunningCommand {
   private tracker: SecretTracker | null = null;
   private received = 0;
   private exitEvent: EvMap["cmd.exit"] | null = null;
+  /** When the agent's cmd.exit was taken up here (the tail's own limit counts from it). */
+  private exitAt = 0;
   private stopWhy: StopWhy | null = null;
   private stopSent = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -249,7 +256,13 @@ class RemoteRun implements RemoteRunningCommand {
         this.ctx.o.log.warn("remote.cmd_output_listener_failed", { runId: this.runId, err: err instanceof Error ? err.name : "error" });
       }
     }
-    if (this.exitEvent && this.received >= this.exitEvent.outBytes) this.finishExit();
+    if (!this.exitEvent) return;
+    if (this.received >= this.exitEvent.outBytes) return this.finishExit();
+    // Still coming: the wait for the rest starts again from this chunk, within the tail's own limit.
+    if (this.ctx.now() - this.exitAt < TAIL_MAX_MS) {
+      this.clearTimer();
+      this.timer = this.later(() => this.finishExit(), TAIL_MS);
+    }
   }
 
   private track(text: string): void {
@@ -265,6 +278,7 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.state === "ended") return;
     this.exitEvent = d;
     if (this.state === "starting") return; // ended before its answer came: taken up when it does
+    this.exitAt = this.ctx.now();
     if (this.received >= d.outBytes) return this.finishExit();
     this.clearTimer();
     this.timer = this.later(() => this.finishExit(), TAIL_MS);

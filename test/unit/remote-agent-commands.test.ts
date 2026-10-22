@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import { RemoteRuns, startError, type RunsDeps } from "../../app/remote/commands";
+import { BACKLOG, RemoteRuns, startError, type RunsDeps } from "../../app/remote/commands";
 import { CONTRACTS } from "../../app/remote/contracts";
 import { emberNamesRegExp } from "../../app/main/remote/protocol";
 import type { RunExit, RunnerFacts, RunSpec } from "../../app/main/commands/types";
@@ -30,11 +30,18 @@ const spec = (o: Partial<RunSpec> = {}): RunSpec => ({
   ...o,
 });
 
+/** An output pipe: data when the test says, and whether the reader paused it. */
+class FakeOut extends EventEmitter {
+  paused = false;
+  pause() { this.paused = true; return this; }
+  resume() { this.paused = false; return this; }
+}
+
 /** A process that does nothing until the test says, recording what reaches it. */
 class FakeChild extends EventEmitter {
   pid = 4321;
-  stdout = new EventEmitter();
-  stderr = new EventEmitter();
+  stdout = new FakeOut();
+  stderr = new FakeOut();
   typed: string[] = [];
   stdin: { writable: boolean; write: (b: Uint8Array | string) => boolean; end: () => void; on: () => void } | null;
   constructor(withStdin: boolean) {
@@ -52,7 +59,7 @@ class FakeChild extends EventEmitter {
 }
 
 /** RemoteRuns over fakes, with everything it does recorded. */
-function harness() {
+function harness(o: Pick<RunsDeps, "backlog" | "drop"> = {}) {
   const log: string[] = [];
   const spawned: { command: string; args: string[]; options: SpawnOptions; child: FakeChild }[] = [];
   const sent: { channel: number; bytes: string }[] = [];
@@ -83,6 +90,7 @@ function harness() {
     exited: (runId, exit, outBytes) => { exits.push({ runId, exit, outBytes }); },
     log: quiet,
     now: at,
+    ...o,
   };
   return { runs: new RemoteRuns(deps), log, spawned, sent, exits, stamps, watched };
 }
@@ -218,6 +226,49 @@ describe("a command on the remote", () => {
     expect(h.spawned[0].child.typed).toEqual(["\x03"]);
     h.spawned[0].child.close(130);
     expect(h.exits[0].exit.ended).toBe("timeout");
+  });
+
+  it("pauses every run's output while the link's bulk backlog is high, and lets it flow again once it drains", async () => {
+    let queued = 0;
+    const h = harness({ backlog: () => queued });
+    h.runs.start(spec(), 7, facts(true));
+    h.runs.start(spec({ runId: "00000000000000bb" }), 8, facts(true));
+    const [a, b] = h.spawned.map(s => s.child);
+    a.out(`${START}line\r\n`);
+    expect([a.stdout.paused, b.stdout.paused]).toEqual([false, false]);
+    queued = BACKLOG.high + 1;
+    a.out("x".repeat(64 * 1024));
+    expect([a.stdout.paused, a.stderr.paused, b.stdout.paused, b.stderr.paused]).toEqual([true, true, true, true]);
+    // A run that starts meanwhile waits too.
+    h.runs.start(spec({ runId: "00000000000000cc" }), 9, facts(true));
+    expect(h.spawned[2].child.stdout.paused).toBe(true);
+    queued = BACKLOG.low + 1;
+    await vi.advanceTimersByTimeAsync(BACKLOG.pollMs * 3);
+    expect(a.stdout.paused).toBe(true);
+    queued = BACKLOG.low;
+    await vi.advanceTimersByTimeAsync(BACKLOG.pollMs);
+    expect(h.spawned.map(s => s.child.stdout.paused)).toEqual([false, false, false]);
+  });
+
+  it("never holds back a run being stopped, and drops the kill switch's runs' queued output (outBytes counts what went)", async () => {
+    let queued = BACKLOG.high + 1;
+    const dropped: number[] = [];
+    const h = harness({ backlog: () => queued, drop: ch => { dropped.push(ch); return 5; } });
+    h.runs.start(spec(), 7, facts(true));
+    const c = h.spawned[0].child;
+    c.out(`${START}0123456789`);
+    expect(c.stdout.paused).toBe(true);
+    h.runs.stop("0123456789abcdef", "user");
+    expect(c.stdout.paused).toBe(false);
+    expect(dropped).toEqual([]);
+    void h.runs.stopAll("killswitch", true);
+    expect(dropped).toEqual([7]);
+    c.out("after the kill switch");
+    expect(h.sent.map(x => x.bytes).join("")).toBe(`${START}0123456789`);
+    c.close(130);
+    expect(h.exits[0].outBytes).toBe(START.length + 10 - 5);
+    queued = 0;
+    await h.runs.ladders();
   });
 
   it("refuses a run id used before", () => {

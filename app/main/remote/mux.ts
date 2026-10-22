@@ -121,6 +121,11 @@ export class MuxError extends Error {
 export interface MuxBacklog {
   /** Bytes queued per stream (frame headers included for ctl and diag; message or send bytes for data and bulk). */
   backlog(): { ctl: number; data: number; bulk: number; diag: number };
+  /**
+   * Drops what is still queued of a bulk channel's bytes (nobody will read them: a run the kill switch stopped) and
+   * returns how many. Each bulk frame stands alone, so a send already part written is simply cut there.
+   */
+  dropBulk(channel: number): number;
 }
 
 /** Test seams for `createMux`: a monotonic clock in ms (default `performance.now()`). */
@@ -484,6 +489,18 @@ class FramedMux implements Mux, MuxBacklog {
 
   backlog(): { ctl: number; data: number; bulk: number; diag: number } {
     return { ctl: this.ctlBytes, data: this.dataBytes, bulk: this.bulkBytes, diag: this.diagBytes };
+  }
+
+  dropBulk(channel: number): number {
+    let dropped = 0;
+    let w = 0;
+    for (const item of this.bulk) {
+      if (item.id === channel) dropped += item.bytes.length - item.at;
+      else this.bulk[w++] = item;
+    }
+    this.bulk.length = w;
+    this.bulkBytes -= dropped;
+    return dropped;
   }
 
   reset(code: number, reason: string): void {
@@ -1017,7 +1034,8 @@ class FramedMux implements Mux, MuxBacklog {
  * - `reset` writes a RESET ahead of anything queued and closes; `onClose` fires once, with why, on any close (a
  *   listener added after it is called on a microtask). The mux never ends or destroys `read` or `write`.
  * - `backlog()` (MuxBacklog, beyond the contract) says how many bytes wait to be written, per stream: nothing bounds
- *   the queues but the owner, who pauses a fast source (a run's output on a slow link) while `bulk` is high.
+ *   the queues but the owner, who pauses a fast source (a run's output on a slow link) while `bulk` is high;
+ *   `dropBulk(channel)` lets go of a channel's queued bytes nobody will read.
  */
 export function createMux(o: { read: NodeJS.ReadableStream; write: NodeJS.WritableStream; role: "pc" | "agent"; partsId: string; log: Logger }, tuning?: MuxTuning): Mux & MuxBacklog {
   if (!o || typeof o.read?.on !== "function" || typeof o.read.resume !== "function" || typeof o.write?.write !== "function" || typeof o.write.on !== "function") {

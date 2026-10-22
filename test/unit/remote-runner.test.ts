@@ -67,6 +67,22 @@ describe("RemoteRunner: a run on the remote (§5.5)", () => {
     expect([ended, out]).toEqual([true, "done\n."]);
   });
 
+  it("waits on after the exit while the last bytes still come (a slow link drains the agent's queue), within a limit", async () => {
+    vi.useFakeTimers();
+    const { link, runner } = setup();
+    const spec = specOf();
+    const run = runner.start(spec);
+    let out = "";
+    run.onOutput(b => { out += new TextDecoder().decode(b); });
+    await settle();
+    link.emit("cmd.exit", exitOf(spec.runId, {}, 9));
+    for (const part of ["abc", "def", "ghi"]) {
+      await vi.advanceTimersByTimeAsync(1900);
+      link.bytes(20, enc(part));
+    }
+    expect([(await run.done).ended, out]).toEqual(["exit", "abcdefghi"]);
+  });
+
   it("ends a moment after the exit when the last bytes never come", async () => {
     vi.useFakeTimers();
     const { link, runner } = setup();
