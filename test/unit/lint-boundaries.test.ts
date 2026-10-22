@@ -5,12 +5,16 @@
  * exist, so nothing is written; the names are joined with this OS's separator, as ESLint receives them.
  */
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import path from "node:path";
 import { ESLint } from "eslint";
 
 const root = path.resolve(__dirname, "../..");
 const eslint = new ESLint({ cwd: root });
+
+// The first lint loads the config and the TypeScript parser (about a second here, several on a busy CI runner running
+// the whole suite): done once up front with room to spare, so no single test's 5 s budget pays for it.
+beforeAll(async () => { await eslint.lintText("export {};\n", { filePath: path.join(root, "app", "main", "boundary-warm-up.ts") }); }, 60_000);
 
 /** The rules that fired for `code` linted as the repository file `file`. */
 async function rulesFor(file: string, code: string): Promise<string[]> {

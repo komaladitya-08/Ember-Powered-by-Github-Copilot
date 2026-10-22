@@ -190,10 +190,12 @@ export function providerApiKey(p: NonNullable<AdminPolicy["provider"]>, read: (f
 /**
  * The commands mode for a kind of target (R5): no policy file → "on" (the user still turns commands on per target);
  * a policy that exists without a `commands` key → "off" (the administrator never agreed to commands); a policy that
- * couldn't be read → "off"; otherwise its value for `kind`, "off" when that key is missing.
+ * couldn't be read → "off"; otherwise its value for `kind`, "off" when that key is missing. A kind the administrator
+ * turned off (`features.wsl` or `features.ssh` false) has no commands either, whatever `commands` says (§9.3's table).
  */
 export function commandMode(loaded: LoadedAdminPolicy, kind: TargetKind): CommandMode {
   if (loaded.error) return "off";
+  if (kind !== "local" && loaded.policy.features[kind] === false) return "off";
   if (loaded.source === null) return "on";
   return loaded.policy.commands?.[kind] ?? "off";
 }

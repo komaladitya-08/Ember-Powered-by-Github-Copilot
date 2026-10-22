@@ -152,6 +152,14 @@ describe("the administrator's commands modes (R5, §9.3)", () => {
     expect(commandMode(l, "wsl")).toBe("off");
     expect(commandMode(loaded({ commands: { wsl: "on" } }), "wsl")).toBe("on");
   });
+  it("is off for WSL or SSH when the policy turns that feature off, whatever its commands key says", () => {
+    const l = loaded({ features: { wsl: false, ssh: false }, commands: { local: "on", wsl: "on", ssh: "on" } });
+    expect(commandMode(l, "wsl")).toBe("off");
+    expect(commandMode(l, "ssh")).toBe("off");
+    expect(commandMode(l, "local")).toBe("on");
+    expect(adminSummary(l).commands).toEqual({ local: "on", wsl: "off", ssh: "off" });
+    expect(commandMode(loaded({ features: { ssh: true }, commands: { ssh: "ask" } }), "ssh")).toBe("ask");
+  });
   it("is off everywhere for a policy that can't be used", () => {
     for (const k of KINDS) expect(commandMode(lockedDown("/etc/ember/policy.json", "broken"), k)).toBe("off");
     for (const k of KINDS) expect(commandMode(loaded({ commands: { local: "always" } }), k)).toBe("off");
@@ -474,6 +482,10 @@ describe("the protocol's schemas", () => {
     expect(OP_SCHEMAS["audit.recent"].args.safeParse({ limit: CAPS.auditEntries + 1 }).success).toBe(false);
     expect(OP_SCHEMAS["perceive.read"].result.safeParse(wire({ ...seen, window: { ...window, bounds: { ...bounds, x: CAPS.coord + 1 } } })).success).toBe(false);
     expect(OP_SCHEMAS["cmd.input"].args.safeParse({ runId, data: "A".repeat(5468) }).success).toBe(false);
+    // 4 KiB decoded at most: 4096 bytes pass; the longest text the length cap allows (4098 bytes) doesn't.
+    expect(OP_SCHEMAS["cmd.input"].args.safeParse({ runId, data: Buffer.alloc(4096, 7).toString("base64") }).success).toBe(true);
+    expect(OP_SCHEMAS["cmd.input"].args.safeParse({ runId, data: Buffer.alloc(4097, 7).toString("base64") }).success).toBe(false);
+    expect(OP_SCHEMAS["cmd.input"].args.safeParse({ runId, data: "A".repeat(5464) }).success).toBe(false);
     expect(OP_SCHEMAS["cmd.input"].args.safeParse({ runId, data: "not base64!" }).success).toBe(false);
   });
 

@@ -519,7 +519,14 @@ const auditValue = (depth: number): z.ZodType<unknown> => {
 const AuditEntrySchema = z.record(str(64), auditValue(2)).refine(o => Object.keys(o).length <= 64, "too many keys");
 
 /** `cmd.input`'s data: base64 of at most 4 KiB. */
-const INPUT_B64_MAX = Math.ceil(4096 / 3) * 4;
+const INPUT_BYTES_MAX = 4096;
+const INPUT_B64_MAX = Math.ceil(INPUT_BYTES_MAX / 3) * 4;
+/** The bytes a padded base64 text decodes to (its length is a multiple of 4: the pattern below checks that first). */
+const base64Bytes = (s: string) => (s.length / 4) * 3 - (s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0);
+/** `cmd.input`'s data: padded base64 that decodes to at most INPUT_BYTES_MAX bytes (the longest text allows 4098). */
+const InputData = z.string().max(INPUT_B64_MAX)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+  .refine(s => base64Bytes(s) <= INPUT_BYTES_MAX, "more than 4 KiB of input");
 
 /** zod schemas, one per op's args and result and per event, `.strict()`, with CAPS. */
 export const OP_SCHEMAS: { readonly [O in Op]: { args: z.ZodType<OpArgs<O>>; result: z.ZodType<OpResult<O>> } } = {
@@ -578,7 +585,7 @@ export const OP_SCHEMAS: { readonly [O in Op]: { args: z.ZodType<OpArgs<O>>; res
     ]),
   },
   "cmd.input": {
-    args: z.object({ runId, data: z.string().max(INPUT_B64_MAX).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/) }).strict(),
+    args: z.object({ runId, data: InputData }).strict(),
     result: EMPTY,
   },
   "cmd.stop": { args: z.object({ runId, why: z.enum(["user", "task", "timeout"]) }).strict(), result: EMPTY },
