@@ -18,20 +18,43 @@ import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
-import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
-import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "./worker";
+import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
 import type { PerceptionPort, SidecarPort } from "../perception/ports";
-import type { TargetsForAgent } from "../targets/types";
+import type { TargetHands, TargetsForAgent } from "../targets/types";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
-import { TERMINAL_REQUEST } from "../policy/vocabulary";
+import { terminalRequest } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
 import { PLATFORM_WORDS } from "../../shared/words";
+import type { TargetBinding, PromptCaps } from "../targets/types";
+import type { TargetId } from "../../shared/targets";
+import { placeName, whereWords } from "../commands/flow";
+import { NO_CAPS } from "./persona";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
+
+/** The worker for a task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
+const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
+  run: async () => ({ success: false, summary: why }),
+  steer: async () => false,
+  dispose: async () => undefined,
+  sessionId: null,
+});
+
+/**
+ * Today's hands as a target's (§2.6), for a host built without a targets runtime (tests, the eval): this computer's
+ * screen, no commands, grants by the app's name in lower case and window leases by the window's own key.
+ */
+export function localTargetHands(hands: Hands, sys: WorkerSystem): TargetHands {
+  return {
+    ...hands, system: sys, commands: null, grantKey: app => app.toLowerCase(), leaseKey: key => key,
+    binding: { id: "local", kind: "local", label: "This computer", screenOs: sys.os, shellOs: sys.os, desktop: "screen" },
+  };
+}
 
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
@@ -141,6 +164,10 @@ export interface HostOptions {
   targets?: TargetsForAgent;
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
   taskBase?: { audit: AuditLog; confirmer: Confirmer };
+  /** Ember's own pids now (app.getAppMetrics() and its helpers'), for commands on this computer (D4.5, live). */
+  emberPids?: () => number[];
+  /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
+  onAnnounce?: (text: string) => void;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -318,7 +345,13 @@ const MAX_QUEUED = 20;
  * One request of the user's: where they were when they called Ember, what they said, and what the conversation
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
-interface UserRequest { target: (WindowTarget & { app?: string }) | null; words: string; screen: string[] }
+interface UserRequest {
+  target: (WindowTarget & { app?: string }) | null;
+  words: string;
+  screen: string[];
+  /** The target the context was read on (QuickContext.targetId; absent: this computer). */
+  targetId?: TargetId;
+}
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
 /** The words of what someone said ("don't" is one). */
@@ -426,6 +459,13 @@ export class AgentHost {
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
   private readonly outcomes = new Map<string, Presenter>();
+  /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
+  private readonly taskBindings = new Map<string, TargetBinding>();
+  /**
+   * What the conversation's prompt promised when it was created (§3.15): kept for its resumes (the system message is
+   * kept with it), and compared with now on every request.
+   */
+  private convoCaps: PromptCaps | null = null;
   private readonly stateFile: string;
 
   /** The OS's keys, words, apps, settings and security vocabulary (Linux's unless main passes its own). */
@@ -766,29 +806,34 @@ export class AgentHost {
       void this.sweepTaskSessions(client);
 
       const hands = this.o.hands;
+      // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6).
+      const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
         && this.o.admin?.().features.screenImages !== false;
-      this.tasks = hands ? new TaskManager({
+      this.tasks = hands || targets ? new TaskManager({
         log: this.o.log.child("tasks"),
-        currentWindow: hands.currentWindow,
+        currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
-        audit: hands.audit,
+        audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           const summary = task.result?.summary ?? "";
           const text = taskOutcome(task);
-          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal);
+          const binding = this.taskBindings.get(task.id);
+          this.taskBindings.delete(task.id);
+          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
           this.taskPresenters.delete(task.id);
           const said = this.remember("task", text);
           if (summary) this.results.set(said, summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
-          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text });
+          // A task on another computer says where when it is spoken or notified ("On build-01: done. …", §6).
+          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
           this.dropAnnouncement(task.id);
           // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
           const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];
@@ -802,28 +847,31 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
-        makeWorker: (spec, progress) => new Worker({
-          client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision(), provider: this.o.provider,
-          workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-          perception: hands.perception, sidecar: hands.sidecar, policy: hands.policy, confirmer: hands.confirmer, audit: hands.audit,
-          settings: this.o.settings,
-          presenter: this.taskPresenter(spec.id, spec.goal),
-          lease: (key, owner, signal) => this.tasks!.lease(key, owner, signal),
-          flyTo: hands.flyTo,
-          cursor: hands.cursor,
-          clipboard: hands.clipboard,
-          pointer: hands.pointer,
-          activationKey: hands.activationKey,
-          desk: hands.desk,
-          onDesk: hands.onDesk,
-          onProgress: progress,
-          onUsage: (i, o) => this.recordUsage(i, o),
-          limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
-          inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
-          system: this.sys,
-        }, spec),
+        makeWorker: (spec, progress) => {
+          // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
+          // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before.
+          const got = targets ? targets.handsFor(spec.targetId ?? "local")
+            : hands ? { ok: true as const, hands: localTargetHands(hands, this.sys) } : { ok: false as const, why: "Ember can't work on this computer's screen here." };
+          if (!got.ok) return refusedWorker(spec, got.why);
+          const h = got.hands;
+          return new Worker({
+            client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
+            provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+            perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
+            settings: this.o.settings, presenter: this.taskPresenter(spec.id, spec.goal, h.binding),
+            lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
+            flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
+            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
+            limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
+            inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
+            system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
+            ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
+          }, spec);
+        },
       }) : null;
       const tasks = this.tasks;
+      // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
+      const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         stateFile: this.stateFile,
@@ -831,7 +879,14 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider,
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
-        describeScreen: this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
+        describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); turn?.screen.push(seen); return seen; }
+          : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
+        caps,
+        ...(targets ? {
+          listComputers: () => targets.describeTargets(),
+          // Only a host the user's own words named, and only a button for them to click (the model never connects).
+          offerConnect: (name: string) => targets.offerConnect(name, this.userWordsOf(this.turn).words ?? ""),
+        } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
         onAnswer: this.o.onAnswer,
         onTurnEnd: this.o.onTurnEnd,
@@ -868,7 +923,7 @@ export class AgentHost {
           if (why === "silent") this.lost(gen, reason, NO_ANSWER, NO_ANSWER_DETAIL, asked, CUT_OFF_STALLED);
           else this.lost(gen, reason, full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
         },
-        startTask: tasks ? goal => {
+        startTask: tasks ? (goal, choice) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           // Risky steps are checked against what the user said in this turn's request (and the one it answers), not the
@@ -876,25 +931,50 @@ export class AgentHost {
           // it goes with this task.
           const r = this.turn;
           const said = this.userWordsOf(r);
+          // The task's computer (§2.3): the one the user's own words name, the model's choice only when their words name it
+          // too, else the one Ember is set to. Its hands are asked for now: a computer that can't take the task refuses it
+          // here, before anything is queued (§2.6).
+          let bound: TargetHands | null = null;
+          if (targets) {
+            const b = targets.bind({ userWords: said.words ?? "", ...(choice !== undefined ? { choice } : {}) });
+            if (!b.ok) return b.why;
+            const got = targets.handsFor(b.binding.id);
+            if (!got.ok) return got.why;
+            bound = got.hands;
+          }
           // The method the user named is part of the task: never let a goal turn "in the terminal" into another app. Earlier
           // words it was refused for in an earlier turn no longer count: what the user said since answers Ember's "how else?"
           // ("yes, use Files instead"). In the turn that refused them they still do, and the user's own words always do.
-          if (r && said.words) {
+          // Where the task's computer runs commands, the terminal the user asked for is Ember's command window (§3.15).
+          const commands = bound?.commands ?? null;
+          if (r && said.words && !(commands && commands.capability().state !== "off")) {
             const key = refusedKey;
             const earlier = said.words.slice(0, said.words.length - r.words.length).split("\n").filter(l => l.trim());
             const held = [...earlier.filter(l => { const by = this.terminalRefused.get(key(l)); return !by || by === r; }), r.words].join("\n");
-            const terminal = TERMINAL_REQUEST[this.sys.os];
+            const terminal = terminalRequest(this.sys.os, this.wslOn());
             if (terminal.asks.test(held.replace(terminal.refuses, " ")) && !terminal.names.test(goal)) {
               for (const l of said.words.split("\n")) this.terminalRefused.set(key(l), r);
               while (this.terminalRefused.size > 60) this.terminalRefused.delete(this.terminalRefused.keys().next().value!);
               return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
             }
           }
-          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined });
+          const binding = bound?.binding;
+          const where = binding ? whereWords(binding) : undefined;
+          const t = tasks.start(goal, {
+            target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
+            ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
+          });
+          if (binding) this.taskBindings.set(t.id, binding);
           this.announced.add(t.id);
-          return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
+          return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {
+          // Ember points only on this screen, never at another computer's (§2.6).
+          if (targets) {
+            const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "" });
+            if (!b.ok) return b.why;
+            if (b.binding.kind === "ssh") return "Ember can't point at things on another computer's screen. Explain the steps in words instead.";
+          }
           // Nothing is promised that can't be done: a window Ember can't read is one it can't point into.
           const target = this.turn?.target ?? undefined;
           const stops = this.stops;
@@ -916,6 +996,7 @@ export class AgentHost {
       });
       await this.conductor.start();
       this.conversation = this.conductor.sessionId;
+      this.convoCaps = caps;
       this.conversationLogin = login;
       if (gen !== this.gen) return;
 
@@ -1081,11 +1162,64 @@ export class AgentHost {
   }
 
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
-  private taskPresenter(id: string, goal: string): Presenter {
+  private taskPresenter(id: string, goal: string, binding?: TargetBinding): Presenter {
     const title = titleOf(goal);
-    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id, shortcuts: this.sys.shortcuts });
+    // Its bubbles say where it acts when that isn't this computer (§2.4); an announced command is spoken when replies are.
+    const where = binding ? whereWords(binding) : undefined;
+    const announce = this.o.onAnnounce;
+    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
+      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}),
+      ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} Say 'Ember, stop' to cancel.`) } : {}),
+    });
     this.taskPresenters.set(id, p);
     return p;
+  }
+
+  /**
+   * The window a task starts in (§2.6, G14): the turn's context only when it was read on the task's own target; for a
+   * task on this computer without one, this screen's current window (as before targets existed); otherwise none (an
+   * empty target, so another computer's task never starts in this screen's window, and the reverse).
+   */
+  private contextFor(r: UserRequest | null, binding: TargetBinding | undefined): (WindowTarget & { app?: string }) | undefined {
+    if (!binding) return r?.target ?? undefined;
+    if (r?.target) return (r.targetId ?? "local") === binding.id ? r.target : {};
+    return binding.id === "local" ? undefined : {};
+  }
+
+  /**
+   * describe_screen with targets (§2.6): the screen of the computer the user's words name (or the model's choice, when
+   * their words name it too), else the active one's; this screen's through main, another computer's through its agent.
+   */
+  private async describeTarget(choice?: string): Promise<string> {
+    const targets = this.o.targets!;
+    const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "", ...(choice !== undefined ? { choice } : {}) });
+    if (!b.ok) return b.why;
+    const remote = targets.describeScreen(b.binding.id);
+    if (remote) return remote;
+    if (this.o.describeScreen) return this.o.describeScreen();
+    return `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`;
+  }
+
+  /** Windows with WSL turned on (the user's switch, and the administrator allows it): the terminal words then differ (§3.15). */
+  private wslOn(): boolean {
+    if (this.sys.os !== "win32" || !this.o.targets || this.o.admin?.().features.wsl === false) return false;
+    return this.o.settings.get().targets?.wsl.on === true;
+  }
+
+  /**
+   * The trusted line before each request's context (§2.6): where Ember is set to work and what commands can do now
+   * (built by the targets runtime from local data), and what changed about commands since the conversation began (its
+   * prompt is kept as it was created). "" without a targets runtime.
+   */
+  private trustedLine(): string {
+    const targets = this.o.targets;
+    if (!targets) return "";
+    const was = this.convoCaps ?? NO_CAPS;
+    const now = targets.caps();
+    const since = was.commands === now.commands ? ""
+      : now.commands ? "(Since this conversation began, the user turned on commands: tasks can now run commands in Ember's command window.)"
+      : "(Since this conversation began, commands were turned off: tasks can't run commands now. Say so if the user asks for one.)";
+    return [targets.activeLine().trim(), since].filter(Boolean).join(" ");
   }
 
   /**
@@ -1121,7 +1255,7 @@ export class AgentHost {
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
    * before reading the screen); a Stop since then drops the request instead of sending it.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch): Promise<void> {
     if (epoch !== this.stopEpoch) return;
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
@@ -1155,13 +1289,13 @@ export class AgentHost {
     const gen = this.gen;
     this.remember("you", text);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
-    const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [] };
+    const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}) };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
-      await this.conductor.ask(text, context?.text);
+      await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
       // Never sent: no turn of its own will come.
       this.queued = this.queued.filter(r => r !== request);
@@ -1213,6 +1347,7 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);
       else forgetSavedConversation(this.stateFile);
