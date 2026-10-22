@@ -148,3 +148,76 @@ export function warmFacts(runner: CommandRunner, log: Logger, event: string, now
 export function shellsOf(facts: RunnerFacts | null, fallback: ShellId[]): ShellId[] {
   return facts?.shells.length ? [...facts.shells] : fallback;
 }
+
+/** One process as a process table lists it: `run` when it carries a command run's marker (the user's work, not Ember's). */
+export interface ProcRow { pid: number; ppid: number; run: boolean }
+
+/**
+ * Ember's own processes from a process table (D4.5): every descendant of Ember's main process (the accessibility
+ * helper, the Copilot runtime, ssh and its askpass, WSL helpers, the desk), except a command's run and everything under
+ * it, which are the user's work and may be stopped like any other program (critique integration-24, S0b's hand-off).
+ */
+export function ownTree(rows: readonly ProcRow[], root: number): number[] {
+  const children = new Map<number, ProcRow[]>();
+  for (const r of rows) {
+    if (r.pid === r.ppid) continue;
+    const list = children.get(r.ppid);
+    if (list) list.push(r); else children.set(r.ppid, [r]);
+  }
+  const out: number[] = [];
+  const seen = new Set<number>([root]);
+  const queue = [root];
+  while (queue.length) {
+    const p = queue.shift()!;
+    for (const c of children.get(p) ?? []) {
+      if (seen.has(c.pid) || c.run) continue;
+      seen.add(c.pid);
+      out.push(c.pid);
+      queue.push(c.pid);
+    }
+  }
+  return out;
+}
+
+/** The parent pid in a Linux /proc/<pid>/stat line ("1234 (comm) S 1 …"; comm may hold spaces and parentheses). */
+export function statParent(stat: string): number | null {
+  const m = /^\s*\d+ \(.*\) \S (\d+) /s.exec(stat);
+  return m ? Number(m[1]) : null;
+}
+
+/** What reading Linux's process table needs (the real /proc in production; a fake in tests). */
+export interface ProcReader {
+  pids(): number[];
+  stat(pid: number): string | null;
+  /** The process's environment (own processes only; null when it can't be read). */
+  environ(pid: number): Uint8Array | null;
+}
+
+/** Linux's process table: parents from stat, a command run by its EMBER_RUN_ID marker (§3.3). */
+export function linuxProcTable(r: ProcReader): ProcRow[] {
+  const marker = Buffer.from("EMBER_RUN_ID=");
+  const rows: ProcRow[] = [];
+  for (const pid of r.pids()) {
+    const s = r.stat(pid);
+    const ppid = s === null ? null : statParent(s);
+    if (ppid === null) continue;
+    const env = r.environ(pid);
+    rows.push({ pid, ppid, run: !!env && Buffer.from(env).includes(marker) });
+  }
+  return rows;
+}
+
+/**
+ * macOS's process table from `ps -A -o pid=,ppid=,comm=`: a run is a `script` or a shell Ember's main process started
+ * itself (that is how every local command starts, §3.3), since another process's environment can't be read cheaply.
+ */
+export function psProcTable(text: string, root: number): ProcRow[] {
+  const rows: ProcRow[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]), ppid = Number(m[2]);
+    rows.push({ pid, ppid, run: ppid === root && /(^|\/)(script|bash|zsh|sh)$/.test(m[3]) });
+  }
+  return rows;
+}

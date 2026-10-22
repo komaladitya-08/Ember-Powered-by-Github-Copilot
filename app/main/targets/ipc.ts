@@ -60,7 +60,7 @@ export function registerTargetsIpc(o: {
 }): TargetsIpc {
   let home: WebContentsLike | null = null;
   const fromHome = (sender: WebContentsLike | undefined, channel: string): boolean => {
-    let ok = false;
+    let ok: boolean;
     try { ok = !!sender && o.isHome(sender); } catch { ok = false; }
     if (!ok) o.log.warn("targets.ipc_refused", { channel });
     else home = sender!;
@@ -88,7 +88,7 @@ export function registerTargetsIpc(o: {
     push(list) {
       const h = home;
       if (!h) return;
-      let still = false;
+      let still: boolean;
       try { still = o.isHome(h); } catch { still = false; }
       if (!still) { home = null; return; }
       try { h.send(TARGETS_IPC.changed, list); } catch (err) { o.log.warn("targets.push_failed", { err }); }

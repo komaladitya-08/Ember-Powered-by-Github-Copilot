@@ -114,9 +114,9 @@ export function createNoticer(d: NoticerDeps): Noticer {
 
   function tick(): void {
     if (!d.enabled() || !d.notice) { lastTitle = null; pending = false; return; }
-    let w: { app: string; title: string } | null = null;
+    let w: { app: string; title: string } | null;
     try { w = d.activeWindow(); } catch { w = null; }
-    let terminal = false;
+    let terminal: boolean;
     try { terminal = !!w && d.isTerminal(w.app); } catch { terminal = false; }
     if (!w || !terminal) { lastTitle = null; pending = false; return; }
     const changed = w.title !== lastTitle;
