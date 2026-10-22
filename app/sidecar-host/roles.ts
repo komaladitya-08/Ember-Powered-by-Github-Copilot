@@ -108,6 +108,9 @@ export function uiaRole(n: RawNode, ctx: RoleContext): string {
       default: return "window";
     }
   }
+  // Whatever its control type (a custom control, a combo box's edit), a password field is one: its text is never read,
+  // it is never typed into, and it is masked in pictures.
+  if (n.password) return "password text";
   switch (n.platformRole) {
     case "Window": return n.modal || cls === DIALOG_CLASS ? "dialog" : "internal frame";
     case "Pane": return "panel";
@@ -119,11 +122,9 @@ export function uiaRole(n: RawNode, ctx: RoleContext): string {
     case "RadioButton": return "radio button";
     case "ComboBox": return "combo box";
     case "Edit":
-      if (n.password) return "password text";
       if (ctx.inTerminal || isTerminalClass(n)) return "terminal";
       return n.multiLine ? "text" : "entry";
     case "Document":
-      if (n.password) return "password text";
       if (ctx.inTerminal || isTerminalClass(n)) return "terminal";
       if (ctx.inWeb || WEB_FRAMEWORKS.has((n.framework ?? "").toLowerCase())) return "document web";
       return n.editable ? "document text" : "document frame";

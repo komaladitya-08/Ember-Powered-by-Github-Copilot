@@ -67,8 +67,8 @@ export class Secrets {
    * Is this element's text off limits? A password field (now or once: its key), or a field named, labelled or with a
    * placeholder that says it is secret. A secret one is remembered.
    */
-  isSecret(key: WireKey | null, n: Pick<RawNode, "labelledBy" | "help" | "placeholder">, role: string, name: string): boolean {
-    if (role === "password text" || this.fields.has(key)) {
+  isSecret(key: WireKey | null, n: Pick<RawNode, "labelledBy" | "help" | "placeholder" | "password">, role: string, name: string): boolean {
+    if (role === "password text" || n.password || this.fields.has(key)) {
       this.fields.add(key);
       return true;
     }

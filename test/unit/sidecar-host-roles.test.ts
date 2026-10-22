@@ -42,6 +42,9 @@ describe("UI Automation roles in AT-SPI's words", () => {
     expect(uiaRole(node("Edit", { name: "Search" }), IN)).toBe("entry");
     expect(uiaRole(node("Edit", { multiLine: true }), IN)).toBe("text");
     expect(uiaRole(node("Edit", { password: true }), IN)).toBe("password text");
+    // Whatever control type a password field has (a custom control, one in a console): it is one.
+    for (const type of ["Custom", "Document", "Pane", "Text"]) expect(uiaRole(node(type, { password: true }), IN)).toBe("password text");
+    expect(uiaRole(node("Edit", { password: true }), TERM)).toBe("password text");
     expect(uiaRole(node("Edit"), TERM)).toBe("terminal");
     expect(uiaRole(node("Document", { className: "ConsoleWindowClass" }), IN)).toBe("terminal");
     expect(uiaRole(node("Text", { hasText: true }), TERM)).toBe("terminal");
