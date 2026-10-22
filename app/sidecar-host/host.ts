@@ -7,7 +7,7 @@
  */
 
 import { HandleRefs, Snapshots, firstId, type ReadRecord } from "./ids";
-import { isProviderError, type AxProvider, type Handle, type RawNode, type RawWindow } from "./provider";
+import { isProviderError, ownerPid, type AxProvider, type Handle, type RawNode, type RawWindow } from "./provider";
 import { BUSY, BusyError, KeyError, encodeError, encodeResult, parseRequest } from "./protocol";
 import { TOP, atspiRole, type RoleContext } from "./roles";
 import { Secrets, type WireKey } from "./secrets";
@@ -22,12 +22,13 @@ export type Method = (host: Host, params: Record<string, unknown>) => Promise<un
 export const METHODS: Record<string, Method> = { ...READING, ...ACTING };
 
 /**
- * Methods answered without the provider, so without waiting for it to start: ping, and remember_secrets, which Ember
- * sends ahead of a new process's first request without waiting for its answer. Were it to wait out a cold start of the
- * Windows bridge, the request Ember does wait on would be left only part of its first-request time, and a start
- * slower than that would be killed and begun again in a loop.
+ * Methods answered without the provider's start gate: ping, and remember_secrets, which Ember sends ahead of a new
+ * process's first request without waiting for its answer (were it to wait out a cold start of the Windows bridge, the
+ * request Ember does wait on would be left only part of its first-request time, and a start slower than that would be
+ * killed and begun again in a loop); and status, which says how the provider is, why it couldn't start included,
+ * instead of failing with it (it starts the provider itself, never failing for it: see reading.ts).
  */
-const WITHOUT_PROVIDER = new Set(["ping", "remember_secrets"]);
+const WITHOUT_PROVIDER = new Set(["ping", "remember_secrets", "status"]);
 
 export interface HostOptions {
   env?: NodeJS.ProcessEnv;
@@ -35,6 +36,8 @@ export interface HostOptions {
   settleMs?: number;
   /** Notes for the log (stderr): events and sizes, never screen text. */
   note?: (event: string, fields?: Record<string, unknown>) => void;
+  /** Ember's own process (see ownerPid in provider.ts); default: EMBER_OWNER_PID in `env`. */
+  ownerPid?: number;
 }
 
 export class Host {
@@ -44,6 +47,8 @@ export class Host {
   readonly known = new KnownWindows();
   readonly settleMs: number;
   readonly note: (event: string, fields?: Record<string, unknown>) => void;
+  /** Ember's own process (see ownerPid): none of its windows is ever found, read, hit-tested or asked about. */
+  readonly ownerPid: number | undefined;
   private generation: number;
   /** Handles the provider gave out during the request going on. */
   private seen = new Set<Handle>();
@@ -52,6 +57,7 @@ export class Host {
     this.snapshots = new Snapshots(firstId(o.env ?? process.env), this.refs);
     this.settleMs = o.settleMs ?? 80;
     this.note = o.note ?? (() => undefined);
+    this.ownerPid = o.ownerPid ?? ownerPid(o.env ?? process.env);
     this.generation = provider.generation;
   }
 
@@ -74,14 +80,31 @@ export class Host {
   async call(method: unknown, params: Record<string, unknown>): Promise<unknown> {
     const run = typeof method === "string" && Object.prototype.hasOwnProperty.call(METHODS, method) ? METHODS[method] : undefined;
     if (!run) throw new KeyError(`unknown method: ${typeof method === "string" ? method : String(method)}`);
-    if (WITHOUT_PROVIDER.has(method as string)) return run(this, params);
+    if (WITHOUT_PROVIDER.has(method as string)) {
+      try {
+        return await run(this, params);
+      } finally {
+        // status looked at the windows when its provider was up: their handles go back too.
+        if (this.seen.size) this.finish();
+      }
+    }
     try {
-      await this.provider.start();
-      this.sync();
+      await this.begin();
       return await run(this, params);
     } finally {
       this.finish();
     }
+  }
+
+  /** Starts the provider (if it isn't up), and forgets every read from before it restarted. Throws when it can't start. */
+  async begin(): Promise<void> {
+    await this.provider.start();
+    this.sync();
+  }
+
+  /** The windows a request may find and read: never Ember's own (see ownerPid), whatever `ownPid` it names. */
+  findable(windows: RawWindow[]): RawWindow[] {
+    return this.ownerPid === undefined ? windows : windows.filter(w => w.pid !== this.ownerPid);
   }
 
   /** The protocol's words for an error (a provider's busy is the BUSY text; one it can't say is "failed"). */

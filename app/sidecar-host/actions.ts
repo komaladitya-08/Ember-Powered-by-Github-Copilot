@@ -133,10 +133,14 @@ async function selectedAlone(host: Host, entry: IdEntry, list: number, n: RawNod
 }
 
 /**
- * Selects a row or item alone, as a single click does: in the window the user is in it is given the keyboard first
- * (its list's focus, where Enter goes, moves with it, and most lists select it then); else, or where that didn't select
- * it, it is selected (UI Automation's Select replaces the selection). In a window the user isn't in, the keyboard can't
- * be given without bringing the window to the front: `inBackground` says so. Returns (it is selected alone now, it was).
+ * Selects a row or item alone, as a single click does: by its own Select (UI Automation's replaces the selection), then
+ * in the window the user is in it is given the keyboard too (its list's focus, where Enter goes, moves with it, as with
+ * a click; a list whose items' Select does nothing may select one only so). Select comes first because it is what
+ * tells the app: a classic Win32 list box's focus (.NET's WindowsListBox proxy behind UI Automation's SetFocus) moves
+ * its selection with LB_SETCURSEL alone, which sends no LBN_SELCHANGE, and its Select then finds the item selected
+ * already and sends nothing either, so a WinForms list never raised SelectedIndexChanged (CI on windows-2022). In a
+ * window the user isn't in, the keyboard can't be given without bringing the window to the front: `inBackground` says
+ * so. Returns (it is selected alone now, it was).
  */
 async function chooseItem(host: Host, entry: IdEntry, n: RawNode, unselectable: string, inBackground: string): Promise<{ ok: boolean; already: boolean }> {
   const list = listOf(entry);
@@ -144,24 +148,24 @@ async function chooseItem(host: Host, entry: IdEntry, n: RawNode, unselectable: 
   if (await selectedAlone(host, entry, list, n) && (focus !== true || n.focused)) return { ok: true, already: true };
   if (focus === false) throw new Error(inBackground);
   if (!n.actions?.includes("select")) throw new Error(unselectable);
-  if (focus === true && n.actions.includes("focus")) {
-    const took = await perform(host, n.handle, "focus").then(() => true, () => false);
-    if (took) {
-      await host.settle();
-      const now = await host.look(n.handle);
-      if (now && now.focused && await selectedAlone(host, entry, list, now)) return { ok: true, already: false };
-    }
-  }
-  let now = await host.look(n.handle);
-  if (!now?.selected) {
-    await perform(host, n.handle, "select").catch(err => {
+  const keyboard = focus === true && n.actions.includes("focus");
+  let now: RawNode | null = n;
+  if (!n.selected) {
+    const selected = await perform(host, n.handle, "select").then(() => true, err => {
       if (err instanceof Error && err.message === NO_ANSWER) throw err;
-      throw new Error(unselectable);
+      return false;
     });
+    if (selected) {
+      await host.settle();
+      now = await host.look(n.handle);
+    }
+    if ((!selected || !now?.selected) && !keyboard) throw new Error(unselectable);
+  }
+  if (keyboard && await perform(host, n.handle, "focus").then(() => true, () => false)) {
     await host.settle();
     now = await host.look(n.handle);
-    if (!now?.selected) throw new Error(unselectable);
   }
+  if (!now?.selected) throw new Error(unselectable);
   // Anything else still selected (a list that lets several be chosen) is unselected: a file dialog would open it too.
   if (list >= 0) {
     for (const other of await host.children(entry.read.raw[list].handle, ROWS_MAX).catch(() => [])) {

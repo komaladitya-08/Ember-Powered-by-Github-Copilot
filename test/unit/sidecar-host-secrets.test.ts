@@ -90,7 +90,7 @@ describe("secret fields by role, name and label", () => {
   it("keeps a password field secret after Show password, by its key", async () => {
     const { fake, call } = harness([edit("Password", "", { password: true, bounds: at(10, 10, 200, 24) })]);
     await read(call);
-    Object.assign(fake.el("Password").spec, { password: false, value: "hunter2" });
+    Object.assign(fake.el("Password", "Edit").spec, { password: false, value: "hunter2" });
     const r = await read(call);
     const field = find(r, n => n.name === "Password");
     expect(field).toMatchObject({ role: "entry", secret: true });

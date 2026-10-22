@@ -11,8 +11,8 @@
 
 import fs from "node:fs";
 import {
-  ProviderError, type AxProvider, type Handle, type PerformOp, type RawNode, type RawWindow, type Rect, type Snapshot,
-  type SnapshotOptions, type TextInfo,
+  ProviderError, type AxProvider, type Handle, type PerformOp, type ProviderHealth, type RawNode, type RawWindow, type Rect,
+  type Snapshot, type SnapshotOptions, type TextInfo,
 } from "../provider";
 
 /** What happens when an element is invoked (JSON-friendly; a test may give a function instead). */
@@ -52,6 +52,11 @@ export interface FakeElementSpec {
   range?: { value: number; min: number; max: number; step?: number; readOnly?: boolean };
   /** It chooses among its children. */
   selection?: { multiple: boolean };
+  /**
+   * An item of a classic Win32 list box (behind .NET's UI Automation proxy): giving it the keyboard selects it too,
+   * telling its app nothing (LB_SETCURSEL without LBN_SELCHANGE: no log line), so only its Select is heard.
+   */
+  focusSelects?: boolean;
   actions?: string[];
   labelledBy?: string;
   help?: string;
@@ -124,6 +129,8 @@ export interface FakeOptions {
   deadlineMs?: number;
   /** start() fails with this message (a bridge that can't run). */
   failStart?: string;
+  /** Hit tests are app by app (AX's), not of the whole screen (UI Automation's): see elementsAt. */
+  appHitTest?: boolean;
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -140,6 +147,10 @@ export class FakeProvider implements AxProvider {
   /** Handles given back (all of them, in order). */
   readonly released: Handle[] = [];
   started = 0;
+  /** start() calls, whether they worked or not. */
+  startsTried = 0;
+  /** The pid of every elementsAt call (undefined where none was given): the app a hit test was scoped to. */
+  readonly hitPids: (number | undefined)[] = [];
   stopped = false;
   private handles = new Map<Handle, FakeElement>();
   private nextHandle = 1;
@@ -198,12 +209,18 @@ export class FakeProvider implements AxProvider {
   }
 
   async start(): Promise<void> {
+    this.startsTried++;
     if (this.o.failStart) throw new Error(this.o.failStart);
     this.started++;
   }
 
   async accessibility(): Promise<boolean | null> {
     return true;
+  }
+
+  health(): ProviderHealth {
+    if (this.o.failStart) return { ok: this.startsTried ? false : null, ...(this.startsTried ? { detail: this.o.failStart } : {}) };
+    return { ok: this.started > 0 ? true : null };
   }
 
   async topWindows(): Promise<RawWindow[]> {
@@ -251,8 +268,15 @@ export class FakeProvider implements AxProvider {
     return this.raw(el, -1, this.depthOf(el));
   }
 
-  async elementsAt(x: number, y: number): Promise<RawNode[]> {
-    const w = this.windows.find(win => !win.gone && !win.spec.offscreen && inside(win.spec.bounds, x, y));
+  /**
+   * Whatever window is on top at the point, as UI Automation hit-tests; with `appHitTest`, within app `pid`'s windows
+   * where it is given, as AX does.
+   */
+  async elementsAt(x: number, y: number, pid?: number): Promise<RawNode[]> {
+    this.hitPids.push(pid);
+    const scoped = this.o.appHitTest && pid !== undefined;
+    const w = this.windows.find(win => !win.gone && !win.spec.offscreen && inside(win.spec.bounds, x, y)
+      && (!scoped || (win.spec as FakeWindowSpec).pid === pid));
     if (!w) return [];
     this.ensureAnswering(w);
     const chain = [w];
@@ -317,11 +341,13 @@ export class FakeProvider implements AxProvider {
       case "select": case "addToSelection": {
         need("select");
         const list = el.parent;
+        // UI Automation's Select on what a single-choice list has selected already does nothing (and tells nobody).
+        if (op === "select" && s.selected && !list?.spec.selection?.multiple) return;
         if (op === "select" && list) for (const c of list.children) if (c !== el) c.spec.selected = false;
         s.selected = true;
-        // A combo box shows the option chosen in it.
+        // A combo box with a value (an editable one) shows the option chosen in it.
         const combo = list?.spec.role === "ComboBox" ? list : list?.parent?.spec.role === "ComboBox" ? list.parent : null;
-        if (combo) combo.spec.value = s.name ?? "";
+        if (combo && combo.spec.value !== undefined) combo.spec.value = s.name ?? "";
         this.record(op, el);
         return;
       }
@@ -351,6 +377,9 @@ export class FakeProvider implements AxProvider {
         need("focus");
         for (const w of this.windows) this.findIn(w, e => { e.spec.focused = false; return false; });
         s.focused = true;
+        if (s.focusSelects && el.parent) {
+          for (const c of el.parent.children) c.spec.selected = c === el;
+        }
         this.record(op, el);
         return;
       case "scrollIntoView":
@@ -457,7 +486,9 @@ export class FakeProvider implements AxProvider {
 
 /**
  * The fake desktop used where none is given: a stand-in for Ember's WinForms bench (test/fixtures/win_bench.ps1), the
- * same controls the Windows end-to-end test works with.
+ * same controls the Windows end-to-end test works with, named as UI Automation names them there: each label says what
+ * its control's accessible name says ("Theme" the label and "Theme" the drop-down, told apart only by role), and the
+ * drop-down list (DropDownList) has no Value pattern, so what it has chosen is read from its options.
  */
 export function benchDesktop(pid = 4242): FakeWindowSpec[] {
   const at = (x: number, y: number, width: number, height: number): Rect => ({ x, y, width, height });
@@ -467,14 +498,14 @@ export function benchDesktop(pid = 4242): FakeWindowSpec[] {
     framework: "WinForm", bounds: at(100, 100, 480, 420), active: true, native: 0x2a0b2,
     children: [
       { role: "TitleBar", name: "Ember Bench (Windows)", bounds: at(108, 101, 464, 30) },
-      { role: "Text", name: "Name:", bounds: at(120, 150, 80, 20) },
+      { role: "Text", name: "Name", bounds: at(120, 150, 80, 20) },
       { role: "Edit", name: "Name", bounds: at(210, 146, 240, 26), value: "", editable: true, focusable: true, actions: ["setValue", ...text] },
-      { role: "Text", name: "Password:", bounds: at(120, 190, 80, 20) },
+      { role: "Text", name: "Password", bounds: at(120, 190, 80, 20) },
       { role: "Edit", name: "Password", bounds: at(210, 186, 240, 26), password: true, editable: true, focusable: true, actions: ["setValue", ...text] },
       { role: "CheckBox", name: "Remember me", bounds: at(210, 226, 160, 24), toggle: "off", focusable: true, actions: ["toggle", "focus"] },
-      { role: "Text", name: "Theme:", bounds: at(120, 266, 80, 20) },
+      { role: "Text", name: "Theme", bounds: at(120, 266, 80, 20) },
       {
-        role: "ComboBox", name: "Theme", bounds: at(210, 262, 160, 26), value: "Light", expanded: false, selection: { multiple: false },
+        role: "ComboBox", name: "Theme", bounds: at(210, 262, 160, 26), expanded: false, selection: { multiple: false },
         focusable: true, actions: ["expand", "collapse", "focus"], children: [
           { role: "List", name: "Theme", bounds: null, offscreen: true, selection: { multiple: false }, children: ["Light", "Dark", "System"].map((name, i) => ({
             role: "ListItem", name, bounds: null, offscreen: true, selected: i === 0, actions: ["select", "scrollIntoView"],
@@ -482,11 +513,14 @@ export function benchDesktop(pid = 4242): FakeWindowSpec[] {
           { role: "Button", name: "Open", bounds: at(350, 264, 18, 22), actions: ["invoke"] },
         ],
       },
-      { role: "Text", name: "Volume:", bounds: at(120, 306, 80, 20) },
+      { role: "Text", name: "Volume", bounds: at(120, 306, 80, 20) },
       { role: "Slider", name: "Volume", bounds: at(210, 302, 200, 30), range: { value: 50, min: 0, max: 100, step: 1 }, focusable: true, actions: ["setRange", "focus"] },
+      { role: "Text", name: "Fruit", bounds: at(120, 342, 80, 20) },
       {
         role: "List", name: "Fruit", bounds: at(420, 150, 140, 80), selection: { multiple: false }, focusable: true, actions: ["focus"],
-        children: ["Apple", "Banana", "Cherry"].map((name, i) => ({ role: "ListItem", name, bounds: at(422, 152 + i * 20, 136, 20), selected: false, actions: ["select", "focus", "scrollIntoView"] })),
+        children: ["Apple", "Banana", "Cherry"].map((name, i) => ({
+          role: "ListItem", name, bounds: at(422, 152 + i * 20, 136, 20), selected: false, focusSelects: true, actions: ["select", "focus", "scrollIntoView"],
+        })),
       },
       { role: "Button", name: "Save", bounds: at(210, 350, 90, 30), focusable: true, actions: ["invoke", "focus"] },
       {

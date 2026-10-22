@@ -83,6 +83,22 @@ describe("UI Automation roles in AT-SPI's words", () => {
     expect(uiaRole(node("Custom"), IN)).toBe("unknown");
   });
 
+  it("gives the WinForms bench's controls, as .NET's proxies report them, the roles the Windows run looks for (CI windows-2022)", () => {
+    // The bench's labels carry their control's accessible name: only the role tells "Theme" the label from "Theme" the drop-down.
+    const bench: [string, Partial<RawNode>, string][] = [
+      ["Text", { name: "Theme", className: "WindowsForms10.STATIC.app.0.141b42a_r6_ad1" }, "label"],
+      ["ComboBox", { name: "Theme", className: "WindowsForms10.COMBOBOX.app.0.141b42a_r6_ad1", expanded: false }, "combo box"],
+      ["Slider", { name: "Volume", className: "WindowsForms10.msctls_trackbar32.app.0.141b42a_r6_ad1", range: { value: 0, min: 0, max: 100 } }, "slider"],
+      ["List", { name: "Fruit", className: "WindowsForms10.LISTBOX.app.0.141b42a_r6_ad1", selection: { multiple: false } }, "list"],
+      ["ListItem", { name: "Banana", actions: ["select", "focus"] }, "list item"],
+      ["Edit", { name: "Name", className: "WindowsForms10.EDIT.app.0.141b42a_r6_ad1" }, "entry"],
+      ["Edit", { name: "Password", password: true }, "password text"],
+      ["CheckBox", { name: "Remember me", toggle: "off" }, "check box"],
+      ["Button", { name: "Save", actions: ["invoke"] }, "push button"],
+    ];
+    for (const [type, more, role] of bench) expect(uiaRole(node(type, { framework: "WinForm", ...more }), IN), `${type} "${more.name}"`).toBe(role);
+  });
+
   it("only ever says roles Ember knows", () => {
     const types = ["Window", "Pane", "Button", "SplitButton", "CheckBox", "RadioButton", "ComboBox", "Edit", "Document", "Text",
       "Hyperlink", "Image", "List", "ListItem", "Menu", "MenuBar", "MenuItem", "ProgressBar", "ScrollBar", "Slider", "Spinner",

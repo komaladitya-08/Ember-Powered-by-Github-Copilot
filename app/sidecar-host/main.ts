@@ -6,15 +6,16 @@
  * to stderr, which Ember only logs); a bad line gets an error answer, never a crash; and when stdin closes (Ember quit
  * or killed it) the host stops its provider (the Windows bridge with it) and exits.
  *
- * Environment: EMBER_ATSPI_ID_BASE (where this process's element ids start, from Ember); EMBER_UIA_SCRIPT and
- * EMBER_UIA_CACHE (Windows: the bridge's bootstrap script and its compiled-assembly cache, from Ember's launch); and
- * for tests in a development tree only, EMBER_AX_PROVIDER=fake with EMBER_AX_FAKE_DESKTOP / EMBER_AX_FAKE_LOG (see
- * providers/index.ts and providers/fake.ts).
+ * Environment: EMBER_ATSPI_ID_BASE (where this process's element ids start, from Ember); EMBER_OWNER_PID (Ember's own
+ * process, never read; else this process's parent); EMBER_UIA_SCRIPT and EMBER_UIA_CACHE (Windows: the bridge's
+ * bootstrap script and its compiled-assembly cache, from Ember's launch); and for tests in a development tree only,
+ * EMBER_AX_PROVIDER=fake with EMBER_AX_FAKE_DESKTOP / EMBER_AX_FAKE_LOG (see providers/index.ts and providers/fake.ts).
  */
 
 import readline from "node:readline";
 import { Host } from "./host";
 import { encodeError } from "./protocol";
+import { ownerPid } from "./provider";
 import { openProvider } from "./providers";
 
 /** A note for Ember's log (it logs this process's stderr): events and sizes, never screen text. */
@@ -30,7 +31,9 @@ function note(event: string, fields: Record<string, unknown> = {}): void {
 console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
 process.on("uncaughtException", err => note("host.uncaught", { error: err instanceof Error ? err.message : String(err) }));
 process.on("unhandledRejection", err => note("host.unhandled", { error: err instanceof Error ? err.message : String(err) }));
-const provider = openProvider();
+// Ember's own process: never read (EMBER_OWNER_PID from Ember's launch, else this process's parent, which is Ember).
+const owner = ownerPid(process.env, process.ppid);
+const provider = openProvider(process.env, process.platform, typeof __filename === "string" ? __filename : "", owner);
 // Ember went away while an answer was on its way: nobody is left to answer (the Windows bridge stops with the host).
 process.stdout.on("error", () => {
   try {
@@ -40,7 +43,7 @@ process.stdout.on("error", () => {
   }
   process.exit(0);
 });
-const host = new Host(provider, { note });
+const host = new Host(provider, { note, ownerPid: owner });
 const queue: string[] = [];
 let working = false;
 let closed = false;

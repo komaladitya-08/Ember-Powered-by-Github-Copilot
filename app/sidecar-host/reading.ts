@@ -57,19 +57,32 @@ async function unlessBusy<T>(call: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
+/**
+ * How the helper is: the Python sidecar's fields, and from the provider's health why it couldn't start (`detail`,
+ * Windows' `languageMode`) and the bridge's DPI awareness (`dpi`, `processDpi`). It starts the provider as any request
+ * does, but never fails for it: a start that failed is `toolkitAccessibility: false` with its reason, one still going
+ * on is null, so Ember's setup check can say why Windows apps can't be read (Constrained Language mode, an execution
+ * policy) instead of getting an error.
+ */
 async function status(host: Host): Promise<unknown> {
-  let apps = 0, accessibility: boolean | null = null;
-  try {
-    apps = new Set((await host.windows()).map(w => w.pid)).size;
-  } catch {
-    // No windows to count (the app list didn't answer): 0, as the Python sidecar says then.
+  await host.begin().catch(() => undefined); // its failure is in health() (a start going on: health's ok is null)
+  const health = host.provider.health();
+  let apps = 0, accessibility: boolean | null = health.ok === false ? false : null;
+  if (health.ok === true) {
+    try {
+      apps = new Set((await host.windows()).map(w => w.pid)).size;
+    } catch {
+      // No windows to count (the app list didn't answer): 0, as the Python sidecar says then.
+    }
+    try {
+      accessibility = await host.provider.accessibility();
+    } catch {
+      // Can't be told.
+    }
   }
-  try {
-    accessibility = await host.provider.accessibility();
-  } catch {
-    // Can't be told.
-  }
-  return { version: VERSION, python: `node ${process.versions.node} (${host.provider.kind})`, toolkitAccessibility: accessibility, apps };
+  const out: Record<string, unknown> = { version: VERSION, python: `node ${process.versions.node} (${host.provider.kind})`, toolkitAccessibility: accessibility, apps };
+  for (const k of ["detail", "languageMode", "dpi", "processDpi"] as const) if (typeof health[k] === "string" && health[k]) out[k] = health[k];
+  return out;
 }
 
 async function listWindowsMethod(host: Host, params: Record<string, unknown>): Promise<unknown> {
@@ -130,11 +143,11 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
     if (isProviderError(err, "busy")) return { window: null, nodes: [], busy: true, ms: since(t0) };
     throw err;
   }
-  const win = findWindow(windows, { pid, title, path, ownPid });
+  const win = findWindow(host.findable(windows), { pid, title, path, ownPid });
   if (!win) {
     // A window whose app didn't answer is busy (a file dialog listing a big folder), not gone.
     const lower = title.toLowerCase();
-    const busy = windows.some(w => w.busy && w.pid !== ownPid && (w.pid === pid || host.known.mightHave(w.pid, lower)));
+    const busy = host.findable(windows).some(w => w.busy && w.pid !== ownPid && (w.pid === pid || host.known.mightHave(w.pid, lower)));
     return { window: null, nodes: [], busy, ms: since(t0) };
   }
   const window = describeWindow(win, host.vocabulary);
@@ -267,8 +280,8 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
     if (isProviderError(err, "busy")) return none(true);
     throw err;
   }
-  const win = windows.find(w => w.pid === pid && w.key === path);
-  if (!win) return none(windows.some(w => w.pid === pid && !!w.busy));
+  const win = host.findable(windows).find(w => w.pid === pid && w.key === path);
+  if (!win) return none(host.findable(windows).some(w => w.pid === pid && !!w.busy));
   if (win.busy) return none(true);
   const snap = await unlessBusy(() => host.provider.snapshot(win.handle, { maxDepth: MAX_DEPTH + 1, maxNodes: SCAN_NODES, deadlineMs: SCAN_BUDGET_MS }))
     .catch(err => {
@@ -479,12 +492,13 @@ async function atPoint(host: Host, params: Record<string, unknown>): Promise<unk
     if (isProviderError(err, "busy")) return { chain: [], busy: true, ms: since(t0) };
     throw err;
   }
-  const win = findWindow(windows, { pid: optInt(params.pid), title: typeof params.title === "string" ? params.title : "", path: typeof params.path === "string" ? params.path : undefined, ownPid });
+  const win = findWindow(host.findable(windows), { pid: optInt(params.pid), title: typeof params.title === "string" ? params.title : "", path: typeof params.path === "string" ? params.path : undefined, ownPid });
   if (!win) return { chain: [], found: false, ms: since(t0) };
   if (neverLooked(describeWindow(win, host.vocabulary), strings(params.neverLook), ints(params.skipPids))) return { chain: [], blocked: true, ms: since(t0) };
   const x = intParam(params, "x"), y = intParam(params, "y");
   const until = t0 + AT_POINT_BUDGET_MS;
-  const hits = await unlessBusy(() => host.provider.elementsAt(x, y));
+  // The window's app: a provider that hit-tests app by app (AX) looks only there, never into Ember's own process.
+  const hits = await unlessBusy(() => host.provider.elementsAt(x, y, win.pid));
   if (hits === undefined) return { chain: [], busy: true, ms: since(t0) };
   host.see(hits);
   let path: RawNode[];
