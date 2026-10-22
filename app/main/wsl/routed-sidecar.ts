@@ -96,14 +96,22 @@ export class RoutedSidecar implements PerceptionSidecar, SidecarPort {
     if (target === "base") return this.base.readWindow(params);
     if (target === "gone") return { window: null, nodes: [], ms: Date.now() - t0 };
     const { neverLook, maxDepth, maxNodes, keep, cells } = params;
-    const res = await this.router.withHelper(target.distro, sc => sc.readWindow({
-      pid: target.frame.pid!, path: target.frame.path,
-      // Never a Windows pid: the distro's own never-look processes, and the Linux defaults beside the user's list.
-      neverLook: [...(neverLook ?? []), ...NEVER_LOOK_DEFAULTS.linux], skipPids: this.router.skipPids(target.distro, neverLook ?? []),
-      ...(maxDepth !== undefined ? { maxDepth } : {}), ...(maxNodes !== undefined ? { maxNodes } : {}),
-      ...(keep !== undefined ? { keep } : {}), ...(cells ? { cells } : {}),
+    const { res, owns } = await this.router.withHelper(target.distro, async sc => ({
+      res: await sc.readWindow({
+        pid: target.frame.pid!, path: target.frame.path,
+        // Never a Windows pid: the distro's own never-look processes, and the Linux defaults beside the user's list.
+        neverLook: [...(neverLook ?? []), ...NEVER_LOOK_DEFAULTS.linux], skipPids: this.router.skipPids(target.distro, neverLook ?? []),
+        ...(maxDepth !== undefined ? { maxDepth } : {}), ...(maxNodes !== undefined ? { maxNodes } : {}),
+        ...(keep !== undefined ? { keep } : {}), ...(cells ? { cells } : {}),
+      }),
+      owns: (id: unknown) => typeof id === "number" && sc.ownsId(id),
     }));
-    const nodes = (Array.isArray(res.nodes) ? res.nodes : []).map(n => placeNode(target.transform, n));
+    // Only ids this helper handed out: a distro naming another sidecar's id (UIA's, another distro's) would have an
+    // action judged as one in this Linux app carried out on that element instead.
+    const all: AxNode[] = Array.isArray(res.nodes) ? res.nodes : [];
+    const mine = all.filter(n => !!n && typeof n === "object" && owns(n.id));
+    if (mine.length !== all.length) this.router.o.log.warn("wsl.foreign_ids", { distro: target.distro, dropped: all.length - mine.length });
+    const nodes = mine.map(n => placeNode(target.transform, n.parent === null || owns(n.parent) ? n : { ...n, parent: null }));
     this.router.rememberIds(nodes.map(n => n.id), target.path);
     const window: AxWindow | null = res.window ? { ...res.window, app: target.app, pid: target.pid, path: target.path, bounds: { ...target.inner } } : null;
     return { ...res, window, nodes };

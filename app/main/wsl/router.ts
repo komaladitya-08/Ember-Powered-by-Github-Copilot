@@ -12,6 +12,7 @@
  */
 
 import wpath from "node:path/win32";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { NEVER_LOOK_DEFAULTS } from "../../shared/never-look";
 import { LAUNCHERS } from "../hands/terminals";
 import { isNeverLook } from "../perception/elements";
@@ -187,11 +188,15 @@ export class WslRouter {
     this.wslg = new WslgPids(d.rail);
   }
 
-  /** WSL is in use here: Windows, the user turned WSL on, and there is a WSL service (the admin allows it). */
+  /**
+   * WSL is in use here: Windows, the user turned WSL on after its consent card (§7.4: a record of an older card, or
+   * none, is off), and there is a WSL service (the admin allows it).
+   */
   active(): boolean {
     if (this.disposed || this.o.os !== "win32") return false;
     try {
-      if (this.o.settings.get().targets?.wsl?.on !== true) return false;
+      const wsl = this.o.settings.get().targets?.wsl;
+      if (wsl?.on !== true || !((wsl.consent?.version ?? 0) >= FEATURE_CONSENT_VERSION.wsl)) return false;
       return this.o.wsl() !== null;
     } catch {
       return false; // can't tell: off
@@ -309,12 +314,15 @@ export class WslRouter {
     const running = (n: string) => { try { return wsl.isRunning(n); } catch { return false; } };
     // Distros that can show Linux apps now: WSL 2, set up, not a tool's, not known to run as root, running.
     const candidates = facts.distros.filter(d => d.version === 2 && !d.needsSetup && !d.tool && d.defaultUid !== 0 && running(d.name)).map(d => d.name);
+    // Every running WSL 2 distro may show Linux apps, root's and a tool's too (never read for): msrdc's windows are
+    // all one distro's only when no other runs.
+    const showing = facts.distros.filter(d => d.version === 2 && running(d.name)).length;
     const known = new Set(candidates);
     for (const [p, n] of [...this.pidDistro]) if (!known.has(n)) this.pidDistro.delete(p);
     const byPid = new Map<number, RailWindow[]>();
     for (const r of rails) byPid.set(r.pid, [...byPid.get(r.pid) ?? [], r]);
     const unresolved = [...byPid.keys()].filter(p => !this.pidDistro.has(p));
-    if (candidates.length === 1) for (const p of unresolved.splice(0)) this.pidDistro.set(p, candidates[0]);
+    if (candidates.length === 1 && showing === 1) for (const p of unresolved.splice(0)) this.pidDistro.set(p, candidates[0]);
     const consult = new Set<string>([...byPid.keys()].map(p => this.pidDistro.get(p)).filter((n): n is string => !!n));
     if (unresolved.length) for (const n of candidates) consult.add(n);
     const titlesFor = (n: string) => {
@@ -335,7 +343,11 @@ export class WslRouter {
     }
     const snap = EMPTY(at, stack, foreground);
     for (const r of rails) snap.rails.set(r.hwnd, r);
-    const neverLook = [...NEVER_LOOK_DEFAULTS.linux];
+    // Linux's defaults and the user's (and administrator's) own list, against every name the app goes by: a window any
+    // of them names stays "msrdc" (masked and refused), not only one whose app id or title says it.
+    const listed = this.userNeverLook();
+    if (!listed) return (this.snap = snap); // can't tell which apps are never to be looked at: none identified
+    const neverLook = [...NEVER_LOOK_DEFAULTS.linux, ...listed];
     for (const [n, fs] of frames) {
       const mine = rails.filter(r => this.pidDistro.get(r.pid) === n);
       if (!mine.length) continue;
@@ -370,6 +382,16 @@ export class WslRouter {
     return (this.snap = snap);
   }
 
+  /** The never-look list in the settings (the user's and the administrator's entries); null when it can't be read. */
+  private userNeverLook(): string[] | null {
+    try {
+      const list: unknown = this.o.settings.get().privacy?.neverLook ?? [];
+      return Array.isArray(list) ? list.filter((i): i is string => typeof i === "string" && !!i.trim()) : null;
+    } catch {
+      return null;
+    }
+  }
+
   private rememberNames(id: string, names: string[]): void {
     const key = lower(id);
     const set = this.names.get(key) ?? new Set<string>();
@@ -382,7 +404,14 @@ export class WslRouter {
   /** The distro's frames, from its checked helper; null when there is none (yet), or it can't say. */
   private async framesOf(st: DistroState, wsl: WslService, facts: WslFacts, titles: string[]): Promise<LinuxFrame[] | null> {
     const sc = await this.ready(st, wsl, facts, titles);
-    if (!sc || st.bus === "none") return null;
+    if (!sc) return null;
+    if (st.bus === "none") {
+      // No bus showed these windows when the helper started (an app not yet on its accessibility bus): asked again
+      // now and then while Linux windows are on screen, as for windows nothing matched.
+      if (!titles.length || this.d.now() - st.scannedAt < RESCAN_MS) return null;
+      await this.rescan(st, titles, []);
+      if (st.bus === "none" || !st.sidecar || st.sidecar !== sc) return null;
+    }
     try {
       const res = await sc.listWindows({});
       const list = Array.isArray((res as { windows?: unknown }).windows) ? (res as { windows: unknown[] }).windows : [];
@@ -496,7 +525,7 @@ export class WslRouter {
     const sc = st.sidecar;
     if (!sc) return;
     const bus = await this.findBus(st, sc, titles);
-    if (bus !== "restart") st.problem = bus === "none" ? "bus" : null;
+    if (bus !== "restart" && (st.problem === null || st.problem === "bus")) st.problem = bus === "none" ? "bus" : null;
   }
 
   /** The design's mayStart: the distro runs and WSL is on (the router's own gate, `allow`, comes first). */
@@ -651,6 +680,8 @@ export class WslRouter {
       for (const w of s.windows.values()) if (w.path === params.path) return w;
       return "gone";
     }
+    // Another reader's path (UIA's) names exactly one window of its own: never a Linux window found by pid instead.
+    if (params.path) return "base";
     const all = [...s.windows.values()];
     if (params.pid == null && !params.title && !params.path) return s.windows.get(s.foreground) ?? "base";
     if (params.pid == null || ![...s.rails.values()].some(r => r.pid === params.pid)) return "base";

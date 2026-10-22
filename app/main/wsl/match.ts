@@ -227,19 +227,24 @@ export function matchWindows(rails: readonly RailWindow[], frames: readonly Linu
 /**
  * The identified window each popup belongs to (§4.6, critique wsl-11), for masking and covering only: by its Win32
  * owner chain (`ownerOf`, nearest first), else by lying within the same msrdc's nearest window below it in the stack
- * (bottom to top: the window it opened over), when that one is identified. Popups nothing claims stay unidentified.
+ * (bottom to top: the window it opened over), when that one is identified. A chain that reaches a Linux window nobody
+ * identified (a never-look app's, one nothing matched) says whose popup it is: it never takes another window's
+ * identity by where it lies. Popups nothing claims stay unidentified.
  */
 export function popupOwners(stackOrder: readonly RailWindow[], identified: ReadonlySet<number>, ownerOf: (hwnd: number) => number): Map<number, number> {
   const out = new Map<number, number>();
+  const tops = new Set(stackOrder.filter(r => !r.popup).map(r => r.hwnd));
   for (let i = 0; i < stackOrder.length; i++) {
     const p = stackOrder[i];
     if (!p.popup) continue;
-    let owner = 0;
+    let owner = 0, unidentified = false;
     const seen = new Set<number>();
     for (let o = p.owner || ownerOf(p.hwnd); o && !seen.has(o) && seen.size < 8; o = ownerOf(o)) {
       seen.add(o);
       if (identified.has(o)) { owner = o; break; }
+      if (tops.has(o)) { unidentified = true; break; }
     }
+    if (unidentified) continue;
     if (!owner) {
       let below: RailWindow | undefined;
       for (let j = i - 1; j >= 0; j--) {

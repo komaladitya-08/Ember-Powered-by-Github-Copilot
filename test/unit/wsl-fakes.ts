@@ -244,7 +244,7 @@ export class FakeWsl {
 export function harness(o: { os?: "win32" | "linux"; on?: boolean; images?: Record<number, string>; owners?: Record<number, number>; problem?: HelperProblem; diag?: HelperDiag | null } = {}) {
   const windows = new FakeWindows();
   const wsl = new FakeWsl();
-  const state = { on: o.on ?? true, service: true, now: 1_000_000 };
+  const state = { on: o.on ?? true, consent: 1, service: true, now: 1_000_000, neverLook: [] as string[] };
   const helpers: FakeHelper[] = [];
   const created: string[] = [];
   const tickers: (() => void)[] = [];
@@ -268,7 +268,9 @@ export function harness(o: { os?: "win32" | "linux"; on?: boolean; images?: Reco
     rail: probe, helpers: factory, now: () => state.now,
     every: fn => { tickers.push(fn); return { stop: () => { const i = tickers.indexOf(fn); if (i >= 0) tickers.splice(i, 1); } }; },
   };
-  const settings = { get: () => ({ targets: { wsl: { on: state.on } } }) } as unknown as SettingsStore;
+  const settings = {
+    get: () => ({ targets: { wsl: { on: state.on, consent: { version: state.consent, at: state.consent ? "2026-10-22T00:00:00Z" : null } } }, privacy: { neverLook: state.neverLook } }),
+  } as unknown as SettingsStore;
   const options: WrapForWslOptions = { os: o.os ?? "win32", log: quiet, ws: () => windows.ws, wsl: () => (state.service ? wsl.service : null), settings };
   return { windows, wsl, state, helpers, created, tickers, images, setups, deps, options, helperOf: (d: string) => helpers.filter(h => h.distro === d).at(-1) };
 }

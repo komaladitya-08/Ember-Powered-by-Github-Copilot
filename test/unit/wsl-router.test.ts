@@ -196,6 +196,69 @@ describe("identifying a WSLg window", () => {
     expect(r.identityNow(12, 4242, true)).toBe("wsl:Ubuntu:gedit");
     expect(r.identityNow(12, 4242, false)).toBeNull();
   });
+
+  it("starts nothing while WSL is on without the WSL card's consent (none, or an older card's)", async () => {
+    const { h, r } = ubuntu();
+    h.state.consent = 0;
+    expect((await r.refresh()).windows.size).toBe(0);
+    expect(r.active()).toBe(false);
+    expect(h.created).toEqual([]);
+    expect(h.wsl.runningNowCalls).toBe(0);
+    h.state.consent = 1;
+    expect((await r.refresh()).windows.size).toBe(1);
+  });
+
+  it("asks find_bus again (at most every 5 s) while no bus showed the windows, and identifies them once one does", async () => {
+    const { h, r } = ubuntu();
+    h.setups.set("Ubuntu", helper => { helper.bus = "none"; helper.frames = [geditScene({ ...h, windows: { stack: [] } } as never).frame]; });
+    expect((await r.refresh()).windows.size).toBe(0);
+    const helper = h.helperOf("Ubuntu")!;
+    // Too soon: not asked again.
+    h.state.now += IDENTITY_MS + 1;
+    expect((await r.refresh()).windows.size).toBe(0);
+    expect(helper.calls.filter(c => c.method === "find_bus")).toHaveLength(1);
+    // gedit has joined its accessibility bus since.
+    helper.bus = "proc";
+    h.state.now += 5000;
+    const s = await r.refresh();
+    expect(helper.calls.filter(c => c.method === "find_bus")).toHaveLength(2);
+    expect(s.windows.get(11)?.app).toBe("wsl:Ubuntu:gedit");
+    expect(h.created).toEqual(["Ubuntu"]);
+  });
+
+  it("hides a window the user's never-look list names by any name its app goes by (comm, argv), not only its app id", async () => {
+    const h = harness();
+    h.wsl.add("Ubuntu");
+    geditScene(h);
+    h.windows.stack.push(stacked(12, 4242, "My notes", "msrdc", { x: 900, y: 0, width: 600, height: 400 }));
+    const vault: FrameSpec = {
+      pid: 801, path: "/org/a11y/atspi/accessible/7", app: "Electron", name: "My notes", program: "electron", argv0: "electron",
+      argv1: "/opt/vault/resources/app.asar", comm: "vault-desktop", bounds: { x: 0, y: 0, width: 600, height: 400 }, children: [{ x: 0, y: 0, width: 600, height: 400 }],
+    };
+    h.setups.set("Ubuntu", helper => { helper.frames = [geditScene({ ...h, windows: { stack: [] } } as never).frame, vault]; });
+    const r = router(h);
+    expect((await r.refresh()).windows.get(12)?.app).toBe("wsl:Ubuntu:electron");
+    h.state.neverLook = ["vault-desktop"];
+    h.state.now += IDENTITY_MS + 1;
+    const s = await r.refresh();
+    expect(s.windows.has(12)).toBe(false);
+    expect(s.hidden.get(12)).toEqual({ distro: "Ubuntu", linuxPid: 801 });
+    expect(r.identityNow(12, 4242, true)).toBeNull();
+    expect([...s.windows.keys()]).toEqual([11]);
+  });
+
+  it("doesn't give a root distro's msrdc to the one distro it reads from because it is the only one it may read", async () => {
+    const h = harness();
+    h.wsl.add("Ubuntu").add("kali-linux", { defaultUid: 0 });
+    const s = geditScene(h, { hwnd: 21, pid: 4300, title: "" });
+    // Ubuntu's gedit is its active window (minimised on Windows); Kali's untitled window, the same size, has the focus.
+    h.windows.foreground = 21;
+    h.setups.set("Ubuntu", helper => { helper.frames = [{ ...s.frame, active: true }]; });
+    const r = router(h);
+    const snap = await r.refresh();
+    expect(snap.windows.size).toBe(0);
+    expect(r.identityNow(21, 4300, false)).toBeNull();
+  });
 });
 
 describe("several distros", () => {

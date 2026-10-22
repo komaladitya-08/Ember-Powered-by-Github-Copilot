@@ -189,6 +189,18 @@ describe("popups (critique wsl-11)", () => {
     expect(popupOwners([main, { ...tip, pid: 99 }], new Set([1]), () => 0).size).toBe(0);
   });
 
+  it("never take a window's identity by where they lie when their owner is a Linux window nobody identified", () => {
+    // KeePassXC (never-look, so unidentified) under gedit; its menu, owned by it, lies within gedit: still KeePassXC's.
+    const keepass = rail(4, "Passwords.kdbx - KeePassXC", { x: 100, y: 100, width: 800, height: 600 });
+    const menu = rail(3, "", { x: 300, y: 300, width: 100, height: 20 }, { popup: true, owner: 4 });
+    expect(popupOwners([keepass, main, menu], new Set([1]), () => 0).size).toBe(0);
+    // Through a popup it opened from (a submenu): the same.
+    const sub = rail(5, "", { x: 310, y: 310, width: 100, height: 20 }, { popup: true, owner: 3 });
+    expect(popupOwners([keepass, main, menu, sub], new Set([1]), h => (h === 3 ? 4 : 0)).size).toBe(0);
+    // An owner that isn't a Linux window on screen (unknown) still lets where it lies decide.
+    expect(popupOwners([main, { ...menu, owner: 77 }], new Set([1]), () => 0)).toEqual(new Map([[3, 1]]));
+  });
+
   it("follow an owner chain only so far (a loop can't hang)", () => {
     const loop = rail(3, "", { x: 0, y: 0, width: 10, height: 10 }, { popup: true, owner: 5 });
     expect(popupOwners([loop], new Set([1]), h => (h === 5 ? 6 : 5)).size).toBe(0);

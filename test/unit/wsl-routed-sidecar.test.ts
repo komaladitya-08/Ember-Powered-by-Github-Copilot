@@ -160,6 +160,30 @@ describe("reading a WSLg window", () => {
     expect(helper.calls.filter(c => c.method === "read_window")).toHaveLength(1);
   });
 
+  it("keeps only the ids its helper handed out: one naming UIA's or another distro's element is dropped (never acted on as this app's)", async () => {
+    const { routed, helper, ids, s, u } = await scene();
+    const send = UIA_BLOCK + 5, other = 777 * 10_000_000 + 1;
+    helper.nodes.set(s.frame.path, [
+      ...helper.nodes.get(s.frame.path)!,
+      node(send, "push button", "Save", { x: 36, y: 63, width: 60, height: 30 }),
+      node(other, "push button", "OK", { x: 36, y: 93, width: 60, height: 30 }),
+      node(helper.id(8), "label", "Child of a foreign node", null, { parent: send }),
+    ]);
+    const res = await routed.readWindow({ pid: 4242, title: "notes.txt - gedit (Ubuntu)" });
+    expect(res.nodes.map(n => n.id)).toEqual([ids.save, ids.name, ids.pass, helper.id(8)]);
+    expect(res.nodes.at(-1)?.parent).toBeNull();
+    expect(u.calls.filter(c => c.method === "doAction")).toHaveLength(0);
+  });
+
+  it("leaves a read naming another reader's window by its path (UIA's) to that reader, whatever its pid", async () => {
+    const { routed, u, helper, h } = await scene();
+    h.windows.foreground = 11;
+    h.state.now += 3000;
+    await routed.readWindow({ pid: 4242, path: "uia:hwnd:12" });
+    expect(u.calls.filter(c => c.method === "readWindow").map(c => c.args[0])).toEqual([{ pid: 4242, path: "uia:hwnd:12" }]);
+    expect(helper.calls.filter(c => c.method === "read_window")).toHaveLength(0);
+  });
+
   it("leaves every other window to UIA: another program's, or a RAIL window by a title nobody identified", async () => {
     const { routed, u, helper } = await scene();
     await routed.readWindow({ pid: 300, title: "todo.txt - Notepad" });
