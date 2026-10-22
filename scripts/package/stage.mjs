@@ -6,8 +6,9 @@
 //       resources/app/               package.json, LICENSE, dist/app (the built app), production node_modules
 //       resources/sidecar/atspi/     the accessibility sidecar (run by the system Python)
 //     dist/package/voice-models/     the speech models, trimmed to the files Ember loads (if downloaded and verified)
-//   Windows: dist/package/Ember/      Ember.exe (electron.exe renamed), the same notices and resources/app, the UI
-//                                     Automation bridge in resources/sidecar/uia, resources/ember.ico
+//   Windows: dist/package/Ember/      Ember.exe (electron.exe renamed, with Ember's version resource and icon and no
+//                                     certificate table: exe-resources.mjs), the same notices and resources/app, the
+//                                     UI Automation bridge in resources/sidecar/uia, resources/ember.ico
 //   macOS:   dist/package/Ember.app   Electron.app renamed, its executable Contents/MacOS/Ember; notices, licences
 //                                     and app/ in Contents/Resources; Info.plist edited, the icon, signed ad hoc
 //                                     last (mac-bundle.mjs)
@@ -28,6 +29,7 @@ import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
 import { layoutFor, npmInvocation, prodPackageDirs, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
+import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
 
 const FLAGS = ["--allow-missing-sidecar", "--with-models"];
@@ -109,6 +111,26 @@ for (const [from, to] of layout.renames) renameRetrying(path.join(app, from), pa
 for (const f of layout.remove) fs.rmSync(path.join(app, f), { force: true });
 // Electron's licences go inside the app folder (on Linux and Windows they already are).
 for (const f of layout.electronNotices) fs.copyFileSync(path.join(electronDist, f), path.join(app, layout.noticesDir, f));
+// Windows: Ember.exe's own version resource and icon (Task Manager and its Startup apps page, the privacy settings,
+// the volume mixer and firewall prompts show them), without Electron's certificate table, which any change voids
+// (exe-resources.mjs). Before the fuses, so they are flipped and checked in the bytes that ship. The .ico also
+// serves shortcuts and windows.
+if (layout.icon?.kind === "ico") await writeIco(path.join(root, "assets/ember.svg"), path.join(app, layout.icon.file));
+let exeIdentity = null;
+if (layout.exeResources) {
+  if (layout.icon?.kind !== "ico") throw new Error(`${layout.target}: the executable's icon comes from an .ico, and this layout has none`);
+  const company = typeof pkg.author === "string" ? pkg.author : pkg.author?.name;
+  if (!company) throw new Error("package.json has no author to name as Ember.exe's company");
+  const exe = path.join(app, layout.exe);
+  const identity = { version: pkg.version, company, ico: fs.readFileSync(path.join(app, layout.icon.file)) };
+  // Written beside and renamed over, so an interrupted run never leaves half an executable.
+  fs.writeFileSync(`${exe}.resources`, rewriteExeResources(fs.readFileSync(exe), identity));
+  renameRetrying(`${exe}.resources`, exe);
+  const read = readExeResources(fs.readFileSync(exe));
+  const wrongResources = exeResourceMismatches(read, identity);
+  if (wrongResources.length) throw new Error(`${layout.exe}'s resources didn't take: ${wrongResources.join("; ")}`);
+  exeIdentity = `${layout.exe}: "${read.versions[0].strings[0].values.FileDescription}" ${pkg.version} by ${company}, ${read.iconGroups[0].icons.length} icon sizes, unsigned`;
+}
 // Its fuses: no debugger (--inspect*) and no NODE_OPTIONS, in the app or in what it runs as plain Node; plain Node
 // itself (RunAsNode) stays, for the desk helper and the accessibility host. Only the copy changes, not
 // node_modules/electron.
@@ -158,10 +180,6 @@ for (const s of sidecars) {
   fs.mkdirSync(path.dirname(path.join(resources, s.to)), { recursive: true });
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
 }
-// Windows: Ember's icon for shortcuts and windows (Ember.exe's own icon resource stays Electron's for now).
-// TODO(port): set Ember.exe's icon and version resource once a resource editor is a dependency; it must run before
-// the fuses are flipped, and it strips Electron's Authenticode signature.
-if (layout.icon?.kind === "ico") await writeIco(path.join(root, "assets/ember.svg"), path.join(app, layout.icon.file));
 
 // 4. Speech models (optional): only when every model is in place and verified (its marker holds the SHA-256 it's
 //    pinned to), and only the files Ember loads (no partial downloads).
@@ -257,6 +275,7 @@ function size(p) {
 }
 
 console.log(`staged ${rel(app)} (${size(app)}): Ember ${version}, Electron ${electronVersion}, ${layout.target}`);
+if (exeIdentity) console.log(`  ${exeIdentity}`);
 console.log(`  fuses: ${Object.entries(fuses).map(([k, v]) => `${k} ${v === true ? "on" : v === false ? "off" : v}`).join(", ")}`);
 console.log(`  production modules: ${prod.map(p => path.relative(path.join(root, "node_modules"), p)).join(", ")}`);
 if (modelsDest && fs.existsSync(modelsDest)) console.log(`staged ${rel(modelsDest)} (${size(modelsDest)})`);

@@ -49,6 +49,7 @@
     "eslint": "10.11.0",
     "globals": "17.12.0",
     "playwright-core": "1.56.1",
+    "resedit": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
     "vitest": "5.0.2"

@@ -8,6 +8,9 @@ import path from "node:path";
 import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout.mjs";
 import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
 import { BUNDLE_ID, EXECUTABLE, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
+import { certificateTable, exeResourceMismatches, exeVersionStrings, numericVersion, readExeResources, rewriteExeResources } from "../../scripts/package/exe-resources.mjs";
+import { EMBER_FUSES, SENTINEL, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
+import * as ResEdit from "resedit";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { autostartEntry, autostartFile, execArg, launchCommand, syncAutostart } from "../../app/main/autostart";
 import { inspectEnvironment } from "../../app/main/environment";
@@ -231,6 +234,130 @@ describe("the Windows icon", () => {
   it("refuses sizes the format can't hold", () => {
     expect(() => icoFromPngs([])).toThrow(/at least one/);
     expect(() => icoFromPngs([{ size: 512, png: png(1) }])).toThrow(/1 to 256/);
+  });
+});
+
+describe("Ember.exe's identity (exe-resources.mjs)", () => {
+  const ab = (b: Buffer) => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) as ArrayBuffer;
+  const section = (name: string, size: number, characteristics: number) => ({
+    name, virtualSize: size, virtualAddress: 0, sizeOfRawData: 0, pointerToRawData: 0, pointerToRelocations: 0,
+    pointerToLineNumbers: 0, numberOfRelocations: 0, numberOfLineNumbers: 0, characteristics,
+  });
+  // As big as real ones (Ember's add up to about 18 KB, more than Electron's three), so the resources grow.
+  const fakePng = (size: number, fill: number) => Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n", "latin1"), Buffer.alloc(size * 32, fill)]);
+  const RDATA = Buffer.concat([Buffer.alloc(256, 0x11), Buffer.from(SENTINEL, "latin1"), Buffer.from([1, 9]), Buffer.from("101100011", "latin1"), Buffer.alloc(256, 0x22)]);
+  const RELOC = Buffer.alloc(64, 0x5a);
+  const CERT = Buffer.concat([Buffer.from([24, 0, 0, 0, 0x00, 0x02, 0x02, 0x00]), Buffer.from("EMBER-TEST-CERT!", "latin1")]);
+  const ELECTRON = {
+    CompanyName: "GitHub, Inc.", FileDescription: "Electron", FileVersion: "44.5.0", InternalName: "electron.exe",
+    LegalCopyright: "Copyright (C) 2015 GitHub, Inc. All rights reserved.", OriginalFilename: "electron.exe",
+    ProductName: "Electron", ProductVersion: "44.5.0",
+  };
+  /**
+   * A stand-in for electron.exe, laid out like it: .rdata holding the fuse wire, then Electron's version resource and
+   * icons, then .reloc, which moves when the resources grow; signed (a certificate table at the end) unless told not.
+   */
+  const fakeElectronExe = (o: { signed?: boolean; resources?: boolean } = {}) => {
+    const exe = ResEdit.NtExecutable.createEmpty(false, false);
+    exe.setSectionByEntry(ResEdit.Format.ImageDirectoryEntry.GlobalPointer, { info: section(".rdata", RDATA.length, 0x40000040), data: ab(RDATA) });
+    if (o.resources !== false) {
+      const res = ResEdit.NtExecutableResource.from(exe);
+      ResEdit.Resource.VersionInfo.create(1033, { fileVersionMS: (44 << 16) | 5, fileVersionLS: 0, productVersionMS: (44 << 16) | 5, productVersionLS: 0 },
+        [{ lang: 1033, codepage: 1200, values: ELECTRON }]).outputToResourceEntries(res.entries);
+      ResEdit.Resource.IconGroupEntry.replaceIconsForResource(res.entries, 1, 1033, [16, 32, 48].map(n => ResEdit.Data.RawIconItem.from(fakePng(n, 0xee), n, n, 32)));
+      res.outputResource(exe);
+    }
+    exe.setSectionByEntry(ResEdit.Format.ImageDirectoryEntry.BaseRelocation, { info: section(".reloc", RELOC.length, 0x42000040), data: ab(RELOC) });
+    const unsigned = Buffer.from(exe.generate());
+    if (o.signed === false) return unsigned;
+    // A WIN_CERTIFICATE after the image, which the data directory's security entry points at by file offset.
+    const signed = Buffer.concat([unsigned, CERT]);
+    const raw = ab(signed);
+    const dos = ResEdit.Format.ImageDosHeader.from(raw);
+    const nt = ResEdit.Format.ImageNtHeaders.from(raw, dos.newHeaderAddress);
+    ResEdit.Format.ImageDataDirectoryArray.from(raw, dos.newHeaderAddress + nt.getDataDirectoryOffset())
+      .set(ResEdit.Format.ImageDirectoryEntry.Certificate, { virtualAddress: unsigned.length, size: CERT.length });
+    return Buffer.from(raw);
+  };
+  const ico = icoFromPngs(ICO_SIZES.map(size => ({ size, png: fakePng(size, size & 0xff) })));
+  const identity = { version: "1.2.3", company: "komaladitya-08", ico };
+
+  it("says Ember, at Ember's version, from its owner, with Ember's icon in every size, and drops the voided signature (W12)", () => {
+    const electron = fakeElectronExe();
+    expect(certificateTable(electron)).toEqual({ offset: electron.length - CERT.length, size: CERT.length });
+    expect(() => ResEdit.NtExecutable.from(electron)).toThrow(/signed/); // the fixture is signed as resedit sees it
+    const ember = rewriteExeResources(electron, identity);
+    const read = readExeResources(ember);
+    expect(read.signed).toBe(false);
+    expect(certificateTable(ember)).toEqual({ offset: 0, size: 0 });
+    expect(ember.includes(Buffer.from("EMBER-TEST-CERT!", "latin1"))).toBe(false);
+    expect(read.versions).toHaveLength(1);
+    expect(read.versions[0]).toMatchObject({ fileVersion: [1, 2, 3, 0], productVersion: [1, 2, 3, 0] });
+    expect(read.versions[0].strings).toEqual([{
+      lang: 1033, codepage: 1200, values: {
+        ...ELECTRON, // Electron's copyright stays: the code is Electron's
+        CompanyName: "komaladitya-08", FileDescription: "Ember", ProductName: "Ember", InternalName: "Ember.exe", OriginalFilename: "Ember.exe",
+        FileVersion: "1.2.3", ProductVersion: "1.2.3",
+      },
+    }]);
+    expect(read.iconGroups).toEqual([{
+      id: 1, lang: 1033, icons: ICO_SIZES.map(size => ({ width: size, height: size, bitCount: 32, dataSize: fakePng(size, 0).length })),
+    }]);
+    expect(exeResourceMismatches(read, identity)).toEqual([]);
+    expect(electron.includes(Buffer.from("EMBER-TEST-CERT!", "latin1"))).toBe(true); // the input is left as it was
+  });
+
+  it("keeps the fuse wire where stage.mjs flips it, and the sections that move after the resources intact", () => {
+    const electron = fakeElectronExe();
+    const ember = rewriteExeResources(electron, identity);
+    expect(readFuses(ember)).toEqual(readFuses(electron));
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-exe-")), "Ember.exe");
+    fs.writeFileSync(file, ember);
+    expect(fuseMismatches(flipFuses(file, EMBER_FUSES), EMBER_FUSES)).toEqual([]);
+    const sections = (bin: Buffer) => ResEdit.NtExecutable.from(bin, { ignoreCert: true });
+    const before = sections(electron), after = sections(ember);
+    const reloc = (exe: ReturnType<typeof sections>) => exe.getSectionByEntry(ResEdit.Format.ImageDirectoryEntry.BaseRelocation)!;
+    // The icons made the resources bigger, so .reloc moved; its directory entry moved with it.
+    expect(reloc(after).info.virtualAddress).toBeGreaterThan(reloc(before).info.virtualAddress);
+    expect(Buffer.from(reloc(after).data!).subarray(0, RELOC.length).equals(RELOC)).toBe(true);
+    expect(Buffer.from(after.getSectionByEntry(ResEdit.Format.ImageDirectoryEntry.GlobalPointer)!.data!).subarray(0, RDATA.length).equals(RDATA)).toBe(true);
+  });
+
+  it("gives an unsigned executable, or one without a version resource or icon, the same identity", () => {
+    for (const exe of [fakeElectronExe({ signed: false }), fakeElectronExe({ resources: false })]) {
+      const read = readExeResources(rewriteExeResources(exe, identity));
+      expect(exeResourceMismatches(read, identity)).toEqual([]);
+      expect(read.versions[0].strings[0].values).toMatchObject(exeVersionStrings(identity));
+      expect(read.iconGroups.map(g => g.id)).toEqual([1]);
+    }
+  });
+
+  it("says what is still Electron's in an executable it didn't rewrite", () => {
+    const problems = exeResourceMismatches(readExeResources(fakeElectronExe()), identity);
+    expect(problems).toEqual(expect.arrayContaining([
+      expect.stringMatching(/certificate table/),
+      "file version 44.5.0.0, should be 1.2.3.0",
+      'FileDescription (language 1033) is "Electron", should be "Ember"',
+      expect.stringMatching(/^icon group 1 holds 16x16\/32\/\d+ 32x32/),
+    ]));
+  });
+
+  it("carries a version Windows can hold, and refuses one it can't or a file that isn't an executable", () => {
+    expect(numericVersion("0.1.0")).toEqual([0, 1, 0, 0]);
+    expect(numericVersion("1.2.3.4")).toEqual([1, 2, 3, 4]);
+    expect(numericVersion("1.2.3-beta.4+build.5")).toEqual([1, 2, 3, 0]);
+    for (const bad of ["1.2", "v1.2.3", "1.2.3 ", "70000.0.0"]) expect(() => numericVersion(bad), bad).toThrow();
+    expect(() => certificateTable(Buffer.from("#!/bin/sh\necho not a PE\n".padEnd(128, " ")))).toThrow(/not a Windows executable/);
+    expect(() => rewriteExeResources(fakeElectronExe(), { ...identity, ico: Buffer.from([0, 0, 1, 0, 0, 0]) })).toThrow(/no images/);
+  });
+
+  it("is written before the fuses are flipped, so they are checked in the bytes that ship", () => {
+    const stage = fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8");
+    const at = (s: string) => { const i = stage.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
+    expect(at("rewriteExeResources(fs.readFileSync(exe), identity)")).toBeLessThan(at("flipFuses(path.join(app, layout.fuseFile)"));
+    expect(at("exeResourceMismatches(read, identity)")).toBeLessThan(at("flipFuses(path.join(app, layout.fuseFile)"));
+    expect(at("await writeIco(")).toBeLessThan(at("rewriteExeResources("));
+    expect(stage).not.toMatch(/TODO\(port\): set Ember\.exe/);
   });
 });
 
