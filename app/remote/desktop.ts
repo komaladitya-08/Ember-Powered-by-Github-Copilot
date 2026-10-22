@@ -8,6 +8,7 @@
  */
 
 import type { ChildProcess } from "node:child_process";
+import readline from "node:readline";
 import type { Logger } from "../main/logger";
 import type { DesktopState } from "../main/remote/protocol";
 import { desktopChildEnv, type DesktopFound, type NoDesktop } from "./desktop-linux";
@@ -145,6 +146,8 @@ export class DesktopController {
       return this.lower({ access: "none", why: `Ember couldn't start its desktop helper on ${this.d.host}.`, notice: "off" });
     }
     if (!proc.stdin || !proc.stdout) return this.lower({ access: "none", why: `Ember couldn't start its desktop helper on ${this.d.host}.`, notice: "off" });
+    // Its stderr (Node's warnings, Xlib's complaints) is read into the log: a pipe nobody reads fills and stalls it.
+    if (proc.stderr) readline.createInterface({ input: proc.stderr, crlfDelay: Infinity }).on("line", l => this.d.log.debug("remote.desktop_child_stderr", { line: l.slice(0, 300) }));
     const child: Child = { proc, session: f.session.id, access: f.access, type: f.session.type, rpc: null as unknown as LineRpc };
     child.rpc = lineRpc({
       input: proc.stdout, output: proc.stdin, log: this.d.log,
@@ -244,9 +247,27 @@ export class DesktopController {
     const pid = c.proc.pid;
     // Its stdin's end stops it; the group (its sidecar and notice too) goes if it hasn't within 1 s.
     if (pid) {
+      this.stopped.add(pid);
+      c.proc.once("exit", () => this.stopped.delete(pid));
       setTimeout(() => {
+        this.stopped.delete(pid);
         try { process.kill(-pid, "SIGKILL"); } catch { /* gone already */ }
       }, 1000).unref();
     }
+  }
+
+  /** Children stopped whose group may still be there (their 1 s isn't up). */
+  private stopped = new Set<number>();
+
+  /**
+   * The agent is exiting now: every stopped child's group that hasn't gone yet is killed at once (their 1 s timers die
+   * with the agent, and nothing of Ember's may stay behind on the remote, R2).
+   */
+  reap(): void {
+    this.stop();
+    for (const pid of this.stopped) {
+      try { process.kill(-pid, "SIGKILL"); } catch { /* gone already */ }
+    }
+    this.stopped.clear();
   }
 }

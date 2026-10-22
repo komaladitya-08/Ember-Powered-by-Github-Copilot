@@ -25,6 +25,7 @@ import { emberNamesRegExp } from "../main/remote/protocol";
 import { createLocalRunner } from "../main/commands/run/local";
 import { loadRemotePolicy, PolicyWatch } from "./admin";
 import { createRemoteAudit, type AuditSource } from "./audit";
+import { cleanUp, REAL_CLEANUP_IO, runtimeIdOf } from "./cleanup";
 import { RemoteRuns } from "./commands";
 import { recordConsent } from "./consent";
 import { CONTRACTS } from "./contracts";
@@ -34,7 +35,7 @@ import { discoverDesktop, type DesktopFound, type NoDesktop } from "./desktop-li
 import { childOf, extraPath, isWslHost, killSession, machineHash, realDesktopIo, spawnGroup, startOf, sweeper, tccLimited } from "./host-io";
 import { acquireLock, fileLockIo } from "./lock";
 import { stampFolder, stampText, sweepOrphans } from "./orphans";
-import { dataFolder, hashLine, machineKey, placesFor, sessionFolder, type AgentOs, type Places } from "./places";
+import { dataFolder, emberPaths, hashLine, machineKey, placesFor, sessionFolder, type AgentOs, type Places } from "./places";
 import { Server } from "./serve";
 import { runWatchdogThread, startWatchdog, WatchTable, WATCHDOG_ROLE, type WatchdogData } from "./watchdog";
 
@@ -118,7 +119,7 @@ function ensureDir(p: string): void {
 }
 
 /** The folders, after the per-session one is made. */
-async function placesNow(agentOs: AgentOs, home: string, uid: number, env: NodeJS.ProcessEnv): Promise<{ places: Places; machineHashHex: string }> {
+async function placesNow(agentOs: AgentOs, home: string, uid: number, env: NodeJS.ProcessEnv): Promise<{ places: Places; machineHashHex: string; machine: string }> {
   const machineHashHex = await machineHash(agentOs);
   const machine = machineKey(machineHashHex, hashLine(os.hostname()));
   const session = sessionFolder(agentOs, {
@@ -145,7 +146,7 @@ async function placesNow(agentOs: AgentOs, home: string, uid: number, env: NodeJ
   });
   const places = placesFor({ os: agentOs, home, machine, session: session.dir, sessionStable: session.stable });
   for (const p of [places.state, places.audit, places.logs, places.runs]) ensureDir(p);
-  return { places, machineHashHex };
+  return { places, machineHashHex, machine };
 }
 
 /** Runs `serve`: the protocol on stdin/stdout until EOF, the grace, bye or a stop signal. */
@@ -154,7 +155,7 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
   const uid = process.getuid?.() ?? user.uid;
   const home = homeOf(o.env);
   const host = os.hostname().split(".")[0] || os.hostname();
-  const { places, machineHashHex } = await placesNow(o.agentOs, home, uid, o.env);
+  const { places, machineHashHex, machine } = await placesNow(o.agentOs, home, uid, o.env);
   const log = createLogger({ dir: places.logs, level: levelOf(o.env), maxBytes: 1024 * 1024, keep: 3 });
   log.info("remote.start", { partsId: o.partsId, packaged: o.packaged, os: o.agentOs, arch: o.arch });
   const self = path.join(o.dir, path.basename(__filename));
@@ -178,7 +179,6 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
   const watchdog = startWatchdog({ table, file: self, sweepScript: CONTRACTS.sweepScript, log });
   const mux = createMux({ read: process.stdin, write: process.stdout, role: "agent", partsId: o.partsId, log: log.child("mux") });
   const extra = extraPath(o.agentOs);
-  const stateRoot = o.agentOs === "darwin" ? path.join(places.data, "state") : path.dirname(places.state);
   const runs = new RemoteRuns({
     contracts: CONTRACTS, os: o.agentOs, baseEnv: o.env, spawn, kill: (pid, signal) => { process.kill(pid, signal); },
     sweep, killSession, childOf,
@@ -208,8 +208,9 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     consoleStop: () => void server?.consoleStop(),
     log: log.child("desktop"), now: () => Date.now(),
   });
+  const ownPaths = emberPaths(o.agentOs, places);
   const ember = () => ({
-    paths: [places.data, stateRoot, places.session],
+    paths: ownPaths,
     pids: [process.pid, ...(desktop.pid ? [desktop.pid] : [])],
     names: emberNamesRegExp(EMBER_NAMES),
   });
@@ -224,6 +225,7 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     policy,
     lock: (pcId, graceMs) => acquireLock({ file: places.lock, me: { pid: process.pid, start: myStart, pcId }, graceMs, io: fileLockIo(started), log }),
     facts: () => CONTRACTS.localFacts({ os: o.agentOs, env: o.env, home, user: user.username, elevated: () => uid === 0, extraPath: extra, ember: ember() }),
+    ember,
     runs,
     inspect: (paths, cwd) => local.inspect(paths, cwd),
     git: cwd => local.gitFacts(cwd),
@@ -235,10 +237,18 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
     },
     desktop,
     orphans,
+    // Old versions and runtimes (§5.2.6): a packaged agent only (a development one runs from the repo's dist).
+    ...(o.packaged ? {
+      cleanup: () => cleanUp({
+        data: places.data, machine, partsId: o.partsId, runtimeId: runtimeIdOf(process.execPath, places.data, REAL_CLEANUP_IO),
+        now: Date.now(), io: REAL_CLEANUP_IO, log: log.child("cleanup"),
+      }),
+    } : {}),
     exit: code => {
       watchdog.stop();
       desktop.stop();
-      setTimeout(() => process.exit(code), 50);
+      // The child had 50 ms to go on its stdin's end; its group goes now if it hasn't.
+      setTimeout(() => { desktop.reap(); process.exit(code); }, 50);
     },
     now: () => Date.now(),
   });

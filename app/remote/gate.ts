@@ -12,6 +12,7 @@ import type { ActStamp } from "../main/perception/ports";
 import type { ElementInfo } from "../main/perception/sidecar";
 import type { ActionKind, ActionRequest, Decision, TextMode } from "../main/policy/policy";
 import { normalizeLabel } from "../main/policy/policy";
+import { ALWAYS_ASK } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
 import type { ClassifyCommand } from "./contracts";
 
@@ -86,7 +87,8 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * Gate 2 for a command (§3.16): freshness and epoch; the stamp belongs to this spec; this machine's commands mode; its
  * own classification with its own facts and real paths (a refusal denies; root asks without a yes); then every finding
  * the stamp doesn't cover asks, carrying this machine's card lines and rules. A finding is covered when the stamp
- * names its rule and its class, or, after the user's yes, its rule (the PC resends with the rules a needs_confirm
+ * names its rule and its class (never for an always-ask class: secret, escape, unclear), or, after the user's yes, its
+ * rule (the PC resends with the rules a needs_confirm
  * carried once the user said yes to them, §3.8.3 step 13). An approval older than 120 s counts as none.
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
@@ -130,7 +132,9 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
   const findings = cls.findings.filter(f => !(f.ifExists && byPath.get(f.ifExists)?.exists === false));
-  const covered = (f: Finding) => stamp.rules.includes(f.rule) && (stamp.classes.includes(f.cls) || approval !== null);
+  // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
+  // "run" or "announce" no PC should send) covers nothing of it.
+  const covered = (f: Finding) => stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls)));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
     const rules = [...new Set(extra.map(f => f.rule))].slice(0, 64);

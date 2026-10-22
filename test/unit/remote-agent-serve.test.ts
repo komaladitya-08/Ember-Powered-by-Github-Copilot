@@ -75,7 +75,7 @@ const facts: RunnerFacts = {
 };
 
 /** A server over fakes; `policy` is this computer's. */
-function server(o: { policy?: LoadedAdminPolicy; lockBusy?: boolean; auditFails?: boolean; classify?: ServeDeps["classify"] } = {}) {
+function server(o: { policy?: LoadedAdminPolicy; lockBusy?: boolean; auditFails?: boolean; classify?: ServeDeps["classify"]; deps?: Partial<ServeDeps> } = {}) {
   const m = fakeMux();
   const calls: string[] = [];
   const audit: Record<string, unknown>[] = [];
@@ -116,6 +116,7 @@ function server(o: { policy?: LoadedAdminPolicy; lockBusy?: boolean; auditFails?
     orphans: async () => [],
     exit: code => { exited = code; },
     now: () => Date.now(),
+    ...o.deps,
   };
   const s = new Server(deps);
   s.start();
@@ -182,6 +183,60 @@ describe("serve (§5.3, §5.4)", () => {
     const ok = res(await t.m.req("cmd.run", run("make", { yes: true, rules: ["remote.unchecked"] })));
     expect(ok).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
     expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "make", approved: true });
+  });
+
+  it("doesn't start a command whose link went quiet while its paths were checked, and records no start", async () => {
+    const plainCls: ServeDeps["classify"] = (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: ["/home/deploy/x"], needsGit: false, downloads: [], programs: [], commands: [] });
+    let quiet: () => void = () => {};
+    const t = server({ classify: plainCls, deps: { inspect: async paths => { quiet(); return paths.map(() => ({ exists: true, real: null })); } } });
+    quiet = () => t.m.setSilent(1600);
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.run", run("ls x")))).toMatchObject({ ok: false, code: "stale" });
+    expect(t.calls.some(c => c.startsWith("start"))).toBe(false);
+    expect(t.audit.some(e => e.event === "command" && e.phase === "start")).toBe(false);
+  });
+
+  it("classifies with Ember's own pids as they are now, not as they were at hello (D4.5)", async () => {
+    const seen: number[][] = [];
+    const spy: ServeDeps["classify"] = (text, shell, ctx) => { seen.push(ctx.ember.pids); return CONTRACTS.classifyCommand(text, shell, ctx); };
+    const pids = [1];
+    const t = server({ classify: spy, deps: { ember: () => ({ ...facts.ember, pids: [...pids] }) } });
+    await t.m.req("hello", helloArgs());
+    pids.push(777); // the desktop child started after hello
+    await t.m.req("cmd.run", run("kill 777"));
+    expect(seen.at(-1)).toEqual([1, 777]);
+  });
+
+  it("serves one hello: a second one while the first waits for the lock is refused", async () => {
+    let free: () => void = () => {};
+    const t = server({ deps: { lock: () => new Promise(r => { free = () => r({ ok: true, release: () => {}, tookOver: null }); }) } });
+    const first = t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("hello", helloArgs()))).toMatchObject({ ok: false, code: "bad_request" });
+    free();
+    expect(res(await first)).toMatchObject({ ok: true });
+  });
+
+  it("cleans up old versions once hello holds the lock, and a failed clean-up changes nothing else", async () => {
+    let cleaned = 0;
+    const t = server({ deps: { cleanup: async () => { cleaned++; throw new Error("read-only home"); } } });
+    expect(cleaned).toBe(0);
+    expect(res(await t.m.req("hello", helloArgs()))).toMatchObject({ ok: true });
+    expect(cleaned).toBe(1);
+    expect(t.exited).toBeNull();
+  });
+
+  it("asks a person at the screen first when either machine's administrator wants it (§5.3.9; combineAdmin ORs it)", async () => {
+    const asks: { consent: boolean }[] = [];
+    const none = { access: "none", why: "x", notice: "off" } as const;
+    const desktop = {
+      ensure: async (a: { consent: boolean }) => { asks.push(a); return none; }, preview: async () => none,
+      stop() {}, pause() {}, policy() {}, recheck: async () => "x", request: async () => { throw new Error("no"); }, pid: null, state: none,
+    } as unknown as DesktopController;
+    const t = server({ deps: { desktop } });
+    const pcAsks = adminSummary({ policy: AdminPolicySchema.parse({ ssh: { requireConsoleConsent: true } }), source: "/etc/ember/policy.json" });
+    expect(res(await t.m.req("hello", { ...helloArgs(), localAdmin: pcAsks }))).toMatchObject({ ok: true });
+    await t.m.req("desktop.state", {});
+    expect(asks[0]?.consent).toBe(true);
   });
 
   it("refuses a command it can't record (write-ahead)", async () => {

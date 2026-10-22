@@ -65,6 +65,11 @@ export interface ServeDeps {
   lock: (pcId: string, graceMs: number) => Promise<LockResult>;
   /** The facts with Ember's live pids (`extraPids`: the desktop child's and its helpers'). */
   facts: () => Promise<RunnerFacts>;
+  /**
+   * Ember's own paths, pids and names as they are now (D4.5; critique integration-24: read at every classification,
+   * since the desktop child comes and goes after the facts were read).
+   */
+  ember?: () => RunnerFacts["ember"];
   runs: RemoteRuns;
   inspect: (paths: string[], cwd: string) => Promise<PathFact[]>;
   git: (cwd: string) => Promise<GitFacts | null>;
@@ -75,6 +80,8 @@ export interface ServeDeps {
   desktop: DesktopController;
   /** The orphan sweep (after a stale agent's lock was taken over). */
   orphans: () => Promise<string[]>;
+  /** Deletes versions and runtimes nobody uses any more (§5.2.6), once hello holds the lock; absent: nothing to do. */
+  cleanup?: () => Promise<unknown>;
   exit: (code: number) => void;
   now: () => number;
 }
@@ -90,6 +97,8 @@ export function graceSeconds(local: AdminSummary | null, remote: AdminSummary): 
 /** The agent's server for one link. */
 export class Server {
   private hello: OpArgs<"hello"> | null = null;
+  /** A hello is being checked (it waits for the lock): a second one meanwhile is refused, never served twice. */
+  private greeting = false;
   private epoch = 0;
   private graceMs = DEFAULT_GRACE_S * 1000;
   private channel = 0;
@@ -215,8 +224,17 @@ export class Server {
   // -- hello -----------------------------------------------------------------------------------------------------------
 
   private async onHello(a: OpArgs<"hello">): Promise<Welcome> {
+    if (this.hello || this.greeting) throw new OpError("bad_request", "hello was said already.");
+    this.greeting = true;
+    try {
+      return await this.greet(a);
+    } finally {
+      this.greeting = false;
+    }
+  }
+
+  private async greet(a: OpArgs<"hello">): Promise<Welcome> {
     const d = this.d;
-    if (this.hello) throw new OpError("bad_request", "hello was said already.");
     if (a.pcId !== d.pcId) throw new OpError("denied", "This helper was started for another computer.");
     if (a.partsId !== d.partsId) throw new OpError("bad_request", "This helper is another version of Ember's.");
     if (!consentAccepted(a.consent)) throw new OpError("denied", `The user hasn't agreed to Ember working on ${d.host}.`);
@@ -242,6 +260,8 @@ export class Server {
     this.hello = a;
     d.consent({ version: a.consent.version, from: a.local.name, pcId: a.pcId, at: a.consent.at, user: d.user });
     d.audit.write({ event: "remote", step: "hello", os: a.local.os, consentVersion: a.consent.version, graceSeconds: graceMs / 1000 });
+    // Under the lock now: old versions and runtimes go (asynchronously; a failure only leaves them for next time).
+    if (d.cleanup) void d.cleanup().catch(err => d.log.warn("remote.cleanup_failed", { err }));
     const facts = await this.currentFacts();
     const desktop = await d.desktop.preview(this.desktopAllowed());
     return {
@@ -301,7 +321,8 @@ export class Server {
   }
 
   private desktopAsk() {
-    return { pc: this.hello?.local.name ?? "", allowed: this.desktopAllowed(), consent: this.d.policy.current.policy.ssh?.requireConsoleConsent === true, policy: this.childPolicy() };
+    // Console consent when either machine's administrator asks for it (combineAdmin ORs it, §9.1).
+    return { pc: this.hello?.local.name ?? "", allowed: this.desktopAllowed(), consent: this.combined().ssh.requireConsoleConsent === true, policy: this.childPolicy() };
   }
 
   /** The remote policy changed (read every 10 s) or the PC's did (policy.sync). */
@@ -368,7 +389,9 @@ export class Server {
   private async run(a: OpArgs<"cmd.run">): Promise<OpResult<"cmd.run">> {
     const d = this.d;
     const fence = this.fence;
-    const facts = this.facts ?? await this.currentFacts();
+    const known = this.facts ?? await this.currentFacts();
+    // Ember's own pids as they are now (the desktop child may have started since the facts were read).
+    const facts: RunnerFacts = d.ember ? { ...known, ember: d.ember() } : known;
     const g = await gateCommand({
       spec: a.spec, epoch: a.epoch, agentEpoch: this.epoch, fresh: !!this.liveness?.fresh(), targetId: null,
       mode: commandMode(d.policy.current, "ssh"), facts, classify: d.classify, inspect: d.inspect,
@@ -379,14 +402,16 @@ export class Server {
       d.audit.write({ event: "decision", task: spec.taskId, op: spec.runId, kind: "command", shell: spec.shell, cwd: spec.cwd, verdict: g.status, reason: g.reason, ...(g.rules ? { rules: g.rules } : {}) });
       return g;
     }
+    // The gate awaited the paths' facts (up to 5 s): a stop may have come meanwhile, or the link gone quiet. Checked
+    // again here, where nothing else can run until the command has started (the audit write is synchronous).
+    if (a.epoch < this.epoch || this.stopping || fence !== this.fence) throw new OpError("stopped", "Ember was stopped.");
+    if (!this.liveness?.fresh()) throw new OpError("stale", "The connection went quiet, so the command didn't start.");
     // Write-ahead: no record, no command.
     const written = d.audit.write({
       event: "command", phase: "start", task: spec.taskId, op: spec.runId, runId: spec.runId, shell: spec.shell, cwd: spec.cwd, command: spec.command,
       verdict: spec.stamp.verdict, classes: spec.stamp.classes, rules: spec.stamp.rules, approved: g.approved,
     });
     if (!written) return { status: "deny", reason: GATE_WORDS.noAudit };
-    // The gate awaited the paths' facts: a stop may have come meanwhile.
-    if (a.epoch < this.epoch || this.stopping || fence !== this.fence) throw new OpError("stopped", "Ember was stopped.");
     const channel = ++this.channel;
     const { interactive } = d.runs.start(spec, channel, facts);
     return { status: "started", channel, interactive };

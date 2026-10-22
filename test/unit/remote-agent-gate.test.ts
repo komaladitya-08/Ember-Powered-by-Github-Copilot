@@ -57,6 +57,16 @@ describe("gate 2 for commands (§3.16)", () => {
     }
   });
 
+  it("asks for a secret, an escape or an unclear finding without the user's yes, even when the stamp names it (D4.4)", async () => {
+    for (const cls of ["secret", "escape", "unclear"] as const) {
+      const f = finding(cls, `x.${cls}`, "Always asks.");
+      const named = spec({ verdict: "announce", classes: [cls], rules: [f.rule] });
+      expect(await gateCommand(input({ spec: named, classify: classifier(() => [f]).classify }))).toMatchObject({ status: "needs_confirm", rules: [f.rule] });
+      const yes = spec({ verdict: "ask", classes: [cls], rules: [f.rule], approval: { ageMs: 100 } });
+      expect((await gateCommand(input({ spec: yes, classify: classifier(() => [f]).classify }))).status).toBe("ok");
+    }
+  });
+
   it("asks when the PC named the rule but not the class, unless the user said yes", async () => {
     const s = spec({ verdict: "announce", classes: ["publish"], rules: ["posix.rm"] });
     expect((await gateCommand(input({ spec: s, classify: classifier(() => [RM]).classify }))).status).toBe("needs_confirm");

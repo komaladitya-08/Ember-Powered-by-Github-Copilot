@@ -18,12 +18,15 @@ import type { AxNode } from "../../app/main/perception/sidecar";
 import type { ActStamp } from "../../app/main/perception/ports";
 
 const required = process.env.EMBER_SSH_TEST === "1";
+// Only with the variable: the suite turns accessibility on in the session's settings, which a developer's own
+// desktop must not get by accident.
+const enabled = !!process.env.EMBER_SSH_TEST;
 const python = process.env.EMBER_PYTHON ?? "python3";
-const gtk = spawnSync(python, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], { stdio: "ignore" }).status === 0;
+const gtk = enabled && spawnSync(python, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], { stdio: "ignore" }).status === 0;
 const available = !!process.env.DISPLAY && !!process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(AGENT) && gtk;
 const BENCH = "Ember Test Bench";
 
-describe.skipIf(!available && !required)("the remote desktop child against Xvfb (§5.3.4-§5.3.9)", () => {
+describe.skipIf(!enabled || (!available && !required))("the remote desktop child against Xvfb (§5.3.4-§5.3.9)", () => {
   let link: AgentLink;
   let bench: ChildProcess;
   const benchEvents: Record<string, unknown>[] = [];

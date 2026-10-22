@@ -20,8 +20,11 @@ import type { AxNode } from "../../app/main/perception/sidecar";
 import type { ActStamp } from "../../app/main/perception/ports";
 
 const required = process.env.EMBER_SSH_TEST === "1";
+// Only with the variable: the suite turns accessibility on in the session's settings, which a developer's own
+// desktop must not get by accident.
+const enabled = !!process.env.EMBER_SSH_TEST;
 const python = process.env.EMBER_PYTHON ?? "python3";
-const gtk = spawnSync(python, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], { stdio: "ignore" }).status === 0;
+const gtk = enabled && spawnSync(python, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], { stdio: "ignore" }).status === 0;
 const available = !!process.env.WAYLAND_DISPLAY && !!process.env.XDG_RUNTIME_DIR && !!process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(AGENT) && gtk;
 const BENCH = "Ember Test Bench";
 
@@ -51,7 +54,7 @@ function helper(script: string, env: NodeJS.ProcessEnv) {
   return { proc, lines, wait, send: (o: Line) => proc.stdin!.write(`${JSON.stringify(o)}\n`) };
 }
 
-describe.skipIf(!available && !required)("the remote desktop's text path on Wayland, without Xwayland (L5, §5.3.9)", { timeout: 90_000 }, () => {
+describe.skipIf(!enabled || (!available && !required))("the remote desktop's text path on Wayland, without Xwayland (L5, §5.3.9)", { timeout: 90_000 }, () => {
   let link: AgentLink;
   let bench: ReturnType<typeof helper>;
   let notices: ReturnType<typeof helper>;

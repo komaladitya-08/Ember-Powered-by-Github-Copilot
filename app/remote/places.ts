@@ -48,6 +48,18 @@ export function dataFolder(os: AgentOs, home: string): string {
   return os === "darwin" ? path.join(home, "Library/Application Support/Ember Remote") : path.join(home, ".local/share/ember-remote");
 }
 
+/** Where this machine's administrator keeps Ember's policy (the folders of admin.ts' ADMIN_POLICY_PATHS, as data). */
+const ADMIN_POLICY_DIRS: Readonly<Record<AgentOs, string>> = { linux: "/etc/ember", darwin: "/Library/Application Support/Ember" };
+
+/**
+ * Ember's own paths on this machine (§3.6.2, D4.5): a command that names one is refused outright. The agent's data,
+ * state and per-session folders, the administrator's policy folder, and on Linux /var/log/ember-remote.
+ */
+export function emberPaths(os: AgentOs, p: Pick<Places, "data" | "state" | "session">): string[] {
+  const stateRoot = os === "darwin" ? path.join(p.data, "state") : path.dirname(p.state);
+  return [p.data, stateRoot, p.session, ADMIN_POLICY_DIRS[os], ...(os === "linux" ? ["/var/log/ember-remote"] : [])];
+}
+
 /** Every folder of the agent for this machine (`session` from sessionFolder; `stable`: it outlives this agent). */
 export function placesFor(o: { os: AgentOs; home: string; machine: string; session: string; sessionStable: boolean }): Places {
   if (!path.isAbsolute(o.home)) throw new Error("the home folder must be absolute");
