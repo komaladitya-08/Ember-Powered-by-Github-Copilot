@@ -479,15 +479,16 @@ describe("why input can't reach a window on macOS", () => {
 describe("CursorBorrow on macOS input", () => {
   const fast = { idleMs: 0, sleep: () => Promise.resolve(), window: 101 };
 
-  it("presses Command with AZERTY's own a key for super+a, and types with the layout's keys", async () => {
+  it("presses Command with AZERTY's own a key for super+a, and types through textKey whatever the layout", async () => {
     const { log, input } = setup();
     await new CursorBorrow(input).borrow(async hand => {
       await hand.keys("super+a");
       await hand.type("He");
     }, fast);
-    expect(log.filter(l => l.startsWith("key"))).toEqual([
+    // Off Linux the borrow types each character with the backend's textKey (design §4.8), not the layout's keys.
+    expect(log.filter(l => /^(key|text)/.test(l))).toEqual([
       "key 55 down f100108", "key 12 down f100108", "key 12 up f100108", "key 55 up f100",
-      "key 56 down f20102", "key 4 down f20102", "key 4 up f20102", "key 56 up f100", "key 14 down f100", "key 14 up f100",
+      "text 0 H down f100", "text 0 H up f100", "text 0 e down f100", "text 0 e up f100",
     ]);
   });
 
