@@ -793,6 +793,28 @@ describe("credits", () => {
     d.p.mux.sendBytes(4, Buffer.alloc(10 * KiB));
     await settle();
     expect(d.p.mux.inFlight().bytes).toBe(10 * KiB + 4);
+    d.setNow(d.now() + 1001);
+    expect(d.p.mux.inFlight().bytes).toBe(0);
+  });
+
+  it("stops counting what it sent once the stream is idle, so a grant the reader shrank isn't in flight for ever", async () => {
+    let t = 1000;
+    const p = await openPc({ now: () => t });
+    // The agent grows its grant to 256 KiB, and the PC fills it exactly (8 chunks of 32 KiB, sub-headers included).
+    p.send(credit(2, WINDOW_MAX - WINDOW_START));
+    await settle();
+    p.mux.sendBytes(4, Buffer.alloc(8 * (CAPS.chunkBytes - 4)));
+    await settle();
+    expect(p.reader.of(2)).toHaveLength(8);
+    expect(p.mux.inFlight().bytes).toBe(WINDOW_MAX);
+    // It has them all and shrinks its grant back to 64 KiB: 192 KiB never comes back as credit.
+    t += 100;
+    p.send(credit(2, WINDOW_START));
+    await settle();
+    expect(p.mux.inFlight().bytes).toBe(WINDOW_MAX - WINDOW_START);
+    t += 1001;
+    expect(p.mux.inFlight().bytes).toBe(0);
+    expect(p.closed).toEqual([]);
   });
 });
 
@@ -891,6 +913,25 @@ describe("priority", () => {
     expect(bulkBeforeAnswer).toBeLessThanOrEqual(WINDOW_START);
     expect(Buffer.concat(parts).equals(bulk)).toBe(true);
     expect(closed).toEqual([]);
+  });
+
+  it("lets the PC's Stop overtake 4 MiB of bulk it queued itself", async () => {
+    const out = new HeldWritable();
+    const p = rawPeer("pc", { write: out });
+    p.send(AGENT_PREAMBLE);
+    await settle();
+    // The PC's own output is blocked (ssh's stdin is full) while 4 MiB of bulk and then a Stop are queued.
+    p.mux.sendBytes(8, allBytes(16 * 1024));
+    p.mux.send({ t: "req", id: 1, op: "stop", a: { epoch: 9 } });
+    await settle();
+    out.release();
+    await settle(30);
+    const r = out.frames();
+    // The Stop is the first frame once the stream accepts again, and the agent's 64 KiB grant holds the bulk back.
+    expect(r.frames[0].stream).toBe(0);
+    expect(r.json(0)).toEqual([{ t: "req", id: 1, op: "stop", a: { epoch: 9 } }]);
+    expect(r.of(2).reduce((n, f) => n + f.payload.length, 0)).toBe(WINDOW_START);
+    expect(p.closed).toEqual([]);
   });
 
   it("writes ctl, then data, then bulk, then diag, and only while the stream accepts", async () => {

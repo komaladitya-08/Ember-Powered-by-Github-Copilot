@@ -325,6 +325,8 @@ class FramedMux implements Mux {
   /** Writer side of the credits: what this end may still send, and the most it has been allowed at once. */
   private readonly avail: Record<Limited, number> = { 1: WINDOW_START, 2: WINDOW_START };
   private readonly availHigh: Record<Limited, number> = { 1: WINDOW_START, 2: WINDOW_START };
+  /** When this end last sent bytes on, or got credit for, each credit-limited stream (its bytes may be in flight). */
+  private readonly lastOut: Record<Limited, number> = { 1: -Infinity, 2: -Infinity };
   private waitingDrain = false;
   private pumping = false;
   private nextMsgId = 1;
@@ -447,8 +449,9 @@ class FramedMux implements Mux {
     for (const s of [STREAM.data, STREAM.bulk] as const) {
       // Granted to the other end and not arrived: on its way (or about to be) if the stream has been busy lately.
       if (t - this.lastArrival[s] <= busy) bytes += this.granted[s] - this.received[s];
-      // Sent by this end and not credited back yet.
-      bytes += Math.max(0, this.availHigh[s] - this.avail[s]);
+      // Sent by this end and not credited back yet, while it is still sending or credit is still coming back. Only
+      // then: a reader that shrank its grant returns less credit than it got, which looks like bytes in flight forever.
+      if (t - this.lastOut[s] <= busy) bytes += Math.max(0, this.availHigh[s] - this.avail[s]);
     }
     return { bytes, throughput: Math.round(this.meter.rate()) };
   }
@@ -589,6 +592,7 @@ class FramedMux implements Mux {
     item.at = end;
     if (end === item.bytes.length) q.shift();
     this.avail[s] -= head + n;
+    this.lastOut[s] = this.now();
     return f;
   }
 
@@ -811,6 +815,7 @@ class FramedMux implements Mux {
     if (this.avail[s] + n > WINDOW_MAX) return this.fail(RESET_CODE.credit, "more credit than any window");
     this.avail[s] += n;
     this.availHigh[s] = Math.max(this.availHigh[s], this.avail[s]);
+    this.lastOut[s] = this.now();
   }
 
   private onPing(payload: Buffer): void {
@@ -967,8 +972,10 @@ class FramedMux implements Mux {
  *   else from the other end resets and closes the link.
  * - `onBytes` gets each bulk chunk as it arrives, in a Uint8Array that owns its ArrayBuffer.
  * - `inFlight()` is an upper bound of the bytes between the two ends on credit-limited streams (granted to the other
- *   end on a stream busy in the last second, plus sent here and not yet credited back) and the measured throughput of
- *   arriving bytes in bytes/s, 0 until measured. `rttMs` is the lowest of the last 8 ping round trips, 0 before one.
+ *   end on a stream that received bytes in the last second, or 4 RTTs if longer; plus sent here and not yet credited
+ *   back, on a stream that sent or got credit in that time) and the measured throughput of arriving bytes in bytes/s,
+ *   0 until measured (a caller dividing by it guards the 0). `rttMs` is the lowest of the last 8 ping round trips, 0
+ *   before one.
  * - `reset` writes a RESET ahead of anything queued and closes; `onClose` fires once, with why, on any close (a
  *   listener added after it is called on a microtask). The mux never ends or destroys `read` or `write`.
  */
