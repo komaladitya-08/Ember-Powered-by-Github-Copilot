@@ -34,6 +34,7 @@ import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
+import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { freshAskPress } from "./hotkey";
@@ -1262,6 +1263,8 @@ function start(): void {
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
       words: sys.words,
       isSecurityWindow: sys.privacy.isSecurityWindow,
+      // Remote desktops' and WSLg apps' windows are blacked out of every screenshot (Windows only; undefined elsewhere).
+      isRemoteSurface: remoteSurfaceCheck(platform.os),
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
         const hw = handle?.win && !handle.win.isDestroyed() ? handle.win : null;

@@ -42,6 +42,11 @@ export interface PerceptionOptions {
   words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
   /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
   isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
+  /**
+   * Is this app a remote surface (policy/remote-surface.ts; Windows: a remote desktop's or a WSLg app's window)? Those
+   * are blacked out of every screenshot. Absent on Linux and macOS, which capture as before.
+   */
+  isRemoteSurface?: (app: string) => boolean;
 }
 
 /**
@@ -635,11 +640,13 @@ export class Perception {
    * frames, title bars included. Both sources are used: X11 sees every top-level window (even apps
    * that expose nothing over accessibility, e.g. started before it was turned on), AT-SPI knows
    * app names. null means neither could be listed: the caller must not capture (fail closed)
-   * while anything is on the never-look list.
+   * while anything is on the never-look list. Remote surfaces (Windows) are blacked out too, always.
    */
   async privateWindows(stack?: StackedWindow[] | null): Promise<Bounds[] | null> {
+    const remote = this.remoteSurfaces(stack);
+    if (remote === null) return null;
     const list = this.o.neverLook();
-    if (!list.some(i => i.trim())) return [];
+    if (!list.some(i => i.trim())) return remote;
     const frame = (w: StackedWindow): Bounds => ({ x: w.x, y: w.y, width: w.width, height: w.height });
     let s: StackedWindow[] | null = null;
     let x11: Bounds[] | null = null;
@@ -662,7 +669,19 @@ export class Perception {
       this.o.log.warn("perception.atspi_windows_failed", { err });
     }
     if (x11 === null && atspi === null) return null;
-    return [...(x11 ?? []), ...(atspi ?? [])];
+    return [...remote, ...(x11 ?? []), ...(atspi ?? [])];
+  }
+
+  /**
+   * The whole frames of the remote surfaces on screen (Windows: a remote desktop's or a WSLg app's window), from the
+   * stack, which sees every top-level window: what they show can't be checked against the never-look list or for a
+   * password prompt. [] without the check (Linux, macOS); null when the stack can't be read (no picture then).
+   */
+  private remoteSurfaces(stack?: StackedWindow[] | null): Bounds[] | null {
+    const remote = this.o.isRemoteSurface;
+    if (!remote) return [];
+    const s = stack ?? this.stackNow();
+    return s && s.filter(w => remote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 }
 
