@@ -5,14 +5,15 @@
 
 import type { Platform, PlatformDeps } from "./types";
 import { linuxPlatform } from "./linux";
-// Phase 3 (I) adds: import { win32Platform } from "./win32/platform"; import { darwinPlatform } from "./darwin/platform";
+import { win32Platform } from "./win32/platform";
+import { darwinPlatform } from "./darwin/platform";
 
 /**
- * The platform for this process. Unknown OSes get the Linux object (they fail the environment's platform check, as
- * today); until Phase 3 switches them on, so do Windows and macOS. `os` is for tests.
+ * The platform for this process: Windows and macOS get their own, anything else Linux's (an OS with no backend then
+ * fails the environment's platform check, as before the port). `os` is for tests.
  */
 export function loadPlatform(deps: PlatformDeps, os: NodeJS.Platform = process.platform): Platform {
-  // Phase 3: if (os === "win32") return win32Platform(deps); if (os === "darwin") return darwinPlatform(deps);
-  void os;
+  if (os === "win32") return win32Platform(deps);
+  if (os === "darwin") return darwinPlatform(deps);
   return linuxPlatform(deps);
 }
