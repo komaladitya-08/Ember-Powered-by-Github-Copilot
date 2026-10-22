@@ -218,7 +218,7 @@ describe("the bridge client", () => {
     const mixed = provider({ FAKE_BRIDGE_PROCESS_DPI: "system" }, { note });
     await mixed.p.start();
     (mixed.p as unknown as { call(m: string): Promise<unknown> }).call("exit").catch(() => undefined);
-    await new Promise(r => setTimeout(r, 300));
+    for (const end = Date.now() + 5000; mixed.p.health().ok === true && Date.now() < end;) await new Promise(r => setTimeout(r, 20));
     await mixed.p.start();
     expect(mixed.spawned).toHaveLength(2);
     expect(notes.filter(([e]) => e === "uia.dpi_mixed")).toEqual([["uia.dpi_mixed", { dpi: "per-monitor-v2", processDpi: "system" }]]);
@@ -249,7 +249,8 @@ describe("the bridge client", () => {
     t0 = Date.now();
     expect(await failure(p.start())).toMatch(/still starting/);
     expect(Date.now() - t0).toBeLessThan(100);
-    await new Promise(r => setTimeout(r, 700));
+    // Its ready line comes in the end (900 ms after node started it: later on a loaded machine), and no second bridge.
+    for (const end = Date.now() + 5000; p.health().ok !== true && Date.now() < end;) await new Promise(r => setTimeout(r, 50));
     await p.start();
     expect(spawned).toHaveLength(1);
     expect(p.generation).toBe(1);
