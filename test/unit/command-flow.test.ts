@@ -618,6 +618,50 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     expect(wsl.classified[0][2].ember.pids).toEqual([10, 4242]);
   });
 
+  it("shows \"Starting Ubuntu…\" while the first command's facts boot the distro, before the run has a tab, then on the tab", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL, run: () => ({ hang: true }) });
+    const events: string[] = [];
+    const fns = new Set<(t: string | null) => void>();
+    let status: string | null = null;
+    const say = (t: string | null) => { status = t; for (const fn of [...fns]) fn(t); };
+    const runner = h.ctx.service.runner;
+    const facts = runner.facts.bind(runner);
+    Object.assign(runner, {
+      status: () => status,
+      onStatus: (fn: (t: string | null) => void) => { fns.add(fn); return () => { fns.delete(fn); }; },
+      // The facts boot the stopped distro: "Starting Ubuntu…" until they come.
+      facts: async () => { say("Starting Ubuntu…"); await tick(); await tick(); say(null); return facts(); },
+    });
+    const w = h.ctx.service.window as unknown as { pending: (task: string, t: string | null) => void; note: (id: string, t: string | null) => void; attach: (...x: unknown[]) => void };
+    w.pending = (task, t) => { events.push(`pending ${task} ${t}`); };
+    w.note = (id, t) => { events.push(`note ${id === h.starts[0]?.runId ? "run" : id} ${t}`); };
+    const attach = w.attach;
+    w.attach = (...x) => { events.push("attach"); attach(...x); };
+    const pending = call(h, { target: "Ubuntu" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    // The run's own boot (a distro stopped since its facts) shows on its tab.
+    say("Starting Ubuntu…");
+    say(null);
+    expect(events).toEqual(["pending t1 Starting Ubuntu…", "pending t1 null", "attach", "note run Starting Ubuntu…", "note run null"]);
+    h.runs[0].stop("user");
+    await pending;
+    expect(fns.size).toBe(0);
+  });
+
+  it("says nothing before the tab when the distro already runs, and works with a window that has no pending line", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL });
+    const events: string[] = [];
+    Object.assign(h.ctx.service.runner, { status: () => null, onStatus: () => () => undefined });
+    (h.ctx.service.window as unknown as { pending: (task: string, t: string | null) => void }).pending = (task, t) => { events.push(`${task} ${t}`); };
+    expect((await call(h, { target: "Ubuntu" })).resultType).toBe("success");
+    expect(events).toEqual([]);
+    const bare = harness({ binding: WSL });
+    Object.assign(bare.ctx.service.runner, { status: () => "Starting Ubuntu…", onStatus: () => () => undefined });
+    expect((await call(bare, { target: "Ubuntu" })).resultType).toBe("success");
+  });
+
   it("shows the runner's status (\"Starting Ubuntu…\") on the run's tab until the run ends", async () => {
     makeJudge();
     const h = harness({ binding: WSL, run: () => ({ hang: true }) });

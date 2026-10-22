@@ -516,14 +516,17 @@ export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext)
   if (a.cwd !== undefined && /[\0\r\n]/.test(a.cwd)) return fail("The folder can't hold a NUL character or a line break.");
   if (ctx.state.running) return fail("This task's last command is still running: wait for its result.");
   ctx.state.running = true;
+  // "Starting Ubuntu…" while the facts boot a stopped distro, before the run has a tab (§3.8.3 step 3).
+  const endPending = followPending(ctx.service, ctx.task.id);
   try {
-    return await flow(a, ctx);
+    return await flow(a, ctx, endPending);
   } finally {
+    endPending();
     ctx.state.running = false;
   }
 }
 
-async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
+async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () => void): Promise<ToolResultObject> {
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
@@ -645,6 +648,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolRes
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
+  // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
+  endPending();
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
@@ -881,6 +886,45 @@ function followStatus(svc: CommandService, runId: string): () => void {
   } catch {
     return () => undefined;
   }
+}
+
+/** The command window's line for a task whose command has no tab yet (UI's extension; absent: only the bubble says it). */
+export interface CommandWindowPending {
+  /** Shows `text` for task `taskId` until it is replaced or cleared with null. */
+  pending(taskId: string, text: string | null): void;
+}
+
+/**
+ * The runner's status line ("Starting Ubuntu…": WA's WSL runner while the first command's facts boot a stopped distro)
+ * while the flow reads the target's facts and checks the command, before the run has a tab: shown through the command
+ * window's `pending` when it has one (the task's bubble says it too: host.ts); cleared when the checks end. Once the run
+ * has its tab, followStatus notes the status there. Returns the unsubscribe (safe to call more than once).
+ */
+function followPending(svc: CommandService, taskId: string): () => void {
+  const runner = svc.runner as CommandService["runner"] & { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void };
+  const window = svc.window as CommandService["window"] & Partial<CommandWindowPending>;
+  if (typeof runner.onStatus !== "function" || typeof window.pending !== "function") return () => undefined;
+  let shown = false;
+  const show = (text: string | null) => {
+    const t = typeof text === "string" && text ? text.slice(0, 200) : null;
+    if (t === null && !shown) return;
+    shown = t !== null;
+    try { window.pending!(taskId, t); } catch { /* a note is only a note */ }
+  };
+  let off: () => void = () => undefined;
+  try {
+    off = runner.onStatus(show);
+    show(runner.status?.() ?? null);
+  } catch {
+    // a runner that can't say: nothing is shown
+  }
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    try { off(); } catch { /* already gone */ }
+    show(null);
+  };
 }
 
 /**
