@@ -1055,19 +1055,6 @@ namespace Ember.Uia
       public int Bottom;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Spot
-    {
-      public int X;
-      public int Y;
-
-      internal Spot(int x, int y)
-      {
-        X = x;
-        Y = y;
-      }
-    }
-
     [DllImport("user32.dll")]
     internal static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
@@ -1119,12 +1106,6 @@ namespace Ember.Uia
 
     [DllImport("user32.dll")]
     internal static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    internal static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
-
-    [DllImport("user32.dll")]
-    internal static extern IntPtr WindowFromPoint(Spot point);
 
     [DllImport("user32.dll")]
     internal static extern IntPtr GetDesktopWindow();
@@ -1223,9 +1204,9 @@ namespace Ember.Uia
   {
     private const uint GwHwndNext = 2;
     private const uint GwOwner = 4;
-    private const uint GaRoot = 2;
     private const int GwlExStyle = -20;
     private const int WsExTopmost = 0x8;
+    private const int WsExTransparent = 0x20;
     private const int DwmwaCloaked = 14;
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint SmtoAbortIfHung = 0x2;
@@ -1293,12 +1274,24 @@ namespace Ember.Uia
 
     internal static IntPtr Foreground() { return Native.GetForegroundWindow(); }
 
-    /// <summary>The top-level window under a point (WindowFromPoint sends no message to other threads' windows).</summary>
+    /// <summary>
+    /// The front-most visible top-level window whose rectangle holds the point, skipping click-through windows (like
+    /// Ember's overlay). Unlike WindowFromPoint it also finds a disabled window (one with a modal dialog open), and it
+    /// sends no message at all.
+    /// </summary>
     internal static IntPtr RootAt(double x, double y)
     {
       if (double.IsNaN(x) || double.IsNaN(y) || Math.Abs(x) > 1e6 || Math.Abs(y) > 1e6) return IntPtr.Zero;
-      IntPtr h = Native.WindowFromPoint(new Native.Spot((int)Math.Floor(x), (int)Math.Floor(y)));
-      return h == IntPtr.Zero ? h : Native.GetAncestor(h, GaRoot);
+      int px = (int)Math.Floor(x);
+      int py = (int)Math.Floor(y);
+      foreach (IntPtr h in TopLevel())
+      {
+        if (!Native.IsWindowVisible(h) || (Native.GetWindowLongW(h, GwlExStyle) & WsExTransparent) != 0) continue;
+        Native.Box r;
+        if (!Native.GetWindowRect(h, out r) || px < r.Left || px >= r.Right || py < r.Top || py >= r.Bottom) continue;
+        if (!Cloaked(h)) return h;
+      }
+      return IntPtr.Zero;
     }
 
     internal static long Number(IntPtr hwnd) { return hwnd.ToInt64(); }
