@@ -85,11 +85,14 @@ export function layoutFor(platform, arch) {
   }
   return {
     platform, arch, target, label: `mac-${arch}`,
-    // Copying Electron.app as Ember.app names the bundle; its executable (Contents/MacOS/Electron) and the helper
-    // apps keep Electron's names, which Electron looks for (only Info.plist says "Ember").
+    // Copying Electron.app as Ember.app names the bundle. Its executable is renamed too (with Info.plist's
+    // CFBundleExecutable, mac-bundle.mjs): Electron's app.isPackaged is false for any executable named "electron"
+    // (checked), and a packaged Ember that takes itself for a development build honours EMBER_* overrides from
+    // the environment and starts with --inspect. The helper apps keep Electron's names: Electron looks for
+    // "Electron Helper*.app" first, whatever its executable is called.
     electronSource: "Electron.app", electronExe: "Electron.app/Contents/MacOS/Electron",
     electronFuseFile: "Electron.app/Contents/Frameworks/Electron Framework.framework/Electron Framework",
-    appDir: "Ember.app", exe: "Contents/MacOS/Electron", renames: [],
+    appDir: "Ember.app", exe: "Contents/MacOS/Ember", renames: [["Contents/MacOS/Electron", "Contents/MacOS/Ember"]],
     resourcesDir: "Contents/Resources",
     // Electron's licences sit beside Electron.app in its dist folder: they move inside the bundle, or the shipped
     // app would carry no Chromium licences.

@@ -8,8 +8,9 @@
 //     dist/package/voice-models/     the speech models, trimmed to the files Ember loads (if downloaded and verified)
 //   Windows: dist/package/Ember/      Ember.exe (electron.exe renamed), the same notices and resources/app, the UI
 //                                     Automation bridge in resources/sidecar/uia, resources/ember.ico
-//   macOS:   dist/package/Ember.app   Electron.app renamed; notices, licences and app/ in Contents/Resources;
-//                                     Info.plist edited, the icon, signed ad hoc last (mac-bundle.mjs)
+//   macOS:   dist/package/Ember.app   Electron.app renamed, its executable Contents/MacOS/Ember; notices, licences
+//                                     and app/ in Contents/Resources; Info.plist edited, the icon, signed ad hoc
+//                                     last (mac-bundle.mjs)
 // Only the target's own platform builds are kept (no musl, no wasm fallbacks, no other OS). Licence and notice files
 // always are. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
 // Every file the target needs must exist, or nothing is staged; --allow-missing-sidecar stages without the

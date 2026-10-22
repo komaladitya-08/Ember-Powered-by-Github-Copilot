@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EMBER_FUSES, FUSES, SENTINEL, fatArchCount, findWire, flipFuses, fuseMismatches, readFuses, setFuses } from "../../scripts/package/fuses.mjs";
-import { layoutFor } from "../../scripts/package/layout.mjs";
+import { TARGETS, layoutFor } from "../../scripts/package/layout.mjs";
 
 /** A fake binary: junk, the fuse wire (Electron 44's defaults unless given), more junk. */
 const fake = (wire = "101100011", o: { version?: number; sentinels?: number } = {}) => Buffer.concat([
@@ -101,6 +101,8 @@ describe("the fuse wire", () => {
   });
 
   it("matches the Electron in node_modules (when it is downloaded): the binary itself, or macOS's framework", () => {
+    // A development machine Ember isn't staged for (linux-arm64, say) has nothing to compare.
+    if (!TARGETS.includes(`${process.platform}-${process.arch}`)) return;
     const layout = layoutFor(process.platform, process.arch);
     const electron = path.resolve("node_modules/electron/dist", layout.electronFuseFile);
     if (!fs.existsSync(electron)) return;

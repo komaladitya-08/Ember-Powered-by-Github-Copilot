@@ -2,7 +2,7 @@
 // Linux needs an X display (in CI: xvfb-run -a npm run test:smoke). Windows and macOS need a logged-in desktop
 // session (GitHub's hosted runners have one).
 // By default it starts the development build (Electron with dist/app); --exe <path> (or EMBER_SMOKE_EXE) starts a
-// packaged binary instead: dist/package/Ember/Ember.exe, dist/package/Ember.app/Contents/MacOS/Electron,
+// packaged binary instead: dist/package/Ember/Ember.exe, dist/package/Ember.app/Contents/MacOS/Ember,
 // /opt/ember/ember. It fails at once on "app.start_failed" or an early exit, waits up to 30 s for the window on Linux
 // and 60 s on Windows and macOS (a cold start there includes antivirus scans; EMBER_SMOKE_TIMEOUT_MS overrides both),
 // and cleanup never fails the test.

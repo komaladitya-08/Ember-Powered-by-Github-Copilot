@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout.mjs";
 import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
-import { BUNDLE_ID, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
+import { BUNDLE_ID, EXECUTABLE, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { autostartEntry, autostartFile, execArg, launchCommand, syncAutostart } from "../../app/main/autostart";
 import { inspectEnvironment } from "../../app/main/environment";
@@ -252,12 +252,14 @@ describe("the macOS app bundle", () => {
       NSMicrophoneUsageDescription: "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac.",
     });
     expect(values.NSAppleEventsUsageDescription).toMatch(/appearance settings.*when you ask/);
-    expect(values).not.toHaveProperty("CFBundleExecutable"); // the executable keeps Electron's name
+    // The executable stage.mjs renamed (layout.mjs), so that Electron's app.isPackaged is true.
+    expect(values.CFBundleExecutable).toBe(EXECUTABLE);
+    expect(layoutFor("darwin", "arm64").exe).toBe(`Contents/MacOS/${EXECUTABLE}`);
   });
 
   /** A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. */
-  const fakeMac = (o: { ignore?: string; verifyFails?: boolean } = {}) => {
-    const plist: Record<string, string> = { CFBundleName: "Electron", CFBundleIdentifier: "com.github.Electron", ElectronAsarIntegrity: "{}" };
+  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean } = {}) => {
+    const plist: Record<string, string> = { CFBundleName: "Electron", CFBundleIdentifier: "com.github.Electron", CFBundleExecutable: "Electron", ElectronAsarIntegrity: "<dict/>" };
     const calls: string[][] = [];
     const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
     const run = (file: string, args: string[]): RunResult => {
@@ -267,7 +269,9 @@ describe("the macOS app bundle", () => {
         return ok();
       }
       if (file === "plutil" && args[0] === "-extract") {
-        expect(args.slice(2, 5)).toEqual(["raw", "-o", "-"]); // without -o, plutil would overwrite the file
+        expect(args.slice(3, 5)).toEqual(["-o", "-"]); // without -o, plutil would overwrite the file
+        // Like plutil: raw prints strings, numbers and booleans only (ElectronAsarIntegrity is a dictionary).
+        if (args[2] === "raw" && plist[args[1]]?.startsWith("<dict")) return { status: 1, stdout: "", stderr: "not a raw value" };
         return args[1] in plist ? ok(`${plist[args[1]]}\n`) : { status: 1, stdout: "", stderr: "No value at that key path." };
       }
       if (file === "plutil" && args[0] === "-remove") { delete plist[args[1]]; return ok(); }
@@ -277,6 +281,8 @@ describe("the macOS app bundle", () => {
     };
     const app = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-bundle-")), "Ember.app");
     fs.mkdirSync(path.join(app, "Contents", "Resources"), { recursive: true });
+    fs.mkdirSync(path.join(app, "Contents", "MacOS"));
+    if (!o.noExecutable) fs.writeFileSync(path.join(app, "Contents", "MacOS", EXECUTABLE), "");
     fs.writeFileSync(path.join(app, "Contents", "Info.plist"), "<plist/>");
     fs.writeFileSync(path.join(app, "Contents", "Resources", "electron.icns"), "electron");
     const iconsets: string[] = [];
@@ -291,7 +297,7 @@ describe("the macOS app bundle", () => {
     const plistFile = path.join(mac.app, "Contents", "Info.plist");
     const line = (c: string[]) => c.join(" ");
     expect(line(mac.calls[0])).toBe(`plutil -convert xml1 ${plistFile}`);
-    expect(mac.plist).toMatchObject({ CFBundleName: "Ember", CFBundleIdentifier: BUNDLE_ID, NSHighResolutionCapable: "true", LSMinimumSystemVersion: "13.0" });
+    expect(mac.plist).toMatchObject({ CFBundleName: "Ember", CFBundleIdentifier: BUNDLE_ID, CFBundleExecutable: EXECUTABLE, NSHighResolutionCapable: "true", LSMinimumSystemVersion: "13.0" });
     expect(mac.plist).not.toHaveProperty("ElectronAsarIntegrity");
     expect(mac.calls.filter(c => c[1] === "-remove").map(c => c[2])).toEqual(["ElectronAsarIntegrity"]);
     expect(mac.calls.filter(c => c[1] === "-extract").length).toBeGreaterThanOrEqual(infoPlistValues("0.1.0").length);
@@ -311,6 +317,12 @@ describe("the macOS app bundle", () => {
     await expect(wrong.finish()).rejects.toThrow(/CFBundleIdentifier is "com\.github\.Electron", should be "io\.github\.komaladitya08\.ember"/);
     expect(wrong.calls.some(c => c[0] === "codesign")).toBe(false);
     await expect(fakeMac({ verifyFails: true }).finish()).rejects.toThrow(/verifying Ember\.app's signature failed.*sealed resource/);
+  });
+
+  it("refuses a bundle whose executable wasn't renamed, before touching it", async () => {
+    const mac = fakeMac({ noExecutable: true });
+    await expect(mac.finish()).rejects.toThrow(/has no Contents\/MacOS\/Ember/);
+    expect(mac.calls).toEqual([]);
   });
 
   it("is staged in order: fuses flipped, app files in, then Info.plist, icon and signature", () => {

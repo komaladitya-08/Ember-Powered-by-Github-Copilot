@@ -76,11 +76,18 @@ describe("the Windows layout", () => {
 describe("the macOS layout", () => {
   for (const arch of ["arm64", "x64"]) {
     const mac = layoutFor("darwin", arch);
-    it(`copies the whole Electron.app as Ember.app, keeping its executable and helper names (${arch})`, () => {
+    it(`copies the whole Electron.app as Ember.app with its executable renamed, so app.isPackaged is true (${arch})`, () => {
       expect(mac).toMatchObject({
         label: `mac-${arch}`, appDir: "Ember.app", electronSource: "Electron.app", electronExe: "Electron.app/Contents/MacOS/Electron",
-        exe: "Contents/MacOS/Electron", renames: [], resourcesDir: "Contents/Resources", remove: ["Contents/Resources/default_app.asar"],
+        exe: "Contents/MacOS/Ember", renames: [["Contents/MacOS/Electron", "Contents/MacOS/Ember"]], resourcesDir: "Contents/Resources",
+        remove: ["Contents/Resources/default_app.asar"],
       });
+      // Electron's app.isPackaged is false for an executable named "electron" (any case), on every OS.
+      for (const l of [mac, layoutFor("win32", arch), layoutFor("linux", "x64")]) {
+        expect(path.posix.basename(l.exe).replace(/\.exe$/i, "").toLowerCase(), l.target).not.toBe("electron");
+      }
+      // The helper apps keep Electron's names (Electron looks for "Electron Helper*.app" first): nothing else is renamed.
+      expect(mac.renames.flat().some(p => p.includes("Helper"))).toBe(false);
     });
 
     it(`flips the fuses in the Electron Framework and signs the bundle ad hoc (${arch})`, () => {
@@ -210,7 +217,7 @@ describe("the archives", () => {
     const [zip, dmg] = plan.archives;
     expect(plan.steps.map(s => s.file)).toEqual(["ditto", "zipinfo", "hdiutil", "hdiutil"]);
     expect(plan.steps[0].args).toEqual(["-c", "-k", "--sequesterRsrc", "--keepParent", path.join("/r/dist/package", "Ember.app"), zip]);
-    expect(plan.steps[1].expect).toEqual(expect.arrayContaining(["Ember.app/Contents/MacOS/Electron", "Ember.app/Contents/_CodeSignature/CodeResources", "Ember.app/Contents/Resources/app/package.json"]));
+    expect(plan.steps[1].expect).toEqual(expect.arrayContaining(["Ember.app/Contents/MacOS/Ember", "Ember.app/Contents/_CodeSignature/CodeResources", "Ember.app/Contents/Resources/app/package.json"]));
     expect(plan.steps[2]).toMatchObject({ args: ["create", "-volname", "Ember", "-srcfolder", plan.dmgRoot, "-ov", "-format", "UDZO", dmg], retries: 3 });
     expect(plan.steps[3].args).toEqual(["verify", dmg]);
   });

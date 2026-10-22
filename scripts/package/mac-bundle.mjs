@@ -12,10 +12,13 @@ import path from "node:path";
 /** The bundle id: TCC grants, the single-instance lock and the defaults domain hang on it (no "_" allowed). */
 export const BUNDLE_ID = "io.github.komaladitya08.ember";
 
+/** Contents/MacOS/<this>: stage.mjs renames Electron's executable to it (layout.mjs says why). */
+export const EXECUTABLE = "Ember";
+
 /**
- * What Info.plist must say, as [key, type, value]. Electron's own plist provides the rest (the executable,
- * NSPrincipalClass, the helpers' names). There is no usage text for Accessibility or Screen Recording: those
- * prompts come from the APIs themselves.
+ * What Info.plist must say, as [key, type, value]. Electron's own plist provides the rest (NSPrincipalClass, the
+ * helpers' names). There is no usage text for Accessibility or Screen Recording: those prompts come from the APIs
+ * themselves.
  * @param {string} version package.json's version
  * @returns {[string, "string" | "bool", string | boolean][]}
  */
@@ -24,6 +27,7 @@ export function infoPlistValues(version) {
     ["CFBundleName", "string", "Ember"],
     ["CFBundleDisplayName", "string", "Ember"],
     ["CFBundleIdentifier", "string", BUNDLE_ID],
+    ["CFBundleExecutable", "string", EXECUTABLE],
     ["CFBundleShortVersionString", "string", version],
     ["CFBundleVersion", "string", version],
     ["CFBundleIconFile", "string", "ember.icns"],
@@ -61,6 +65,8 @@ export async function finishMacBundle(o) {
     return r;
   };
   const plist = path.join(o.app, "Contents", "Info.plist");
+  // Info.plist names the renamed executable; a bundle whose CFBundleExecutable is missing doesn't launch.
+  if (!fs.existsSync(path.join(o.app, "Contents", "MacOS", EXECUTABLE))) throw new Error(`${o.app} has no Contents/MacOS/${EXECUTABLE}`);
 
   // 1. Info.plist, as XML so the edits stay readable in a diff of two builds.
   must("plutil", ["-convert", "xml1", plist], "converting Info.plist to XML");
@@ -68,8 +74,9 @@ export async function finishMacBundle(o) {
   for (const [key, type, value] of values) {
     must("plutil", ["-replace", key, `-${type}`, type === "bool" ? (value ? "YES" : "NO") : String(value), plist], `setting ${key}`);
   }
+  // Present or not, asked in xml1: raw is for strings, numbers and booleans, and ElectronAsarIntegrity is a dictionary.
   for (const key of INFO_PLIST_DROP) {
-    if (run("plutil", ["-extract", key, "raw", "-o", "-", plist]).status === 0) must("plutil", ["-remove", key, plist], `removing ${key}`);
+    if (run("plutil", ["-extract", key, "xml1", "-o", "-", plist]).status === 0) must("plutil", ["-remove", key, plist], `removing ${key}`);
   }
   // Read every value back (-o -: without it, -extract would overwrite the file with the value).
   for (const [key, , value] of values) {

@@ -1,6 +1,7 @@
 // Types for mac-bundle.mjs (stage.mjs and the unit tests import it).
 export type RunResult = { status: number | null; stdout: string; stderr: string };
 export declare const BUNDLE_ID: string;
+export declare const EXECUTABLE: string;
 export declare const INFO_PLIST_DROP: string[];
 export declare function infoPlistValues(version: string): [string, "string" | "bool", string | boolean][];
 export declare function finishMacBundle(o: {

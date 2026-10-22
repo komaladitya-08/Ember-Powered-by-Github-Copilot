@@ -271,7 +271,7 @@ jobs:
           ELECTRON_RUN_AS_NODE=1 "$app/Ember.exe" -e "process.exit(0)"
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=C:/nonexistent/ember-fuse-check.js "$app/Ember.exe" -e "process.exit(0)"
           # --inspect opens no debugger, and a packaged Ember refuses to start with it (exit 2).
-          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "exit " + r.status)' "$app/Ember.exe" > inspect.log
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$app/Ember.exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
           test -s "$app/THIRD_PARTY_NOTICES" && test -f "$app/LICENSES.chromium.html" && test -f "$app/LICENSE"
@@ -319,7 +319,7 @@ jobs:
           node_bin=$(command -v node)
           clients=(
             "$GITHUB_WORKSPACE/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
-            "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Electron"
+            "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Ember"
             "$node_bin" "$(realpath "$node_bin")" /bin/bash /bin/zsh
           )
           # The runner's own processes, from this shell up to launchd.
@@ -336,6 +336,14 @@ jobs:
             done
             echo "granted Accessibility and Screen Recording: $client"
           done
+          # TCC may know an app bundle by its bundle id (client_type 0) rather than its executable's path: the
+          # development Electron.app and the packaged Ember.app.
+          for client in com.github.Electron io.github.komaladitya08.ember; do
+            for service in kTCCServiceAccessibility kTCCServiceScreenCapture; do
+              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) VALUES('$service','$client',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$now);"
+            done
+            echo "granted Accessibility and Screen Recording: $client (bundle id)"
+          done
           sudo launchctl stop com.apple.tccd || true
           sleep 2
           sudo sqlite3 "$db" "SELECT service, client, auth_value FROM access WHERE service IN ('kTCCServiceAccessibility', 'kTCCServiceScreenCapture');"
@@ -351,10 +359,10 @@ jobs:
         run: |
           node scripts/package/stage.mjs --allow-missing-sidecar
           node scripts/package/archive.mjs
-      - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused"
+      - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
         run: |
           app=dist/package/Ember.app
-          exe="$app/Contents/MacOS/Electron"
+          exe="$app/Contents/MacOS/Ember"
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
@@ -362,17 +370,18 @@ jobs:
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
           # --inspect opens no debugger, and a packaged Ember refuses to start with it (exit 2).
-          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "exit " + r.status)' "$exe" > inspect.log
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
           test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = io.github.komaladitya08.ember
+          test "$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" = Ember && test ! -e "$app/Contents/MacOS/Electron"
           plutil -extract NSMicrophoneUsageDescription raw -o - "$app/Contents/Info.plist"
           test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES" && test -f "$app/Contents/Resources/LICENSES.chromium.html" && test -f "$app/Contents/Resources/LICENSE"
           test -f "$app/Contents/Resources/ember.icns" && test ! -e "$app/Contents/Resources/default_app.asar"
           test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
           if [ -f dist/app/ax-sidecar.cjs ]; then test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"; fi
       - name: The packaged Ember.app starts and shows its window
-        run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Electron
+        run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         continue-on-error: true
         with:
