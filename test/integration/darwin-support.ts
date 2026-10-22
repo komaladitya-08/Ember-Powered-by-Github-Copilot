@@ -26,12 +26,12 @@ const OSASCRIPT = "/usr/bin/osascript";
 export const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 /** Polls `fn` until it gives something truthy, or fails after `ms` saying what was awaited (and what it found). */
-export async function waitFor<T>(what: string | (() => string), fn: () => T | null | undefined | false | Promise<T | null | undefined | false>, ms: number): Promise<T> {
+export async function waitFor<T>(what: string | (() => string | Promise<string>), fn: () => T | null | undefined | false | Promise<T | null | undefined | false>, ms: number): Promise<T> {
   const until = Date.now() + ms;
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() > until) throw new Error(`timed out after ${ms} ms waiting for ${typeof what === "string" ? what : what()}`);
+    if (Date.now() > until) throw new Error(`timed out after ${ms} ms waiting for ${typeof what === "string" ? what : await what()}`);
     await sleep(100);
   }
 }

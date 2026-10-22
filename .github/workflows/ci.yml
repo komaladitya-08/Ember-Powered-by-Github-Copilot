@@ -395,11 +395,12 @@ jobs:
           retention-days: 3
 
   macos:
-    name: macOS (unit tests, build, smoke, accessibility, app bundle)
+    name: macOS (unit tests, build, smoke, accessibility, Ember itself, app bundle)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'macos'
-    # Kept lean: macOS minutes cost ten times Linux's on a private repository.
+    # Kept lean: macOS minutes cost ten times Linux's on a private repository. Every check after the build runs even
+    # when an earlier one failed (!cancelled()), so one run shows them all.
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -416,6 +417,10 @@ jobs:
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "$query" || echo "(unreadable)"
           echo "The image's grants, user database:"
           sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "$query" || echo "(unreadable)"
+      - name: No crash dialogs on screen (an app that dies would leave one over every later test)
+        # The system's "… quit unexpectedly" alert is UserNotificationCenter's, which Ember counts as a security prompt
+        # (no screenshots while it is up). Crash reports are still written, and the suites print them.
+        run: defaults write com.apple.CrashReporter DialogType none
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -426,10 +431,15 @@ jobs:
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm test
-      - run: npm run build
+      - id: build
+        if: ${{ !cancelled() }}
+        run: npm run build
       - name: Launch smoke test (development build)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:smoke
       - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
+        id: grant
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # Which process macOS holds responsible for a CI job isn't certain, so every candidate is granted (scripts/
         # package/tcc.mjs): Accessibility, Screen Recording, Input Monitoring (posting and listening to events) and
         # Apple Events to System Events, for the development Electron, node, the shells and the runner's own
@@ -441,16 +451,29 @@ jobs:
           node scripts/package/tcc.mjs grant-paths --ancestors "$electron" "$(command -v node)" /bin/bash /bin/zsh
           node scripts/package/tcc.mjs approve-capture "$electron" "$GITHUB_WORKSPACE/dist/package/Ember.app/Contents/MacOS/Ember" "$(command -v node)"
           node scripts/package/tcc.mjs show
-      - name: Desktop integration tests (window system and input, accessibility host)
-        run: node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts test/integration/ax-sidecar.test.ts
+      - name: "Window system and input (darwin-desktop: the AppKit bench, TextEdit)"
+        if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts
         env:
           EMBER_DARWIN_TEST: "1"
+      - name: "Accessibility host on the AX provider (ax-sidecar-darwin: the AppKit bench)"
+        if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/ax-sidecar-darwin.test.ts
+        env:
           EMBER_AX_TEST: "1"
+      - name: "System integration and vocabularies (darwin-system, darwin-vocabulary)"
+        if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/darwin-system.test.ts test/integration/darwin-vocabulary.test.ts
+        env:
+          EMBER_MACSYS_TEST: "1"
       - name: Stage Ember.app (signed ad hoc), zip it and make the disk image
+        id: stage
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
           app=dist/package/Ember.app
           exe="$app/Contents/MacOS/Ember"
@@ -472,33 +495,75 @@ jobs:
           test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
           test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
       - name: The packaged Ember.app starts and shows its window
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
+      - name: "Ember itself: start beside the user's app (M1), the ask box (M2), screenshots, the overlay, the packaged host"
+        if: ${{ !cancelled() && steps.grant.outcome == 'success' && steps.stage.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/ember-darwin.test.ts
+        env:
+          EMBER_DARWIN_TEST: "1"
+          EMBER_PACKAGED_APP: dist/package/Ember.app
+      - name: "Input Monitoring evidence (design Q10): does key-state polling see another process's key without the grant?"
+        # Every Input Monitoring (listen) row is set aside for one test, which prints its verdict (it asserts only with
+        # the grant), and put back after. Nothing asks for the permission: a prompt would sit over the later steps.
+        if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+        run: |
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          rows="$RUNNER_TEMP/listen-rows.sql"
+          sudo sqlite3 "$db" ".mode insert access" "SELECT * FROM access WHERE service='kTCCServiceListenEvent'" > "$rows"
+          echo "Input Monitoring rows set aside: $(grep -c . "$rows")"
+          sudo sqlite3 "$db" "DELETE FROM access WHERE service='kTCCServiceListenEvent'"
+          sudo launchctl kickstart -k system/com.apple.tccd
+          launchctl kickstart -k "gui/$(id -u)/com.apple.tccd"
+          sleep 2
+          status=0
+          EMBER_DARWIN_TEST=1 node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts -t "sees a key another process holds down" || status=$?
+          sudo sqlite3 "$db" < "$rows"
+          sudo launchctl kickstart -k system/com.apple.tccd
+          echo "Input Monitoring rows back: $(sudo sqlite3 "$db" "SELECT count(*) FROM access WHERE service='kTCCServiceListenEvent'")"
+          exit $status
       - name: "Attribution, before Ember.app's grant: opened as users open it, Ember can't read apps (nothing is borrowed from the runner's granted processes)"
         # Started through LaunchServices, Ember.app is its own responsible process to TCC, as when a user opens it; the
         # tests above ran under the runner's processes, whose grants prove nothing about Ember's.
-        # TODO(port): drop --allow-missing-rows once the macOS doctor has its "Accessibility" and "Accessibility helper"
-        # rows (MS and I); until then a missing row is a warning, and a report with no rows still fails.
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           report="$RUNNER_TEMP/doctor-before.txt"
           : > "$report"
           # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
+          cat "$report"
+          node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
       - name: Grant Ember.app by its bundle id, with its real code requirement
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
           node scripts/package/tcc.mjs grant-bundle dist/package/Ember.app
           node scripts/package/tcc.mjs show
-      - name: "Attribution, after: the grant reaches Ember and the accessibility helper it starts"
-        # TODO(port): drop --allow-missing-rows once the macOS doctor has its "Accessibility" and "Accessibility helper"
-        # rows (MS and I).
+      - name: "Attribution, after: the grant reaches Ember and the accessibility helper it starts; the packaged Copilot runtime is found"
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           report="$RUNNER_TEMP/doctor-after.txt"
           : > "$report"
           # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" --allow-missing-rows || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
+          cat "$report"
+          # Copilot warns (not signed in on a runner) rather than failing: a missing runtime is the failure.
+          node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
+      - name: What was on screen when something failed (a picture, the system's alerts, crash reports)
+        if: failure()
+        continue-on-error: true
+        run: |
+          screencapture -x "$RUNNER_TEMP/screen.png" || true
+          ls -lt "$HOME/Library/Logs/DiagnosticReports" 2>/dev/null | head -20 || true
+          /usr/bin/log show --last 15m --style compact --predicate 'process == "UserNotificationCenter" OR process == "TextEdit" OR process == "ReportCrash"' 2>/dev/null | tail -80 || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        continue-on-error: true
+        with:
+          name: macos-screen
+          path: ${{ runner.temp }}/screen.png
+          retention-days: 1
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
