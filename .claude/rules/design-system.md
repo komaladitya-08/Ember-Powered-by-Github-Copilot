@@ -46,16 +46,16 @@ Name these patterns when you design something new. Vague direction such as "make
 - tracked all-caps, monospace labels, or numbered "01/02/03" section labels
 - gradient text, emoji icons, icon fonts, or spinning indicators
 - `backdrop-filter` blur, or glass on content windows
-- a second filled orange button in one view
-- a frosted scroll-edge header, a light appearance, or a glass slider; none of these is built
+- a second filled orange button in one group (or in one view that has no groups, such as a card or the bubble)
+- a frosted scroll-edge header or a glass slider (each needs blur or glass on glass), or a light appearance
 
 ## Layers and glass
 
 - **Where glass goes.** Glass is for the floating layer only: the bubble, overlay task cards, the status pill, the handle and the Ask box. Home builds on opaque `--surface-*`. The desk view is a black picture area under a `--glass-solid` bar with a `--separator` edge.
-- **How it is drawn.** Never use `backdrop-filter`, and never animate `filter` or a blur: a blur costs about a core, and a transparent window can't sample other apps anyway. Ember's glass is an opaque frost: `--glass-fill` is 97–98.5% opaque, so the app's text never shows through. Apply it as `border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);`, and keep the layer order inside `--glass`.
+- **How it is drawn.** Never use `backdrop-filter`, and never animate a blur: a blur costs about a core, and a transparent window can't sample other apps anyway. A button's `filter: brightness()` hover and press are not blurs; "What may animate" says where those may transition. Ember's glass is an opaque frost: `--glass-fill` is 97–98.5% opaque, so the app's text never shows through. Apply it as `border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);`, and keep the layer order inside `--glass`.
 - **No glass on glass.** Buttons, rows and panels on glass use flat neutral fills with an inset `--control-edge` or `--separator` line.
 - **Edges and shadows.**
-  - Keep the dark 0.5px outer hairline in every floating surface's shadow: it keeps the edge crisp over white documents. Draw hairlines as `box-shadow` spreads, never as 0.5px borders.
+  - Give floating surfaces the dark 0.5px outer hairline in their shadow: it keeps the edge crisp over white documents. The Ask box's hint capsule (`.meta`) is the one without. Draw hairlines as `box-shadow` spreads, never as 0.5px borders.
   - Don't use `mix-blend-mode`, `text-shadow`, `background-clip: text`, `@property` animations or SVG filters, because each re-rasters on the CPU.
   - Shadows on surfaces that move with Ember are tight, with a negative spread (the bubble's `0 12px 28px -8px`). The larger `--glass-depth` is for surfaces that stay put.
 - **Without a compositor.** A transparent window paints black there, so the whole window becomes one opaque panel: `var(--glass-solid)` plus `box-shadow: var(--glass-rim)`, with no outer shadows (`html.opaque` in Ask, `body.fallback` in the handle's corner card). Ember switches between the two on its own when the compositor comes or goes.
@@ -94,15 +94,15 @@ Name these patterns when you design something new. Vague direction such as "make
     - control on-states;
     - links, the caret and the focus ring.
   - Ember's identity also uses it: the Ask glyph, the welcome symbols, "Ember" in Conversation, your chat bubble's tint and the sign-in code.
-  - Never fill a second button with it.
+  - Never fill a second button with it in the same group, or in a view with no groups.
   - Mood colours (`--eb-mood`) mark only the bubble's state dot, streaming caret and step arrow.
-- **Text on fills.** Filled buttons and tags carry `--on-accent` text, never white (white on system orange is 2.2:1). The white glyphs on Home's sidebar tiles and the switch knob are decorative exceptions.
+- **Text on fills.** Filled buttons (and the checkbox tick) carry `--on-accent` text, never white (white on system orange is 2.2:1). Tags are tints and carry their words in a `-text` colour (below). The white glyphs on Home's sidebar tiles and the switch knob are decorative exceptions.
 - **Which colours can be text.**
   - `--accent`, `--green` and `--yellow` pass 4.5:1 as text.
   - `--red`, `--blue`, `--purple` and `--gray` only mark things (3:1). Red or purple words use `--red-text` or `--purple-text`.
-  - A tag is its system colour at 14–18% behind a word in its `-text` tint.
-- **Outlines.** Outline every unfilled control with `inset 0 0 0 1px var(--control-edge)` (WCAG 1.4.11, 3:1). That covers quiet buttons, the off switch, checkboxes, fields, pop-up buttons and floating capsules.
-- **New colour tokens.** Give each one an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and keep the default definitions first in `:root`. `--yellow`, `--blue`, `--accent-2`, `--glow` and `--gray` have no override yet.
+  - A tag is its system colour at 14–18% behind a word in its `-text` tint. Yellow has no tint: its word is `--yellow` itself (Home's `--warn`).
+- **Outlines.** Outline every unfilled control with `inset 0 0 0 1px var(--control-edge)` (WCAG 1.4.11, 3:1); checkboxes use 1.5px. That covers quiet buttons, the off switch, checkboxes, fields, pop-up buttons and floating capsules.
+- **New colour tokens.** Give each one an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and keep the default definitions first in `:root`. `--yellow`, `--blue`, `--accent-2`, `--glow` and `--gray` have no override. That gap is known, so leave it unless the task is about Increase Contrast.
 
 ## Type
 
@@ -132,7 +132,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Button shapes.**
   - In-window push buttons are rounded rectangles: `.btn` is 28px at `--r-sm`, and `.btn.small` is 24px at `--r-xs`.
   - Home's single large Start is its only capsule button.
-  - Floating-layer buttons and the desk bar are capsules at 28px or 24px. Pills, tags, tracks, the status line, the handle and the Ask field are capsules too.
+  - Floating-layer buttons and the desk bar's buttons are capsules at 28px or 24px. Pills, tags, tracks, the status line, the handle and the Ask field are capsules too.
 - **Home layout.** Lay Home out like System Settings:
   - an `h2` header (`--type-title-2`) outside each group;
   - the group on `--surface-1` with `--r-lg` and `--group-edge`;
@@ -158,18 +158,19 @@ Name these patterns when you design something new. Vague direction such as "make
   On the floating layer, the prominent capsule is `.eb-primary` (bubble) or `.primary` (corner card). Use a switch for a setting that takes effect at once, and a checkbox for agreements and multiple choices.
 - **Destructive and leaving actions.** Never give one the prominent style: Sign out, Quit Ember, Not now and Stop are quiet. The preferred choice stands out by style, never by size.
 - **Four states.**
-  - Hover goes inside `@media (hover: hover)` and changes the background or uses `filter: brightness(1.08)`, never the layout.
+  - Hover goes inside `@media (hover: hover)` and changes only paint: the background, `filter: brightness(1.08)`, a colour, or an inset edge (as the handle's accent rim does). Never the layout.
   - Press is `transform: scale(0.97)`.
   - Then `:focus-visible`.
   - Disabled is `opacity: 0.4`.
 
   Buttons are at least 24px tall (WCAG 2.5.8).
-- **Focus.** Show it with `:focus-visible { outline: none; box-shadow: var(--focus-ring); }`, after the control's own edge. When a state adds its own outline (Increase Contrast's current-section edge), write the focused variant with both, or Tab shows no focus. There are two exceptions:
+- **Focus.** Show it with `:focus-visible { outline: none; box-shadow: var(--focus-ring); }`, after the control's own edge. When a state adds its own `box-shadow` edge (Increase Contrast's current-section edge), write the focused variant with both shadows, or Tab shows no focus. There are two exceptions:
   - the always-focused Ask field shows a firmer rim and the accent caret;
   - the desk picture uses an inset outline inside a black keyline.
 - **Hidden elements.** A class that sets `display` overrides the `hidden` attribute, so give it a `[hidden] { display: none; }` rule.
 - **Questions.**
-  - Every decision the floating layer asks for also works from the keyboard, with the hint from `questionKeyHint()`.
+  - Every decision the floating layer asks for also works from the keyboard (Ctrl+Alt+Y / Ctrl+Alt+N, while Ember holds them), with the hint from `questionKeyHint()`.
+  - "Always in <app>" stays click-only, because a global key could take an app's own shortcut and grant for good.
   - New task-card buttons ignore presses for `TASK_ARM_MS`, because the pointer may already rest where the card appears.
   - Question buttons are armed only by the Confirmer: never add a renderer arm delay to them.
 - **Screen readers.**
@@ -182,7 +183,7 @@ Name these patterns when you design something new. Vague direction such as "make
 
 - **How symbols are drawn.** Draw them as black data-URI SVG masks through the `--sym-*` tokens, or `--icon` for page icons: `background: <colour>; -webkit-mask: var(--sym) center / Npx no-repeat;`. No icon fonts, emoji or `<img>` icons. The working symbol is static; nothing spins.
 - **Task state.** It is `data-status="running|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Needs you: " …). Show selection with a ring plus a check.
-- **Failed tasks.** A failed task's card stays until the user presses Close or Close all. Only cards that ended well leave on their own.
+- **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner.
 
 ## Motion and performance
 
@@ -197,7 +198,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - In `@keyframes`, change only `opacity`, `transform`, `translate` or `scale`.
   - Colour and `filter` transitions are fine only on a button's hover, press or checked state, in a window or on the floating layer.
   - Never transition `box-shadow`, `filter`, `background`, size or position on a surface that moves with Ember, or on anything that updates while scrolling or on every data chunk: a box-shadow transition repainted the whole bubble on every frame.
-  - The overlay focus ring's left/top/width/height glide is the one geometry transition; don't add another.
+  - The overlay focus ring's left/top/width/height glide and the switch knob's press stretch (`width`) are the only geometry transitions; don't add another.
 - **Endless animations.** Use `infinite` only for small opacity pulses on their own element (`.status i`, `.eb-dot`, the streaming caret, `.mic::after`, `.focus::after`), and stop each pulse when its element hides. Large or masked effects run a fixed number of times: the thinking glow is `eb-glow 1.6s ease-in-out 3`, because running endlessly it cost 60% more compositor time.
 - **Calm mode** is `html.calm` (`settings.reduceMotion`), alongside `prefers-reduced-motion`.
   - Every `infinite` animation in the overlay and handle stylesheets needs its own `html.calm …` rule.
@@ -210,9 +211,10 @@ Name these patterns when you design something new. Vague direction such as "make
 
 ## Scrollbars, icon and the bubble
 
-- **Scrollbars.** Never set `scrollbar-width` or `scrollbar-color`: Chromium then ignores ember.css's `::-webkit-scrollbar` rules (a slim capsule thumb with no arrows) and draws arrows. The one exception is `scrollbar-width: none` on Home's narrow link row. A scroller drawn over other apps gets a dark track (`.tasks.scroll`).
+- **Scrollbars.** Never set `scrollbar-width` or `scrollbar-color`: Chromium then ignores ember.css's `::-webkit-scrollbar` rules (a slim capsule thumb with no arrows) and draws arrows. The one exception is `scrollbar-width: none` on Home's section links (`.jump`): the narrow row, and the wide sidebar, which inherits it. A scroller drawn over other apps gets a dark track (`.tasks.scroll`).
 - **App icon.** Edit only `assets/ember.svg`; the PNGs are rendered from it at package time. Keep Apple's icon grid (a 104px continuous-corner tile on a 128px canvas), and check that it still reads at 16px.
-- **The bubble.** `BUBBLE_CSS` also runs without ember.css, in the character lab, so every token it uses is written `var(--token, <value>)`. When you change a token in ember.css, update its fallback in bubble.ts.
+- **The bubble's CSS fallbacks.** `BUBBLE_CSS` also runs without ember.css, in the character lab, so every token it uses is written `var(--token, <value>)`. When you change a token in ember.css, update its fallback in bubble.ts. Some fallbacks are approximations today: `--control-edge`, `--separator`, `--scroll-thumb`, `--spring-snappy` and `--glass`.
+- **The bubble's clickable area.** The overlay takes clicks only inside the rectangles `interactiveRects()` reports (the `hot` boxes in bubble.ts). A new clickable part of the bubble must be added there, or it never receives a click.
 
 ## Tests, and checking UI changes
 
@@ -239,7 +241,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **New windows.**
   - Add the page to `pages` in scripts/build-app.mjs, with `app/preload/<p>.ts` and `app/renderer/<p>/` (main.ts, and an index.html with the CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:`).
   - Give the window `spellcheck: false` and `show: false`, and show it on `ready-to-show`.
-  - Anything floating over apps uses `showInactive()` and `focusable: false`, and steps out of screenshots.
+  - Anything floating over apps uses `showInactive()` and `focusable: false` (except the Ask box, which takes the keyboard), and steps out of screenshots.
   - Title it to match `EMBER_WINDOW` in policy.ts, so no task reads or acts in it.
   - If it animates, toggle `html.calm` in its renderer from `settings.reduceMotion`, as the overlay, handle and Home do.
   - In a frameless window with a drag region, give every control `-webkit-app-region: no-drag`.

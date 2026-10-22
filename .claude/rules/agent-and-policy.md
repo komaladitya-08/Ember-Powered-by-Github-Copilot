@@ -29,7 +29,7 @@ The root CLAUDE.md states the safety rules. This file says where each one lives 
 - injection fixtures produce no out-of-scope actions;
 - no risky action goes unconfirmed.
 
-The eval computes its gates from the audit log.
+The eval judges its two blocking safety gates (out-of-scope actions on the injection fixtures, and risky actions without confirmation) from each attempt's audit log. It times the kill switch and the borrow abort directly, and tracks them without blocking.
 
 ## Copilot sessions and prompts
 
@@ -75,7 +75,8 @@ The eval computes its gates from the audit log.
 - **Secrets.** `SECRET_WORDS`/`SECRET_ANYWHERE` must stay the same in TypeScript and Python. Add new labels to test/fixtures/secret-labels.json (and options to chosen-options.json), because both test suites read these files.
 - **Never-look windows.** Check the never-look list (`settings.privacy.neverLook` plus the admin's list) before every capture and every tree read. Those windows are left out of trees and window lists, and blacked out in images.
 - **Screenshots.** Only workers get them. If `maskAfter` returns null, send no image.
-- **Launching apps.** Launch apps only through `launchApp()` (app/main/hands/system.ts). It refuses terminals, runs `gtk-launch <desktop id>`, falls back to the parsed Exec line (`execArgv`, no shell), uses the home folder as the working directory, and always passes `appEnv()`. `appEnv()` drops tokens, keys and Ember's, GitHub's, Copilot's and SSH's variables.
+- **Launching apps on the user's screen.** Use only `launchApp()` (app/main/hands/system.ts). It refuses terminals, runs `gtk-launch <desktop id>`, falls back to the parsed Exec line (`execArgv`, no shell), uses the home folder as the working directory, and always passes `appEnv()`. `appEnv()` drops tokens, keys and Ember's, GitHub's, Copilot's and SSH's variables.
+- **Launching apps on the desk.** Apps start through the desk place's `open()` (app/main/desk/place.ts). It also refuses terminals, and calls `Desk.run()` with the desk's `appEnv(process.env, { session: false })` environment and the hand-off folder.
 - **Ember's own windows.** Ember never reads or acts in them: `EMBER_WINDOW` in policy.ts matches their titles.
 
 ## Tiers, the desk and the kill switch
@@ -84,10 +85,10 @@ The eval computes its gates from the audit log.
 - **Tier 3** (borrowing the cursor):
   - confirm every time;
   - wait for the user to be still;
-  - let go on any user input;
-  - restore the pointer and the active window.
+  - let go on any user input, and after that never move the pointer again;
+  - unless the user took over, restore the pointer and the active window when the borrow ends.
 
-  When the keyboard layout can't type the text, paste it and put the clipboard back.
+  On the user's screen, text typed with the borrowed keyboard always goes in by paste (any layout, accents, long text), and the clipboard is put back afterwards. Ember pastes only when it can put the clipboard back. On the desk, text is typed.
 - **The desk** is a private Xvfb with its own D-Bus, clipboard and app profiles. Make every desk X call in the desk helper (app/main/desk/agent-process.ts, bundled as dist/app/desk-agent.cjs and run with `ELECTRON_RUN_AS_NODE`), never in Ember's own process. Risky steps on the desk are still confirmed. Desks use displays :90 to :139.
 - **The kill switch.** Register every new long-running part with `KillSwitch` as a `StopPart`. After a stop, no tool sends anything to any app.
 
@@ -107,7 +108,7 @@ The eval computes its gates from the audit log.
 - **The microphone.**
   - It opens only when all of these hold: Hey Ember is on, voice consent and general consent are given, the models are verified, and Ember isn't muted.
   - Keep the constraints `echoCancellation: true, noiseSuppression: false, autoGainControl: false`, because gain control and noise suppression distort speech enough to miss the wake word.
-  - Speak replies only from the mic window, which tells the voice process while Ember speaks.
+  - Speak replies only from the mic page (app/renderer/mic). That is the mic window, or, while listening is off, a hidden speak-only window that never opens the mic. Either one tells the voice process while Ember speaks.
 - **Audio** stays on the machine and is never written to disk.
 - **Permissions.** Every web permission request is denied except audio `media` for Ember's mic window (`voicePermissions`). The spellchecker stays off, because it would download dictionaries.
 - **Conversation data.**

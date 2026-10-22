@@ -1,6 +1,6 @@
 # Ember
 
-Ember is a desktop companion and agent for RHEL 8.4 (GNOME on Xorg, x86-64). A small character sits beside the cursor, answers questions and does tasks in the user's real apps, where they can watch. It is built with Electron 44 and strict TypeScript. The agent loop runs on the GitHub Copilot SDK: one conductor session, plus one hardened worker session per task. A Python 3.6 AT-SPI sidecar reads apps and acts in them, and voice runs on the device with sherpa-onnx. Ember ships as an RPM and an AppImage. Its windows use Apple's current design language, adapted to a desktop with no GPU.
+Ember is a desktop companion and agent for RHEL 8.4 (GNOME on Xorg, x86-64). A small character sits beside the cursor, answers questions and does tasks in the user's real apps, where they can watch. It is built with Electron 44 and strict TypeScript. The agent loop runs on the GitHub Copilot SDK: one conductor session, plus one hardened worker session per task. A Python 3.6 AT-SPI sidecar reads apps and acts in them, and voice runs on the device with sherpa-onnx. Ember ships as an RPM and an AppImage. Its windows use Apple's macOS 26 (Liquid Glass) design language, adapted to a desktop with no GPU.
 
 The detail lives in the docs. Read the one for the area you are changing:
 - `PLAN.md` is the frozen v1 plan: §2 decisions, §4 task IDs (M0–M10), §5 safety, §6 release gates, §9 what comes after v1, §10 progress and departures. Where it and docs/RESEARCH.md differ, PLAN.md wins. Where §10 records a departure from §2, the code follows §10. §3's layout was the v1 target and is out of date.
@@ -42,7 +42,7 @@ xvfb-run -a npm run test:smoke   # launches dist/app, so build first; adds --no-
 - The eval drives real windows, so give it a display and a session bus, as CI's `eval` job does (with gedit installed): `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs`. For a partial run use `node eval/run.mjs --only <id> --no-gates`.
 - Without Copilot, start the mock model with `node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &`, then run `EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev`.
 - Useful switches: `EMBER_USER_DATA` (a throwaway settings and logs folder), `EMBER_LOG_LEVEL=debug`, `EMBER_PYTHON`, and `EMBER_LOG_STDOUT=1` (logs to stdout from an installed Ember; development already does this). Ember's real data lives in `~/.config/ember/`.
-- Also available: `npm run rebuild:el8`, `npm run check:symvers` and `npm run package` (RPM and AppImage into dist/package).
+- Also available: `npm run rebuild:el8`, `npm run check:symvers` and `npm run package` (RPM and AppImage into dist/package; only on EL8 or in `rockylinux:8`, see `packaging-and-ci.md`).
 
 ## Repository map
 
@@ -104,7 +104,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - Password text never reaches the model.
 - **Screenshots** go only to workers. They are JPEGs at most 1280 px, with Ember hidden and never-look windows and secret fields blacked out. If masking fails, no image is sent. Prefer AT-SPI text to pixels.
 - **Least intrusive tier first:** 0 app APIs, 1 background AT-SPI, 2 Ember's desk, 3 borrowing the cursor. Tier 3 asks every time and lets go on any user input. Ember never moves the pointer again after the user takes over.
-- **Kill switch.** Ctrl+Alt+X, "Ember, stop" and "Stop everything" call `KillSwitch.pull()`, which stops every part within 300 ms. Register any new long-running part as a `StopPart`.
+- **Kill switch.** Ctrl+Alt+X, "Ember, stop" and "Stop everything" call `KillSwitch.pull()`, which tells every part to stop at once and returns within 300 ms, logging any part still winding down as `late`. Register any new long-running part as a `StopPart`.
 - **Consent.**
   - Nothing is read, heard or sent until `hasConsent` is true.
   - When you change what Ember reads, sends or keeps, bump `CONSENT_VERSION` (app/shared/consent.ts) and update "Before Ember starts" in app/renderer/home/index.html.
@@ -115,7 +115,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - `~/.config/ember` is mode 0700 and the audit files are 0600. Typed text appears in the audit log only as a character count.
   - Never log window titles, typed text or the user's words anywhere more widely readable.
   - The GitHub token is stored only with `safeStorage`, and never when its backend is `basic_text`.
-- **Admin policy.** `/etc/ember/policy.json` can only tighten Ember. If it is unreadable, invalid or writable by others, Ember applies `LOCKDOWN`.
+- **Admin policy.** `/etc/ember/policy.json` can only tighten Ember. If it is unreadable, invalid, not owned by root, or writable by group or others, Ember applies `LOCKDOWN`.
 
 ## Writing UI copy
 
@@ -146,13 +146,19 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 
 ## Testing and verifying changes
 
-- **Where tests go.** Unit tests go in `test/unit/*.test.ts` or `packages/**/*.test.ts`. Anything that needs the Copilot runtime, X, AT-SPI or voice models goes in `test/integration/*.test.ts`, which runs only with `EMBER_INTEGRATION=1`.
+- **Where tests go.** Unit tests go in `test/unit/*.test.ts` or `packages/**/*.test.ts`. Anything that needs the Copilot runtime, AT-SPI or voice models goes in `test/integration/*.test.ts`, which runs only with `EMBER_INTEGRATION=1`. A unit test that needs a real X server skips itself without one (as desk-live.test.ts and perception-x11.test.ts do).
 - **How to write them.**
   - Move decisions into pure functions with no Electron and no DOM, and unit-test them.
   - Use `vi.mock` only at a module boundary (`electron`, `node:child_process`, `@github/copilot-sdk`); otherwise pass small fakes in.
   - Add a regression test with every fix.
   - Name tests as a spec: `describe` names the subject, and `it` states the behaviour from the user's side, citing the review ID or WCAG criterion in parentheses.
-- **Tests that read source text.** Some unit tests match exact source text: the font copy in build-app.mjs, the licence path in stage.mjs, the voice-models path in main.ts, `const SIZE = { width: 560, height: 92 }` in ask.ts, the chrome-sandbox `%attr` line in the spec, and the CSS rules listed in `design-system.md`. When you change one, update its test in the same commit.
+- **Tests that read source text.** Some unit tests match exact source text:
+  - the font copy in build-app.mjs and the licence path in stage.mjs;
+  - the voice-models path in main.ts and `const SIZE = { width: 560, height: 92 }` in ask.ts;
+  - several lines of the RPM spec and the AppRun heredoc in appimage.sh (listed in `packaging-and-ci.md`);
+  - the CSS rules listed in `design-system.md`.
+
+  When you change one, update its test in the same commit.
 - **Eval.** Keep the eval green: eval/tasks/*.json run against the scripted mock model with blocking safety gates.
 - **UI changes.** Check them in real renders as well as tests; `design-system.md` says how.
 
@@ -167,13 +173,13 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 ## Git, commits and PRs
 
 - **Branches.** Work on a branch and open a PR against `main`; never push to main. Name branches like the recent ones: `ember-improve/<YYYYMMDD-HHMM>` or `ember-improve/<YYYYMMDD>-<slug>`. The owner merges with a merge commit, so every commit must be coherent and pass the gate.
-- **Commits.** The subject is one imperative sentence in sentence case that states the user-visible outcome, with no period and no `feat:` or area prefix ("Refuse a silent Copilot runtime instead of hanging at startup"). Wrap the body at 90 columns. Open with how the problem was found and checked. Then use `- ` bullets that say what was wrong and what happens now, with measured numbers.
+- **Commits.** The subject is one imperative sentence in sentence case that states the user-visible outcome, with no period and no `feat:` or area prefix ("Refuse a silent Copilot runtime instead of hanging at startup"). Wrap the body at 90 columns. Open with how the problem was found and checked. Then use `- ` bullets that say what was wrong and what happens now, with the numbers you measured where you measured any.
 - **PR body.** Summary; what changed, by area or window; Testing (exact commands, results, counts and visual checks); then "Known, not addressed here". Reference PLAN.md task IDs where they apply.
 - **Docs in the same change.**
   - docs/DEVELOPING.md: commands, environment variables, behaviour users or admins see, troubleshooting.
   - PLAN.md §10: progress and departures.
   - docs/DESIGN.md: design changes.
-  - This file and `.claude/rules/`: whenever a rule they state changes. Fix a stale doc rather than noting the drift here.
+  - This file and `.claude/rules/`: whenever a rule they state changes, update the rule in place rather than adding a note about the drift. A stale doc your change doesn't touch is a follow-up for your summary.
 
 ## Gotchas
 
