@@ -864,6 +864,25 @@ describe("WSL targets", () => {
     }
   });
 
+  it("keeps D4.4's wrong-target guard for 'in WSL' while WSL is off, not installed or not allowed (the task binds here)", async () => {
+    const setups: RigOptions[] = [
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: commandsOn("local") }, // installed, off in Ember
+      { os: "win32", wslFacts: { ...wslFacts([]), installed: false }, settings: commandsOn("local") }, // not installed
+      { os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { ...wslOnSettings, ...commandsOn("local") }, admin: policy({ features: { wsl: false }, commands: { local: "on" } }) }, // not allowed
+    ];
+    for (const o of setups) {
+      const r = rig(o);
+      await flush();
+      expect(r.t.agent.bind({ userWords: "in WSL, delete build/" })).toMatchObject({ ok: true, binding: { id: "local" } });
+      const got = r.t.agent.handsFor("local");
+      if (!got.ok) throw new Error(got.why);
+      const guard = got.hands.commands as unknown as { othersNamed(words: string): string[] };
+      expect(guard.othersNamed("in WSL, delete build/").length, JSON.stringify(o.admin?.policy.features ?? o.wslFacts?.installed)).toBeGreaterThan(0);
+      expect(guard.othersNamed("on the Linux side, delete build/").length).toBeGreaterThan(0);
+      expect(guard.othersNamed("delete build/")).toEqual([]);
+    }
+  });
+
   it("never offers WSL once the administrator has turned it off (Ember made its WSL view before that)", async () => {
     const admin: LoadedAdminPolicy = { ...noPolicy };
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), admin });

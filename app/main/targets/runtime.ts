@@ -1199,6 +1199,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
   const othersNamed = (bound: TargetId, words: string): string[] => {
     const { known, labels } = knownNamed();
+    // On a Windows PC "WSL", "Linux" and "the Linux side" name WSL whether or not Ember works there. While no distro it
+    // lists answers to them (WSL off and not looked at yet, not installed, or not allowed), the task binds here (§2.3
+    // rule 5), and they still name a computer other than this one: a command they ask for asks, never announces.
+    if (deps.os === "win32" && !known.some(t => t.names.some(n => normaliseName(n) === "wsl"))) {
+      known.push({ id: "wsl:WSL" as TargetId, names: [...WSL_WORDS] });
+      labels.set("wsl:WSL", "WSL");
+    }
     return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
   };
   /** The other computers the user's words name as a place (§2.3 rule 3: "on build-02", "build-02: …"), never as a word. */
