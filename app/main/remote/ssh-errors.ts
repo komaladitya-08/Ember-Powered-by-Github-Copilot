@@ -70,6 +70,7 @@ export const MESSAGES = {
   busyInstall: (h: string) => `Another Ember is installing its helper on ${h}. Try again in a minute.`,
   download: (h: string, reason: string) => `Ember couldn't download what it needs for ${h} (${reason}). Check your internet connection, or ask your administrator about a mirror.`,
   downloadMismatch: (h: string) => `Ember couldn't check the Node download for ${h} (it doesn't match the expected file). Try again later.`,
+  downloadStalled: (h: string) => `The download of what Ember needs for ${h} stalled. Try again.`,
   partsMissing: () => "Ember's helper for other computers is missing from this install. Reinstall Ember.",
   cancelled: () => "Connection cancelled",
   noConsent: (h: string) => `Ember needs your yes before it connects to ${h}.`,

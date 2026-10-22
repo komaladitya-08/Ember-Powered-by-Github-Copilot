@@ -241,6 +241,8 @@ function rig(o: {
   archive?: (path: string) => Buffer;
   /** What `ssh -V` prints (default: a current client for the OS). */
   sshV?: string;
+  /** The runtime download's fetch (default: the server answers 404). */
+  fetch?: Parameters<typeof createConnections>[0]["fetch"];
 } = {}) {
   const spawned: FakeChild[] = [];
   const muxes: FakeMux[] = [];
@@ -286,7 +288,7 @@ function rig(o: {
     os: o.os ?? "linux", userData: "/home/ana/.config/ember", appDir: "/opt/Ember/resources/app/dist/app", execPath: "/opt/Ember/ember",
     resourcesPath: "/opt/Ember/resources", settings: store,
     admin: () => o.admin ?? { policy: AdminPolicySchema.parse({}), source: null },
-    prompts, fetch: async () => ({ ok: false, status: 404, body: null }), allowLoopback: o.allowLoopback ?? false,
+    prompts, fetch: o.fetch ?? (async () => ({ ok: false, status: 404, body: null })), allowLoopback: o.allowLoopback ?? false,
     audit: () => ({ write: (e: Record<string, unknown>) => audits.push(e) }) as never,
     pcId: () => PC_ID, wsl: () => null, jobHost: o.os === "win32" ? { execPath: "C:\\Ember\\Ember.exe", script: "C:\\Ember\\resources\\app\\dist\\app\\job-host.cjs" } : null,
   }, internals);
@@ -375,6 +377,43 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(c.decision).toBe(`INSTALL ${PC_ID} v24.11.1-linux-x64 ${runtimeBytes.length} ${sha(runtimeBytes)} xz ${PARTS_ID} ${partsBytes.length} ${sha(partsBytes)}`);
     expect(Object.keys(c.received)).toEqual(["runtime", "parts"]);
     expect(r.progress.map(([, p]) => p.step)).toContain("copying");
+  });
+
+  it("ends the attempt with \"stalled. Try again.\" when the runtime's download stops sending, and tells the remote to quit", async () => {
+    const runtimeBytes = Buffer.alloc(100_000, 7);
+    const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    const signals: AbortSignal[] = [];
+    const r = track(rig({
+      remotes: [{ probe: { rt: "", parts: "" } }, { probe: { rt: "", parts: "" } }],
+      // The mirror sends the first piece, then nothing more (and ignores the abort, as a wedged proxy might).
+      fetch: async (_url, init) => {
+        if (init?.signal) signals.push(init.signal);
+        return { ok: true, status: 200, body: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(runtimeBytes.subarray(0, 1000))); } }) };
+      },
+      internals: {
+        runtimeStallMs: 50,
+        readText: async p => {
+          if (p.endsWith("remote-parts/remote-parts.json")) return JSON.stringify({ partsId: PARTS_ID, targets: { "linux-x64": { file: "parts-linux-x64.tar.gz", sha256: H("d"), bytes: 10 } } });
+          if (p.endsWith("remote-runtime.json")) return JSON.stringify({ minimum: "24.8.0", pinned: "24.11.1", targets: { "linux-x64": { xz: { file: "node-v24.11.1-linux-x64.tar.xz", sha256: sha(runtimeBytes), bytes: runtimeBytes.length } } } });
+          throw new Error("ENOENT");
+        },
+        runtimeFs: {
+          stat: async () => { throw new Error("ENOENT"); },
+          createReadStream: () => (async function* () { /* nothing cached */ })(),
+          open: async () => ({ write: async () => undefined, close: async () => undefined }), rename: async () => undefined, rm: async () => undefined, mkdir: async () => undefined,
+        },
+      },
+    }));
+    const stalled = { kind: "download", message: "The download of what Ember needs for build-01 stalled. Try again.", retry: true };
+    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject(stalled);
+    expect(signals[0].aborted).toBe(true);
+    expect(r.spawned[0].decision).toBe("QUIT");
+    expect(r.progress.at(-1)).toEqual(["build-01", { step: "failed", ...stalled }]);
+    expect(r.progress.map(([, p]) => p.step)).toContain("downloading");
+    expect(r.conns.link("build-01")).toBeNull();
+    // The attempt is over: Try again starts a new one rather than joining a hung one.
+    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject(stalled);
+    expect(r.spawned).toHaveLength(2);
   });
 
   it("asks through Ember's prompt when the key is new, and connects once the user trusts it", async () => {

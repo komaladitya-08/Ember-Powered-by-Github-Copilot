@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadShipped, partsArchive, planShipped, shippedCandidates } from "../../app/main/remote/parts-cache";
-import { cachedOk, ensureRuntime, RuntimeError, RuntimeManifestSchema, runtimeUrl, type RuntimeFs, type RuntimeManifest } from "../../app/main/remote/runtime-download";
+import { cachedOk, ensureRuntime, RUNTIME_STALL_MS, RuntimeError, RuntimeManifestSchema, runtimeUrl, type RuntimeFs, type RuntimeManifest } from "../../app/main/remote/runtime-download";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const BODY = Buffer.alloc(300_000, 3);
@@ -34,7 +34,42 @@ const answer = (bytes: Buffer, status = 200) => ({
 
 let dirs: string[] = [];
 const tmp = () => { const d = mkdtempSync(path.join(os.tmpdir(), "ember-rt-")); dirs.push(d); return d; };
-afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
+afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; vi.useRealTimers(); });
+
+/** An in-memory cache folder (the stall tests run on fake timers, so no real I/O waits in them). */
+function memFs() {
+  const files = new Map<string, Buffer>();
+  const removed: string[] = [];
+  const fs: RuntimeFs = {
+    stat: async p => { const f = files.get(p); if (!f) throw new Error("ENOENT"); return { size: f.length }; },
+    open: async p => {
+      files.set(p, Buffer.alloc(0));
+      return { write: async b => { files.set(p, Buffer.concat([files.get(p) ?? Buffer.alloc(0), b])); }, close: async () => undefined };
+    },
+    createReadStream: p => (async function* () { yield files.get(p) ?? Buffer.alloc(0); })(),
+    rename: async (a, b) => { files.set(b, files.get(a) as Buffer); files.delete(a); },
+    rm: async p => { removed.push(p); files.delete(p); },
+    mkdir: async () => undefined,
+  };
+  return { fs, files, removed };
+}
+
+/** A fetch whose answer sends `first` and then nothing, ignoring its signal (the worst case); it records the signal. */
+function stallingFetch(first: Buffer | null) {
+  const seen: { signal?: AbortSignal; cancelled: boolean } = { cancelled: false };
+  const fetch = async (_url: string, init?: { signal?: AbortSignal }) => {
+    seen.signal = init?.signal;
+    if (!first) return new Promise<never>(() => { /* the server never answers */ });
+    return {
+      ok: true, status: 200,
+      body: new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(new Uint8Array(first)); },
+        cancel() { seen.cancelled = true; },
+      }),
+    };
+  };
+  return { fetch, seen };
+}
 
 const run = (dir: string, fetch: (url: string) => Promise<ReturnType<typeof answer>>, over: { mirror?: string; progress?: (d: number, t: number) => void } = {}) =>
   ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir, file: n => path.join(dir, n), fs, fetch, ...over });
@@ -85,6 +120,80 @@ describe("the Node runtime for remotes (§5.2.1)", () => {
   it("reports a server error or no connection as a download failure", async () => {
     expect(await run(tmp(), async () => answer(Buffer.alloc(0), 404)).catch(e => [e.kind, e.reason])).toEqual(["download", "the server answered 404"]);
     expect(await run(tmp(), async () => { throw new Error("ENOTFOUND"); }).catch(e => e.kind)).toBe("download");
+  });
+
+  it("ends a download that goes 60 s without a byte: the request aborted, the partial file deleted, \"stalled\"", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    expect(RUNTIME_STALL_MS).toBe(60_000);
+    const m = memFs();
+    const { fetch, seen } = stallingFetch(BODY.subarray(0, 65_536));
+    const progress: number[] = [];
+    let settled = false;
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch, progress: d => progress.push(d) })
+      .catch((e: unknown) => e)
+      .finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(RUNTIME_STALL_MS - 1);
+    expect(settled).toBe(false);
+    expect(progress).toEqual([65_536]);
+    expect([...m.files.keys()]).toEqual([expect.stringMatching(/^\/c\/node-v24\.11\.1-linux-x64\.tar\.xz\.[0-9a-f]{8}\.part$/)]);
+    await vi.advanceTimersByTimeAsync(1);
+    const err = await p;
+    expect(err).toBeInstanceOf(RuntimeError);
+    expect((err as RuntimeError).kind).toBe("stalled");
+    expect(seen.signal?.aborted).toBe(true);
+    expect(seen.cancelled).toBe(true);
+    expect(m.files.size).toBe(0);
+    expect(m.removed).toHaveLength(1);
+  });
+
+  it("ends a request the server never answers after the same 60 s", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const m = memFs();
+    const { fetch, seen } = stallingFetch(null);
+    let settled = false;
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch })
+      .catch((e: unknown) => e)
+      .finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(RUNTIME_STALL_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await p).toMatchObject({ kind: "stalled" });
+    expect(seen.signal?.aborted).toBe(true);
+    expect(m.files.size).toBe(0);
+  });
+
+  it("counts the limit from the last byte, so a slow download that keeps coming finishes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const m = memFs();
+    const pieces = 6;
+    const size = BODY.length / pieces;
+    // One piece every 50 s: five minutes in all, never 60 s without a byte.
+    const fetch = async () => ({
+      ok: true, status: 200,
+      body: new ReadableStream<Uint8Array>({
+        async start(c) {
+          for (let i = 0; i < pieces; i++) {
+            await new Promise(r => setTimeout(r, 50_000));
+            c.enqueue(new Uint8Array(BODY.subarray(i * size, (i + 1) * size)));
+          }
+          c.close();
+        },
+      }),
+    });
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch });
+    await vi.advanceTimersByTimeAsync(pieces * 50_000);
+    await expect(p).resolves.toEqual({ path: "/c/node-v24.11.1-linux-x64.tar.xz", sha256: sha(BODY), bytes: BODY.length });
+    expect([...m.files.keys()]).toEqual(["/c/node-v24.11.1-linux-x64.tar.xz"]);
+  });
+
+  it("still says \"cancelled\" when the user cancels a download that is waiting for bytes", async () => {
+    const m = memFs();
+    const { fetch, seen } = stallingFetch(BODY.subarray(0, 1000));
+    const ac = new AbortController();
+    const p = ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: "/c", file: n => `/c/${n}`, fs: m.fs, fetch, signal: ac.signal, progress: () => ac.abort() });
+    expect(await p.catch((e: unknown) => e)).toMatchObject({ kind: "download", reason: "cancelled" });
+    expect(seen.signal?.aborted).toBe(true);
+    expect(m.files.size).toBe(0);
   });
 
   it("accepts only a manifest whose files are the pinned version's", () => {
