@@ -627,7 +627,10 @@ describe("the other stubs", () => {
     const ws = {} as Parameters<typeof wrapWindowsForWsl>[0];
     expect(wrapWindowsForWsl(ws, o)).toBe(ws);
     const privacy = { isSecurityWindow: () => false, isTerminalApp: () => false };
-    expect(wslAwarePrivacy(privacy)).toBe(privacy);
+    // WB's union (§4.5) answers as the PC's own checks for every window that isn't a WSLg app's.
+    const aware = wslAwarePrivacy(privacy);
+    expect(aware.isSecurityWindow({ app: "gedit", title: "notes" })).toBe(false);
+    expect(aware.isTerminalApp({ id: "gedit", name: "gedit" })).toBe(false);
     expect(wslAwareSystem(sys)).toBe(sys);
     expect(targetRules({} as ActionRequest, "win32")).toBeNull();
     expect(createWsl({ log: {} as never, env: {}, os: "win32", ember: { winPaths: [] }, jobHost: null })).toBeNull();

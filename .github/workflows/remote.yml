@@ -394,12 +394,21 @@ jobs:
           distribution: Ubuntu-22.04
           wsl-version: 2
           wsl-shell-user: ember
+          # systemd gives the user a session bus (/run/user/<uid>/bus) for the apps, which find_bus may then find
+          # (whether that is what helps is what this job records: critique wsl-8c).
           wsl-conf: |
             [user]
             default=ember
-          additional-packages: util-linux python3 x11-apps gedit python3-pyatspi at-spi2-core
-      - name: The distro restarts so its default user (ember, not root) applies
+            [boot]
+            systemd=true
+          additional-packages: util-linux python3 x11-apps gedit python3-pyatspi at-spi2-core dbus-user-session dbus-x11
+      - name: The distro restarts so its default user (ember, not root) and systemd apply
         run: wsl.exe --terminate Ubuntu-22.04
+      - name: Toolkit accessibility on for the Linux apps the probe starts (best effort; the probe records what it finds)
+        run: |
+          MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 --exec /bin/sh -c \
+            'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus gsettings set org.gnome.desktop.interface toolkit-accessibility true' \
+            || echo "::warning::toolkit accessibility could not be turned on in the distro"
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build

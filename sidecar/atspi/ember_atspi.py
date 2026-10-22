@@ -26,17 +26,34 @@ import traceback
 import unicodedata
 from collections import OrderedDict
 
-try:
-    import pyatspi
-except ImportError:  # reported per request; the self-test runs without it
-    pyatspi = None
+pyatspi = None
 Atspi = None
-if pyatspi is not None:
+
+# Inside a WSL distro (Ember on Windows reading WSLg's Linux apps) Ember starts this script with EMBER_ATSPI_FIND_BUS=1:
+# the session bus the distro's apps use is found first (find_bus), and only then are gi and pyatspi imported, on that
+# bus. Without the variable (Linux) everything is as it always was: imported now.
+FIND_BUS = os.environ.get("EMBER_ATSPI_FIND_BUS") == "1"
+
+
+def load_atspi():
+    """Imports pyatspi, and libatspi itself through gi. False when pyatspi isn't there (reported per request)."""
+    global pyatspi, Atspi
+    try:
+        import pyatspi as module
+    except ImportError:  # reported per request; the self-test runs without it
+        return False
+    pyatspi = module
     try:
         # libatspi itself (pyatspi loaded it): states and extents straight from it take half the time.
-        from gi.repository import Atspi
+        from gi.repository import Atspi as lib
+        Atspi = lib
     except Exception:
         pass
+    return True
+
+
+if not FIND_BUS:
+    load_atspi()
 
 VERSION = 3
 # Deep enough for web pages (Firefox lists every <div> as a section; a card field can sit 40 levels down) and
@@ -2134,6 +2151,9 @@ def describe_window(app, pid, win, budget=None):
             pass
         if budget.tick():
             break
+    if FIND_BUS and pid is not None:
+        # Inside WSL: the names its program goes by, for Ember's checks on Windows (they come from /proc, not the app).
+        out.update(process_names(pid))
     return out
 
 
@@ -2145,6 +2165,9 @@ def list_windows(params):
         _, states = window_facts(pid, win)
         if "showing" in states or "active" in states:
             out.append(describe_window(app, pid, win))
+            if FIND_BUS:
+                # Inside WSL: what shows of it, without client-side shadows, to place it in its WSLg window (§4.9).
+                out[-1]["children"] = child_extents(win)
     for pid in asked - SLOW_NOW:
         remember_windows(pid, [w for w in out if w["pid"] == pid])
     # Apps that didn't answer this time (busy, or hung and skipped): their windows as last seen, marked busy.
@@ -2679,19 +2702,24 @@ def shell_text(acc, words, depth):
 
 def status(params):
     enabled = None
-    try:
-        from gi.repository import Gio
-        schema = Gio.SettingsSchemaSource.get_default().lookup("org.gnome.desktop.interface", True)
-        if schema is not None and schema.has_key("toolkit-accessibility"):
-            enabled = Gio.Settings.new("org.gnome.desktop.interface").get_boolean("toolkit-accessibility")
-    except Exception:
-        pass
+    # (Inside WSL gi isn't imported before find_bus has chosen the bus: until then this can't be told.)
+    if not FIND_BUS or BUS["chosen"]:
+        try:
+            from gi.repository import Gio
+            schema = Gio.SettingsSchemaSource.get_default().lookup("org.gnome.desktop.interface", True)
+            if schema is not None and schema.has_key("toolkit-accessibility"):
+                enabled = Gio.Settings.new("org.gnome.desktop.interface").get_boolean("toolkit-accessibility")
+        except Exception:
+            pass
     apps = 0
     try:
         apps = pyatspi.Registry.getDesktop(0).childCount
     except Exception:
         pass
-    return {"version": VERSION, "python": sys.version.split()[0], "toolkitAccessibility": enabled, "apps": apps}
+    out = {"version": VERSION, "python": sys.version.split()[0], "toolkitAccessibility": enabled, "apps": apps}
+    if FIND_BUS:
+        out.update(wsl_status())
+    return out
 
 
 # ---------------------------------------------------------------- actions (tier 1)
@@ -4233,6 +4261,17 @@ if Atspi is not None:
     except Exception:
         Gio = GLib = None
 
+
+def load_links():
+    """Gio and GLib for the links, as above: inside WSL (EMBER_ATSPI_FIND_BUS) once find_bus has loaded libatspi."""
+    global Gio, GLib
+    if Gio is None and Atspi is not None:
+        try:
+            from gi.repository import Gio as gio, GLib as glib
+            Gio, GLib = gio, glib
+        except Exception:
+            Gio = GLib = None
+
 # The requests that go on a link: (D-Bus interface, method, argument types, answer types).
 LINK_CALLS = {
     "DoAction": ("org.a11y.atspi.Action", "DoAction", "(i)", "(b)"),
@@ -4364,7 +4403,9 @@ def holder():
     try:
         mine, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         # Its own session: it outlives this process (killed when a request takes too long) while it keeps links.
-        proc = subprocess.Popen([sys.executable, HOLDER_SCRIPT, "--hold", str(theirs.fileno())],
+        # (Inside WSL, isolated like this process: python3 -I, its folder and the user's site-packages off the path.)
+        isolated = ["-I"] if FIND_BUS else []
+        proc = subprocess.Popen([sys.executable] + isolated + [HOLDER_SCRIPT, "--hold", str(theirs.fileno())],
                                 pass_fds=(theirs.fileno(),), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True, cwd="/")
     except Exception:
@@ -4589,6 +4630,461 @@ def let_go(entry):
             pass
 
 
+# ---------------------------------------------------------------- inside WSL (EMBER_ATSPI_FIND_BUS=1)
+
+# Ember on Windows starts this script inside a WSL distro to read WSLg's Linux apps. There the session bus the apps use
+# isn't in this process's environment (it is started with wsl.exe --exec): it is found first, by asking each candidate
+# bus which windows its apps show and keeping the one that shows the windows WSLg shows on Windows (find_bus). Each
+# candidate is looked at by a short-lived child (this script again, with EMBER_ATSPI_PROBE), so a bad bus never wedges
+# this process, and nothing is ever started on a bus to answer (no D-Bus activation). Nothing here runs without the
+# variable: the Linux sidecar is as it always was.
+
+# What find_bus chose: "source" ("env", "proc", "runtime", "x11", or "none"), the addresses, and whether gi and
+# pyatspi are loaded on it ("chosen").
+BUS = {"source": None, "session": None, "a11y": None, "chosen": False}
+# How long one candidate's look may take (a cold python3 with gi takes a few hundred milliseconds), and all of them.
+PROBE_TIMEOUT_S = 3.0
+FIND_TOTAL_S = 12.0
+MAX_CANDIDATES = 8
+MAX_TITLES = 32
+# A long title RDP may have cut: one this long that starts exactly one frame's name names that frame (§4.9).
+LONG_TITLE = 100
+# A local bus address only (never a network one), as D-Bus writes it.
+BUS_ADDRESS = re.compile(r"^unix:[A-Za-z0-9_=,./%:-]{1,1000}$")
+SOURCES = ("env", "proc", "runtime", "x11")
+
+
+def normalize_title(title):
+    """A window title as Ember compares them: NFC, whitespace collapsed and trimmed."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", title or "")).strip()
+
+
+def title_matches(frame_name, titles):
+    """Does a frame's name equal one of the (normalised) titles, or start with a long one RDP may have cut?"""
+    name = normalize_title(frame_name)
+    return bool(name) and any(t == name or (len(t) >= LONG_TITLE and name.startswith(t)) for t in titles)
+
+
+def bus_address(value):
+    """A session or accessibility bus address worth trying (a local one), else None."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    value = (value or "").strip()
+    return value if BUS_ADDRESS.match(value) else None
+
+
+def own_tree(proc="/proc", me=None):
+    """This process and everything it started (the probes, the holder): their environments are Ember's own."""
+    me = os.getpid() if me is None else me
+    parents = {}
+    try:
+        names = os.listdir(proc)
+    except OSError:
+        return {me}
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc, name, "stat"), "rb") as f:
+                stat = f.read().decode("utf-8", "replace")
+            parents[int(name)] = int(stat[stat.rindex(")") + 2:].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+    tree = {me}
+    grew = True
+    while grew:
+        grew = False
+        for pid, parent in parents.items():
+            if parent in tree and pid not in tree:
+                tree.add(pid)
+                grew = True
+    return tree
+
+
+def environ_bus(path):
+    """The DBUS_SESSION_BUS_ADDRESS in a process's environment file, unless the process is one of Ember's commands
+    (EMBER_RUN_ID): only that variable is read out of it."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(1 << 20)
+    except OSError:
+        return None
+    found = None
+    for entry in data.split(b"\0"):
+        if entry.startswith(b"EMBER_RUN_ID="):
+            return None
+        if entry.startswith(b"DBUS_SESSION_BUS_ADDRESS="):
+            found = bus_address(entry[len(b"DBUS_SESSION_BUS_ADDRESS="):])
+    return found
+
+
+def bus_candidates(environ=None, proc="/proc", uid=None, skip=None, uid_of=None, is_socket=None, x11=None):
+    """The session buses the distro's apps may use, each once, in order of trust: this process's own
+    (DBUS_SESSION_BUS_ADDRESS), the same user's processes' (/proc/<pid>/environ), the runtime folders' sockets
+    (/run/user/<uid>/bus, WSLg's /mnt/wslg/runtime-dir/bus), and the X root window's properties. Each is
+    {"source", "session", "a11y"} (a11y: the accessibility bus itself, when the X root window says it)."""
+    environ = os.environ if environ is None else environ
+    uid = os.getuid() if uid is None else uid
+    skip = own_tree(proc) if skip is None else skip
+
+    def owner(path):
+        try:
+            return os.stat(path).st_uid
+        except OSError:
+            return None
+
+    uid_of = uid_of or owner
+    is_socket = is_socket or (lambda p: os.path.exists(p) and not os.path.isdir(p))
+    out, seen = [], set()
+
+    def add(source, session, a11y=None):
+        if (session or a11y) and (session, a11y) not in seen:
+            seen.add((session, a11y))
+            out.append({"source": source, "session": session, "a11y": a11y})
+
+    add("env", bus_address(environ.get("DBUS_SESSION_BUS_ADDRESS")))
+    try:
+        pids = sorted(int(n) for n in os.listdir(proc) if n.isdigit())
+    except OSError:
+        pids = []
+    for pid in pids:
+        if pid in skip or uid_of(os.path.join(proc, str(pid))) != uid:
+            continue
+        add("proc", environ_bus(os.path.join(proc, str(pid), "environ")))
+    for path in ("/run/user/%d/bus" % uid, "/mnt/wslg/runtime-dir/bus"):
+        if is_socket(path):
+            add("runtime", "unix:path=" + path)
+    props = x11() if x11 is not None else x_root_properties()
+    add("x11", bus_address(props.get("_DBUS_SESSION_BUS_ADDRESS")), bus_address(props.get("AT_SPI_BUS")))
+    return out[:MAX_CANDIDATES]
+
+
+def probe(spec, timeout=PROBE_TIMEOUT_S):
+    """What a child (this script with EMBER_ATSPI_PROBE) found for `spec`; None when it failed or took too long."""
+    env = dict(os.environ)
+    for name in ("DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS"):
+        env.pop(name, None)
+    # (With EMBER_ATSPI_FIND_BUS the child imports nothing on its own: only once it has set the bus it looks at.)
+    env["EMBER_ATSPI_FIND_BUS"] = "1"
+    env["EMBER_ATSPI_PROBE"] = json.dumps(spec)
+    try:
+        done = subprocess.run([sys.executable, "-I", os.path.abspath(__file__)], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, timeout=timeout, cwd="/")
+        return json.loads(done.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
+    except Exception:
+        return None
+
+
+def x_root_properties():
+    """The X root window's _DBUS_SESSION_BUS_ADDRESS and AT_SPI_BUS on $DISPLAY (":0" by default), read by a child
+    (an X error can end the process that meets it); {} without an X server or libX11."""
+    found = probe({"kind": "x11", "display": os.environ.get("DISPLAY") or ":0"})
+    return found if isinstance(found, dict) else {}
+
+
+def score(found, titles):
+    """How many apps on a candidate bus show a window WSLg shows (the probe's frames, app by app)."""
+    if not isinstance(found, dict) or not isinstance(found.get("apps"), list):
+        return 0
+    return sum(1 for frames in found["apps"] if isinstance(frames, list) and any(
+        isinstance(n, str) and title_matches(n, titles) for n in frames))
+
+
+def rank(candidates, titles, look=probe, budget=FIND_TOTAL_S):
+    """Each candidate with its score and the accessibility bus its look found, in order, until the time is up: each look
+    gets what is left of `budget` (PROBE_TIMEOUT_S at most), so the whole stays within it."""
+    out = []
+    until = time.monotonic() + budget
+    for c in candidates:
+        left = until - time.monotonic()
+        if left < 0.25:
+            break
+        found = look({"kind": "bus", "session": c["session"], "a11y": c["a11y"]}, min(PROBE_TIMEOUT_S, left))
+        a11y = bus_address(found.get("a11y")) if isinstance(found, dict) else None
+        out.append((score(found, titles), dict(c, a11y=a11y or c["a11y"])))
+    return out
+
+
+def best_of(ranked):
+    """The candidate with the most matches (the earlier on a tie), when it has any; else None."""
+    best = None
+    for n, c in ranked:
+        if n >= 1 and (best is None or n > best[0]):
+            best = (n, c)
+    return best
+
+
+def choose_bus(candidate):
+    """Uses this bus from now on: its addresses go in the environment libatspi reads, then gi and pyatspi load."""
+    if candidate["session"]:
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = candidate["session"]
+    if candidate["a11y"]:
+        os.environ["AT_SPI_BUS_ADDRESS"] = candidate["a11y"]
+    if not load_atspi():
+        return False
+    if not configure_atspi():
+        sys.stderr.write("ember_atspi: could not shorten libatspi timeouts\n")
+    load_links()
+    BUS.update(source=candidate["source"], session=candidate["session"], a11y=candidate["a11y"], chosen=True)
+    return True
+
+
+def find_bus(params, candidates=None, look=probe, choose=choose_bus):
+    """find_bus { titles }: the session bus whose apps show the windows WSLg shows (`titles`, normalised), chosen and
+    used from now on; "none" when no candidate shows any (every request but status then says "no session bus"). Once
+    a bus is in use it can't be changed in this process: when another fits better now, `restart` says to start over."""
+    titles = [normalize_title(t) for t in (params.get("titles") or [])[:MAX_TITLES] if isinstance(t, str)]
+    titles = [t for t in titles if t]
+    began = time.monotonic()
+    cands = bus_candidates() if candidates is None else candidates
+    # The X root window's look (in bus_candidates) counts against the same budget: Ember waits 15 s for the answer.
+    ranked = rank(cands, titles, look, FIND_TOTAL_S - (time.monotonic() - began))
+    best = best_of(ranked)
+    # What each candidate scored, by where it was found (for the doctor and the wslg-probe job; no addresses).
+    scores = [[c["source"], n] for n, c in ranked]
+    if BUS["chosen"]:
+        mine = [n for n, c in ranked if (c["session"], c["a11y"]) == (BUS["session"], BUS["a11y"])
+                or (c["session"] and c["session"] == BUS["session"])]
+        if best is not None and best[0] > (mine[0] if mine else 0):
+            return {"bus": best[1]["source"], "score": best[0], "restart": True, "scores": scores}
+        return {"bus": BUS["source"], "score": mine[0] if mine else 0, "scores": scores}
+    if best is None or not choose(best[1]):
+        BUS["source"] = "none"
+        return {"bus": "none", "candidates": len(cands), "scores": scores}
+    return {"bus": best[1]["source"], "score": best[0], "scores": scores}
+
+
+def pyatspi_installed():
+    """Is pyatspi there to import (without importing it: that would connect to a bus)?"""
+    if pyatspi is not None:
+        return True
+    try:
+        import importlib.util
+        return importlib.util.find_spec("pyatspi") is not None
+    except Exception:
+        return False
+
+
+def wsl_status():
+    """What Ember on Windows checks before it reads anything here: the user (root is never read for), WSLg, the bus."""
+    return {"uid": os.getuid(), "wslg": os.path.isdir("/mnt/wslg"), "bus": BUS["source"] or "none",
+            "pyatspi": pyatspi_installed()}
+
+
+def process_names(pid, proc="/proc"):
+    """The names a process goes by, each at most 64 characters: its program (/proc/<pid>/exe's basename), the
+    basenames of its command line's first two words (an interpreter and its script), and comm (15 bytes, as the
+    kernel cuts it)."""
+    out = {}
+    base = os.path.join(proc, str(pid))
+    try:
+        exe = os.readlink(os.path.join(base, "exe"))
+        if exe.endswith(" (deleted)"):
+            exe = exe[:-len(" (deleted)")]
+        if os.path.basename(exe):
+            out["program"] = os.path.basename(exe)[:64]
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(base, "cmdline"), "rb") as f:
+            words = [w.decode("utf-8", "replace") for w in f.read(65536).split(b"\0")]
+        for key, word in zip(("argv0", "argv1"), words[:2]):
+            if os.path.basename(word):
+                out[key] = os.path.basename(word)[:64]
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(base, "comm"), "rb") as f:
+            comm = f.read(64).decode("utf-8", "replace").strip()
+        if comm:
+            out["comm"] = comm[:15]
+    except OSError:
+        pass
+    return out
+
+
+def child_extents(win, limit=16):
+    """The rectangles of a frame's direct children (the content box is their union; the frame may carry shadows)."""
+    out = []
+    try:
+        count = min(win.childCount, limit)
+    except Exception:
+        return out
+    for i in range(max(0, count)):
+        child = child_at(win, i)
+        b = extents(child) if child is not None else None
+        if b is not None:
+            out.append(b)
+    return out
+
+
+# How long the main loop has, after stdin hung up, to answer what was already sent and see the end of its input itself
+# (it may hold those lines in its own buffer, where poll can't see them); one stuck in a hung app is ended then.
+HUP_GRACE_S = 2.0
+
+
+def stdin_state(fd):
+    """(hung up, input still to read) for stdin: POLLHUP, or POLLRDHUP on a socket (a WSL relay that outlived its
+    client). A pipe that can't be polled counts as hung up."""
+    rdhup = getattr(select, "POLLRDHUP", 0)
+    poller = select.poll()
+    poller.register(fd, select.POLLIN | select.POLLHUP | rdhup)
+    try:
+        events = 0
+        for _, ev in poller.poll(0):
+            events |= ev
+    except OSError:
+        return True, False
+    return bool(events & (select.POLLHUP | select.POLLERR | select.POLLNVAL | rdhup)), bool(events & select.POLLIN)
+
+
+def stdin_hung_up(fd):
+    """Has the other end of stdin gone?"""
+    return stdin_state(fd)[0]
+
+
+def watch_once(fd, parent, getppid=os.getppid, waited=0.0):
+    """Why this process should end now: "parent" (it changed), "stdin" (hung up for HUP_GRACE_S); "draining" (hung up
+    for less: what was sent is still being answered); None to go on."""
+    if getppid() != parent:
+        return "parent"
+    if not stdin_hung_up(fd):
+        return None
+    return "stdin" if waited >= HUP_GRACE_S else "draining"
+
+
+def start_watchdog(fd, interval=0.5):
+    """Inside WSL: ends this process when its parent changes or stdin hangs up (under WSL 2 the parent may be a relay
+    that outlives Ember, and a request stuck in a hung app would keep the main loop from seeing the end of input)."""
+    parent = os.getppid()
+
+    def run():
+        waited = 0.0
+        while True:
+            why = watch_once(fd, parent, waited=waited)
+            if why in ("parent", "stdin"):
+                break
+            waited = waited + interval if why == "draining" else 0.0
+            time.sleep(interval)
+        os._exit(0)
+
+    t = threading.Thread(target=run, name="watchdog")
+    t.daemon = True
+    t.start()
+    return t
+
+
+def probe_x11(display):
+    """The X root window's two string properties on `display`, through libX11 with an error handler that ignores
+    errors (so a bad property can't end the process); {} without libX11 or a display."""
+    import ctypes
+    import ctypes.util
+    try:
+        x = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+    except OSError:
+        return {}
+    handler_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+    ignore = handler_type(lambda d, e: 0)
+    x.XSetErrorHandler.argtypes = [handler_type]
+    x.XSetErrorHandler(ignore)
+    x.XOpenDisplay.restype = ctypes.c_void_p
+    x.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x.XDefaultRootWindow.restype = ctypes.c_ulong
+    x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x.XInternAtom.restype = ctypes.c_ulong
+    x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x.XGetWindowProperty.restype = ctypes.c_int
+    x.XGetWindowProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_long, ctypes.c_long,
+                                     ctypes.c_int, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+                                     ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_ulong),
+                                     ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_void_p)]
+    x.XFree.argtypes = [ctypes.c_void_p]
+    x.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    d = x.XOpenDisplay(display.encode("utf-8"))
+    if not d:
+        return {}
+    out = {}
+    try:
+        root = x.XDefaultRootWindow(d)
+        for name in ("_DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS"):
+            atom = x.XInternAtom(d, name.encode("ascii"), 1)
+            if not atom:
+                continue
+            kind, fmt, n, after, data = ctypes.c_ulong(), ctypes.c_int(), ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_void_p()
+            if x.XGetWindowProperty(d, root, atom, 0, 1024, 0, 0, ctypes.byref(kind), ctypes.byref(fmt), ctypes.byref(n),
+                                    ctypes.byref(after), ctypes.byref(data)) == 0 and data.value:
+                if fmt.value == 8:
+                    out[name] = ctypes.string_at(data.value, n.value).decode("utf-8", "replace")
+                x.XFree(data)
+    finally:
+        x.XCloseDisplay(d)
+    return out
+
+
+def a11y_address_of(session):
+    """The accessibility bus a session bus has running, asked without starting it (no auto-start): None when there
+    is none, so a bus whose accessibility bus isn't up scores nothing."""
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio as gio, GLib as glib
+    flags = gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION
+    conn = gio.DBusConnection.new_for_address_sync(session, flags, None, None)
+    try:
+        return conn.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None,
+                              glib.VariantType("(s)"), gio.DBusCallFlags.NO_AUTO_START, 1000, None).unpack()[0]
+    finally:
+        conn.close_sync(None)
+
+
+def probe_bus(session, a11y):
+    """The names of every app's top-level windows on one candidate (at most 64 apps, 32 windows each)."""
+    if not a11y:
+        if not session:
+            return {"apps": []}
+        a11y = bus_address(a11y_address_of(session))
+        if not a11y:
+            return {"apps": []}
+    os.environ["AT_SPI_BUS_ADDRESS"] = a11y
+    if session:
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = session
+    if not load_atspi():
+        return {"apps": [], "a11y": a11y}
+    configure_atspi()
+    apps = []
+    desktop = pyatspi.Registry.getDesktop(0)
+    for a in range(min(desktop.childCount, 64)):
+        app = child_at(desktop, a)
+        if app is None:
+            continue
+        names = []
+        try:
+            count = min(app.childCount, 32)
+        except Exception:
+            count = 0
+        for i in range(max(0, count)):
+            win = child_at(app, i)
+            try:
+                if win is not None and win.name:
+                    names.append(win.name[:300])
+            except Exception:
+                pass
+        apps.append(names)
+    return {"apps": apps, "a11y": a11y}
+
+
+def probe_main(spec):
+    """A probe child: looks at one thing find_bus asked for, prints it as one JSON line, and ends."""
+    try:
+        if spec.get("kind") == "x11":
+            out = probe_x11(spec.get("display") or ":0")
+        else:
+            out = probe_bus(bus_address(spec.get("session")), bus_address(spec.get("a11y")))
+    except Exception as err:
+        out = {"error": str(err)[:200]}
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+
+
 # ---------------------------------------------------------------- protocol
 
 def configure_atspi():
@@ -4627,10 +5123,15 @@ def handle(line):
     try:
         req = json.loads(line)
         req_id = req.get("id")
-        method = METHODS.get(req.get("method"))
+        name = req.get("method")
+        method = find_bus if FIND_BUS and name == "find_bus" else METHODS.get(name)
         if method is None:
-            raise KeyError("unknown method: %s" % req.get("method"))
-        if pyatspi is None and req.get("method") != "ping":
+            raise KeyError("unknown method: %s" % name)
+        if FIND_BUS and not BUS["chosen"]:
+            # Inside WSL, before (or without) a bus: only what needs none.
+            if name not in ("ping", "status", "find_bus"):
+                raise RuntimeError("no session bus")
+        elif pyatspi is None and name != "ping":
             raise RuntimeError("python3-pyatspi is not installed")
         result = method(req.get("params") or {})
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
@@ -4640,6 +5141,9 @@ def handle(line):
 
 def main():
     inp, out = protocol_streams()
+    if FIND_BUS:
+        # Inside WSL the parent may be a relay that outlives Ember: this ends with it, or when stdin hangs up.
+        start_watchdog(inp.fileno())
     if pyatspi is not None and not configure_atspi():
         sys.stderr.write("ember_atspi: could not shorten libatspi timeouts\n")
     while True:
@@ -4656,7 +5160,12 @@ def main():
 if __name__ == "__main__":
     # Keep stdout for protocol messages only.
     os.environ.setdefault("NO_AT_BRIDGE", "1")
-    if sys.argv[1:2] == ["--hold"]:
+    if FIND_BUS and os.environ.get("EMBER_ATSPI_PROBE"):
+        probe_main(json.loads(os.environ["EMBER_ATSPI_PROBE"]))  # one look for find_bus (inside WSL)
+    elif sys.argv[1:2] == ["--hold"]:
+        if FIND_BUS:
+            load_atspi()  # inside WSL the holder loads what it needs itself (it doesn't look for a bus)
+            load_links()
         hold_main(int(sys.argv[2]))  # the holder of links (see on_link)
     else:
         main()

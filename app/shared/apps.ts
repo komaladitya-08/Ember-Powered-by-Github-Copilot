@@ -130,8 +130,24 @@ function capitalised(n: string): string {
   return /^[a-z][a-z0-9-]*$/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 
+/**
+ * A WSLg Linux app's window ("wsl:<distro>:<app>", Windows only): the Linux app's familiar name and its distro, "gedit
+ * (Ubuntu)". A distro named all in lower case is shown capitalised, as WSL's own names are.
+ */
+function wslApp(name: string): string | null {
+  const m = /^wsl:([^:\s]+):(.+)$/i.exec(name);
+  if (!m) return null;
+  const app = m[2].trim();
+  const known = APP_NAMES.linux[app.toLowerCase()];
+  return `${known !== undefined && known ? known : capitalised(app)} (${capitalised(m[1])})`;
+}
+
 export function friendlyApp(name: string): string {
   const names = APP_NAMES[appOs];
+  if (appOs === "win32") {
+    const wsl = wslApp(name.trim());
+    if (wsl) return wsl;
+  }
   // A desktop file name (firefox.desktop): the program is what's inside. On Windows a program may come with its ".exe".
   let n = name.trim().replace(/\.desktop$/i, "");
   if (appOs === "win32") n = n.replace(/\.exe$/i, "");
