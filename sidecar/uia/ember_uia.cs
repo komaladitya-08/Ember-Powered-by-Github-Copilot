@@ -478,6 +478,8 @@ namespace Ember.Uia
     internal bool Finished;
     internal bool MarkedBusy;
     internal bool AnsweredPartially;
+    /// <summary>How many of Registered existed when the partial answer was taken (the rest are in no answer).</summary>
+    internal int PartialHandles;
     internal readonly List<int> Registered = new List<int>();
 
     internal Call(object id, string method, JObj parameters, int kind, int deadlineMs)
@@ -813,10 +815,15 @@ namespace Ember.Uia
     {
       c.Timer = new Timer(OnDeadline, c, Math.Max(1, (int)Math.Ceiling(c.RemainingMs)), Timeout.Infinite);
       if (Pool.Start(delegate { Work(c, run); })) return;
-      if (Interlocked.CompareExchange(ref c.State, 1, 0) != 0) return;
       c.Timer.Dispose();
-      lock (c.Gate) c.Finished = true;
-      c.Deliver(c, null, new BridgeError("busy", Msg.NoWorker, c.Pid));
+      bool unanswered = Interlocked.CompareExchange(ref c.State, 1, 0) == 0;
+      lock (c.Gate)
+      {
+        // No worker will return to clear a busy mark that the deadline may have set meanwhile, so clear it here.
+        c.Finished = true;
+        if (c.MarkedBusy) Unmark(c.Pid);
+      }
+      if (unanswered) c.Deliver(c, null, new BridgeError("busy", Msg.NoWorker, c.Pid));
     }
 
     /// <summary>
@@ -850,9 +857,9 @@ namespace Ember.Uia
       try { result = run(c); }
       catch (BridgeError e) { error = e; }
       catch (Exception e) { error = Map(e, c); }
+      c.Timer.Dispose();
       if (Interlocked.CompareExchange(ref c.State, 1, 0) == 0)
       {
-        c.Timer.Dispose();
         try { c.Deliver(c, result, error); }
         catch (Exception) { /* stdout is gone: the reader sees EOF next and exits */ }
       }
@@ -860,8 +867,12 @@ namespace Ember.Uia
       {
         c.Finished = true;
         if (c.MarkedBusy) Unmark(c.Pid);
-        // A call that timed out with a plain "busy" sent none of its handles: free them.
-        if (c.Abandoned && !c.AnsweredPartially) foreach (int h in c.Registered) Handles.Remove(h);
+        // A call that timed out with a plain "busy" sent none of its handles, and one that answered with what it had
+        // sent only those made before that answer: free the rest.
+        if (c.Abandoned)
+        {
+          for (int i = c.AnsweredPartially ? c.PartialHandles : 0; i < c.Registered.Count; i++) Handles.Remove(c.Registered[i]);
+        }
         c.Registered.Clear();
       }
     }
@@ -882,6 +893,7 @@ namespace Ember.Uia
             catch (Exception) { partial = null; }
           }
           c.AnsweredPartially = partial != null;
+          c.PartialHandles = c.Registered.Count;
           // A read that timed out marks its process before the answer goes out, so a request sent right after the
           // answer can't start another call into the same hung app.
           if (c.Kind != MethodSpec.Act) MarkBusy(c);
@@ -1503,24 +1515,46 @@ namespace Ember.Uia
       using (Request(false).Activate()) return el.FindAll(TreeScope.Children, Condition.TrueCondition);
     }
 
-    /// <summary>The element with its properties cached (some ways of getting an element ignore the active request).</summary>
+    /// <summary>
+    /// The element with its properties cached (some ways of getting an element ignore the active request). A null
+    /// element (FromHandle on a window that has just closed) is gone.
+    /// </summary>
     internal static AutomationElement Ensure(AutomationElement el, CacheRequest request)
     {
+      if (el == null) throw new ElementNotAvailableException();
       try
       {
         el.GetCachedPropertyValue(AutomationElement.RuntimeIdProperty);
         return el;
       }
       catch (InvalidOperationException) { return el.GetUpdatedCache(request); }
+      catch (Exception) { return el; /* cached, but the provider failed to give that one property */ }
     }
 
-    /// <summary>A cached property, or null when it wasn't fetched or the provider failed.</summary>
+    // Set when a cached property says its element no longer exists; Node turns it into "gone". One per worker.
+    [ThreadStatic] private static bool goneSeen;
+
+    /// <summary>
+    /// A cached property, or null when it wasn't fetched or the provider failed to give it. Never throws: a cached
+    /// failure comes back as whatever exception its HRESULT maps to (E_NOTIMPL, E_ACCESSDENIED, a timeout...), and
+    /// one bad property must not fail a whole snapshot.
+    /// </summary>
     internal static object Get(AutomationElement el, AutomationProperty p)
     {
       try { return el.GetCachedPropertyValue(p); }
-      catch (InvalidOperationException) { return null; }
-      catch (ArgumentException) { return null; }
-      catch (COMException) { return null; }
+      catch (ElementNotAvailableException) { Gone(p); return null; }
+      catch (COMException e)
+      {
+        if (e.ErrorCode == Faults.UiaElementNotAvailable) Gone(p);
+        return null;
+      }
+      catch (Exception) { return null; /* not fetched, or the provider failed for this property */ }
+    }
+
+    // LabeledBy fails that way when the label is gone, which says nothing about the element itself.
+    private static void Gone(AutomationProperty p)
+    {
+      if (p != AutomationElement.LabeledByProperty) goneSeen = true;
     }
 
     internal static bool? Flag(AutomationElement el, AutomationProperty p)
@@ -1560,9 +1594,10 @@ namespace Ember.Uia
       return !r.IsEmpty && r.Width > 0 && r.Height > 0 && !double.IsInfinity(r.Width) && !double.IsInfinity(r.Height);
     }
 
+    // UIA's "no rectangle" is all zeros, which the .NET client turns into a zero-size Rect rather than Rect.Empty.
     internal static object Bounds(Rect r)
     {
-      if (r.IsEmpty || double.IsNaN(r.X) || double.IsNaN(r.Y) || double.IsInfinity(r.X) || double.IsInfinity(r.Y) || double.IsInfinity(r.Width) || double.IsInfinity(r.Height))
+      if (r.IsEmpty || (r.Width <= 0 && r.Height <= 0) || double.IsNaN(r.X) || double.IsNaN(r.Y) || double.IsInfinity(r.X) || double.IsInfinity(r.Y) || double.IsInfinity(r.Width) || double.IsInfinity(r.Height))
         return null;
       return new JObj().Add("x", r.X).Add("y", r.Y).Add("width", r.Width).Add("height", r.Height);
     }
@@ -1588,6 +1623,7 @@ namespace Ember.Uia
     /// <summary>A RawNode from an element's cached properties (PROTOCOL.md, "RawNode").</summary>
     internal static JObj Node(AutomationElement el, int handle, int parent, int depth, Want want)
     {
+      goneSeen = false;
       JObj n = new JObj().Add("h", handle);
       if (parent != NoTree && depth != NoTree)
       {
@@ -1638,6 +1674,8 @@ namespace Ember.Uia
       AddText(n, "acceleratorKey", el, AutomationElement.AcceleratorKeyProperty);
       AddText(n, "accessKey", el, AutomationElement.AccessKeyProperty);
       n.Add("patterns", Patterns(el, n, password, type, want));
+      if (goneSeen) n.Add("gone", true);
+      goneSeen = false;
       return n;
     }
 

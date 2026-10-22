@@ -98,6 +98,15 @@ describe("the bridge's bootstrap (ember_uia.ps1)", () => {
     for (const pattern of forbidden) expect(ps1, String(pattern)).not.toMatch(pattern);
   });
 
+  it("leaves this version's files to another bridge that may still be compiling it, and recompiles an unloadable build", () => {
+    expect(ps1).toContain("$mine = $name.StartsWith('ember_uia-' + $hash + '.', [StringComparison]::Ordinal)");
+    expect(ps1).toMatch(/if \(-not \$mine -or \(\$name\.Contains\('\.tmp\.'\) -and .*-lt \$stale\)\) \{ \[IO\.File\]::Delete\(\$old\) \}/);
+    // A cached build that can't be read or loaded falls through to a compile instead of a fatal line.
+    const hit = ps1.slice(ps1.indexOf("[IO.File]::Exists($dll)"), ps1.indexOf("if ($null -eq $assembly)"));
+    expect(hit).toMatch(/try \{[\s\S]*\[Reflection\.Assembly\]::Load\(\$bytes\)[\s\S]*\} catch \{/);
+    expect(ps1).toContain("[IO.Path]::GetFullPath($env:EMBER_UIA_CACHE)");
+  });
+
   it("writes to the pipeline only the fatal line, and only when the .NET stream is blocked", () => {
     const outputs = [...ps1.matchAll(/Write-Output\b.*$/gim)].map(m => m[0].trim());
     expect(outputs).toEqual(["Write-Output $line"]);
@@ -176,6 +185,16 @@ describe("the bridge's C# (ember_uia.cs)", () => {
     expect(textInfo.indexOf("Props.IsSecret(el)")).toBeLessThan(textInfo.indexOf("TryGetCurrentPattern"));
     // Snapshot values are read only once IsPassword said false (unknown counts as a password).
     expect(cs).toContain("if (want.Values && password == false) ReadValue(el, node, type, v);");
+  });
+
+  it("never lets one cached property's failure fail a read, and gives UIA's all-zero rectangle as no bounds", () => {
+    // A cached failure is rethrown as whatever its HRESULT maps to (NotImplementedException, TimeoutException...).
+    const start = cs.indexOf("internal static object Get(AutomationElement el, AutomationProperty p)");
+    const get = cs.slice(start, cs.indexOf("\n    }\n", start));
+    expect(get).toMatch(/catch \(Exception\) \{ return null;/);
+    expect(cs).toContain("if (el == null) throw new ElementNotAvailableException();");
+    const bounds = cs.slice(cs.indexOf("internal static object Bounds(Rect r)"));
+    expect(bounds.slice(0, bounds.indexOf("return null;"))).toContain("(r.Width <= 0 && r.Height <= 0)");
   });
 
   it("answers only with the error codes PROTOCOL.md documents", () => {

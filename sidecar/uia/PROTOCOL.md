@@ -83,7 +83,9 @@ line.
 - **Answers can come out of order.** Every request runs on its own worker thread, so match answers by `id`. Up to 64
   workers exist; a request that finds none free (they are all waiting on apps that don't answer) is answered `busy`
   at once.
-- A line that isn't JSON, or has no `method`, is answered with `"id":null` and `bad_request`.
+- A line that isn't a JSON object is answered with `"id":null` and `bad_request`; a request without `method`,
+  with an unknown one or with `params` that isn't an object gets `bad_request` with its own `id` (`null` when it
+  had none or one that isn't a number or string).
 - Lines longer than 1 MiB are refused (`bad_request`).
 
 ### Errors
@@ -159,7 +161,7 @@ and strings are left out when empty. Strings are cut to 2000 characters.
 | `hasKeyboardFocus` | boolean | `HasKeyboardFocus` |
 | `isKeyboardFocusable` | boolean | `IsKeyboardFocusable` |
 | `isControlElement` | boolean | `IsControlElement` |
-| `bounds` | `{x, y, width, height}` or `null` | `BoundingRectangle`; `null` when empty or infinite |
+| `bounds` | `{x, y, width, height}` or `null` | `BoundingRectangle`; `null` when empty (no width and no height: UIA's all-zero "no rectangle") or not finite |
 | `pid` | number | `ProcessId` |
 | `hwnd` | number | `NativeWindowHandle` (left out when 0) |
 | `runtimeId` | string | `RuntimeId`, the integers joined with `.`; with `pid`, a key that is stable while the element lives |

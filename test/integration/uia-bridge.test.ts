@@ -75,9 +75,10 @@ function centre(node: RawNode): { x: number; y: number } {
 }
 
 describe.skipIf(!available && !required)("the UI Automation bridge on a real WinForms window", { timeout: 120_000 }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-uia-"));
-  const cache = path.join(dir, "cache");
-  const log = path.join(dir, "bench.log");
+  // Made in beforeAll: vitest still runs this body to list a skipped suite, and nothing would remove the folder then.
+  let dir = "";
+  let cache = "";
+  let log = "";
   let bench: ChildProcess | undefined;
   let benchHwnd = 0;
   let benchPid = 0;
@@ -96,6 +97,9 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     expect(fs.existsSync(POWERSHELL), `Windows PowerShell 5.1 at ${POWERSHELL}`).toBe(true);
     expect(fs.existsSync(SCRIPT), "sidecar/uia/ember_uia.ps1").toBe(true);
     expect(fs.existsSync(BENCH), "the shared WinForms bench, test/fixtures/win_bench.ps1").toBe(true);
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-uia-"));
+    cache = path.join(dir, "cache");
+    log = path.join(dir, "bench.log");
     // Not windowsHide: that hides the first window the process shows, which would be the bench itself.
     bench = spawn(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Sta", "-File", BENCH, "-Log", log, "-Seconds", "600"], {
       stdio: "ignore",
@@ -112,7 +116,7 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     bridge?.kill();
     if (bench && bench.exitCode === null) bench.kill();
     await sleep(500);
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
   it("starts with a ready line and Per-Monitor-V2 DPI awareness, compiling into the cache the first time", async () => {

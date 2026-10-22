@@ -47,27 +47,33 @@ try {
     [System.Windows.Rect].Assembly.Location
   )
   $assembly = $null
-  $cache = $env:EMBER_UIA_CACHE
+  # .NET resolves a relative path against the process's directory, not PowerShell's: make it absolute first.
+  $cache = $null
+  if ($env:EMBER_UIA_CACHE) { try { $cache = [IO.Path]::GetFullPath($env:EMBER_UIA_CACHE) } catch { <# unusable: from memory #> } }
   if ($cache) {
     $dll = Join-Path $cache ('ember_uia-' + $hash + '.dll')
     $sum = $dll + '.sha256'
-    # Loaded from bytes checked against the hash written beside them: a half-written or replaced file is compiled
-    # again, and the file is never locked or refused for a Mark-of-the-Web.
+    # Loaded from bytes checked against the hash written beside them: a half-written, replaced, locked or unloadable
+    # file is compiled again, and the file is never locked or refused for a Mark-of-the-Web.
     if ([IO.File]::Exists($dll) -and [IO.File]::Exists($sum)) {
-      $bytes = [IO.File]::ReadAllBytes($dll)
-      if ((Get-Sha256 $bytes) -eq [IO.File]::ReadAllText($sum).Trim()) { $assembly = [Reflection.Assembly]::Load($bytes) }
+      try {
+        $bytes = [IO.File]::ReadAllBytes($dll)
+        if ((Get-Sha256 $bytes) -eq [IO.File]::ReadAllText($sum).Trim()) { $assembly = [Reflection.Assembly]::Load($bytes) }
+      } catch { $assembly = $null }
     }
     if ($null -eq $assembly) {
       $tmp = Join-Path $cache ('ember_uia-' + $hash + '.' + $PID + '.tmp')
       try {
         [void][IO.Directory]::CreateDirectory($cache)
-        # Builds of other versions and leftovers of earlier compiles are never needed again (and nothing holds a
-        # build open: they load from bytes).
+        # Builds of other versions are never needed again (nothing holds a build open: they load from bytes). Another
+        # bridge may be compiling this version right now, so this version's temporary files go only when stale.
+        $stale = [DateTime]::UtcNow.AddMinutes(-10)
         foreach ($old in [IO.Directory]::GetFiles($cache, 'ember_uia-*')) {
           $name = [IO.Path]::GetFileName($old)
-          if ($name -ne [IO.Path]::GetFileName($dll) -and $name -ne [IO.Path]::GetFileName($sum)) {
-            try { [IO.File]::Delete($old) } catch { <# in use or read-only: harmless to leave #> }
-          }
+          try {
+            $mine = $name.StartsWith('ember_uia-' + $hash + '.', [StringComparison]::Ordinal)
+            if (-not $mine -or ($name.Contains('.tmp.') -and [IO.File]::GetLastWriteTimeUtc($old) -lt $stale)) { [IO.File]::Delete($old) }
+          } catch { <# in use, read-only or already gone: harmless to leave #> }
         }
         Add-Type -Path $source -ReferencedAssemblies $refs -OutputAssembly ($tmp + '.dll') -OutputType Library -IgnoreWarnings
         $bytes = [IO.File]::ReadAllBytes($tmp + '.dll')
