@@ -134,7 +134,7 @@ describe("the Windows environment inputs", () => {
   const make = (o: { registry?: FakeRegistry; env?: NodeJS.ProcessEnv; elevated?: boolean | null; session?: number | null; streams?: Set<string> } = {}) => {
     const elevatedCalls: number[] = [];
     const api = fakeApi(o.registry, {
-      elevated: () => { elevatedCalls.push(1); return o.elevated ?? false; },
+      elevated: () => { elevatedCalls.push(1); return o.elevated === undefined ? false : o.elevated; },
       sessionId: () => (o.session === undefined ? 1 : o.session),
     });
     const removed: string[] = [];
@@ -157,12 +157,12 @@ describe("the Windows environment inputs", () => {
     });
   });
 
-  it("reads elevation once, and treats an unknown answer as not elevated", () => {
+  it("reads elevation once, and reports an unknown answer as unknown (null: no warning, and commands fail closed on it)", () => {
     const { e, elevatedCalls } = make({ elevated: false });
     e.environment({ windows: undefined });
     e.environment({ windows: undefined });
     expect(elevatedCalls).toHaveLength(1);
-    expect(make({ elevated: null }).e.environment({ windows: undefined }).windows.elevated).toBe(false);
+    expect(make({ elevated: null }).e.environment({ windows: undefined }).windows.elevated).toBeNull();
   });
 
   it("says unknown before the helper answered, and doesn't call DPI mixed without both answers", () => {

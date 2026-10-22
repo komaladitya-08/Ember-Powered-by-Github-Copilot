@@ -17,7 +17,8 @@ import { powershellState, unblockHelper, type PowerShellFacts, type PowerShellSt
 export interface Win32EnvFacts {
   /** The Windows build ("10.0.22631" → 22631). */
   build: number;
-  elevated: boolean;
+  /** The token's elevation; null when it couldn't be read (the setup check says nothing; commands count it as elevated). */
+  elevated: boolean | null;
   session: "console" | "rdp" | "service";
   powershell: PowerShellState;
   /** The helper's threads and its process see different DPI awareness (mixed-DPI risk, R22). */
@@ -82,7 +83,7 @@ export function win32Environment(d: Win32EnvDeps): {
         shortcuts: SHORTCUTS.win32,
         windows: {
           build: windowsBuild(systemVersion()),
-          elevated: elevated === true,
+          elevated: elevated ?? null,
           session,
           powershell: powershellState(d.powershell.get(), helper),
           dpiMixed: !!helper?.dpi && !!helper.processDpi && helper.dpi !== helper.processDpi,

@@ -18,8 +18,8 @@ export type MediaAccess = "not-determined" | "granted" | "denied" | "restricted"
 export interface WindowsEnvInputs {
   /** The Windows build ("10.0.22631" → 22631); 0 when it couldn't be read. */
   build: number;
-  /** Ember runs elevated (as administrator). */
-  elevated: boolean;
+  /** Ember runs elevated (as administrator); null when the token couldn't be read (no row; commands fail closed on it). */
+  elevated: boolean | null;
   /** At the computer, over Remote Desktop, or in session 0 (as a service). */
   session: "console" | "rdp" | "service";
   /**
