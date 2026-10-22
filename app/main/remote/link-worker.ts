@@ -27,6 +27,12 @@ export const STDERR_MAX = 16 * 1024;
  * it (a process that kept ssh's stdout open, say) the attempt is ended here as ssh's end, so it never hangs.
  */
 export const SETTLE_AFTER_EXIT_MS = 2000;
+/**
+ * After Ember's decision, how long the remote may go without taking an archive's next bytes or reaching the agent's
+ * preamble (the probe's deadline ends when the probe does). Generous for a slow board unpacking the runtime; a remote
+ * that stops reading its stdin is ended here instead of holding the attempt open for ever.
+ */
+export const AFTER_DECISION_IDLE_MS = 120_000;
 
 /** The child process the core drives (node's ChildProcess, or a fake). */
 export interface ChildLike {
@@ -144,6 +150,7 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
   let killedWhy: string | null = null;
   let deadline: Deadline | null = null;
   let probeTimer: NodeJS.Timeout | null = null;
+  let idleTimer: NodeJS.Timeout | null = null;
   let tick: NodeJS.Timeout | null = null;
   let graceMs = 20_000;
   let stallMs = 5_000;
@@ -156,6 +163,16 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
   let probeBegan = false;
   /** Ends an attempt whose ssh exited before serving, when the bootstrap hasn't said how it ended (set in start()). */
   let settleExited: () => void = () => undefined;
+
+  /** (Re)starts the wait for the remote's next step after the decision; stopped when the bootstrap ends or ssh exits. */
+  const idle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { idleTimer = null; port.post({ t: "deadline" }); kill("stalled"); }, AFTER_DECISION_IDLE_MS);
+  };
+  const unidle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = null;
+  };
 
   const postOutcome = (outcome: WorkerOutcome): boolean => {
     if (outcomePosted) return false;
@@ -279,6 +296,7 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
       exitInfo = { code, signal };
       deadline?.cancel();
       if (probeTimer) clearTimeout(probeTimer);
+      unidle();
       if (state === "ready" || state === "stalled") lost("ssh exited");
       else if (state === "starting") setTimeout(() => settleExited(), SETTLE_AFTER_EXIT_MS);
       for (const w of exitWaiters.splice(0)) w();
@@ -301,6 +319,7 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
         return new Promise<Decision>(resolve => {
           decide = d => {
             decide = null;
+            idle();
             if (d.kind === "install") {
               resolve({ kind: "install", line: d.line, archives: d.archives.map(a => ({ name: a.name, bytes: a.bytes, open: () => deps.openArchive(a.path) })) });
             } else if (d.kind === "serve") {
@@ -311,9 +330,13 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
           };
         });
       },
-      progress: (done, total) => port.post({ t: "progress", done, total }),
+      progress: (done, total) => {
+        idle();
+        port.post({ t: "progress", done, total });
+      },
     }).then(outcome => {
       deadline?.cancel();
+      unidle();
       if (outcomePosted) {
         // Ended already as ssh's exit (settleExited): nothing more to say, only ssh to see off.
         kill("ended");
@@ -335,6 +358,7 @@ export function runLinkCore(port: WorkerPort, deps: CoreDeps): void {
       void afterExit().then(() => clearTimeout(stuck));
       void reportExit();
     }, () => {
+      unidle();
       kill("bootstrap");
       void reportExit();
     });

@@ -8,7 +8,7 @@ import { BOOTSTRAP_SCRIPT, writeAll } from "../../app/main/remote/bootstrap";
 import { createConnections, type ConnectionsInternals, type ExecResult } from "../../app/main/remote/connections";
 import { HELD_CHANNEL_BYTES, HELD_TOTAL_BYTES, helloTimeoutMs, RemoteError, runAttempt, WorkerLink, type FromWorker, type LinkPort, type ToWorker } from "../../app/main/remote/link";
 import { acquireLock, type LockIo } from "../../app/remote/lock";
-import { checkIncoming, Deadline, escalationMs, runLinkCore, SETTLE_AFTER_EXIT_MS, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
+import { AFTER_DECISION_IDLE_MS, checkIncoming, Deadline, escalationMs, runLinkCore, SETTLE_AFTER_EXIT_MS, type ChildLike, type CoreDeps, type WorkerPort } from "../../app/main/remote/link-worker";
 import type { Msg } from "../../app/main/remote/protocol";
 import { ConnectError, type ConnectProgress, type HostRecord, type Mux, type PromptUi } from "../../app/main/remote/types";
 import type { PromptAnswer, PromptCard } from "../../app/shared/remote-ui";
@@ -736,6 +736,76 @@ describe("the link's pieces", () => {
       const r = await within(held.result, cancel ? 500 : SETTLE_AFTER_EXIT_MS + 1000);
       expect(r).toMatchObject({ kind: "failed", cancelled: cancel, probeBegan: true, exit: { code: 255 } });
     }
+  });
+
+  it("ends an attempt whose remote stops taking an archive's bytes, after the post-decision wait (no hang)", async () => {
+    /** A remote that asks for the runtime and then never reads its stdin again. */
+    class StuckChild implements ChildLike {
+      readonly stdin = new PassThrough();
+      readonly stdout = new PassThrough();
+      readonly stderr = new PassThrough();
+      readonly pid = 4999;
+      killed = false;
+      private got = 0;
+      private line = "";
+      private exitFns: ((c: number | null, s: NodeJS.Signals | null) => void)[] = [];
+      constructor() { this.stdin.on("data", this.take); }
+      private readonly take = (c: Buffer) => {
+        if (this.got < Buffer.byteLength(BOOTSTRAP_SCRIPT)) {
+          this.got += c.length;
+          if (this.got >= Buffer.byteLength(BOOTSTRAP_SCRIPT)) this.stdout.write("\0EMBER-PROBE-BEGIN\nos=Linux\nEMBER-PROBE-END\n");
+          return;
+        }
+        this.line += c.toString();
+        if (!this.line.includes("\n")) return;
+        this.stdin.off("data", this.take);
+        this.stdin.pause();
+        this.stdout.write("EMBER-READY runtime\n");
+      };
+      on(ev: "exit" | "error", fn: (...a: never[]) => void): this {
+        if (ev === "exit") this.exitFns.push(fn as (c: number | null, s: NodeJS.Signals | null) => void);
+        return this;
+      }
+      kill(): boolean {
+        this.killed = true;
+        this.stdout.end();
+        this.stderr.end();
+        setImmediate(() => { this.stdin.destroy(); for (const f of this.exitFns) f(null, "SIGKILL"); });
+        return true;
+      }
+    }
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const child = new StuckChild();
+    const toMain = new Set<(m: FromWorker) => void>();
+    const toWorker: ((m: ToWorker) => void)[] = [];
+    runLinkCore({ post: m => setImmediate(() => { for (const f of toMain) f(m); }), on: fn => { toWorker.push(fn); } }, {
+      spawn: () => child,
+      createMux: () => { throw new Error("never serves"); },
+      openArchive: () => (async function* () { yield Buffer.alloc(1024 * 1024, 7); })(),
+      kill: c => { c.kill("SIGKILL"); },
+    });
+    const port: LinkPort = {
+      post: m => setImmediate(() => { for (const f of toWorker) f(m); }),
+      onMessage: fn => { toMain.add(fn); return () => { toMain.delete(fn); }; },
+      onExit: () => () => undefined,
+      terminate: async () => undefined,
+    };
+    const line = `INSTALL ${PC_ID} v24.11.1-linux-x64 ${1024 * 1024} ${H("a")} xz ${PARTS_ID} 0 ${H("b")}`;
+    const control = runAttempt(port, {
+      t: "start", argv: ["/usr/bin/ssh", "deploy@build-01"], env: {}, spawn: { detached: true, windowsHide: true }, script: BOOTSTRAP_SCRIPT,
+      deadlineMs: 45_000, probeMs: 60_000, stallMs: 5000, graceMs: 20_000,
+    }, { decide: async () => ({ kind: "install", line, partsId: PARTS_ID, archives: [{ name: "runtime", bytes: 1024 * 1024, path: "/x/runtime" }] }) });
+    let result: unknown = null;
+    void control.result.then(r => { result = r; });
+    await settle(60);
+    expect(result).toBeNull();
+    await vi.advanceTimersByTimeAsync(AFTER_DECISION_IDLE_MS - 1000);
+    await settle(20);
+    expect(result).toBeNull();
+    await vi.advanceTimersByTimeAsync(2000);
+    for (let i = 0; i < 20 && result === null; i++) { await settle(20); await vi.advanceTimersByTimeAsync(50); }
+    expect(child.killed).toBe(true);
+    expect(result).toMatchObject({ kind: "failed", deadline: true, probeBegan: true });
   });
 
   it("never waits on a write to a stream that is closed already (Node destroys a child's stdin when it exits)", async () => {

@@ -370,6 +370,11 @@ export const BOOTSTRAP_LIMITS = {
   valueBytes: 1024,
   /** One line. */
   lineBytes: 4096,
+  /**
+   * The most of ssh's output held unread at once. Output that comes while Ember decides or uploads an archive is read
+   * by nobody (the script is waiting for its stdin then, so it says nothing); past this the run fails as noise.
+   */
+  bufferBytes: 512 * 1024,
 } as const;
 
 /** Ember's decision after the probe (planInstall's, turned into what is written). */
@@ -395,16 +400,26 @@ export type BootstrapOutcome =
 const PROBE_BEGIN = Buffer.from("\0EMBER-PROBE-BEGIN\n");
 const PREAMBLE = Buffer.from("\0EMBER-REMOTE/");
 
-/** Reads a stream as bytes and lines, waiting only for what it needs; detaches cleanly for the mux. */
+/**
+ * Reads a stream as bytes and lines, waiting only for what it needs; detaches cleanly for the mux. Chunks that arrive
+ * are only listed (joined when read, so a flood of small chunks costs no copying while nobody reads), and at most
+ * `cap` bytes are held: past it the reader stops reading, drops what it held and ends as `overflowed`.
+ */
 export class StreamReader {
-  private buf: Buffer = Buffer.alloc(0);
+  /** The bytes joined so far, and the chunks that came after them. */
+  private head: Buffer = Buffer.alloc(0);
+  private tail: Buffer[] = [];
+  private tailBytes = 0;
   private ended = false;
+  private over = false;
   private wake: (() => void) | null = null;
   private readonly endWaiters: (() => void)[] = [];
   private readonly onData = (c: Buffer | string) => {
     const b = typeof c === "string" ? Buffer.from(c) : c;
-    this.buf = this.buf.length ? Buffer.concat([this.buf, b]) : b;
-    this.notify();
+    this.tail.push(b);
+    this.tailBytes += b.length;
+    if (this.head.length + this.tailBytes > this.cap) this.overflow();
+    else this.notify();
   };
   private readonly onEnd = () => {
     this.ended = true;
@@ -412,11 +427,40 @@ export class StreamReader {
     for (const w of this.endWaiters.splice(0)) w();
   };
 
-  constructor(private readonly s: NodeJS.ReadableStream) {
+  constructor(private readonly s: NodeJS.ReadableStream, private readonly cap: number = BOOTSTRAP_LIMITS.bufferBytes) {
     s.on("data", this.onData);
     s.on("end", this.onEnd);
     s.on("close", this.onEnd);
     s.on("error", this.onEnd);
+  }
+
+  /** Did more than `cap` bytes wait unread (the reader then stopped and ended)? */
+  get overflowed(): boolean {
+    return this.over;
+  }
+
+  /** Everything held, joined. */
+  private get buf(): Buffer {
+    if (this.tail.length) {
+      this.head = this.head.length ? Buffer.concat([this.head, ...this.tail], this.head.length + this.tailBytes) : this.tail.length === 1 ? this.tail[0] : Buffer.concat(this.tail, this.tailBytes);
+      this.tail = [];
+      this.tailBytes = 0;
+    }
+    return this.head;
+  }
+
+  private set buf(b: Buffer) {
+    this.head = b;
+    this.tail = [];
+    this.tailBytes = 0;
+  }
+
+  /** Too much waited unread: stop reading (ssh then waits on its pipe), let go of it all, and end. */
+  private overflow(): void {
+    this.over = true;
+    this.detach();
+    this.s.on("error", () => { /* the run fails as noise and ssh is ended; its pipe's errors don't matter now */ });
+    this.onEnd();
   }
 
   private notify(): void {
@@ -428,9 +472,9 @@ export class StreamReader {
   /** Waits for more bytes; false at the end. */
   private async more(): Promise<boolean> {
     if (this.ended) return false;
-    const before = this.buf.length;
+    const before = this.head.length + this.tailBytes;
     await new Promise<void>(resolve => { this.wake = resolve; });
-    return this.buf.length > before || !this.ended;
+    return this.head.length + this.tailBytes > before || !this.ended;
   }
 
   /** Skips to just after `marker`, allowing at most `max` bytes before it: "found", "too-much" or "eof". */
@@ -545,15 +589,19 @@ export async function runBootstrap(
     reader.detach();
     return { kind: "error", code, ...(detail ? { detail } : {}), probe, probeBegan };
   };
+  /** ssh's output ended (ssh is gone: its exit code and stderr say why), or more of it waited unread than allowed. */
+  const ended = (probe: Record<string, string> | null, probeBegan: boolean): BootstrapOutcome => {
+    if (reader.overflowed) return fail("noise", probe, probeBegan);
+    reader.detach();
+    return { kind: "eof", probe, probeBegan };
+  };
   try {
     await writeAll(io.stdin, hooks.script ?? BOOTSTRAP_SCRIPT);
   } catch {
-    // ssh is gone already: its exit code and stderr say why.
-    reader.detach();
-    return { kind: "eof", probe: null, probeBegan: false };
+    return ended(null, false);
   }
   const begin = await reader.skipTo(PROBE_BEGIN, BOOTSTRAP_LIMITS.noiseBytes);
-  if (begin === "eof") { reader.detach(); return { kind: "eof", probe: null, probeBegan: false }; }
+  if (begin === "eof") return ended(null, false);
   if (begin === "too-much") return fail("noise", null, false);
   hooks.onProbeBegin?.();
   // The probe, up to EMBER-PROBE-END: key=value lines, bounded; anything else is shell noise and ignored.
@@ -562,7 +610,7 @@ export async function runBootstrap(
   let lines = 0;
   for (;;) {
     const l = await reader.line(BOOTSTRAP_LIMITS.lineBytes);
-    if (l === null) { reader.detach(); return { kind: "eof", probe: null, probeBegan: true }; }
+    if (l === null) return ended(null, true);
     if (l === "too-long") return fail("probe", null, true);
     if (l === "EMBER-PROBE-END") break;
     bytes += l.length + 1;
@@ -574,20 +622,16 @@ export async function runBootstrap(
     probe[key] = l.slice(eq + 1, eq + 1 + BOOTSTRAP_LIMITS.valueBytes);
   }
   const plain = { ...probe };
-  // ssh may end while Ember decides (a dropped network, the user's Cancel during the runtime's download): its stdout's
-  // end answers for it, so a decision nobody can read is never waited for.
+  // ssh may end while Ember decides (a dropped network, the user's Cancel during the runtime's download), or flood
+  // what nobody reads now: the reader's end answers for it, so a decision nobody can read is never waited for.
   const decision = await Promise.race([hooks.decide(plain), reader.whenEnded().then(() => null)]);
-  if (decision === null) {
-    reader.detach();
-    return { kind: "eof", probe: plain, probeBegan: true };
-  }
+  if (decision === null) return ended(plain, true);
   const line = decision.kind === "quit" ? "QUIT" : decision.kind === "uninstall" ? "UNINSTALL" : decision.line;
   if (!/^[A-Z]+( [A-Za-z0-9._+-]{1,100}){0,8}$/.test(line)) return fail("decision", plain, true);
   try {
     await writeAll(io.stdin, `${line}\n`);
   } catch {
-    reader.detach();
-    return { kind: "eof", probe: plain, probeBegan: true };
+    return ended(plain, true);
   }
   if (decision.kind === "quit") {
     reader.detach();
@@ -604,7 +648,7 @@ export async function runBootstrap(
       return { kind: "serving", probe: plain, rest: reader.detach() };
     }
     const l = await reader.line(BOOTSTRAP_LIMITS.lineBytes);
-    if (l === null) { reader.detach(); return { kind: "eof", probe: plain, probeBegan: true }; }
+    if (l === null) return ended(plain, true);
     if (l === "too-long") return fail("noise", plain, true);
     const err = /^EMBER-ERROR ([a-z0-9-]{1,32})(?: (\S{1,100}))?$/.exec(l);
     if (err) return fail(err[1], plain, true, err[2] && err[2] !== "-" ? err[2] : undefined);
@@ -618,18 +662,22 @@ export async function runBootstrap(
       const next = archives.shift();
       if (!next || next.name !== ready[1]) return fail("ready", plain, true);
       let sent = 0;
+      let cut = false;
       try {
         for await (const chunk of next.open()) {
           if (sent + chunk.length > next.bytes) return fail("integrity", plain, true, next.name);
-          await writeAll(io.stdin, chunk);
+          // A remote that stops reading and floods its output instead ends the reader (overflowed); one whose output
+          // ends (its script failed and said why) is read on below, its EMBER-ERROR first.
+          if (!(await Promise.race([writeAll(io.stdin, chunk).then(() => true), reader.whenEnded().then(() => false)]))) { cut = true; break; }
           sent += chunk.length;
           copied += chunk.length;
           hooks.progress?.(copied, total);
         }
       } catch {
-        reader.detach();
-        return { kind: "eof", probe: plain, probeBegan: true };
+        return ended(plain, true);
       }
+      if (reader.overflowed) return fail("noise", plain, true);
+      if (cut) continue;
       if (sent !== next.bytes) return fail("integrity", plain, true, next.name);
       continue;
     }
