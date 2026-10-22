@@ -193,6 +193,20 @@ export function hopCommand(o: { ssh: string; os: OS; hops: readonly Hop[]; mode:
 /** Variables never handed to ssh (§5.1.4): Ember's own, Electron's, Node's options and every GitHub/Copilot sign-in. */
 const NEVER_ENV = /^(EMBER_|ELECTRON_|COPILOT_|GH_|GITHUB_)|^(NODE_OPTIONS|NODE_PATH|NODE_DEBUG)$/;
 
+/**
+ * The environment for any other program Ember starts here (ssh -V/-G/-O runs get sshEnv; PowerShell, ioreg, ps, a WSL
+ * reader get this): the user's, minus Ember's own variables, Electron's, Node's options and every GitHub sign-in
+ * variable, so the token that powers Ember never reaches a child. Windows names compare without regard to case.
+ */
+export function childEnv(base: Readonly<Record<string, string | undefined>>, os: OS): Record<string, string> {
+  const never = os === "win32" ? new RegExp(NEVER_ENV.source, "i") : NEVER_ENV;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (v !== undefined && !never.test(k)) out[k] = v;
+  }
+  return out;
+}
+
 /** The askpass channel of an interactive run (§5.1.6). */
 export type AskpassEnv =
   /** Linux and macOS PCs: the wrapper script, the per-run socket and its nonce. */

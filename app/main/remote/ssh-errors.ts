@@ -101,10 +101,15 @@ const CONFIG = /Bad configuration option|Unsupported option|getsockname failed: 
  * The failure class of an ssh run (§5.1.8). `probeBegan`: the bootstrap printed EMBER-PROBE-BEGIN (so ssh connected
  * and the remote ran sh). `darwinMajor`: this Mac's Darwin major (os.release(); macOS 15 is 24), for the Local Network
  * hint on a LAN address (`lan`). `host`: the label the messages name.
+ *
+ * Once the probe began, the host key was checked and the login accepted, and stderr also carries whatever the remote
+ * printed (its rc files, the script's commands): text there that reads like a host-key, sign-in, name or
+ * configuration failure is the remote's, never ssh's, so only a dropped connection and the remote's own end are read.
  */
 export function classifySshFailure(stderr: string, exitCode: number | null, o: { probeBegan: boolean; os: OS; darwinMajor?: number; lan?: boolean; host?: string }): SshFailure {
   const h = o.host ?? "that computer";
   const text = String(stderr ?? "");
+  if (o.probeBegan) return afterProbe(text, exitCode, h);
   if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key for .* has changed/i.test(text)) {
     return { kind: "host-key-changed", message: MESSAGES.keyChanged(h), fix: MESSAGES.keyChangedFix(h), retry: false };
   }
@@ -133,10 +138,18 @@ export function classifySshFailure(stderr: string, exitCode: number | null, o: {
   if (!o.probeBegan && exitCode !== null && exitCode !== 255) {
     return { kind: "no-setup", message: MESSAGES.noSetup(h), retry: false };
   }
-  if (o.probeBegan && exitCode !== null && exitCode !== 255) {
-    return { kind: "remote", message: MESSAGES.remoteStopped(h, `exit ${exitCode}`), retry: false };
-  }
   return { kind: "unknown", message: MESSAGES.unknown(h), retry: true };
+}
+
+/** A failure after the probe began (§5.1.8): the connection dropped (ssh's own line, exit 255), or the remote ended. */
+function afterProbe(text: string, exitCode: number | null, h: string): SshFailure {
+  if (exitCode === null || exitCode === 255) {
+    for (const [re, reason] of NETWORK) {
+      if (re.test(text)) return { kind: "network", message: MESSAGES.network(h, reason), retry: true };
+    }
+    return { kind: "unknown", message: MESSAGES.unknown(h), retry: true };
+  }
+  return { kind: "remote", message: MESSAGES.remoteStopped(h, `exit ${exitCode}`), retry: false };
 }
 
 /** A bootstrap `EMBER-ERROR <code> [detail]` line in Ember's words (§5.1.9, §8.7). */

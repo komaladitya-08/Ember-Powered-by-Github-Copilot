@@ -40,7 +40,7 @@ import { loadShipped, partsArchive, planShipped, shippedCandidates, type Shipped
 import { planInstall, type Plan } from "./plan";
 import { ensureRuntime, RuntimeError, type RuntimeFs } from "./runtime-download";
 import { ioregPlatformUuid, isThisComputer, selfIdentity, type SelfIdentity } from "./same-machine";
-import { hopCommand, MAX_HOPS, sshArgv, sshCheckArgv, sshEnv, SshArgvError, sshGArgv, sshGHopArgv, sshVersionArgv, type AskpassEnv } from "./ssh-argv";
+import { childEnv, hopCommand, MAX_HOPS, sshArgv, sshCheckArgv, sshEnv, SshArgvError, sshGArgv, sshGHopArgv, sshVersionArgv, type AskpassEnv } from "./ssh-argv";
 import { askpassWorks, knownHostsDiscarded, minimumVersion, parseSshG, parseSshVersion, sshClientPath, SshConfigError, unfixableSessionOption, versionAtLeast, type SshConfig, type SshVersion } from "./ssh-config";
 import { bootstrapFailure, classifySshFailure, cleanLine, isLanAddress, MESSAGES, type SshFailure } from "./ssh-errors";
 import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink } from "./types";
@@ -53,6 +53,8 @@ export const RECONNECT_BACKOFF_S = [1, 2, 4, 8, 16, 30] as const;
 export const RECONNECT_GIVE_UP_MS = 10 * 60_000;
 /** Failures a reconnect keeps trying through (the network and a dying agent's lock); anything else ends it. */
 const RETRYABLE: ReadonlySet<string> = new Set(["network", "timeout", "dns", "busy", "busy-install", "unknown"]);
+/** The command grace when no administrator sets `ssh.commandGraceSeconds` (L10; combineAdmin's "absent = 20"). */
+const GRACE_DEFAULT_S = 20;
 /** The time a quick ssh run (-V, -G, -O check) may take. */
 const QUICK_MS = 15_000;
 
@@ -273,20 +275,20 @@ export function createConnections(o: {
   }
 
   /** The argv and spawn options of one attempt (§5.1.4): POSIX detached; Windows hidden, under the job host. */
-  function startMessage(p: Prepared, host: Pick<HostRecord, "dest" | "port" | "extra">, mode: "batch" | "interactive", acceptNewKey: boolean, childEnv: Record<string, string>): Extract<ToWorker, { t: "start" }> {
+  function startMessage(p: Prepared, host: Pick<HostRecord, "dest" | "port" | "extra">, mode: "batch" | "interactive", acceptNewKey: boolean, runEnv: Record<string, string>): Extract<ToWorker, { t: "start" }> {
     const proxyCommand = p.hops ? hopCommand({ ssh: p.client.ssh, os: p.client.wsl ? "linux" : os, hops: p.hops, mode, configFile: host.extra?.configFile }) : null;
     let argv = sshArgv({
       ssh: p.client.ssh, os: p.client.wsl ? "linux" : os, version: p.client.version, dest: host.dest, port: host.port, mode,
       acceptNewKey, controlPath: p.controlPath, proxyCommand, extra: host.extra, wsl: p.client.wsl,
     });
-    let spawnEnv = childEnv;
+    let spawnEnv = runEnv;
     if (os === "win32" && o.jobHost) {
       argv = [o.jobHost.execPath, o.jobHost.script, "--interactive", "--", ...argv];
-      spawnEnv = { ...childEnv, ELECTRON_RUN_AS_NODE: "1" };
+      spawnEnv = { ...runEnv, ELECTRON_RUN_AS_NODE: "1" };
     }
     return {
       t: "start", argv, env: spawnEnv, spawn: { detached: os !== "win32", windowsHide: true }, script: BOOTSTRAP_SCRIPT,
-      deadlineMs: CONNECT_DEADLINE_MS, probeMs: PROBE_DEADLINE_MS, stallMs: 5_000, graceMs: 20_000,
+      deadlineMs: CONNECT_DEADLINE_MS, probeMs: PROBE_DEADLINE_MS, stallMs: 5_000, graceMs: (o.admin().policy.ssh?.commandGraceSeconds ?? GRACE_DEFAULT_S) * 1000,
     };
   }
 
@@ -307,7 +309,7 @@ export function createConnections(o: {
       }
       if (!source) return null;
       const r = await (internals.windowsHelper ?? ensureAskpassHelper)({
-        userData: o.userData, source, powershell: powershellPath(env().SystemRoot ?? env().SYSTEMROOT), env: cleanEnv(env()),
+        userData: o.userData, source, powershell: powershellPath(env().SystemRoot ?? env().SYSTEMROOT), env: childEnv(env(), os),
         run: runWithStdin,
         fs: { readFile: p => fsp.readFile(p), writeFile: (p, d) => fsp.writeFile(p, d), rename: (a, b) => fsp.rename(a, b), rm: p => fsp.rm(p, { force: true }), mkdir: p => fsp.mkdir(p, { recursive: true }) },
         log,
@@ -347,7 +349,7 @@ export function createConnections(o: {
       os,
       readFile: internals.readFileSync ?? (p => { try { return readFileSync(p); } catch { return null; } }),
       ioregUuid: async () => {
-        const r = await exec(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], { env: cleanEnv(env()), timeoutMs: 5_000 });
+        const r = await exec(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], { env: childEnv(env(), os), timeoutMs: 5_000 });
         return ioregPlatformUuid(r.stdout);
       },
       wslBoots: async () => (await o.wsl()?.bootIds()) ?? [],
@@ -446,7 +448,7 @@ export function createConnections(o: {
     let cancelledByUser = false;
     let channel: AskpassChannel | null = null;
     let control: ReturnType<typeof runAttempt> | null = null;
-    let childEnv: Record<string, string>;
+    let runEnv: Record<string, string>;
     if (mode === "interactive") {
       const handler: AskpassHandler = async (req, sig) => {
         const card = promptCard(req, { id: `ssh-${randomUUID()}`, host: h, names: p.names });
@@ -465,13 +467,13 @@ export function createConnections(o: {
       };
       const opened = await openAskpass(handler);
       channel = opened.channel;
-      childEnv = sshEnv(env(), { os, mode: "interactive", askpass: opened.env });
+      runEnv = sshEnv(env(), { os, mode: "interactive", askpass: opened.env });
     } else {
-      childEnv = sshEnv(env(), { os, mode: "batch" });
+      runEnv = sshEnv(env(), { os, mode: "batch" });
     }
     const port = newPort();
     try {
-      const start = startMessage(p, host, mode, acceptNewKey, childEnv);
+      const start = startMessage(p, host, mode, acceptNewKey, runEnv);
       control = runAttempt(port, start, {
         decide: decision === "uninstall" ? async () => ({ kind: "uninstall" }) : decider(host, h, refusal, signal),
         progress: x => progress(host.id, x.step === "checking" ? { step: "checking" } : x),
@@ -575,7 +577,8 @@ export function createConnections(o: {
         throw err;
       }
       link.setWelcome(welcome);
-      link.setGrace(welcome.graceSeconds);
+      // The agent applies the smaller of both machines' grace; the PC's own limit holds whatever the agent says (L10).
+      link.setGrace(Math.min(welcome.graceSeconds, o.admin().policy.ssh?.commandGraceSeconds ?? GRACE_DEFAULT_S));
       if (signal.aborted) {
         await link.close("cancelled");
         throw new ConnectError(MESSAGES.cancelled(), "cancelled", undefined, true);
@@ -742,15 +745,6 @@ export function createConnections(o: {
       await Promise.all(all.map(([id, l]) => { closing.add(id); return l.close("quit").catch(() => undefined); }));
     },
   };
-}
-
-/** The environment for quick helpers Ember runs itself (PowerShell, ioreg): the user's, minus Ember's own secrets. */
-function cleanEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) {
-    if (v !== undefined && !/^(EMBER_|ELECTRON_|COPILOT_|GH_|GITHUB_)|^(NODE_OPTIONS|NODE_PATH|NODE_DEBUG)$/i.test(k)) out[k] = v;
-  }
-  return out;
 }
 
 /** Runs a quick process (no shell; hidden on Windows; bounded output and time). */

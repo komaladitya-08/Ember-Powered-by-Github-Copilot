@@ -13,6 +13,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import type { OS } from "../../shared/shortcuts";
 import { DISTRO_NAME } from "../../shared/targets";
 import { optionKey, parseTypedDestination, validDest, validHop, validOptionValue, validPort, validSshFile } from "./destination";
+import { childEnv } from "./ssh-argv";
 import type { SshSeen } from "./types";
 
 /** OpenSSH's client options that take a value (ssh.c's getopt string: "b:c:e:i:l:m:o:p:B:D:E:F:I:J:L:O:P:Q:R:S:w:W:"). */
@@ -143,9 +144,12 @@ export interface NoticeDeps {
   ownerUid(p: string): number | null;
   /** This process's user id (POSIX). */
   uid: number | null;
-  run(argv: readonly string[], o: { input?: string; timeoutMs: number }): Promise<{ code: number | null; stdout: string }>;
+  /** Runs a fixed reader (ps, PowerShell's CIM query, a distro's sh) with `env` as its whole environment. */
+  run(argv: readonly string[], o: { input?: string; timeoutMs: number; env: Record<string, string> }): Promise<{ code: number | null; stdout: string }>;
   /** Windows' folder (for powershell.exe by absolute path). */
   systemRoot?: string;
+  /** Ember's own environment: the readers get it without Ember's variables and the GitHub sign-in (childEnv). */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /** The most processes looked at, and the most ssh processes reported. */
@@ -294,24 +298,25 @@ export function parseWslReader(text: string, distro: string): SshProcess[] {
 
 /** userSshProcesses with its readers given (tests); Ember calls userSshProcesses. */
 export async function userSshProcessesWith(os: OS, d: NoticeDeps, o: { wsl?: { exe: string; distros: string[] } } = {}): Promise<SshProcess[] | null> {
+  const env = childEnv(d.env ?? {}, os);
   let local: SshProcess[] | null;
   if (os === "linux") {
     local = linuxSshProcesses(d);
   } else if (os === "darwin") {
     if (d.uid === null) return null;
-    const r = await d.run(["/bin/ps", "-U", String(d.uid), "-o", "pid=,args="], { timeoutMs: 5_000 }).catch(() => null);
+    const r = await d.run(["/bin/ps", "-U", String(d.uid), "-o", "pid=,args="], { timeoutMs: 5_000, env }).catch(() => null);
     local = r && r.code === 0 ? parsePs(r.stdout) : null;
   } else {
     const root = d.systemRoot && /^[A-Za-z]:\\/.test(d.systemRoot) ? d.systemRoot.replace(/\\+$/, "") : "C:\\Windows";
     const ps = `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-    const r = await d.run([ps, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CIM_SCRIPT], { timeoutMs: 8_000 }).catch(() => null);
+    const r = await d.run([ps, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CIM_SCRIPT], { timeoutMs: 8_000, env }).catch(() => null);
     local = r && r.code === 0 ? parseCim(r.stdout) : null;
   }
   if (local === null) return null;
   if (os === "win32" && o.wsl) {
     for (const distro of o.wsl.distros.slice(0, 8)) {
       if (!DISTRO_NAME.test(distro)) continue;
-      const r = await d.run([o.wsl.exe, "-d", distro, "--exec", "/bin/sh", "-s"], { input: WSL_READER, timeoutMs: 5_000 }).catch(() => null);
+      const r = await d.run([o.wsl.exe, "-d", distro, "--exec", "/bin/sh", "-s"], { input: WSL_READER, timeoutMs: 5_000, env }).catch(() => null);
       if (r && r.code === 0) local.push(...parseWslReader(r.stdout, distro));
     }
   }
@@ -331,13 +336,14 @@ export function userSshProcesses(os: OS, o?: { wsl?: { exe: string; distros: str
     ownerUid: p => { try { return statSync(p).uid; } catch { return null; } },
     uid: typeof process.getuid === "function" ? process.getuid() : null,
     run: (argv, ro) => new Promise(resolve => {
-      const child = execFile(argv[0], argv.slice(1), { timeout: ro.timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024, encoding: "utf8" }, (err, stdout) => {
+      const child = execFile(argv[0], argv.slice(1), { env: ro.env, timeout: ro.timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024, encoding: "utf8" }, (err, stdout) => {
         const e = err as (NodeJS.ErrnoException & { code?: number | string }) | null;
         resolve({ code: e ? (typeof e.code === "number" ? e.code : null) : 0, stdout: String(stdout ?? "") });
       });
       child.stdin?.end(ro.input ?? "");
     }),
     systemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT,
+    env: process.env,
   };
   return userSshProcessesWith(os, deps, o).catch(() => null);
 }

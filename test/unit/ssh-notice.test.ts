@@ -107,6 +107,15 @@ describe("the user's own ssh processes (R4)", () => {
     ]);
   });
 
+  it("runs every reader without Ember's variables or the GitHub sign-in in its environment", async () => {
+    const envs: Record<string, string>[] = [];
+    const env = { Path: "C:\\Windows", GH_TOKEN: "ghp_x", Github_Token: "ghp_y", COPILOT_GITHUB_TOKEN: "ghu_z", EMBER_USER_DATA: "x", NODE_OPTIONS: "--require x" };
+    const run: NoticeDeps["run"] = async (_argv, o) => { envs.push(o.env); return { code: 0, stdout: "" }; };
+    await userSshProcessesWith("win32", deps({ env, run }), { wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distros: ["Ubuntu"] } });
+    await userSshProcessesWith("darwin", deps({ env: { HOME: "/Users/ana", GH_TOKEN: "ghp_x" }, run }));
+    expect(envs).toEqual([{ Path: "C:\\Windows" }, { Path: "C:\\Windows" }, { HOME: "/Users/ana" }]);
+  });
+
   it("says null when the list can't be read", async () => {
     expect(await userSshProcessesWith("win32", deps({ run: async () => ({ code: 1, stdout: "" }) }))).toBeNull();
     expect(await userSshProcessesWith("darwin", deps({ uid: null }))).toBeNull();

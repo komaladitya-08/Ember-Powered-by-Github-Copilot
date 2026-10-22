@@ -286,10 +286,21 @@ export class WorkerLink implements RemoteLink {
     await this.port.terminate().catch(() => undefined);
   }
 
-  /** Ends the link at once (the kill switch's last resort, Disconnect after close): ssh killed, the worker ended. */
+  /**
+   * Ends the link at once (the kill switch's last resort, Disconnect after close): ssh killed, the worker ended. The
+   * worker kills ssh's group when it reads the message, so the thread ends only after ssh did (or a second passed):
+   * a thread ended first would drop the message, leaving ssh to notice its closed pipes by itself. A link already
+   * lost was lost by the worker (which killed ssh then) or with the worker itself, so it isn't waited for.
+   */
   async kill(why: string): Promise<void> {
+    const live = this.st !== "lost" && this.st !== "closed";
     try { this.port.post({ t: "kill", why }); } catch { /* gone */ }
     this.setState("lost", why);
+    if (live) {
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([this.exited, new Promise<void>(r => { timer = setTimeout(r, 1_000); })]);
+      if (timer) clearTimeout(timer);
+    }
     for (const f of this.off.splice(0)) f();
     this.sshGone();
     await this.port.terminate().catch(() => undefined);

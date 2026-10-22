@@ -576,6 +576,18 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     expect(r.conns.link("build-01")?.id).not.toBe(link.id);
   });
 
+  it("calls the link lost at this PC's own grace when the agent claims a longer one (L10)", async () => {
+    const r = track(rig({
+      admin: { policy: AdminPolicySchema.parse({ ssh: { commandGraceSeconds: 5 } }), source: "/etc/ember/policy.json" },
+      agent: () => agent({ hello: () => welcome({ graceSeconds: 120 }) }),
+      internals: { setTimeout: () => 0, clearTimeout: () => undefined },
+    }));
+    const link = await r.conns.connect(record(), { interactive: true });
+    r.muxes[0].silent = 6_000;
+    await new Promise(res => setTimeout(res, 1_100));
+    expect(link.state).toBe("lost");
+  });
+
   it("gives up reconnecting at a failure that needs the user", async () => {
     const timers: (() => void)[] = [];
     const r = track(rig({
@@ -658,6 +670,26 @@ describe("the link's pieces", () => {
     expect(checkIncoming({ t: "res", id: 7, ok: false, e: { code: "made-up" as never, m: "no" } }, pending)).toBeNull();
     expect(checkIncoming({ t: "req", id: 1, op: "hello", a: {} }, pending)).toBeNull();
     expect(checkIncoming({ t: "ev", ev: "console.stop", d: { at: "now" } }, pending)).toMatchObject({ ev: "console.stop" });
+  });
+
+  it("lets the worker kill ssh's group before it ends the thread (a thread ended first drops the message)", async () => {
+    const seen: string[] = [];
+    let toMain: ((m: FromWorker) => void) | null = null;
+    let terminated = false;
+    const port: LinkPort = {
+      post: m => setImmediate(() => {
+        if (terminated) return;
+        seen.push(m.t);
+        if (m.t === "kill") setImmediate(() => toMain?.({ t: "exit", code: null, signal: "SIGKILL", stderr: "", killed: "test" }));
+      }),
+      onMessage: fn => { toMain = fn; return () => { toMain = null; }; },
+      onExit: () => () => undefined,
+      terminate: async () => { terminated = true; seen.push("terminate"); },
+    };
+    const link = new WorkerLink(port, { id: "l", hostId: "h" });
+    await link.kill("test");
+    expect(seen).toEqual(["kill", "terminate"]);
+    expect(link.state).toBe("lost");
   });
 
   it("times a request out and refuses one that breaks its own schema before it leaves", async () => {

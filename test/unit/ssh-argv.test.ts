@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hopCommand, shQuote, sshArgv, sshCheckArgv, sshEnv, SshArgvError, sshGArgv, sshGHopArgv, type SshArgvOptions } from "../../app/main/remote/ssh-argv";
+import { childEnv, hopCommand, shQuote, sshArgv, sshCheckArgv, sshEnv, SshArgvError, sshGArgv, sshGHopArgv, type SshArgvOptions } from "../../app/main/remote/ssh-argv";
 import { parseSshG } from "../../app/main/remote/ssh-config";
 
 const V80 = { major: 8, minor: 0 };
@@ -179,6 +179,13 @@ describe("the ssh child's environment (§5.1.4)", () => {
     const e = sshEnv(env, { os: "linux", mode: "batch" });
     expect(e).toMatchObject({ HOME: "/home/ana", PATH: "/usr/bin", SSH_AUTH_SOCK: "/run/user/1000/ssh-agent", KRB5CCNAME: "FILE:/tmp/krb5cc" });
     for (const k of ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "EMBER_USER_DATA", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"]) expect(e).not.toHaveProperty(k);
+  });
+
+  it("gives Ember's other helpers the same environment without its secrets (askpass variables untouched)", () => {
+    const e = childEnv(env, "linux");
+    for (const k of ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "EMBER_USER_DATA", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"]) expect(e).not.toHaveProperty(k);
+    expect(e).toMatchObject({ HOME: "/home/ana", DISPLAY: ":1", KRB5CCNAME: "FILE:/tmp/krb5cc" });
+    expect(childEnv({ gh_token: "x", Node_Options: "y", Path: "C:\\W" }, "win32")).toEqual({ Path: "C:\\W" });
   });
 
   it("lets no prompt pop up in a batch run: no SSH_ASKPASS, no DISPLAY, SSH_ASKPASS_REQUIRE=never", () => {

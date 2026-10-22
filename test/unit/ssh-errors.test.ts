@@ -58,6 +58,12 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
 
   it("reports a failure after the probe began as the remote's own", () => {
     expect(at("", 3, { probeBegan: true }).kind).toBe("remote");
+    // The remote's own text can't pass for ssh's once the login was accepted: no sign-in or host-key offer from it.
+    expect(at("Permission denied (publickey).\n", 255, { probeBegan: true }).kind).toBe("unknown");
+    expect(at("Host key verification failed.\n", 255, { probeBegan: true }).kind).toBe("unknown");
+    expect(at("@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @\n", 1, { probeBegan: true }).kind).toBe("remote");
+    expect(at("Bad configuration option: x\n", 255, { probeBegan: true }).kind).toBe("unknown");
+    expect(at("Connection to build-01 closed by remote host.\n", 255, { probeBegan: true }).kind).toBe("network");
     expect(at("", null).kind).toBe("unknown");
     expect(at("something else entirely").kind).toBe("unknown");
   });
