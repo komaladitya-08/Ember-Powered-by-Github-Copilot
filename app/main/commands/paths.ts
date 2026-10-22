@@ -9,8 +9,10 @@
 
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
-import type { OS } from "../../shared/shortcuts";
-import type { WindowsContext } from "./types";
+import type { ClassifyContext, WindowsContext } from "./types";
+
+/** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
+type OS = ClassifyContext["os"];
 
 /** Which path rules a path follows. */
 export type PathFlavour = "posix" | "win32";

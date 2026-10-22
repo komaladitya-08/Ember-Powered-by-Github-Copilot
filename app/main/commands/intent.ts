@@ -9,11 +9,13 @@
  * Pure.
  */
 
-import type { OS } from "../../shared/shortcuts";
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
 import { ALWAYS_ASK } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList } from "./words";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, type PathEnv } from "./paths";
+
+/** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
+type OS = ClassifyContext["os"];
 
 /** What a match says and which row matched. */
 export interface IntentMatch {

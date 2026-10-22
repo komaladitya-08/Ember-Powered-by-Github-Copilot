@@ -8,7 +8,6 @@
  * integration-11). Conservative throughout: anything not fully understood is "unclear" and asks (D4.3 g).
  */
 
-import type { OS } from "../../shared/shortcuts";
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
@@ -34,6 +33,9 @@ import {
 import { commandLineSecret } from "./redact";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
+
+/** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
+type OS = ClassifyContext["os"];
 
 /** Text longer than this is unclear (§3.4.1). */
 export const MAX_COMMAND_CHARS = 8000;

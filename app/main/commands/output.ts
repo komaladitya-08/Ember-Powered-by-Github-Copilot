@@ -5,10 +5,12 @@
  * pre-rendered by a remote. Pure and synchronous.
  */
 
-import type { RunExit, ShellId } from "./types";
-import type { TargetId } from "../../shared/targets";
+import type { CommandRunner, RunExit, ShellId } from "./types";
 import { redactSecrets } from "./redact";
 import { OPEN_SPAN_END } from "./prompts";
+
+/** A target's id (the contract's own type, so this file imports nothing outside the commands package). */
+type TargetId = CommandRunner["target"];
 
 /** How one run's output is shaped. */
 export interface ShapeOptions {

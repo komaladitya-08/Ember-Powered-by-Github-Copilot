@@ -5,8 +5,10 @@
  * the user's own words (§2.3 rule 1). Pure.
  */
 
-import type { OS } from "../../shared/shortcuts";
-import type { ShellFamily } from "./types";
+import type { ClassifyContext, ShellFamily } from "./types";
+
+/** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
+type OS = ClassifyContext["os"];
 
 /** One argument as the classifier sees it. */
 export interface Arg {
