@@ -9,6 +9,7 @@ import sharp from "sharp";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PolicyEngine, type ActionKind, type ActionRequest } from "../../app/main/policy/policy";
 import { REMOTE_SURFACE, isRemoteSurface, isWindowsXServer, isWslgImage, remoteSurfaceCheck } from "../../app/main/policy/remote-surface";
+import { runningXServer } from "../../app/main/wsl/doctor";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow, Bounds } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, StackedWindow, X11Image } from "../../app/main/platform/types";
@@ -46,11 +47,22 @@ describe("which windows are remote surfaces", () => {
       expect(isRemoteSurface(p, "win32"), p).toBe(true);
       expect(isWindowsXServer(p, "win32"), p).toBe(true);
     }
-    for (const p of ["msrdc", "mstsc", "xwinwrap", "x4100", "notepad"]) expect(isWindowsXServer(p, "win32"), p).toBe(false);
+    for (const p of ["msrdc", "mstsc", "xwinwrap", "x4100", "notepad", "gwslx", "gwsl-notes"]) expect(isWindowsXServer(p, "win32"), p).toBe(false);
     for (const os of ["linux", "darwin"] as const) for (const p of ["vcxsrv", "xwin", "gwsl"]) {
       expect(isRemoteSurface(p, os), `${os} ${p}`).toBe(false);
       expect(isWindowsXServer(p, os), `${os} ${p}`).toBe(false);
     }
+  });
+
+  it("knows GWSL's own X server by its real program names (GWSL_vcxsrv, GWSL_vcxsrv_lowdpi), as the WSL doctor does", () => {
+    // GWSL shows Linux apps through its bundled VcXsrv, VCXSRV/GWSL_vcxsrv{,_lowdpi}.exe: the Windows backend names their
+    // windows' app by the program's file name.
+    for (const p of ["GWSL_vcxsrv", "GWSL_vcxsrv.exe", "gwsl_vcxsrv_lowdpi", "GWSL_vcxsrv_lowdpi.exe", "GWSL_service"]) {
+      expect(isRemoteSurface(p, "win32"), p).toBe(true);
+      expect(isWindowsXServer(p, "win32"), p).toBe(true);
+      expect(runningXServer([`${p.replace(/\.exe$/i, "")}.exe`]), p).toBe("GWSL");
+    }
+    for (const os of ["linux", "darwin"] as const) expect(isRemoteSurface("GWSL_vcxsrv", os), os).toBe(false);
   });
 
   it("takes no ordinary Windows app for one, nor a name that only contains one", () => {
@@ -84,7 +96,7 @@ describe("the policy in a remote surface on Windows", () => {
   it("refuses every kind of action in a WSLg app's or a remote desktop's window, with the reason in plain words", () => {
     // A Linux terminal and a polkit prompt under WSLg pass the Windows terminal and security checks by name.
     for (const [app, title] of [["msrdc", "ada@laptop: ~"], ["msrdc", "Authentication Required"], ["mstsc", "build-server - Remote Desktop Connection"],
-      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"], ["vcxsrv", "xterm"], ["x410", "gedit"], ["GWSL", "Authentication Required"]]) {
+      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"], ["vcxsrv", "xterm"], ["x410", "gedit"], ["GWSL", "Authentication Required"], ["GWSL_vcxsrv", "ana@pc: ~"], ["GWSL_vcxsrv_lowdpi", "pinentry"]]) {
       for (const kind of IN_WINDOW) {
         const d = engine("win32").decide(request(kind, app, title));
         expect(d, `${kind} in ${app}`).toMatchObject({ tier: "never", verdict: "deny", reason: REASON });

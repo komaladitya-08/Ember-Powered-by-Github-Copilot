@@ -17,7 +17,9 @@ export const X_SERVERS: readonly { image: RegExp; name: string }[] = [
   { image: /^x410\.exe$/i, name: "X410" },
   { image: /^xming\.exe$/i, name: "Xming" },
   { image: /^xwin\.exe$/i, name: "Cygwin/X" },
-  { image: /^gwsl.*\.exe$/i, name: "GWSL" },
+  // GWSL.exe (its dashboard), GWSL_service.exe, and the X server itself: GWSL_vcxsrv.exe or GWSL_vcxsrv_lowdpi.exe
+  // (the same names policy/remote-surface.ts refuses and masks).
+  { image: /^gwsl(?:_\w+)?\.exe$/i, name: "GWSL" },
 ];
 
 /** "2.3.26.0" → "2.3.26" (the doctor's short form). */
