@@ -228,8 +228,10 @@ export interface UiaOptions {
   command?: string;
   args?: string[];
   /**
-   * How long the first start() of a bridge waits for its ready line (the start goes on after that), and how long later
-   * ones wait while it is still starting: Ember gives a host's requests their usual time once it has answered once.
+   * How long the first start() of a bridge waits for its ready line (the start goes on after that): within Ember's
+   * first-request time (20 s) with room left for the request's own work. And how long later ones wait while it is still
+   * starting: by default not at all, since the host answers one request at a time, so a later request has spent the
+   * first one's wait queued behind it, out of its own time in Ember (and from then on Ember gives it only 5 s).
    */
   startMs?: number;
   againMs?: number;
@@ -253,10 +255,20 @@ interface Bridge {
   ready: Promise<void>;
   isReady: boolean;
   done: boolean;
-  /** A request has already waited the first start's whole time for it. */
-  waited: boolean;
+  /** Until when requests wait for its ready line (startMs after the first began to wait). */
+  waitUntil?: number;
+  /** The provider's generation once this bridge is ready (its handles carry it). */
+  generation: number;
   dpi?: string;
 }
+
+/**
+ * Every bridge numbers its handles from 1 (C# ints, below 2^31), so a handle of a bridge that was restarted is very likely
+ * a handle of the new one too, naming another element. The host's handles carry the generation of the bridge that gave
+ * them out: generation 1's are the bridge's own numbers, generation g's are offset by (g - 1) * 2^31 (exact in a double
+ * for millions of restarts), and one from another generation is refused as gone before it reaches a bridge.
+ */
+const HANDLE_SPAN = 2 ** 31;
 
 /** The bridge's longest deadline for one call. */
 const MAX_DEADLINE_MS = 4000;
@@ -287,8 +299,8 @@ export class UiaProvider implements AxProvider {
 
   constructor(private o: UiaOptions) {
     this.env = o.env ?? process.env;
-    this.startMs = o.startMs ?? 18_000;
-    this.againMs = o.againMs ?? 3000;
+    this.startMs = o.startMs ?? 15_000;
+    this.againMs = o.againMs ?? 0;
     this.deadlineMs = o.deadlineMs ?? 800;
     this.graceMs = o.graceMs ?? 2000;
     this.retryMs = o.retryMs ?? 60_000;
@@ -309,9 +321,10 @@ export class UiaProvider implements AxProvider {
       this.bridge = this.launch();
     }
     const b = this.bridge;
-    // The first request waits out a cold start; later ones, while it still starts, only a little (they have 5 s).
-    const ms = b.waited ? this.againMs : this.startMs;
-    b.waited = true;
+    // The first request waits out a cold start (with any made meanwhile); later ones, while it still starts, are answered
+    // at once (see againMs).
+    b.waitUntil ??= Date.now() + this.startMs;
+    const ms = Math.max(this.againMs, b.waitUntil - Date.now());
     let timer: NodeJS.Timeout | undefined;
     const waited = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`the accessibility bridge is still starting (Windows PowerShell compiles it on its first start); try again in a moment`)), ms);
@@ -331,7 +344,7 @@ export class UiaProvider implements AxProvider {
     const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
     // Nobody may be waiting when a start fails in the background: that is no unhandled rejection.
     ready.catch(() => undefined);
-    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, waited: false };
+    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, generation: 0 };
     const first = this.starts++ === 0;
     const fail = (why: string) => {
       if (b.done) return;
@@ -356,6 +369,7 @@ export class UiaProvider implements AxProvider {
           b.dpi = typeof msg.dpi === "string" ? msg.dpi : undefined;
           this.failure = "";
           if (!first) this.generation++;
+          b.generation = this.generation;
           this.note("uia.ready", { dpi: b.dpi, generation: this.generation });
           settle.resolve();
         } else if (typeof msg.fatal === "string") {
@@ -384,12 +398,42 @@ export class UiaProvider implements AxProvider {
     return b;
   }
 
-  /** One bridge request, answered within its deadline (a bridge that doesn't answer at all is killed: see the module comment). */
-  private async call<T>(method: string, params: Record<string, unknown> = {}, deadlineMs = this.deadlineMs): Promise<T> {
+  /** The host's handle for handle `h` of the bridge of generation `gen` (0, a busy window's missing one, stays 0). */
+  private own(h: number, gen: number): Handle {
+    return Number.isInteger(h) && h > 0 && h < HANDLE_SPAN ? (gen - 1) * HANDLE_SPAN + h : 0;
+  }
+
+  /** Gives `x` (a node or window converted from the bridge's answer) the host's handle for it. */
+  private mine<T extends { handle: Handle }>(x: T, gen: number): T {
+    x.handle = this.own(x.handle, gen);
+    return x;
+  }
+
+  /** The bridge's own number for host handle `h`, if it is one of bridge `gen`'s (null: from before a restart). */
+  private theirs(h: Handle, gen: number): number | null {
+    if (!Number.isInteger(h) || h <= 0) return null;
+    const raw = h % HANDLE_SPAN;
+    return raw > 0 && Math.floor(h / HANDLE_SPAN) + 1 === gen ? raw : null;
+  }
+
+  /**
+   * One bridge request, answered within its deadline (a bridge that doesn't answer at all is killed: see the module
+   * comment). `handle`: the element it is about, sent as the bridge's own number once the bridge it goes to is known;
+   * one from a bridge before this one is gone, never another element. Resolves to the answer and the generation of the
+   * bridge that gave it (whose handles are in it).
+   */
+  private async call<T>(method: string, params: Record<string, unknown> = {}, deadlineMs = this.deadlineMs, handle?: Handle): Promise<{ value: T; gen: number }> {
     await this.start();
     const b = this.bridge!;
+    const gen = b.generation;
+    const target: Record<string, unknown> = {};
+    if (handle !== undefined) {
+      const raw = this.theirs(handle, gen);
+      if (raw === null) throw new ProviderError("gone", `handle ${handle} is from before the accessibility bridge started again`);
+      target.handle = raw;
+    }
     const id = this.nextId++;
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<{ value: T; gen: number }>((resolve, reject) => {
       const timer = setTimeout(() => {
         b.pending.delete(id);
         reject(new ProviderError("busy", `the accessibility bridge didn't answer ${method} in time`));
@@ -400,8 +444,8 @@ export class UiaProvider implements AxProvider {
         b.pending.clear();
         if (b.child.exitCode === null && b.child.signalCode === null) b.child.kill();
       }, deadlineMs + this.graceMs);
-      b.pending.set(id, { resolve: v => resolve(v as T), reject, timer });
-      b.child.stdin.write(JSON.stringify({ id, method, params: { ...params, deadlineMs } }) + "\n");
+      b.pending.set(id, { resolve: v => resolve({ value: v as T, gen }), reject, timer });
+      b.child.stdin.write(JSON.stringify({ id, method, params: { ...params, ...target, deadlineMs } }) + "\n");
     });
   }
 
@@ -411,26 +455,27 @@ export class UiaProvider implements AxProvider {
   }
 
   async topWindows(): Promise<RawWindow[]> {
-    return listOf<BridgeWindow>(await this.call("topWindows", {}, WINDOWS_DEADLINE_MS), "windows").map(fromBridgeWindow);
+    const { value, gen } = await this.call("topWindows", {}, WINDOWS_DEADLINE_MS);
+    return listOf<BridgeWindow>(value, "windows").map(w => this.mine(fromBridgeWindow(w), gen));
   }
 
   async snapshot(window: Handle, o: SnapshotOptions): Promise<Snapshot> {
     const deadline = Math.min(MAX_DEADLINE_MS, Math.max(100, Math.round(o.deadlineMs)));
     // Values are read (a field's text); LegacyIAccessible isn't (three calls an element): a look at one element reads it.
-    const r = await this.call<{ nodes?: BridgeNode[]; truncated?: boolean; cut?: unknown; busy?: boolean }>("snapshot", {
-      handle: window, maxDepth: o.maxDepth, maxNodes: o.maxNodes, maxChildren: MAX_CHILDREN, values: true, legacy: false,
-    }, deadline);
+    const { value: r, gen } = await this.call<{ nodes?: BridgeNode[]; truncated?: boolean; cut?: unknown; busy?: boolean }>("snapshot", {
+      maxDepth: o.maxDepth, maxNodes: o.maxNodes, maxChildren: MAX_CHILDREN, values: true, legacy: false,
+    }, deadline, window);
     const cut = Array.isArray(r?.cut) ? r.cut.filter((c): c is string => typeof c === "string") : [];
     const nodes = r?.nodes ?? [];
     // What an element held couldn't be read: the read isn't whole (no picture is taken of what it may hide).
     if (nodes.some(n => n.childrenFailed) && !cut.includes("nodes")) cut.unshift("nodes");
-    return { nodes: nodes.map(fromBridgeNode), truncated: !!r?.truncated || cut.length > 0, cut, ...(r?.busy ? { busy: true } : {}) };
+    return { nodes: nodes.map(n => this.mine(fromBridgeNode(n), gen)), truncated: !!r?.truncated || cut.length > 0, cut, ...(r?.busy ? { busy: true } : {}) };
   }
 
   async element(h: Handle): Promise<RawNode | null> {
     try {
-      const r = await this.call<BridgeNode | null>("element", { handle: h, values: true, legacy: true });
-      return r ? fromBridgeNode(r) : null;
+      const { value: r, gen } = await this.call<BridgeNode | null>("element", { values: true, legacy: true }, this.deadlineMs, h);
+      return r ? this.mine(fromBridgeNode(r), gen) : null;
     } catch (err) {
       if (err instanceof ProviderError && err.code === "gone") return null;
       throw err;
@@ -438,26 +483,29 @@ export class UiaProvider implements AxProvider {
   }
 
   async elementsAt(x: number, y: number): Promise<RawNode[]> {
-    return listOf<BridgeNode>(await this.call("elementsAt", { x: Math.round(x), y: Math.round(y) }), "chain").map(fromBridgeNode);
+    const { value, gen } = await this.call("elementsAt", { x: Math.round(x), y: Math.round(y) });
+    return listOf<BridgeNode>(value, "chain").map(n => this.mine(fromBridgeNode(n), gen));
   }
 
   async focused(): Promise<{ element: RawNode | null; window: Handle | null }> {
-    const r = await this.call<{ element?: BridgeNode | null; window?: number | null }>("focused");
-    return { element: r?.element ? fromBridgeNode(r.element) : null, window: typeof r?.window === "number" ? r.window : null };
+    const { value: r, gen } = await this.call<{ element?: BridgeNode | null; window?: number | null }>("focused");
+    const window = typeof r?.window === "number" ? this.own(r.window, gen) : 0;
+    return { element: r?.element ? this.mine(fromBridgeNode(r.element), gen) : null, window: window || null };
   }
 
   async children(h: Handle, max: number): Promise<RawNode[]> {
-    return listOf<BridgeNode>(await this.call("children", { handle: h, max }), "children").map(fromBridgeNode);
+    const { value, gen } = await this.call("children", { max }, this.deadlineMs, h);
+    return listOf<BridgeNode>(value, "children").map(n => this.mine(fromBridgeNode(n), gen));
   }
 
   async perform(h: Handle, op: PerformOp, value?: unknown): Promise<void> {
     // The bridge names LegacyIAccessible's default action in full.
     const bridgeOp = op === "legacy" ? "legacyDefaultAction" : op;
-    await this.call("perform", { handle: h, op: bridgeOp, ...(value !== undefined ? { value } : {}) });
+    await this.call("perform", { op: bridgeOp, ...(value !== undefined ? { value } : {}) }, this.deadlineMs, h);
   }
 
   async textInfo(h: Handle, maxChars: number): Promise<TextInfo> {
-    const r = await this.call<TextInfo | null>("textInfo", { handle: h, maxChars: Math.min(100_000, Math.max(1, maxChars)) });
+    const { value: r } = await this.call<TextInfo | null>("textInfo", { maxChars: Math.min(100_000, Math.max(1, maxChars)) }, this.deadlineMs, h);
     if (!r) return {};
     if (r.secret) return { secret: true };
     const out: TextInfo = {};
@@ -469,12 +517,15 @@ export class UiaProvider implements AxProvider {
     return out;
   }
 
+  /** Gives handles back to the bridge that gave them out; those of an earlier bridge died with it. */
   release(hs: Handle[]): void {
     const b = this.bridge;
     if (!hs.length || !b?.isReady || b.done) return;
+    const handles = hs.map(h => this.theirs(h, b.generation)).filter((h): h is number => h !== null);
+    if (!handles.length) return;
     const id = this.nextId++;
     // Nothing waits on the answer (its id has no pending entry, so it is dropped).
-    b.child.stdin.write(JSON.stringify({ id, method: "release", params: { handles: hs } }) + "\n");
+    b.child.stdin.write(JSON.stringify({ id, method: "release", params: { handles } }) + "\n");
   }
 
   stop(): void {

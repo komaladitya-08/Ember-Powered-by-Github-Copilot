@@ -178,14 +178,14 @@ describe("the bridge client", () => {
   });
 
   it("lets a slow first start go on in the background instead of starting it again, and keeps later requests short", async () => {
-    const { p, spawned } = provider({ FAKE_BRIDGE_READY_MS: "900" }, { startMs: 300, againMs: 100 });
+    const { p, spawned } = provider({ FAKE_BRIDGE_READY_MS: "900" }, { startMs: 300 });
     let t0 = Date.now();
     expect(await failure(p.start())).toMatch(/still starting/);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
-    // Ember's later requests have their usual 5 s: they aren't held for the first start's whole time.
+    // Later requests waited in the host's queue meanwhile, out of their time in Ember: they are answered at once.
     t0 = Date.now();
     expect(await failure(p.start())).toMatch(/still starting/);
-    expect(Date.now() - t0).toBeLessThan(250);
+    expect(Date.now() - t0).toBeLessThan(100);
     await new Promise(r => setTimeout(r, 700));
     await p.start();
     expect(spawned).toHaveLength(1);
@@ -257,9 +257,32 @@ describe("the bridge client", () => {
     const t0 = Date.now();
     expect(await failure(p.element(13))).toMatch(/^busy: /);
     expect(Date.now() - t0).toBeLessThan(1500);
-    expect((await p.element(2))?.name).toBe("Element 2");
+    // The new bridge numbers its handles from 1 again: one from before is gone, never the new bridge's element 2.
+    expect(await p.element(2)).toBeNull();
+    expect(await failure(p.perform(2, "invoke"))).toMatch(/^gone: /);
     expect(spawned).toHaveLength(2);
     expect(p.generation).toBe(2);
+    const [w] = await p.topWindows();
+    expect(w.handle).not.toBe(1);
+    expect((await p.element(w.handle))?.name).toBe("Element 1");
+  });
+
+  it("never sends a handle from before a restart, even within the request it happened in", async () => {
+    const { p, lines } = provider();
+    const [old] = await p.topWindows();
+    expect(old.handle).toBe(1);
+    (p as unknown as { call(m: string): Promise<unknown> }).call("exit").catch(() => undefined);
+    await new Promise(r => setTimeout(r, 300));
+    const [now] = await p.topWindows();
+    expect(p.generation).toBe(2);
+    expect(await failure(p.perform(old.handle, "invoke"))).toMatch(/^gone: /);
+    expect(await failure(p.textInfo(old.handle, 10))).toMatch(/^gone: /);
+    expect(await p.children(old.handle, 4).then(() => "listed", (e: ProviderError) => e.code)).toBe("gone");
+    p.release([old.handle, now.handle]);
+    await p.element(now.handle);
+    // Only the new bridge's own number went to it, and only for its own handle.
+    const sent = lines().filter(l => l.method === "perform" || l.method === "release" || l.method === "textInfo" || l.method === "children");
+    expect(sent.map(l => [l.method, l.params.handles ?? l.params.handle])).toEqual([["release", [1]]]);
   });
 
   it("fails what was waiting when the bridge exits, and starts it again on the next request", async () => {
@@ -269,7 +292,8 @@ describe("the bridge client", () => {
     p.perform(1, "invoke").catch(() => undefined); // answered or failed, depending on which comes first
     (p as unknown as { call(m: string): Promise<unknown> }).call("exit").catch(() => undefined);
     expect(await waiting).toMatch(/^failed: the accessibility bridge stopped/);
-    expect((await p.element(2))?.name).toBe("Element 2");
+    const [w] = await p.topWindows();
+    expect((await p.element(w.handle))?.name).toBe("Element 1");
     expect(spawned).toHaveLength(2);
   });
 

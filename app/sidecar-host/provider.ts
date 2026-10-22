@@ -166,7 +166,10 @@ export interface AxProvider {
   readonly kind: "uia" | "ax" | "fake";
   /** Which role vocabulary its nodes use (roles.ts maps each to AT-SPI's). */
   readonly vocabulary: "uia" | "ax";
-  /** Goes up whenever the provider restarted: handles from an earlier generation name nothing. */
+  /**
+   * Goes up whenever the provider restarted. A handle from an earlier generation names nothing: every call given one
+   * fails as "gone" (or element() answers null), even within the request during which the restart happened.
+   */
   readonly generation: number;
   /** Ready to answer (Windows: the bridge started and said it is ready). Called before every request; cheap once started. */
   start(): Promise<void>;
@@ -185,7 +188,7 @@ export interface AxProvider {
   children(h: Handle, max: number): Promise<RawNode[]>;
   perform(h: Handle, op: PerformOp, value?: unknown): Promise<void>;
   textInfo(h: Handle, maxChars: number): Promise<TextInfo>;
-  /** These handles won't be used again. */
+  /** These handles won't be used again (any from an earlier generation are ignored: they died with it). */
   release(hs: Handle[]): void;
   /** Stops for good (the host is exiting). */
   stop(): void;

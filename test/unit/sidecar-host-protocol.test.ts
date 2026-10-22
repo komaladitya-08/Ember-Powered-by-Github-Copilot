@@ -47,6 +47,14 @@ describe("sidecar host protocol framing", () => {
     expect(fake.started).toBe(1);
   });
 
+  it("takes the secrets Ember hands a new process without waiting for its provider (a cold bridge start)", async () => {
+    const fake = new FakeProvider(benchDesktop(), { failStart: "the accessibility bridge is still starting" });
+    const host = new Host(fake, { env: {} });
+    const answer = async (method: string, params: Record<string, unknown>) => JSON.parse((await host.handle(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })))!);
+    expect((await answer("remember_secrets", { keys: [["uia", "4242:42.7"]] })).result).toEqual({ count: 1 });
+    expect((await answer("list_windows", {})).error.message).toBe("the accessibility bridge is still starting");
+  });
+
   it("answers an unknown method and a bad line with the Python sidecar's errors", async () => {
     const { host, raw } = harness();
     expect((await raw("frobnicate")).error.message).toBe("'unknown method: frobnicate'");

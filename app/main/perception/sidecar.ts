@@ -186,9 +186,11 @@ export interface SidecarLaunch {
   /** Its whole environment (EMBER_ATSPI_ID_BASE is added to it). */
   env: NodeJS.ProcessEnv;
   /**
-   * How long a request to a new process may take until the process first answers (a cold start: Windows PowerShell
-   * compiling the UI Automation bridge, with antivirus scanning it, takes seconds), so a slow start isn't killed over
-   * and over. Later requests get their own timeout. Default: their own timeout from the start.
+   * How long a request to a new process may take until the process first answers one that is waited on (a cold start:
+   * Windows PowerShell compiling the UI Automation bridge, with antivirus scanning it, takes seconds), so a slow start
+   * isn't killed over and over. The secret fields handed to a new process first don't count: nothing waits on that
+   * answer, and the host gives it without starting its bridge. Later requests get their own timeout. Default: their own
+   * timeout from the start.
    */
   firstRequestMs?: number;
   /** Windows: no console window for it (or for what it starts). */
@@ -204,8 +206,11 @@ export const ID_BLOCK = 10_000_000;
 let idBlocks = 0;
 
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
-/** One sidecar process and the requests waiting on it; `answered`: it has answered something (it works). */
-interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean }
+/**
+ * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
+ * answered a request waited on (see SidecarLaunch.firstRequestMs).
+ */
+interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean }
 
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
@@ -250,7 +255,7 @@ export class AtspiSidecar {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: base },
       });
-    const h: Helper = { child, pending: new Map(), done: false, answered: false };
+    const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false };
     this.helper = h;
     readline.createInterface({ input: child.stdout }).on("line", line => this.answer(h, line));
     readline.createInterface({ input: child.stderr }).on("line", line => {
@@ -303,6 +308,7 @@ export class AtspiSidecar {
     if (id !== null) h.answered = true;
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
+    h.warm = true;
     clearTimeout(p.timer);
     h.pending.delete(id!);
     if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
@@ -344,9 +350,9 @@ export class AtspiSidecar {
     return new Promise<T>((resolve, reject) => {
       const h = this.ensure();
       const id = this.nextId++;
-      // A process that hasn't answered anything yet may still be starting (see SidecarLaunch.firstRequestMs).
+      // A process that hasn't answered a request yet may still be starting (see SidecarLaunch.firstRequestMs).
       const first = this.launch?.firstRequestMs;
-      const ms = first !== undefined && !h.answered ? Math.max(timeoutMs, first) : timeoutMs;
+      const ms = first !== undefined && !h.warm ? Math.max(timeoutMs, first) : timeoutMs;
       const timer = setTimeout(() => {
         h.pending.delete(id);
         reject(new Error(`accessibility helper did not answer ${method} in ${ms} ms`));

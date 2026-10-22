@@ -14,18 +14,26 @@ vi.mock("node:child_process", async importOriginal => {
 
 /**
  * A stand-in sidecar run by node: it says how it was started, and (with EMBER_FAKE_COLD_MS) answers nothing until that
- * long after it started, as a cold Windows PowerShell bridge doesn't.
+ * long after it started, as a cold Windows PowerShell bridge doesn't, but the secret fields handed to it (at once, as
+ * the sidecar host does).
  */
 const FAKE = `
 const readline = require("node:readline");
 const cold = Number(process.env.EMBER_FAKE_COLD_MS || 0);
 const started = Date.now();
 const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
+let told = 0;
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const req = JSON.parse(line);
   const ok = result => setTimeout(() => send({ jsonrpc: "2.0", id: req.id, result }), Math.max(0, started + cold - Date.now()));
   switch (req.method) {
-    case "whoami": return ok({ argv: process.argv.slice(2), base: process.env.EMBER_ATSPI_ID_BASE, enc: process.env.PYTHONIOENCODING ?? null, mine: process.env.EMBER_FAKE_MINE ?? null });
+    case "whoami": return ok({ argv: process.argv.slice(2), base: process.env.EMBER_ATSPI_ID_BASE, enc: process.env.PYTHONIOENCODING ?? null, mine: process.env.EMBER_FAKE_MINE ?? null, told });
+    case "remember_secrets":
+      told += req.params.keys.length;
+      send({ jsonrpc: "2.0", id: req.id, result: { count: told } });
+      if (process.env.EMBER_FAKE_TOLD) require("node:fs").writeFileSync(process.env.EMBER_FAKE_TOLD + "." + process.pid, String(told));
+      return;
+    case "read_window": return ok({ window: null, nodes: [], secretKeys: [["fake", "1"]] });
     case "slow": return setTimeout(() => send({ jsonrpc: "2.0", id: req.id, result: "slow" }), req.params.ms);
     case "status": return ok({ version: 3, python: "fake", toolkitAccessibility: null, apps: 0 });
   }
@@ -48,7 +56,7 @@ afterEach(() => {
   vi.mocked(spawn).mockClear();
 });
 
-type Who = { argv: string[]; base: string; enc: string | null; mine: string | null };
+type Who = { argv: string[]; base: string; enc: string | null; mine: string | null; told: number };
 const failure = (p: Promise<unknown>) => p.then(() => "resolved", (e: Error) => e.message);
 
 describe("AtspiSidecar's launch", () => {
@@ -88,6 +96,19 @@ describe("AtspiSidecar's launch", () => {
     expect(a.base).toBe(b.base);
     // Warm now: its own timeout again.
     expect(await failure(s.request("slow", { ms: 600 }, 200))).toMatch(/did not answer slow in 200 ms/);
+  });
+
+  it("keeps the first-request time until a request waited on is answered, not the secrets handed over first", async () => {
+    const told = path.join(dir, `told-${Date.now()}`);
+    const s = sidecar({ command: process.execPath, args: [fake], env: { ...process.env, EMBER_FAKE_COLD_MS: "1500", EMBER_FAKE_TOLD: told }, firstRequestMs: 5000 });
+    await s.readWindow({});
+    // Too slow once warm: this process is killed, and the next one starts at once, told the secret field first.
+    expect(await failure(s.request("slow", { ms: 9000 }, 200))).toMatch(/did not answer slow in 200 ms/);
+    for (let i = 0; i < 100 && !fs.readdirSync(dir).some(f => f.startsWith(path.basename(told) + ".")); i++) await new Promise(r => setTimeout(r, 20));
+    await new Promise(r => setTimeout(r, 50));
+    // It answered that at once, but nothing else yet (still cold): a request sent now still has the first-request time.
+    const who = await s.request<Who>("whoami", {}, 200);
+    expect(who.told).toBe(1);
   });
 
   it("keeps the request's own timeout from the start without a first-request time", async () => {

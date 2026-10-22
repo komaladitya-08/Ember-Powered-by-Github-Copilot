@@ -21,6 +21,14 @@ export type Method = (host: Host, params: Record<string, unknown>) => Promise<un
 /** Every method the Python sidecar answers. */
 export const METHODS: Record<string, Method> = { ...READING, ...ACTING };
 
+/**
+ * Methods answered without the provider, so without waiting for it to start: ping, and remember_secrets, which Ember
+ * sends ahead of a new process's first request without waiting for its answer. Were it to wait out a cold start of the
+ * Windows bridge, the request Ember does wait on would be left only part of its first-request time, and a start
+ * slower than that would be killed and begun again in a loop.
+ */
+const WITHOUT_PROVIDER = new Set(["ping", "remember_secrets"]);
+
 export interface HostOptions {
   env?: NodeJS.ProcessEnv;
   /** How long toolkits get to apply a change before it is read back (80 ms, as the Python sidecar waits). */
@@ -62,11 +70,11 @@ export class Host {
     }
   }
 
-  /** Runs one method (the provider started first, except for ping), then gives back the handles it left. */
+  /** Runs one method (the provider started first, except for WITHOUT_PROVIDER's), then gives back the handles it left. */
   async call(method: unknown, params: Record<string, unknown>): Promise<unknown> {
     const run = typeof method === "string" && Object.prototype.hasOwnProperty.call(METHODS, method) ? METHODS[method] : undefined;
     if (!run) throw new KeyError(`unknown method: ${typeof method === "string" ? method : String(method)}`);
-    if (method === "ping") return run(this, params);
+    if (WITHOUT_PROVIDER.has(method as string)) return run(this, params);
     try {
       await this.provider.start();
       this.sync();
@@ -93,12 +101,15 @@ export class Host {
     this.seen.clear();
   }
 
-  /** The request is over: handles no read holds go back to the provider (only those of its current generation). */
+  /**
+   * The request is over: handles no read holds go back to the provider. (When it restarted during the request, those it
+   * gave out before are the provider's to ignore; those it gave out since still go back.)
+   */
   private finish(): void {
     const free = new Set(this.refs.take());
     for (const h of this.seen) if (!this.refs.held(h)) free.add(h);
     this.seen.clear();
-    if (!free.size || this.provider.generation !== this.generation) return;
+    if (!free.size) return;
     try {
       this.provider.release([...free]);
     } catch (err) {
