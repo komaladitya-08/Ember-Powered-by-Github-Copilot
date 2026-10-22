@@ -9,8 +9,9 @@
  */
 
 import type { OwnWindowHandle, Rect, ScreenLike, StackedWindow, WindowSystem, X11Image, X11Window } from "../types";
+import type { Logger } from "../../logger";
 import { captureRect, type DarwinCapture } from "./capture";
-import { openDesktop, desktopError, type DarwinDesktop } from "./desktop";
+import { openDesktop, desktopError, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
 import { resolveActive, resolveFocus, type Resolved } from "./focus";
 import { FLAG, MOUSE_BUTTON } from "./cg";
 import { VK } from "./keys";
@@ -29,6 +30,8 @@ export interface DarwinWindowsDeps {
    * non-activating panel can, with another app still frontmost), focusWindow() reports it without asking AX.
    */
   focusedOwnWindow?: () => OwnWindowHandle | null;
+  /** Where `platform.secure_input_unknown` goes (once) when Ember can't tell whether secure keyboard entry is on. */
+  log?: Pick<Logger, "warn" | "info">;
 }
 
 /** The modifier chord held now: X11's three keys, plus Shift and Command for macOS's shortcuts. */
@@ -45,14 +48,30 @@ export interface DarwinWindowSystem extends WindowSystem {
   readonly kind: "darwin";
   keysDown(): DarwinKeysDown | null;
   /**
-   * An authentication dialog (SecurityAgent, coreautha) is on screen, or secure keyboard entry is on (a password is
-   * being typed somewhere): no screenshot. True when it can't be checked.
+   * A window of the system's that takes credentials or consent is on screen (SECURITY_OWNERS: authorisation and
+   * Touch ID prompts, privacy and Gatekeeper prompts, passkey sheets, the screen saver), or secure keyboard entry is
+   * on (a password is being typed somewhere) or can't be checked: no screenshot. True when it can't be checked.
    */
   systemDialogOpen(): boolean;
   /** Is Ember trusted for Accessibility (focus, titles, activation and input need it)? */
   accessibilityTrusted(): boolean;
   /** Does Ember have the Screen Recording permission (capture and other apps' window titles need it)? */
   screenRecording(): boolean;
+  /**
+   * Secure keyboard entry and the app holding it, for the refusal text and the doctor's "Secure input" row. `on` is
+   * null when it can't be told (and after close()).
+   */
+  secureInput(): DarwinSecureInput;
+  /**
+   * Input Monitoring (CGPreflightListenEventAccess): without it Ember may not see the user's keys, so keyboard
+   * borrowing is refused (fail closed until shown otherwise). null after close() or where the call doesn't exist.
+   */
+  inputMonitoring(): boolean | null;
+  /**
+   * Asks macOS for Input Monitoring (CGRequestListenEventAccess: the system prompt, once, and Ember listed in System
+   * Settings); for the setup check's fix. null after close() or where the call doesn't exist.
+   */
+  requestInputMonitoring(): boolean | null;
 }
 
 /** Tunables and seams for the tests. */
@@ -68,6 +87,16 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
   const ownPid = o.ownPid ?? process.pid;
   const now = o.now ?? Date.now;
   let open = true;
+  let unknownLogged = false;
+  /** Secure input, logging (once) when it can't be told. */
+  const secure = (): DarwinSecureInput => {
+    const state = secureInputOf(desktop);
+    if (state.on === null && !unknownLogged) {
+      unknownLogged = true;
+      deps.log?.warn("platform.secure_input_unknown", { part: "windows" });
+    }
+    return state;
+  };
 
   const windowId = (win: OwnWindowHandle): number => {
     try {
@@ -189,7 +218,7 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
     systemDialogOpen() {
       if (!open) return true;
       try {
-        if (desktop.secureInput()) return true;
+        if (secure().on !== false) return true; // on, or nobody can tell
         return desktop.windows().some(e => SECURITY_OWNERS.has(e.owner) && e.alpha > 0);
       } catch {
         return true; // can't check: assume one is up
@@ -202,6 +231,23 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
 
     screenRecording() {
       return open && screenAccess();
+    },
+
+    secureInput() {
+      if (!open) return { on: null, pid: null, app: "" };
+      try {
+        return secure();
+      } catch {
+        return { on: null, pid: null, app: "" }; // can't check
+      }
+    },
+
+    inputMonitoring() {
+      return open ? desktop.listenAccess() : null;
+    },
+
+    requestInputMonitoring() {
+      return open ? desktop.requestListenAccess() : null;
     },
 
     close() {
@@ -223,7 +269,7 @@ export function openDarwinWindows(deps: DarwinWindowsDeps): DarwinWindowSystem |
     return null;
   }
   try {
-    const desktop = openDesktop();
+    const desktop = openDesktop({ log: deps.log });
     if (!desktop) {
       darwinWindowsError = desktopError;
       return null;

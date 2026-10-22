@@ -73,12 +73,17 @@ export interface AXRaw {
   readonly kAXTrustedCheckOptionPrompt: Ref | null;
 }
 
-/** A decoded AXValue. */
+/**
+ * A decoded AXValue. `error` is kAXValueAXErrorType: AXUIElementCopyMultipleAttributeValues (options 0) puts a failed
+ * attribute's AXError in its slot as one of these instead of failing the call, so a busy app's partial answer must
+ * read as that error (kAXErrorCannotComplete), never as an attribute that is simply absent.
+ */
 export type AXValue =
   | { type: "point"; x: number; y: number }
   | { type: "size"; width: number; height: number }
   | { type: "rect"; x: number; y: number; width: number; height: number }
-  | { type: "range"; location: number; length: number };
+  | { type: "range"; location: number; length: number }
+  | { type: "error"; code: number };
 
 /** The name of an AXError code, for logs ("cannotComplete"), or the number itself when unknown. */
 export function axErrorName(code: number): string {
@@ -86,8 +91,12 @@ export function axErrorName(code: number): string {
   return String(code);
 }
 
-/** Decodes what AXValueGetValue wrote for `type` (CGPoint/CGSize: two doubles; CGRect: four; CFRange: two longs). */
+/**
+ * Decodes what AXValueGetValue wrote for `type` (CGPoint/CGSize: two doubles; CGRect: four; CFRange: two longs;
+ * AXError: one int32). null for a type it doesn't know or a buffer too short for it.
+ */
 export function decodeAXValue(type: number, buf: Buffer): AXValue | null {
+  if (type === AX_VALUE.axError) return buf.length >= 4 ? { type: "error", code: buf.readInt32LE(0) } : null;
   if (buf.length < 32) return null;
   const d = (i: number) => buf.readDoubleLE(i * 8);
   const finite = (...v: number[]) => v.every(Number.isFinite);
@@ -117,6 +126,11 @@ export interface AX {
   number(element: Ref, attribute: string): number | null;
   boolean(element: Ref, attribute: string): boolean | null;
   value(element: Ref, attribute: string): AXValue | null;
+  /**
+   * A CF object already in hand (a slot of a batched read) as a decoded AXValue, or null when it isn't an AXValue.
+   * Borrowed: not released.
+   */
+  decode(ref: Ref | null | undefined): AXValue | null;
   /** AXPosition + AXSize as a Rect (points). */
   frame(element: Ref): Rect | null;
   /** An element-valued attribute (+1: release it), e.g. AXFocusedWindow. */
@@ -156,8 +170,8 @@ export function makeAX(raw: AXRaw, cf: CF): AX {
     }
     return { error, value };
   };
-  const decode = (ref: Ref): AXValue | null => {
-    if (!isAXValue(ref)) return null;
+  const decode = (ref: Ref | null | undefined): AXValue | null => {
+    if (!ref || !isAXValue(ref)) return null;
     const type = raw.AXValueGetType(ref);
     const buf = Buffer.alloc(32);
     return raw.AXValueGetValue(ref, type, buf) ? decodeAXValue(type, buf) : null;
@@ -186,6 +200,7 @@ export function makeAX(raw: AXRaw, cf: CF): AX {
     value(element, attribute) {
       return cf.own(copy(element, attribute).value, decode);
     },
+    decode,
     frame(element) {
       const p = ax.value(element, "AXPosition"), s = ax.value(element, "AXSize");
       if (p?.type !== "point" || s?.type !== "size") return null;

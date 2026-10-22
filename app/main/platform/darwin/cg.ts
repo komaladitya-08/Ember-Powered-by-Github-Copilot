@@ -84,10 +84,16 @@ export const CG_PROTOTYPES = {
   CGSessionCopyCurrentDictionary: "void *CGSessionCopyCurrentDictionary(void)",
 } as const;
 
-/** Functions newer than some macOS Ember might meet, bound when present. */
+/**
+ * Functions newer than some macOS Ember might meet, bound when present (all exist from macOS 10.15, the release
+ * that added the Screen Recording and Input Monitoring permissions they ask about). ListenEvent is Input Monitoring:
+ * whether this process may observe the keyboard; PostEvent is whether the events it posts are delivered.
+ */
 export const CG_OPTIONAL_PROTOTYPES = {
   CGPreflightScreenCaptureAccess: "bool CGPreflightScreenCaptureAccess(void)",
   CGPreflightPostEventAccess: "bool CGPreflightPostEventAccess(void)",
+  CGPreflightListenEventAccess: "bool CGPreflightListenEventAccess(void)",
+  CGRequestListenEventAccess: "bool CGRequestListenEventAccess(void)",
 } as const;
 
 /** CoreGraphics as koffi binds it. */
@@ -117,6 +123,9 @@ export interface CGRaw {
   CGSessionCopyCurrentDictionary(): Ref | null;
   CGPreflightScreenCaptureAccess?(): boolean;
   CGPreflightPostEventAccess?(): boolean;
+  CGPreflightListenEventAccess?(): boolean;
+  /** Asks for Input Monitoring (macOS shows its prompt once, and lists the app in System Settings); true when granted. */
+  CGRequestListenEventAccess?(): boolean;
 }
 
 /** koffi's named types for CoreGraphics' structs (defined once per process). */

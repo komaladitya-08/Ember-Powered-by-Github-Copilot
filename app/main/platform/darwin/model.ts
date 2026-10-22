@@ -56,8 +56,71 @@ export const SYSTEM_OWNERS: ReadonlySet<string> = new Set([
   "Window Server", "Dock", "SystemUIServer", "Control Center", "Notification Center", "WindowManager",
 ]);
 
-/** Owners of the system's authentication dialogs (authorisation prompts, Touch ID / password sheets). */
-export const SECURITY_OWNERS: ReadonlySet<string> = new Set(["SecurityAgent", "coreautha"]);
+/**
+ * Owners of the system's windows that take credentials or consent, while which Ember takes no screenshot: the
+ * authorisation prompts and Touch ID / password sheets (SecurityAgent, coreautha, coreauthd), "… would like to control
+ * this computer using accessibility features" (universalAccessAuthWarn), privacy (TCC) prompts
+ * (UserNotificationCenter), Gatekeeper (CoreServicesUIAgent), passkey and AutoFill sheets
+ * (AuthenticationServicesAgent) and the screen saver's lock (ScreenSaverEngine). A screenshot or click while the
+ * Accessibility prompt is up is the self-approval path to avoid. TODO(port): read SECURITY_APP.darwin from
+ * policy/vocabulary.ts once that file exists, so perception, this list and the accessibility host's shell_overlays
+ * can't drift (design §8.4).
+ */
+export const SECURITY_OWNERS: ReadonlySet<string> = new Set([
+  "SecurityAgent", "coreautha", "coreauthd", "universalAccessAuthWarn", "UserNotificationCenter", "CoreServicesUIAgent",
+  "AuthenticationServicesAgent", "ScreenSaverEngine",
+]);
+
+/**
+ * Secure keyboard entry as Ember decides it: `on` true or false, or null when Ember can't tell (it then acts as if
+ * it were on). `pid` is the process holding it, when the session names one.
+ */
+export interface SecureInputState {
+  on: boolean | null;
+  pid: number | null;
+}
+
+/**
+ * Secure keyboard entry from IsSecureEventInputEnabled (`api`, null when it can't be called) and the session
+ * dictionary's kCGSSessionSecureInputPID (`session`, null when the dictionary can't be read). The API decides when
+ * it answers; without it the session's pid is the signal (present only while some process holds secure input);
+ * without either, nobody can tell.
+ */
+export function secureInputState(api: boolean | null, session: { secureInputPid: number | null } | null): SecureInputState {
+  const pid = session?.secureInputPid ?? null;
+  if (api !== null) return { on: api, pid: api ? pid : null };
+  if (!session) return { on: null, pid: null };
+  return { on: pid !== null, pid };
+}
+
+/**
+ * The application bundle an executable belongs to: the innermost ".app" folder above it
+ * ("/Applications/TextEdit.app/Contents/MacOS/TextEdit" → "/Applications/TextEdit.app"), or null for a process
+ * outside any bundle (a command-line tool), which LaunchServices can't activate.
+ */
+export function bundleOf(executable: string | null | undefined): string | null {
+  if (!executable || !executable.startsWith("/")) return null;
+  const parts = executable.split("/");
+  for (let i = parts.length - 2; i > 0; i--) {
+    if (parts[i]!.endsWith(".app") && parts[i]!.length > 4) return parts.slice(0, i + 1).join("/");
+  }
+  return null;
+}
+
+/** A process's name from its executable: its bundle's name ("1Password" for ".../1Password.app/..."), else the file's. */
+export function processName(executable: string | null | undefined): string {
+  if (!executable) return "";
+  const bundle = bundleOf(executable);
+  const base = (bundle ?? executable).split("/").pop() ?? "";
+  return bundle ? base.slice(0, -".app".length) : base;
+}
+
+/** The CGKeyCodes down in a GetKeys KeyMap (16 bytes: key k is bit k & 7 of byte k >> 3). */
+export function keysInMap(map: Buffer): number[] {
+  const down: number[] = [];
+  for (let k = 0; k < Math.min(map.length, 16) * 8; k++) if (map[k >> 3]! & (1 << (k & 7))) down.push(k);
+  return down;
+}
 
 const MAX_WINDOW_ID = 0xffffffff;
 

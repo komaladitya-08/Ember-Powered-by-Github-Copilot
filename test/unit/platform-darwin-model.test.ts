@@ -1,14 +1,16 @@
 /**
  * The macOS window logic over CGWindowList entries: which entries are kept, the X11-shaped stack (bottom to top,
  * menus and the Dock as popups that still cover), the apps' open windows, the front window of an app, AX windows
- * mapped to CGWindowIDs, where a click lands, finding a window by title with XInput's rules, and own-window ids from
- * Electron's media source id.
+ * mapped to CGWindowIDs, where a click lands, finding a window by title with XInput's rules, own-window ids from
+ * Electron's media source id, the security prompts' owners, secure input from its two signals, app bundles from
+ * executables, and GetKeys' KeyMap.
  */
 
 import { describe, expect, it } from "vitest";
 import {
-  OVERLAY_TITLE, axWindowId, clientWindowsOf, findWindowIn, frontWindowOf, ownFrontWindow, parseMediaSourceId, pointerLandsOn,
-  sameFrame, stackOf, unionRect, windowEntry, type CGWindowEntry, type RawWindowInfo, type TitledWindow,
+  OVERLAY_TITLE, SECURITY_OWNERS, axWindowId, bundleOf, clientWindowsOf, findWindowIn, frontWindowOf, keysInMap, ownFrontWindow,
+  parseMediaSourceId, pointerLandsOn, processName, sameFrame, secureInputState, stackOf, unionRect, windowEntry,
+  type CGWindowEntry, type RawWindowInfo, type TitledWindow,
 } from "../../app/main/platform/darwin/model";
 
 const OWN = 4242;
@@ -182,5 +184,58 @@ describe("the screen's extent", () => {
     expect(unionRect([{ x: 0, y: 0, width: 1440, height: 900 }, { x: -1280, y: -200, width: 1280, height: 800 }])).toEqual({ x: -1280, y: -200, width: 2720, height: 1100 });
     expect(unionRect([])).toBeNull();
     expect(unionRect([{ x: 0, y: 0, width: 0, height: 10 }])).toBeNull();
+  });
+});
+
+describe("the system's credential and consent prompts (M17)", () => {
+  it("names every owner whose window takes credentials or consent", () => {
+    expect([...SECURITY_OWNERS].sort()).toEqual([
+      "AuthenticationServicesAgent", "CoreServicesUIAgent", "ScreenSaverEngine", "SecurityAgent", "UserNotificationCenter",
+      "coreautha", "coreauthd", "universalAccessAuthWarn",
+    ]);
+  });
+});
+
+describe("secure keyboard entry from its two signals (M18)", () => {
+  it("goes by IsSecureEventInputEnabled when it answers, naming the session's holder only while it is on", () => {
+    expect(secureInputState(true, { secureInputPid: 88 })).toEqual({ on: true, pid: 88 });
+    expect(secureInputState(true, null)).toEqual({ on: true, pid: null });
+    expect(secureInputState(false, { secureInputPid: 88 })).toEqual({ on: false, pid: null });
+  });
+
+  it("goes by the session's secure-input pid when the call can't be made, and can't tell without either", () => {
+    expect(secureInputState(null, { secureInputPid: 88 })).toEqual({ on: true, pid: 88 });
+    expect(secureInputState(null, { secureInputPid: null })).toEqual({ on: false, pid: null });
+    expect(secureInputState(null, null)).toEqual({ on: null, pid: null });
+  });
+});
+
+describe("app bundles and process names", () => {
+  it("finds the innermost app bundle above an executable, and none outside one", () => {
+    expect(bundleOf("/System/Applications/TextEdit.app/Contents/MacOS/TextEdit")).toBe("/System/Applications/TextEdit.app");
+    expect(bundleOf("/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator"))
+      .toBe("/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app");
+    expect(bundleOf("/Applications/My Tools/Some App.app/Contents/MacOS/Some App")).toBe("/Applications/My Tools/Some App.app");
+    expect(bundleOf("/usr/local/bin/pinentry")).toBeNull();
+    expect(bundleOf("/.app/x")).toBeNull();
+    expect(bundleOf("relative/Thing.app/Contents/MacOS/Thing")).toBeNull();
+    expect([bundleOf(""), bundleOf(null)]).toEqual([null, null]);
+  });
+
+  it("names a process by its bundle, else by its file", () => {
+    expect(processName("/Applications/1Password.app/Contents/MacOS/1Password")).toBe("1Password");
+    expect(processName("/usr/local/bin/pinentry-mac")).toBe("pinentry-mac");
+    expect(processName(null)).toBe("");
+  });
+});
+
+describe("GetKeys' KeyMap", () => {
+  it("reads key k from bit k & 7 of byte k >> 3", () => {
+    const map = Buffer.alloc(16);
+    map[0] = 0b1000_0001;
+    map[6] = 0b0000_0010;
+    map[15] = 0b1000_0000;
+    expect(keysInMap(map)).toEqual([0, 7, 49, 127]);
+    expect(keysInMap(Buffer.alloc(16))).toEqual([]);
   });
 });
