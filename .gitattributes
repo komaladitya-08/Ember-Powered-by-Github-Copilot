@@ -1,0 +1,29 @@
+# Every text file is checked out with LF, also on Windows (core.autocrlf there would make CRLF): shell scripts,
+# the AppRun heredoc packaging.test.ts cuts out, and tests that match source text all expect "\n".
+* text=auto eol=lf
+
+# Windows batch files are the one kind that needs CRLF (cmd.exe misreads labels in LF files).
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binaries: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.wav binary
+*.onnx binary
+*.zip binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+*.dll binary
+*.node binary
+*.exe binary
+*.dylib binary
+*.so binary

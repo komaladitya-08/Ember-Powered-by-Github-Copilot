@@ -1,10 +1,13 @@
-/** M9: `ember doctor`, start at login, and the RPM's promises. */
+/** M9: `ember doctor`, start at login, the RPM's promises, and the Windows and macOS packages (M11). */
 
 import { describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout.mjs";
+import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
+import { BUNDLE_ID, EXECUTABLE, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { autostartEntry, autostartFile, execArg, launchCommand, syncAutostart } from "../../app/main/autostart";
 import { inspectEnvironment } from "../../app/main/environment";
@@ -134,6 +137,14 @@ describe("the RPM's licences", () => {
     for (const [k, v] of bundled) for (const id of (v.license ?? "(none)").split(/\s+(?:AND|OR)\s+|[()]/).filter(Boolean)) expect(tag, k).toContain(id);
     for (const id of ["MIT", "BSD-3-Clause", "LGPL-2.1-or-later"]) expect(tag).toContain(id); // Electron, Chromium, FFmpeg
   });
+  it("names the licence of every package the Windows and macOS builds bundle too (one tag for every target)", () => {
+    const lock = JSON.parse(fs.readFileSync(path.resolve("package-lock.json"), "utf8")) as { packages: Record<string, { dev?: boolean; license?: string }> };
+    for (const target of TARGETS) {
+      const { bundle, missing } = selectPackages(Object.keys(lock.packages).filter(k => k && !lock.packages[k].dev), layoutFor(target.split("-")[0], target.split("-")[1]));
+      expect(missing, target).toEqual([]);
+      for (const k of bundle) for (const id of (lock.packages[k].license ?? "(none)").split(/\s+(?:AND|OR)\s+|[()]/).filter(Boolean)) expect(tag, `${target}: ${k}`).toContain(id);
+    }
+  });
   it("marks licence and notice files %license and sets plain modes before the sandbox helper's", () => {
     expect(spec).toMatch(/%%license \\1@I/);
     const install = spec.slice(spec.indexOf("%install"), spec.indexOf("%post"));
@@ -142,7 +153,8 @@ describe("the RPM's licences", () => {
   });
 });
 
-describe("the launchers", () => {
+// The RPM's and the AppImage's sh launchers, run with /bin/sh (which Windows doesn't have).
+describe.skipIf(process.platform === "win32")("the launchers", () => {
   // Each runs with a stand-in Ember that prints its arguments, as root (uid 0) or a normal user.
   const run = (script: string, args: string[], uid: number, display?: string) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-launcher-"));
@@ -166,7 +178,8 @@ describe("the launchers", () => {
   });
 });
 
-describe("the glibc check (check-symvers.sh)", () => {
+// glibc symbol versions of x86-64 ELF binaries: Linux only (macOS's binaries are Mach-O, Windows's are PE).
+describe.skipIf(process.platform !== "linux")("the glibc check (check-symvers.sh)", () => {
   const script = path.resolve("scripts/check-symvers.sh");
   const has = (t: string) => spawnSync("sh", ["-c", `command -v ${t}`]).status === 0;
   const bash = has("bash") ? execFileSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).trim() : "bash";
@@ -191,5 +204,213 @@ describe("the glibc check (check-symvers.sh)", () => {
     const broken = dir();
     fs.writeFileSync(path.join(broken, "objdump"), "#!/bin/sh\necho 'objdump: bad' >&2\nexit 1\n", { mode: 0o755 });
     expect(run([one], `${broken}:${process.env.PATH}`)).toMatchObject({ status: 1, stdout: expect.stringMatching(/^FAIL .*true: objdump couldn't read/m) });
+  });
+});
+
+describe("the Windows icon", () => {
+  const png = (n: number) => Buffer.from(`\x89PNG fake ${n}`, "latin1");
+  it("is an .ico of PNG images, 16 to 256 pixels, with 256 written as 0", () => {
+    const ico = icoFromPngs(ICO_SIZES.map(size => ({ size, png: png(size) })));
+    expect(ico.readUInt16LE(0)).toBe(0);
+    expect(ico.readUInt16LE(2)).toBe(1);
+    expect(ico.readUInt16LE(4)).toBe(ICO_SIZES.length);
+    let expected = 6 + 16 * ICO_SIZES.length;
+    ICO_SIZES.forEach((size, i) => {
+      const e = 6 + 16 * i;
+      expect(ico[e]).toBe(size === 256 ? 0 : size);
+      expect(ico[e + 1]).toBe(size === 256 ? 0 : size);
+      expect(ico.readUInt16LE(e + 6)).toBe(32);
+      const [length, offset] = [ico.readUInt32LE(e + 8), ico.readUInt32LE(e + 12)];
+      expect(offset).toBe(expected);
+      expect(ico.subarray(offset, offset + length).equals(png(size))).toBe(true);
+      expected += length;
+    });
+    expect(ico.length).toBe(expected);
+    expect(ICO_SIZES).toContain(256);
+  });
+  it("refuses sizes the format can't hold", () => {
+    expect(() => icoFromPngs([])).toThrow(/at least one/);
+    expect(() => icoFromPngs([{ size: 512, png: png(1) }])).toThrow(/1 to 256/);
+  });
+});
+
+describe("the macOS app bundle", () => {
+  it("has every image iconutil needs for an .icns", () => {
+    expect(ICONSET.map(i => `${i.name}:${i.size}`)).toEqual([
+      "icon_16x16.png:16", "icon_16x16@2x.png:32", "icon_32x32.png:32", "icon_32x32@2x.png:64", "icon_128x128.png:128",
+      "icon_128x128@2x.png:256", "icon_256x256.png:256", "icon_256x256@2x.png:512", "icon_512x512.png:512", "icon_512x512@2x.png:1024",
+    ]);
+  });
+
+  it("says “Ember” in Info.plist, with a bundle id macOS accepts and the texts its prompts show", () => {
+    const values = Object.fromEntries(infoPlistValues("1.2.3").map(([k, , v]) => [k, v]));
+    expect(BUNDLE_ID).toBe("io.github.komaladitya08.ember");
+    expect(BUNDLE_ID).toMatch(/^[A-Za-z0-9.-]+$/); // no "_": TCC and LaunchServices refuse it
+    expect(values).toMatchObject({
+      CFBundleName: "Ember", CFBundleDisplayName: "Ember", CFBundleIdentifier: BUNDLE_ID, CFBundleShortVersionString: "1.2.3", CFBundleVersion: "1.2.3",
+      CFBundleIconFile: "ember.icns", LSApplicationCategoryType: "public.app-category.productivity", LSMinimumSystemVersion: "13.0", NSHighResolutionCapable: true,
+      NSMicrophoneUsageDescription: "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac.",
+    });
+    expect(values.NSAppleEventsUsageDescription).toMatch(/appearance settings.*when you ask/);
+    // The executable stage.mjs renamed (layout.mjs), so that Electron's app.isPackaged is true.
+    expect(values.CFBundleExecutable).toBe(EXECUTABLE);
+    expect(layoutFor("darwin", "arm64").exe).toBe(`Contents/MacOS/${EXECUTABLE}`);
+  });
+
+  /** A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. */
+  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean } = {}) => {
+    const plist: Record<string, string> = { CFBundleName: "Electron", CFBundleIdentifier: "com.github.Electron", CFBundleExecutable: "Electron", ElectronAsarIntegrity: "<dict/>" };
+    const calls: string[][] = [];
+    const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
+    const run = (file: string, args: string[]): RunResult => {
+      calls.push([file, ...args]);
+      if (file === "plutil" && args[0] === "-replace") {
+        if (args[1] !== o.ignore) plist[args[1]] = args[2] === "-bool" ? String(args[3] === "YES") : args[3];
+        return ok();
+      }
+      if (file === "plutil" && args[0] === "-extract") {
+        expect(args.slice(3, 5)).toEqual(["-o", "-"]); // without -o, plutil would overwrite the file
+        // Like plutil: raw prints strings, numbers and booleans only (ElectronAsarIntegrity is a dictionary).
+        if (args[2] === "raw" && plist[args[1]]?.startsWith("<dict")) return { status: 1, stdout: "", stderr: "not a raw value" };
+        return args[1] in plist ? ok(`${plist[args[1]]}\n`) : { status: 1, stdout: "", stderr: "No value at that key path." };
+      }
+      if (file === "plutil" && args[0] === "-remove") { delete plist[args[1]]; return ok(); }
+      if (file === "iconutil") { fs.writeFileSync(args[args.indexOf("-o") + 1], "icns"); return ok(); }
+      if (file === "codesign" && args[0] === "--verify" && o.verifyFails) return { status: 1, stdout: "", stderr: "a sealed resource is missing or invalid" };
+      return ok();
+    };
+    const app = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-bundle-")), "Ember.app");
+    fs.mkdirSync(path.join(app, "Contents", "Resources"), { recursive: true });
+    fs.mkdirSync(path.join(app, "Contents", "MacOS"));
+    if (!o.noExecutable) fs.writeFileSync(path.join(app, "Contents", "MacOS", EXECUTABLE), "");
+    fs.writeFileSync(path.join(app, "Contents", "Info.plist"), "<plist/>");
+    fs.writeFileSync(path.join(app, "Contents", "Resources", "electron.icns"), "electron");
+    const iconsets: string[] = [];
+    const writeIconset = async (_svg: string, dir: string) => { iconsets.push(dir); };
+    const finish = () => finishMacBundle({ app, version: "0.1.0", svg: "ember.svg", tmp: path.dirname(app), run, writeIconset });
+    return { plist, calls, app, iconsets, finish };
+  };
+
+  it("edits Info.plist, reads every value back, adds the icon, and signs ad hoc last", async () => {
+    const mac = fakeMac();
+    await mac.finish();
+    const plistFile = path.join(mac.app, "Contents", "Info.plist");
+    const line = (c: string[]) => c.join(" ");
+    expect(line(mac.calls[0])).toBe(`plutil -convert xml1 ${plistFile}`);
+    expect(mac.plist).toMatchObject({ CFBundleName: "Ember", CFBundleIdentifier: BUNDLE_ID, CFBundleExecutable: EXECUTABLE, NSHighResolutionCapable: "true", LSMinimumSystemVersion: "13.0" });
+    expect(mac.plist).not.toHaveProperty("ElectronAsarIntegrity");
+    expect(mac.calls.filter(c => c[1] === "-remove").map(c => c[2])).toEqual(["ElectronAsarIntegrity"]);
+    expect(mac.calls.filter(c => c[1] === "-extract").length).toBeGreaterThanOrEqual(infoPlistValues("0.1.0").length);
+    expect(mac.iconsets).toEqual([path.join(path.dirname(mac.app), "ember.iconset")]);
+    expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "ember.icns"))).toBe(true);
+    expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "electron.icns"))).toBe(false);
+    // The signature covers every change: nothing touches the bundle after it.
+    expect(mac.calls.slice(-3).map(line)).toEqual([
+      `xattr -cr ${mac.app}`,
+      `codesign --force --deep --sign - --timestamp=none ${mac.app}`,
+      `codesign --verify --deep --strict --verbose=2 ${mac.app}`,
+    ]);
+  });
+
+  it("stops before signing when a value doesn't read back, or when the signature doesn't verify", async () => {
+    const wrong = fakeMac({ ignore: "CFBundleIdentifier" });
+    await expect(wrong.finish()).rejects.toThrow(/CFBundleIdentifier is "com\.github\.Electron", should be "io\.github\.komaladitya08\.ember"/);
+    expect(wrong.calls.some(c => c[0] === "codesign")).toBe(false);
+    await expect(fakeMac({ verifyFails: true }).finish()).rejects.toThrow(/verifying Ember\.app's signature failed.*sealed resource/);
+  });
+
+  it("refuses a bundle whose executable wasn't renamed, before touching it", async () => {
+    const mac = fakeMac({ noExecutable: true });
+    await expect(mac.finish()).rejects.toThrow(/has no Contents\/MacOS\/Ember/);
+    expect(mac.calls).toEqual([]);
+  });
+
+  it("is staged in order: fuses flipped, app files in, then Info.plist, icon and signature", () => {
+    const stage = fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8");
+    const at = (s: string) => { const i = stage.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
+    expect(at("flipFuses(path.join(app, layout.fuseFile)")).toBeLessThan(at("for (const src of prod)"));
+    expect(at("THIRD_PARTY_NOTICES\"), [")).toBeLessThan(at("await finishMacBundle("));
+    expect(at("for (const p of layout.prune)")).toBeLessThan(at("await finishMacBundle("));
+  });
+});
+
+describe("staging in CI", () => {
+  const ci = fs.readFileSync(path.resolve(".github/workflows/ci.yml"), "utf8");
+  it("stages the Linux packages with every file required (no --allow-missing-sidecar)", () => {
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    expect(job).toMatch(/^\s+node scripts\/package\/stage\.mjs$/m);
+    expect(job).not.toContain("--allow-missing");
+  });
+  it("marks every use of --allow-missing-sidecar and --allow-missing for removal", () => {
+    const lines = ci.split("\n");
+    const uses = lines.flatMap((l, i) => (/--allow-missing/.test(l) && !/^\s*#/.test(l) ? [i] : []));
+    expect(uses.length).toBeGreaterThan(0);
+    for (const i of uses) expect(lines.slice(Math.max(0, i - 4), i).join("\n"), lines[i]).toMatch(/TODO\(port\): drop --allow-missing/);
+  });
+});
+
+describe("the integration runner (scripts/run-integration.mjs)", () => {
+  const run = (...args: string[]) => spawnSync(process.execPath, [path.resolve("scripts/run-integration.mjs"), ...args], { encoding: "utf8" });
+  it("refuses a test file that doesn't exist, rather than skipping it silently", () => {
+    expect(run("test/integration/no-such-suite.test.ts")).toMatchObject({ status: 2, stderr: expect.stringMatching(/no such test file: test\/integration\/no-such-suite\.test\.ts/) });
+  });
+  it("drops files that don't exist yet with --allow-missing, and runs nothing when none are left", () => {
+    const r = run("--allow-missing", "test/integration/no-such-suite.test.ts");
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/no-such-suite\.test\.ts doesn't exist yet: not run/);
+    expect(r.stdout).toMatch(/nothing to run/);
+  });
+});
+
+// The smoke test against a stand-in Ember (a Node script it runs as the packaged binary). Windows can't run a script
+// as an executable, so this runs on Linux and macOS; the Windows CI job runs the real packaged Ember.exe.
+describe.skipIf(process.platform === "win32")("the smoke test (test/smoke/launch.mjs --exe)", () => {
+  const fake = (() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-fake-exe-"));
+    const file = path.join(dir, "ember.mjs");
+    fs.writeFileSync(file, `#!${process.execPath}
+import fs from "node:fs";
+import path from "node:path";
+const dir = process.env.EMBER_USER_DATA;
+const log = msg => console.log(JSON.stringify({ level: "info", msg }));
+const mode = process.env.FAKE_EMBER_MODE;
+if (mode === "start-failed") { log("app.start_failed"); setInterval(() => {}, 1000); }
+else if (mode === "crash") { console.error("libsomething.so: cannot open shared object file"); process.exit(3); }
+else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(dir, "second"), ""); log("instance.handover"); }
+else {
+  fs.writeFileSync(path.join(dir, "first"), "");
+  log("window.home.shown");
+  setInterval(() => { if (fs.existsSync(path.join(dir, "second"))) { fs.rmSync(path.join(dir, "second")); log("instance.second"); } }, 50);
+}
+`, { mode: 0o755 });
+    return file;
+  })();
+  const smoke = (mode: string) => {
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--exe", fake], {
+      encoding: "utf8", timeout: 60_000, env: { ...process.env, FAKE_EMBER_MODE: mode, EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "" },
+    });
+    return { ...r, ms: Date.now() - t0 };
+  };
+
+  it("passes when the window shows and a second launch hands over", () => {
+    const r = smoke("ok");
+    expect(r.stdout).toMatch(/ok {3}first instance showed its window\nok {3}second launch handed over/);
+    expect(r.status).toBe(0);
+  });
+
+  it("fails at once on app.start_failed, quoting it, and stops the app", () => {
+    const r = smoke("start-failed");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/FAIL .*"msg":"app\.start_failed".*\(waiting for home window\)/);
+    expect(r.ms).toBeLessThan(15_000);
+  });
+
+  it("fails at once when the app exits before its window, showing what it said", () => {
+    const r = smoke("crash");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/FAIL the first instance exited with 3/);
+    expect(r.stderr).toMatch(/cannot open shared object file/);
+    expect(r.ms).toBeLessThan(15_000);
   });
 });

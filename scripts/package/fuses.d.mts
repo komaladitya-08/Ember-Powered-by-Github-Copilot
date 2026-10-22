@@ -4,6 +4,7 @@ export declare const SENTINEL: string;
 export declare const WIRE_VERSION: number;
 export declare const FUSES: string[];
 export declare const EMBER_FUSES: Record<string, boolean>;
+export declare function fatArchCount(bin: Buffer): number;
 export declare function findWire(bin: Buffer): { start: number; length: number };
 export declare function readFuses(bin: Buffer): Record<string, FuseValue>;
 export declare function setFuses(bin: Buffer, config: Record<string, boolean>): Record<string, FuseValue>;
