@@ -1,12 +1,20 @@
 /**
  * Tier 0: things Ember changes without touching any window. A short list of
  * comfort settings (gsettings) and launching apps from their .desktop files.
+ * The terminal and shell checks, the value grammar and the app environment are
+ * shared with the Windows and macOS catalogues (their vocabularies are keyed by OS
+ * in hands/terminals.ts); every OS argument defaults to Linux, today's behaviour.
  */
 
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { OS } from "../../shared/shortcuts";
+import type { AppIdentity } from "../platform/types";
+import {
+  INTERPRETERS, LAUNCHERS, REFUSED, SHELLS, SHELL_APP, SHELL_APP_ID, SHELL_APP_NAME, SHELL_MODULES, TERMINALS, TERMINAL_CLASSES, TERMINAL_NAME, WRAPPERS,
+} from "./terminals";
 
 const run = (cmd: string, args: string[]) => new Promise<string>((resolve, reject) => {
   execFile(cmd, args, { timeout: 5000 }, (err, stdout, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve(stdout.trim())));
@@ -25,13 +33,28 @@ export type SettingName = keyof typeof SETTINGS;
 
 interface Key { schema: string; key: string }
 
+/**
+ * The on/off grammar of change_setting values ("on", "true", "yes", "1"; anything else is off), shared by every
+ * OS's settings so the model's words mean the same everywhere.
+ */
+export function parseOnOff(value: string): boolean {
+  return /^(true|on|yes|1)$/i.test(value);
+}
+
+/** A text-size value: a scale factor from 0.5 to 3 (1 is normal); throws in plain words otherwise. */
+export function parseScale(value: string): number {
+  const n = Number(value);
+  if (!(n >= 0.5 && n <= 3)) throw new Error("text size must be between 0.5 and 3");
+  return n;
+}
+
 async function hasKey(k: Key): Promise<boolean> {
   try { await run("gsettings", ["writable", k.schema, k.key]); return true; } catch { return false; }
 }
 
 /** Where each setting lives, with a fallback for older GNOME (RHEL 8 ships 3.32). */
 async function locate(name: SettingName): Promise<{ key: Key; encode: (v: string, raw: string) => string; decode: (raw: string) => string }> {
-  const bool = (v: string) => (/^(true|on|yes|1)$/i.test(v) ? "true" : "false");
+  const bool = (v: string) => (parseOnOff(v) ? "true" : "false");
   const asIs = (raw: string) => raw;
   switch (name) {
     case "night_light": return { key: { schema: "org.gnome.settings-daemon.plugins.color", key: "night-light-enabled" }, encode: bool, decode: asIs };
@@ -40,7 +63,7 @@ async function locate(name: SettingName): Promise<{ key: Key; encode: (v: string
       return { key: { schema: "org.gnome.desktop.notifications", key: "show-banners" }, encode: v => (bool(v) === "true" ? "false" : "true"), decode: raw => (raw === "false" ? "true" : "false") };
     case "text_size": return {
       key: { schema: "org.gnome.desktop.interface", key: "text-scaling-factor" },
-      encode: v => { const n = Number(v); if (!(n >= 0.5 && n <= 3)) throw new Error("text size must be between 0.5 and 3"); return String(n); },
+      encode: v => String(parseScale(v)),
       decode: asIs,
     };
     case "battery_percentage": return { key: { schema: "org.gnome.desktop.interface", key: "show-battery-percentage" }, encode: bool, decode: asIs };
@@ -136,63 +159,51 @@ export function parseDesktopFile(text: string): { name: string; keywords: string
   };
 }
 
-/** Terminal emulators, by program name or desktop id (lower case). */
-const TERMINALS = new Set([
-  "xterm", "uxterm", "lxterm", "koi8rxterm", "urxvt", "urxvtc", "urxvtd", "rxvt", "rxvt-unicode", "aterm", "eterm", "mlterm", "st", "stterm", "xvt",
-  "wezterm", "wezterm-gui", "foot", "footclient", "kitty", "alacritty", "terminator", "tilix", "terminix", "konsole", "yakuake", "guake", "tilda",
-  "terminology", "cool-retro-term", "kgx", "gnome-console", "blackbox", "blackbox-terminal", "gnome-terminal", "gnome-terminal-server", "ptyxis",
-  "xfce4-terminal", "mate-terminal", "lxterminal", "qterminal", "sakura", "roxterm", "termite", "deepin-terminal", "hyper", "tabby", "contour",
-  "ghostty", "rio", "zutty", "kmscon", "warp-terminal", "evilvte", "lilyterm", "pterm", "putty", "terminal", "x-terminal-emulator",
-  "xdg-terminal", "xdg-terminal-exec",
-]);
-/** Command shells and terminal multiplexers: given no script, they wait for typed commands. */
-const SHELLS = /^(sh|bash|rbash|dash|zsh|ksh|ksh93|mksh|pdksh|oksh|ash|yash|csh|tcsh|fish|elvish|xonsh|nu|pwsh|busybox|toybox|screen|tmux|byobu)$/;
-/** Interpreters: with -c/-e they run the code given to them; alone, they wait for typed code. */
-const INTERPRETERS = /^(python|pypy|perl|ruby|irb|node|nodejs|deno|bun|lua|luajit|php|tclsh|wish|guile|gjs|jshell|julia|rscript|expect|ipython|bpython|ptpython)[\d.]*$/i;
-/** Python modules that are an interactive shell or an IDE (python -m idlelib). */
-const SHELL_MODULES = /^(idlelib(\..*)?|code|pdb|asyncio|ipython|jupyter.*|qtconsole|thonny|spyder.*|bpython|ptpython)$/i;
-/**
- * Apps with a terminal or shell built in (IDEs, programmers' editors, REPLs): whatever is typed into
- * them can run as a command (Emacs' M-x shell, Vim's :!, IDLE, an IDE's terminal panel). Program
- * names or desktop-id parts, with any version after them.
- */
-const SHELL_APP = new RegExp("^(x?emacs(client)?|g?vimx?|evim|nvim(-qt)?|neovim(-qt)?|neovide|gnvim|idle|thonny|spyder|code(-insiders|-oss)?|codium|vscodium|visual-studio-code"
-  + "|atom|pulsar|subl|sublime_text|sublimetext|sublime-text|kate|geany|gnome-builder|qtcreator|kdevelop|lazarus(-ide)?|monodevelop|netbeans|arduino(-?ide)?"
-  + "|rstudio|octave(-gui|-cli)?|matlab|jupyter[\\w-]*|eclipse|idea|intellij[\\w-]*|pycharm|clion|goland|webstorm|rider|phpstorm|rubymine|datagrip|dataspell"
-  + "|android-?studio|jetbrains[\\w-]*|fleet|zed|lapce|codeblocks|anjuta)"
-  // Versions and editions after the name (emacs-26.1, idle3, idle-python3.6, pycharm-community, idea.sh).
-  + "([-_]?\\d[\\w.]*|-(ce|community|professional|ultimate|edu|eap|nightly|preview|beta|stable|bin|gui|cli|qt|gtk\\d?|x11|nox|lucid|python[\\d.]*))*(\\.sh)?$");
-const SHELL_APP_ID = /^(org\.gnome\.builder|com\.visualstudio\.code.*|com\.vscodium\.codium|org\.kde\.kate|cc\.arduino\..*|org\.qt-project\.qtcreator|com\.jetbrains\..*|com\.google\.androidstudio|org\.octave\.octave|org\.jupyter\..*)$/;
-const SHELL_APP_NAME = /\b(x?emacs|g?vim|neovim|neovide|thonny|spyder|visual studio code|vs ?code|vscodium|code - oss|sublime text|kate|geany|gnome builder|qt ?creator|kdevelop|lazarus|monodevelop|netbeans|arduino|rstudio|octave|matlab|jupyter\w*|eclipse|intellij|jetbrains|pycharm|clion|goland|webstorm|phpstorm|rubymine|datagrip|dataspell|android studio|code::blocks|anjuta)\b/i;
-
-/** Programs that start the next word as the real command (after their own options). */
-const WRAPPERS: Record<string, { value?: string; long?: string[]; positional?: number; noCommand?: RegExp }> = {
-  nohup: {}, setsid: {}, exec: { value: "a" }, "dbus-launch": { long: ["autolaunch", "config-file"] }, "dbus-run-session": { long: ["config-file", "dbus-daemon"] },
-  nice: { value: "n", long: ["adjustment"] },
-  ionice: { value: "cnpPu", long: ["class", "classdata", "pid", "pgid", "uid"], noCommand: /^-([a-z]*[pPu]|-pid|-pgid|-uid)/ },
-  stdbuf: { value: "ioe", long: ["input", "output", "error"] },
-  timeout: { value: "ks", long: ["kill-after", "signal"], positional: 1 },
-  taskset: { positional: 1, noCommand: /^-([a-z]*p|-pid)/ },
-  chrt: { value: "TPD", long: ["sched-runtime", "sched-period", "sched-deadline"], positional: 1, noCommand: /^-([a-z]*[pm]|-pid|-max)/ },
-  flock: { value: "Ew", long: ["conflict-exit-code", "timeout", "wait"], positional: 1 },
-  "systemd-cat": { value: "tp", long: ["identifier", "priority", "stderr-priority", "level-prefix"] },
-  firejail: {}, torsocks: {}, proxychains: {}, proxychains4: {}, "prime-run": {}, primusrun: {}, optirun: {}, vglrun: { value: "dc" }, gamemoderun: {}, mangohud: {},
-  // (Not xdg-terminal-exec: it always opens a terminal, whatever it runs in it, so it is a terminal itself.)
-};
-/**
- * Programs that run commands Ember can't follow, or as someone else: never started. (systemd-run
- * runs it inside the user's own session, sudo and friends as another user, the launchers start
- * another desktop entry, URL or D-Bus service.)
- */
-const REFUSED = /^(sudo|sudoedit|pkexec|su|doas|runuser|run0|sg|newgrp|systemd-run|machinectl|nsenter|unshare|ssh|mosh|telnet|rsh|rlogin|gksu|gksudo|kdesu|kdesudo|beesu|xdg-su|flatpak-spawn|toolbox|distrobox|gtk-launch|gio|gvfs-open|gnome-open|xdg-open|kde-open5?|kioclient5?|exo-open|dex|dbus-send|gdbus|busctl|qdbus(-qt\d)?|dbus-update-activation-environment|snap|xdotool|xte|ydotool)$/;
 /** flatpak run options that take a value (the next word, unless given as --name=value). */
 const FLATPAK_VALUE = new Set(["arch", "branch", "command", "cwd", "runtime", "runtime-version", "commit", "runtime-commit", "filesystem", "nofilesystem",
   "env", "unset-env", "persist", "socket", "nosocket", "device", "nodevice", "share", "unshare", "allow", "disallow", "talk-name", "no-talk-name",
   "own-name", "system-talk-name", "system-no-talk-name", "system-own-name", "add-policy", "remove-policy", "app-path", "usr-path", "instance-id-fd", "parent-pid", "env-fd"]);
 
-const base = (p: string) => path.basename(p).toLowerCase();
-const named = (word: string) => TERMINALS.has(word) || TERMINALS.has(word.replace(/\.(py|pl|rb|js|sh)$/, ""));
-const shellApp = (word: string) => SHELL_APP.test(word);
+/** One OS's terminal and shell vocabulary (hands/terminals.ts). */
+interface Vocabulary {
+  os: OS;
+  terminals: ReadonlySet<string>;
+  shells: RegExp;
+  interpreters: RegExp;
+  shellModules: RegExp;
+  shellApp: RegExp;
+  shellAppId: RegExp;
+  shellAppName: RegExp;
+  terminalName: RegExp;
+  wrappers: (typeof WRAPPERS)[OS];
+  refused: RegExp;
+}
+
+const vocabularies = new Map<OS, Vocabulary>();
+function vocabulary(os: OS): Vocabulary {
+  let v = vocabularies.get(os);
+  if (!v) {
+    v = {
+      os, terminals: TERMINALS[os], shells: SHELLS[os], interpreters: INTERPRETERS[os], shellModules: SHELL_MODULES[os], shellApp: SHELL_APP[os],
+      shellAppId: SHELL_APP_ID[os], shellAppName: SHELL_APP_NAME[os], terminalName: TERMINAL_NAME[os], wrappers: WRAPPERS[os], refused: REFUSED[os],
+    };
+    vocabularies.set(os, v);
+  }
+  return v;
+}
+
+/** File extensions a Windows or macOS program, shortcut or bundle name may carry (never stripped on Linux, where a name is the name). */
+const PROGRAM_EXT = /\.(exe|com|bat|cmd|ps1|lnk|app)$/i;
+
+/**
+ * A command word's program name, lower case. Windows paths split on either slash and lose their extension
+ * ("C:\\Windows\\System32\\cmd.exe" → "cmd"), so the vocabularies hold bare names; Linux is today's posix basename.
+ */
+const base = (p: string, os: OS = "linux") => (os === "linux" ? path.posix.basename(p).toLowerCase()
+  : (os === "win32" ? path.win32 : path.posix).basename(p).toLowerCase().replace(PROGRAM_EXT, ""));
+const named = (word: string, v: Vocabulary) => v.terminals.has(word) || v.terminals.has(word.replace(/\.(py|pl|rb|js|sh)$/, ""))
+  || (v.os !== "linux" && v.terminals.has(word.replace(PROGRAM_EXT, "")));
+const shellApp = (word: string, v: Vocabulary) => v.shellApp.test(word) || (v.os !== "linux" && v.shellApp.test(word.replace(PROGRAM_EXT, "")));
 
 /** The words after a command's own options (`value`: short options taking a value; `long`: long ones), less `positional` more. */
 function afterOptions(args: string[], value = "", long: string[] = [], positional = 0): string[] {
@@ -256,59 +267,65 @@ function flatpakCommand(args: string[]): { id: string; argv: string[] | null } |
 }
 
 /** Does this argv (an Exec line) start a terminal, a shell or an app with one built in, or wait for typed commands? */
-function runsTerminal(argv: string[], depth = 0): boolean {
+function runsTerminal(argv: string[], v: Vocabulary, depth = 0): boolean {
   if (!argv.length) return false;
   if (depth > 8) return true; // wrappers inside wrappers: Ember doesn't follow that far
-  const prog = base(argv[0]), args = argv.slice(1);
-  if (REFUSED.test(prog)) return true;
-  if (prog === "env") return runsTerminal(envCommand(args, 0), depth + 1);
-  const wrapper = WRAPPERS[prog];
+  const word = (w: string) => base(w, v.os);
+  const prog = word(argv[0]), args = argv.slice(1);
+  if (v.refused.test(prog)) return true;
+  if (prog === "env") return runsTerminal(envCommand(args, 0), v, depth + 1);
+  const wrapper = v.wrappers[prog];
   if (wrapper) {
     if (wrapper.noCommand && args.some(a => wrapper.noCommand!.test(a))) return false;
     // flock -c runs its string with sh.
     if (prog === "flock") {
       const c = args.findIndex(a => a === "-c" || a === "--command" || a.startsWith("--command="));
-      if (c >= 0) return runsTerminal(["sh", "-c", args[c].startsWith("--command=") ? args[c].slice(10) : args[c + 1] ?? ""], depth + 1);
+      if (c >= 0) return runsTerminal(["sh", "-c", args[c].startsWith("--command=") ? args[c].slice(10) : args[c + 1] ?? ""], v, depth + 1);
     }
-    return runsTerminal(afterOptions(args, wrapper.value, wrapper.long, wrapper.positional), depth + 1);
+    return runsTerminal(afterOptions(args, wrapper.value, wrapper.long, wrapper.positional), v, depth + 1);
   }
-  if (named(prog) || shellApp(prog) || argv.some(a => /TerminalEmulator/i.test(a))) return true;
+  if (named(prog, v) || shellApp(prog, v) || argv.some(a => /TerminalEmulator/i.test(a))) return true;
   if (prog === "flatpak") {
     const f = flatpakCommand(args);
     if (f === true) return true;
     if (!f) return false;
-    return idIsTerminal(f.id) || idHasShell(f.id) || (!!f.argv && runsTerminal(f.argv, depth + 1));
+    return idIsTerminal(f.id, v) || idHasShell(f.id, v) || (!!f.argv && runsTerminal(f.argv, v, depth + 1));
   }
-  if (!SHELLS.test(prog) && !INTERPRETERS.test(prog)) return false;
+  if (!v.shells.test(prog) && !v.interpreters.test(prog)) return false;
   // Inline code (sh -c "…", python -c "…", perl -e "…"): refuse it if it starts any of the above.
   const inline = args.findIndex(a => /^-[a-zA-Z]*[ceE]$/.test(a));
   if (inline >= 0) {
     const code = args.slice(inline + 1).join(" ");
-    if (SHELLS.test(prog) && runsTerminal(execArgv(code.replace(/[;&|()`$<>]/g, " ")), depth + 1)) return true;
-    return (code.match(/[\w./+-]+/g) ?? []).some(w => named(base(w)) || shellApp(base(w)) || REFUSED.test(base(w)));
+    if (v.shells.test(prog) && runsTerminal(execArgv(code.replace(/[;&|()`$<>]/g, " ")), v, depth + 1)) return true;
+    return (code.match(/[\w./+-]+/g) ?? []).some(w => named(word(w), v) || shellApp(word(w), v) || v.refused.test(word(w)));
   }
   // python -m idlelib, python -m code: an interactive shell.
   const m = args.findIndex(a => a === "-m");
-  if (m >= 0 && INTERPRETERS.test(prog)) return SHELL_MODULES.test(args[m + 1] ?? "");
+  if (m >= 0 && v.interpreters.test(prog)) return v.shellModules.test(args[m + 1] ?? "");
   // A script runs: refuse only a script that is itself a terminal (terminator is a Python program) or an IDE.
   const script = args.find(a => !a.startsWith("-"));
-  return script ? named(base(script)) || shellApp(base(script)) : true;
+  return script ? named(word(script), v) || shellApp(word(script), v) : true;
 }
 
-const idWords = (id: string) => id.toLowerCase().replace(/\.desktop$/, "").split(".");
-const idIsTerminal = (id: string) => idWords(id).some(p => named(p) || p === "console" || p.split(/[-_]/).some(w => named(w) || w === "console"));
-const idHasShell = (id: string) => SHELL_APP_ID.test(id.toLowerCase().replace(/\.desktop$/, "")) || idWords(id).some(shellApp);
+/** A desktop id's words. Off Linux also split at "!" and "_": a UWP app id (Microsoft.WindowsTerminal_8wekyb3d8bbwe!App). */
+const idWords = (id: string, v: Vocabulary) => id.toLowerCase().replace(/\.desktop$/, "").split(v.os === "linux" ? "." : /[.!_]/);
+const idIsTerminal = (id: string, v: Vocabulary) => idWords(id, v).some(p => named(p, v) || p === "console" || p.split(/[-_]/).some(w => named(w, v) || w === "console"));
+const idHasShell = (id: string, v: Vocabulary) => v.shellAppId.test(id.toLowerCase().replace(/\.desktop$/, "")) || idWords(id, v).some(w => shellApp(w, v));
+
+/** An app's launch command as words: the catalogue's own split (Windows, macOS) or the parsed Exec line (Linux). */
+const argvOf = (app: Pick<AppIdentity, "argv" | "exec">): string[] => app.argv ?? (app.exec ? execArgv(app.exec) : []);
 
 /**
  * Does this app have a terminal or shell built in (an IDE, Emacs, Vim, IDLE)? Text typed into it
  * can run commands, so Ember doesn't open it (isTerminalApp() includes this). LibreOffice isn't
- * one: on Ember's desk it runs with macros off (desk/place.ts).
+ * one: on Ember's desk it runs with macros off (desk/place.ts). `os` picks the vocabulary.
  */
-export function hasBuiltInShell(app: Pick<DesktopApp, "id" | "name"> & Partial<Pick<DesktopApp, "exec" | "categories">>): boolean {
+export function hasBuiltInShell(app: AppIdentity, os: OS = "linux"): boolean {
+  const v = vocabulary(os);
   if (app.categories?.some(c => /^IDE$/i.test(c))) return true;
-  if (idHasShell(app.id) || SHELL_APP_NAME.test(app.name) || /\bIDLE\b/.test(app.name)) return true;
-  const argv = app.exec ? execArgv(app.exec) : [];
-  return argv.length > 0 && shellApp(base(argv[0]));
+  if (idHasShell(app.id, v) || v.shellAppName.test(app.name) || /\bIDLE\b/.test(app.name)) return true;
+  const argv = argvOf(app);
+  return argv.length > 0 && shellApp(base(argv[0], os), v);
 }
 
 /**
@@ -316,14 +333,33 @@ export function hasBuiltInShell(app: Pick<DesktopApp, "id" | "name"> & Partial<P
  * opens one, on its desk or on the user's screen: both ways of opening apps ask this. Checks the
  * desktop id, name, Categories (TerminalEmulator, IDE), Terminal=true and what the Exec line starts,
  * through wrappers (env, timeout, flatpak run --command…); programs that run commands as someone
- * else or elsewhere (sudo, systemd-run, gtk-launch, gio launch…) count too.
+ * else or elsewhere (sudo, systemd-run, gtk-launch, gio launch…) count too. A window's class, when
+ * the caller knows it, counts on Windows (a console host runs whatever command-line tool it hosts).
  */
-export function isTerminalApp(app: Pick<DesktopApp, "id" | "name"> & Partial<Pick<DesktopApp, "exec" | "categories" | "terminal">>): boolean {
+export function isTerminalApp(app: AppIdentity, os: OS = "linux"): boolean {
+  const v = vocabulary(os);
   if (app.terminal) return true;
+  if (app.windowClass) {
+    const cls = app.windowClass.toLowerCase();
+    if (TERMINAL_CLASSES[os].some(c => c.toLowerCase() === cls)) return true;
+  }
   if (app.categories?.some(c => /^TerminalEmulator$/i.test(c))) return true;
-  if (idIsTerminal(app.id) || hasBuiltInShell(app)) return true;
-  if (/\b(terminal|console)\b/i.test(app.name) || named(app.name.trim().toLowerCase().replace(/\s+/g, "-"))) return true;
-  return !!app.exec && runsTerminal(execArgv(app.exec));
+  if (idIsTerminal(app.id, v) || hasBuiltInShell(app, os)) return true;
+  if (v.terminalName.test(app.name) || named(app.name.trim().toLowerCase().replace(/\s+/g, "-"), v)) return true;
+  const argv = argvOf(app);
+  return argv.length > 0 && runsTerminal(argv, v);
+}
+
+/**
+ * The programs an app's windows belong to (lower case, as the accessibility helper's `app` reports them): the
+ * catalogue's own list when it has one (Windows, macOS), else its launcher's file name and its desktop id. Never an
+ * interpreter's or launcher's name (`launchers`: hands/terminals.ts LAUNCHERS for this OS), which any window could share.
+ */
+export function programsOf(app: DesktopApp, launchers: RegExp = LAUNCHERS.linux): Set<string> {
+  const keep = (names: string[]) => new Set(names.map(n => n.toLowerCase()).filter(n => n && !launchers.test(n)));
+  if (app.programs) return keep(app.programs);
+  const argv = argvOf(app);
+  return keep([app.id.replace(/\.desktop$/, ""), ...argv.filter(a => !/^[-%]/.test(a)).map(a => path.basename(a))]);
 }
 
 export function listApps(env: NodeJS.ProcessEnv = process.env): DesktopApp[] {
@@ -364,8 +400,9 @@ const lowerWords = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filt
  * "open the file manager" (or "Files") chooses Thunar instead of the first app in directory order.
  * The tiers run from best to worst, so an app takes the best one it reaches: XFCE's settings dialogs
  * all have "settings" in their ids, and "Settings" must still reach Settings Manager by its name.
+ * `os` picks the terminal vocabulary for the tie-break (the ranking itself is the same everywhere).
  */
-export function findApp(apps: DesktopApp[], query: string): DesktopApp | null {
+export function findApp(apps: DesktopApp[], query: string, os: OS = "linux"): DesktopApp | null {
   const q = appWords(query).join(" ");
   if (!q) return null;
   const cq = compact(query); // never empty: q has a letter or digit
@@ -400,7 +437,7 @@ export function findApp(apps: DesktopApp[], query: string): DesktopApp | null {
   const score = (a: DesktopApp): number => {
     const t = tier(a);
     if (!t) return 0;
-    if (isTerminalApp(a)) return t - 2;
+    if (isTerminalApp(a, os)) return t - 2;
     return t + (a.keywords.some(k => appWords(k).join(" ") === q) ? 1 : 0);
   };
   let best: DesktopApp | null = null, bestScore = 0;
@@ -417,6 +454,14 @@ const KEEP = /^(HOME|USER|LOGNAME|SHELL|PATH|LANG|LANGUAGE|LC_[A-Z_]+|TZ|TMPDIR|
 const SESSION = /^(DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|XDG_SESSION_(TYPE|DESKTOP|CLASS|ID)|XDG_SEAT|XDG_VTNR|XDG_MENU_PREFIX|DESKTOP_SESSION|GDMSESSION|XDG_(CONFIG|DATA|CACHE|STATE)_HOME|GTK_MODULES|GTK_THEME|GNOME_ACCESSIBILITY|ACCESSIBILITY_ENABLED|QT_ACCESSIBILITY|QT_LINUX_ACCESSIBILITY_ALWAYS_ON|GDK_SCALE|GDK_DPI_SCALE|QT_SCALE_FACTOR|QT_SCREEN_SCALE_FACTORS|QT_AUTO_SCREEN_SCALE_FACTOR|QT_QPA_PLATFORMTHEME)$/;
 /** Never, whatever the lists above say: Ember's sign-in, keys and agents stay with Ember. */
 const NEVER = /(_TOKEN|_API_KEY|_SECRET|_PASSWORD)$|^(GH_|GITHUB_|COPILOT_|EMBER_|GPG_|GNOME_KEYRING_|SSH_|ELECTRON_)|^(SESSION_MANAGER|NO_AT_BRIDGE|CHROME_DESKTOP)$/;
+/**
+ * Windows: the same rules without regard to case (its environment names are case-insensitive, and Node keeps the
+ * stored spelling: "Path", "SystemRoot"), plus what every Windows program expects to find (system folders, the
+ * user's profile folders, the processor and the session). The X session list doesn't apply there.
+ */
+const KEEP_WIN32 = new RegExp(KEEP.source, "i");
+const WIN32_KEEP = /^(SystemRoot|windir|SystemDrive|ComSpec|PATHEXT|TEMP|TMP|USERPROFILE|USERNAME|USERDOMAIN|USERDOMAIN_ROAMINGPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|ProgramData|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432|CommonProgramFiles(\(x86\))?|CommonProgramW6432|PUBLIC|ALLUSERSPROFILE|OS|PROCESSOR_[A-Z0-9_]+|NUMBER_OF_PROCESSORS|COMPUTERNAME|SESSIONNAME|LOGONSERVER|USERDNSDOMAIN|DriverData|OneDrive(Commercial|Consumer)?)$/i;
+const NEVER_WIN32 = new RegExp(NEVER.source, "i");
 
 /**
  * The environment for apps Ember starts, built from an allowlist: Ember's own
@@ -424,12 +469,16 @@ const NEVER = /(_TOKEN|_API_KEY|_SECRET|_PASSWORD)$|^(GH_|GITHUB_|COPILOT_|EMBER
  * Electron's markers are left out too: Chromium sets NO_AT_BRIDGE=1 (and GTK
  * disables accessibility if the variable exists at all), so apps would be
  * invisible to Ember's screen reading. `session: false` is for Ember's desk,
- * which adds its own display, bus and user folders.
+ * which adds its own display, bus and user folders. `os: "win32"` compares names
+ * without regard to case and keeps Windows' own variables (default: Linux's rules).
  */
-export function appEnv(base: NodeJS.ProcessEnv = process.env, o: { session?: boolean } = {}): NodeJS.ProcessEnv {
+export function appEnv(base: NodeJS.ProcessEnv = process.env, o: { session?: boolean; os?: OS } = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
+  const win32 = o.os === "win32";
+  const keep = win32 ? (k: string) => KEEP_WIN32.test(k) || WIN32_KEEP.test(k) : (k: string) => KEEP.test(k) || (o.session !== false && SESSION.test(k));
+  const never = win32 ? NEVER_WIN32 : NEVER;
   for (const [k, v] of Object.entries(base)) {
-    if (v !== undefined && (KEEP.test(k) || (o.session !== false && SESSION.test(k))) && !NEVER.test(k)) env[k] = v;
+    if (v !== undefined && keep(k) && !never.test(k)) env[k] = v;
   }
   if (base.ORIGINAL_XDG_CURRENT_DESKTOP) env.XDG_CURRENT_DESKTOP = base.ORIGINAL_XDG_CURRENT_DESKTOP;
   return env;
@@ -487,7 +536,7 @@ const launchCwd = () => os.homedir();
 export function launchApp(app: DesktopApp): void {
   if (isTerminalApp(app)) throw new Error("Ember doesn't run terminals, on its desk or anywhere else");
   const fallback = () => {
-    const argv = app.exec ? execArgv(app.exec) : [];
+    const argv = argvOf(app);
     if (!argv.length) return;
     const c = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: appEnv(), cwd: launchCwd() });
     c.on("error", () => { /* the caller notices no window appeared */ });

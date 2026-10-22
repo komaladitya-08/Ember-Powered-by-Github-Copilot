@@ -1,9 +1,9 @@
 /**
- * User settings in ~/.config/ember/settings.json. Validated with zod; invalid
+ * User settings in settings.json in Ember's data folder (~/.config/ember on Linux). Validated with zod; invalid
  * values fall back to defaults item by item (one bad never-look entry doesn't
  * reset the list); writes are atomic and durable (tmp + fsync + rename), and a
  * change made by hand while Ember runs is picked up, never overwritten.
- * The administrator's policy (/etc/ember/policy.json, see admin.ts) layers on
+ * The administrator's policy (see admin.ts and the platform's policy source) layers on
  * top: get() returns the settings in force, with the admin's values applied.
  */
 
@@ -12,6 +12,11 @@ import path from "node:path";
 import { z } from "zod";
 import { applyAdminPolicy, type AdminPolicy } from "./admin";
 import { CONSENT_VERSION } from "../shared/consent";
+import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
+import { HOST_OS } from "./platform/os";
+
+/** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
+const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
 
 export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 
@@ -29,7 +34,7 @@ export const SettingsSchema = z.object({
     consent: z.boolean().default(false),
     /** Ignore "Hey Ember" when it comes out of the speakers (needs parec). */
     speakerRejection: z.boolean().default(true),
-    /** The user turned the microphone off (Ctrl+Alt+M): it stays off across restarts. */
+    /** The user turned the microphone off (its shortcut or the menu): it stays off across restarts. */
     muted: z.boolean().default(false),
   }).default({ consent: false, speakerRejection: true, muted: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
@@ -37,14 +42,14 @@ export const SettingsSchema = z.object({
     version: z.number().int().min(0).default(0),
     at: z.string().nullable().default(null),
   }).default({ version: 0, at: null }),
-  /** Start Ember when the user logs in (an XDG autostart entry). */
+  /** Start Ember when the user logs in (the OS's own login item: an XDG autostart entry on Linux). */
   startAtLogin: z.boolean().default(false),
   /** Onboarding finished (consent given, character picked). */
   onboarded: z.boolean().default(false),
   /** Apps and windows Ember must never read or capture (matched case-insensitively against app name and title). */
   privacy: z.object({
-    neverLook: z.array(z.string().max(100)).max(100).default(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]),
-  }).default({ neverLook: ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"] }),
+    neverLook: z.array(z.string().max(100)).max(100).default(neverLookDefault()),
+  }).default({ neverLook: neverLookDefault() }),
   /** Apps Ember may act in without asking first (lower-case app name → grant). */
   grants: z.record(z.string(), z.enum(["observe", "act"])).default({}),
   /** Preferred Copilot models; null lets Ember choose. */
@@ -140,6 +145,25 @@ function salvageNeverLook(raw: string): string[] | null {
   return list.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 100).slice(0, 100);
 }
 
+/** Rename failures another program's open handle causes for a moment on Windows (antivirus scans, sync clients): worth retrying. */
+const BUSY_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
+/** How long to wait between those retries. */
+const RENAME_RETRY_MS = 50;
+
+/** Waits `ms` without returning to the event loop (saves are synchronous; this runs only after a refused rename). */
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** How a SettingsStore saves on this OS (the platform's paths). */
+export interface SettingsStoreOptions {
+  /**
+   * How many times a rename refused with EPERM/EBUSY/EACCES is tried again, 50 ms apart (the platform's
+   * paths.renameRetries: 0 on Linux and macOS, as before; 5 on Windows, whose antivirus and sync locks are brief).
+   */
+  renameRetries?: number;
+}
+
 export interface LoadResult {
   settings: Settings;
   /** Set when the file existed but could not be used; the bad file is kept beside it. */
@@ -162,7 +186,11 @@ export class SettingsStore {
   private pending: SettingsPatch | null = null;
   private pendingTimer: NodeJS.Timeout | null = null;
 
-  constructor(readonly file: string, private admin: AdminPolicy | null = null) {}
+  private renameRetries: number;
+
+  constructor(readonly file: string, private admin: AdminPolicy | null = null, o: SettingsStoreOptions = {}) {
+    this.renameRetries = Math.max(0, Math.floor(o.renameRetries ?? 0));
+  }
 
   load(): LoadResult {
     const r = this.read(false);
@@ -351,6 +379,19 @@ export class SettingsStore {
     return () => this.listeners.delete(fn);
   }
 
+  /** Puts the new file in place, retrying a briefly locked target (renameRetries). */
+  private rename(tmp: string): void {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, this.file);
+        return;
+      } catch (err) {
+        if (attempt >= this.renameRetries || !BUSY_RENAME.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+        pause(RENAME_RETRY_MS);
+      }
+    }
+  }
+
   private save(settings: Settings): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const tmp = `${this.file}.tmp-${process.pid}`;
@@ -363,7 +404,7 @@ export class SettingsStore {
       } finally {
         fs.closeSync(fd);
       }
-      fs.renameSync(tmp, this.file);
+      this.rename(tmp);
     } catch (err) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing left to tidy */ }
       throw err;
