@@ -6,12 +6,18 @@
  * The bridge speaks newline JSON over stdio: a ready line once it has started (`{"ready":true,"version":1,"dpi":…}`, or
  * `{"fatal":…}` when it can't), then `{"id","method","params"}` requests answered by id, possibly out of order. It
  * gives every UIA call a deadline and answers "busy" when an app doesn't answer in time, so one hung app never holds
- * up the rest. It is started with a clean environment (no PSModulePath, so no user modules load) and no console
- * window; its first start compiles the C# (seconds, more with antivirus scanning) and caches the assembly under
- * EMBER_UIA_CACHE, so start() waits generously, and a start that takes longer than one request keeps going in the
- * background rather than being killed and begun again. If the bridge stops answering altogether it is killed and a
- * new one started on the next request; its handles from before mean nothing (`generation`), and the host forgets
- * every read made with them.
+ * up the rest. It is started with PSModulePath set to Windows PowerShell's own modules folder (so no user module
+ * loads, and 5.1 doesn't rebuild a default that includes the user's Documents) and no console window; its first start
+ * compiles the C# (seconds, more with antivirus scanning) and caches the assembly under EMBER_UIA_CACHE, so start()
+ * waits generously, and a start that takes longer than one request keeps going in the background rather than being
+ * killed and begun again. If the bridge stops answering altogether it is killed and a new one started on the next
+ * request; its handles from before mean nothing (`generation`), and the host forgets every read made with them.
+ *
+ * A bridge that can't start isn't started in a loop (PROTOCOL.md): after a fatal line in Constrained Language mode (an
+ * administrator's lockdown) never again in this host's life; after PowerShell refused the script for an execution
+ * policy, again at once only once the script's Mark-of-the-Web is gone (the user unblocked it), else later; after any
+ * other failure 5 s, 30 s, 2 min and then every 10 min later. Ember's own process (skipPids) is never read: the bridge
+ * lists its windows from Win32 facts alone and answers no hit test in them.
  */
 
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -19,8 +25,8 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import {
-  ProviderError, type AxProvider, type Handle, type PerformOp, type ProviderErrorCode, type RawNode, type RawWindow, type Rect,
-  type Snapshot, type SnapshotOptions, type TextInfo,
+  ProviderError, type AxProvider, type Handle, type PerformOp, type ProviderErrorCode, type ProviderHealth, type RawNode, type RawWindow,
+  type Rect, type Snapshot, type SnapshotOptions, type TextInfo,
 } from "../provider";
 
 /** The bridge's element, as its snapshot, element, elementsAt, focused and children answers carry it (PROTOCOL.md). */
@@ -206,16 +212,33 @@ export function uiaScript(env: NodeJS.ProcessEnv, file: string, exists: (p: stri
   return candidates.find(c => exists(c)) ?? candidates[0];
 }
 
-/** Windows PowerShell 5.1, by its full path (never one on PATH). */
-export function powershellPath(env: NodeJS.ProcessEnv): string {
-  const root = env.SystemRoot || env.SYSTEMROOT || env.windir || "C:\\Windows";
-  return path.win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+/** Windows' own folder (SystemRoot, else windir, in any case), as the environment says. */
+function systemRoot(env: NodeJS.ProcessEnv): string {
+  return envValue(env, "SystemRoot") || envValue(env, "windir") || "C:\\Windows";
 }
 
-/** The bridge's environment: the host's without PSModulePath (no user or system modules load into it). */
+/** Windows PowerShell 5.1, by its full path (never one on PATH). */
+export function powershellPath(env: NodeJS.ProcessEnv): string {
+  return path.win32.join(systemRoot(env), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+/** A variable of `env` by its name in any case, as Windows looks one up. */
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(env)) if (k.toLowerCase() === lower && v) return v;
+  return undefined;
+}
+
+/**
+ * The bridge's environment: the host's, with PSModulePath (whatever its case) set to Windows PowerShell 5.1's own
+ * modules folder. Deleting it would make 5.1 rebuild a default that includes the user's Documents\WindowsPowerShell
+ * (often on OneDrive); PowerShell 7's folders in it break 5.1's module autoloading. __PSLockdownPolicy is kept: an
+ * administrator's Constrained Language mode is honoured, and the bridge says what it causes.
+ */
 export function bridgeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env)) if (k.toLowerCase() !== "psmodulepath" && v !== undefined) out[k] = v;
+  out.PSModulePath = path.win32.join(systemRoot(env), "System32", "WindowsPowerShell", "v1.0", "Modules");
   return out;
 }
 
@@ -240,13 +263,46 @@ export interface UiaOptions {
   /** How long past its deadline an answer may take before the bridge counts as stuck (killed, started again). */
   graceMs?: number;
   /**
-   * How soon a bridge that couldn't start is tried again (a fatal line, or PowerShell refusing the script): not in a
-   * loop, since what stops it (a Group Policy execution policy, Constrained Language mode) doesn't go away by itself.
+   * How long after each failed start in a row the bridge is tried again (the last for every one after): not in a loop,
+   * since what stops it (a policy, a broken install) rarely goes away by itself. Default 5 s, 30 s, 2 min, 10 min.
    */
-  retryMs?: number;
+  backoffMs?: readonly number[];
+  /** Ember's own process (and any other never to be read): no UI Automation call goes into them. */
+  skipPids?: readonly number[];
+  /** Tests: whether a file's NTFS stream exists (default fs.existsSync on "<file>:<stream>"). */
+  streamExists?: (file: string, stream: string) => boolean;
   spawn?: typeof nodeSpawn;
   note?: (event: string, fields?: Record<string, unknown>) => void;
 }
+
+/** The back-off after failed starts in a row (see UiaOptions.backoffMs). */
+export const BACKOFF_MS: readonly number[] = [5_000, 30_000, 120_000, 600_000];
+
+/** What a refused script says on stderr (PowerShell's PSSecurityException for an execution policy). */
+const POLICY_REFUSAL = /execution[ _]polic|PSSecurityException|UnauthorizedAccess/i;
+/** The words for it, in the host's status and the setup check. */
+export const POLICY_DETAIL = "PowerShell refused to run the bridge (execution policy)";
+/** How much of a starting bridge's stderr is kept to tell a refusal (never logged, never past its start). */
+const STDERR_KEPT = 16_384;
+/** How long an exit's stderr may still be on its way before the start's failure is judged without the rest of it. */
+const STDERR_GRACE_MS = 500;
+
+/** Why the bridge couldn't start, as the provider keeps it until a start works. */
+interface StartFailure {
+  /** What requests are told. */
+  why: string;
+  /** What status says (ProviderHealth.detail). */
+  detail: string;
+  /** "constrained": never started again; "policy": an execution policy refused the script; "other". */
+  kind: "constrained" | "policy" | "other";
+  languageMode?: string;
+  /** When it failed, and whether the script carried a Mark-of-the-Web then (a refusal for an execution policy). */
+  at: number;
+  marked?: boolean;
+}
+
+/** The DPI awareness's family: per-monitor (v1 or v2: physical pixels either way), system or unaware. */
+const dpiFamily = (dpi: string) => (dpi.toLowerCase().startsWith("per-monitor") ? "per-monitor" : dpi.toLowerCase());
 
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 interface Bridge {
@@ -259,7 +315,12 @@ interface Bridge {
   waitUntil?: number;
   /** The provider's generation once this bridge is ready (its handles carry it). */
   generation: number;
-  dpi?: string;
+  /** Lines it wrote on stdout (any: a refused script writes none). */
+  lines: number;
+  /** Its stderr while it starts, to tell a refusal (STDERR_KEPT at most). */
+  stderr: string;
+  /** Its stderr was read to the end. */
+  stderrDone: boolean;
 }
 
 /**
@@ -285,15 +346,21 @@ export class UiaProvider implements AxProvider {
   private bridge: Bridge | null = null;
   private starts = 0;
   private nextId = 1;
-  private failedAt = 0;
-  private failure = "";
+  /** Why the last start failed (cleared by a start that works), and how many failed in a row. */
+  private failure: StartFailure | null = null;
+  private failures = 0;
+  /** What the last ready line said of DPI awareness. */
+  private dpiAwareness: { dpi?: string; processDpi?: string } = {};
+  private dpiMixedNoted = false;
   private stopped = false;
   private readonly env: NodeJS.ProcessEnv;
   private readonly startMs: number;
   private readonly againMs: number;
   private readonly deadlineMs: number;
   private readonly graceMs: number;
-  private readonly retryMs: number;
+  private readonly backoffMs: readonly number[];
+  private readonly skipPids: number[];
+  private readonly streamExists: (file: string, stream: string) => boolean;
   private readonly spawn: typeof nodeSpawn;
   private readonly note: (event: string, fields?: Record<string, unknown>) => void;
 
@@ -303,21 +370,58 @@ export class UiaProvider implements AxProvider {
     this.againMs = o.againMs ?? 0;
     this.deadlineMs = o.deadlineMs ?? 800;
     this.graceMs = o.graceMs ?? 2000;
-    this.retryMs = o.retryMs ?? 60_000;
+    this.backoffMs = o.backoffMs?.length ? o.backoffMs : BACKOFF_MS;
+    this.skipPids = [...new Set(o.skipPids ?? [])].filter(p => Number.isSafeInteger(p) && p > 0);
+    this.streamExists = o.streamExists ?? ((file, stream) => fs.existsSync(`${file}:${stream}`));
     this.spawn = o.spawn ?? nodeSpawn;
     this.note = o.note ?? (() => undefined);
   }
 
-  /** The DPI awareness the bridge got ("per-monitor-v2" for physical pixels everywhere), once it is ready. */
+  /** The DPI awareness the bridge's UI Automation threads got ("per-monitor-v2" for physical pixels everywhere). */
   get dpi(): string | undefined {
-    return this.bridge?.dpi;
+    return this.dpiAwareness.dpi;
+  }
+
+  health(): ProviderHealth {
+    const b = this.bridge;
+    const up = !!b && b.isReady && !b.done;
+    const starting = !!b && !b.done && !b.isReady;
+    const f = this.failure;
+    const out: ProviderHealth = { ok: up ? true : f && !starting ? false : null };
+    if (f && !up) {
+      out.detail = f.detail;
+      if (f.languageMode) out.languageMode = f.languageMode;
+    }
+    if (this.dpiAwareness.dpi) out.dpi = this.dpiAwareness.dpi;
+    if (this.dpiAwareness.processDpi) out.processDpi = this.dpiAwareness.processDpi;
+    return out;
+  }
+
+  /**
+   * May a bridge be started again after the last failed start (see the module comment)? The Mark-of-the-Web is looked
+   * for at most once a request, and only after a refusal for an execution policy.
+   */
+  private mayRetry(f: StartFailure): boolean {
+    if (f.kind === "constrained") return false;
+    if (f.kind === "policy" && f.marked && !this.marked()) return true;
+    const wait = this.backoffMs[Math.min(Math.max(this.failures, 1), this.backoffMs.length) - 1];
+    return Date.now() - f.at >= wait;
+  }
+
+  /** Does the bridge's script carry a Mark-of-the-Web (Windows' Zone.Identifier stream, from a downloaded zip)? */
+  private marked(): boolean {
+    try {
+      return this.streamExists(this.o.script, "Zone.Identifier");
+    } catch {
+      return false; // can't be told: as if not (the back-off still applies)
+    }
   }
 
   async start(): Promise<void> {
     if (this.stopped) throw new Error("the accessibility bridge was stopped");
     if (this.bridge?.isReady && !this.bridge.done) return;
     if (!this.bridge || this.bridge.done) {
-      if (this.failure && Date.now() - this.failedAt < this.retryMs) throw new Error(this.failure);
+      if (this.failure && !this.mayRetry(this.failure)) throw new Error(this.failure.why);
       this.bridge = this.launch();
     }
     const b = this.bridge;
@@ -344,18 +448,24 @@ export class UiaProvider implements AxProvider {
     const ready = new Promise<void>((resolve, reject) => { settle = { resolve, reject }; });
     // Nobody may be waiting when a start fails in the background: that is no unhandled rejection.
     ready.catch(() => undefined);
-    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, generation: 0 };
+    const b: Bridge = { child, pending: new Map(), ready, isReady: false, done: false, generation: 0, lines: 0, stderr: "", stderrDone: false };
     const first = this.starts++ === 0;
-    const fail = (why: string) => {
+    /** The bridge is finished with; `start`: why it couldn't start, when it never got ready. */
+    const fail = (why: string, start?: Omit<StartFailure, "at" | "why">) => {
       if (b.done) return;
       b.done = true;
-      if (!b.isReady) { this.failure = why; this.failedAt = Date.now(); }
+      if (!b.isReady) {
+        this.failures++;
+        this.failure = { why, at: Date.now(), ...(start ?? { kind: "other", detail: why }) };
+        this.note("uia.start_failed", { kind: this.failure.kind, failures: this.failures, ...(this.failure.languageMode ? { languageMode: this.failure.languageMode } : {}) });
+      }
       settle.reject(new Error(why));
       for (const p of b.pending.values()) { clearTimeout(p.timer); p.reject(new ProviderError("failed", why)); }
       b.pending.clear();
       if (child.exitCode === null && child.signalCode === null) child.kill();
     };
     readline.createInterface({ input: child.stdout }).on("line", line => {
+      b.lines++;
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(line);
@@ -366,14 +476,20 @@ export class UiaProvider implements AxProvider {
       if (!b.isReady) {
         if (msg.ready === true) {
           b.isReady = true;
-          b.dpi = typeof msg.dpi === "string" ? msg.dpi : undefined;
-          this.failure = "";
+          b.stderr = "";
+          this.failure = null;
+          this.failures = 0;
+          this.readyDpi(msg);
           if (!first) this.generation++;
           b.generation = this.generation;
-          this.note("uia.ready", { dpi: b.dpi, generation: this.generation });
+          this.note("uia.ready", { dpi: this.dpiAwareness.dpi, processDpi: this.dpiAwareness.processDpi, generation: this.generation });
           settle.resolve();
         } else if (typeof msg.fatal === "string") {
-          fail(`the accessibility bridge could not start (${msg.fatal})`);
+          const detail = msg.fatal.slice(0, 500);
+          const languageMode = typeof msg.languageMode === "string" ? msg.languageMode : undefined;
+          fail(`the accessibility bridge could not start (${detail})`, {
+            kind: languageMode === "ConstrainedLanguage" ? "constrained" : "other", detail, ...(languageMode ? { languageMode } : {}),
+          });
         }
         return;
       }
@@ -388,14 +504,48 @@ export class UiaProvider implements AxProvider {
         p.reject(new ProviderError(codeOf(err.code, message), message));
       } else p.resolve(msg.result);
     });
-    readline.createInterface({ input: child.stderr }).on("line", line => this.note("uia.stderr", { bytes: line.length }));
+    const errors = readline.createInterface({ input: child.stderr });
+    errors.on("line", line => {
+      // Never logged above debug, nor its text: kept only while it starts, to tell PowerShell refusing the script.
+      this.note("uia.stderr", { bytes: line.length });
+      if (!b.isReady && b.stderr.length < STDERR_KEPT) b.stderr += line.slice(0, STDERR_KEPT - b.stderr.length) + "\n";
+    });
+    errors.on("close", () => { b.stderrDone = true; });
     child.on("exit", (code, signal) => {
       this.note("uia.exit", { code, signal });
-      fail(`the accessibility bridge stopped (${signal ?? `exit code ${code}`})`);
+      const how = signal ?? `exit code ${code}`;
+      if (b.isReady || b.done) { fail(`the accessibility bridge stopped (${how})`); return; }
+      // It never got ready: why is judged once its stderr is read (it may still be on its way), within a moment.
+      const judge = () => fail(...this.exitBeforeReady(b, how));
+      if (b.stderrDone) { judge(); return; }
+      const timer = setTimeout(judge, STDERR_GRACE_MS);
+      errors.once("close", () => { clearTimeout(timer); judge(); });
     });
-    child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`));
+    child.on("error", err => fail(`the accessibility bridge could not run (${err.message})`, { kind: "other", detail: `Windows PowerShell could not be run (${err.message})` }));
     child.stdin.on("error", () => fail("the accessibility bridge stopped"));
     return b;
+  }
+
+  /**
+   * Why a bridge that exited before its ready line couldn't start: PowerShell refused the script for an execution
+   * policy when it wrote no line at all and its stderr says so (PROTOCOL.md); anything else is an ordinary failure.
+   */
+  private exitBeforeReady(b: Bridge, how: string): [string, Omit<StartFailure, "at" | "why">] {
+    if (b.lines === 0 && POLICY_REFUSAL.test(b.stderr)) {
+      return [`the accessibility bridge could not start: ${POLICY_DETAIL}`, { kind: "policy", detail: POLICY_DETAIL, marked: this.marked() }];
+    }
+    return [`the accessibility bridge stopped (${how})`, { kind: "other", detail: `Windows PowerShell stopped before the bridge was ready (${how})` }];
+  }
+
+  /** Keeps the ready line's DPI awareness, and says once when the threads' and the process's differ (R22). */
+  private readyDpi(msg: Record<string, unknown>): void {
+    const dpi = typeof msg.dpi === "string" ? msg.dpi : undefined;
+    const processDpi = typeof msg.processDpi === "string" ? msg.processDpi : undefined;
+    this.dpiAwareness = { ...(dpi ? { dpi } : {}), ...(processDpi ? { processDpi } : {}) };
+    if (dpi && processDpi && dpiFamily(dpi) !== dpiFamily(processDpi) && !this.dpiMixedNoted) {
+      this.dpiMixedNoted = true;
+      this.note("uia.dpi_mixed", { dpi, processDpi });
+    }
   }
 
   /** The host's handle for handle `h` of the bridge of generation `gen` (0, a busy window's missing one, stays 0). */
@@ -454,8 +604,13 @@ export class UiaProvider implements AxProvider {
     return true;
   }
 
+  /** The pids no UI Automation call may go into, as a request's params (none: nothing). */
+  private skipping(): { skipPids?: number[] } {
+    return this.skipPids.length ? { skipPids: [...this.skipPids] } : {};
+  }
+
   async topWindows(): Promise<RawWindow[]> {
-    const { value, gen } = await this.call("topWindows", {}, WINDOWS_DEADLINE_MS);
+    const { value, gen } = await this.call("topWindows", this.skipping(), WINDOWS_DEADLINE_MS);
     return listOf<BridgeWindow>(value, "windows").map(w => this.mine(fromBridgeWindow(w), gen));
   }
 
@@ -482,8 +637,9 @@ export class UiaProvider implements AxProvider {
     }
   }
 
-  async elementsAt(x: number, y: number): Promise<RawNode[]> {
-    const { value, gen } = await this.call("elementsAt", { x: Math.round(x), y: Math.round(y) });
+  /** (UI Automation hit-tests the whole screen: the app asked about isn't needed.) */
+  async elementsAt(x: number, y: number, _pid?: number): Promise<RawNode[]> {
+    const { value, gen } = await this.call("elementsAt", { x: Math.round(x), y: Math.round(y), ...this.skipping() });
     return listOf<BridgeNode>(value, "chain").map(n => this.mine(fromBridgeNode(n), gen));
   }
 

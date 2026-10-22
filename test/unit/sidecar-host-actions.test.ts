@@ -19,8 +19,10 @@ function harness(windows: FakeWindowSpec[] = benchDesktop(), deadlineMs = 300) {
   };
   const fails = (method: string, params: Record<string, unknown> = {}) => call(method, params).then(() => "resolved", (e: Error) => e.message);
   const readAll = (params: Record<string, unknown> = {}) => call<ReadWindowResult>("read_window", params);
+  /** The control called `name`: never the label beside it that says the same (the bench's "Theme" and "Theme"). */
   const id = async (name: string, params: Record<string, unknown> = {}) => {
-    const node = (await readAll(params)).nodes.find(x => x.name === name);
+    const nodes = (await readAll(params)).nodes;
+    const node = nodes.find(x => x.name === name && x.role !== "label") ?? nodes.find(x => x.name === name);
     if (!node) throw new Error(`no node "${name}"`);
     return node.id;
   };
@@ -120,14 +122,39 @@ describe("do_action", () => {
     const r = await call<ActionResult>("do_action", { id: b, action: "click" });
     expect(r).toMatchObject({ ok: true, action: "select item" });
     expect(r.after!.states).toContain("selected");
-    // Given the keyboard (the list's focus goes there, where Enter goes), then selected; never invoked.
-    expect(fake.log.map(l => l.op)).toEqual(["focus", "select"]);
+    // Selected (what tells the app), then given the keyboard (the list's focus goes there, where Enter goes); never invoked.
+    expect(fake.log.map(l => l.op)).toEqual(["select", "focus"]);
     expect(fake.el("b.txt").spec.selected).toBe(true);
     expect(fake.el("a.txt").spec.selected).toBeFalsy();
     // Already selected, with the keyboard: nothing more is done.
     fake.log.length = 0;
     expect(await call("do_action", { id: b })).toMatchObject({ ok: true, action: "select item" });
     expect(fake.log).toEqual([]);
+  });
+
+  it("selects a classic list box's item so that its app hears it, though its focus would select it silently (CI windows-2022)", async () => {
+    // .NET's WindowsListBox proxy: SetFocus moves the selection without LBN_SELCHANGE, and Select on what is selected
+    // already sends nothing, so focusing first left a WinForms list's SelectedIndexChanged unraised.
+    const { fake, call, id } = harness(app([list(["Apple", "Banana", "Cherry"], { name: "Fruit" }, { actions: ["select", "focus", "scrollIntoView"], focusSelects: true })]));
+    const r = await call<ActionResult>("do_action", { id: await id("Banana"), action: "click" });
+    expect(r).toMatchObject({ ok: true, action: "select item", after: { states: expect.arrayContaining(["focused", "selected"]) } });
+    expect(fake.log).toEqual([{ op: "select", name: "Banana", role: "ListItem" }, { op: "focus", name: "Banana", role: "ListItem" }]);
+    expect(["Apple", "Banana", "Cherry"].map(n => !!fake.el(n).spec.selected)).toEqual([false, true, false]);
+  });
+
+  it("chooses an item by the keyboard where its list's Select does nothing", async () => {
+    const { fake, call, id } = harness(app([list(["a", "b"], {}, { actions: ["select", "focus"], focusSelects: true })]));
+    const b = fake.el("b");
+    b.spec.actions = ["select", "focus"];
+    // This list's Select fails (an app that chooses only by the keyboard); its focus selects.
+    const real = fake.perform.bind(fake);
+    fake.perform = async (h, op, value) => {
+      if (op === "select") throw new Error("unsupported:select");
+      return real(h, op, value);
+    };
+    expect(await call<ActionResult>("do_action", { id: await id("b"), action: "click" })).toMatchObject({ ok: true, action: "select item" });
+    expect(fake.log.map(l => [l.op, l.name])).toEqual([["focus", "b"]]);
+    expect(b.spec.selected).toBe(true);
   });
 
   it("unselects the others in a list that lets several be chosen", async () => {
@@ -317,9 +344,11 @@ describe("list_options and select_option", () => {
 
   it("says ok: false where the option says it is chosen but its box still shows another", async () => {
     const { fake, call, id } = harness();
-    // The app didn't hear of the choice: its box goes on showing the old one.
+    // The app didn't hear of the choice: its box (an editable one, which shows its choice as its value) goes on showing
+    // the old one.
     fake.el("Dark").spec.onInvoke = undefined;
-    const theme = fake.el("Theme");
+    const theme = fake.el("Theme", "ComboBox");
+    theme.spec.value = "Light";
     const realPerform = fake.perform.bind(fake);
     fake.perform = async (h, op, value) => {
       await realPerform(h, op, value);

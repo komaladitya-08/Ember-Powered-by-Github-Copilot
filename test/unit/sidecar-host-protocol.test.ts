@@ -21,7 +21,8 @@ function harness(windows: FakeWindowSpec[] = benchDesktop(), deadlineMs = 300) {
   return { fake, host, call, raw, fails };
 }
 type Read = ReadWindowResult & { secretKeys: [string, string][]; withheldKeys: [string, string][] };
-const byName = (r: { nodes: AxNode[] }, name: string) => r.nodes.find(n => n.name === name)!;
+/** The control called `name`: never the label beside it that says the same (the bench's "Theme" and "Theme"). */
+const byName = (r: { nodes: AxNode[] }, name: string) => (r.nodes.find(n => n.name === name && n.role !== "label") ?? r.nodes.find(n => n.name === name))!;
 
 /** Two apps: an editor with a main window and a modal Find dialog, and a password manager. */
 function twoApps(): FakeWindowSpec[] {
@@ -103,13 +104,15 @@ describe("choosing the provider", () => {
     expect(isPackaged("/home/dev/ember/dist/app/ax-sidecar.cjs")).toBe(false);
   });
 
-  it("says plainly that macOS isn't read yet (every request but ping)", async () => {
+  it("says plainly that macOS isn't read yet (every request but ping, and status says why)", async () => {
     const p = openProvider({}, "darwin", "/x/dist/app/ax-sidecar.cjs");
     expect(p).toBeInstanceOf(UnsupportedProvider);
     const host = new Host(p, { settleMs: 0 });
     const msg = JSON.parse((await host.handle('{"jsonrpc":"2.0","id":1,"method":"read_window","params":{}}'))!);
     expect(msg.error.message).toMatch(/macOS accessibility provider/);
     expect(JSON.parse((await host.handle('{"jsonrpc":"2.0","id":2,"method":"ping"}'))!).result.version).toBe(3);
+    const status = JSON.parse((await host.handle('{"jsonrpc":"2.0","id":3,"method":"status","params":{}}'))!).result;
+    expect(status).toMatchObject({ version: 3, toolkitAccessibility: false, apps: 0, detail: expect.stringMatching(/macOS accessibility provider/) });
   });
 });
 
@@ -126,6 +129,41 @@ describe("status and list_windows", () => {
     const { windows } = await call<{ windows: AxWindow[] }>("list_windows", { ownPid: 20 });
     expect(windows.map(w => w.name)).toEqual(["Find", "notes.txt - Editor"]);
     expect(windows[0]).toEqual({ app: "editor", pid: 10, path: "102", name: "Find", role: "dialog", active: true, bounds: at(200, 200, 300, 120) });
+  });
+
+  it("starts its provider for status as any request does", async () => {
+    const { fake, call } = harness(twoApps());
+    expect(fake.started).toBe(0);
+    expect(await call("status")).toMatchObject({ toolkitAccessibility: true, apps: 2 });
+    expect(fake.started).toBe(1);
+  });
+
+  it("says why its provider couldn't start instead of failing, with the bridge's language mode (L7, W3)", async () => {
+    const fake = new FakeProvider(benchDesktop(), { failStart: "the accessibility bridge could not start (Cannot add type.)" });
+    fake.health = () => ({ ok: false, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    const host = new Host(fake, { env: {}, settleMs: 0 });
+    const answer = async (method: string) => JSON.parse((await host.handle(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: {} })))!);
+    const s = await answer("status");
+    expect(s.error).toBeUndefined();
+    expect(s.result).toEqual({ version: 3, python: expect.any(String), toolkitAccessibility: false, apps: 0, detail: "Cannot add type.", languageMode: "ConstrainedLanguage" });
+    expect(fake.startsTried).toBe(1);
+    // Every other request still fails with the reason.
+    expect((await answer("list_windows")).error.message).toBe("the accessibility bridge could not start (Cannot add type.)");
+  });
+
+  it("says nothing is known yet while its provider is still starting, at once", async () => {
+    const fake = new FakeProvider(benchDesktop(), { failStart: "the accessibility bridge is still starting" });
+    const host = new Host(fake, { env: {}, settleMs: 0 });
+    fake.health = () => ({ ok: null });
+    const s = JSON.parse((await host.handle('{"jsonrpc":"2.0","id":1,"method":"status","params":{}}'))!);
+    expect(s.result).toMatchObject({ version: 3, toolkitAccessibility: null, apps: 0 });
+    expect(Object.keys(s.result)).not.toContain("detail");
+  });
+
+  it("carries the bridge's DPI awareness, its threads' and its process's (W20)", async () => {
+    const { fake, call } = harness(twoApps());
+    fake.health = () => ({ ok: true, dpi: "per-monitor-v2", processDpi: "system" });
+    expect(await call("status")).toMatchObject({ toolkitAccessibility: true, apps: 2, dpi: "per-monitor-v2", processDpi: "system" });
   });
 
   it("keeps a busy app's windows listed as last seen, busy and not active, after the rest", async () => {
@@ -318,7 +356,7 @@ describe("read_element", () => {
   it("reads an element as it is now, its text up to 2000 characters", async () => {
     const { fake, call } = harness();
     const r = await call<Read>("read_window", {});
-    fake.el("Name").spec.value = "x".repeat(2500);
+    fake.el("Name", "Edit").spec.value = "x".repeat(2500);
     const info = await call<{ role: string; name: string; text: string; states: string[] }>("read_element", { id: byName(r, "Name").id });
     expect(info).toMatchObject({ role: "entry", name: "Name" });
     expect(info.text).toHaveLength(2000);
@@ -334,7 +372,7 @@ describe("read_element", () => {
     const r = await call<Read>("read_window", {});
     fake.remove(fake.el("Save"));
     expect(await fails("read_element", { id: byName(r, "Save").id })).toBe(`element ${byName(r, "Save").id} is gone (the window changed); read the window again`);
-    fake.el("Volume").spec.slowMs = 1000;
+    fake.el("Volume", "Slider").spec.slowMs = 1000;
     expect(await fails("read_element", { id: byName(r, "Volume").id })).toBe(BUSY);
     expect(BUSY).toMatch(/\bbusy\b|did not (receive a reply|answer)|timeout was reached/i);
   });
@@ -417,11 +455,44 @@ describe("at_point", () => {
     expect(res.chain.map(c => c.name)).toEqual(["Save"]);
   });
 
+  it("hit-tests in the window's own app where the platform does so app by app (AX)", async () => {
+    const cover: FakeWindowSpec = { role: "Window", name: "Notification", pid: 77, app: "toast", bounds: at(200, 340, 300, 60) };
+    const fake = new FakeProvider([cover, ...benchDesktop()].reverse(), { deadlineMs: 300, appHitTest: true });
+    const host = new Host(fake, { env: {}, settleMs: 0 });
+    const res = JSON.parse((await host.handle(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "at_point", params: { pid: 4242, path: "172210", x: 250, y: 360 } })))!).result;
+    expect(res.chain.map((c: { name: string }) => c.name)).toEqual(["Save"]);
+    expect(fake.hitPids).toEqual([4242]);
+  });
+
   it("marks an empty grouping container at the end as telling nothing", async () => {
     const w: FakeWindowSpec = { role: "Window", name: "App", pid: 9, app: "app", native: 90, bounds: at(0, 0, 400, 400), children: [
       { role: "Pane", name: "", bounds: at(0, 0, 400, 400) },
     ] };
     const res = await harness([w]).call<{ chain: { role: string; empty?: boolean }[] }>("at_point", { pid: 9, path: "90", x: 5, y: 5 });
     expect(res.chain).toEqual([{ role: "panel", name: "", bounds: at(0, 0, 400, 400), empty: true }]);
+  });
+});
+
+describe("Ember's own process", () => {
+  it("is never found, read or hit-tested, whatever a request names, though its windows are listed (EMBER_OWNER_PID, W14)", async () => {
+    const fake = new FakeProvider([...twoApps(), ...benchDesktop(4242)], { deadlineMs: 300 });
+    const host = new Host(fake, { env: { EMBER_OWNER_PID: "4242" }, settleMs: 0 });
+    let n = 1;
+    const call = async (method: string, params: Record<string, unknown> = {}) => JSON.parse((await host.handle(JSON.stringify({ jsonrpc: "2.0", id: n++, method, params })))!).result;
+    const asked: string[] = [];
+    for (const m of ["snapshot", "element", "children", "elementsAt", "textInfo", "perform"] as const) {
+      const real = (fake[m] as (...a: unknown[]) => Promise<unknown>).bind(fake);
+      (fake as unknown as Record<string, unknown>)[m] = (...a: unknown[]) => { asked.push(m); return real(...a); };
+    }
+    expect((await call("list_windows")).windows.map((w: AxWindow) => w.pid)).toContain(4242);
+    const bench = { pid: 4242, path: "172210" };
+    expect(await call("read_window", bench)).toMatchObject({ window: null, nodes: [] });
+    expect(await call("read_window", { title: "Ember Bench" })).toMatchObject({ window: null, nodes: [] });
+    expect(await call("at_point", { ...bench, x: 250, y: 360 })).toMatchObject({ chain: [], found: false });
+    expect(await call("secret_fields", bench)).toMatchObject({ fields: [], complete: false });
+    expect(asked).toEqual([]);
+    // Other apps are read as ever.
+    expect((await call("read_window", { pid: 20, path: "201" })).window).toMatchObject({ name: "Vault - KeePassXC" });
+    expect(asked).toEqual(["snapshot"]);
   });
 });

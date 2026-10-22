@@ -6,8 +6,8 @@
  */
 
 import path from "node:path";
-import type { AxProvider } from "../provider";
-import { ProviderError } from "../provider";
+import type { AxProvider, ProviderHealth } from "../provider";
+import { ProviderError, ownerPid } from "../provider";
 import { fakeFromEnv } from "./fake";
 import { UiaProvider, uiaScript } from "./uia";
 
@@ -34,6 +34,7 @@ export class UnsupportedProvider implements AxProvider {
   get vocabulary(): "uia" | "ax" { return this.kind; }
   async start(): Promise<void> { throw new Error(this.why); }
   async accessibility(): Promise<boolean | null> { return null; }
+  health(): ProviderHealth { return { ok: false, detail: this.why }; }
   private fail(): never { throw new ProviderError("failed", this.why); }
   async topWindows(): Promise<never> { this.fail(); }
   async snapshot(): Promise<never> { this.fail(); }
@@ -47,11 +48,14 @@ export class UnsupportedProvider implements AxProvider {
   stop(): void {}
 }
 
-/** The provider for this process (`file`: the host's own script, which says whether it is packaged). */
-export function openProvider(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, file = typeof __filename === "string" ? __filename : ""): AxProvider {
+/**
+ * The provider for this process (`file`: the host's own script, which says whether it is packaged; `owner`: Ember's
+ * own process, never read: its windows are listed from Win32 facts alone).
+ */
+export function openProvider(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, file = typeof __filename === "string" ? __filename : "", owner = ownerPid(env, process.ppid)): AxProvider {
   switch (providerKind(env, platform, isPackaged(file))) {
     case "fake": return fakeFromEnv(env);
-    case "uia": return new UiaProvider({ script: uiaScript(env, file), env });
+    case "uia": return new UiaProvider({ script: uiaScript(env, file), env, skipPids: owner === undefined ? [] : [owner] });
     case "ax": return new UnsupportedProvider("ax", "the macOS accessibility provider isn't part of this build yet");
     default: return new UnsupportedProvider("uia", `the accessibility host doesn't run on ${platform}: Ember reads apps there with its AT-SPI sidecar`);
   }

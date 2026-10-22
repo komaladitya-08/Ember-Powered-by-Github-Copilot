@@ -136,6 +136,33 @@ export interface RawNode {
   gone?: boolean;
 }
 
+/**
+ * How the provider is, as the host's `status` reports it without waiting for a start: `ok` true when it is up, false
+ * when its last start failed (`detail` says why, in a phrase that reads after "didn't start: "), null when it hasn't
+ * started yet or is starting. Windows adds the bridge's `languageMode` from its fatal line ("ConstrainedLanguage": an
+ * administrator's lockdown, which nothing Ember does changes) and the DPI awareness its ready line reported for its UI
+ * Automation threads (`dpi`) and for its process (`processDpi`).
+ */
+export interface ProviderHealth {
+  ok: boolean | null;
+  detail?: string;
+  languageMode?: string;
+  dpi?: string;
+  processDpi?: string;
+}
+
+/**
+ * Ember's own process: EMBER_OWNER_PID (which Ember's launch sets), else `parent` where given (the host process's
+ * parent, which is Ember). No provider call is ever made into it: an accessibility request there would turn Chromium's
+ * accessibility on for Ember's own windows (and on macOS wait on Ember's main thread); its windows are still listed
+ * from the window facts alone.
+ */
+export function ownerPid(env: NodeJS.ProcessEnv, parent?: number): number | undefined {
+  const raw = env.EMBER_OWNER_PID?.trim();
+  const pid = raw && /^\d+$/.test(raw) ? Number(raw) : parent;
+  return pid !== undefined && Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
 /** How much a snapshot may take: its depth, its node count, and its time. */
 export interface SnapshotOptions { maxDepth: number; maxNodes: number; deadlineMs: number }
 
@@ -175,13 +202,19 @@ export interface AxProvider {
   start(): Promise<void>;
   /** Whether accessibility is on for Ember (macOS: the Accessibility permission), or null when that can't be told. */
   accessibility(): Promise<boolean | null>;
+  /** How it is now (see ProviderHealth): never throws, never starts it, never waits. */
+  health(): ProviderHealth;
   /** The top-level windows, front to back where the platform says. */
   topWindows(): Promise<RawWindow[]>;
   snapshot(window: Handle, o: SnapshotOptions): Promise<Snapshot>;
   /** The element as it is now (null: gone). */
   element(h: Handle): Promise<RawNode | null>;
-  /** What is at a screen point: its top-level window first, down to the deepest element there. */
-  elementsAt(x: number, y: number): Promise<RawNode[]>;
+  /**
+   * What is at a screen point: its top-level window first, down to the deepest element there. `pid`: the app whose
+   * window is asked about, where the platform hit-tests app by app (AX); a provider that hit-tests the whole screen
+   * (UI Automation) may ignore it.
+   */
+  elementsAt(x: number, y: number, pid?: number): Promise<RawNode[]>;
   /** The element with the keyboard, and its top-level window. */
   focused(): Promise<{ element: RawNode | null; window: Handle | null }>;
   /** Its first `max` children as they are now (offscreen ones too: a closed drop-down's options). */

@@ -19,9 +19,13 @@ import type { Logger } from "../../app/main/logger";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-e2e-"));
 const desktop = path.join(dir, "desktop.json");
-const bench = benchDesktop();
+const bench = benchDesktop(process.pid === 4242 ? 4243 : 4242);
 // A field nothing says is secret until Ember finds it is (a key revealed beside "Show"): marked, then remembered.
 bench[0].children!.push({ role: "Edit", name: "Recovery hint", value: "blue-horse", editable: true, bounds: { x: 210, y: 390, width: 200, height: 24 }, actions: ["setValue"] });
+// Ember's own window (this test process stands for Ember: EMBER_OWNER_PID), which the host never reads.
+bench.push({ role: "Window", name: "Ember overlay", pid: process.pid, app: "ember", bounds: { x: 0, y: 0, width: 300, height: 200 }, children: [
+  { role: "Button", name: "Stop", bounds: { x: 10, y: 10, width: 60, height: 24 }, actions: ["invoke"] },
+] });
 fs.writeFileSync(desktop, JSON.stringify(bench));
 let script = "";
 
@@ -38,14 +42,16 @@ function buildHost(): string {
 const log = { debug() {}, info() {}, warn() {}, error() {}, child: () => log } as unknown as Logger;
 const running: AtspiSidecar[] = [];
 function client(logFile = path.join(dir, `bench-${running.length}.log`)) {
-  const launch = hostLaunch({ execPath: process.execPath, host: script, env: { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop, EMBER_AX_FAKE_LOG: logFile }, platform: process.platform, packaged: false });
+  const env = { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop, EMBER_AX_FAKE_LOG: logFile, EMBER_OWNER_PID: String(process.pid) };
+  const launch = hostLaunch({ execPath: process.execPath, host: script, env, platform: process.platform, packaged: false });
   const s = new AtspiSidecar("unused.py", log, "unused-python", process.env, launch);
   running.push(s);
   const lines = (): FakeLogLine[] => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l)) : []);
   return { s, lines };
 }
 const failure = (p: Promise<unknown>) => p.then(() => "resolved", (e: Error) => e.message);
-const byName = (nodes: AxNode[], name: string) => nodes.find(n => n.name === name)!;
+/** The control called `name`: never the label beside it that says the same (the bench's "Theme" and "Theme"). */
+const byName = (nodes: AxNode[], name: string) => (nodes.find(n => n.name === name && n.role !== "label") ?? nodes.find(n => n.name === name))!;
 
 /** The host processes this test process started (Linux: by /proc). */
 function hostPids(): number[] {
@@ -66,7 +72,9 @@ afterAll(() => { for (const s of running.splice(0)) s.stop(); });
 describe("the built sidecar host through Ember's client", () => {
   it("answers on the wire as the Python sidecar does, numbering elements from the block it was given", async () => {
     const { s } = client();
-    expect(await s.status()).toMatchObject({ version: 3, toolkitAccessibility: true, apps: 1 });
+    const status = await s.status();
+    expect(status).toMatchObject({ version: 3, toolkitAccessibility: true, apps: 2 });
+    expect(status.detail).toBeUndefined();
     const { windows } = await s.listWindows({ ownPid: process.pid });
     expect(windows).toEqual([expect.objectContaining({ app: "powershell", name: "Ember Bench (Windows)", role: "frame", path: expect.any(String) })]);
     const r = await s.readWindow({ pid: windows[0].pid!, path: windows[0].path, ownPid: process.pid });
@@ -77,6 +85,8 @@ describe("the built sidecar host through Ember's client", () => {
     expect(pw.text).toBeUndefined();
     // The client keeps the secret keys to itself.
     expect("secretKeys" in r).toBe(false);
+    // Ember's own window is never read, even asked for by name.
+    expect(await s.readWindow({ title: "Ember overlay" })).toMatchObject({ window: null, nodes: [] });
   });
 
   it("does the bench's actions, and the bench sees them", async () => {

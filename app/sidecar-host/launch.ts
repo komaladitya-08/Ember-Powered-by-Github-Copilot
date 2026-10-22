@@ -11,8 +11,11 @@ import type { SidecarLaunch } from "../main/perception/sidecar";
 /** How long a new host's first requests may take, by platform: Windows' first start compiles the bridge. */
 export const FIRST_REQUEST_MS: Partial<Record<NodeJS.Platform, number>> = { win32: 20_000, darwin: 10_000 };
 
-/** Switches only tests use (see providers/index.ts): never passed to a packaged host. */
-const TEST_SWITCHES = ["EMBER_AX_PROVIDER", "EMBER_AX_FAKE_DESKTOP", "EMBER_AX_FAKE_LOG"];
+/**
+ * Switches only tests use (see providers/index.ts): never passed to a packaged host. Exported so that Ember's own
+ * environment for the host (the platform layer's hostEnv) keeps exactly these in development and drops them packaged.
+ */
+export const TEST_SWITCHES: readonly string[] = ["EMBER_AX_PROVIDER", "EMBER_AX_FAKE_DESKTOP", "EMBER_AX_FAKE_LOG"];
 
 export interface HostLaunchOptions {
   /** Ember's own binary (process.execPath). */
@@ -32,7 +35,8 @@ export interface HostLaunchOptions {
 /** The launch for the sidecar host (see the module comment). */
 export function hostLaunch(o: HostLaunchOptions): SidecarLaunch {
   const env: NodeJS.ProcessEnv = { ...o.env, ELECTRON_RUN_AS_NODE: "1" };
-  if (o.packaged) for (const k of TEST_SWITCHES) delete env[k];
+  // Compared without case: Windows' environment is case-insensitive, so a packaged host would read Ember_AX_Provider too.
+  if (o.packaged) for (const k of Object.keys(env)) if (TEST_SWITCHES.includes(k.toUpperCase())) delete env[k];
   if (o.uiaScript) env.EMBER_UIA_SCRIPT = o.uiaScript;
   if (o.uiaCache) env.EMBER_UIA_CACHE = o.uiaCache;
   return { command: o.execPath, args: [o.host], env, firstRequestMs: FIRST_REQUEST_MS[o.platform] ?? 5000, windowsHide: true };
