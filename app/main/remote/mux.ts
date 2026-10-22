@@ -136,9 +136,11 @@ export function nextWindow(current: number, other: number, throughput: number): 
 }
 
 /**
- * Throughput of the credit-limited bytes arriving from the other end, in bytes/s. It counts only bytes that arrive
- * after a sample's first read (those were already on their way before the clock started) over at least 250 ms, and
- * restarts after 500 ms of quiet, so it errs low: a low figure only slows growth and lengthens the escalation deadline.
+ * Throughput of the credit-limited bytes arriving from the other end, in bytes/s. A sample spans at least 250 ms from
+ * one read to a later one and counts the bytes of the reads after its first (those were already on their way before
+ * its clock started); a read is all the frames that arrive at one instant, so a sample is closed by the first arrival
+ * after it is long enough. It restarts after 500 ms of quiet. It errs low: a low figure only slows growth and
+ * lengthens the escalation deadline.
  */
 export class RateMeter {
   private start = -1;
@@ -156,16 +158,16 @@ export class RateMeter {
       this.bytes = 0;
       return;
     }
-    this.last = t;
+    // More of the read that opened the sample.
     if (t === this.start) return;
-    this.bytes += n;
-    const dt = t - this.start;
-    if (dt >= this.sampleMs) {
-      const r = (this.bytes * 1000) / dt;
+    if (t !== this.last && this.last - this.start >= this.sampleMs) {
+      const r = (this.bytes * 1000) / (this.last - this.start);
       this.est = this.est > 0 ? (this.est + r) / 2 : r;
-      this.start = t;
+      this.start = this.last;
       this.bytes = 0;
     }
+    this.bytes += n;
+    this.last = t;
   }
 
   /** The estimate (bytes/s), 0 until a sample completes. */
