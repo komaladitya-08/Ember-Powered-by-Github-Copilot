@@ -411,7 +411,10 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
       if (win.wmClassName === "CASCADIA_HOSTING_WINDOW_CLASS") {
         // Windows 11's default terminal took the console over: the window is Windows Terminal's own.
         expect(win.wmClass.toLowerCase()).toBe("windowsterminal");
-        console.log("not testable on this machine: the default terminal is Windows Terminal, so no classic console window opened");
+        // §10 item 10's wording, in the log and the job summary, so the check is listed as not run rather than passed.
+        const note = "not testable on this runner: the default terminal is Windows Terminal, so no classic console window opened";
+        console.log(note);
+        if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- console windows: ${note}\n`);
         return;
       }
       if (!consolePid) consolePid = win.pid ?? 0;
