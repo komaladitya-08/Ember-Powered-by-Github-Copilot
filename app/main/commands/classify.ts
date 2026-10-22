@@ -474,6 +474,95 @@ const PROJECT_RUNNERS = new Set([
 
 /** bash built-ins that take a variable's name (a subscript in it is evaluated as arithmetic). */
 const NAME_TAKERS = new Set(["printf", "read", "unset", "test", "[", "mapfile", "readarray", "declare", "typeset", "local", "export", "readonly", "wait", "getopts", "let", "eval"]);
+/** The declaration built-ins: an operand is a name or a `name=value` assignment. */
+const DECLARERS = new Set(["declare", "typeset", "local", "export", "readonly"]);
+/** `test`'s operators whose operand is a variable's name. */
+const TEST_NAME_OPS = new Set(["-v", "-R"]);
+/** Options of read and mapfile whose value is text or a number, never a name (read -a's value is a name). */
+const READ_TEXT_OPTS = "dinNptu";
+const MAPFILE_TEXT_OPTS = "dnOsucC";
+
+/**
+ * Whether an unresolved word could become several words when the shell runs it: an unquoted expansion splits on
+ * spaces, and `"$@"` or `"${a[@]}"` give one word per element even in quotes. Such a word could carry an option and
+ * a name at once (`x='-v a[$(…)]'; [ $x ]`).
+ */
+export function mayBecomeWords(raw: string): boolean {
+  let q: "'" | "\"" | null = null;
+  for (let k = 0; k < raw.length; k++) {
+    const c = raw[k];
+    if (q === "'") { if (c === "'") q = null; continue; }
+    if (c === "\\") { k++; continue; }
+    if (q === "\"" && c === "\"") { q = null; continue; }
+    if (q === null && (c === "'" || c === "\"")) { q = c; continue; }
+    if (c === "`" && q === null) return true;
+    if (c !== "$") continue;
+    const n = raw[k + 1] ?? "";
+    if (n === "@" || (n === "{" && /^\{[^}]*@/.test(raw.slice(k + 1)))) return true;
+    if (q === null && /[A-Za-z0-9_{(*#?$!-]/.test(n)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a name-taking built-in gets a variable's name Ember can't see (D4.3 g). bash evaluates the subscript of a
+ * name it is given (`printf -v`, `read`, `declare` with a value, `test -v`, `unset` of an array element), so
+ * `x='a[$(rm -rf build)]'; printf -v "$x" y` runs the hidden command. Every place a name can stand counts, and so
+ * does an unresolved word that could itself be the option taking a name (`printf "$o" "$x" y`) or split into an
+ * option and a name (`[ $x ]`). Written-out names are judged by their text (`a[$(…)]`) elsewhere.
+ */
+export function unseenName(key: string, args: readonly Arg[]): boolean {
+  const unres = (a: Arg | undefined): boolean => a !== undefined && a.v === null;
+  /**
+   * Walks the options: letters in `textOpts` take a text or number value, letters in `nameOpts` a name. Returns where
+   * the operands start (an unresolved word stops the walk: it could be an option too), or -1 for a name Ember can't
+   * see (or a text value that could split into one).
+   */
+  const options = (textOpts: string, nameOpts: string): number => {
+    let k = 0;
+    for (; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null || v === "--" || !v.startsWith("-") || v === "-") return v === "--" ? k + 1 : k;
+      for (let j = 1; j < v.length; j++) {
+        const c = v[j];
+        if (!textOpts.includes(c) && !nameOpts.includes(c)) continue;
+        if (j === v.length - 1) {
+          const value = args[k + 1];
+          if (nameOpts.includes(c) ? unres(value) : unres(value) && mayBecomeWords(value!.raw)) return -1;
+          k++;
+        }
+        break;
+      }
+    }
+    return k;
+  };
+  switch (key) {
+    case "printf": {
+      // printf [-v name] [--] format [arguments]: an unresolved format could be -v itself, or split into -v and a name.
+      const at = options("", "v");
+      return at < 0 || (unres(args[at]) && (at < args.length - 1 || mayBecomeWords(args[at].raw)));
+    }
+    case "test":
+    case "[": {
+      const ops = key === "[" && args.at(-1)?.v === "]" ? args.slice(0, -1) : args;
+      return ops.some((a, k) => unres(a) && (mayBecomeWords(a.raw) || TEST_NAME_OPS.has(ops[k - 1]?.v ?? "") || unres(ops[k + 1])));
+    }
+    case "read":
+    case "mapfile":
+    case "readarray": {
+      const at = options(key === "read" ? READ_TEXT_OPTS : MAPFILE_TEXT_OPTS, key === "read" ? "a" : "");
+      return at < 0 || args.slice(at).some(unres);
+    }
+    case "getopts":
+      return unres(args[1]) || (unres(args[0]) && mayBecomeWords(args[0].raw));
+    case "unset":
+    case "wait":
+      return args.some(unres);
+    default:
+      // A declaration's operand: an assignment whose name is written out is fine whatever its value.
+      return DECLARERS.has(key) && args.some(a => unres(a) && !/^["']?[A-Za-z_][A-Za-z0-9_]*\+?=/.test(a.raw));
+  }
+}
 
 /** Words that name the null device or the terminal (redirecting to them writes no file). */
 const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "$null", "con", "nul:"]);
@@ -1024,10 +1113,7 @@ class Engine extends Classifier {
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
-    // A variable name with a subscript that runs a command (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`, `test -v …`).
-    if (sc.family === "posix" && NAME_TAKERS.has(key) && args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v))) {
-      this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
-    }
+    this.hiddenNames(key, args, sc);
     this.pipe.program = key;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
   }
@@ -1173,6 +1259,19 @@ class Engine extends Classifier {
     else generic(inner);
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
+    // `command printf -v …` and `time unset …` run the same built-ins.
+    this.hiddenNames(key, inner.args, sc);
+  }
+
+  /**
+   * A variable's name with a subscript that runs a command, written out (`printf -v 'a[$(…)]'`, `unset 'a[$(…)]'`,
+   * `test -v …`) or out of Ember's sight (`printf -v "$x"`, `read "$x"`, `declare "$x"=1`; `unseenName`).
+   */
+  hiddenNames(key: string, args: readonly Arg[], sc: Scope): void {
+    if (sc.family !== "posix" || !NAME_TAKERS.has(key)) return;
+    if (args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v)) || unseenName(key, args)) {
+      this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
+    }
   }
 
   /**

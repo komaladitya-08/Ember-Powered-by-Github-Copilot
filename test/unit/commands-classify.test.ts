@@ -7,10 +7,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { ShellId } from "../../app/main/commands/types";
-import { classifyCommand, MAX_COMMAND_CHARS } from "../../app/main/commands/classify";
+import { classifyCommand, MAX_COMMAND_CHARS, mayBecomeWords, unseenName } from "../../app/main/commands/classify";
 import { lexPosix } from "../../app/main/commands/lex-posix";
 import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
+import { lit, type Arg } from "../../app/main/commands/words";
 import { contextOf, loadCorpus, problemsOf, runCase, type Family } from "../fixtures/commands/corpus";
 
 const FAMILIES: Family[] = ["posix", "powershell", "cmd", "wsl"];
@@ -131,6 +132,46 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(says("xdotool key y")).toBe(INPUT);
     expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);
     expect(says("xdotool key y; cat ~/.config/ember/settings.json")).toBe(INPUT);
+  });
+});
+
+describe("variable names Ember can't see (name-taking built-ins, D4.3 g)", () => {
+  /** An unresolved word as written. */
+  const unres = (raw: string): Arg => ({ v: null, raw, glob: false });
+
+  it("tells a word that could split into several from one that can't", () => {
+    for (const raw of ["$x", "${x}", "$(cmd)", "`cmd`", "a$x", "\"$@\"", "\"${a[@]}\"", "$*", "'a'$x"]) expect(mayBecomeWords(raw), raw).toBe(true);
+    for (const raw of ["\"$x\"", "\"${x}\"", "\"$(cmd)\"", "'$x'", "\\$x", "\"a $x b\"", "$'a\\tb'"]) expect(mayBecomeWords(raw), raw).toBe(false);
+  });
+
+  it("finds a name in every place each built-in takes one", () => {
+    expect(unseenName("printf", [lit("-v"), unres("\"$x\""), lit("y")])).toBe(true);
+    expect(unseenName("printf", [unres("\"$o\""), unres("\"$x\""), lit("y")])).toBe(true);
+    expect(unseenName("printf", [unres("$x")])).toBe(true);
+    expect(unseenName("read", [lit("-r"), lit("-a"), unres("\"$x\"")])).toBe(true);
+    expect(unseenName("read", [unres("\"$x\"")])).toBe(true);
+    expect(unseenName("mapfile", [lit("-t"), unres("\"$x\"")])).toBe(true);
+    expect(unseenName("declare", [unres("\"$x\"=1")])).toBe(true);
+    expect(unseenName("export", [unres("\"$x=1\"")])).toBe(true);
+    expect(unseenName("test", [lit("-v"), unres("\"$x\"")])).toBe(true);
+    expect(unseenName("[", [unres("\"$o\""), unres("\"$x\""), lit("]")])).toBe(true);
+    expect(unseenName("[", [unres("$x"), lit("]")])).toBe(true);
+    expect(unseenName("unset", [unres("\"$x\"")])).toBe(true);
+    expect(unseenName("wait", [lit("-p"), unres("\"$x\"")])).toBe(true);
+    expect(unseenName("getopts", [lit("ab"), unres("\"$x\"")])).toBe(true);
+  });
+
+  it("leaves values that are only text alone", () => {
+    expect(unseenName("printf", [lit("%s\\n"), unres("\"$x\""), unres("$y")])).toBe(false);
+    expect(unseenName("printf", [lit("-v"), lit("out"), lit("%s"), unres("\"$x\"")])).toBe(false);
+    expect(unseenName("printf", [unres("\"$fmt\"")])).toBe(false);
+    expect(unseenName("test", [lit("-n"), unres("\"$x\"")])).toBe(false);
+    expect(unseenName("[", [unres("\"$a\""), lit("="), unres("\"$b\""), lit("]")])).toBe(false);
+    expect(unseenName("[", [unres("\"$x\""), lit("]")])).toBe(false);
+    expect(unseenName("read", [lit("-r"), lit("-p"), unres("\"$msg\""), lit("line")])).toBe(false);
+    expect(unseenName("read", [lit("-r"), lit("-p"), unres("$msg"), lit("line")])).toBe(true);
+    expect(unseenName("export", [unres("NODE_ENV=\"$mode\"")])).toBe(false);
+    expect(unseenName("declare", [unres("\"greeting=hello $name\"")])).toBe(false);
   });
 });
 

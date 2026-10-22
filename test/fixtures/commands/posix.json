@@ -9498,6 +9498,361 @@
   {
    "cmd": "command make -p",
    "verdict": "run"
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]' && printf -v \"$x\" %s foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v $x foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v\"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "o=-v; x='a[$(rm -rf build)]'; printf \"$o\" \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)] foo'; printf $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; read \"$x\" <<< foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; read -r -a \"$x\" <<< foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; declare \"$x\"=1",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; declare \"$x=1\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; typeset \"$x\"=1",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; export \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; readonly \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; test -v \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ -v \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ ! -R \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "o=-v; x='a[$(rm -rf build)]'; [ \"$o\" \"$x\" ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)]'; [ $x ]",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='-v a[$(rm${IFS}-rf${IFS}build)]'; test ! $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; unset \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; unset -v $x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; mapfile -t \"$x\" < list.txt",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; readarray \"$x\" < list.txt",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; wait -p \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; getopts ab \"$x\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; command printf -v \"$x\" foo",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "command printf -v 'a[$(rm y)]' %s x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "time unset 'a[$(rm y)]'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; printf -v \"$x\" foo",
+   "context": "darwin",
+   "shell": "zsh",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "x='a[$(rm -rf build)]'; [ -v \"$x\" ]",
+   "shell": "sh",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "printf '%s\\n' \"$name\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "printf '%s %s\\n' $a \"$HOME\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "printf -v out '%s' \"$name\" && echo \"$out\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ -n \"$name\" ] && echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "test -z \"$name\" || echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$a\" = \"$b\" ] && echo same",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$n\" -gt 3 ] && echo many",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ -f \"$HOME/.profile\" ] && echo yes",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ \"$name\" ] && echo set",
+   "verdict": "run"
+  },
+  {
+   "cmd": "export NODE_ENV=\"$mode\" && npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "declare greeting=\"hello $name\"; echo \"$greeting\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "read -r first rest <<< \"$line\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "unset FOO BAR",
+   "verdict": "run"
   }
  ]
 }
