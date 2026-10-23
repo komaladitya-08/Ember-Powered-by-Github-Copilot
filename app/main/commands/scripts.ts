@@ -287,8 +287,9 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       // A relative interpreter is found from the folder the command runs in.
       if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
       const path = flavour.isAbsolute(lang.path) ? lang.path : flavour.join(ref.cwd, lang.path);
-      // The kernel opens the interpreter by its name as written: a `..` in it is walked through links.
-      const open = env.os === "win32" ? null : physicalForm(lang.path, { os: env.os, home: "", cwd: ref.cwd });
+      // The kernel opens the interpreter by its name as written: a `..` in it is walked through links (and a leading `~`
+      // is a folder named `~`: the kernel expands nothing).
+      const open = env.os === "win32" ? null : physicalForm(lang.path.startsWith("~") ? `./${lang.path}` : lang.path, { os: env.os, home: "", cwd: ref.cwd });
       queue.push({ ref: { path, as: "shebang", cwd: ref.cwd, ...(open !== null ? { open } : {}) }, depth: depth + 1 });
       continue;
     }

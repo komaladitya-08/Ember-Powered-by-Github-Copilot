@@ -432,6 +432,10 @@ describe("a script named with `..`, which the kernel walks through links (§3.6,
     const interp = linked({ [`${P}/t`]: "#!./sub/../i.sh\necho hi\n", [`${P}/sub/../i.sh`]: "rm -rf build\n", [`${P}/i.sh`]: "echo benign\n" });
     expect((await local(interp, "./t")).resultType).toBe("denied");
     expect(interp.reads).toEqual([`${P}/t`, `${P}/sub/../i.sh`]);
+    // A leading `~` in a #! line is a folder named `~` (the kernel expands nothing), walked like any other.
+    const tilde = linked({ [`${P}/t`]: "#!~/../i.sh\necho hi\n", [`${P}/~/../i.sh`]: "rm -rf build\n", [`${P}/i.sh`]: "echo benign\n" });
+    expect((await local(tilde, "./t")).resultType).toBe("denied");
+    expect(tilde.reads).toEqual([`${P}/t`, `${P}/~/../i.sh`]);
     const lost = linked({ [`${P}/t`]: "#!./sub/../i.sh\necho hi\n" }, { real: p => (p.includes("/..") ? null : p) });
     expect((await local(lost, "./t")).resultType).toBe("denied");
     expect(h0rules(lost)).toContain("unclear.script-path");

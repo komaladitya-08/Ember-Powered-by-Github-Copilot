@@ -459,23 +459,11 @@ class Classifier {
    * The form with `..` kept of a path a program opens (physicalForm), on the target's own POSIX filesystem: the kernel
    * walks `..` through links, unlike the lexical form. Null for a path without one, a foreign scope's (never probed),
    * Windows' (Win32 removes `..` lexically too), and a `cd` target (the shell's own `cd` is lexical, as the scope's
-   * folder is; `cd -P` follows links: the cd rule handles it).
+   * folder is; after `cd -P`, which follows links, the cd rule leaves the folder unknown).
    */
   physical(text: string, use: PathUse, sc: Scope): string | null {
     if (sc.foreign || use === "cd" || sc.path.flavour !== "posix") return null;
     return physicalForm(text, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
-  }
-
-  /**
-   * The folder a `cd -P` lands in: the real path the target reports for the target as written (its form with `..` kept
-   * when it has one, which is probed). The lexical folder stands while nothing is known and the name has no `..`
-   * (a link in it differs, so the second pass corrects it); a `..` the target couldn't resolve leaves the folder unknown.
-   */
-  physicalCdTarget(target: Arg, abs: string | null, sc: Scope): string | null {
-    if (abs === null || target.v === null || sc.foreign || sc.path.flavour !== "posix") return abs;
-    const phys = physicalForm(target.v, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
-    if (phys !== null) this.addProbe(phys);
-    return this.ctx.real?.get(phys ?? abs) ?? (phys === null ? abs : null);
   }
 
   /** A write into a folder whose new file Ember can't name: a file in it, judged by §3.6's rules (not probed). */
@@ -1997,14 +1985,25 @@ reg(NATIVE, ["cd", "chdir", "pushd", "popd", "set-location", "push-location", "p
     target = ops[0];
     if (ops.length > 1 && h.sc.family === "cmd") target = { ...ops[0], v: ops.map(o => o.v).join(" ") };
   }
+  if (h.sc.family === "posix" && physicalCd(h.args)) {
+    // `cd -P` lands in the folder's real path, which only the target knows (the second pass), and every name after it
+    // would be judged there, where the first pass never probed (a link inside it into ~/.ssh, unseen), and its `cd ..`
+    // leaves from there: what follows it in this command has no folder Ember knows (a relative name asks). A command
+    // that is only `cd -P <folder>` still moves the task's folder, by the name as written (the same folder; the next
+    // command's shell gets that name in PWD, so its `cd ..` matches), unless a `..` in it only the target could resolve.
+    const abs = !target ? h.sc.home : target.v === "-" ? null : h.e.usePath(target, "cd", h.sc).abs;
+    const dots = target?.v != null && physicalForm(target.v, { os: h.sc.os === "win32" ? "linux" : h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) !== null;
+    h.e.cdTarget = null;
+    finishCd(h, dots ? null : abs);
+    return;
+  }
   if (!target) { h.e.cdTarget = h.sc.home; finishCd(h, h.sc.home); return; }
   if (target.v === "-") { h.e.cdTarget = null; return; }
   const obj = h.e.usePath(target, "cd", h.sc);
-  const to = h.sc.family === "posix" && physicalCd(h.args) ? h.e.physicalCdTarget(target, obj.abs, h.sc) : obj.abs;
-  h.e.cdTarget = to;
-  finishCd(h, to);
+  h.e.cdTarget = obj.abs;
+  finishCd(h, obj.abs);
 });
-/** Whether a POSIX `cd` follows links (`cd -P`; the last of -L and -P wins), so its folder is a real path. */
+/** Whether a POSIX `cd` follows links (`cd -P`; the last of -L and -P wins), so it lands in a real path. */
 function physicalCd(args: readonly Arg[]): boolean {
   let physical = false;
   for (const a of args) {

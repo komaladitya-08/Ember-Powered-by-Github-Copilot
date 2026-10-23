@@ -310,16 +310,24 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     expect(extra("rm -r ../build", { [`${P}/../build`]: "/home/ana/build" }).findings.every(f => !f.widening.includes("real-path"))).toBe(true);
   });
 
-  it("follows `cd -P` to the folder's real path, and asks about shell options that make every cd follow links", () => {
-    expect(extra("cd -P link && cd .. && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts).toEqual([{ path: "/data/t.sh", as: "sh", cwd: "/data" }]);
-    expect(extra("cd -P link && sh t.sh").scripts).toEqual([{ path: `${P}/link/t.sh`, as: "sh", cwd: `${P}/link` }]);
-    expect(extra("cd -L -P link && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts[0]?.cwd).toBe("/data/sub");
-    expect(extra("cd -P -L link && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts[0]?.cwd).toBe(`${P}/link`);
-    // `..` in a `cd -P` folder Ember couldn't resolve: the folder is unknown, so what follows asks.
-    expect(rules("cd -P link/.. && cat notes")).toContain("unclear.folder");
-    expect(extra("cd -P link/.. && sh t.sh", { [`${P}/link/..`]: "/data" }).scripts).toEqual([{ path: "/data/t.sh", as: "sh", cwd: "/data" }]);
+  it("leaves the folder unknown after `cd -P`, and asks about shell options that make every cd follow links", () => {
+    // Where `cd -P` lands only the target knows, and the first pass never probed the names after it there: with k a
+    // link into ~/.aws inside /data/sub, `cat k/config` would have been judged as /data/sub/k/config, unprobed.
+    const linkedK = { [`${P}/link`]: "/data/sub", [`${P}/link/k`]: "/home/ana/.aws", [`${P}/link/k/config`]: "/home/ana/.aws/config" };
+    for (const real of [{}, linkedK]) {
+      for (const cmd of ["cd -P link && cat k/config", "cd -P link && cd .. && sh t.sh", "cd -P link && sh t.sh", "cd -L -P link && sh t.sh", "cd -P && cd .. && sh t.sh", "cd -P link/.. && cat notes"]) {
+        const c = extra(cmd, real);
+        expect(c.findings.map(f => f.rule), cmd).toContain("unclear.folder");
+        expect(c.scripts, cmd).toEqual([]);
+      }
+    }
+    expect(rules("cd link && cat k/config", linkedK)).toContain("path.secret");
+    expect(extra("cd -P -L link && sh t.sh", linkedK).scripts[0]?.cwd).toBe(`${P}/link`);
+    expect(extra("cd -P link && make").findings).toEqual([]);
+    // A command that is only `cd -P <folder>` moves the task's folder by the name as written; with a `..`, not at all.
     expect(extra("cd -P sub").cdOnly).toBe(`${P}/sub`);
-    expect(extra("cd -P link", { [`${P}/link`]: "/data/sub" }).cdOnly).toBe("/data/sub");
+    expect(extra("cd -P link", linkedK).cdOnly).toBe(`${P}/link`);
+    expect(extra("cd -P link/..", { [`${P}/link/..`]: "/data" }).cdOnly).toBeUndefined();
     for (const [cmd, shell] of [
       ["set -P && cd link && cd .. && sh t.sh", "bash"], ["set -eP", "bash"], ["set -o physical", "bash"], ["bash -P -c 'cd link; cd ..; sh t.sh'", "bash"],
       ["setopt chase_links", "zsh"], ["setopt CHASEDOTS", "zsh"], ["set -o chaselinks", "zsh"], ["zsh -o chase_dots -c 'cd ..'", "bash"],
