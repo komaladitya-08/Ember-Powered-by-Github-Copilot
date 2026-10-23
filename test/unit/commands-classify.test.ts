@@ -298,6 +298,7 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     expect(extra("rm -r sub/../x", { [`${P}/sub/../x`]: "/home/ana/.config/ember/x" }).refuse?.rule).toBe("ember.path");
     expect(rules("cat sub/../*", { [`${P}/sub/..`]: "/home/ana/.ssh" })).toContain("path.secret");
     expect(rules("cat */../x")).toContain("unclear.glob-parent");
+    expect(extra("cat sub/../a\\ b/emb*/settings.json", { [`${P}/sub/../a b`]: "/home/ana/.config" }).refuse?.rule).toBe("ember.path");
     // A secret reached through `..` is never read as a script; its own rule asks.
     const key = extra("sh sub/../id", { [`${P}/sub/../id`]: "/home/ana/.ssh/id_ed25519" });
     expect(key.scripts).toEqual([]);

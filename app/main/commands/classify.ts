@@ -423,12 +423,14 @@ class Classifier {
     const physPattern = this.physical(pattern, use, sc);
     if (physPattern !== null) {
       const physPrefix = globPrefix(physPattern, sc.path);
-      if (DOT_DOT.test(physPattern.slice(physPrefix.length))) this.unclear("unclear.glob-parent", "Ember can't tell which files this names.");
+      // The pattern's segments after the fixed folder's (counted, not measured: the folder comes back unescaped).
+      const rest = physPattern.split("/").slice(physPrefix.split("/").length).join("/");
+      if (DOT_DOT.test(rest)) this.unclear("unclear.glob-parent", "Ember can't tell which files this names.");
       else if (DOT_DOT.test(physPrefix)) {
         this.addProbe(physPrefix);
         const r = this.ctx.real?.get(physPrefix);
         if (r && r !== prefix) {
-          forms.push(r + physPattern.slice(physPrefix.length));
+          forms.push(`${r.replace(/\/$/, "")}/${rest}`);
           this.judge(r, use, sc.path, text, sc, true);
           if (WRITES.has(use)) this.written.push({ p: r, env: sc.path });
         }
