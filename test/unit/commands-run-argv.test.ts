@@ -335,6 +335,19 @@ describe("the local runner's spawn", () => {
     expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
   });
 
+  it("names the run's folder in PWD on POSIX, over an inherited one, so the shell's `cd ..` starts where Ember judged", async () => {
+    const h = harness(linux);
+    const runner = createRunner({ ...h.options, env: { PATH: "/usr/bin", PWD: "/somewhere/else" } }, h.deps);
+    await runner.facts();
+    runner.start(spec({ cwd: "/home/ana/link" }));
+    expect((h.spawned[0].options.env as Record<string, string>).PWD).toBe("/home/ana/link");
+    const win = harness(windows);
+    const wr = createRunner({ ...win.options, env: { Path: "C:\\Windows", PWD: "C:\\x" } }, win.deps);
+    await wr.facts();
+    wr.start(spec({ shell: "powershell", cwd: "C:\\Users\\ana" }));
+    expect((win.spawned[0].options.env as Record<string, string>).PWD).toBe("C:\\x");
+  });
+
   it("gives pipe runs and Windows runs the non-interactive defaults, Windows names compared without case", async () => {
     const pipes = harness(linuxPipes);
     await started(pipes);

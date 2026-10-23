@@ -496,7 +496,11 @@ class LocalRun implements KeptRun {
     } catch {
       this.tracker = null;
     }
-    const env = mergeEnv(commandEnv(this.o.env, { os: facts.os, pty, remote: this.o.remote === true, extraPath: this.o.extraPath, runId: spec.runId }), launch.env, facts.os);
+    // PWD names the run's folder as Ember judged it: a POSIX shell keeps a PWD that is its current folder and otherwise
+    // starts from the folder's real path, so with the task's folder through a link (`~/link`) an inherited PWD would
+    // make `cd ..` land beside the link's target while the classifier judged the folder above ~/link (§3.6, L25).
+    const own = facts.os === "win32" ? launch.env : { ...launch.env, PWD: spec.cwd };
+    const env = mergeEnv(commandEnv(this.o.env, { os: facts.os, pty, remote: this.o.remote === true, extraPath: this.o.extraPath, runId: spec.runId }), own, facts.os);
 
     let child: ChildLike;
     try {

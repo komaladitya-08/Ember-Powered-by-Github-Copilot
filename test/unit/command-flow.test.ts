@@ -376,6 +376,91 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
   });
 });
 
+describe("a script named with `..`, which the kernel walks through links (§3.6, L25)", () => {
+  const P = "/home/ana/proj";
+  /** CL's own judge on this computer in ~/proj, where sub is a link to /data/inner; `texts` serves readScript by path. */
+  const linked = (texts: Record<string, string>, o: { real?: (p: string) => string | null; answers?: (string | null)[] } = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    const inspected: string[] = [];
+    /** Real paths the target says aren't there yet (a test removes what its earlier commands made). */
+    const absent = new Set<string>();
+    const lead = (p: string): string | null => (o.real ? o.real(p) : p.replace(`${P}/sub/..`, "/data").replace(`${P}/sub`, "/data/inner"));
+    const h = harness({
+      binding: LOCAL, answers: o.answers ?? ["deny", "deny", "deny"], state: { cwd: P, downloaded: new Set(), running: false },
+      inspect: async paths => { inspected.push(...paths); return paths.map(p => ({ exists: !absent.has(lead(p) ?? p), real: lead(p) })); },
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads, inspected, absent });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+
+  it("reads the t.sh beside the link's target, by the name the shell opens, and asks for what it does", async () => {
+    for (const command of ["sh sub/../t.sh", "cd sub && sh ../t.sh", "./sub/../t.sh"]) {
+      const h = linked({ [`${P}/sub/../t.sh`]: "rm -rf build\n", [`${P}/t.sh`]: "echo benign\n" });
+      expect((await local(h, command)).resultType, command).toBe("denied");
+      expect(h.reads, command).toEqual([`${P}/sub/../t.sh`]);
+      expect(h.inspected, command).toContain(`${P}/sub/../t.sh`);
+      expect((h.asked[0].panel as { card: CommandCard }).card.says.some(l => /^In t\.sh: .*build/.test(l)), command).toBe(true);
+      expect(h.starts, command).toEqual([]);
+    }
+  });
+
+  it("asks which script runs when the target can't say where the `..` leads, and reads nothing", async () => {
+    const h = linked({ [`${P}/t.sh`]: "echo benign\n" }, { real: p => (p.includes("/..") ? null : p) });
+    expect((await local(h, "sh sub/../t.sh")).resultType).toBe("denied");
+    expect(h.reads).toEqual([]);
+    expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain("Ember can't tell which script this runs.");
+    expect(h0rules(h)).toContain("unclear.script-path");
+  });
+
+  it("runs an ordinary script named with `..` without asking", async () => {
+    const h = linked({ [`${P}/sub/../t.sh`]: "echo building\n" });
+    expect((await local(h, "sh sub/../t.sh")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+
+  it("follows `..` in a script inside a script, and in a #! interpreter's path", async () => {
+    const nested = linked({ [`${P}/a.sh`]: "sh sub/../b.sh\n", [`${P}/sub/../b.sh`]: "rm -rf build\n", [`${P}/b.sh`]: "echo benign\n" });
+    expect((await local(nested, "sh a.sh")).resultType).toBe("denied");
+    expect(nested.reads).toEqual([`${P}/a.sh`, `${P}/sub/../b.sh`]);
+    const interp = linked({ [`${P}/t`]: "#!./sub/../i.sh\necho hi\n", [`${P}/sub/../i.sh`]: "rm -rf build\n", [`${P}/i.sh`]: "echo benign\n" });
+    expect((await local(interp, "./t")).resultType).toBe("denied");
+    expect(interp.reads).toEqual([`${P}/t`, `${P}/sub/../i.sh`]);
+    const lost = linked({ [`${P}/t`]: "#!./sub/../i.sh\necho hi\n" }, { real: p => (p.includes("/..") ? null : p) });
+    expect((await local(lost, "./t")).resultType).toBe("denied");
+    expect(h0rules(lost)).toContain("unclear.script-path");
+  });
+
+  it("asks before overwriting the file `> sub/../x` really writes when that one exists, whatever is at <cwd>/x", async () => {
+    const h = linked({});
+    h.absent.add(`${P}/notes.txt`);
+    expect((await local(h, "echo x > sub/../notes.txt")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("redirect.overwrite");
+    const fresh = linked({});
+    fresh.absent.add("/data/notes.txt");
+    expect((await local(fresh, "echo x > sub/../notes.txt")).resultType).toBe("success");
+  });
+
+  it("knows a padded script written through `..` as the task's own by where it landed, and the other way round", async () => {
+    const UNREAD = "It runs t.sh, which this task wrote or downloaded, and Ember can't read all of it first.";
+    const a = linked({});
+    a.absent.add("/data/t.sh");
+    expect((await local(a, "printf '%70000s' > sub/../t.sh")).resultType).toBe("success");
+    a.absent.clear();
+    expect([...a.ctx.state.written!.paths]).toEqual(expect.arrayContaining(["/data/t.sh"]));
+    expect((await local(a, "sh /data/t.sh")).resultType).toBe("denied");
+    expect((a.asked.at(-1)!.panel as { card: CommandCard }).card.says).toContain(UNREAD);
+    const b = linked({});
+    b.absent.add("/data/t.sh");
+    expect((await local(b, "printf '%70000s' > /data/t.sh")).resultType).toBe("success");
+    b.absent.clear();
+    expect((await local(b, "sh sub/../t.sh")).resultType).toBe("denied");
+    expect((b.asked.at(-1)!.panel as { card: CommandCard }).card.says).toContain(UNREAD);
+  });
+});
+
 describe("a script of the task's own that can't be read in full (L8's padding bypass)", () => {
   /** CL's own judge on this computer; `texts` serves readScript by path (missing: unreadable, as past the cap). */
   const own = (texts: Record<string, string> = {}, o: { exists?: (p: string) => boolean; real?: (p: string) => string; answers?: (string | null)[]; state?: CommandFlowContext["state"] } = {}) => {

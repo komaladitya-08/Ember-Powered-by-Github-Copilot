@@ -189,6 +189,8 @@ interface Obj extends CommandObject {
   abs: string | null;
   /** The target reported a different real path (second pass). */
   realDiffers?: boolean;
+  /** Its form with `..` kept (physicalForm), probed for the file the kernel opens: what "if it exists" asks about. */
+  phys?: string;
 }
 
 /** How a path use reaches Ember's own files, for the refusal's verb (§3.5.8): reading them, or changing or running them. */
@@ -242,7 +244,9 @@ class Classifier {
 
   add(cls: DangerClass, rule: string, says: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
     const program = o.program ?? this.program;
-    if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === o.ifExists)) return;
+    // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
+    const ifExists = o.ifExists === undefined ? undefined : (o.objects ?? []).find(ob => ob.abs === o.ifExists && ob.phys !== undefined)?.phys ?? o.ifExists;
+    if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === ifExists)) return;
     const objects: CommandObject[] = (o.objects ?? []).map(ob => {
       const out: CommandObject = { kind: ob.kind, text: ob.text };
       if (ob.resolved !== undefined) out.resolved = ob.resolved;
@@ -252,7 +256,7 @@ class Classifier {
     if (this.globalOpts.has(this.at) && !widening.includes("global-option")) widening.push("global-option");
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
-    if (o.ifExists !== undefined) f.ifExists = o.ifExists;
+    if (ifExists !== undefined) f.ifExists = ifExists;
     this.findings.push(f);
   }
 
@@ -374,6 +378,7 @@ class Classifier {
     // too, and on the second pass its real path is judged and remembered as written like the lexical one.
     const phys = this.physical(text, use, sc);
     if (phys !== null) {
+      obj.phys = phys;
       this.addProbe(phys);
       const r = this.ctx.real?.get(phys);
       if (r && r !== abs) {
