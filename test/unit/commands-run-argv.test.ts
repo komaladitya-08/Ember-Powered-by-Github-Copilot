@@ -196,7 +196,7 @@ describe("launchArgv", () => {
       command: "/usr/bin/script",
       args: ["-q", "-e", "-f", "-c", posixInner("bash", "/usr/bin/bash", "env"), "/dev/null"],
       options: { detached: true, stdio: ["pipe", "pipe", "pipe"] },
-      env: { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_COLS: "100", EMBER_ROWS: "30", EMBER_RUN_ID: RUN_ID },
+      env: { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_COLS: "100", EMBER_ROWS: "30", EMBER_RUN_ID: RUN_ID, PWD: "/home/ana/src" },
     });
     expect(launchArgv(spec({ shell: "zsh" }), linux, { jobHost: null }).args[4]).toBe(posixInner("zsh", "/usr/bin/zsh", "env"));
     expect(launchArgv(spec({ shell: "sh" }), linux, { jobHost: null }).args[4]).toBe(posixInner("sh", "/usr/bin/sh", "env"));
@@ -208,7 +208,7 @@ describe("launchArgv", () => {
     expect(got.command).toBe("/usr/bin/script");
     expect(got.args).toEqual(["-q", "/dev/null", "/bin/sh", "-c", posixInner("zsh", "/bin/zsh", "env")]);
     expect(got.options).toEqual({ detached: true, stdio: ["pipe", "pipe", "pipe"] });
-    expect(got.env).toMatchObject({ SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID });
+    expect(got.env).toMatchObject({ SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID, PWD: "/home/ana/src" });
   });
 
   it("runs on pipes with stdin closed and TERM=dumb without script", () => {
@@ -217,7 +217,7 @@ describe("launchArgv", () => {
       command: "/usr/bin/bash",
       args: [...NO_RC.bash, "-c", posixBody({ pty: false, from: "env" })],
       options: { detached: true, stdio: ["ignore", "pipe", "pipe"] },
-      env: { TERM: "dumb", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID },
+      env: { TERM: "dumb", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID, PWD: "/home/ana/src" },
     });
     expect(launchArgv(spec({ shell: "zsh" }), linuxPipes, { jobHost: null }).args).toEqual(["-f", "-c", posixBody({ pty: false, from: "env" })]);
     expect(launchArgv(spec({ shell: "sh" }), linuxPipes, { jobHost: null }).args).toEqual(["-c", posixBody({ pty: false, from: "env" })]);
@@ -245,7 +245,7 @@ describe("launchArgv", () => {
     expect(got.env).toEqual({
       ELECTRON_RUN_AS_NODE: "1", WSL_UTF8: "1", EMBER_INNER: posixInner("bash", "/usr/bin/bash", "b64"),
       EMBER_CMD_B64: Buffer.from(s.command, "utf8").toString("base64"), EMBER_RUN_ID: RUN_ID, EMBER_COLS: "100", EMBER_ROWS: "30",
-      TERM: "xterm-256color", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u",
+      TERM: "xterm-256color", PWD: "/home/ana/src", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u",
     });
     expect(Buffer.from(got.env.EMBER_CMD_B64, "base64").toString("utf8")).toBe(s.command);
   });
@@ -257,7 +257,9 @@ describe("launchArgv", () => {
     expect(got.env.TERM).toBe("dumb");
     // Nobody can type into a pipe run: the non-interactive defaults (fixed values) cross into the distro (RUN's gap).
     expect(got.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
-    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    // The shell inside starts with the run's folder as Ember named it, links included (§3.6, L25).
+    expect(got.env.PWD).toBe("/home/ana/src");
   });
 
   it("never puts the command text on the argv, whatever the target", () => {
@@ -333,6 +335,19 @@ describe("the local runner's spawn", () => {
     expect(env.NODE_OPTIONS).toBeUndefined();
     // A PTY run can be answered: no non-interactive defaults.
     expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
+  });
+
+  it("names the run's folder in PWD on POSIX, over an inherited one, so the shell's `cd ..` starts where Ember judged", async () => {
+    const h = harness(linux);
+    const runner = createRunner({ ...h.options, env: { PATH: "/usr/bin", PWD: "/somewhere/else" } }, h.deps);
+    await runner.facts();
+    runner.start(spec({ cwd: "/home/ana/link" }));
+    expect((h.spawned[0].options.env as Record<string, string>).PWD).toBe("/home/ana/link");
+    const win = harness(windows);
+    const wr = createRunner({ ...win.options, env: { Path: "C:\\Windows", PWD: "C:\\x" } }, win.deps);
+    await wr.facts();
+    wr.start(spec({ shell: "powershell", cwd: "C:\\Users\\ana" }));
+    expect((win.spawned[0].options.env as Record<string, string>).PWD).toBe("C:\\x");
   });
 
   it("gives pipe runs and Windows runs the non-interactive defaults, Windows names compared without case", async () => {

@@ -1063,6 +1063,17 @@ downloads it on first use per target and checks it before sending.
 - **A target's paths use the target's rules**: `node:path/posix` or `node:path/win32`, or `resolveTargetPath`, never
   `node:path`, in `app/main/commands/**`, `app/main/wsl/runner.ts`, `app/main/wsl/service.ts`, `app/main/remote/**`
   and `app/remote/**` (ESLint enforces it): a Windows PC runs commands on Linux targets.
+- **`..` is the kernel's on a POSIX target**: `x/..` is the folder above where x really leads, so with a link before
+  it, `resolveTargetPath`'s lexical form isn't the file that opens. The classifier also probes `physicalForm` (the
+  path with its `..` kept) and judges that form's real path; a script named with `..` is read by that form
+  (`ScriptRef.open`), judged by its real path (`ScriptRef.real`), and asks when the target can't resolve it; inspect
+  and `readScriptText` walk `..` through links, so never `path.normalize` a POSIX path before opening it; and every
+  POSIX run (`launchArgv`: this computer, an SSH remote's agent, and WSL through `WSLENV`) gets `PWD` set to its
+  folder, so the shell's own logical `cd ..` matches the classifier's. A shell's `cd` is lexical; `cd -P` leaves the
+  folder unknown for the rest of the command (never a real path from the second pass: the first pass must probe every
+  name the second judges, so no folder may depend on what the target reported; `env -C` likewise), and `set -P`,
+  `set -o physical`, zsh's `-w` and `chase_*`, setting or removing `PWD`, and `env -i`/`exec -c` ask. Win32 and PowerShell remove `..` lexically, as `resolveTargetPath`
+  does, so Windows keeps the lexical form.
 - **Nothing on an argv that a user or a remote wrote**: commands travel in the environment, WSL's fixed scripts on
   stdin, ssh's destination after `--`. Nothing secret is written on a remote. No network listener anywhere: askpass
   and the remote's helpers use local IPC only (a 0600 Unix socket in a 0700 folder; a named pipe that admits only the

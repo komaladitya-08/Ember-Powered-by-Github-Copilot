@@ -15,8 +15,8 @@
 
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
-import type { ClassificationExtra, ScriptRef } from "./classify";
-import { isUnder, pathEnv, type PathEnv } from "./paths";
+import { SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
+import { isUnder, pathEnv, physicalForm, type PathEnv } from "./paths";
 import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
 import type { Classification, ClassifyContext, Finding, PathFact, RunnerFacts, ShellId } from "./types";
 
@@ -219,9 +219,11 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const downloads: string[] = [];
   const writes = new Set<string>(outer.writes ?? []);
   let anywhere = outer.writesAnywhere === true;
-  /** What each script's own text writes, by that script's path: a script it doesn't run itself may change under it. */
-  const inner: { by: string; writes: string[]; anywhere: boolean }[] = [];
-  const ran: { path: string; depth: number }[] = [];
+  /** Each script read: its names (lexical, and real when known) and how deep it runs. */
+  type Ran = { names: string[]; depth: number };
+  /** What each script's own text writes, by that script: another script it runs may change under it. */
+  const inner: { by: Ran; writes: string[]; anywhere: boolean }[] = [];
+  const ran: Ran[] = [];
   let refuse = cls.refuse;
   const unclear = (rule: string, says: string): void => {
     if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening: ["in-script"], at: -1 });
@@ -241,25 +243,37 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   let reads = 0;
   while (queue.length > 0 && !env.isOver()) {
     const { ref, depth } = queue.shift()!;
-    const key = `${ref.as}\0${ref.path}\0${ref.cwd}`;
+    const key = `${ref.as}\0${ref.path}\0${ref.open ?? ""}\0${ref.cwd}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (depth > MAX_SCRIPT_DEPTH || ++reads > MAX_SCRIPT_READS) {
       unclear("unclear.scripts", "It runs more scripts, or scripts deeper inside scripts, than Ember reads first.");
       break;
     }
-    ran.push({ path: ref.path, depth });
+    const folder = ref.cwd || flavour.dirname(ref.path);
+    // A name with a `..` the kernel walks through links (an interpreter's `#!` path, or a ref the classifier made before
+    // the target answered) is the file at the real path the target reports for it; without that, which file runs
+    // can't be told, and it asks (L25).
+    let where = ref.real ?? null;
+    if (ref.open !== undefined && where === null) {
+      where = (await factOf(ref.open, folder)).real;
+      if (where === null) { unclear("unclear.script-path", SCRIPT_UNSURE); continue; }
+    }
+    const me: Ran = { names: where !== null && where !== ref.path ? [ref.path, where] : [ref.path], depth };
+    ran.push(me);
     const name = flavour.basename(ref.path);
     const ms = left();
-    const raw = ms > 0 ? await within(io.read(ref.path, ref.cwd || flavour.dirname(ref.path)), ms, null) : null;
+    // Read by the name the shell opens (`open`, `..` kept), so the text is the file that runs; never by `real`, which a
+    // target may report changed (`$(realpath …)` drops a name's trailing line breaks).
+    const raw = ms > 0 ? await within(io.read(ref.open ?? ref.path, folder), ms, null) : null;
     if (typeof raw !== "string") {
       // Padded past the cap, a FIFO, unreadable: L8 for a script the task didn't write; its own asks, unless the target
       // says nothing is there (PowerShell's `.\t` names t.bat and t.cmd too; a file this same command makes asks anyway).
-      // Its own by either name: a write through a link (`> l/t.sh`, l → .) is remembered where it landed too.
+      // Its own by any of its names: a write through a link (`> l/t.sh`, l → .) is remembered where it landed too.
       const own = (p: string | null): boolean => p !== null && taskWrote(p, env.written, env.downloaded, cmp);
-      if (own(ref.path) || (env.written?.paths.size ?? 0) > 0 || env.downloaded.size > 0) {
-        const fact = await factOf(ref.path, ref.cwd || flavour.dirname(ref.path));
-        if (fact.exists !== false && (own(ref.path) || own(fact.real))) unclear("unclear.script-unread", unreadOwnScript(name));
+      if (own(ref.path) || own(where) || (env.written?.paths.size ?? 0) > 0 || env.downloaded.size > 0) {
+        const fact = await factOf(ref.open ?? ref.path, folder);
+        if (fact.exists !== false && (own(ref.path) || own(where) || own(fact.real))) unclear("unclear.script-unread", unreadOwnScript(name));
       }
       continue;
     }
@@ -273,7 +287,10 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       // A relative interpreter is found from the folder the command runs in.
       if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
       const path = flavour.isAbsolute(lang.path) ? lang.path : flavour.join(ref.cwd, lang.path);
-      queue.push({ ref: { path, as: "shebang", cwd: ref.cwd }, depth: depth + 1 });
+      // The kernel opens the interpreter by its name as written: a `..` in it is walked through links (and a leading `~`
+      // is a folder named `~`: the kernel expands nothing).
+      const open = env.os === "win32" ? null : physicalForm(lang.path.startsWith("~") ? `./${lang.path}` : lang.path, { os: env.os, home: "", cwd: ref.cwd });
+      queue.push({ ref: { path, as: "shebang", cwd: ref.cwd, ...(open !== null ? { open } : {}) }, depth: depth + 1 });
       continue;
     }
     const sctx: ClassifyContext = {
@@ -299,7 +316,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       }
       downloads.push(...got.downloads);
       const x = got as Partial<ClassificationExtra>;
-      const its = { by: ref.path, writes: (x.writes ?? []).filter(p => typeof p === "string" && p !== ""), anywhere: x.writesAnywhere === true };
+      const its = { by: me, writes: (x.writes ?? []).filter(p => typeof p === "string" && p !== ""), anywhere: x.writesAnywhere === true };
       inner.push(its);
       for (const p of its.writes) writes.add(p);
       if (its.anywhere) anywhere = true;
@@ -312,8 +329,9 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const outerWrites = outer.writes ?? [];
   const outerAnywhere = outer.writesAnywhere === true;
   for (const r of ran) {
-    const byScript = inner.some(w => w.by !== r.path && (w.anywhere || w.writes.some(p => isUnder(r.path, p, cmp))));
-    const byLine = r.depth > 1 && (outerAnywhere || outerWrites.some(p => isUnder(r.path, p, cmp)));
+    const hit = (p: string) => r.names.some(n => isUnder(n, p, cmp));
+    const byScript = inner.some(w => w.by !== r && (w.anywhere || w.writes.some(hit)));
+    const byLine = r.depth > 1 && (outerAnywhere || outerWrites.some(hit));
     if (byScript || byLine) { unclear("unclear.script-written", WRITTEN_FIRST); break; }
   }
   const moreWrites = writes.size !== (outer.writes ?? []).length || anywhere !== outerAnywhere;

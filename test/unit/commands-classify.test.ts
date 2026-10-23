@@ -192,8 +192,10 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     expect(scripts(". ./env.sh", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "bash", cwd: P }]);
     expect(scripts("sh -c '. ./env.sh'", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "sh", cwd: P }]);
     expect(scripts("./deploy.sh", "bash", "linux")).toEqual([{ path: `${P}/deploy.sh`, as: "shebang", cwd: P }]);
-    // It runs in the command's folder, not beside the script (its relative paths resolve there).
-    expect(scripts("cd sub && sh ../tools/t.sh", "bash", "linux")).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub` }]);
+    // It runs in the command's folder, not beside the script (its relative paths resolve there). A `..` in its name is
+    // walked by the kernel through links, so it is read by the name as written once the target says where that leads.
+    const back = classifyCommand("cd sub && sh ../tools/t.sh", "bash", { ...contextOf("linux"), real: new Map([[`${P}/sub/../tools/t.sh`, `${P}/tools/t.sh`]]) });
+    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh` }]);
     // Through a wrapper, and from stdin.
     for (const cmd of ["env FOO=1 ./x.sh", "exec ./x.sh", "nice ./x.sh", "timeout 5 ./x.sh", "command ./x.sh"]) {
       expect(scripts(cmd, "bash", "linux"), cmd).toEqual([{ path: `${P}/x.sh`, as: "shebang", cwd: P }]);
@@ -249,6 +251,144 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     const dl = classifyCommand("sh get.sh", "bash", contextOf("linux", ["/home/ana/proj/get.sh"])) as ClassificationExtra;
     expect(dl.scripts).toEqual([]);
     expect(dl.findings.map(f => f.rule)).toContain("escape.run-downloaded");
+  });
+});
+
+describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () => {
+  const P = "/home/ana/proj";
+  const ctx = (real: Record<string, string> = {}, downloaded: string[] = []) => ({ ...contextOf("linux", downloaded), real: new Map(Object.entries(real)) });
+  const extra = (cmd: string, real: Record<string, string> = {}, downloaded: string[] = []) => classifyCommand(cmd, "bash", ctx(real, downloaded)) as ClassificationExtra;
+  const rules = (cmd: string, real: Record<string, string> = {}, downloaded: string[] = []) => extra(cmd, real, downloaded).findings.map(f => f.rule);
+
+  it("asks which script runs until the target says where `sub/../t.sh` leads, and probes it as written", () => {
+    for (const [cmd, open] of [
+      ["sh sub/../t.sh", `${P}/sub/../t.sh`], ["cd link && sh ../t.sh", `${P}/link/../t.sh`], ["./sub/../t.sh", `${P}/sub/../t.sh`],
+      ["bash < sub/../t.sh", `${P}/sub/../t.sh`], ["source sub/../env.sh", `${P}/sub/../env.sh`], ["env A=1 ./sub/../t.sh", `${P}/sub/../t.sh`],
+    ]) {
+      const c = extra(cmd);
+      expect(c.scripts, cmd).toEqual([]);
+      expect(c.findings.find(f => f.rule === "unclear.script-path")?.says, cmd).toBe("Ember can't tell which script this runs.");
+      expect(c.probe, cmd).toContain(open);
+    }
+  });
+
+  it("reads the script by the name as written and judges it by where it really is, once the target said", () => {
+    const c = extra("cd link && sh ../t.sh", { [`${P}/link/../t.sh`]: "/data/t.sh" });
+    expect(c.scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: `${P}/link`, open: `${P}/link/../t.sh`, real: "/data/t.sh" }]);
+    expect(c.findings.map(f => f.rule)).not.toContain("unclear.script-path");
+    // `sh t.sh && sh sub/../t.sh` names two files, both read.
+    expect(extra("sh t.sh && sh sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).scripts.map(r => r.open ?? r.path)).toEqual([`${P}/t.sh`, `${P}/sub/../t.sh`]);
+    // A link's own target is remembered as where the script is.
+    expect(extra("sh l.sh", { [`${P}/l.sh`]: "/x/t.sh" }).scripts).toEqual([{ path: `${P}/l.sh`, as: "sh", cwd: P, real: "/x/t.sh" }]);
+  });
+
+  it("keeps the shell's own `cd ..` lexical, and PowerShell's and cmd's `..` (they remove it themselves)", () => {
+    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P }]);
+    const W = "C:\\Users\\ana\\proj";
+    const ps = classifyCommand("& .\\sub\\..\\t.ps1", "powershell", contextOf("win32")) as ClassificationExtra;
+    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W }]);
+    expect(ps.findings.map(f => f.rule)).not.toContain("unclear.script-path");
+    const cmd = classifyCommand("sub\\..\\build.bat", "cmd", contextOf("win32")) as ClassificationExtra;
+    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+  });
+
+  it("judges every path with `..` by where it really leads: a secret, Ember's own, a download", () => {
+    expect(rules("cat sub/../credentials")).not.toContain("path.secret");
+    expect(rules("cat sub/../credentials", { [`${P}/sub/../credentials`]: "/home/ana/.aws/credentials" })).toContain("path.secret");
+    expect(extra("rm -r sub/../x", { [`${P}/sub/../x`]: "/home/ana/.config/ember/x" }).refuse?.rule).toBe("ember.path");
+    expect(rules("cat sub/../*", { [`${P}/sub/..`]: "/home/ana/.ssh" })).toContain("path.secret");
+    expect(rules("cat */../x")).toContain("unclear.glob-parent");
+    expect(extra("cat sub/../a\\ b/emb*/settings.json", { [`${P}/sub/../a b`]: "/home/ana/.config" }).refuse?.rule).toBe("ember.path");
+    // A secret reached through `..` is never read as a script; its own rule asks.
+    const key = extra("sh sub/../id", { [`${P}/sub/../id`]: "/home/ana/.ssh/id_ed25519" });
+    expect(key.scripts).toEqual([]);
+    expect(key.findings.map(f => f.rule)).toContain("path.secret");
+    // Running this task's download by another name is running the download.
+    expect(rules("sh sub/../get.sh", { [`${P}/sub/../get.sh`]: "/data/get.sh" }, ["/data/get.sh"])).toContain("escape.run-downloaded");
+    expect(rules("sh l.sh", { [`${P}/l.sh`]: `${P}/get.sh` }, [`${P}/get.sh`])).toContain("escape.run-downloaded");
+    // Nothing more when `..` leads where the lexical form does.
+    expect(extra("rm -r ../build", { [`${P}/../build`]: "/home/ana/build" }).findings.every(f => !f.widening.includes("real-path"))).toBe(true);
+  });
+
+  it("leaves the folder unknown after `cd -P`, and asks about shell options that make every cd follow links", () => {
+    // Where `cd -P` lands only the target knows, and the first pass never probed the names after it there: with k a
+    // link into ~/.aws inside /data/sub, `cat k/config` would have been judged as /data/sub/k/config, unprobed.
+    const linkedK = { [`${P}/link`]: "/data/sub", [`${P}/link/k`]: "/home/ana/.aws", [`${P}/link/k/config`]: "/home/ana/.aws/config" };
+    for (const real of [{}, linkedK]) {
+      for (const cmd of ["cd -P link && cat k/config", "cd -P link && cd .. && sh t.sh", "cd -P link && sh t.sh", "cd -L -P link && sh t.sh", "cd -P && cd .. && sh t.sh", "cd -P link/.. && cat notes"]) {
+        const c = extra(cmd, real);
+        expect(c.findings.map(f => f.rule), cmd).toContain("unclear.folder");
+        expect(c.scripts, cmd).toEqual([]);
+      }
+    }
+    expect(rules("cd link && cat k/config", linkedK)).toContain("path.secret");
+    expect(extra("cd -P -L link && sh t.sh", linkedK).scripts[0]?.cwd).toBe(`${P}/link`);
+    expect(extra("cd -P link && make").findings).toEqual([]);
+    // A command that is only `cd -P <folder>` moves the task's folder by the name as written; with a `..`, not at all.
+    expect(extra("cd -P sub").cdOnly).toBe(`${P}/sub`);
+    expect(extra("cd -P link", linkedK).cdOnly).toBe(`${P}/link`);
+    expect(extra("cd -P link/..", { [`${P}/link/..`]: "/data" }).cdOnly).toBeUndefined();
+    for (const [cmd, shell] of [
+      ["set -P && cd link && cd .. && sh t.sh", "bash"], ["set -eP", "bash"], ["set -o physical", "bash"], ["bash -P -c 'cd link; cd ..; sh t.sh'", "bash"],
+      ["setopt chase_links", "zsh"], ["setopt CHASEDOTS", "zsh"], ["set -o chaselinks", "zsh"], ["zsh -o chase_dots -c 'cd ..'", "bash"],
+      // Every `o` in a cluster takes the next word (bash 5.2: `set -euo physical` and `set -oe physical` both turn it on).
+      ["set -euo physical", "bash"], ["set -oe physical", "bash"], ["bash -euo physical -c 'cd ..'", "bash"],
+      // A name Ember can't see could be physical.
+      ["set -o $x", "bash"], ["set $x", "bash"], ["bash -o $x -c 'cd ..'", "bash"],
+      // zsh: -w is CHASE_LINKS's letter, `no` turns a name over, and -m makes names patterns.
+      ["set -w", "zsh"], ["setopt -w", "zsh"], ["unsetopt nochaselinks", "zsh"], ["unsetopt NO_CHASE_DOTS", "zsh"], ["set +o nochaselinks", "zsh"],
+      ["setopt -m 'c*'", "zsh"], ["zsh -w -c 'cd ..'", "bash"], ["zsh +o nochaselinks -c 'cd ..'", "bash"],
+    ] as const) expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.chase-links");
+    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "set -- -P x", "set -- $x", "cd -L link", "setopt extendedglob", "bash -eu -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
+    }
+    // zsh's CDABLE_VARS: `cd x` with no folder x goes to $x.
+    for (const [cmd, shell] of [["setopt cdablevars", "zsh"], ["setopt -T", "zsh"], ["unsetopt NO_CDABLE_VARS", "zsh"], ["set -o cdable_vars", "zsh"], ["set -T", "zsh"]] as const) {
+      expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.cdable-vars");
+    }
+    expect(rules("set -T")).not.toContain("unclear.cdable-vars");
+  });
+
+  it("asks when a command names the shell's folder another way (PWD), or sets PATH-like names through a built-in", () => {
+    // A shell started with PWD naming its folder through a link leaves `cd ..` from there (bash, dash: /z/l/.. is /z).
+    for (const cmd of ["PWD=/z/l bash -c 'cd .. && sh t.sh'", "export PWD=/z/l; bash -c 'cd ..'", "declare -x PWD=/z/l", "env PWD=/z/l sh -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    // Without PWD a shell starts from its folder's real path (bash, dash): `env -i`, `env -`, `env -u PWD`, `exec -c`,
+    // `unset PWD` before it.
+    for (const cmd of ["env -i bash -c 'cd .. && sh t.sh'", "env - sh -c 'cd ..'", "env -u PWD bash -c 'cd ..'", "env --unset=PWD bash", "exec -c bash -c 'cd ..'", "exec -cl bash", "unset PWD; bash -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    // `env -C` changes folder as the kernel does (`sub/..` beside where sub leads) and leaves PWD behind: what it runs
+    // has no folder Ember knows.
+    for (const cmd of ["env -C sub/.. sh t.sh", "env -C link bash -c 'cd .. && sh t.sh'", "env --chdir=link cat notes"]) {
+      const c = extra(cmd);
+      expect(c.findings.map(f => f.rule), cmd).toContain("unclear.folder");
+      expect(c.scripts, cmd).toEqual([]);
+    }
+    expect(rules("env -u FOO make")).not.toContain("unclear.assignment");
+    for (const cmd of ["printf -v PATH /tmp/x", "printf -vPATH /tmp/x", "printf -v 'PATH[0]' /tmp/x", "read PWD <<< /z/l", "read -r -a PATH <<< /tmp", "mapfile LD_PRELOAD < f", "declare PATH[0]=/tmp/x", "PATH+=:/tmp/x; ls"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    for (const cmd of ["printf '%s' PATH", "read -r line <<< x", "printf -v out '%s' x", "echo $PWD"]) expect(rules(cmd), cmd).not.toContain("unclear.assignment");
+  });
+
+  it("asks about overwriting the file a copy into `sub/../` really writes, and remembers a download where it lands", () => {
+    const into = extra("cp a b sub/../", { [`${P}/sub/..`]: "/data" });
+    expect(into.findings.filter(f => f.rule === "posix.cp").map(f => f.ifExists)).toEqual([`${P}/sub/../a`, `${P}/sub/../b`]);
+    expect(into.probe).toEqual(expect.arrayContaining([`${P}/sub/../a`, `${P}/sub/../b`]));
+    expect(extra("cp a dir/").findings.find(f => f.rule === "posix.cp")?.ifExists).toBe(`${P}/dir/a`);
+    // A download through `..` or a link is the download by its real name too: running that later asks (D4.3 f).
+    expect(extra("curl -o sub/../t.sh https://example.com/t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).downloads).toEqual([`${P}/t.sh`, "/data/t.sh"]);
+    expect(extra("curl -o l/t.sh https://example.com/t.sh", { [`${P}/l/t.sh`]: "/data/t.sh" }).downloads).toEqual([`${P}/l/t.sh`, "/data/t.sh"]);
+    expect(extra("curl -o t.sh https://example.com/t.sh").downloads).toEqual([`${P}/t.sh`]);
+  });
+
+  it("knows a command writes the script it runs by any of its names, and remembers a write where it lands", () => {
+    expect(rules("printf 'rm -rf ~' > /data/t.sh; sh sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" })).toContain("unclear.script-written");
+    expect(rules("printf 'rm -rf ~' > /x/t.sh; sh l.sh", { [`${P}/l.sh`]: "/x/t.sh" })).toContain("unclear.script-written");
+    expect(rules("printf 'rm -rf ~' > l.sh; sh /x/t.sh", { [`${P}/l.sh`]: "/x/t.sh" })).toContain("unclear.script-written");
+    expect(extra("printf x > sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).writes).toEqual(expect.arrayContaining([`${P}/t.sh`, "/data/t.sh"]));
   });
 });
 

@@ -59,7 +59,7 @@ class FakeChild extends EventEmitter {
 }
 
 /** RemoteRuns over fakes, with everything it does recorded. */
-function harness(o: Pick<RunsDeps, "backlog" | "drop"> = {}) {
+function harness(o: Partial<Pick<RunsDeps, "backlog" | "drop" | "baseEnv">> = {}) {
   const log: string[] = [];
   const spawned: { command: string; args: string[]; options: SpawnOptions; child: FakeChild }[] = [];
   const sent: { channel: number; bytes: string }[] = [];
@@ -115,6 +115,16 @@ describe("a command on the remote", () => {
     expect(env.GH_TOKEN).toBeUndefined();
     expect(h.stamps.has("0123456789abcdef")).toBe(true);
     expect(h.watched.get(1)).toMatchObject({ runId: "0123456789abcdef", pgid: 4321 });
+  });
+
+  it("starts the shell in the task's folder as the PC named it, over the SSH login's PWD, so its `cd ..` goes where the PC judged", () => {
+    // A shell keeps an inherited PWD only when it names its folder; the login's (the home folder) doesn't, and the shell
+    // would start from the real path of a folder reached through a link (§3.6, L25).
+    for (const pty of [true, false]) {
+      const h = harness({ baseEnv: { PATH: "/usr/bin:/bin", HOME: "/home/deploy", PWD: "/home/deploy" } });
+      h.runs.start(spec({ cwd: "/home/deploy/link" }), 7, facts(pty));
+      expect(h.spawned[0].options.env!.PWD, String(pty)).toBe("/home/deploy/link");
+    }
   });
 
   it("sends its raw output on its channel and ends with its exit code; the stamp and the watch go", () => {

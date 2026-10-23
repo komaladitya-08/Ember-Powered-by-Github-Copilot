@@ -62,6 +62,21 @@ const MISSING = new Set(["ENOENT", "ENOTDIR"]);
 
 const codeOf = (err: unknown): string | undefined => (err as NodeJS.ErrnoException | null)?.code;
 
+/**
+ * `raw` made absolute as the OS will walk it: on Windows normalised (Win32 removes `..` lexically before any
+ * filesystem sees a path); elsewhere joined to `cwd` with its `..` kept, since the kernel takes `x/..` as the folder
+ * above where x really is (`sub/../t.sh` with sub a link is beside the link's target), and realpath and open both
+ * walk it that way. Null when it can't be made absolute.
+ */
+function absolute(raw: string, cwd: string, os: OS): string | null {
+  if (os === "win32") {
+    if (win32.isAbsolute(raw)) return win32.normalize(raw);
+    return win32.isAbsolute(cwd) ? win32.join(cwd, raw) : null;
+  }
+  if (raw.startsWith("/")) return raw;
+  return cwd.startsWith("/") ? `${cwd.replace(/\/+$/, "")}/${raw}` : null;
+}
+
 /** For each path (relative ones joined to `cwd`): does it exist, and its real path. Never throws. */
 export async function inspectPaths(paths: readonly string[], cwd: string, o: { os: OS; fs?: InspectFs }): Promise<PathFact[]> {
   const P = o.os === "win32" ? win32 : posix;
@@ -89,7 +104,9 @@ export async function inspectPaths(paths: readonly string[], cwd: string, o: { o
     if (!link) return null;
     try {
       const target = await files.readlink(p);
-      return await realOf(P.isAbsolute(target) ? P.normalize(target) : P.join(P.dirname(p), target), depth + 1);
+      // A link's target is walked like any path: its `..` through links on a POSIX system.
+      const next = absolute(target, P.dirname(p), o.os);
+      return next === null ? null : await realOf(next, depth + 1);
     } catch {
       return null;
     }
@@ -97,10 +114,8 @@ export async function inspectPaths(paths: readonly string[], cwd: string, o: { o
 
   const one = async (raw: string): Promise<PathFact> => {
     if (typeof raw !== "string" || raw === "" || raw.includes("\0")) return unknown;
-    let abs: string;
-    if (P.isAbsolute(raw)) abs = P.normalize(raw);
-    else if (P.isAbsolute(cwd)) abs = P.join(cwd, raw);
-    else return unknown;
+    const abs = absolute(raw, cwd, o.os);
+    if (abs === null) return unknown;
     // A UNC or device path (\\host\share, \\?\, \\.\, //host) would make Windows open a connection to that host, and
     // hand it the user's sign-in (NTLM), before the user was asked anything: it is answered "can't tell", untouched.
     if (o.os === "win32" && /^[\\/]{2}/.test(abs)) return unknown;
@@ -136,14 +151,19 @@ export async function readScriptText(path: string, cwd: string, o: { os: OS; max
   const files = o.fs ?? NODE_FS;
   const maxBytes = o.maxBytes ?? MAX_SCRIPT_BYTES;
   if (typeof path !== "string" || path === "" || path.includes("\0")) return null;
-  let abs: string;
-  if (P.isAbsolute(path)) abs = P.normalize(path);
-  else if (P.isAbsolute(cwd)) abs = P.join(cwd, path);
-  else return null;
+  // Opened by the name as the shell opens it: on a POSIX system `x/../t.sh` through x's real folder.
+  const abs = absolute(path, cwd, o.os);
+  if (abs === null) return null;
   // A UNC or device path would open a connection to another host before the user was asked (as inspect avoids); a
-  // POSIX device or process file is a stream (and /proc/self, /dev/fd would be Ember's own).
+  // POSIX device or process file is a stream (and /proc/self, /dev/fd would be Ember's own), by its lexical form and,
+  // when `..` may lead elsewhere through a link, its real one.
   if (o.os === "win32" && /^[\\/]{2}/.test(abs)) return null;
-  if (o.os !== "win32" && /^\/(dev|proc)(\/|$)/.test(abs)) return null;
+  const stream = (p: string) => /^\/(dev|proc)(\/|$)/.test(p);
+  if (o.os !== "win32" && stream(P.normalize(abs))) return null;
+  if (o.os !== "win32" && /(^|\/)\.\.(\/|$)/.test(abs)) {
+    const real = await Promise.resolve().then(() => files.realpath(abs)).catch(() => null);
+    if (real === null || stream(real)) return null;
+  }
   if (!files.open) return null;
   let fh: ScriptFile | null = null;
   try {

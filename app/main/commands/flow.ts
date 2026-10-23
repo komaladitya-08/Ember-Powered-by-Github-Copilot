@@ -888,7 +888,7 @@ function followStatus(svc: CommandService, runId: string): () => void {
   }
 }
 
-/** The command window's line for a task whose command has no tab yet (UI's extension; absent: only the bubble says it). */
+/** The command window's line for a task whose command has no tab yet (window.ts's controller has it; absent: only the bubble says it). */
 export interface CommandWindowPending {
   /** Shows `text` for task `taskId` until it is replaced or cleared with null. */
   pending(taskId: string, text: string | null): void;

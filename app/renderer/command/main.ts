@@ -1,6 +1,7 @@
 /**
- * The command window's page ("Ember commands", §3.9-§3.10, §8.5): the card on top (a question or an announcement)
- * and a tab per run with its header, its command, its live terminal, its typing hint, its status line and Stop.
+ * The command window's page ("Ember commands", §3.9-§3.10, §8.5): the card on top (a question or an announcement),
+ * a line for each task whose command has no tab yet ("Starting Ubuntu…"), and a tab per run with its header, its
+ * command, its live terminal, its typing hint, its status line and Stop.
  *
  * The card's DOM is built only from CommandCard fields, as text nodes (never HTML), and rebuilt only when the question
  * changes; whether its whole command is in view is measured from the card's own element. Output bytes go only into
@@ -13,7 +14,10 @@ import {
   ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
   cardLines, countdownText, headerLine, tabLabel,
 } from "./copy";
-import { INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView, type WindowView } from "./model";
+import {
+  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
+  type WindowView,
+} from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
 import { cellSize, createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
 
@@ -322,6 +326,20 @@ function render(): void {
   // Anything drawn may have moved the card: measure it again once laid out.
   if (ask) { paintAllow(); requestAnimationFrame(measureCard); }
 
+  // A task whose command has no tab yet ("Starting Ubuntu…"): its line, as text nodes, until the tab comes.
+  const lines = pendingLines(v);
+  const box = $("pending");
+  const linesKey = JSON.stringify(lines);
+  if (box.dataset.lines !== linesKey) {
+    box.replaceChildren(...lines.map(text => {
+      const p = el("p", "pending-line", text);
+      p.dataset.status = "running";
+      return p;
+    }));
+    box.dataset.lines = linesKey;
+  }
+  box.hidden = lines.length === 0;
+
   // The tabs, newest first.
   const tabs = v?.tabs ?? [];
   const seqs = new Set(tabs.map(t => t.seq));
@@ -365,7 +383,7 @@ function render(): void {
     }
   });
   list.hidden = tabs.length === 0;
-  $("empty").hidden = tabs.length > 0 || !!announce || !!ask;
+  $("empty").hidden = tabs.length > 0 || !!announce || !!ask || lines.length > 0;
   reportSize();
 }
 

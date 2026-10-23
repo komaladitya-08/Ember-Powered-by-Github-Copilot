@@ -72,8 +72,19 @@ const DISTRO_NAME = /^[A-Za-z0-9._-]+$/;
 /** An absolute Windows path Ember can hand to CreateProcess as a program. */
 const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
 
-/** What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). */
-export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM"];
+/**
+ * What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). PWD is the run's
+ * folder as Ember named it (posixPwd), never Windows' own.
+ */
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
+/**
+ * The PWD a POSIX run's shell starts with: its folder as Ember judged it. A POSIX shell keeps an inherited PWD that
+ * names its current folder (through links too) and otherwise starts from the folder's real path, so with the task's
+ * folder reached through a link (`cd link`, then a new command) an inherited PWD (Ember's own, the SSH login's) would
+ * make the shell's logical `cd ..` land beside the link's target while the classifier judged the folder above the link,
+ * and `cd .. && sh t.sh` would run a script Ember never read (§3.6, L25).
+ */
+const posixPwd = (spec: RunSpec): { PWD: string } => ({ PWD: spec.cwd });
 /**
  * §3.3.1's non-interactive defaults as a WSL pipe run carries them into the distro (WSLENV takes a variable's value
  * from Windows' side, so the values are fixed here): a program that wants an answer fails at once instead of waiting.
@@ -136,6 +147,7 @@ export function launchArgv(
         EMBER_RUN_ID: spec.runId,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),
         TERM: pty ? "xterm-256color" : "dumb",
+        ...posixPwd(spec),
         // A pipe run can't take typing: §3.3.1's non-interactive defaults, fixed values, cross into the distro too.
         ...(pty ? {} : WSL_PIPE_DEFAULTS),
         // Replaces the user's WSLENV: only these cross into the distro (X11 and the rest of Windows' don't).
@@ -167,14 +179,14 @@ export function launchArgv(
       args,
       options: { detached: true, stdio: ["pipe", "pipe", "pipe"] },
       // script runs its -c text with $SHELL -c.
-      env: { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: spec.command, EMBER_COLS: cols, EMBER_ROWS: rows, EMBER_RUN_ID: spec.runId },
+      env: { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: spec.command, EMBER_COLS: cols, EMBER_ROWS: rows, EMBER_RUN_ID: spec.runId, ...posixPwd(spec) },
     };
   }
   return {
     command: path,
     args: [...NO_RC[shell], "-c", posixBody({ pty: false, from: "env" })],
     options: { detached: true, stdio: ["ignore", "pipe", "pipe"] },
-    env: { TERM: "dumb", EMBER_CMD: spec.command, EMBER_RUN_ID: spec.runId },
+    env: { TERM: "dumb", EMBER_CMD: spec.command, EMBER_RUN_ID: spec.runId, ...posixPwd(spec) },
   };
 }
 
@@ -496,6 +508,7 @@ class LocalRun implements KeptRun {
     } catch {
       this.tracker = null;
     }
+    // launch.env's PWD (posixPwd) replaces an inherited one on POSIX.
     const env = mergeEnv(commandEnv(this.o.env, { os: facts.os, pty, remote: this.o.remote === true, extraPath: this.o.extraPath, runId: spec.runId }), launch.env, facts.os);
 
     let child: ChildLike;

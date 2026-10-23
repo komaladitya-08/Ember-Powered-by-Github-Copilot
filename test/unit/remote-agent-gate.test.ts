@@ -223,6 +223,20 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     expect(await dl.gate()).toMatchObject({ status: "needs_confirm", rules: expect.arrayContaining(["escape.run-downloaded"]) });
   });
 
+  it("reads a script named with `..` by that name, which walks links here, and asks when this machine can't say where it leads", async () => {
+    const open = `${P}/sub/../t.sh`;
+    const texts = { [open]: "rm -rf build\n", [`${P}/t.sh`]: "echo benign\n" };
+    const linked = async (paths: string[]) => paths.map((p): PathFact => ({ exists: true, real: p === open ? "/srv/t.sh" : p }));
+    const r = reading("sh sub/../t.sh", texts, { inspect: linked });
+    const g = await r.gate();
+    expect(g).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+    expect((g as { says: string[] }).says.some(l => /^In t\.sh: .*build/.test(l))).toBe(true);
+    expect(r.reads).toEqual([{ path: open, cwd: P }]);
+    const lost = reading("sh sub/../t.sh", texts);
+    expect(await lost.gate()).toMatchObject({ status: "needs_confirm", rules: ["unclear.script-path"], says: ["Ember can't tell which script this runs."] });
+    expect(lost.reads).toEqual([]);
+  });
+
   it("gives each read 2 s and all of them 3 s: a script left unread then counts as unreadable", async () => {
     vi.useFakeTimers();
     try {

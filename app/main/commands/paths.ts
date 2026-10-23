@@ -62,6 +62,31 @@ export function resolveTargetPath(p: string, o: { os: OS; home: string; cwd: str
   return trimPosix(posix.normalize(posix.join(o.cwd, s)));
 }
 
+/**
+ * A POSIX path as the kernel walks it, when that can differ from resolveTargetPath's lexical form: `~` from `home`, a
+ * relative path joined to `cwd`, and its `..` segments KEPT (the kernel takes `x/..` as the folder above where x really
+ * is, so with sub a symbolic link `sub/../t.sh` is beside sub's target, not `<cwd>/t.sh`); repeated separators, `.`
+ * segments, a trailing separator and a `..` right under the root (the root either way) are dropped. Null when only
+ * the lexical form can be meant: no other `..` in it, a `~` path with no known home, a relative one with no folder,
+ * and Windows, where Win32 removes `..` lexically before any filesystem sees the path. Its real path (the target's
+ * inspect) is the file the kernel opens (§3.6, L25).
+ */
+export function physicalForm(p: string, o: { os: OS; home: string; cwd: string }): string | null {
+  if (o.os === "win32" || p.includes("\0")) return null;
+  let s = p;
+  if (s === "~" || s.startsWith("~/")) {
+    if (!o.home) return null;
+    s = o.home + s.slice(1);
+  }
+  if (!s.startsWith("/")) {
+    if (!o.cwd.startsWith("/")) return null;
+    s = `${o.cwd}/${s}`;
+  }
+  const parts = s.split("/").filter(x => x !== "" && x !== ".");
+  while (parts[0] === "..") parts.shift();
+  return parts.includes("..") ? `/${parts.join("/")}` : null;
+}
+
 /** Whether a path is absolute under its flavour's rules. */
 export function isAbsolute(p: string, f: PathFlavour): boolean {
   return f === "win32" ? /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p) : p.startsWith("/");

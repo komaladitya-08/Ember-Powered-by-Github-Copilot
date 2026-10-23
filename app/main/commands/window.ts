@@ -1,7 +1,8 @@
 /**
  * The command window's controller ("Ember commands", §3.9-§3.10, §8.5): the card that shows a whole command before
- * Allow, the announcement that counts down before a command the user asked for runs, and a tab per run with its live
- * output, its status line, Stop, and the user's typing straight to the process (R1, R7).
+ * Allow, the announcement that counts down before a command the user asked for runs, a tab per run with its live
+ * output, its status line, Stop, and the user's typing straight to the process (R1, R7), and a line for a task whose
+ * command has no tab yet ("Starting Ubuntu…" while the first command's checks start a stopped distro).
  *
  * Plain Node (L13): the window comes from `create()` (windows.ts's createCommandWindow, S0b) and the IPC from `ipc`.
  * Every message from a page is taken only from this window's own webContents and checked field by field. What the user
@@ -16,7 +17,7 @@ import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, headerLine, statusLine, typingHint } from "../../renderer/command/copy";
+import { RUNNING_STATUS, headerLine, outsideText, statusLine, typingHint } from "../../renderer/command/copy";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
 /** Runs whose tabs are kept (the newest first; running ones are never dropped). */
@@ -42,7 +43,16 @@ export interface CommandWindowExtras {
   termSize(): { cols: number; rows: number };
   /** A note in a running tab's status line ("Starting Ubuntu…", the stalled-link countdown), or null to clear it. */
   note(runId: string, text: string | null): void;
+  /**
+   * A line for task `taskId` whose command has no tab yet ("Starting Ubuntu…": the flow's followPending, while the
+   * first command's checks start a stopped distro), shown until the task's run gets its tab or the text is cleared
+   * with null. It brings the window up (not on top): the run's tab follows there.
+   */
+  pending(taskId: string, text: string | null): void;
 }
+
+/** At most this many pending lines are kept (one per task; a task past it isn't shown). */
+export const MAX_PENDING = 8;
 
 /** The port, what the targets runtime needs of the window, and the extras. */
 export type CommandWindowController = CommandWindowPort & CommandWindowExtras & { show(): void; owns(sender: WebContentsLike): boolean; dispose(): void };
@@ -138,6 +148,8 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
   let card: { n: number; card: CommandCard; shownAt: number } | null = null;
   let view: SeenMsg | null = null;
   const queue: Announcement[] = [];
+  /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
+  const pendings = new Map<string, string>();
   const answerFns = new Set<(a: AnswerMsg) => void>();
   let size: { cols: number; rows: number } | null = null;
 
@@ -197,6 +209,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       card: card ? { ...card.card, n: card.n } : null,
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
       keyHint: card ? keyHint() : null,
+      pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
     };
   }
 
@@ -224,7 +237,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     if (!w || card || queue.length) return;
     safe("settle", () => {
       w.setAlwaysOnTop(false);
-      if (!tabs.length && w.isVisible()) w.hide();
+      if (!tabs.length && !pendings.size && w.isVisible()) w.hide();
     });
   }
 
@@ -451,6 +464,8 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       if (disposed) { unseen("disposed"); return; }
       if (!validCard(c)) { unseen("card"); return; }
       if (!ensure()) { unseen("window"); return; }
+      // The task's run has its tab now: its pending line ("Starting Ubuntu…") gives way to it.
+      pendings.delete(c.taskId);
       // The same run shown again (a retry after the remote asked): its old tab goes.
       for (const old of tabs.filter(t => t.card.runId === c.runId)) dropTab(old);
       tabs = tabs.filter(t => t.card.runId !== c.runId);
@@ -512,6 +527,23 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       push();
     },
 
+    pending(taskId, text) {
+      if (disposed || !str(taskId, 200, 1)) return;
+      // One short line, every invisible character shown (it names a distro); nothing to show clears it.
+      const line = typeof text === "string" ? outsideText(text, 200) : "";
+      if (!line) {
+        if (!pendings.delete(taskId)) return;
+        push();
+        settle();
+        return;
+      }
+      if (pendings.get(taskId) === line) return;
+      if (!pendings.has(taskId) && pendings.size >= MAX_PENDING) return;
+      pendings.set(taskId, line);
+      reveal();
+      push();
+    },
+
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -520,6 +552,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       tabs = [];
       card = null;
       view = null;
+      pendings.clear();
       answerFns.clear();
       const w = live();
       win = null;

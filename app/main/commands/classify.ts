@@ -20,8 +20,8 @@ import {
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
-  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, resolveTargetPath,
-  secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
+  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
+  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -36,6 +36,13 @@ import win32 from "node:path/win32";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
 type OS = ClassifyContext["os"];
+
+/** A `..` segment in a POSIX path. */
+const DOT_DOT = /(^|\/)\.\.(\/|$)/;
+/** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang"]);
+/** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
+export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
 /** Text longer than this is unclear (§3.4.1). */
 export const MAX_COMMAND_CHARS = 8000;
@@ -84,6 +91,17 @@ export interface ScriptRef {
   as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
+  /**
+   * The path as the shell hands it to the kernel, `..` kept (physicalForm), when it holds a `..` the kernel walks
+   * through links (`sh sub/../t.sh`, `cd link && sh ../t.sh`): the script is read by this name, which opens the file
+   * that runs, not the lexical `path`. Absent: `path` is read.
+   */
+  open?: string;
+  /**
+   * Where the script really is, as the target reported it: `open`'s real path, or a link's target. What the task's
+   * writes and downloads are compared with, beside `path`. Absent: not known (no `..`, no link, or not asked yet).
+   */
+  real?: string;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -171,6 +189,8 @@ interface Obj extends CommandObject {
   abs: string | null;
   /** The target reported a different real path (second pass). */
   realDiffers?: boolean;
+  /** Its form with `..` kept (physicalForm), probed for the file the kernel opens: what "if it exists" asks about. */
+  phys?: string;
 }
 
 /** How a path use reaches Ember's own files, for the refusal's verb (§3.5.8): reading them, or changing or running them. */
@@ -224,7 +244,9 @@ class Classifier {
 
   add(cls: DangerClass, rule: string, says: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
     const program = o.program ?? this.program;
-    if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === o.ifExists)) return;
+    // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
+    const ifExists = o.ifExists === undefined ? undefined : (o.objects ?? []).find(ob => ob.abs === o.ifExists && ob.phys !== undefined)?.phys ?? o.ifExists;
+    if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === ifExists)) return;
     const objects: CommandObject[] = (o.objects ?? []).map(ob => {
       const out: CommandObject = { kind: ob.kind, text: ob.text };
       if (ob.resolved !== undefined) out.resolved = ob.resolved;
@@ -234,7 +256,7 @@ class Classifier {
     if (this.globalOpts.has(this.at) && !widening.includes("global-option")) widening.push("global-option");
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
-    if (o.ifExists !== undefined) f.ifExists = o.ifExists;
+    if (ifExists !== undefined) f.ifExists = ifExists;
     this.findings.push(f);
   }
 
@@ -349,6 +371,22 @@ class Classifier {
     if (real && real !== abs) {
       obj.realDiffers = true;
       this.judge(real, use, sc.path, text, sc);
+      // A write through a link lands at its target: a script run there by that name was written by this command.
+      if (WRITES.has(use)) this.written.push({ p: real, env: sc.path });
+    }
+    // The file the kernel opens for a path with `..` (`cat sub/../x`, sub a link): its form with `..` kept is probed
+    // too, and on the second pass its real path is judged and remembered as written like the lexical one.
+    const phys = this.physical(text, use, sc);
+    if (phys !== null) {
+      obj.phys = phys;
+      this.addProbe(phys);
+      const r = this.ctx.real?.get(phys);
+      if (r && r !== abs) {
+        obj.realDiffers = true;
+        this.judge(r, use, sc.path, text, sc);
+        if (WRITES.has(use)) this.written.push({ p: r, env: sc.path });
+        if (sc.wsl && sc.mountRoot && isUnder(r, sc.mountRoot, sc.path)) this.windowsReach = true;
+      }
     }
     if (sc.path.flavour === "win32" && SHORT_NAME.test(abs) && !(real && !SHORT_NAME.test(real))) {
       this.unclear("unclear.short-name", "Ember can't tell which file this names.");
@@ -380,6 +418,24 @@ class Classifier {
       forms.push(realPrefix + absPattern.slice(prefix.length));
       this.judge(realPrefix, use, sc.path, text, sc, true);
     }
+    // `..` in the fixed folder is walked through links by the kernel (`cat sub/../*.pem`): that folder is probed as
+    // written and its real path judged with the rest of the pattern; a `..` after a wildcard can't be followed at all.
+    const physPattern = this.physical(pattern, use, sc);
+    if (physPattern !== null) {
+      const physPrefix = globPrefix(physPattern, sc.path);
+      // The pattern's segments after the fixed folder's (counted, not measured: the folder comes back unescaped).
+      const rest = physPattern.split("/").slice(physPrefix.split("/").length).join("/");
+      if (DOT_DOT.test(rest)) this.unclear("unclear.glob-parent", "Ember can't tell which files this names.");
+      else if (DOT_DOT.test(physPrefix)) {
+        this.addProbe(physPrefix);
+        const r = this.ctx.real?.get(physPrefix);
+        if (r && r !== prefix) {
+          forms.push(`${r.replace(/\/$/, "")}/${rest}`);
+          this.judge(r, use, sc.path, text, sc, true);
+          if (WRITES.has(use)) this.written.push({ p: r, env: sc.path });
+        }
+      }
+    }
     let secret = false;
     for (const f of forms) {
       const r = globReaches(f, use, sc.path, dotRule);
@@ -397,6 +453,17 @@ class Classifier {
     }
     if (sc.wsl && sc.mountRoot && isUnder(prefix, sc.mountRoot, sc.path)) this.windowsReach = true;
     return { kind: "glob", text, resolved: absPattern, abs: absPattern };
+  }
+
+  /**
+   * The form with `..` kept of a path a program opens (physicalForm), on the target's own POSIX filesystem: the kernel
+   * walks `..` through links, unlike the lexical form. Null for a path without one, a foreign scope's (never probed),
+   * Windows' (Win32 removes `..` lexically too), and a `cd` target (the shell's own `cd` is lexical, as the scope's
+   * folder is; after `cd -P`, which follows links, the cd rule leaves the folder unknown).
+   */
+  physical(text: string, use: PathUse, sc: Scope): string | null {
+    if (sc.foreign || use === "cd" || sc.path.flavour !== "posix") return null;
+    return physicalForm(text, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
   }
 
   /** A write into a folder whose new file Ember can't name: a file in it, judged by §3.6's rules (not probed). */
@@ -446,18 +513,33 @@ class Classifier {
     if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
     if (this.isDownloaded(a, sc)) return;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
-    if (sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(abs)) {
+    const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
+    if (stream(abs)) {
       this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
       return;
     }
+    // A shell or the kernel opens the name as written, walking `..` through links (`sh sub/../t.sh` with sub a link
+    // runs the t.sh beside sub's target): the script is the file at the real path the target reports for that form,
+    // never the lexical one. Without that report Ember can't tell which file runs, so it asks (L25). PowerShell and
+    // Win32 remove `..` lexically themselves, as the lexical form does.
+    const open = POSIX_OPENERS.has(as) && sc.path.flavour === "posix"
+      ? physicalForm(a.v, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" })
+      : null;
+    let real = this.ctx.real?.get(abs);
+    if (open !== null) {
+      this.addProbe(open);
+      real = this.ctx.real?.get(open);
+      if (!real) { this.unclear("unclear.script-path", SCRIPT_UNSURE); return; }
+      if (stream(real)) { this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first."); return; }
+    }
     // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
     // own rule), and its text has no business on a card.
-    const real = this.ctx.real?.get(abs);
     if ([abs, ...(real ? [real] : [])].some(p => secretKind(p, "read", sc.path) !== null || isEmberPath(p, sc.path))) return;
     const cwd = sc.cwd ?? "";
-    if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd)) return;
+    const known = real !== undefined && real !== abs ? real : undefined;
+    if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd && r.open === (open ?? undefined))) return;
     if (this.scripts.length >= MAX_SCRIPTS) { this.unclear("unclear.scripts", "It runs more scripts than Ember reads first."); return; }
-    const ref: ScriptRef = { path: abs, as, cwd };
+    const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}) };
     this.scripts.push(ref);
     if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
   }
@@ -469,9 +551,12 @@ class Classifier {
    */
   protected scriptWritten(): boolean {
     return this.scripts.some(r => {
+      // By either name: `printf … > /x/t.sh; sh l/../t.sh` (l → /x/sub) writes the very file it runs.
+      const names = r.real !== undefined ? [r.path, r.real] : [r.path];
+      const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
       const snap = this.candidates.get(r);
-      if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(w => isUnder(r.path, w.p, w.env));
-      return this.writesUnnamed || this.written.some(w => isUnder(r.path, w.p, w.env));
+      if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(hit);
+      return this.writesUnnamed || this.written.some(hit);
     });
   }
 
@@ -503,7 +588,12 @@ class Classifier {
   download(p: string | null, sc: Scope): void {
     if (!p || !sc.cwd) return;
     const abs = resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    if (!this.downloads.includes(abs)) this.downloads.push(abs);
+    // Where it really lands too (§3.6): through a link (`-o link/x`) or `..` after one (`-o sub/../x`), so running it
+    // later by that name (`sh /data/x`) is running the download.
+    const phys = this.physical(p, "write", sc);
+    for (const n of [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)]) {
+      if (n !== undefined && !this.downloads.includes(n)) this.downloads.push(n);
+    }
   }
 
   /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
@@ -511,8 +601,11 @@ class Classifier {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
+    const phys = this.physical(a.v, "exec", sc);
+    const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => isUnder(abs, d, sc.path))) return true;
+    if (all.some(d => names.some(n => isUnder(n, d, sc.path)))) return true;
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
@@ -761,6 +854,30 @@ export function mayBecomeWords(raw: string): boolean {
     if (q === null && /[A-Za-z0-9_{(*#?$!-]/.test(n)) return true;
   }
   return false;
+}
+
+/**
+ * Whether a built-in sets, by its name, a variable that changes how commands are found or run (RISKY_ASSIGNMENTS):
+ * printf's `-v` name (`printf -v PATH /tmp/x`, `-vPATH`, `PATH[0]`), and any word of read, mapfile, readarray,
+ * getopts, wait or unset that is such a name (`read PWD <<< /z/l` makes a later `bash -c 'cd ..'` leave from /z/l;
+ * after `unset PWD` it leaves from the folder's real path).
+ */
+function setsRiskyName(key: string, args: readonly Arg[]): boolean {
+  const risky = (n: string | null | undefined): boolean => {
+    if (typeof n !== "string") return false;
+    const name = n.replace(/\[.*$/, "");
+    return RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name);
+  };
+  if (key === "printf") {
+    for (let k = 0; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null || v === "--" || v === "-" || !v.startsWith("-")) return false;
+      if (v === "-v") return risky(args[k + 1]?.v);
+      if (v.startsWith("-v")) return risky(v.slice(2));
+    }
+    return false;
+  }
+  return ["read", "mapfile", "readarray", "getopts", "wait", "unset"].includes(key) && args.some(a => risky(a.v));
 }
 
 /**
@@ -1559,6 +1676,8 @@ class Engine extends Classifier {
     if (args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v)) || unseenName(key, args)) {
       this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
     }
+    // Setting PATH, PWD and the like by name is an assignment too (`printf -v PATH /tmp/x; ls`, `read PWD <<< …`).
+    if (setsRiskyName(key, args)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
 
   /**
@@ -1867,12 +1986,64 @@ reg(NATIVE, ["cd", "chdir", "pushd", "popd", "set-location", "push-location", "p
     target = ops[0];
     if (ops.length > 1 && h.sc.family === "cmd") target = { ...ops[0], v: ops.map(o => o.v).join(" ") };
   }
+  if (h.sc.family === "posix" && physicalCd(h.args)) {
+    // `cd -P` lands in the folder's real path, which only the target knows (the second pass), and every name after it
+    // would be judged there, where the first pass never probed (a link inside it into ~/.ssh, unseen), and its `cd ..`
+    // leaves from there: what follows it in this command has no folder Ember knows (a relative name asks). A command
+    // that is only `cd -P <folder>` still moves the task's folder, by the name as written (the same folder; the next
+    // command's shell gets that name in PWD, so its `cd ..` matches), unless a `..` in it only the target could resolve.
+    const abs = !target ? h.sc.home : target.v === "-" ? null : h.e.usePath(target, "cd", h.sc).abs;
+    const dots = target?.v != null && physicalForm(target.v, { os: h.sc.os === "win32" ? "linux" : h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) !== null;
+    h.e.cdTarget = null;
+    finishCd(h, dots ? null : abs);
+    return;
+  }
   if (!target) { h.e.cdTarget = h.sc.home; finishCd(h, h.sc.home); return; }
   if (target.v === "-") { h.e.cdTarget = null; return; }
   const obj = h.e.usePath(target, "cd", h.sc);
   h.e.cdTarget = obj.abs;
   finishCd(h, obj.abs);
 });
+/** Whether a POSIX `cd` follows links (`cd -P`; the last of -L and -P wins), so it lands in a real path. */
+function physicalCd(args: readonly Arg[]): boolean {
+  let physical = false;
+  for (const a of args) {
+    if (a.v === "--") break;
+    if (a.v === null || !/^-[LPe@]+$/.test(a.v)) continue;
+    for (const c of a.v.slice(1)) if (c === "P") physical = true; else if (c === "L") physical = false;
+  }
+  return physical;
+}
+/**
+ * A shell option name that can make every later `cd` follow links (bash's physical, zsh's chase_links and chase_dots),
+ * either way round (zsh's `no` prefix turns a name over: `unsetopt no_chase_links` sets it), or one Ember can't see.
+ */
+const chaseOption = (name: string | null): boolean => name === null || /^(no)?(physical|chaselinks|chasedots)$/.test(name.toLowerCase().replace(/[_-]/g, ""));
+const CHASE_SAYS = "It makes the shell follow links when it changes folder, which Ember doesn't follow.";
+/** zsh's CDABLE_VARS by name, either way round. */
+const cdableOption = (name: string): boolean => /^(no)?cdablevars$/.test(name.toLowerCase().replace(/[_-]/g, ""));
+const CDABLE_SAYS = "It makes cd go to folders named by variables, which Ember doesn't follow.";
+/**
+ * Whether a POSIX `set` may make every later `cd` follow links: bash's `-P`, zsh's `-w` (CHASE_LINKS's letter), an
+ * option name chaseOption matches after `-o` or `+o` (every `o` in a cluster takes the next word: `set -euo physical`,
+ * `set -oe physical`), or a word Ember can't see (it could be any of these). Only the words before `--`.
+ */
+function setChases(args: readonly Arg[]): boolean {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null) return true;
+    if (v === "--") return false;
+    const m = /^([-+])([A-Za-z]+)$/.exec(v);
+    if (!m) continue;
+    if (m[1] === "-" && /[Pw]/.test(m[2])) return true;
+    for (const c of m[2]) {
+      if (c !== "o") continue;
+      k++;
+      if (k < args.length && chaseOption(args[k].v)) return true;
+    }
+  }
+  return false;
+}
 function finishCd(h: H, abs: string | null): void {
   if (h.sc.depth === 0 && h.sc.wrappers.length === 0 && h.e.commands.length === 1) h.e.topCd = { at: h.e.at, abs };
 }
@@ -2169,9 +2340,13 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
         continue;
       }
       const mod = h.sc.path.flavour === "win32" ? win32 : posix;
-      const p2 = mod.join(destObj.abs, baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour));
-      h.e.usePath(lit(p2), "write", h.sc);
-      h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [{ kind: "path", text: p2, resolved: p2, abs: p2 }], ifExists: p2 });
+      const name = baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
+      const p2 = mod.join(destObj.abs, name);
+      // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
+      // kept, never joined lexically) is probed and is what "if it exists" asks about.
+      const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
+      const obj: Obj = { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
+      h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [obj], ifExists: p2 });
     }
     return;
   }
@@ -2440,6 +2615,9 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   const posixShell = POSIX_SHELLS[h.key];
   const cIdx = h.args.findIndex(a => a.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v) && !a.v.startsWith("--"));
   if (has(p, "l", "login", "i", "rcfile", "init-file") || values(p, "O").length) h.e.unclear("unclear.login-shell", "It starts a shell that runs your profile files.");
+  // bash's -P and -o physical, zsh's -w and -o/+o chase_*: every `cd` in it follows links.
+  const plusO = h.args.slice(0, cIdx >= 0 ? cIdx : h.args.length).some((a, k, before) => /^\+[A-Za-z]*o/.test(a.v ?? "") && chaseOption(before[k + 1]?.v ?? null));
+  if (has(p, "P") || (posixShell === "zsh" && has(p, "w")) || values(p, "o").some(chaseOption) || plusO) h.e.unclear("unclear.chase-links", CHASE_SAYS);
   if (cIdx >= 0) {
     const text = h.args[cIdx + 1];
     if (!text || text.v === null) {
@@ -2644,8 +2822,14 @@ reg(NATIVE, ["env"], h => {
   }
   const rest = p.operands.slice(k);
   if (rest.length === 0) { h.e.add("secret", "secret.env", SAYS.env); return; }
-  const dir = values(p, "C", "chdir")[0];
-  const cwd = dir === undefined ? h.sc.cwd : dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" });
+  // Without PWD (`env -i`, `env -`, `env -u PWD`) a shell it starts begins from its folder's real path, and its `cd ..`
+  // leaves from there, not from where Ember judged (§3.6, L25).
+  if (has(p, "i", "ignore-environment") || h.args.some(a => a.v === "-") || values(p, "u", "unset").some(v => v === null || v === "PWD")) {
+    h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
+  // `env -C` changes folder as the kernel does (`..` after a link leads beside its target) and leaves PWD naming the old
+  // one, so a shell it starts begins from the real path: the folder is unknown to what it runs (as after `cd -P`).
+  const cwd = values(p, "C", "chdir").length ? null : h.sc.cwd;
   h.e.unwrap(h, rest, "env", { cwd });
 });
 // wslvar prints a Windows environment variable (or, with -s/-l, the system's or the user's shell folders).
@@ -2659,6 +2843,20 @@ reg(NATIVE, ["printenv"], h => {
 reg(NATIVE, ["set"], h => {
   if (h.sc.family === "posix" && h.args.length === 0) h.e.add("secret", "secret.env", SAYS.env);
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
+  // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
+  // where Ember's lexical folder says.
+  if (h.sc.family === "posix" && setChases(h.args)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  // zsh's CDABLE_VARS, by name or (zsh only: bash's -T is functrace) by its letter.
+  if (h.sc.family === "posix" && h.args.some(a => a.v !== null && (cdableOption(a.v) || (h.sc.shell === "zsh" && /^-[A-Za-z]*T/.test(a.v))))) {
+    h.e.unclear("unclear.cdable-vars", CDABLE_SAYS);
+  }
+});
+reg(NATIVE, ["setopt", "unsetopt"], h => {
+  // zsh's option names: any case, underscores ignored, either way round (`setopt CHASE_LINKS`, `unsetopt nochaselinks`);
+  // `-w` is CHASE_LINKS's letter, and `-m` makes every name a pattern (`setopt -m 'c*'`).
+  if (h.args.some(a => chaseOption(a.v) || /^[-+][A-Za-z]*[wm]/.test(a.v ?? ""))) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  // CDABLE_VARS (-T): `cd x` with no folder x goes to $x, not where Ember judged.
+  if (h.args.some(a => a.v !== null && (cdableOption(a.v) || /^[-+][A-Za-z]*T/.test(a.v)))) h.e.unclear("unclear.cdable-vars", CDABLE_SAYS);
 });
 reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   const p = opts(h);
@@ -2668,7 +2866,8 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   if (names.length && !has(p, "p")) h.e.envChanged = true;
   if (has(p, "i", "n")) h.e.unclear("unclear.arithmetic-command", "Its arithmetic reads a variable whose value could run a command.");
   for (const n of names) {
-    const name = (n.v ?? n.raw).split("=")[0];
+    // An element of one is the variable itself (`declare PATH[0]=/tmp/x` sets PATH; `PATH+=` appends to it).
+    const name = (n.v ?? n.raw).split("=")[0].replace(/\[.*$/, "").replace(/\+$/, "");
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   }
@@ -2749,6 +2948,8 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
     if (rule.aloneInteractive) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
+  // `exec -c` empties the environment: a shell started so has no PWD and begins from its folder's real path (as env -i).
+  if (h.key === "exec" && has(p, "c")) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   h.e.unwrap(h, rest, h.key);
 });
 reg(NATIVE, ["flock"], h => {
