@@ -459,6 +459,18 @@ class Classifier {
     return physicalForm(text, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
   }
 
+  /**
+   * The folder a `cd -P` lands in: the real path the target reports for the target as written (its form with `..` kept
+   * when it has one, which is probed). The lexical folder stands while nothing is known and the name has no `..`
+   * (a link in it differs, so the second pass corrects it); a `..` the target couldn't resolve leaves the folder unknown.
+   */
+  physicalCdTarget(target: Arg, abs: string | null, sc: Scope): string | null {
+    if (abs === null || target.v === null || sc.foreign || sc.path.flavour !== "posix") return abs;
+    const phys = physicalForm(target.v, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    if (phys !== null) this.addProbe(phys);
+    return this.ctx.real?.get(phys ?? abs) ?? (phys === null ? abs : null);
+  }
+
   /** A write into a folder whose new file Ember can't name: a file in it, judged by §3.6's rules (not probed). */
   judgeInside(abs: string, use: PathUse, sc: Scope, text: string): void {
     this.judge((sc.path.flavour === "win32" ? win32 : posix).join(abs, "x"), use, sc.path, text, sc);
@@ -1951,9 +1963,24 @@ reg(NATIVE, ["cd", "chdir", "pushd", "popd", "set-location", "push-location", "p
   if (!target) { h.e.cdTarget = h.sc.home; finishCd(h, h.sc.home); return; }
   if (target.v === "-") { h.e.cdTarget = null; return; }
   const obj = h.e.usePath(target, "cd", h.sc);
-  h.e.cdTarget = obj.abs;
-  finishCd(h, obj.abs);
+  const to = h.sc.family === "posix" && physicalCd(h.args) ? h.e.physicalCdTarget(target, obj.abs, h.sc) : obj.abs;
+  h.e.cdTarget = to;
+  finishCd(h, to);
 });
+/** Whether a POSIX `cd` follows links (`cd -P`; the last of -L and -P wins), so its folder is a real path. */
+function physicalCd(args: readonly Arg[]): boolean {
+  let physical = false;
+  for (const a of args) {
+    if (a.v === "--") break;
+    if (a.v === null || !/^-[LPe@]+$/.test(a.v)) continue;
+    for (const c of a.v.slice(1)) if (c === "P") physical = true; else if (c === "L") physical = false;
+  }
+  return physical;
+}
+/** A shell option that makes every later `cd` follow links (bash's -P and physical, zsh's chase_links and chase_dots). */
+const CHASE_OPTION = /^(physical|chaselinks|chasedots)$/;
+const chaseOption = (name: string | null): boolean => name !== null && CHASE_OPTION.test(name.toLowerCase().replace(/_/g, ""));
+const CHASE_SAYS = "It makes the shell follow links when it changes folder, which Ember doesn't follow.";
 function finishCd(h: H, abs: string | null): void {
   if (h.sc.depth === 0 && h.sc.wrappers.length === 0 && h.e.commands.length === 1) h.e.topCd = { at: h.e.at, abs };
 }
@@ -2521,6 +2548,7 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   const posixShell = POSIX_SHELLS[h.key];
   const cIdx = h.args.findIndex(a => a.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v) && !a.v.startsWith("--"));
   if (has(p, "l", "login", "i", "rcfile", "init-file") || values(p, "O").length) h.e.unclear("unclear.login-shell", "It starts a shell that runs your profile files.");
+  if (has(p, "P") || values(p, "o").some(chaseOption)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
   if (cIdx >= 0) {
     const text = h.args[cIdx + 1];
     if (!text || text.v === null) {
@@ -2740,6 +2768,15 @@ reg(NATIVE, ["printenv"], h => {
 reg(NATIVE, ["set"], h => {
   if (h.sc.family === "posix" && h.args.length === 0) h.e.add("secret", "secret.env", SAYS.env);
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
+  // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
+  // where Ember's lexical folder says.
+  if (h.sc.family === "posix" && h.args.some((a, k) => (a.v !== null && /^-[A-Za-z]*P/.test(a.v) && !a.v.startsWith("--")) || (a.v === "-o" && chaseOption(h.args[k + 1]?.v ?? null)))) {
+    h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  }
+});
+reg(NATIVE, ["setopt"], h => {
+  // zsh's option names: any case, underscores ignored (`setopt CHASE_LINKS`, `setopt chasedots`).
+  if (h.args.some(a => a.v === null || chaseOption(a.v))) h.e.unclear("unclear.chase-links", CHASE_SAYS);
 });
 reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   const p = opts(h);

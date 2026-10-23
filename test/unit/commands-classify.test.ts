@@ -309,6 +309,23 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     expect(extra("rm -r ../build", { [`${P}/../build`]: "/home/ana/build" }).findings.every(f => !f.widening.includes("real-path"))).toBe(true);
   });
 
+  it("follows `cd -P` to the folder's real path, and asks about shell options that make every cd follow links", () => {
+    expect(extra("cd -P link && cd .. && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts).toEqual([{ path: "/data/t.sh", as: "sh", cwd: "/data" }]);
+    expect(extra("cd -P link && sh t.sh").scripts).toEqual([{ path: `${P}/link/t.sh`, as: "sh", cwd: `${P}/link` }]);
+    expect(extra("cd -L -P link && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts[0]?.cwd).toBe("/data/sub");
+    expect(extra("cd -P -L link && sh t.sh", { [`${P}/link`]: "/data/sub" }).scripts[0]?.cwd).toBe(`${P}/link`);
+    // `..` in a `cd -P` folder Ember couldn't resolve: the folder is unknown, so what follows asks.
+    expect(rules("cd -P link/.. && cat notes")).toContain("unclear.folder");
+    expect(extra("cd -P link/.. && sh t.sh", { [`${P}/link/..`]: "/data" }).scripts).toEqual([{ path: "/data/t.sh", as: "sh", cwd: "/data" }]);
+    expect(extra("cd -P sub").cdOnly).toBe(`${P}/sub`);
+    expect(extra("cd -P link", { [`${P}/link`]: "/data/sub" }).cdOnly).toBe("/data/sub");
+    for (const [cmd, shell] of [
+      ["set -P && cd link && cd .. && sh t.sh", "bash"], ["set -eP", "bash"], ["set -o physical", "bash"], ["bash -P -c 'cd link; cd ..; sh t.sh'", "bash"],
+      ["setopt chase_links", "zsh"], ["setopt CHASEDOTS", "zsh"], ["set -o chaselinks", "zsh"], ["zsh -o chase_dots -c 'cd ..'", "bash"],
+    ] as const) expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.chase-links");
+    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "cd -L link", "setopt extendedglob"]) expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
+  });
+
   it("knows a command writes the script it runs by any of its names, and remembers a write where it lands", () => {
     expect(rules("printf 'rm -rf ~' > /data/t.sh; sh sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" })).toContain("unclear.script-written");
     expect(rules("printf 'rm -rf ~' > /x/t.sh; sh l.sh", { [`${P}/l.sh`]: "/x/t.sh" })).toContain("unclear.script-written");
