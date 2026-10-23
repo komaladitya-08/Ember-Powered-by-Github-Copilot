@@ -22,6 +22,10 @@ import type { ConsentPanel } from "../../app/shared/consent";
 import type { ReadSource } from "../../app/main/policy/policy";
 import type { Logger } from "../../app/main/logger";
 import { carriedText } from "../../app/main/commands/carried";
+import { createCommandWindowController } from "../../app/main/commands/window";
+import { COMMANDS_IPC } from "../../app/shared/commands";
+import type { WindowView } from "../../app/renderer/command/model";
+import type { BrowserWindowLike, IpcLike } from "../../app/main/targets/types";
 import * as policy from "../../app/main/policy/policy";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -780,6 +784,40 @@ describe("facts, shells and the folder (§3.8.3 step 3, §3.14)", () => {
     h.runs[0].stop("user");
     await pending;
     expect(fns.size).toBe(0);
+  });
+
+  it("puts \"Starting Ubuntu…\" on the command window's own pending line, which the run's tab then replaces", async () => {
+    makeJudge();
+    const h = harness({ binding: WSL, run: () => ({ hang: true }) });
+    const states: WindowView[] = [];
+    const win = {
+      webContents: { id: 7, send: (channel: string, v: unknown) => { if (channel === COMMANDS_IPC.state) states.push(v as WindowView); } },
+      show() {}, showInactive() {}, hide() {}, focus() {}, close() {}, moveTop() {}, setAlwaysOnTop() {}, setBounds() {}, setContentProtection() {}, on() {},
+      isVisible: () => true, isMinimized: () => false, isDestroyed: () => false, isAlwaysOnTop: () => false, isFocused: () => false,
+    } as unknown as BrowserWindowLike;
+    const ipc: IpcLike = { on() {}, handle() {} };
+    const window = createCommandWindowController({ create: () => win, ipc, log: quiet, os: "linux", keyHint: () => null });
+    (h.ctx.service as { window: unknown }).window = window;
+    const fns = new Set<(t: string | null) => void>();
+    let status: string | null = null;
+    const say = (t: string | null) => { status = t; for (const fn of [...fns]) fn(t); };
+    const runner = h.ctx.service.runner;
+    const facts = runner.facts.bind(runner);
+    Object.assign(runner, {
+      status: () => status,
+      onStatus: (fn: (t: string | null) => void) => { fns.add(fn); return () => { fns.delete(fn); }; },
+      facts: async () => { say("Starting Ubuntu…"); await tick(); say(null); return facts(); },
+    });
+    const pending = call(h, { target: "Ubuntu" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    const before = states.find(v => (v.pending ?? []).length > 0);
+    expect(before?.pending).toEqual([{ taskId: "t1", text: "Starting Ubuntu…" }]);
+    expect(before?.tabs).toEqual([]);
+    expect(states.at(-1)!.pending).toEqual([]);
+    expect(states.at(-1)!.tabs).toHaveLength(1);
+    h.runs[0].stop("user");
+    await pending;
+    window.dispose();
   });
 
   it("says nothing before the tab when the distro already runs, and works with a window that has no pending line", async () => {

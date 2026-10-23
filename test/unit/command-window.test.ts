@@ -598,6 +598,55 @@ describe("a run's tab", () => {
     expect(page().last().tabs[0].status).toBe("Running…");
   });
 
+  it("shows a task's pending line (a distro starting) before its run has a tab, until the tab comes or it is cleared", () => {
+    const { ctl, windows, win, page } = setup();
+    ctl.pending("t1", "Starting Ubuntu…");
+    // It brings the window up without taking the keyboard, and not on top (no card is asking).
+    expect(windows).toHaveLength(1);
+    expect(win().calls).toEqual(["showInactive"]);
+    expect(page().last().pending).toEqual([{ taskId: "t1", text: "Starting Ubuntu…" }]);
+    ctl.pending("t2", "Starting Debian…");
+    expect(page().last().pending?.map(p => p.taskId)).toEqual(["t1", "t2"]);
+    // The task's run gets its tab: its line gives way; the other task's stays.
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", taskId: "t1" }), run);
+    expect(page().last().pending).toEqual([{ taskId: "t2", text: "Starting Debian…" }]);
+    expect(page().last().tabs).toHaveLength(1);
+    ctl.pending("t2", null);
+    expect(page().last().pending).toEqual([]);
+  });
+
+  it("hides the window again when a cleared pending line leaves nothing to show", () => {
+    const { ctl, win, page } = setup();
+    ctl.pending("t1", "Starting Ubuntu…");
+    const sent = page().states().length;
+    ctl.pending("t1", "Starting Ubuntu…");
+    expect(page().states()).toHaveLength(sent);
+    ctl.pending("t1", null);
+    expect(win().visible).toBe(false);
+    expect(win().calls.at(-1)).toBe("hide");
+    // Clearing a line that isn't there changes nothing.
+    ctl.pending("t9", null);
+    expect(page().states()).toHaveLength(sent + 1);
+  });
+
+  it("takes a pending line as one short line with every invisible character shown, and ignores what isn't one", () => {
+    const { ctl, windows, page } = setup();
+    ctl.pending("", "Starting Ubuntu…");
+    ctl.pending("t1", "");
+    ctl.pending(42 as unknown as string, "Starting Ubuntu…");
+    expect(windows).toHaveLength(0);
+    ctl.pending("t1", "Starting Ubu\u202entu…\n" + "x".repeat(400));
+    const line = page().last().pending![0].text;
+    expect(line.startsWith("Starting Ubu⟨RLO⟩ntu… x")).toBe(true);
+    expect([...line].length).toBeLessThanOrEqual(201);
+    for (let k = 2; k <= 12; k++) ctl.pending(`t${k}`, "Starting Ubuntu…");
+    expect(page().last().pending).toHaveLength(8);
+    ctl.dispose();
+    ctl.pending("t1", "Starting Ubuntu…");
+    expect(windows[0].destroyed).toBe(true);
+  });
+
   it("stops a run it can't show rather than let it run unseen (R1): a malformed card, no window, or after dispose", () => {
     const bad = setup();
     const r1 = new FakeRun("0123456789abcdef");

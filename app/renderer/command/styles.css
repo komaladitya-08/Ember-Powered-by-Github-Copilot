@@ -1,6 +1,6 @@
 /* The command window ("Ember commands", §8.5): an opaque content window. The card (a question or an announcement) on
-   top, then the tabs of the runs and the selected run's panel: its header, its command, its terminal, the typing hint,
-   the status line and Stop. */
+   top, a line for each task whose command has no tab yet, then the tabs of the runs and the selected run's panel: its
+   header, its command, its terminal, the typing hint, the status line and Stop. */
 html, body { margin: 0; height: 100%; }
 body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.006em; color: var(--label); overflow: hidden; }
 .window { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
@@ -31,6 +31,11 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .hint, .keys, .count { margin: 0; font: var(--type-footnote); color: var(--label-2); }
 .count { font-variant-numeric: tabular-nums; color: var(--label); font-weight: 600; }
 .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── A task whose command has no tab yet ("Starting Ubuntu…"): a quiet line with the working symbol, above the tabs ── */
+.pending { flex: none; display: grid; gap: 4px; padding: 0 2px; }
+.pending-line { margin: 0; display: flex; align-items: center; gap: 8px; font: var(--type-callout); color: var(--label-2); overflow-wrap: anywhere; }
+.pending-line::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
 
 /* ── Tabs: one per run, newest first; the symbol says how it is going (never colour alone) ── */
 .tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 2px; }

@@ -31,11 +31,33 @@ export interface TabView extends CommandTabView {
   outcome: "running" | "done" | "failed" | "stopped";
 }
 
+/** A task whose command has no tab yet, and its line ("Starting Ubuntu…"). */
+export interface PendingView { taskId: string; text: string }
+
 /** Everything the window draws, pushed whole on every change (the contract's state with richer tabs). */
 export interface WindowView extends CommandWindowState {
   tabs: TabView[];
   /** Grows with every push: the page ignores an older state that arrives late. */
   rev: number;
+  /** Lines for tasks whose command has no tab yet, until the tab comes (absent: none). */
+  pending?: PendingView[];
+}
+
+/** At most this many pending lines are drawn. */
+export const MAX_PENDING_LINES = 4;
+
+/**
+ * The pending lines the page draws above the tabs: each different text once, in order, non-empty ones only, at most
+ * MAX_PENDING_LINES (two tasks waiting for the same distro say "Starting Ubuntu…" once).
+ */
+export function pendingLines(view: WindowView | null): string[] {
+  const out: string[] = [];
+  for (const p of Array.isArray(view?.pending) ? view.pending : []) {
+    const text = typeof p?.text === "string" ? p.text.trim() : "";
+    if (text && !out.includes(text)) out.push(text);
+    if (out.length >= MAX_PENDING_LINES) break;
+  }
+  return out;
 }
 
 /** A run's output bytes from byte `at` of its output (offsets let the page drop what it already wrote). */

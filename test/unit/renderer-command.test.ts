@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { INERT_LINKS, XTERM_OPTIONS, terminalOptions } from "../../app/renderer/command/terminal-options";
 import {
-  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, judgeMetrics, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel, type TabView, type WindowView,
+  INITIAL_MODEL, MAX_PENDING_LINES, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
+  type TabView, type WindowView,
 } from "../../app/renderer/command/model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "../../app/renderer/command/visible";
 import type { CommandCard } from "../../app/main/commands/types";
@@ -243,6 +244,30 @@ describe("the page's model: seen, in view and Allow", () => {
     const d = run([{ type: "state", view: view(4, { tabs: [tab(2, "fedcba9876543210")] }), now: 0 }], c.model);
     expect(d.model.selected).toBe("fedcba9876543210");
     expect(d.model.written).toEqual({});
+  });
+});
+
+describe("the page's pending lines (a task whose command has no tab yet)", () => {
+  const view = (pending?: unknown): WindowView => ({ rev: 1, tabs: [], card: null, announce: null, keyHint: null, ...(pending === undefined ? {} : { pending }) } as WindowView);
+
+  it("draws each different line once, in order, at most a few, and nothing for none or odd input", () => {
+    expect(pendingLines(null)).toEqual([]);
+    expect(pendingLines(view())).toEqual([]);
+    expect(pendingLines(view([{ taskId: "t1", text: "Starting Ubuntu…" }, { taskId: "t2", text: "Starting Ubuntu…" }, { taskId: "t3", text: "Starting Debian…" }])))
+      .toEqual(["Starting Ubuntu…", "Starting Debian…"]);
+    expect(pendingLines(view([{ taskId: "t1", text: "  " }, null, { taskId: "t2" }, { taskId: "t3", text: 5 }]))).toEqual([]);
+    expect(pendingLines(view("Starting Ubuntu…"))).toEqual([]);
+    const many = Array.from({ length: 9 }, (_, k) => ({ taskId: `t${k}`, text: `Starting D${k}…` }));
+    expect(pendingLines(view(many))).toHaveLength(MAX_PENDING_LINES);
+  });
+
+  it("are built as text nodes in their own status region, above the tabs, and hide the empty text", () => {
+    const main = read("main.ts");
+    expect(main).toMatch(/el\("p", "pending-line", text\)/);
+    expect(main).toMatch(/\|\| lines\.length > 0;/);
+    const html = read("index.html");
+    expect(html).toMatch(/<div id="pending" class="pending" role="status" aria-live="polite" hidden><\/div>/);
+    expect(html.indexOf('id="pending"')).toBeLessThan(html.indexOf('id="tabs"'));
   });
 });
 
