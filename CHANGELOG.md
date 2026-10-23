@@ -20,7 +20,9 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   Ember's helper there does) and judges its text like a command: a dangerous script asks, even when you asked for that
   kind of operation. A script the same command writes first, or one this task downloaded, always asks; one this task
   wrote earlier asks when it can't be read in full; other scripts too big to read (over 64 KB) are judged by their
-  name as before.
+  name as before. A script named with `..` (`sh sub/../t.sh`, `cd link && sh ../t.sh`) is read where the computer
+  really runs it (beside the link's target), and asks ("Ember can't tell which script this runs.") when the computer
+  can't say where that is; any other path with `..` is judged where it really leads too.
 - **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
   ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
   name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
@@ -40,7 +42,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 - **WSL** (Windows): Ember reads and uses the Linux apps WSLg shows ("gedit (Ubuntu)"), opens them from their Start
   menu entries, and runs commands in your distros. Each distro that has a Linux app open gets a small helper while one
   is open; Ember never starts a distro to read it. The first command in a stopped distro starts it, and the task's
-  bubble and the command's tab say "Starting Ubuntu…" meanwhile.
+  bubble and the command window say "Starting Ubuntu…" meanwhile: a line above the tabs while Ember checks the
+  command, then the command's tab.
 - **Other computers over SSH**: add a computer in Settings › **Computers**, or accept Ember's offer when it sees you
   `ssh` somewhere ("You're connected to build-01"). Ember opens its own connection with your SSH settings, keys, agent
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
@@ -129,6 +132,12 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
 - Ember judges the command line it can see and the shell scripts it can read (up to 64 KB): a build file, a program, a
   script in another language or a larger shell script runs like a build unless its name says publish, delete, install
   or the like (a script this task downloaded always asks, and one it wrote asks when it can't be read in full).
+  Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as
+  `python gen.py`) don't make a script the task's own, so a padded script made that way runs by its name. Over SSH,
+  Ember's helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written
+  before the reconnect runs unread after it.
+- `set -P`, `set -o physical` and zsh's `chase_links` or `chase_dots` ask, because they make every later `cd` follow
+  links in a way Ember doesn't follow; `cd -P` alone is followed.
 - Commands run without your shell profile, so aliases and tools set up there (conda, nvm, pyenv) are missing; on a Mac
   Homebrew's folders are added.
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks

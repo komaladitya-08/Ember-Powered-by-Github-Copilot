@@ -131,6 +131,15 @@ script of your project) is judged by its name, as before (§2.9). Ember reads sc
 an SSH computer, build-01's helper reads them there and asks when it finds more than this computer could see (§4.5).
 Programs in other languages (`python x.py`, `node x.js`) aren't read: their names count (§2.9).
 
+**A script named with `..`** (`sh sub/../t.sh`, `cd link && sh ../t.sh`) is read where the computer really runs it:
+on Linux, macOS, in WSL and on an SSH computer, `..` after a link is the folder above where the link leads, so with sub
+a link to ~/other/inner, `sub/../t.sh` is ~/other/t.sh, not the t.sh beside sub. Ember asks the computer where the
+name leads and reads that file by the name the shell opens. When the computer can't say (it didn't answer in time, or
+an old `realpath` there can't resolve it), Ember asks: "Ember can't tell which script this runs." Windows (PowerShell,
+cmd) takes `..` out of a name before anything opens it, as Ember does, so nothing changes there. Every other path with
+`..` is judged where it really leads too (`cat sub/../credentials` with sub a link into `~/.aws` reads a secret and
+asks), and so is an overwrite (`echo x > sub/../notes.txt` asks when the notes.txt it would really overwrite exists).
+
 **How it asks.** The bubble says "May I run a command?" with **Show the command** and **Not now**, and the command
 window shows the card "Ember wants to run this command": the whole command in monospace, nothing cut, with characters
 you wouldn't see shown in ⟨ ⟩ and letters from another alphabet underlined; then why it asks ("Deletes build and
@@ -215,7 +224,12 @@ earlier command printed text that looked like instructions.").
 - A command stops after 2 minutes unless the task gives it longer (at most 15 minutes): "Stopped after 2 min: it took
   too long."
 - Each task keeps one folder per computer, starting at your home folder. A command that is only `cd <folder>` changes
-  it; a `cd` inside a longer command affects only that command.
+  it (`cd -P <folder>`: to where the folder really is); a `cd` inside a longer command affects only that command. On
+  this computer and on SSH computers a command's shell is told the task's folder as Ember named it, links included,
+  so its `cd ..` goes where Ember judged (a shell not told starts from the folder's real path, and `cd ..` would land
+  beside a link's target). `cd -P` follows links as the shell does; `set -P`, `set -o physical` and zsh's
+  `chase_links` or `chase_dots` make every later `cd` follow them, which Ember doesn't follow, so they ask ("It makes
+  the shell follow links when it changes folder, which Ember doesn't follow.").
 - One command at a time per task; at most three at once on one computer.
 
 ### 2.9 Things to know
@@ -235,8 +249,14 @@ earlier command printed text that looked like instructions.").
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
   downloaded always asks, and one it wrote asks when it can't be read in full.
-- **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`); a
-  link changed between that check and the run is not caught.
+- **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`,
+  and `sub/../x` counts as the x beside where sub leads, §2.4); a link changed between that check and the run is not
+  caught.
+- **Writes Ember can't see.** A script this task wrote counts as its own only when Ember could see the write: a
+  redirection (`>`, `>>`), `cp`, `mv`, `tee`, `sed -i`, or an archive unpacked. Programs that write files without
+  naming them on the command line, such as `uudecode`, `split`, `base64 -o` on a Mac, or a program that generates a
+  script (`python gen.py`), don't make that script the task's own: if it is then too big to read, it is judged by its
+  name like any other script (§7, L8).
 - **Same-user programs.** While a command runs, its text is in its own environment, which other programs of yours
   can read; they could already use your keys and SSH agent.
 - A command can't use Ember's GitHub sign-in: `git` and `gh` use your own credential helpers and keys.
@@ -299,9 +319,10 @@ the Store or MSI WSL: "Update WSL to use Linux apps with Ember: run `wsl --updat
 ### 3.4 Commands in WSL
 
 Commands run inside the distro as its default user, never as root through `wsl -u root`. The first command in a
-stopped distro starts it: while it boots, the task's bubble and the command's tab in the command window say "Starting
-Ubuntu…". Shell scripts a command runs are read inside the distro before it runs (§2.4), only while the distro runs
-(Ember never starts it just to read one). A command in WSL may start Windows programs and read or write Windows drives
+stopped distro starts it: while it boots, the task's bubble and the command window say "Starting Ubuntu…" (a line
+above the tabs while Ember checks the command, before it has a tab; then the command's own tab, once it runs). Shell
+scripts a command runs are read inside the distro before it runs (§2.4), only while the distro runs (Ember never
+starts it just to read one). A command in WSL may start Windows programs and read or write Windows drives
 (`/mnt/c`); it is judged like any other command, and the card adds "This can reach your Windows files." when it does.
 `wsl.exe`'s own options (another user, `--shutdown`, `--unregister`, `--export`…) and changes to `.wslconfig` or
 `/etc/wsl.conf` ask.
@@ -413,6 +434,12 @@ when it finds more than this computer did, it asks you ("build-01's own check al
 script the command runs (`sh build.sh`, `./tools/gen.sh`) is read by that check on build-01, not by this computer, which
 can't see build-01's files: anything dangerous in the script asks this way, and so does a script this task wrote or
 downloaded there that can't be read in full. Both computers record the command in their audit logs.
+
+build-01's helper remembers what a task wrote or downloaded there only while it runs. When the connection is lost and
+Ember reconnects, the helper starts afresh and has forgotten it: a script the task padded past 64 KB before the
+reconnect then runs unread, judged by its name like any other script too big to read, and a script that runs a file
+downloaded before the reconnect is no longer known to run a download (this computer still remembers the task's
+downloads, so a command that runs one by name still asks) (§7, L8).
 
 If the connection goes silent for 5 seconds, the bubble says "build-01 isn't answering" — "Its running commands stop
 in 15 s unless the link comes back. Nothing new is sent meanwhile.", and each running command's tab counts down
@@ -620,7 +647,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
-| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule |
+| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
 | L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured |
@@ -636,7 +663,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L22 | `ssh` in a WSL tab: connecting through the distro only once proven | Otherwise the offer says how to connect from Windows; through a distro, keys and agent only |
 | L23 | A remote that is WSL on another PC: no desktop | Commands only |
 | L24 | Hardened remotes (fapolicyd, confined SELinux users, `noexec` homes) | Ember says the administrator must trust its helper (§6.6) |
-| L25 | A link changed between Ember's check and the run | Paths are judged on their real target too, so links into secret folders ask |
+| L25 | A link changed between Ember's check and the run | Paths are judged on their real target too (`..` after a link included: `sh sub/../t.sh` reads the t.sh the computer really runs), so links into secret folders ask; a script named with `..` that the computer can't resolve asks |
 | L26 | Output can steer the model in ways rules can't see | Instruction-like output makes every later command in the task ask; dangerous commands always show the whole command |
 
 (L13 is a rule for Ember's code, in [DEVELOPING.md](DEVELOPING.md) §14.3.)
