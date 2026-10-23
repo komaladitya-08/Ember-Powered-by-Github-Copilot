@@ -600,7 +600,12 @@ class Classifier {
   download(p: string | null, sc: Scope): void {
     if (!p || !sc.cwd) return;
     const abs = resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    if (!this.downloads.includes(abs)) this.downloads.push(abs);
+    // Where it really lands too (§3.6): through a link (`-o link/x`) or `..` after one (`-o sub/../x`), so running it
+    // later by that name (`sh /data/x`) is running the download.
+    const phys = this.physical(p, "write", sc);
+    for (const n of [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)]) {
+      if (n !== undefined && !this.downloads.includes(n)) this.downloads.push(n);
+    }
   }
 
   /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
@@ -861,6 +866,29 @@ export function mayBecomeWords(raw: string): boolean {
     if (q === null && /[A-Za-z0-9_{(*#?$!-]/.test(n)) return true;
   }
   return false;
+}
+
+/**
+ * Whether a built-in sets, by its name, a variable that changes how commands are found or run (RISKY_ASSIGNMENTS):
+ * printf's `-v` name (`printf -v PATH /tmp/x`, `-vPATH`, `PATH[0]`), and any word of read, mapfile, readarray,
+ * getopts or wait that is such a name (`read PWD <<< /z/l` makes a later `bash -c 'cd ..'` leave from /z/l).
+ */
+function setsRiskyName(key: string, args: readonly Arg[]): boolean {
+  const risky = (n: string | null | undefined): boolean => {
+    if (typeof n !== "string") return false;
+    const name = n.replace(/\[.*$/, "");
+    return RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name);
+  };
+  if (key === "printf") {
+    for (let k = 0; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null || v === "--" || v === "-" || !v.startsWith("-")) return false;
+      if (v === "-v") return risky(args[k + 1]?.v);
+      if (v.startsWith("-v")) return risky(v.slice(2));
+    }
+    return false;
+  }
+  return ["read", "mapfile", "readarray", "getopts", "wait"].includes(key) && args.some(a => risky(a.v));
 }
 
 /**
@@ -1659,6 +1687,8 @@ class Engine extends Classifier {
     if (args.some(a => a.v !== null && /\[[^\]]*[$`]/.test(a.v)) || unseenName(key, args)) {
       this.unclear("unclear.hidden-command", "It hides a command in a variable's name.");
     }
+    // Setting PATH, PWD and the like by name is an assignment too (`printf -v PATH /tmp/x; ls`, `read PWD <<< …`).
+    if (setsRiskyName(key, args)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
 
   /**
@@ -1984,10 +2014,33 @@ function physicalCd(args: readonly Arg[]): boolean {
   }
   return physical;
 }
-/** A shell option that makes every later `cd` follow links (bash's -P and physical, zsh's chase_links and chase_dots). */
-const CHASE_OPTION = /^(physical|chaselinks|chasedots)$/;
-const chaseOption = (name: string | null): boolean => name !== null && CHASE_OPTION.test(name.toLowerCase().replace(/_/g, ""));
+/**
+ * A shell option name that can make every later `cd` follow links (bash's physical, zsh's chase_links and chase_dots),
+ * either way round (zsh's `no` prefix turns a name over: `unsetopt no_chase_links` sets it), or one Ember can't see.
+ */
+const chaseOption = (name: string | null): boolean => name === null || /^(no)?(physical|chaselinks|chasedots)$/.test(name.toLowerCase().replace(/[_-]/g, ""));
 const CHASE_SAYS = "It makes the shell follow links when it changes folder, which Ember doesn't follow.";
+/**
+ * Whether a POSIX `set` may make every later `cd` follow links: bash's `-P`, zsh's `-w` (CHASE_LINKS's letter), an
+ * option name chaseOption matches after `-o` or `+o` (every `o` in a cluster takes the next word: `set -euo physical`,
+ * `set -oe physical`), or a word Ember can't see (it could be any of these). Only the words before `--`.
+ */
+function setChases(args: readonly Arg[]): boolean {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null) return true;
+    if (v === "--") return false;
+    const m = /^([-+])([A-Za-z]+)$/.exec(v);
+    if (!m) continue;
+    if (m[1] === "-" && /[Pw]/.test(m[2])) return true;
+    for (const c of m[2]) {
+      if (c !== "o") continue;
+      k++;
+      if (k < args.length && chaseOption(args[k].v)) return true;
+    }
+  }
+  return false;
+}
 function finishCd(h: H, abs: string | null): void {
   if (h.sc.depth === 0 && h.sc.wrappers.length === 0 && h.e.commands.length === 1) h.e.topCd = { at: h.e.at, abs };
 }
@@ -2284,9 +2337,13 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
         continue;
       }
       const mod = h.sc.path.flavour === "win32" ? win32 : posix;
-      const p2 = mod.join(destObj.abs, baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour));
-      h.e.usePath(lit(p2), "write", h.sc);
-      h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [{ kind: "path", text: p2, resolved: p2, abs: p2 }], ifExists: p2 });
+      const name = baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
+      const p2 = mod.join(destObj.abs, name);
+      // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
+      // kept, never joined lexically) is probed and is what "if it exists" asks about.
+      const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
+      const obj: Obj = { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
+      h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [obj], ifExists: p2 });
     }
     return;
   }
@@ -2555,7 +2612,9 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   const posixShell = POSIX_SHELLS[h.key];
   const cIdx = h.args.findIndex(a => a.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v) && !a.v.startsWith("--"));
   if (has(p, "l", "login", "i", "rcfile", "init-file") || values(p, "O").length) h.e.unclear("unclear.login-shell", "It starts a shell that runs your profile files.");
-  if (has(p, "P") || values(p, "o").some(chaseOption)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  // bash's -P and -o physical, zsh's -w and -o/+o chase_*: every `cd` in it follows links.
+  const plusO = h.args.slice(0, cIdx >= 0 ? cIdx : h.args.length).some((a, k, before) => /^\+[A-Za-z]*o/.test(a.v ?? "") && chaseOption(before[k + 1]?.v ?? null));
+  if (has(p, "P") || (posixShell === "zsh" && has(p, "w")) || values(p, "o").some(chaseOption) || plusO) h.e.unclear("unclear.chase-links", CHASE_SAYS);
   if (cIdx >= 0) {
     const text = h.args[cIdx + 1];
     if (!text || text.v === null) {
@@ -2777,15 +2836,12 @@ reg(NATIVE, ["set"], h => {
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.
-  const end = h.args.findIndex(a => a.v === "--");
-  const opts = end < 0 ? h.args : h.args.slice(0, end);
-  if (h.sc.family === "posix" && opts.some((a, k) => (a.v !== null && /^-[A-Za-z]*P/.test(a.v) && !a.v.startsWith("--")) || (a.v === "-o" && chaseOption(opts[k + 1]?.v ?? null)))) {
-    h.e.unclear("unclear.chase-links", CHASE_SAYS);
-  }
+  if (h.sc.family === "posix" && setChases(h.args)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
 });
-reg(NATIVE, ["setopt"], h => {
-  // zsh's option names: any case, underscores ignored (`setopt CHASE_LINKS`, `setopt chasedots`).
-  if (h.args.some(a => a.v === null || chaseOption(a.v))) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+reg(NATIVE, ["setopt", "unsetopt"], h => {
+  // zsh's option names: any case, underscores ignored, either way round (`setopt CHASE_LINKS`, `unsetopt nochaselinks`);
+  // `-w` is CHASE_LINKS's letter, and `-m` makes every name a pattern (`setopt -m 'c*'`).
+  if (h.args.some(a => chaseOption(a.v) || /^[-+][A-Za-z]*[wm]/.test(a.v ?? ""))) h.e.unclear("unclear.chase-links", CHASE_SAYS);
 });
 reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   const p = opts(h);
@@ -2795,7 +2851,8 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   if (names.length && !has(p, "p")) h.e.envChanged = true;
   if (has(p, "i", "n")) h.e.unclear("unclear.arithmetic-command", "Its arithmetic reads a variable whose value could run a command.");
   for (const n of names) {
-    const name = (n.v ?? n.raw).split("=")[0];
+    // An element of one is the variable itself (`declare PATH[0]=/tmp/x` sets PATH; `PATH+=` appends to it).
+    const name = (n.v ?? n.raw).split("=")[0].replace(/\[.*$/, "").replace(/\+$/, "");
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   }

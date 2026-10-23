@@ -323,8 +323,39 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     for (const [cmd, shell] of [
       ["set -P && cd link && cd .. && sh t.sh", "bash"], ["set -eP", "bash"], ["set -o physical", "bash"], ["bash -P -c 'cd link; cd ..; sh t.sh'", "bash"],
       ["setopt chase_links", "zsh"], ["setopt CHASEDOTS", "zsh"], ["set -o chaselinks", "zsh"], ["zsh -o chase_dots -c 'cd ..'", "bash"],
+      // Every `o` in a cluster takes the next word (bash 5.2: `set -euo physical` and `set -oe physical` both turn it on).
+      ["set -euo physical", "bash"], ["set -oe physical", "bash"], ["bash -euo physical -c 'cd ..'", "bash"],
+      // A name Ember can't see could be physical.
+      ["set -o $x", "bash"], ["set $x", "bash"], ["bash -o $x -c 'cd ..'", "bash"],
+      // zsh: -w is CHASE_LINKS's letter, `no` turns a name over, and -m makes names patterns.
+      ["set -w", "zsh"], ["setopt -w", "zsh"], ["unsetopt nochaselinks", "zsh"], ["unsetopt NO_CHASE_DOTS", "zsh"], ["set +o nochaselinks", "zsh"],
+      ["setopt -m 'c*'", "zsh"], ["zsh -w -c 'cd ..'", "bash"], ["zsh +o nochaselinks -c 'cd ..'", "bash"],
     ] as const) expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.chase-links");
-    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "set -- -P x", "cd -L link", "setopt extendedglob"]) expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
+    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "set -- -P x", "set -- $x", "cd -L link", "setopt extendedglob", "bash -eu -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
+    }
+  });
+
+  it("asks when a command names the shell's folder another way (PWD), or sets PATH-like names through a built-in", () => {
+    // A shell started with PWD naming its folder through a link leaves `cd ..` from there (bash, dash: /z/l/.. is /z).
+    for (const cmd of ["PWD=/z/l bash -c 'cd .. && sh t.sh'", "export PWD=/z/l; bash -c 'cd ..'", "declare -x PWD=/z/l", "env PWD=/z/l sh -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    for (const cmd of ["printf -v PATH /tmp/x", "printf -vPATH /tmp/x", "printf -v 'PATH[0]' /tmp/x", "read PWD <<< /z/l", "read -r -a PATH <<< /tmp", "mapfile LD_PRELOAD < f", "declare PATH[0]=/tmp/x", "PATH+=:/tmp/x; ls"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    for (const cmd of ["printf '%s' PATH", "read -r line <<< x", "printf -v out '%s' x", "echo $PWD"]) expect(rules(cmd), cmd).not.toContain("unclear.assignment");
+  });
+
+  it("asks about overwriting the file a copy into `sub/../` really writes, and remembers a download where it lands", () => {
+    const into = extra("cp a b sub/../", { [`${P}/sub/..`]: "/data" });
+    expect(into.findings.filter(f => f.rule === "posix.cp").map(f => f.ifExists)).toEqual([`${P}/sub/../a`, `${P}/sub/../b`]);
+    expect(into.probe).toEqual(expect.arrayContaining([`${P}/sub/../a`, `${P}/sub/../b`]));
+    expect(extra("cp a dir/").findings.find(f => f.rule === "posix.cp")?.ifExists).toBe(`${P}/dir/a`);
+    // A download through `..` or a link is the download by its real name too: running that later asks (D4.3 f).
+    expect(extra("curl -o sub/../t.sh https://example.com/t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).downloads).toEqual([`${P}/t.sh`, "/data/t.sh"]);
+    expect(extra("curl -o l/t.sh https://example.com/t.sh", { [`${P}/l/t.sh`]: "/data/t.sh" }).downloads).toEqual([`${P}/l/t.sh`, "/data/t.sh"]);
+    expect(extra("curl -o t.sh https://example.com/t.sh").downloads).toEqual([`${P}/t.sh`]);
   });
 
   it("knows a command writes the script it runs by any of its names, and remembers a write where it lands", () => {
