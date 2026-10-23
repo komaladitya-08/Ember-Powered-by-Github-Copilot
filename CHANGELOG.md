@@ -136,8 +136,9 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
   `python gen.py`) don't make a script the task's own, so a padded script made that way runs by its name. Over SSH,
   Ember's helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written
   before the reconnect runs unread after it.
-- `set -P`, `set -o physical`, zsh's `chase_links` or `chase_dots`, and a command that sets `PWD` ask, because they
-  make later `cd`s go where Ember doesn't follow; after `cd -P` in a longer command, a relative name asks.
+- `set -P`, `set -o physical`, zsh's `chase_links` or `chase_dots`, a command that sets or removes `PWD`, and `env -i`
+  ask, because they make later `cd`s go where Ember doesn't follow; after `cd -P` in a longer command, and in what
+  `env -C` runs, a relative name asks.
 - Commands run without your shell profile, so aliases and tools set up there (conda, nvm, pyenv) are missing; on a Mac
   Homebrew's folders are added.
 - Stop can miss a program that leaves on purpose (detached, run as another user, handed to a service); Ember asks

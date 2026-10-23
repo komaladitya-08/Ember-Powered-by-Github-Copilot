@@ -1071,8 +1071,8 @@ downloads it on first use per target and checks it before sending.
   POSIX run (`launchArgv`: this computer, an SSH remote's agent, and WSL through `WSLENV`) gets `PWD` set to its
   folder, so the shell's own logical `cd ..` matches the classifier's. A shell's `cd` is lexical; `cd -P` leaves the
   folder unknown for the rest of the command (never a real path from the second pass: the first pass must probe every
-  name the second judges, so no folder may depend on what the target reported), and `set -P`, `set -o physical`, zsh's
-  `-w` and `chase_*`, and assigning `PWD` ask. Win32 and PowerShell remove `..` lexically, as `resolveTargetPath`
+  name the second judges, so no folder may depend on what the target reported; `env -C` likewise), and `set -P`,
+  `set -o physical`, zsh's `-w` and `chase_*`, setting or removing `PWD`, and `env -i`/`exec -c` ask. Win32 and PowerShell remove `..` lexically, as `resolveTargetPath`
   does, so Windows keeps the lexical form.
 - **Nothing on an argv that a user or a remote wrote**: commands travel in the environment, WSL's fixed scripts on
   stdin, ssh's destination after `--`. Nothing secret is written on a remote. No network listener anywhere: askpass

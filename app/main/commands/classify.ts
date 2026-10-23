@@ -859,7 +859,8 @@ export function mayBecomeWords(raw: string): boolean {
 /**
  * Whether a built-in sets, by its name, a variable that changes how commands are found or run (RISKY_ASSIGNMENTS):
  * printf's `-v` name (`printf -v PATH /tmp/x`, `-vPATH`, `PATH[0]`), and any word of read, mapfile, readarray,
- * getopts or wait that is such a name (`read PWD <<< /z/l` makes a later `bash -c 'cd ..'` leave from /z/l).
+ * getopts, wait or unset that is such a name (`read PWD <<< /z/l` makes a later `bash -c 'cd ..'` leave from /z/l;
+ * after `unset PWD` it leaves from the folder's real path).
  */
 function setsRiskyName(key: string, args: readonly Arg[]): boolean {
   const risky = (n: string | null | undefined): boolean => {
@@ -876,7 +877,7 @@ function setsRiskyName(key: string, args: readonly Arg[]): boolean {
     }
     return false;
   }
-  return ["read", "mapfile", "readarray", "getopts", "wait"].includes(key) && args.some(a => risky(a.v));
+  return ["read", "mapfile", "readarray", "getopts", "wait", "unset"].includes(key) && args.some(a => risky(a.v));
 }
 
 /**
@@ -2818,8 +2819,14 @@ reg(NATIVE, ["env"], h => {
   }
   const rest = p.operands.slice(k);
   if (rest.length === 0) { h.e.add("secret", "secret.env", SAYS.env); return; }
-  const dir = values(p, "C", "chdir")[0];
-  const cwd = dir === undefined ? h.sc.cwd : dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" });
+  // Without PWD (`env -i`, `env -`, `env -u PWD`) a shell it starts begins from its folder's real path, and its `cd ..`
+  // leaves from there, not from where Ember judged (§3.6, L25).
+  if (has(p, "i", "ignore-environment") || h.args.some(a => a.v === "-") || values(p, "u", "unset").some(v => v === null || v === "PWD")) {
+    h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
+  // `env -C` changes folder as the kernel does (`..` after a link leads beside its target) and leaves PWD naming the old
+  // one, so a shell it starts begins from the real path: the folder is unknown to what it runs (as after `cd -P`).
+  const cwd = values(p, "C", "chdir").length ? null : h.sc.cwd;
   h.e.unwrap(h, rest, "env", { cwd });
 });
 // wslvar prints a Windows environment variable (or, with -s/-l, the system's or the user's shell folders).
@@ -2932,6 +2939,8 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
     if (rule.aloneInteractive) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
+  // `exec -c` empties the environment: a shell started so has no PWD and begins from its folder's real path (as env -i).
+  if (h.key === "exec" && has(p, "c")) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   h.e.unwrap(h, rest, h.key);
 });
 reg(NATIVE, ["flock"], h => {

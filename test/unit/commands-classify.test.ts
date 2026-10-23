@@ -349,6 +349,19 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     for (const cmd of ["PWD=/z/l bash -c 'cd .. && sh t.sh'", "export PWD=/z/l; bash -c 'cd ..'", "declare -x PWD=/z/l", "env PWD=/z/l sh -c 'cd ..'"]) {
       expect(rules(cmd), cmd).toContain("unclear.assignment");
     }
+    // Without PWD a shell starts from its folder's real path (bash, dash): `env -i`, `env -`, `env -u PWD`, `exec -c`,
+    // `unset PWD` before it.
+    for (const cmd of ["env -i bash -c 'cd .. && sh t.sh'", "env - sh -c 'cd ..'", "env -u PWD bash -c 'cd ..'", "env --unset=PWD bash", "exec -c bash -c 'cd ..'", "exec -cl bash", "unset PWD; bash -c 'cd ..'"]) {
+      expect(rules(cmd), cmd).toContain("unclear.assignment");
+    }
+    // `env -C` changes folder as the kernel does (`sub/..` beside where sub leads) and leaves PWD behind: what it runs
+    // has no folder Ember knows.
+    for (const cmd of ["env -C sub/.. sh t.sh", "env -C link bash -c 'cd .. && sh t.sh'", "env --chdir=link cat notes"]) {
+      const c = extra(cmd);
+      expect(c.findings.map(f => f.rule), cmd).toContain("unclear.folder");
+      expect(c.scripts, cmd).toEqual([]);
+    }
+    expect(rules("env -u FOO make")).not.toContain("unclear.assignment");
     for (const cmd of ["printf -v PATH /tmp/x", "printf -vPATH /tmp/x", "printf -v 'PATH[0]' /tmp/x", "read PWD <<< /z/l", "read -r -a PATH <<< /tmp", "mapfile LD_PRELOAD < f", "declare PATH[0]=/tmp/x", "PATH+=:/tmp/x; ls"]) {
       expect(rules(cmd), cmd).toContain("unclear.assignment");
     }
