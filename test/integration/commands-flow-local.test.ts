@@ -7,7 +7,9 @@
  * "delete build" alone still asks; with those words `rm -rf ~` never runs (refused here, where Ember's own files live
  * in the home folder) and `rm -rf ~/proj` asks; a command that would change Ember's settings is refused; the kill
  * switch stops `sleep 100` within its budget; words that name another computer make a requested command ask (the
- * wrong-target guard); and root asks before every command.
+ * wrong-target guard); root asks before every command; and a script named through a real symbolic link and `..`
+ * (`sh sub/../t.sh`, `cd sub && sh ../t.sh`) is read where the kernel runs it, and a task folder through a link starts
+ * the next shell where Ember judged it (`cd ..` after `cd sub`).
  *
  * Everything happens in a temporary home (HOME points there, so `~` in a command is that folder). The test process
  * may run as root (CI containers do): the runner is told whether commands are privileged, as main tells it from the
@@ -385,6 +387,52 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(result).toMatchObject({ resultType: "denied" });
     expect(fs.existsSync(path.join(w.work, "build", "out.o"))).toBe(true);
   }, 20_000);
+
+  describe("a script named with `..` through a real symbolic link (§3.6, L25)", () => {
+    /** ~/proj/sub → ~/other/inner: `sub/../t.sh` is ~/other/t.sh, which deletes; ~/proj/t.sh is harmless. */
+    const setUp = () => {
+      const other = path.join(w.home, "other");
+      fs.mkdirSync(path.join(other, "inner"), { recursive: true });
+      fs.mkdirSync(path.join(other, "build"), { recursive: true });
+      fs.writeFileSync(path.join(other, "build", "keep.o"), "x");
+      fs.writeFileSync(path.join(other, "t.sh"), "rm -rf build\n");
+      fs.writeFileSync(path.join(w.work, "t.sh"), "echo benign\n");
+      fs.rmSync(path.join(w.work, "sub"), { force: true });
+      fs.symlinkSync(path.join(other, "inner"), path.join(w.work, "sub"));
+      return other;
+    };
+
+    for (const command of ["sh sub/../t.sh", "cd sub && sh ../t.sh"]) {
+      it(`reads the script the kernel runs for \`${command}\`, asks, and runs nothing on deny`, async () => {
+        const other = setUp();
+        w.verdicts = () => "deny";
+        // The script deletes the build folder of the folder the command runs in; keep both.
+        fs.writeFileSync(path.join(other, "t.sh"), `rm -rf ${path.join(other, "build")}\n`);
+        const { result } = await run(command, "");
+        expect(w.announced).toEqual([]);
+        expect(w.cards).toHaveLength(1);
+        expect(w.cards[0].says.join("\n")).toMatch(/In t\.sh: .*(delete|remove)/i);
+        expect(result).toMatchObject({ resultType: "denied" });
+        expect(fs.existsSync(path.join(other, "build", "keep.o"))).toBe(true);
+      }, 20_000);
+    }
+
+    it("starts the next command in the task's folder through the link as judged: `cd ..` after `cd sub` is ~/proj", async () => {
+      const other = setUp();
+      fs.writeFileSync(path.join(other, "t.sh"), `rm -rf ${path.join(other, "build")}\n`);
+      const state: CommandFlowContext["state"] = { cwd: w.work, downloaded: new Set(), running: false };
+      const moved = await run("cd sub", "", {}, state);
+      expect(moved.result.resultType).toBe("success");
+      expect(state.cwd).toBe(path.join(w.work, "sub"));
+      // The shell's `cd ..` goes where Ember judged (~/proj, whose t.sh it read), not beside the link's target.
+      const { result } = await run("cd .. && sh t.sh && pwd", "", {}, state);
+      expect(w.cards).toEqual([]);
+      expect(result.resultType).toBe("success");
+      expect(result.textResultForLlm).toContain("benign");
+      expect(result.textResultForLlm).toContain(w.work);
+      expect(fs.existsSync(path.join(other, "build", "keep.o"))).toBe(true);
+    }, 20_000);
+  });
 
   it("runs an ordinary `sh ok.sh` without asking", async () => {
     fs.writeFileSync(path.join(w.work, "ok.sh"), "#!/bin/sh\necho hello from the script\n");
