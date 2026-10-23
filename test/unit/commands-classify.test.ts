@@ -192,8 +192,10 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     expect(scripts(". ./env.sh", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "bash", cwd: P }]);
     expect(scripts("sh -c '. ./env.sh'", "bash", "linux")).toEqual([{ path: `${P}/env.sh`, as: "sh", cwd: P }]);
     expect(scripts("./deploy.sh", "bash", "linux")).toEqual([{ path: `${P}/deploy.sh`, as: "shebang", cwd: P }]);
-    // It runs in the command's folder, not beside the script (its relative paths resolve there).
-    expect(scripts("cd sub && sh ../tools/t.sh", "bash", "linux")).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub` }]);
+    // It runs in the command's folder, not beside the script (its relative paths resolve there). A `..` in its name is
+    // walked by the kernel through links, so it is read by the name as written once the target says where that leads.
+    const back = classifyCommand("cd sub && sh ../tools/t.sh", "bash", { ...contextOf("linux"), real: new Map([[`${P}/sub/../tools/t.sh`, `${P}/tools/t.sh`]]) });
+    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh` }]);
     // Through a wrapper, and from stdin.
     for (const cmd of ["env FOO=1 ./x.sh", "exec ./x.sh", "nice ./x.sh", "timeout 5 ./x.sh", "command ./x.sh"]) {
       expect(scripts(cmd, "bash", "linux"), cmd).toEqual([{ path: `${P}/x.sh`, as: "shebang", cwd: P }]);
@@ -249,6 +251,69 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     const dl = classifyCommand("sh get.sh", "bash", contextOf("linux", ["/home/ana/proj/get.sh"])) as ClassificationExtra;
     expect(dl.scripts).toEqual([]);
     expect(dl.findings.map(f => f.rule)).toContain("escape.run-downloaded");
+  });
+});
+
+describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () => {
+  const P = "/home/ana/proj";
+  const ctx = (real: Record<string, string> = {}, downloaded: string[] = []) => ({ ...contextOf("linux", downloaded), real: new Map(Object.entries(real)) });
+  const extra = (cmd: string, real: Record<string, string> = {}, downloaded: string[] = []) => classifyCommand(cmd, "bash", ctx(real, downloaded)) as ClassificationExtra;
+  const rules = (cmd: string, real: Record<string, string> = {}, downloaded: string[] = []) => extra(cmd, real, downloaded).findings.map(f => f.rule);
+
+  it("asks which script runs until the target says where `sub/../t.sh` leads, and probes it as written", () => {
+    for (const [cmd, open] of [
+      ["sh sub/../t.sh", `${P}/sub/../t.sh`], ["cd link && sh ../t.sh", `${P}/link/../t.sh`], ["./sub/../t.sh", `${P}/sub/../t.sh`],
+      ["bash < sub/../t.sh", `${P}/sub/../t.sh`], ["source sub/../env.sh", `${P}/sub/../env.sh`], ["env A=1 ./sub/../t.sh", `${P}/sub/../t.sh`],
+    ]) {
+      const c = extra(cmd);
+      expect(c.scripts, cmd).toEqual([]);
+      expect(c.findings.find(f => f.rule === "unclear.script-path")?.says, cmd).toBe("Ember can't tell which script this runs.");
+      expect(c.probe, cmd).toContain(open);
+    }
+  });
+
+  it("reads the script by the name as written and judges it by where it really is, once the target said", () => {
+    const c = extra("cd link && sh ../t.sh", { [`${P}/link/../t.sh`]: "/data/t.sh" });
+    expect(c.scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: `${P}/link`, open: `${P}/link/../t.sh`, real: "/data/t.sh" }]);
+    expect(c.findings.map(f => f.rule)).not.toContain("unclear.script-path");
+    // `sh t.sh && sh sub/../t.sh` names two files, both read.
+    expect(extra("sh t.sh && sh sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).scripts.map(r => r.open ?? r.path)).toEqual([`${P}/t.sh`, `${P}/sub/../t.sh`]);
+    // A link's own target is remembered as where the script is.
+    expect(extra("sh l.sh", { [`${P}/l.sh`]: "/x/t.sh" }).scripts).toEqual([{ path: `${P}/l.sh`, as: "sh", cwd: P, real: "/x/t.sh" }]);
+  });
+
+  it("keeps the shell's own `cd ..` lexical, and PowerShell's and cmd's `..` (they remove it themselves)", () => {
+    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P }]);
+    const W = "C:\\Users\\ana\\proj";
+    const ps = classifyCommand("& .\\sub\\..\\t.ps1", "powershell", contextOf("win32")) as ClassificationExtra;
+    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W }]);
+    expect(ps.findings.map(f => f.rule)).not.toContain("unclear.script-path");
+    const cmd = classifyCommand("sub\\..\\build.bat", "cmd", contextOf("win32")) as ClassificationExtra;
+    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+  });
+
+  it("judges every path with `..` by where it really leads: a secret, Ember's own, a download", () => {
+    expect(rules("cat sub/../credentials")).not.toContain("path.secret");
+    expect(rules("cat sub/../credentials", { [`${P}/sub/../credentials`]: "/home/ana/.aws/credentials" })).toContain("path.secret");
+    expect(extra("rm -r sub/../x", { [`${P}/sub/../x`]: "/home/ana/.config/ember/x" }).refuse?.rule).toBe("ember.path");
+    expect(rules("cat sub/../*", { [`${P}/sub/..`]: "/home/ana/.ssh" })).toContain("path.secret");
+    expect(rules("cat */../x")).toContain("unclear.glob-parent");
+    // A secret reached through `..` is never read as a script; its own rule asks.
+    const key = extra("sh sub/../id", { [`${P}/sub/../id`]: "/home/ana/.ssh/id_ed25519" });
+    expect(key.scripts).toEqual([]);
+    expect(key.findings.map(f => f.rule)).toContain("path.secret");
+    // Running this task's download by another name is running the download.
+    expect(rules("sh sub/../get.sh", { [`${P}/sub/../get.sh`]: "/data/get.sh" }, ["/data/get.sh"])).toContain("escape.run-downloaded");
+    expect(rules("sh l.sh", { [`${P}/l.sh`]: `${P}/get.sh` }, [`${P}/get.sh`])).toContain("escape.run-downloaded");
+    // Nothing more when `..` leads where the lexical form does.
+    expect(extra("rm -r ../build", { [`${P}/../build`]: "/home/ana/build" }).findings.every(f => !f.widening.includes("real-path"))).toBe(true);
+  });
+
+  it("knows a command writes the script it runs by any of its names, and remembers a write where it lands", () => {
+    expect(rules("printf 'rm -rf ~' > /data/t.sh; sh sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" })).toContain("unclear.script-written");
+    expect(rules("printf 'rm -rf ~' > /x/t.sh; sh l.sh", { [`${P}/l.sh`]: "/x/t.sh" })).toContain("unclear.script-written");
+    expect(rules("printf 'rm -rf ~' > l.sh; sh /x/t.sh", { [`${P}/l.sh`]: "/x/t.sh" })).toContain("unclear.script-written");
+    expect(extra("printf x > sub/../t.sh", { [`${P}/sub/../t.sh`]: "/data/t.sh" }).writes).toEqual(expect.arrayContaining([`${P}/t.sh`, "/data/t.sh"]));
   });
 });
 

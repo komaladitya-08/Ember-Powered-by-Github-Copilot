@@ -20,8 +20,8 @@ import {
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
-  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, resolveTargetPath,
-  secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
+  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
+  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -36,6 +36,13 @@ import win32 from "node:path/win32";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
 type OS = ClassifyContext["os"];
+
+/** A `..` segment in a POSIX path. */
+const DOT_DOT = /(^|\/)\.\.(\/|$)/;
+/** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang"]);
+/** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
+export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
 /** Text longer than this is unclear (§3.4.1). */
 export const MAX_COMMAND_CHARS = 8000;
@@ -84,6 +91,17 @@ export interface ScriptRef {
   as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
+  /**
+   * The path as the shell hands it to the kernel, `..` kept (physicalForm), when it holds a `..` the kernel walks
+   * through links (`sh sub/../t.sh`, `cd link && sh ../t.sh`): the script is read by this name, which opens the file
+   * that runs, not the lexical `path`. Absent: `path` is read.
+   */
+  open?: string;
+  /**
+   * Where the script really is, as the target reported it: `open`'s real path, or a link's target. What the task's
+   * writes and downloads are compared with, beside `path`. Absent: not known (no `..`, no link, or not asked yet).
+   */
+  real?: string;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -349,6 +367,21 @@ class Classifier {
     if (real && real !== abs) {
       obj.realDiffers = true;
       this.judge(real, use, sc.path, text, sc);
+      // A write through a link lands at its target: a script run there by that name was written by this command.
+      if (WRITES.has(use)) this.written.push({ p: real, env: sc.path });
+    }
+    // The file the kernel opens for a path with `..` (`cat sub/../x`, sub a link): its form with `..` kept is probed
+    // too, and on the second pass its real path is judged and remembered as written like the lexical one.
+    const phys = this.physical(text, use, sc);
+    if (phys !== null) {
+      this.addProbe(phys);
+      const r = this.ctx.real?.get(phys);
+      if (r && r !== abs) {
+        obj.realDiffers = true;
+        this.judge(r, use, sc.path, text, sc);
+        if (WRITES.has(use)) this.written.push({ p: r, env: sc.path });
+        if (sc.wsl && sc.mountRoot && isUnder(r, sc.mountRoot, sc.path)) this.windowsReach = true;
+      }
     }
     if (sc.path.flavour === "win32" && SHORT_NAME.test(abs) && !(real && !SHORT_NAME.test(real))) {
       this.unclear("unclear.short-name", "Ember can't tell which file this names.");
@@ -380,6 +413,22 @@ class Classifier {
       forms.push(realPrefix + absPattern.slice(prefix.length));
       this.judge(realPrefix, use, sc.path, text, sc, true);
     }
+    // `..` in the fixed folder is walked through links by the kernel (`cat sub/../*.pem`): that folder is probed as
+    // written and its real path judged with the rest of the pattern; a `..` after a wildcard can't be followed at all.
+    const physPattern = this.physical(pattern, use, sc);
+    if (physPattern !== null) {
+      const physPrefix = globPrefix(physPattern, sc.path);
+      if (DOT_DOT.test(physPattern.slice(physPrefix.length))) this.unclear("unclear.glob-parent", "Ember can't tell which files this names.");
+      else if (DOT_DOT.test(physPrefix)) {
+        this.addProbe(physPrefix);
+        const r = this.ctx.real?.get(physPrefix);
+        if (r && r !== prefix) {
+          forms.push(r + physPattern.slice(physPrefix.length));
+          this.judge(r, use, sc.path, text, sc, true);
+          if (WRITES.has(use)) this.written.push({ p: r, env: sc.path });
+        }
+      }
+    }
     let secret = false;
     for (const f of forms) {
       const r = globReaches(f, use, sc.path, dotRule);
@@ -397,6 +446,17 @@ class Classifier {
     }
     if (sc.wsl && sc.mountRoot && isUnder(prefix, sc.mountRoot, sc.path)) this.windowsReach = true;
     return { kind: "glob", text, resolved: absPattern, abs: absPattern };
+  }
+
+  /**
+   * The form with `..` kept of a path a program opens (physicalForm), on the target's own POSIX filesystem: the kernel
+   * walks `..` through links, unlike the lexical form. Null for a path without one, a foreign scope's (never probed),
+   * Windows' (Win32 removes `..` lexically too), and a `cd` target (the shell's own `cd` is lexical, as the scope's
+   * folder is; `cd -P` follows links: the cd rule handles it).
+   */
+  physical(text: string, use: PathUse, sc: Scope): string | null {
+    if (sc.foreign || use === "cd" || sc.path.flavour !== "posix") return null;
+    return physicalForm(text, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
   }
 
   /** A write into a folder whose new file Ember can't name: a file in it, judged by §3.6's rules (not probed). */
@@ -446,18 +506,33 @@ class Classifier {
     if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
     if (this.isDownloaded(a, sc)) return;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
-    if (sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(abs)) {
+    const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
+    if (stream(abs)) {
       this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
       return;
     }
+    // A shell or the kernel opens the name as written, walking `..` through links (`sh sub/../t.sh` with sub a link
+    // runs the t.sh beside sub's target): the script is the file at the real path the target reports for that form,
+    // never the lexical one. Without that report Ember can't tell which file runs, so it asks (L25). PowerShell and
+    // Win32 remove `..` lexically themselves, as the lexical form does.
+    const open = POSIX_OPENERS.has(as) && sc.path.flavour === "posix"
+      ? physicalForm(a.v, { os: sc.os === "win32" ? "linux" : sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" })
+      : null;
+    let real = this.ctx.real?.get(abs);
+    if (open !== null) {
+      this.addProbe(open);
+      real = this.ctx.real?.get(open);
+      if (!real) { this.unclear("unclear.script-path", SCRIPT_UNSURE); return; }
+      if (stream(real)) { this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first."); return; }
+    }
     // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
     // own rule), and its text has no business on a card.
-    const real = this.ctx.real?.get(abs);
     if ([abs, ...(real ? [real] : [])].some(p => secretKind(p, "read", sc.path) !== null || isEmberPath(p, sc.path))) return;
     const cwd = sc.cwd ?? "";
-    if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd)) return;
+    const known = real !== undefined && real !== abs ? real : undefined;
+    if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd && r.open === (open ?? undefined))) return;
     if (this.scripts.length >= MAX_SCRIPTS) { this.unclear("unclear.scripts", "It runs more scripts than Ember reads first."); return; }
-    const ref: ScriptRef = { path: abs, as, cwd };
+    const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}) };
     this.scripts.push(ref);
     if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
   }
@@ -469,9 +544,12 @@ class Classifier {
    */
   protected scriptWritten(): boolean {
     return this.scripts.some(r => {
+      // By either name: `printf … > /x/t.sh; sh l/../t.sh` (l → /x/sub) writes the very file it runs.
+      const names = r.real !== undefined ? [r.path, r.real] : [r.path];
+      const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
       const snap = this.candidates.get(r);
-      if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(w => isUnder(r.path, w.p, w.env));
-      return this.writesUnnamed || this.written.some(w => isUnder(r.path, w.p, w.env));
+      if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(hit);
+      return this.writesUnnamed || this.written.some(hit);
     });
   }
 
@@ -511,8 +589,11 @@ class Classifier {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
+    const phys = this.physical(a.v, "exec", sc);
+    const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => isUnder(abs, d, sc.path))) return true;
+    if (all.some(d => names.some(n => isUnder(n, d, sc.path)))) return true;
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
