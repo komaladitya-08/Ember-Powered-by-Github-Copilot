@@ -2775,7 +2775,9 @@ reg(NATIVE, ["set"], h => {
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.
-  if (h.sc.family === "posix" && h.args.some((a, k) => (a.v !== null && /^-[A-Za-z]*P/.test(a.v) && !a.v.startsWith("--")) || (a.v === "-o" && chaseOption(h.args[k + 1]?.v ?? null)))) {
+  const end = h.args.findIndex(a => a.v === "--");
+  const opts = end < 0 ? h.args : h.args.slice(0, end);
+  if (h.sc.family === "posix" && opts.some((a, k) => (a.v !== null && /^-[A-Za-z]*P/.test(a.v) && !a.v.startsWith("--")) || (a.v === "-o" && chaseOption(opts[k + 1]?.v ?? null)))) {
     h.e.unclear("unclear.chase-links", CHASE_SAYS);
   }
 });

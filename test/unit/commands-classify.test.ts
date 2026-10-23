@@ -323,7 +323,7 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
       ["set -P && cd link && cd .. && sh t.sh", "bash"], ["set -eP", "bash"], ["set -o physical", "bash"], ["bash -P -c 'cd link; cd ..; sh t.sh'", "bash"],
       ["setopt chase_links", "zsh"], ["setopt CHASEDOTS", "zsh"], ["set -o chaselinks", "zsh"], ["zsh -o chase_dots -c 'cd ..'", "bash"],
     ] as const) expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.chase-links");
-    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "cd -L link", "setopt extendedglob"]) expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
+    for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "set -- -P x", "cd -L link", "setopt extendedglob"]) expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
   });
 
   it("knows a command writes the script it runs by any of its names, and remembers a write where it lands", () => {
