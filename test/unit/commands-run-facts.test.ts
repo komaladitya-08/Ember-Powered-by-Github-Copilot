@@ -102,6 +102,9 @@ function fakeFs(tree: Record<string, Node>, os: "posix" | "win32"): InspectFs {
     const { root, parts } = split(p);
     let cur = root;
     for (let i = 0; i < parts.length; i++) {
+      // `..` is the folder above where the walk really is (links already followed), as the kernel takes it.
+      if (parts[i] === "..") { cur = P.dirname(cur); continue; }
+      if (parts[i] === ".") continue;
       const next = cur.endsWith(sep) ? cur + parts[i] : cur + sep + parts[i];
       const hit = find(next);
       if (!hit) throw err("ENOENT");
@@ -116,6 +119,7 @@ function fakeFs(tree: Record<string, Node>, os: "posix" | "win32"): InspectFs {
   return {
     lstat: async p => {
       const { root, parts } = split(p);
+      if (parts.at(-1) === ".." || parts.at(-1) === ".") return { isSymbolicLink: () => (real(p), false) };
       const parent = parts.length > 1 ? real(root + parts.slice(0, -1).join(sep)) : root;
       const hit = find(parent.endsWith(sep) ? parent + parts[parts.length - 1] : parent + sep + parts[parts.length - 1]);
       if (!hit) throw err("ENOENT");
@@ -167,6 +171,25 @@ describe("inspectPaths", () => {
     expect(got).toHaveLength(MAX_INSPECT + 2);
     expect(got[0]).toEqual({ exists: false, real: "/home/ana/src/f0" });
     expect(got[MAX_INSPECT]).toEqual({ exists: null, real: null });
+  });
+
+  it("walks `..` through links as the kernel does, so `sub/../t.sh` is beside the link's target (§3.6, L25)", async () => {
+    const tree: Record<string, Node> = {
+      "/home": { kind: "dir" }, "/home/ana": { kind: "dir" }, "/home/ana/src": { kind: "dir" }, "/home/ana/src/t.sh": { kind: "file" },
+      "/home/ana/src/sub": { kind: "link", to: "/data/inner" }, "/data": { kind: "dir" }, "/data/inner": { kind: "dir" }, "/data/t.sh": { kind: "file" },
+      "/home/ana/src/dl": { kind: "link", to: "sub/../gone.sh" },
+    };
+    const lfs = fakeFs(tree, "posix");
+    await expect(inspectPaths(["sub/../t.sh", "/home/ana/src/sub/../new.sh", "dl", "sub/..", "./t.sh"], "/home/ana/src", { os: "linux", fs: lfs })).resolves.toEqual([
+      { exists: true, real: "/data/t.sh" },
+      { exists: false, real: "/data/new.sh" },
+      { exists: true, real: "/data/gone.sh" },
+      { exists: true, real: "/data" },
+      { exists: true, real: "/home/ana/src/t.sh" },
+    ]);
+    // Windows removes `..` lexically before any filesystem sees the path, and so does inspect there.
+    const wfs = fakeFs({ "C:\\Users": { kind: "dir" }, "C:\\Users\\ana": { kind: "dir" }, "C:\\Users\\ana\\x.txt": { kind: "file" }, "C:\\Users\\ana\\j": { kind: "link", to: "C:\\Windows\\Temp" } }, "win32");
+    await expect(inspectPaths(["j\\..\\x.txt"], "C:\\Users\\ana", { os: "win32", fs: wfs })).resolves.toEqual([{ exists: true, real: "C:\\Users\\ana\\x.txt" }]);
   });
 
   it("follows Windows' path rules on Windows: 8.3 names and junctions come back long", async () => {
@@ -249,6 +272,25 @@ describe("readScriptText", () => {
     }
     await expect(readScriptText("../../dev/tty", "/home/ana", { os: "linux", fs })).resolves.toBeNull();
     expect(opened).toEqual([]);
+  });
+
+  it("opens a name with `..` as written, which the kernel walks through links, and never one whose real path is a stream", async () => {
+    const opened: string[] = [];
+    const served = openFs({ "/home/ana/proj/sub/../t.sh": { bytes: bytesOf("rm -rf build\n") }, "/home/ana/proj/t.sh": { bytes: bytesOf("echo benign\n") } });
+    const fs: InspectFs = {
+      lstat: async () => ({ isSymbolicLink: () => false }), readlink: async () => "",
+      realpath: async p => (p.startsWith("/home/ana/proj/sub/..") ? `/data${p.slice("/home/ana/proj/sub/..".length)}` : p.startsWith("/home/ana/proj/fd/..") ? "/proc/self/fd/0" : p),
+      open: async p => { opened.push(p); return served.open!(p); },
+    };
+    await expect(readScriptText("sub/../t.sh", "/home/ana/proj", { os: "linux", fs })).resolves.toBe("rm -rf build\n");
+    await expect(readScriptText("/home/ana/proj/sub/../t.sh", "/", { os: "linux", fs })).resolves.toBe("rm -rf build\n");
+    await expect(readScriptText("fd/../0", "/home/ana/proj", { os: "linux", fs })).resolves.toBeNull();
+    expect(opened).toEqual(["/home/ana/proj/sub/../t.sh", "/home/ana/proj/sub/../t.sh"]);
+    // Without a filesystem that can say where `..` leads, nothing is read.
+    await expect(readScriptText("sub/../t.sh", "/home/ana/proj", { os: "linux", fs: served as InspectFs })).resolves.toBeNull();
+    // Windows: Win32's lexical `..`.
+    const wfs = openFs({ "C:\\Users\\ana\\build.bat": { bytes: bytesOf("del /q *") } }) as InspectFs;
+    await expect(readScriptText("sub\\..\\build.bat", "C:\\Users\\ana", { os: "win32", fs: wfs })).resolves.toBe("del /q *");
   });
 
   it("decodes UTF-8 and UTF-16 by their byte order mark, keeping the mark (a shell doesn't skip it)", () => {

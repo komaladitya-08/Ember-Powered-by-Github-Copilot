@@ -69,6 +69,27 @@ describe("resolveTargetPath (POSIX)", () => {
   });
 });
 
+describe("physicalForm: a POSIX path as the kernel walks it (§3.6, L25)", () => {
+  const o = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj" };
+  it("keeps `..`, which the kernel takes through links, and drops what can't change the file", () => {
+    expect(P.physicalForm("sub/../t.sh", o)).toBe("/home/ana/proj/sub/../t.sh");
+    expect(P.physicalForm("../t.sh", o)).toBe("/home/ana/proj/../t.sh");
+    expect(P.physicalForm("~/l/../.ssh/x", o)).toBe("/home/ana/l/../.ssh/x");
+    expect(P.physicalForm("/a//b/./../c/", o)).toBe("/a/b/../c");
+    expect(P.physicalForm("/a/b/..", o)).toBe("/a/b/..");
+  });
+  it("is null where only the lexical form can be meant", () => {
+    for (const p of ["t.sh", "./sub/t.sh", "/a/b", "/../x", "/../../x", "~", "a..b/c", "..x/y"]) expect(P.physicalForm(p, o), p).toBeNull();
+    expect(P.physicalForm("~/a/../b", { ...o, home: "" })).toBeNull();
+    expect(P.physicalForm("a/../b", { ...o, cwd: "" })).toBeNull();
+    expect(P.physicalForm("a\\..\\b", { os: "win32", home: "C:\\Users\\ana", cwd: "C:\\x" })).toBeNull();
+    expect(P.physicalForm("a/../b", { os: "win32", home: "C:\\Users\\ana", cwd: "C:\\x" })).toBeNull();
+  });
+  it("works for macOS too", () => {
+    expect(P.physicalForm("l/../x", { os: "darwin", home: "/Users/ana", cwd: "/Users/ana" })).toBe("/Users/ana/l/../x");
+  });
+});
+
 describe("POSIX path rules", () => {
   it("compares paths by segment, without case on macOS and drive mounts", () => {
     expect(P.isUnder("/home/ana/proj/x", "/home/ana/proj", envL)).toBe(true);

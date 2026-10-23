@@ -161,7 +161,7 @@ export async function readScriptText(path: string, cwd: string, o: { os: OS; max
   const stream = (p: string) => /^\/(dev|proc)(\/|$)/.test(p);
   if (o.os !== "win32" && stream(P.normalize(abs))) return null;
   if (o.os !== "win32" && /(^|\/)\.\.(\/|$)/.test(abs)) {
-    const real = await files.realpath(abs).catch(() => null);
+    const real = await Promise.resolve().then(() => files.realpath(abs)).catch(() => null);
     if (real === null || stream(real)) return null;
   }
   if (!files.open) return null;
