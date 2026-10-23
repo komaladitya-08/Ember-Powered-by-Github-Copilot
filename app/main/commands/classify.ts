@@ -2020,6 +2020,9 @@ function physicalCd(args: readonly Arg[]): boolean {
  */
 const chaseOption = (name: string | null): boolean => name === null || /^(no)?(physical|chaselinks|chasedots)$/.test(name.toLowerCase().replace(/[_-]/g, ""));
 const CHASE_SAYS = "It makes the shell follow links when it changes folder, which Ember doesn't follow.";
+/** zsh's CDABLE_VARS by name, either way round. */
+const cdableOption = (name: string): boolean => /^(no)?cdablevars$/.test(name.toLowerCase().replace(/[_-]/g, ""));
+const CDABLE_SAYS = "It makes cd go to folders named by variables, which Ember doesn't follow.";
 /**
  * Whether a POSIX `set` may make every later `cd` follow links: bash's `-P`, zsh's `-w` (CHASE_LINKS's letter), an
  * option name chaseOption matches after `-o` or `+o` (every `o` in a cluster takes the next word: `set -euo physical`,
@@ -2843,11 +2846,17 @@ reg(NATIVE, ["set"], h => {
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.
   if (h.sc.family === "posix" && setChases(h.args)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  // zsh's CDABLE_VARS, by name or (zsh only: bash's -T is functrace) by its letter.
+  if (h.sc.family === "posix" && h.args.some(a => a.v !== null && (cdableOption(a.v) || (h.sc.shell === "zsh" && /^-[A-Za-z]*T/.test(a.v))))) {
+    h.e.unclear("unclear.cdable-vars", CDABLE_SAYS);
+  }
 });
 reg(NATIVE, ["setopt", "unsetopt"], h => {
   // zsh's option names: any case, underscores ignored, either way round (`setopt CHASE_LINKS`, `unsetopt nochaselinks`);
   // `-w` is CHASE_LINKS's letter, and `-m` makes every name a pattern (`setopt -m 'c*'`).
   if (h.args.some(a => chaseOption(a.v) || /^[-+][A-Za-z]*[wm]/.test(a.v ?? ""))) h.e.unclear("unclear.chase-links", CHASE_SAYS);
+  // CDABLE_VARS (-T): `cd x` with no folder x goes to $x, not where Ember judged.
+  if (h.args.some(a => a.v !== null && (cdableOption(a.v) || /^[-+][A-Za-z]*T/.test(a.v)))) h.e.unclear("unclear.cdable-vars", CDABLE_SAYS);
 });
 reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
   const p = opts(h);

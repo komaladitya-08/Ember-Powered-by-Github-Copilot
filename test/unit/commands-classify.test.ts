@@ -342,6 +342,11 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
     for (const cmd of ["set -euo pipefail", "set +P", "set -o errexit", "set -- -P x", "set -- $x", "cd -L link", "setopt extendedglob", "bash -eu -c 'cd ..'"]) {
       expect(rules(cmd), cmd).not.toContain("unclear.chase-links");
     }
+    // zsh's CDABLE_VARS: `cd x` with no folder x goes to $x.
+    for (const [cmd, shell] of [["setopt cdablevars", "zsh"], ["setopt -T", "zsh"], ["unsetopt NO_CDABLE_VARS", "zsh"], ["set -o cdable_vars", "zsh"], ["set -T", "zsh"]] as const) {
+      expect(classifyCommand(cmd, shell, ctx()).findings.map(f => f.rule), cmd).toContain("unclear.cdable-vars");
+    }
+    expect(rules("set -T")).not.toContain("unclear.cdable-vars");
   });
 
   it("asks when a command names the shell's folder another way (PWD), or sets PATH-like names through a built-in", () => {

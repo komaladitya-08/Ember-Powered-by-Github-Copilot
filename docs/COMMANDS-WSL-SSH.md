@@ -230,7 +230,7 @@ earlier command printed text that looked like instructions.").
   beside a link's target). Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
   folder Ember knows (only the computer knows where a link leads), so a name relative to it asks ("Ember can't tell
   which folder this command runs in."); `set -P`, `set -o physical` (also as `set -euo physical`), zsh's `-w`,
-  `chase_links` or `chase_dots`, a command that sets or removes `PWD` itself, and a shell started without it (`env -i`,
+  `chase_links`, `chase_dots` or `cdable_vars`, a command that sets or removes `PWD` itself, and a shell started without it (`env -i`,
   `env -u PWD`, `exec -c`) make later `cd`s go where Ember doesn't follow, so they ask ("It makes the shell follow links
   when it changes folder, which Ember doesn't follow.", or "It changes how commands are found or run.").
 - One command at a time per task; at most three at once on one computer.
