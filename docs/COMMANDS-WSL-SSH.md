@@ -224,12 +224,13 @@ earlier command printed text that looked like instructions.").
 - A command stops after 2 minutes unless the task gives it longer (at most 15 minutes): "Stopped after 2 min: it took
   too long."
 - Each task keeps one folder per computer, starting at your home folder. A command that is only `cd <folder>` changes
-  it (`cd -P <folder>`: to where the folder really is); a `cd` inside a longer command affects only that command. On
-  this computer and on SSH computers a command's shell is told the task's folder as Ember named it, links included,
+  it (by the name as written, links included, `cd -P` too); a `cd` inside a longer command affects only that command.
+  Each command's shell (on this computer, in WSL and on SSH computers) is told the task's folder as Ember named it,
   so its `cd ..` goes where Ember judged (a shell not told starts from the folder's real path, and `cd ..` would land
-  beside a link's target). `cd -P` follows links as the shell does; `set -P`, `set -o physical` and zsh's
-  `chase_links` or `chase_dots` make every later `cd` follow them, which Ember doesn't follow, so they ask ("It makes
-  the shell follow links when it changes folder, which Ember doesn't follow.").
+  beside a link's target). Inside a longer command `cd -P` follows links as the shell does; `set -P`, `set -o
+  physical` (also as `set -euo physical`), zsh's `-w`, `chase_links` or `chase_dots`, and a command that sets `PWD`
+  itself make later `cd`s go where Ember doesn't follow, so they ask ("It makes the shell follow links when it changes
+  folder, which Ember doesn't follow.", or "It changes how commands are found or run." for `PWD`).
 - One command at a time per task; at most three at once on one computer.
 
 ### 2.9 Things to know

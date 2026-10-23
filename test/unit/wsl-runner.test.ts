@@ -194,12 +194,13 @@ describe("wslLaunch", () => {
 
   it("replaces the user's WSLENV with exactly Ember's variables, and sets WSL_UTF8", () => {
     const p = wslLaunch(spec(), pty, o).env;
-    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u");
+    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u");
+    expect(p.PWD).toBe("/home/ana/proj");
     expect(Object.keys(p).filter(k => k.toUpperCase() === "WSLENV")).toEqual(["WSLENV"]);
     expect(p).toMatchObject({ WSL_UTF8: "1", EMBER_RUN_ID: RUN_ID, EMBER_COLS: "120", EMBER_ROWS: "30", ELECTRON_RUN_AS_NODE: "1" });
     // Pipes also send §3.3.1's non-interactive defaults across.
     const q = wslLaunch(spec(), pipes, o).env;
-    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
     expect(q).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
     expect(p.GIT_TERMINAL_PROMPT).toBeUndefined();
   });

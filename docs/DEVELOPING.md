@@ -1067,10 +1067,11 @@ downloads it on first use per target and checks it before sending.
   it, `resolveTargetPath`'s lexical form isn't the file that opens. The classifier also probes `physicalForm` (the
   path with its `..` kept) and judges that form's real path; a script named with `..` is read by that form
   (`ScriptRef.open`), judged by its real path (`ScriptRef.real`), and asks when the target can't resolve it; inspect
-  and `readScriptText` walk `..` through links, so never `path.normalize` a POSIX path before opening it; and a POSIX
-  run gets `PWD` set to its folder, so the shell's own logical `cd ..` matches the classifier's. A shell's `cd` is
-  lexical (`cd -P` lands in the real path; `set -P` and zsh's `chase_*` ask). Win32 and PowerShell remove `..`
-  lexically, as `resolveTargetPath` does, so Windows keeps the lexical form.
+  and `readScriptText` walk `..` through links, so never `path.normalize` a POSIX path before opening it; and every
+  POSIX run (`launchArgv`: this computer, an SSH remote's agent, and WSL through `WSLENV`) gets `PWD` set to its
+  folder, so the shell's own logical `cd ..` matches the classifier's. A shell's `cd` is lexical (`cd -P` lands in the
+  real path; `set -P`, `set -o physical`, zsh's `-w` and `chase_*`, and assigning `PWD` ask). Win32 and PowerShell
+  remove `..` lexically, as `resolveTargetPath` does, so Windows keeps the lexical form.
 - **Nothing on an argv that a user or a remote wrote**: commands travel in the environment, WSL's fixed scripts on
   stdin, ssh's destination after `--`. Nothing secret is written on a remote. No network listener anywhere: askpass
   and the remote's helpers use local IPC only (a 0600 Unix socket in a 0700 folder; a named pipe that admits only the
