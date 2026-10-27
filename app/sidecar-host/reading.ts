@@ -193,7 +193,11 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       }
       if (!busy) await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
       const keyOf = (id: number) => host.keyOf(snap.nodes[built.indexOf.get(id)!]);
-      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid);
+      // Secret fields it doesn't list may be named in what it lists; past where the snapshot ended, nothing is known.
+      const unreadAfter = !!snap.busy || (snap.truncated && snap.cut.some(c => c === "nodes" || c === "time"));
+      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid, {
+        fields: built.unlisted, unreadAfter, inWeb: id => !!built.ctx[built.indexOf.get(id)!]?.inWeb || DOCUMENT_ROLES.has(built.roles[built.indexOf.get(id)!]),
+      });
       for (const id of red.removed) host.snapshots.remove(id);
       nodes = red.nodes;
       secretKeys = red.secretKeys;

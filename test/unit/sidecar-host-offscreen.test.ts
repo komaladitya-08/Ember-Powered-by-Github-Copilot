@@ -77,3 +77,78 @@ describe("a long page scrolled down (review #1)", () => {
     expect(r.nodes.find(n => n.role === "combo box")?.selected).toBe("Paris");
   });
 });
+
+describe("names that say what a secret field the read didn't list holds (review #2)", () => {
+  // Chromium names a table's cell, a row or a section after the values of the fields in it. A field scrolled out of
+  // view, or past where the read stopped, isn't listed, but what holds it may be (partly in view): its name must not
+  // carry the field's value to the model. The host's twin of the Python sidecar's PERC9-1 and PERC9-3 cases.
+  const web = (children: FakeElementSpec[]): FakeElementSpec => ({ role: "Document", name: "Checkout", framework: "Chrome", bounds: at(0, 0, 600, 300), children });
+  const field = (name: string, value: string | undefined, b: ReturnType<typeof at>, more: Partial<FakeElementSpec> = {}): FakeElementSpec =>
+    ({ role: "Edit", name, ...(value !== undefined ? { value } : {}), editable: true, bounds: b, ...more });
+  const checkout = (cardValue: string | undefined): FakeElementSpec[] => [web([
+    { role: "DataItem", name: "Ship to Ada", bounds: at(10, 40, 280, 24), children: [
+      { role: "Text", name: "Ship to", bounds: at(12, 42, 50, 16) }, field("Name", "Ada", at(70, 42, 100, 18))] },
+    { role: "Button", name: "Pay now", bounds: at(10, 70, 60, 20) },
+    { role: "DataItem", name: "PIN 10010", bounds: at(10, 100, 380, 24), children: [
+      { role: "Text", name: "PIN", bounds: at(12, 102, 40, 16) }, field("PIN", "10010", at(60, 100, 60, 20))] },
+    // Partly in view at the bottom: its label shows, its field is scrolled out.
+    { role: "Group", name: "Card number 4111 1111 1111 1111", bounds: at(10, 270, 280, 46), children: [
+      { role: "Text", name: "Card number", bounds: at(12, 272, 90, 16) }, field("Card number", cardValue, at(12, 296, 260, 20), { offscreen: true })] },
+    { role: "Group", name: "Notes Leave at the door", bounds: at(300, 270, 280, 46), children: [
+      { role: "Text", name: "Notes", bounds: at(302, 272, 60, 16) }, field("Delivery notes", "Leave at the door", at(302, 296, 260, 20), { offscreen: true })] },
+  ])];
+
+  it("withholds the name of what holds a secret field scrolled out of view, and nothing else", async () => {
+    const { call } = harness(checkout("4111 1111 1111 1111"));
+    const r = await read(call);
+    expect(JSON.stringify(r)).not.toContain("4111");
+    expect(r.nodes.filter(n => ["section", "table cell", "push button"].includes(n.role)).map(n => [n.role, n.name])).toEqual([
+      ["table cell", "Ship to Ada"], ["push button", "Pay now"], ["table cell", ""], ["section", ""], ["section", "Notes Leave at the door"]]);
+    const held = r.nodes.find(n => n.role === "section" && n.withheld)!;
+    expect(r.withheldKeys.length).toBeGreaterThanOrEqual(2);
+    // Withheld for good: looked at on its own later, it still has no name.
+    expect((await call<{ name: string }>("read_element", { id: held.id })).name).toBe("");
+  });
+
+  it("withholds such a name when the field's value can't be told, if the name says something like a value that nothing in it says", async () => {
+    const { call } = harness(checkout(undefined));
+    const r = await read(call);
+    expect(JSON.stringify(r)).not.toContain("4111");
+    expect(r.nodes.find(n => n.role === "section" && n.withheld)).toBeTruthy();
+    expect(r.nodes.find(n => n.name === "Notes Leave at the door")).toBeTruthy();
+  });
+
+  it("withholds the name of what holds a secret field that comes after where the read stopped", async () => {
+    const filler = Array.from({ length: 6 }, (_, i): FakeElementSpec => ({ role: "Hyperlink", name: `Link ${i}`, bounds: at(10, 10 + 12 * i, 60, 10) }));
+    const { call } = harness([web([...filler,
+      { role: "DataItem", name: "Card number 4111 1111 1111 1111", bounds: at(300, 200, 280, 40), children: [
+        field("Card number", "4111 1111 1111 1111", at(300, 210, 200, 24))] },
+    ])]);
+    // The window, the page, six links and the cell: the field would be the tenth.
+    const r = await call<Read>("read_window", { pid: 30, maxNodes: 9 });
+    expect(r.cut).toContain("nodes");
+    expect(r.nodes.at(-1)).toMatchObject({ role: "table cell", name: "", withheld: true });
+    expect(JSON.stringify(r)).not.toContain("4111");
+  });
+
+  it("withholds names that say something like a value where the read stopped and the page went on unread", async () => {
+    // Unnamed groups the read doesn't list take up the snapshot (4 elements a listed one): it ends at the cell.
+    const nest = (depth: number, inner: FakeElementSpec): FakeElementSpec =>
+      depth ? { role: "Group", bounds: at(0, 0, 600, 300), children: [nest(depth - 1, inner)] } : inner;
+    const cell = (name: string): FakeElementSpec => ({ role: "DataItem", name, bounds: at(300, 200, 280, 40), children: [
+      field("Card number", "4111 1111 1111 1111", at(300, 210, 200, 24))] });
+    for (const [name, kept] of [["Card number 4111 1111 1111 1111", false], ["Payment details", true]] as const) {
+      const { call } = harness([web([nest(9, cell(name))])]);
+      const r = await call<Read>("read_window", { pid: 30, maxNodes: 3 });
+      expect(r.truncated).toBe(true);
+      expect(r.nodes.at(-1)!.name, name).toBe(kept ? name : "");
+    }
+  });
+
+  it("leaves names alone outside a web page, and when the field isn't secret", async () => {
+    const { call } = harness([{ role: "Group", name: "Order 4111 1111", bounds: at(10, 270, 280, 46), children: [
+      field("Reference", "4111 1111", at(12, 296, 260, 20), { offscreen: true })] }]);
+    const r = await read(call);
+    expect(r.nodes.find(n => n.name === "Order 4111 1111")).toBeTruthy();
+  });
+});
