@@ -112,6 +112,8 @@ interface RigOptions {
   /** Main's setter (default: a mock that records), and the shared bubble's notice board (TargetsDepsExtra.bubbles). */
   showState?: (patch: Partial<EmberState>) => void;
   bubbles?: () => NoticeBoard | null;
+  /** The settings shortcut while Ember holds it (TargetsDepsExtra.settingsKey). */
+  settingsKey?: () => string | null;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -256,7 +258,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}) }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}), ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -718,7 +720,7 @@ describe("SSH targets", () => {
     expect(r.t.agent.active).toBe("local");
     expect(r.showState).toHaveBeenCalledWith({ target: undefined });
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Lost build-01", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }, { id: "conn:build-01:stop", label: "Stop trying" }] }) });
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Reconnect it from Ember's menu first." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Reconnect it from Ember's menu or in Ember's settings (Computers) first." });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
   });
 
@@ -734,7 +736,7 @@ describe("SSH targets", () => {
       title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
     }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu first." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu or in Ember's settings (Computers) first." });
     // Ten minutes of network failures: said as it is, with Reconnect.
     const l2 = await connected(r, "build-02");
     l2.move("lost");
@@ -1296,6 +1298,32 @@ describe("how a question shown in a window is reached from the keyboard (review 
       .toBe("Ember needs your OK to run commands on this computer. It's in the window that opened: press Alt+Tab to go there.");
     expect(r.t.panelHint({ kind: "command", card })).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
     expect(rig({ os: "darwin" }).t.panelHint({ kind: "consent", consent })).toBe("It's in the window that opened.");
+  });
+});
+
+describe("a keyboard route for the runtime's buttons (review #47)", () => {
+  it("says under an offer, a loss and a failure worth trying again where the same buttons are in settings", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, settingsKey: () => "Ctrl+Alt+E" });
+    r.t.agent.offerConnect("build-01", "open the logs on build-01");
+    expect(s.screen()).toMatchObject({ title: "Connect to build-01?", step: "Or press Ctrl+Alt+E and go to Computers." });
+    const l = await connected(r);
+    l.move("lost");
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", step: "Or press Ctrl+Alt+E and go to Computers." });
+    r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", undefined, true));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(s.screen()).toMatchObject({ title: "Can't connect to build-01", step: "Or press Ctrl+Alt+E and go to Computers." });
+    // Without the settings shortcut (another app holds it), no key is named.
+    const t = screenRig();
+    const n = rig({ settings: withHosts([hostRecord("build-01")]), showState: t.setState, bubbles: () => t.notices, settingsKey: () => null });
+    n.t.agent.offerConnect("build-01", "open the logs on build-01");
+    expect(t.screen().step).toBe("Or open Ember's settings and go to Computers.");
+  });
+
+  it("tells the model the settings route too, never the menu alone", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toBe("Ember showed the user a Connect button for build-01. Tell them to click it, or to connect build-01 in Ember's settings (Computers); once it is connected, start the task there.");
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu or in Ember's settings (Computers) first." });
   });
 });
 

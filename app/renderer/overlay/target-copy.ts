@@ -139,6 +139,13 @@ export const wslFirstSeen = (): BubbleWords => ({
 });
 
 /**
+ * Under a bubble whose buttons the keyboard can't reach (the overlay never takes the keyboard): where the same buttons
+ * are in settings, with the settings shortcut while Ember holds it (`key`; null: another app took it).
+ */
+export const keyboardRoute = (key: string | null, section: "Computers" | "Commands" = "Computers"): string =>
+  (key ? `Or press ${key} and go to ${section}.` : `Or open Ember's settings and go to ${section}.`);
+
+/**
  * How to reach the window that shows a question whole (the command window, the window a consent card opened in) from
  * the keyboard: Alt+Tab reaches it on Linux and Windows; on macOS the command window is a panel Command+Tab doesn't list.
  */

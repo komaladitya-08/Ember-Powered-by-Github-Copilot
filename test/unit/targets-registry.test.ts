@@ -128,7 +128,7 @@ describe("SSH hosts (§2.2)", () => {
     expect(e.find(x => x.id === "ssh:db-02")).toMatchObject({ state: "lost", usable: false });
     const off = withHosts([]).find(x => x.id === "ssh:build-01")!;
     expect(off).toMatchObject({ state: "off", usable: false, login: "deploy", can: "not connected" });
-    expect(off.why).toBe("build-01 isn't connected. Connect it from Ember's menu first.");
+    expect(off.why).toBe("build-01 isn't connected. Connect it from Ember's menu or in Ember's settings (Computers) first.");
     const ready = withHosts([["build-01", view("ready", { desktop: "screen", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;
     expect(ready).toMatchObject({ state: "ready", usable: true, can: "apps and commands" });
     const stalled = withHosts([["build-01", view("stalled", { desktop: "none", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;

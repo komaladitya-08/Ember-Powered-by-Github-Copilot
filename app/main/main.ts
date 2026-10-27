@@ -1506,6 +1506,8 @@ function start(): void {
       stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
       // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
       bubbles: () => agent?.notices ?? null,
+      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it.
+      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });

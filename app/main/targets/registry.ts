@@ -175,7 +175,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
     const names = [...new Set([h.id, hostPart(h.dest), h.resolved.hostname, h.dest.includes("@") ? "" : h.dest].filter(Boolean))];
     const base = { id, kind: "ssh" as const, label, login: h.resolved.user, names, host: h, listedOnly: false };
     if (!link || link.state === "closed") {
-      out.push({ ...base, state: "off", can: "not connected", usable: false, why: `${label} isn't connected. Connect it from Ember's menu first.` });
+      out.push({ ...base, state: "off", can: "not connected", usable: false, why: `${label} isn't connected. Connect it from Ember's menu or in Ember's settings (Computers) first.` });
       continue;
     }
     if (link.state === "connecting") {
@@ -183,7 +183,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
       continue;
     }
     if (link.state === "lost") {
-      out.push({ ...base, state: "lost", can: "connection lost", usable: false, why: `The connection to ${label} dropped. Reconnect it from Ember's menu first.` });
+      out.push({ ...base, state: "lost", can: "connection lost", usable: false, why: `The connection to ${label} dropped. Reconnect it from Ember's menu or in Ember's settings (Computers) first.` });
       continue;
     }
     const cmd = link.commands ?? "off";
