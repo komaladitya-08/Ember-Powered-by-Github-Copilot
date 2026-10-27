@@ -44,7 +44,7 @@ export function targetMenu(i: MenuInput): MenuItemLike[] {
   }
   // Offered once SSH is in use (a host added, or another place to work): never new for someone who set nothing up.
   const hosts = i.entries.some(e => e.kind === "ssh");
-  if (i.sshAllowed && (picker || hosts)) items.push({ type: "separator" }, { label: "Bring Ember to a computer…", click: i.bring });
+  if (i.sshAllowed && (picker || hosts)) items.push({ type: "separator" }, { label: "Bring Ember to a computer…", click: i.bring, opens: true });
   const active = targets.find(e => e.id === i.active);
   if (active?.kind === "ssh" && active.host && active.state === "ready") {
     const hostId = active.host.id;

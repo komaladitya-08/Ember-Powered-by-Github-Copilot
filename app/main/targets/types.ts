@@ -148,6 +148,11 @@ export interface MenuItemLike {
   enabled?: boolean;
   submenu?: MenuItemLike[];
   click?: () => void;
+  /**
+   * The click opens one of Ember's windows (settings): the handle keeps the keyboard off the user's app meanwhile, so
+   * the window that opens isn't left behind it (not an Electron field; main reads it).
+   */
+  opens?: boolean;
 }
 
 /** Everything main hands the targets runtime (createTargets): plain data, functions and Electron-free shapes. */
