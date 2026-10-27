@@ -104,11 +104,17 @@ h2[tabindex="-1"]:focus { outline: none; }
 .start-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 6px; padding: 16px; }
 .start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
 /* It is the page's last part, and in first run it stays at the window's foot while the terms scroll, so agreeing and
-   Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). A band of the window's own
-   background fills the space under it, so nothing scrolls into view below the card, and a soft shadow sets it apart. */
+   Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). A soft shadow sets it apart.
+   From the card's top down, the window's own background covers everything around it, across the whole window, so
+   nothing scrolls into view beside or below the card or through its rounded corners: a shadow spread from a box the
+   card's shape, behind its content, clipped to start at its top (a shadow, so the window never scrolls sideways). */
 body.first-run .start-row {
   position: sticky; bottom: 12px; z-index: 1;
-  box-shadow: var(--group-edge), 0 -10px 24px -8px rgba(0, 0, 0, 0.6), 0 12px 0 12px var(--bg);
+  box-shadow: var(--group-edge), 0 -10px 24px -8px rgba(0, 0, 0, 0.6);
+}
+body.first-run .start-row::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 100vmax var(--bg); clip-path: inset(0 -100vmax -100vmax);
 }
 html:has(> body.first-run) { scroll-padding-bottom: 150px; }
 .start-row .hint { margin: 0; flex-basis: 100%; }
