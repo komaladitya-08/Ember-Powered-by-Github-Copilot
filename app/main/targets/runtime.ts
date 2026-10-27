@@ -195,6 +195,32 @@ function sameDest(h: HostRecord, dest: string, port: number | undefined): boolea
   return fold(h.dest) === fold(dest) && (h.port ?? null) === (port ?? null);
 }
 
+/**
+ * Whether a host record is the computer and login ssh -G resolved (§7.4's user, hostname, port and jump hosts, through
+ * the same route): the same computer typed another way ("build-01" and "deploy@build-01.example.com") is one record,
+ * never a second one with its own card and a connection that fights the first for the remote's lock (review #181).
+ */
+function sameIdentity(h: HostRecord, r: HostRecord["resolved"], via: HostRecord["via"] | undefined): boolean {
+  const route = (v: HostRecord["via"] | undefined) => (v && v !== "local" ? v : "local");
+  const hops = (j: readonly string[]) => j.map(x => x.toLowerCase()).join(",");
+  return h.resolved.user === r.user && h.resolved.hostname.toLowerCase() === r.hostname.toLowerCase() && h.resolved.port === r.port
+    && hops(h.resolved.jump) === hops(r.jump) && route(h.via) === route(via);
+}
+
+/**
+ * Whether a destination the user's own ssh uses reaches a host record, as far as Ember can tell without running ssh -G
+ * (the noticer looks every few seconds): the same destination, or its host one of the record's own names (its id, its
+ * host part, its resolved hostname) with the user and the port, where given, the record's resolved ones (review #181).
+ */
+function reaches(h: HostRecord, dest: string, port: number | undefined): boolean {
+  if (sameDest(h, dest, port)) return true;
+  const at = dest.lastIndexOf("@");
+  const host = (at >= 0 ? dest.slice(at + 1) : dest).toLowerCase();
+  if (at >= 0 && dest.slice(0, at) !== h.resolved.user) return false;
+  if (port !== undefined && port !== h.resolved.port) return false;
+  return [h.id, hostPart(h.dest), h.resolved.hostname].some(n => n.toLowerCase() === host);
+}
+
 /** The destination a seen ssh connects to, with its -l user folded in ("deploy@build-01"). */
 function seenDest(s: SshSeen): string {
   return s.user && !s.dest.includes("@") ? `${s.user}@${s.dest}` : s.dest;
@@ -798,6 +824,18 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (!(err instanceof ConnectError)) log.warn("targets.resolve_failed", { err });
       return refused(err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up.");
     }
+    // The same computer and login under another spelling: the record Ember has, connected, and said so (review #181).
+    const same = settings.get().targets.hosts.find(h => sameIdentity(h, resolved, raw.via));
+    if (same) {
+      const was = conns.get(same.id)?.state;
+      const r = await connect(same.id, { interactive: true, activate: true });
+      if (!r.ok) return r;
+      // From a bubble's button, an already connected one has nothing else on screen to say where Ember is.
+      if (o.bubble && (was === "ready" || was === "stalled")) {
+        bubble(`connected:${same.id}`, { title: `Already added as ${same.id}`, thought: `Ember is on ${same.id} already, so I'll work there.`, actions: [], mood: "done" }, INFO_MS);
+      }
+      return { ok: true, message: `Already added as ${same.id}.` };
+    }
     const id = hostIdFor(hostPart(raw.dest), new Set(settings.get().targets.hosts.map(h => h.id)));
     const host: HostRecord = {
       id, dest: raw.dest, ...(raw.port ? { port: raw.port } : {}), ...(raw.extra ? { extra: raw.extra } : {}), ...(raw.via ? { via: raw.via } : {}),
@@ -1035,8 +1073,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const distros = wslFacts.distros.filter(d => entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
         return { exe: wslFacts.wslExe, distros };
       },
-      dismissed: s => settings.get().targets.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase()),
-      connected: s => settings.get().targets.hosts.some(h => sameDest(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
+      // Turned away under this spelling, or under another one of a computer Ember has a record of (review #181).
+      dismissed: s => {
+        const t = settings.get().targets;
+        if (t.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase())) return true;
+        const h = t.hosts.find(x => reaches(x, seenDest(s), s.port));
+        return !!h && t.dismissedOffers.some(d => reaches(h, d, undefined));
+      },
+      connected: s => settings.get().targets.hosts.some(h => reaches(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
       questionUp,
       offer: s => showSeenOffer(s),
       now: () => parts.now().getTime(),

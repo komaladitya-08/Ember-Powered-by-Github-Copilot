@@ -857,6 +857,29 @@ describe("SSH targets", () => {
     await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01.example.com:99999" })).resolves.toEqual({ ok: false, message: "That isn't an SSH host Ember can use. Type an alias from your SSH config, or user@host." });
   });
 
+  it("keeps one record for one computer: another spelling of it connects the record Ember has, with no second card (review #181)", async () => {
+    // "build-01" (an alias) and "deploy@build-01" resolve to the same login on the same computer.
+    const r = rig({ settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(r);
+    r.t.bubbleAction("target:local");
+    const cardsBefore = r.cards.length;
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01" })).resolves.toEqual({ ok: true, message: "Already added as build-01." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.cards.length).toBe(cardsBefore);
+    expect(r.conns.connect).toHaveBeenCalledTimes(1);
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    // Not connected: the record Ember has is connected, never a copy of it.
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
+    r.conns.resolve.mockResolvedValueOnce({ user: "deploy", hostname: "Build-01.example.com", port: 22, jump: [], controlPath: null });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01.example.com" })).resolves.toEqual({ ok: true, message: "Already added as build-01." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.conns.connect).toHaveBeenCalledTimes(2);
+    // Another login on that computer is another record.
+    r.conns.resolve.mockResolvedValueOnce({ user: "root", hostname: "build-01.example.com", port: 22, jump: [], controlPath: null });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "root@build-01" })).resolves.toEqual({ ok: true });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01", "build-01-2"]);
+  });
+
   it("resets a remote picked last time to this computer at start (it isn't connected yet)", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")], { active: "ssh:build-01" }) });
     expect(r.t.agent.active).toBe("local");
@@ -1331,6 +1354,28 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     no.t.bubbleAction("offer:1:bring");
     await flush(); await flush();
     expect(no.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
+  });
+
+  it("never offers a computer Ember is connected to, or one the user turned away, under another spelling (review #181)", async () => {
+    const seen = (dest: string) => ({ sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", dest], via: "local" as const }]) });
+    // Connected to "build-01" (an alias for deploy@build-01.example.com); the user runs "ssh deploy@build-01".
+    const r = rig({ notice: seen("deploy@build-01"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(r);
+    r.showState.mockClear();
+    r.ticks[0]();
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Turned away as "deploy@build-01"; later seen as its full name.
+    const d = rig({ notice: seen("deploy@build-01.example.com"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })], { dismissedOffers: ["deploy@build-01"] }) });
+    d.ticks[0]();
+    await flush();
+    expect(d.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Another login there is still offered.
+    const other = rig({ notice: seen("root@build-01"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(other);
+    other.ticks[0]();
+    await flush();
+    expect(other.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
   });
 
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {
