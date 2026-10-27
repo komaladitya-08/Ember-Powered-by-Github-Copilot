@@ -26,8 +26,13 @@ export const LEGEND_TOKENS = "Characters you wouldn't see are shown in ⟨ ⟩."
 export const LEGEND_MIXED = "Letters from another alphabet are underlined.";
 /** Under a command with Hebrew or Arabic letters: the card draws them in the order the shell reads them (review #273). */
 export const LEGEND_RTL = "Right-to-left text is shown in the order it runs.";
-export const TYPING_HINT = "Type here to answer the command. Ember never sees what you type.";
+/** Under a run that takes typing: where typing goes, how to paste there (review #264), and that Ember never sees it. */
+export const typingHintFor = (os: OS) => `Type here to answer the command; paste with ${os === "darwin" ? "Command+V" : "Ctrl+V"}. Ember never sees what you type.`;
+export const TYPING_HINT = typingHintFor("linux");
 export const NO_TYPING_HINT = "This command can't take typing here.";
+/** The button beside Stop that copies what a run's terminal shows (review #268), and what it says once it has. */
+export const COPY_OUTPUT_LABEL = "Copy output";
+export const COPIED_LABEL = "Copied";
 export const RUNNING_STATUS = "Running…";
 
 /** How a shell is named in the header. */
@@ -123,9 +128,9 @@ export function keyHintText(os: OS): string {
 }
 
 /** The hint under a run's terminal: typing goes to the command, or it can't take any; nothing once it has ended. */
-export function typingHint(t: { interactive: boolean; ended: boolean }): string {
+export function typingHint(t: { interactive: boolean; ended: boolean }, os: OS = "linux"): string {
   if (t.ended) return "";
-  return t.interactive ? TYPING_HINT : NO_TYPING_HINT;
+  return t.interactive ? typingHintFor(os) : NO_TYPING_HINT;
 }
 
 /** While a WSL distro boots for its first command (the status line). */

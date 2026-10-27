@@ -237,7 +237,7 @@ describe("What Ember did, review round 11", () => {
 const NEW_STRINGS: string[] = [];
 const keep = <T extends string>(s: T): T => { NEW_STRINGS.push(s); return s; };
 /** Words that keep their capital inside a sentence. */
-const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
+const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|Ctrl\+V\.?|Command\+V\.?|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
 
 describe("the command window's words (§8.5)", () => {
   const exit = (e: Partial<Parameters<typeof commandCopy.statusLine>[0]>) => ({ code: 0, signal: null, ended: "exit" as const, ms: 3200, ...e });
@@ -285,7 +285,10 @@ describe("the command window's words (§8.5)", () => {
   });
 
   it("says whether typing reaches the command, and what it waits for", () => {
-    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }))).toBe("Type here to answer the command. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }, "win32"))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }, "darwin"))).toBe("Type here to answer the command; paste with Command+V. Ember never sees what you type.");
+    expect([commandCopy.COPY_OUTPUT_LABEL, commandCopy.COPIED_LABEL].map(keep)).toEqual(["Copy output", "Copied"]);
     expect(keep(commandCopy.typingHint({ interactive: false, ended: false }))).toBe("This command can't take typing here.");
     expect(commandCopy.typingHint({ interactive: true, ended: true })).toBe("");
     expect(keep(commandCopy.startingText("Ubuntu"))).toBe("Starting Ubuntu…");

@@ -197,7 +197,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     return {
       runId: t.card.runId, seq: t.seq, header: headerLine(t.card), command: t.card.command,
       status: t.note && !t.ended ? t.note : t.status, interactive, ended: t.ended, title: t.card.taskTitle,
-      typing: typingHint({ interactive, ended: t.ended }), cols: t.size.cols, rows: t.size.rows, outcome: t.outcome,
+      typing: typingHint({ interactive, ended: t.ended }, o.os), cols: t.size.cols, rows: t.size.rows, outcome: t.outcome,
     };
   }
 
@@ -210,6 +210,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
       keyHint: card ? keyHint() : null,
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
+      os: o.os,
     };
   }
 

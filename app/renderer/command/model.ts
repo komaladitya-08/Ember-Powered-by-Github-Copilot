@@ -8,6 +8,7 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import type { CommandTabView, CommandWindowState } from "../../shared/commands";
+import type { OS } from "../../shared/shortcuts";
 import { READ_ALL_HINT } from "./copy";
 
 /**
@@ -41,6 +42,8 @@ export interface WindowView extends CommandWindowState {
   rev: number;
   /** Lines for tasks whose command has no tab yet, until the tab comes (absent: none). */
   pending?: PendingView[];
+  /** The PC's OS, for its keys in a run's terminal (keys.ts; absent: not a Mac). */
+  os?: OS;
 }
 
 /** At most this many pending lines are drawn. */

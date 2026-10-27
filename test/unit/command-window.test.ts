@@ -470,7 +470,7 @@ describe("a run's tab", () => {
     ctl.attach(card(), run);
     expect(page().last().tabs[0]).toMatchObject({
       runId: run.runId, header: "On build-01 as deploy · bash · in /home/deploy/src/app", status: "Running…", interactive: true, ended: false,
-      title: "Clean the build", typing: "Type here to answer the command. Ember never sees what you type.", outcome: "running",
+      title: "Clean the build", typing: "Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.", outcome: "running",
     });
     run.finish({ code: 2, ms: 1100 });
     await vi.runAllTimersAsync();

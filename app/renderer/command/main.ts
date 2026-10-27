@@ -11,9 +11,10 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
-  cardLines, countdownText, headerLine, tabLabel,
+  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
+  NOT_NOW_LABEL, STOP_LABEL, cardLines, countdownText, headerLine, tabLabel,
 } from "./copy";
+import { shouldFocusTerminal } from "./keys";
 import {
   INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
   type WindowView,
@@ -279,6 +280,18 @@ function buildTab(t: TabView): TabEls {
   const foot = el("div", "foot");
   const status = el("p", "status", t.status);
   status.setAttribute("role", "status");
+  // What the terminal shows, to the clipboard (Ctrl+C copies a selection; this copies it all, review #268).
+  const copy = el("button", "btn quiet copy", COPY_OUTPUT_LABEL);
+  copy.type = "button";
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+  copy.addEventListener("click", e => {
+    if (!e.isTrusted) return;
+    const cur = tabEls.get(t.seq);
+    if (!cur?.term.copyAll()) return;
+    copy.textContent = COPIED_LABEL;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copy.textContent = COPY_OUTPUT_LABEL; }, 1500);
+  });
   const action = el("button", "btn quiet", t.ended ? CLOSE_LABEL : STOP_LABEL);
   action.type = "button";
   action.addEventListener("click", e => {
@@ -288,9 +301,13 @@ function buildTab(t: TabView): TabEls {
     if (cur.ended) api.close(cur.runId);
     else { action.disabled = true; api.stop(cur.runId); }
   });
-  foot.append(status, action);
-  panel.append(where.node, block, ...legends, host, typing, foot);
-  const term = createRunTerminal({ cols: t.cols, rows: t.rows, interactive: t.interactive, onInput: data => api.input(t.runId, data) });
+  foot.append(status, copy, action);
+  // The status line and Stop come before the terminal, on screen and in the Tab order: they are reached without
+  // passing through it (reviews #42, #261).
+  panel.append(where.node, block, ...legends, foot, host, typing);
+  const term = createRunTerminal({
+    cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", onInput: data => api.input(t.runId, data),
+  });
   return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
 }
 
@@ -398,7 +415,21 @@ function render(): void {
   });
   list.hidden = tabs.length === 0;
   $("empty").hidden = tabs.length > 0 || !!announce || !!ask || lines.length > 0;
+  focusTerminal();
   reportSize();
+}
+
+/**
+ * Puts the keyboard in the selected run's terminal when it takes typing and nothing else wants it (keys.ts), so the
+ * answer to "[sudo] password for ana:" typed at once reaches the run (review #264). It never takes the focus from
+ * another window: the page's own focus only follows when the user brings the window up.
+ */
+function focusTerminal(): void {
+  const t = model.view?.tabs.find(x => x.runId === model.selected);
+  const e = t ? tabEls.get(t.seq) : undefined;
+  if (!t || !e?.term.opened) return;
+  const a = document.activeElement;
+  if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce, focusIdle: !a || a === document.body })) e.term.focus();
 }
 
 /** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
@@ -437,6 +468,7 @@ $("empty").textContent = EMPTY_TEXT;
 api.onState(onState);
 api.onOutput(msg => dispatch({ type: "output", msg }));
 window.addEventListener("resize", () => { measureCard(); reportSize(); });
+window.addEventListener("focus", () => focusTerminal());
 // A scroll anywhere on the page (the card area, not only the command block) can move the card out of view.
 document.addEventListener("scroll", () => measureCard(), { capture: true, passive: true });
 document.addEventListener("visibilitychange", () => measureCard());

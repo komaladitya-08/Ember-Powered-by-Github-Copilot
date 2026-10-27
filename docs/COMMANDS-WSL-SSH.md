@@ -64,15 +64,19 @@ Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop ev
 
 Commands run in Ember's own window, **Ember commands**, never in your own terminal windows: Ember still never types
 into a terminal of yours. Each command gets a tab (the newest first, the last 20 kept) with a header such as
-"On build-01 as deploy · bash · in ~/src/app", its live output, a status line ("Running…", "Finished in 3.2 s.",
-"Ended with exit code 2 after 1.1 s.") and a **Stop** button. What a command already changed stays changed when you
-stop it.
+"On build-01 as deploy · bash · in ~/src/app", a status line ("Running…", "Finished in 3.2 s.", "Ended with exit
+code 2 after 1.1 s.") with **Copy output** and **Stop**, then its live output. What a command already changed stays
+changed when you stop it.
 
-When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command.
-Ember never sees what you type." What you type goes only to the command: it never reaches Copilot, the log or the
-audit. Commands without a terminal (on Windows, or where `script` isn't installed) say "This command can't take
-typing here."; programs there run with their non-interactive settings, so one that wants a password fails at once
-instead of waiting.
+When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command;
+paste with Ctrl+V. Ember never sees what you type." (Command+V on a Mac). The keyboard is already in the command's
+terminal when its tab comes up, so what you type there goes straight to it. What you type goes only to the command: it
+never reaches Copilot, the log or the audit. Tab and Shift+Tab always move on to the window's buttons and tabs, never
+into the command (Ctrl+I types a tab for a program that wants one). Off a Mac, Ctrl+C copies the text you selected
+(without a selection it interrupts the command, as in any terminal) and Ctrl+Shift+C always copies; **Copy output**
+copies everything the command printed. Commands without a terminal (on Windows, or where `script` isn't installed)
+say "This command can't take typing here." and are left out of the Tab order; programs there run with their
+non-interactive settings, so one that wants a password fails at once instead of waiting.
 
 The window never reaches Copilot as a picture: Ember blacks out its own windows in every screenshot.
 
