@@ -177,6 +177,8 @@ export class CursorBorrow {
   private runningMouse = false;
   /** When Ember last posted a key event (0 before any): see lastSyntheticKeyAt. */
   private lastKeyAt = 0;
+  /** Hands back at once what the borrow driving now took (see stopForQuit); null while none drives. */
+  private handBack: (() => void) | null = null;
 
   constructor(private x: Input, private options: CursorBorrowOptions = {}) {}
 
@@ -230,6 +232,18 @@ export class CursorBorrow {
   stop(): void {
     this.epoch++;
     if (this.busy) this.stopping = true;
+  }
+
+  /**
+   * Ember is quitting: stop(), and the borrow driving now hands everything back at once (keys and buttons up, then the
+   * pointer home and the keyboard back to the window that had it). Main closes the input in the same tick, and the
+   * borrow's own clean-up runs later, against a closed input that does nothing.
+   */
+  stopForQuit(): void {
+    this.stop();
+    const back = this.handBack;
+    this.handBack = null;
+    try { back?.(); } catch { /* quitting: nothing more can be put back */ }
   }
 
   borrow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions = {}): Promise<T> {
@@ -366,6 +380,13 @@ export class CursorBorrow {
 
     let home: { x: number; y: number } | null = null;
     let previousWindow = 0;
+    const restoreFocus = () => {
+      if (!previousWindow || !o.window || previousWindow === o.window) return;
+      let may: boolean;
+      try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
+      if (may) x.activate(previousWindow);
+    };
+    let handedBack = false;
     const hand: Hand = {
       glideTo: async (tx, ty) => {
         check();
@@ -507,6 +528,15 @@ export class CursorBorrow {
       home = x.pointer();
       previousWindow = x.activeWindow();
       expected = home;
+      this.handBack = () => {
+        handedBack = true;
+        // Keys and buttons up first: a move with a button held would be a drag.
+        x.releaseAll();
+        held.clear();
+        ownButtons = 0;
+        if (home) x.move(home.x, home.y);
+        restoreFocus();
+      };
       this.setDriving(true);
       o.onStart?.();
       if (o.window) {
@@ -519,17 +549,14 @@ export class CursorBorrow {
       }
       return await fn(hand);
     } finally {
+      this.handBack = null;
       // Never leave a key or button stuck down, whatever happened.
       // By keycode: the exact key that went down comes up (a keysym could map to another key by now).
       for (const code of held.keys()) { posted(); x.keycode(code, false); }
       held.clear();
-      const restoreFocus = () => {
-        if (!previousWindow || !o.window || previousWindow === o.window) return;
-        let may: boolean;
-        try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
-        if (may) x.activate(previousWindow);
-      };
-      if (this.stopping || tookOver === "keys") {
+      if (handedBack) {
+        // Ember quit while driving: stopForQuit() handed everything back, and the input is closed by now.
+      } else if (this.stopping || tookOver === "keys") {
         // Stopped (or the user reached for the keyboard, e.g. Ctrl+Alt+X): no gliding, pointer and focus simply go back.
         if (home) x.move(home.x, home.y);
         restoreFocus();

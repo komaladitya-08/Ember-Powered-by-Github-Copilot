@@ -1362,8 +1362,8 @@ function start(): void {
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
-    // A borrow still running lets go (keys up, pointer home) before the connection closes.
-    app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
+    // A borrow still running lets go at once (keys up, pointer home, the keyboard back) before the connection closes.
+    app.on("will-quit", () => { borrowRef?.stopForQuit(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
     // The borrow says when someone starts waiting for the mouse or Ember starts driving it; the status follows.
     showBorrowing = () => {
