@@ -303,8 +303,8 @@ export const BUBBLE_CSS = `
   .eb-actions button.eb-primary:hover { background: var(--accent, #ff9230); filter: brightness(1.08); }
 }
 .eb-actions button:active { transform: scale(0.97); }
-.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
-.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
+.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
+.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 /* Read out by screen readers, never seen. */
 .eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }

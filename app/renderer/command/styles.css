@@ -38,7 +38,7 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .pending-line::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
 
 /* ── Tabs: one per run, newest first; the symbol says how it is going (never colour alone) ── */
-.tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 2px; }
+.tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 4px; }
 .tab {
   all: unset; box-sizing: border-box; cursor: pointer; flex: none; display: inline-flex; align-items: center; gap: 6px;
   max-width: 260px; min-height: 28px; padding: 4px 10px; border-radius: var(--r-sm);

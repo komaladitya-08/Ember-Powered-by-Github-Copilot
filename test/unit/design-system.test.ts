@@ -36,6 +36,33 @@ const contrast = (a: RGB, b: RGB) => {
 };
 const solid = (c: string) => parse(c).rgb;
 
+/** A list split at its top-level commas (`:is(h1, h2)` and `rgba(…)` stay whole). */
+const selectors = (list: string): string[] => {
+  const out: string[] = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === "(") depth++;
+    else if (list[i] === ")") depth--;
+    else if (list[i] === "," && depth === 0) { out.push(list.slice(from, i).trim()); from = i + 1; }
+  }
+  return [...out, list.slice(from).trim()];
+};
+/** The rules of a stylesheet's `@media (forced-colors: active)` block, as [selectors, declarations]. */
+const forcedRules = (css: string): [string[], string][] => {
+  const at = css.indexOf("@media (forced-colors: active) {");
+  if (at < 0) return [];
+  const open = css.indexOf("{", at);
+  let depth = 0, end = open;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) { end = i; break; }
+  }
+  const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]);
+};
+/** Every declaration the forced-colours block gives `selector`. */
+const forced = (css: string, selector: string) => forcedRules(css).filter(([s]) => s.includes(selector)).map(([, d]) => d).join(" ");
+
 describe("the design system's colours", () => {
   const surfaces = ["surface-0", "surface-1", "surface-2", "glass-solid"].map(token);
 
@@ -65,6 +92,50 @@ describe("the design system's colours", () => {
 
   it("outlines controls at 3:1 or more against what they sit on (WCAG 1.4.11)", () => {
     for (const bg of surfaces) expect(contrast(over(token("control-edge"), bg), solid(bg)), bg).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("the keyboard focus ring", () => {
+  /** `--focus-ring` as the default appearance and Increase Contrast set it, with the accent each uses. */
+  const contrastBlock = /@media \(prefers-contrast: more\) \{\s*:root \{([^}]*)\}/.exec(shared)![1];
+  const modes = [
+    { mode: "default", ring: token("focus-ring"), accent: token("accent") },
+    { mode: "increase contrast", ring: /--focus-ring: ([^;]+);/.exec(contrastBlock)![1].trim(), accent: /--accent: ([^;]+);/.exec(contrastBlock)![1].trim() },
+  ];
+  /** A colour the ring names: a token, or the accent mixed toward transparent (as rgba). */
+  const colour = (c: string, accent: string) => {
+    const mix = /^color-mix\(in srgb, var\(--accent\) (\d+)%, transparent\)$/.exec(c);
+    if (mix) return `rgba(${solid(accent).join(", ")}, ${Number(mix[1]) / 100})`;
+    const v = /^var\(--([\w-]+)\)$/.exec(c);
+    return v ? (v[1] === "accent" ? accent : token(v[1])) : c;
+  };
+  /** The ring's shadows, inside out: [spread px, colour]. */
+  const layers = (ring: string, accent: string) => selectors(ring).map(l => {
+    const m = /^0 0 0 (\d+)px (.+)$/.exec(l.trim())!;
+    return [Number(m[1]), colour(m[2], accent)] as const;
+  });
+
+  it("is set off from a filled control by a gap of the window's colour, so focus on an accent button shows as a ring (review #244)", () => {
+    for (const { mode, ring, accent } of modes) {
+      const ls = layers(ring, accent);
+      expect(ls.length, mode).toBe(2);
+      const [[gap, gapColour], [outer, ringColour]] = ls;
+      expect(gapColour, mode).toBe(token("surface-0"));
+      expect(gap, mode).toBeGreaterThanOrEqual(2);
+      expect(outer - gap, mode).toBeGreaterThanOrEqual(2);
+      // The gap against the accent fill it rings, and the ring against the gap and each surface (WCAG 1.4.11: 3:1).
+      expect(contrast(solid(gapColour), solid(accent)), mode).toBeGreaterThanOrEqual(3);
+      for (const bg of ["surface-0", "surface-1", "surface-2", "glass-solid"].map(token)) {
+        expect(contrast(over(ringColour, bg), solid(bg)), `${mode} on ${bg}`).toBeGreaterThanOrEqual(3);
+        expect(contrast(over(ringColour, bg), solid(gapColour)), `${mode} against its gap`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("is the same ring in the bubble when it runs without ember.css", () => {
+    const fallbacks = [...BUBBLE_CSS.matchAll(/var\(--focus-ring, ([^;]+)\);/g)].map(m => m[1].replace(/\)$/, ""));
+    expect(fallbacks.length).toBeGreaterThan(0);
+    for (const f of fallbacks) expect(layers(f, token("accent")).map(([px]) => px)).toEqual(layers(token("focus-ring"), token("accent")).map(([px]) => px));
   });
 });
 
@@ -136,33 +207,6 @@ describe("every window", () => {
     expect(2 * inset + field + gap + line).toBeLessThanOrEqual(92);
   });
 });
-
-/** A selector list split at its top-level commas (`:is(h1, h2)` stays whole). */
-const selectors = (list: string): string[] => {
-  const out: string[] = [];
-  let depth = 0, from = 0;
-  for (let i = 0; i < list.length; i++) {
-    if (list[i] === "(") depth++;
-    else if (list[i] === ")") depth--;
-    else if (list[i] === "," && depth === 0) { out.push(list.slice(from, i).trim()); from = i + 1; }
-  }
-  return [...out, list.slice(from).trim()];
-};
-/** The rules of a stylesheet's `@media (forced-colors: active)` block, as [selectors, declarations]. */
-const forcedRules = (css: string): [string[], string][] => {
-  const at = css.indexOf("@media (forced-colors: active) {");
-  if (at < 0) return [];
-  const open = css.indexOf("{", at);
-  let depth = 0, end = open;
-  for (let i = open; i < css.length; i++) {
-    if (css[i] === "{") depth++;
-    else if (css[i] === "}" && --depth === 0) { end = i; break; }
-  }
-  const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
-  return [...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]);
-};
-/** Every declaration the forced-colours block gives `selector`. */
-const forced = (css: string, selector: string) => forcedRules(css).filter(([s]) => s.includes(selector)).map(([, d]) => d).join(" ");
 
 describe("Windows contrast themes (forced colours)", () => {
   const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : read(`app/renderer/${page}/styles.css`);

@@ -110,12 +110,13 @@
   --t-snappy: 380ms;
   --t-bouncy: 540ms;
 
-  /* Keyboard focus: Apple's ring, a band of the accent just outside the control (3:1 or more on every surface). */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 75%, transparent);
+  /* Keyboard focus: Apple's ring, a band of the accent just outside the control (3:1 or more on every surface), set
+     off by a gap of the window's colour so it reads as a ring round a filled control too (not as a larger button). */
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
 /* Increase contrast (the desktop's high-contrast preference): Apple's increased-contrast colours, firmer edges and
-   secondary text, solid glass with a contrasting border, a full-strength focus ring. */
+   secondary text, solid glass with a contrasting border, a full-strength focus ring (still set off by its gap). */
 @media (prefers-contrast: more) {
   :root {
     --accent: #ffa056;
@@ -135,7 +136,7 @@
     --glass-sheen: linear-gradient(transparent, transparent);
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
     --glass-edge: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));
-    --focus-ring: 0 0 0 3px var(--accent);
+    --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent);
   }
 }
 /* Reduce transparency: glass becomes a solid panel. */
