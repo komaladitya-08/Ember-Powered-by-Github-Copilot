@@ -254,6 +254,27 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     expect(warmMs).toBeLessThan(10_000);
   });
 
+  it("starts from a folder whose name has square brackets, from memory and with its cache in such a folder (review #201)", async () => {
+    // Add-Type -Path would take "[portable]" for a wildcard and find no file; the bootstrap compiles by literal path.
+    const staged = path.join(dir, "Ember [portable]", "sidecar", "uia");
+    fs.mkdirSync(staged, { recursive: true });
+    for (const f of ["ember_uia.ps1", "ember_uia.cs"]) fs.copyFileSync(path.join(path.dirname(SCRIPT), f), path.join(staged, f));
+    const bracketCache = path.join(dir, "Jane [Work]", "cache");
+    for (const extra of [{}, { EMBER_UIA_CACHE: bracketCache }] as Record<string, string>[]) {
+      const b = new UiaBridge(path.join(staged, "ember_uia.ps1"), bridgeEnv(process.env, extra));
+      try {
+        expect(await b.ready).toMatchObject({ ready: true, version: 1 });
+        expect(await b.call("ping")).toEqual({ version: 1 });
+      } finally {
+        const exit = await b.close();
+        expect(exit.code).toBe(0);
+      }
+    }
+    // Whether the build could be cached under a bracketed folder (-OutputAssembly); from memory works either way.
+    const cached = fs.existsSync(bracketCache) ? fs.readdirSync(bracketCache) : [];
+    console.log(`uia-bridge: a cache under "Jane [Work]" holds ${JSON.stringify(cached)}`);
+  }, 120_000);
+
   it("lists the bench among the top-level windows, with its process and program name", async () => {
     const { windows, w } = await listedRead(main().hwnd);
     expect(w, JSON.stringify(windows.map(x => [x.hwnd, x.name, x.processName]))).toBeTruthy();

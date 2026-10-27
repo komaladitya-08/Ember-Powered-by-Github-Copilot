@@ -80,11 +80,19 @@ describe("the bridge's bootstrap (ember_uia.ps1)", () => {
     expect(lines[0]).toBe("Set-StrictMode -Version Latest");
     expect(lines.length).toBeLessThan(90);
     expect(ps1).toContain("$env:EMBER_UIA_CACHE");
-    expect(ps1).toMatch(/Add-Type -Path \$source -ReferencedAssemblies \$refs -OutputAssembly/);
+    expect(ps1).toMatch(/Add-Type -LiteralPath \$source -ReferencedAssemblies \$refs -OutputAssembly/);
     expect(ps1).toContain("[Reflection.Assembly]::Load($bytes)");
     expect(ps1).toContain("$assembly.GetType('Ember.Uia.Bridge', $true)");
     expect(ps1).toContain("$code = $bridge::Run()");
     expect(lines[lines.length - 1]).toBe("exit $code");
+  });
+
+  it("compiles its source by literal path, so [ and ] in the install folder aren't taken for wildcards", () => {
+    // Add-Type -Path resolves wildcards: "C:\Users\Jane [Work]\Apps\Ember" would match no file.
+    const compiles = lines.filter(l => /(^|[(=]\s*)Add-Type\b/.test(l) && !/-AssemblyName\b/.test(l));
+    expect(compiles).toHaveLength(2);
+    for (const l of compiles) expect(l).toMatch(/^(\$types = @\()?Add-Type -LiteralPath \$source /);
+    expect(ps1).not.toMatch(/Add-Type\s+-Path\b/i);
   });
 
   it("never handles screen data: no stdin, no UI Automation, no serialising or output cmdlets", () => {
