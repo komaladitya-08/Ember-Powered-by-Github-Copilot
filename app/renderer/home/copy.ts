@@ -299,7 +299,8 @@ function connectionLine(e: ActivityEntry): EntryView | null {
   switch (e.step) {
     case "connected": return { tag: "Connected", cls: "ok", what: name };
     case "lost": return { tag: "Lost", cls: "no", what: name, why: "The connection dropped." };
-    case "disconnected": return { tag: "Disconnected", cls: "", what: name };
+    // "Disconnected" is too wide for the tag column.
+    case "disconnected": return { tag: "Ended", cls: "", what: `Connection to ${name}` };
     case "failed": return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
     case "uninstalled": return { tag: "Removed", cls: "ok", what: `Ember from ${name}` };
     // A card shown, a connection starting: the line after it says how it went.

@@ -63,7 +63,7 @@ describe("What Ember did: other computers", () => {
   it("shows connections made, lost, ended and failed, and Ember removed", () => {
     expect(describeEntry(remote({ step: "connected", ms: 900 }))).toEqual({ tag: "Connected", cls: "ok", what: "build-01" });
     expect(describeEntry(remote({ step: "lost" }))).toEqual({ tag: "Lost", cls: "no", what: "build-01", why: "The connection dropped." });
-    expect(describeEntry(remote({ step: "disconnected" }))).toEqual({ tag: "Disconnected", cls: "", what: "build-01" });
+    expect(describeEntry(remote({ step: "disconnected" }))).toEqual({ tag: "Ended", cls: "", what: "Connection to build-01" });
     expect(describeEntry(remote({ step: "failed", kind: "auth" }))).toEqual({ tag: "Didn't work", cls: "no", what: "Connect to build-01", why: "It needed you to sign in." });
     expect(describeEntry(remote({ step: "failed", kind: "protocol" }))).toEqual({ tag: "Didn't work", cls: "no", what: "Connect to build-01" });
     expect(describeEntry(remote({ step: "failed", kind: "cancelled", uninstall: true }))).toMatchObject({ what: "Remove Ember from build-01", why: "You cancelled it." });
