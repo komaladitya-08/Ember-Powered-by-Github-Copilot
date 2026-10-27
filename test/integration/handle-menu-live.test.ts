@@ -2,7 +2,7 @@
  * The handle's menu on a real X server (Xvfb) with the built app (dist/app; `npm run build` first): picking "Ask
  * Ember…" with the keyboard opens the ask box (review #67: a guard on menu-will-close, which Electron sends just before
  * the pick's click, swallowed every pick), and Esc on the menu opens nothing. Skipped without Xvfb, off Linux, or
- * without a build.
+ * without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,7 +26,10 @@ type ElectronApp = {
   close(): Promise<void>;
 };
 
-describe.skipIf(!xvfb || !built)("the handle's menu on a real X server", () => {
+/** CI's RHEL 8 job: Xvfb and the build must be there (a skip would hide that the menu was never checked). */
+const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "linux";
+
+describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X server", () => {
   let server: ChildProcess;
   let display = "";
   let app: ElectronApp;
@@ -58,6 +61,7 @@ describe.skipIf(!xvfb || !built)("the handle's menu on a real X server", () => {
   const hideAsk = () => app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (w.getTitle() === "Ask Ember") w.hide(); });
 
   beforeAll(async () => {
+    if (!xvfb || !built) throw new Error(`the handle's menu can't be checked here: ${!xvfb ? "no Xvfb" : "no build (npm run build first)"}`);
     server = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
     display = ":" + await new Promise<string>((resolve, reject) => {
       server.stdio[3]!.on("data", (d: Buffer) => resolve(d.toString().trim()));

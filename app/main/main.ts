@@ -533,8 +533,10 @@ function start(): void {
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
     // No guard on menu-will-close: Electron sends it just before the picked item's click, so such a guard swallowed
-    // every real pick. The release of the click that opened the menu can't pick (the menu opens once the button is
-    // up), and an ask box that opens without a pick is put away once the menu has closed (ask.spurious_after_menu).
+    // every real pick. What keeps a pick nobody made away is the released() gate below: the menu opens only once the
+    // button that opened it is up, so its release can't choose "Ask Ember…". (The check once the menu has closed,
+    // ask.spurious_after_menu, only puts away an ask box that opened with no item's click at all: a click on "Ask
+    // Ember…", whatever caused it, counts as a pick.)
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
       { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
@@ -571,7 +573,7 @@ function start(): void {
     const askWasVisible = askWindow.visible;
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
-      // Esc dismissed the menu but the first item still opened Ask: put it away (it never went through a pick).
+      // The ask box opened while the menu was up, but no item's click opened it: put it away (nobody picked it).
       if (!opens && askWindow.visible && !askWasVisible) {
         log.warn("ask.spurious_after_menu");
         askWindow.hide();

@@ -105,7 +105,7 @@ jobs:
       - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts test/integration/handle-menu-live.test.ts
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
