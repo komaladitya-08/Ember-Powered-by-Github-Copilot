@@ -36,10 +36,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -53,7 +53,7 @@ jobs:
       - name: Accessibility sidecar self-test (stand-in pyatspi, no desktop)
         run: npm run test:sidecar
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -84,10 +84,10 @@ jobs:
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject
           useradd -m ci
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -121,10 +121,10 @@ jobs:
           dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -182,7 +182,7 @@ jobs:
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
       # The packages are about 340 MB, so they're kept only when asked for (Run workflow, "packages"): uploading them on
       # every run filled the account's artifact storage, after which no artifact could be uploaded at all.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
@@ -210,10 +210,10 @@ jobs:
             xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts \
             python3-pyatspi python3-gobject gedit dconf gsettings-desktop-schemas
           useradd -m ci
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -222,7 +222,7 @@ jobs:
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - name: Speech models (cached; verified by SHA-256)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
@@ -232,7 +232,7 @@ jobs:
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci \
             dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs --out dist/eval
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         continue-on-error: true
         with:
@@ -284,10 +284,10 @@ jobs:
           $facts
       - name: Keep LF line endings in the checkout (as .gitattributes says)
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -435,7 +435,7 @@ jobs:
           EMBER_WIN32_TEST: "1"
           EMBER_PACKAGED_APP: dist/package/Ember
       # Large: kept only when asked for, like the Linux packages.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
@@ -470,10 +470,10 @@ jobs:
         # The system's "… quit unexpectedly" alert is UserNotificationCenter's, which Ember counts as a security prompt
         # (no screenshots while it is up). Crash reports are still written, and the suites print them.
         run: defaults write com.apple.CrashReporter DialogType none
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -632,7 +632,7 @@ jobs:
           ls -lt "$HOME/Library/Logs/DiagnosticReports" 2>/dev/null | head -20 || true
           /usr/bin/log show --last 15m --style compact --predicate 'process == "UserNotificationCenter" OR process == "ReportCrash"' 2>/dev/null | tail -60 || true
       # Large: kept only when asked for, like the Linux packages.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
@@ -662,10 +662,10 @@ jobs:
           test "$(uname -m)" = x86_64
       - name: No crash dialogs on screen (an app that dies would leave one over every later test)
         run: defaults write com.apple.CrashReporter DialogType none
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -719,7 +719,7 @@ jobs:
           test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
       - name: The packaged Ember.app starts and shows its window on Intel
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
         with:
