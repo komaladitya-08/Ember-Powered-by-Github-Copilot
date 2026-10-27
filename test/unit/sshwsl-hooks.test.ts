@@ -441,8 +441,9 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     }
     const today = out.filter(x => (x as { app: string }).app !== "Ember commands");
     expect(today).toHaveLength(78);
-    // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out.
-    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("c8585b24618a027e");
+    // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out, with
+    // the terminal refusals reworded (review #216; with the old three reasons put back the hash is c8585b24618a027e).
+    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("0da1a584899525c4");
     expect(seam.calls).toHaveLength(3 * CORPUS.length);
     expect(seam.calls.slice(0, 3).map(([, o]) => o)).toEqual(["linux", "linux", "linux"]);
     expect(seam.calls.at(-1)?.[1]).toBe("darwin");
