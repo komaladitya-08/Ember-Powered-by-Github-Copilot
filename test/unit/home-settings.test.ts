@@ -42,3 +42,12 @@ describe("the sidebar says what the sections are called (review #162)", () => {
     }
   });
 });
+
+describe("the sidebar shows that it scrolls (review #250)", () => {
+  it("keeps the slim scrollbar on the wide sidebar, hiding it only in the narrow row of links", () => {
+    const wide = css.slice(css.indexOf("@media (min-width: 640px) {"));
+    const sidebar = /body:not\(\.first-run\) \.home > \.jump \{([^}]*)\}/.exec(wide)?.[1] ?? "";
+    // scrollbar-width: none (the narrow row's) would be inherited by the sidebar: 11 links need 438 px, the window may be 420.
+    expect(sidebar).toMatch(/scrollbar-width: auto;/);
+  });
+});

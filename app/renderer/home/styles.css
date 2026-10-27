@@ -308,6 +308,8 @@ h2, summary { scroll-margin-top: 16px; }
   body:not(.first-run) .home > .jump {
     position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 2;
     margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
+    /* The slim scrollbar (ember.css) shows when the links outgrow a short window: none is only for the narrow row. */
+    scrollbar-width: auto;
     background: #181517; box-shadow: inset -1px 0 0 var(--separator);
   }
   .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
