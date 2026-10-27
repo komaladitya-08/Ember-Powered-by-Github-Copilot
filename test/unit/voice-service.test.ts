@@ -135,6 +135,23 @@ describe("VoiceService", () => {
     expect(events).toEqual([{ type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" }]);
   });
 
+  it("kills a voice process stopped before it had started, once it starts (Electron's kill() does nothing until then) (review #256)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [early] = electron.procs; // no pid yet: not spawned
+    v.setMuted(true); // a mute double-press, within the spawn's latency
+    expect(early.kill).toHaveBeenCalledTimes(1);
+    early.emit("spawn");
+    expect(early.kill).toHaveBeenCalledTimes(2);
+    // One already running is killed once, as before.
+    v.setMuted(false);
+    await flush();
+    const running = Object.assign(electron.procs[1], { pid: 4242 });
+    v.setMuted(true);
+    running.emit("spawn");
+    expect(running.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a replaced voice process", async () => {
     const { v, states, events } = service();
     await v.setWanted(true);

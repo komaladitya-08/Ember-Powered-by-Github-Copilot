@@ -306,7 +306,11 @@ export class VoiceService {
     this.dropFollowUp();
     const p = this.proc;
     this.proc = null;
-    p?.kill();
+    if (!p) return;
+    p.kill();
+    // Not started yet (no pid): kill() does nothing then, and with its handle dropped the process would live on, models
+    // loaded, until Ember quits. It goes as soon as it has started (review #256).
+    if (p.pid === undefined) p.once("spawn", () => p.kill());
   }
 
   stop(): void {
