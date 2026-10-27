@@ -61,9 +61,10 @@ async function manager(displays: Shown[], cards: (Box | null)[], handle: Box | n
     return { sender: webContents as unknown as Electron.WebContents, cards: cards[i] };
   });
   for (const s of senders) m.setCards(s.sender, s.cards);
-  // Time moves 16 ms a tick, as at 60 Hz.
+  // Time moves 16 ms a tick, as at 60 Hz (on either clock the tick may read).
   let now = 1_000_000;
   vi.spyOn(Date, "now").mockImplementation(() => now);
+  vi.spyOn(performance, "now").mockImplementation(() => now);
   /** Where Ember settles with the cursor at `p`. */
   const settle = (p: { x: number; y: number }) => {
     pointer.x = p.x; pointer.y = p.y;
