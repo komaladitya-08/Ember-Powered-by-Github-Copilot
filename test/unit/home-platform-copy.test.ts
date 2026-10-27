@@ -116,7 +116,7 @@ const MAC: StatusPlatform = {
 
 /** Today's sentences around everything the OS changes (before the port, verbatim). */
 const TODAY = {
-  "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.",
+  "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read.",
   "data-dir": "On this computer it keeps your settings, logs and a record of every action it took (kept 30 days) in ~/.config/ember. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.",
   "mic-indicator": "Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only). GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
