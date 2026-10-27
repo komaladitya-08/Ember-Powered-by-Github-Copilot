@@ -180,6 +180,8 @@ export interface AppLike {
   focus(o?: { steal: boolean }): void;
   isInApplicationsFolder?(): boolean;
   moveToApplicationsFolder?(): boolean;
+  /** The user's preferred languages, most preferred first ("de-DE"): the macOS app catalogue's localized names. */
+  getPreferredSystemLanguages?(): string[];
 }
 
 /** The part of Electron's systemPreferences the permission checks and probes use (some members exist on one OS only). */
