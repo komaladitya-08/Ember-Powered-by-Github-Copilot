@@ -347,7 +347,7 @@ function inspectMac(i: EnvInputs): EnvReport {
     if (secure?.on === true) {
       const where = secure.app ? ` in ${secure.app}` : "";
       checks.push({ id: "secure-input", label: "Secure input", status: "warn",
-        detail: `Secure keyboard entry is on${where}, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field${where}, or turn off Secure Keyboard Entry there (Terminal menu › Secure Keyboard Entry).` });
+        detail: `Secure keyboard entry is on${where}, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field${where}, or turn off Secure Keyboard Entry there (Terminal: Terminal menu › Secure Keyboard Entry).` });
     } else if (secure && secure.on === null) {
       checks.push({ id: "secure-input", label: "Secure input", status: "warn", detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
     }

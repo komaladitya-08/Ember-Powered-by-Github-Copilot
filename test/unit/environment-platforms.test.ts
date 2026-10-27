@@ -137,7 +137,10 @@ describe("macOS setup checks", () => {
 
   it("show secure keyboard entry with the app that holds it, and leave it out when it is off (review #236)", () => {
     expect(check(mac({ secureInput: { on: true, app: "Terminal" } }), "secure-input")).toEqual({ id: "secure-input", label: "Secure input", status: "warn",
-      detail: "Secure keyboard entry is on in Terminal, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field in Terminal, or turn off Secure Keyboard Entry there (Terminal menu › Secure Keyboard Entry)." });
+      detail: "Secure keyboard entry is on in Terminal, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field in Terminal, or turn off Secure Keyboard Entry there (Terminal: Terminal menu › Secure Keyboard Entry)." });
+    // Another app holds it (a password field in Safari): the Terminal hint says it is Terminal's menu, as the doctor does.
+    expect(check(mac({ secureInput: { on: true, app: "Safari" } }), "secure-input")?.detail).toBe("Secure keyboard entry is on in Safari, so Ember won't look at the screen "
+      + "or use the mouse or keyboard until it's off. Close the password field in Safari, or turn off Secure Keyboard Entry there (Terminal: Terminal menu › Secure Keyboard Entry).");
     expect(check(mac({ secureInput: { on: true, app: "" } }), "secure-input")?.detail).toMatch(/^Secure keyboard entry is on, so Ember won't look at the screen.*Close the password field, or turn off/);
     expect(check(mac({ secureInput: { on: null, app: "" } }), "secure-input")).toMatchObject({ status: "warn",
       detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
