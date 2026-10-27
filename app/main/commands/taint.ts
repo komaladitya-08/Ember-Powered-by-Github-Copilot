@@ -12,7 +12,9 @@ const RULES: readonly TaintRule[] = [
   // Text addressed to an assistant or agent.
   { re: /(ignore|disregard) (all |any )?(previous|prior|above) (instructions|directions)/i, why: "output.ignore-instructions" },
   { re: /\b(you are|you're) (now )?(an? )?(ai|assistant|agent)\b/i, why: "output.you-are-an-assistant" },
-  { re: /\b(assistant|system|developer)\s*:/i, why: "output.role-label" },
+  // A chat transcript's role label: first on its line, and not a report's heading ("System:" before "Host: …" in
+  // inxi), so "Operating System: Ubuntu" (hostnamectl, docker info) and "refactor: assistant: …" don't count.
+  { re: /^[ \t]*(assistant|Assistant|ASSISTANT|system|System|SYSTEM)[ \t]*:(?![ \t]*(?:$|[A-Z][A-Za-z ]{0,20}:))/m, why: "output.role-label" },
   { re: /<\/?(system|instructions?|prompt)>/i, why: "output.role-tag" },
   { re: /\bas an ai\b/i, why: "output.as-an-ai" },
   // Download-and-run text. Each is anchored at the pipe and looks back along its line for the download: read from
@@ -21,10 +23,11 @@ const RULES: readonly TaintRule[] = [
   { re: /\|(?<=wget[^\n|]*\|)\s*(sudo\s+)?(ba|z)?sh\b/i, why: "output.wget-pipe-shell" },
   { re: /\|(?<=\b(iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|)\s*(iex|invoke-expression)\b/i, why: "output.iwr-pipe-iex" },
   { re: /\|(?<=base64\s+-d[^\n|]*\|)\s*(ba|z)?sh\b/i, why: "output.base64-pipe-shell" },
-  // A request to run, paste or type something, addressed to Ember, the assistant or the agent.
-  { re: /\b(ember|assistant|agent)\s*[,:]\s*(please\s+)?(now\s+)?(run|execute|paste|type|enter)\b/i, why: "output.addressed-request" },
+  // A request to run, paste or type something, addressed to Ember or the assistant. "The agent" alone is a build
+  // agent, ssh-agent or a user agent in ordinary logs ("The agent will run the job"): only an AI agent counts there.
+  { re: /\b(ember|assistant|ai agent)\s*[,:]\s*(please\s+)?(now\s+)?(run|execute|paste|type|enter)\b/i, why: "output.addressed-request" },
   { re: /\bif you('re| are) (an? )?(ai|llm|language model|assistant|agent|ember)\b[^\n]{0,80}\b(run|execute|paste|type)\b/i, why: "output.addressed-request" },
-  { re: /\b(the |an? )?(ai )?(assistant|agent)\s+(should|must|needs to|has to|is to|will)\s+(now\s+)?(run|execute|paste|type)\b/i, why: "output.addressed-request" },
+  { re: /\b(the |an? )?(ai (assistant|agent)|assistant)\s+(should|must|needs to|has to|is to|will)\s+(now\s+)?(run|execute|paste|type)\b/i, why: "output.addressed-request" },
   { re: /\bember\b[^\n]{0,40}\b(should|must|please|needs to)\b[^\n]{0,20}\b(run|execute|paste|type)\b/i, why: "output.addressed-request" },
   { re: /\b(note|message|instructions?) (to|for) (the )?(ai|assistant|agent|ember)\b/i, why: "output.addressed-request" },
 ];
