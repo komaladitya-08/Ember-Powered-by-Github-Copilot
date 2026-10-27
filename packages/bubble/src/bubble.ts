@@ -238,17 +238,17 @@ export const BUBBLE_CSS = `
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
-  margin: 0; max-height: calc(20px * 6); overflow: hidden;
+  margin: 0; max-height: 6lh; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-start;
   color: var(--label, #f5f2ef); white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
 /* Running commentary (thinking, working, listening) is quieter: the secondary label, three lines. */
 .ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
-  max-height: calc(20px * 3); color: var(--label-2, rgba(245, 240, 236, 0.66));
+  max-height: 3lh; color: var(--label-2, rgba(245, 240, 236, 0.66));
 }
 /* While text streams in, the newest lines show and the start slides away under a fade. */
-.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(20px * 3); justify-content: flex-end; }
+.ember-bubble[data-streaming="true"] .eb-thought { max-height: 3lh; justify-content: flex-end; }
 .ember-bubble[data-streaming="true"] .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
@@ -260,7 +260,7 @@ export const BUBBLE_CSS = `
 }
 /* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
 .ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: 10lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* A question gets room for its answers on one row ("Allow", "Always in …", "Not now"). */
@@ -269,7 +269,7 @@ export const BUBBLE_CSS = `
 /* "Read all": the whole answer, scrolling inside the bubble when it is longer still. As specific as the overflow
    fade above (which it must undo: a fade over the scroll box would hide the last line however far it scrolled). */
 .ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: 16lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* Its scrollers' bars as on a Mac (a slim thumb, no track or arrows), with or without the page's tokens. */
@@ -331,7 +331,7 @@ html.calm .ember-bubble { transition: none; translate: none; }
   .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
 /* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
-   grow. The bubble keeps its width and its heights, so a long answer fades and offers "Read all" a line sooner. */
+   grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
 html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
 html[data-text-size] .eb-chip { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }

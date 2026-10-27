@@ -126,6 +126,14 @@ describe("the text size", () => {
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
   });
 
+  it("keeps as many lines in the bubble at every size: its heights are counted in lines, not px (review #57)", async () => {
+    const { BUBBLE_CSS } = await import("@ember/bubble");
+    const heights = [...BUBBLE_CSS.matchAll(/max-height: ([^;]+);/g)].map(m => m[1]);
+    // Six lines of an answer, three while it streams or for commentary, ten for a question, sixteen once opened in full.
+    expect(heights.filter(h => /^\d+lh$/.test(h)).sort()).toEqual(["10lh", "16lh", "3lh", "3lh", "6lh"]);
+    expect(BUBBLE_CSS).not.toMatch(/max-height: calc\(\d+px \* \d+\)/);
+  });
+
   it("checks the rules inside a media query too, against their scaled twins there", () => {
     expect(unscaled("@media (min-width: 640px) { .jump a { font-size: 15px; } }")).toEqual([".jump a"]);
     expect(unscaled("@media (min-width: 640px) { .a { color: red; } .jump a, .b { font: 600 15px/20px x; } }")).toEqual([".jump a", ".b"]);
