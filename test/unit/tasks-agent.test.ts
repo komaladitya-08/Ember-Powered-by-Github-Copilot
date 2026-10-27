@@ -38,3 +38,25 @@ describe("a guide beside running tasks (review #142)", () => {
     await vi.waitFor(() => expect(tm.get(g2.id)!.status).toBe("running"));
   });
 });
+
+describe("a worker that can't be made (review #145)", () => {
+  it("fails the task with a plain sentence instead of leaving it waiting for ever, and what queued behind it starts", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (r: unknown) => { rejections.push(r); };
+    process.on("unhandledRejection", onRejection);
+    try {
+      let n = 0;
+      const { tm, cards } = manager({ maxRunning: 1, makeWorker: () => { if (n++ === 0) throw new Error("boom"); return never(); } });
+      const a = tm.start("tidy the desktop");
+      const b = tm.start("rename the photos");
+      await vi.waitFor(() => expect(tm.get(a.id)!.status).toBe("failed"));
+      expect(tm.get(a.id)!.result?.summary).toBe("Ember couldn't start this task. Try again; if it keeps happening, restart Ember.");
+      expect(cards.at(-1)?.find(c => c.id === a.id)?.actions).toEqual([{ id: `task:${a.id}:dismiss`, label: "Close" }]);
+      await vi.waitFor(() => expect(tm.get(b.id)!.status).toBe("running"));
+      await new Promise(r => setTimeout(r, 20));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+});

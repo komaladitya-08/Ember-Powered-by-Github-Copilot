@@ -244,7 +244,17 @@ export class TaskManager {
 
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
-    const worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    let worker: WorkerLike;
+    try {
+      worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    } catch (err) {
+      // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
+      // Stop that does nothing, and what queued behind it gets its turn.
+      this.d.log.error("task.error", { id: task.id, err });
+      this.finish(task, "failed", { success: false, summary: "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." });
+      this.pump();
+      return;
+    }
     task.mode = spec.mode ?? "do";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
