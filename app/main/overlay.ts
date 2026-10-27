@@ -111,9 +111,19 @@ export class OverlayManager {
     return this.follower.position;
   }
 
-  /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
+  /**
+   * Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion: read at start, then
+   * as the overlay's page sees it change (reducedMotionChanged), so the spring follows the switch without a restart.
+   */
   avoid: (() => Rect | null) | null = null;
   systemReducedMotion = false;
+
+  /** Called by IPC when an overlay's page sees the desktop's reduce-motion preference change. */
+  reducedMotionChanged(on: boolean): void {
+    if (on === this.systemReducedMotion) return;
+    this.systemReducedMotion = on;
+    this.log.info("overlay.reduced_motion", { on });
+  }
   /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
   private aside: Rect | null = null;
 

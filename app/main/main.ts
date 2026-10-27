@@ -1035,6 +1035,9 @@ function start(): void {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setCards(event.sender, rect);
   });
+  ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
+    if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);
+  });
   ipcMain.on(OVERLAY.interactive, (event, rects: unknown) => {
     if (!overlay?.owns(event.sender) || !Array.isArray(rects) || rects.length > 32 || !rects.every(isRect)) return;
     overlay.setInteractive(event.sender, rects);

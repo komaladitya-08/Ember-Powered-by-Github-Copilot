@@ -18,6 +18,8 @@ export const OVERLAY = {
   handleFit: "handle:fit",
   /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
   cards: "overlay:cards",
+  /** The desktop's reduce-motion preference changed (the overlay's page follows it live), for Ember's follow spring. */
+  motion: "overlay:motion",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -108,6 +110,8 @@ export interface OverlayApi {
   bubbleAction(id: string): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
+  /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
+  setReducedMotion?(on: boolean): void;
 }
 
 export interface HandleApi {

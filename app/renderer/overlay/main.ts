@@ -85,7 +85,11 @@ function applyReducedMotion(): void {
   // Calm mode also stills the CSS pulses (the bubble's dot, the status dot, the focus glow).
   document.documentElement.classList.toggle("calm", settings?.reduceMotion === true);
 }
-reducedMotionQuery.addEventListener("change", applyReducedMotion);
+reducedMotionQuery.addEventListener("change", () => {
+  applyReducedMotion();
+  // Ember's follow spring is in the main process, which read the preference once: it is told of the change.
+  api.setReducedMotion?.(reducedMotionQuery.matches);
+});
 
 function applySettings(s: Settings): void {
   settings = s;
