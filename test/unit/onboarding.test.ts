@@ -21,3 +21,16 @@ describe("the settings window's first paint", () => {
     expect(SCRIPT).toContain("setTimeout(() => document.body.classList.remove(\"loading\"), 1500);");
   });
 });
+
+describe("the microphone consent", () => {
+  it("is read with the button that agrees to it, so a screen reader user hears what they agree to (review #153)", () => {
+    // Turning on "Hey Ember" moves focus straight to the button: its description is the whole note.
+    const panel = /<div id="consent" ([^>]*)>\s*<p id="consent-text">/.exec(PAGE);
+    expect(panel, "the note is the panel's first paragraph, with an id").not.toBeNull();
+    expect(panel![1]).toContain("role=\"group\"");
+    expect(panel![1]).toContain("aria-describedby=\"consent-text\"");
+    expect(panel![1]).toMatch(/aria-label="[^"]+"/);
+    expect(PAGE).toMatch(/<button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening<\/button>/);
+    expect(SCRIPT).toContain("$(\"consent-yes\").focus()");
+  });
+});
