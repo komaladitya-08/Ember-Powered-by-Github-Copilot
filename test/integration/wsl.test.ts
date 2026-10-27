@@ -88,13 +88,20 @@ suite("WSL on a real Windows runner", () => {
   let wsl: WslServiceImpl;
   let runner: WslRunner;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     if (process.platform !== "win32") throw new Error("EMBER_WSL_TEST=1 needs Windows with WSL");
     if (!fs.existsSync(jobHostScript)) throw new Error("dist/app/job-host.cjs is missing: run npm run build first");
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-wsl-test-"));
     // The job host must be RUN's real one: Step 0a's stub refuses every run (exit 125, "job").
-    const probe = spawnSync(process.execPath, [jobHostScript, "--batch", "--", process.execPath, "-e", "process.exit(7)"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true, input: "" });
-    if (probe.status !== 7) throw new Error(`the job host doesn't run programs yet (exit ${probe.status}: ${probe.stderr.toString().trim()}); it is Step 0a's stub until RUN merges`);
+    // Its stdin is held open as Ember holds it: the job host takes the end of its stdin as Ember stopping the run.
+    const probe = await new Promise<{ status: number | null; stderr: string }>(resolve => {
+      const child = spawn(process.execPath, [jobHostScript, "--batch", "--", process.execPath, "-e", "process.exit(7)"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr?.on("data", b => { stderr += String(b); });
+      child.on("error", err => resolve({ status: null, stderr: err.message }));
+      child.on("exit", status => { child.stdin?.end(); resolve({ status, stderr }); });
+    });
+    if (probe.status !== 7) throw new Error(`the job host didn't run a program (exit ${probe.status}: ${probe.stderr.trim()})`);
     const created = createWsl({
       log: createLogger({ dir: logDir, level: "debug" }),
       // The user's own WSLENV and a variable of theirs: neither may reach the distro (X11).
