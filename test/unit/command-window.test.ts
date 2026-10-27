@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
-import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import { statusLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
@@ -60,6 +60,8 @@ class FakeWindow implements BrowserWindowLike {
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
   emit(event: string) { for (const fn of this.handlers.get(event) ?? []) fn(); }
   flashFrame(flag: boolean) { this.calls.push(`flash:${flag}`); }
+  placeNearUser() { this.calls.push("place"); }
+  setOnAllWorkspaces(on: boolean) { this.calls.push(`workspaces:${on}`); }
   /** createCommandWindow's guard on the window's close button (review #262). */
   guard: (() => boolean) | null = null;
   setCloseGuard(fn: () => boolean) { this.guard = fn; }
@@ -361,7 +363,7 @@ describe("one card at a time", () => {
   it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {
     const { ctl, win } = setup();
     ctl.showCard(1, card());
-    expect(win().calls).toEqual(["top:true", "showInactive", "moveTop"]);
+    expect(win().calls).toEqual(["place", "top:true", "workspaces:true", "showInactive", "moveTop"]);
     expect(win().focused).toBe(false);
     ctl.hideCard(1);
     expect(win().onTop).toBe(false);
@@ -610,7 +612,7 @@ describe("a run's tab", () => {
     ctl.pending("t1", "Starting Ubuntu…");
     // It brings the window up without taking the keyboard, and not on top (no card is asking).
     expect(windows).toHaveLength(1);
-    expect(win().calls).toEqual(["showInactive"]);
+    expect(win().calls).toEqual(["place", "showInactive"]);
     expect(page().last().pending).toEqual([{ taskId: "t1", text: "Starting Ubuntu…" }]);
     ctl.pending("t2", "Starting Debian…");
     expect(page().last().pending?.map(p => p.taskId)).toEqual(["t1", "t2"]);
@@ -981,5 +983,32 @@ describe("a command waiting for the user to type (review #263)", () => {
     run.finish({ ended: "timeout", code: null, ms: 120_000 });
     await vi.advanceTimersByTimeAsync(0);
     expect(page().last().tabs[0].status).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+  });
+});
+
+describe("where the window comes up (review #272)", () => {
+  it("moves a window whose centre is off the user's display to the middle of it, shrunk to fit; leaves one already there", () => {
+    const area = { x: 1920, y: 0, width: 1600, height: 900 };
+    expect(placeOnDisplay({ x: 580, y: 300, width: 760, height: 480 }, area)).toEqual({ x: 2340, y: 210, width: 760, height: 480 });
+    expect(placeOnDisplay({ x: 2000, y: 100, width: 760, height: 480 }, area)).toBeNull();
+    expect(placeOnDisplay({ x: -3000, y: 0, width: 2000, height: 1200 }, { x: 0, y: 0, width: 1280, height: 720 })).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
+    // Negative coordinates are real displays (left of the primary on Windows and macOS).
+    expect(placeOnDisplay({ x: 100, y: 100, width: 760, height: 480 }, { x: -1600, y: -200, width: 1600, height: 900 })).toEqual({ x: -1180, y: 10, width: 760, height: 480 });
+  });
+
+  it("brings a card to the user's display and every workspace, and lets go of the workspaces when it goes", () => {
+    const { ctl, win } = setup();
+    ctl.showCard(1, card());
+    expect(win().calls).toEqual(expect.arrayContaining(["place", "workspaces:true"]));
+    win().calls.length = 0;
+    ctl.hideCard(1);
+    expect(win().calls).toContain("workspaces:false");
+  });
+
+  it("places a window that was hidden when a run shows, without putting it on every workspace", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(win().calls).toContain("place");
+    expect(win().calls).not.toContain("workspaces:true");
   });
 });

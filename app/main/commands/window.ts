@@ -73,6 +73,26 @@ export interface CommandWindowExtras {
  */
 export interface CloseGuarded { setCloseGuard(fn: () => boolean): void }
 
+/**
+ * What windows.ts adds to the command and prompt windows (review #272): moving the window to the display the user is on
+ * (nearest the pointer), and keeping it on every workspace (and over a full-screen app on macOS) while a card is up.
+ */
+export interface Placeable { placeNearUser(): void; setOnAllWorkspaces(on: boolean): void }
+
+/** A window's bounds or a display's work area, in DIP. */
+export interface Rect { x: number; y: number; width: number; height: number }
+
+/**
+ * Where a window goes on the display the user is on: null (stay) when its centre is already in that display's work
+ * area, else centred in it and shrunk to fit.
+ */
+export function placeOnDisplay(bounds: Rect, area: Rect): Rect | null {
+  const cx = bounds.x + bounds.width / 2, cy = bounds.y + bounds.height / 2;
+  if (cx >= area.x && cx < area.x + area.width && cy >= area.y && cy < area.y + area.height) return null;
+  const width = Math.min(bounds.width, area.width), height = Math.min(bounds.height, area.height);
+  return { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
+}
+
 /** How long an interactive run's output must sit at a prompt before the window says it waits for typing (review #263). */
 export const WAITING_MS = 2000;
 
@@ -346,9 +366,14 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     const w = ensure();
     if (!w) return;
     const onTop = !!card || queue.length > 0;
+    const p = w as BrowserWindowLike & Partial<Placeable>;
     safe("reveal", () => {
-      if (onTop) w.setAlwaysOnTop(true, "floating");
-      if (!w.isVisible() || w.isMinimized()) w.showInactive();
+      const hidden = !w.isVisible() || w.isMinimized();
+      // On the display the user is on (a card always; otherwise when it comes up from hidden), and on every workspace
+      // while a card or countdown is up, so its Allow or Stop is where the bubble is (review #272).
+      if (onTop || hidden) p.placeNearUser?.();
+      if (onTop) { w.setAlwaysOnTop(true, "floating"); p.setOnAllWorkspaces?.(true); }
+      if (hidden) w.showInactive();
       if (onTop || raise) w.moveTop();
     });
   }
@@ -375,6 +400,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (!w || card || queue.length) return;
     safe("settle", () => {
       w.setAlwaysOnTop(false);
+      (w as BrowserWindowLike & Partial<Placeable>).setOnAllWorkspaces?.(false);
       if (!tabs.length && !pendings.size && w.isVisible()) w.hide();
     });
   }
