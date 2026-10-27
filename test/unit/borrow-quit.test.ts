@@ -5,6 +5,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { BorrowStopped, CursorBorrow } from "../../app/main/hands/borrow";
 import type { XInput } from "../../app/main/hands/input";
 
@@ -75,5 +77,60 @@ describe("quitting while Ember borrows the mouse", () => {
     await first.catch(() => undefined);
     expect(await queued).toBeInstanceOf(BorrowStopped);
     expect(s.log).not.toContain("move 5,5");
+  });
+});
+
+/** main.ts without its comments, every run of white space made one space (main-privacy-wiring.test.ts's reading). */
+const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1").replace(/\s+/g, " ");
+
+/** The body of every app.on("will-quit", …) in main.ts, in the order main registers them. */
+function willQuitHandlers(): string[] {
+  const out: string[] = [];
+  const head = 'app.on("will-quit", ';
+  for (let at = MAIN.indexOf(head); at >= 0; at = MAIN.indexOf(head, at + 1)) {
+    let depth = 1, i = at + head.length;
+    for (; i < MAIN.length && depth > 0; i++) depth += MAIN[i] === "(" ? 1 : MAIN[i] === ")" ? -1 : 0;
+    out.push(MAIN.slice(at + head.length, i - 1));
+  }
+  return out;
+}
+
+describe("quitting while Ember borrows the mouse, as main.ts quits", () => {
+  // main.ts can't be loaded in a unit test (it is Electron's entry point), so its will-quit listeners are read from its
+  // source and what they do to the borrow, the window system and the input is run here in the same order. They are all
+  // registered straight in whenReady, so the order in the file is the order Electron calls them.
+  it("hands the keyboard back while the window system can still say the window is there (review #66)", async () => {
+    // main's mayRefocus asks the window system's list (shownWindows over wsRef.stack()), and a closed window system
+    // lists nothing, so the keyboard can only go back before it closes.
+    expect(MAIN).toContain("const shownWindows = () => wsRef?.stack().filter(w => w.title && w.width > 1 && w.height > 1) ?? [];");
+    expect(MAIN).toContain("mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),");
+    const calls = willQuitHandlers().flatMap(h => [...h.matchAll(/borrowRef\?\.stopForQuit\(\)|\bws\?\.close\(\)|xinput\?\.close\(\)/g)].map(m => m[0]));
+    expect(calls).toContain("ws?.close()");
+    expect(calls).toContain("xinput?.close()");
+
+    const { s, x } = fakeX();
+    const ws = { open: true, windows: [{ id: 11, client: 11, title: "Where the user was", width: 640, height: 480 }, { id: 22, client: 22, title: "Target", width: 800, height: 600 }] };
+    const stack = () => (ws.open ? ws.windows : []);
+    const shownWindows = () => stack().filter(w => w.title && w.width > 1 && w.height > 1);
+    const b = new CursorBorrow(x, { mayRefocus: w => shownWindows().some(sw => sw.client === w || sw.id === w) });
+    let parked!: () => void;
+    const run = b.borrow(async hand => {
+      await hand.glideTo(800, 450);
+      await new Promise<void>(r => { parked = r; });
+      await hand.keys("ctrl+a");
+    }, { idleMs: 0, window: 22, sleep: () => Promise.resolve() }).catch(e => e);
+    await new Promise(r => setTimeout(r, 0));
+    expect(s.active).toBe(22);
+    // will-quit, as main.ts has it.
+    for (const call of calls) {
+      if (call === "borrowRef?.stopForQuit()") b.stopForQuit();
+      else if (call === "ws?.close()") ws.open = false;
+      else x.close();
+    }
+    parked();
+    expect(await run).toBeInstanceOf(BorrowStopped);
+    expect(s.pointer).toEqual({ x: 1152, y: 720 });
+    expect(s.active).toBe(11);
   });
 });

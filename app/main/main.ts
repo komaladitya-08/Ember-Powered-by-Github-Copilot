@@ -1207,7 +1207,9 @@ function start(): void {
       const d = ws.toDipPoint(p);
       return { x: d.x, y: d.y, buttons: p.mask & 0x1f00 };
     };
-    app.on("will-quit", () => ws?.close());
+    // A borrow still running hands back first (see the input's will-quit below): whether the window the keyboard goes
+    // back to is still on screen is asked of the window system, which lists no windows once closed.
+    app.on("will-quit", () => { borrowRef?.stopForQuit(); ws?.close(); });
     log.info("app.ready", {
       version: app.getVersion(),
       os: env.os,
@@ -1362,7 +1364,8 @@ function start(): void {
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
-    // A borrow still running lets go at once (keys up, pointer home, the keyboard back) before the connection closes.
+    // A borrow still running lets go at once (keys up, pointer home, the keyboard back) before the connection closes:
+    // the window system's will-quit above already did (it runs first), so this one only finds it stopped.
     app.on("will-quit", () => { borrowRef?.stopForQuit(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
     // The borrow says when someone starts waiting for the mouse or Ember starts driving it; the status follows.

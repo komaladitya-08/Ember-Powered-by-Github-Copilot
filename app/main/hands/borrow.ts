@@ -236,8 +236,9 @@ export class CursorBorrow {
 
   /**
    * Ember is quitting: stop(), and the borrow driving now hands everything back at once (keys and buttons up, then the
-   * pointer home and the keyboard back to the window that had it). Main closes the input in the same tick, and the
-   * borrow's own clean-up runs later, against a closed input that does nothing.
+   * pointer home and the keyboard back to the window that had it). Main calls it at will-quit before the window system
+   * closes (mayRefocus asks it whether that window is still there) and again before the input closes, where it does
+   * nothing more. The borrow's own clean-up runs later, against a closed input that does nothing.
    */
   stopForQuit(): void {
     this.stop();
