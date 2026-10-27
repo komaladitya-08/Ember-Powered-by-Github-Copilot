@@ -526,6 +526,14 @@ describe("where Ember works, on the floating layer (§8.1, §2.4)", () => {
     expect(targetBadge(t({ state: "unavailable" }))?.state).toBe("off");
   });
 
+  it("calls a stopped WSL distro stopped, never not connected: it starts on the first command (review #189)", () => {
+    const ubuntu = t({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", state: "off" });
+    expect(targetBadge(ubuntu)).toEqual({ text: "Ubuntu (WSL)", state: "off", label: "Working on Ubuntu (WSL) (stopped)" });
+    expect(targetBadge({ ...ubuntu, state: "ready" })!.label).toBe("Working on Ubuntu (WSL)");
+    // An SSH computer that is off is still not connected.
+    expect(targetBadge(t({ state: "off" }))!.label).toBe("Working on build-01 (not connected)");
+  });
+
   it("puts \"On build-01\" or \"In Ubuntu (WSL)\" in the ask box, and the where words on cards as given", () => {
     expect(keep(targetChip(t({}))!)).toBe("On build-01");
     expect(keep(targetChip(t({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)" }))!)).toBe("In Ubuntu (WSL)");

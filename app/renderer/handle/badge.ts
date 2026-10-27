@@ -20,7 +20,9 @@ const STATE_WORDS: Readonly<Record<TargetBadge["state"], string>> = { ready: "",
 export function targetBadge(t: TargetSummary | null | undefined): TargetBadge | null {
   if (!t || t.id === "local" || t.kind === "local" || typeof t.label !== "string" || !t.label) return null;
   const state: TargetBadge["state"] = t.state === "ready" ? "ready" : t.state === "connecting" ? "connecting" : t.state === "lost" ? "lost" : "off";
-  return { text: t.label, state, label: `Working on ${t.label}${STATE_WORDS[state]}` };
+  // A WSL distro that is off is stopped (WSL's own word), not disconnected: it starts on the first command (review #189).
+  const words = t.kind === "wsl" && state === "off" ? " (stopped)" : STATE_WORDS[state];
+  return { text: t.label, state, label: `Working on ${t.label}${words}` };
 }
 
 /** The ask box's chip: "On build-01", "In Ubuntu (WSL)"; null for this computer. */
