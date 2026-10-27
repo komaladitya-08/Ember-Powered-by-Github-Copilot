@@ -21,7 +21,7 @@ on:
         type: string
         default: ""
       only:
-        description: "Run only one group of jobs (pushes run every group but macOS)"
+        description: "Run only one group of jobs (pushes run every group)"
         type: choice
         options: [all, unit, commands, wsl, ssh, macos, wayland]
         default: all
@@ -501,10 +501,10 @@ jobs:
           retention-days: 14
 
   # Owner: SB. Commands on macOS (zsh, BSD script) and SSH to the runner's own sshd (commands only on macOS remotes).
-  # Only on dispatch (only: all or macos) and weekly.
+  # On every push too: the repository is public, so macOS runners cost nothing.
   ssh-macos:
     name: Commands and SSH on macOS (macos-15)
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'macos'))
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'macos'))
     runs-on: macos-15
     timeout-minutes: 30
     steps:
