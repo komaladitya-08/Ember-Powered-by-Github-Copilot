@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
+import { loginItemFollower } from "./autostart";
 import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
@@ -1081,16 +1082,12 @@ function start(): void {
     overlay?.broadcastSettings(s);
     handle?.sendSettings(s);
   });
-  // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step.
-  const autostart = () => {
-    try {
-      if (sys.autostart.sync(settings.get().startAtLogin)) {
-        log.info("autostart.updated", { on: settings.get().startAtLogin });
-      }
-    } catch (err) { log.warn("autostart.failed", { err }); }
-  };
-  autostart();
-  settings.onChange(autostart);
+  // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
+  // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).
+  const autostart = loginItemFollower(on => sys.autostart.sync(on), (on, changed) => { if (changed) log.info("autostart.updated", { on }); },
+    err => log.warn("autostart.failed", { err }));
+  autostart(settings.get().startAtLogin);
+  settings.onChange(s => autostart(s.startAtLogin));
   const atLogin = sys.autostart.launchedAtLogin(process.argv);
   if (atLogin) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
