@@ -145,6 +145,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 }
 .sign-in-msg[hidden] { display: none; }
 .sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
+.sign-in-msg .nowrap { white-space: nowrap; }
 .models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }

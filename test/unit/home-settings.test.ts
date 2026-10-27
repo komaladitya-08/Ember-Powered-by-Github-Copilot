@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { STARTED_TEXT, fixButtonName, fixFailedText } from "../../app/renderer/home/copy";
+import { OFFER_SWITCH } from "../../app/renderer/home/computers-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../app/renderer/home/${f}`, import.meta.url), "utf8");
 const css = read("styles.css");
@@ -65,5 +66,21 @@ describe("Start hands focus on when it goes (review #50)", () => {
   it("has a status line that says Ember started, there from the start", () => {
     expect(STARTED_TEXT).toBe("Ember has started.");
     expect(page).toMatch(/<p id="tagline" role="status">Starting…<\/p>\s*<p class="sr" id="home-live" role="status"><\/p>/);
+  });
+});
+
+describe("small copy slips (review #164)", () => {
+  it("says app windows, not Windows, and writes SSH in capitals", () => {
+    expect(page).toContain("App windows on your never-look list and password prompts are never read.");
+    expect(page).not.toMatch(/>Windows on your never-look list/);
+    expect(page).toContain("Offer to bring Ember along when I connect with SSH");
+    expect(OFFER_SWITCH).toBe("Offer to bring Ember along when I connect with SSH");
+  });
+
+  it("keeps the sign-in code's “enter it at …” together, with no dash to start a line", () => {
+    const home = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(home).not.toContain("` — enter it at ${where}`");
+    expect(home).toContain('className: "nowrap", textContent: `Enter it at ${where}`');
+    expect(css).toMatch(/\.sign-in-msg \.nowrap \{ white-space: nowrap; \}/);
   });
 });

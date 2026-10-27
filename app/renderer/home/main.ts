@@ -562,7 +562,7 @@ $("retry").addEventListener("click", () => {
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
 $("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
 
-/** The device code row: "Code ABCD-1234 [Copy] — enter it at github.com/login/device [Open]". */
+/** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
   const msg = $("sign-in-msg");
   msg.hidden = false;
@@ -573,7 +573,8 @@ function showCode(userCode: string, uri: string): void {
   copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
-  const parts: (string | Node)[] = ["Code ", code, copy, ` — enter it at ${where}`];
+  // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).
+  const parts: (string | Node)[] = ["Code ", code, copy, Object.assign(document.createElement("span"), { className: "nowrap", textContent: `Enter it at ${where}` })];
   // Opening the page again needs the main process (the window never navigates); offered when it can.
   const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
   if (typeof open === "function") {

@@ -23,3 +23,13 @@ describe("a grant for an app on a computer reached over SSH (review #194)", () =
     expect(friendlyApp("ssh:")).toBe("ssh:");
   });
 });
+
+describe("the Linux table names the apps people run most (review #164)", () => {
+  it("names Chrome, Visual Studio Code and Slack as people say them", () => {
+    expect(friendlyApp("google-chrome")).toBe("Google Chrome");
+    expect(friendlyApp("google-chrome-stable")).toBe("Google Chrome");
+    expect(friendlyApp("code")).toBe("Visual Studio Code");
+    expect(friendlyApp("slack")).toBe("Slack");
+    expect(friendlyApp("com.slack.Slack")).toBe("Slack");
+  });
+});

@@ -21,7 +21,7 @@ export function computersIntro(os: OS | undefined): string {
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
 export const WSL_SWITCH = "Let Ember work in WSL";
-export const OFFER_SWITCH = "Offer to bring Ember along when I connect with ssh";
+export const OFFER_SWITCH = "Offer to bring Ember along when I connect with SSH";
 /** Short enough to show whole in a narrow window (the field is labelled "SSH host" for screen readers). */
 export const ADD_PLACEHOLDER = "Host name or user@host";
 export const ADD_BUTTON = "Connect";
