@@ -11,6 +11,15 @@ export const STATE_WORD: Record<TaskCard["status"], string> = {
 };
 
 /**
+ * What the handle says while tasks run and nothing else is to be said ("Working on 2 tasks…"), so it never says
+ * Ready under a card that says Working; null when no task is running or in line.
+ */
+export function busyLine(tasks: readonly TaskCard[]): string | null {
+  const n = tasks.filter(t => t.status === "running" || t.status === "queued").length;
+  return n === 0 ? null : `Working on ${n === 1 ? "1 task" : `${n} tasks`}…`;
+}
+
+/**
  * The cards from the top of the stack down: the tasks that ended (oldest first), then those under way, so
  * every Stop is nearest the handle and stays in view however many failures wait to be closed.
  */
