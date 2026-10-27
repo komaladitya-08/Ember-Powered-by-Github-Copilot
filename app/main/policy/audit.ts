@@ -18,8 +18,24 @@ export interface AuditEntry {
 
 const MONTH_FILE = /^audit-(\d{4})-(\d{2})\.jsonl$/;
 
+/** Command phases written once their step has happened (a run started or ended, the task's folder changed). */
+const DONE_PHASES = new Set(["started", "ended", "tainted", "cd"]);
+
+/**
+ * Is `e` written after its step happened (an action done or tried, a command started or ended)? Its record failing
+ * can't undo the step, so the step is reported as it went; an entry written before its step (a decision, an answer)
+ * failing means the step isn't taken (review #117).
+ */
+export function afterTheStep(e: AuditEntry): boolean {
+  return e.event === "action" || (e.event === "command" && DONE_PHASES.has(String(e.phase)));
+}
+
 export class AuditLog {
-  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void) {
+  /** The last write failed: the next failure isn't reported again until a write works. */
+  private failing = false;
+
+  /** `onError`: told when writes start failing (once, until one works again). */
+  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void, private onError?: (err: unknown) => void) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
@@ -32,11 +48,35 @@ export class AuditLog {
   private latest: (AuditEntry & { t: string })[] | null = null;
   private static readonly KEEP = 500;
 
+  /**
+   * Appends `e`. Throws when it can't be written (a full disk, an unwritable file): callers that must not act
+   * unrecorded rely on that, and those that only keep a record catch it. The journal gets the line either way.
+   */
   write(e: AuditEntry): void {
     const line = JSON.stringify({ t: this.now().toISOString(), ...e });
-    fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+    try {
+      this.append(line);
+    } catch (err) {
+      // Where the file can't keep it, the machine's journal still has it (review #117).
+      try { this.sink?.(line); } catch { /* the journal is a copy */ }
+      if (!this.failing) { try { this.onError?.(err); } catch { /* reporting it mustn't hide the failure */ } }
+      this.failing = true;
+      throw err;
+    }
+    this.failing = false;
     if (this.latest) { this.latest.unshift(JSON.parse(line)); this.latest.length = Math.min(this.latest.length, AuditLog.KEEP); }
     try { this.sink?.(line); } catch { /* the journal is a copy; the file is the record */ }
+  }
+
+  private append(line: string): void {
+    try {
+      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+    } catch (err) {
+      // A folder removed while Ember runs (a clean-up tool) is made again: writing works without a restart (review #117).
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+    }
   }
 
   /** The newest entries, newest first (for the activity timeline, asked for every few seconds). */

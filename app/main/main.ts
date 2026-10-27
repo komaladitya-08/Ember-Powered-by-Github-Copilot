@@ -1345,7 +1345,8 @@ function start(): void {
     });
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
-    audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
+    audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
+      err => log.warn("audit.write_failed", { err }));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
