@@ -138,6 +138,8 @@ export interface HostOptions {
    * modelServiceRefusal), or null: while it says why, no runtime client starts, whatever sign-in or endpoint is given.
    */
   refuseConnect?: () => string | null;
+  /** The policy changed while Ember ran (admin.ts heldUntilRestart): the notice offers Restart Ember, not settings. */
+  policyHeld?: () => boolean;
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
   /**
@@ -1367,7 +1369,8 @@ export class AgentHost {
       const signedOut = this.status.phase === "signed-out";
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
       const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
-      this.presenter.notice({ title, text: why, actions: [{ id: "ui:settings", label: "Open settings" }] });
+      const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
+      this.presenter.notice({ title, text: why, actions: [restart ? { id: "ui:restart", label: "Restart Ember" } : { id: "ui:settings", label: "Open settings" }] });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
       this.remember("you", text);

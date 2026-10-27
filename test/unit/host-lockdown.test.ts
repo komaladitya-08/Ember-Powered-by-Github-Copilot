@@ -31,7 +31,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
 });
 
 import { AgentHost, idleWord, NOTICE_TITLE, type HostOptions } from "../../app/main/agent/host";
-import { modelServiceRefusal, parseAdminPolicy } from "../../app/main/admin";
+import { heldUntilRestart, modelServiceRefusal, parseAdminPolicy } from "../../app/main/admin";
 import { SettingsStore } from "../../app/main/settings";
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 
@@ -75,6 +75,22 @@ describe("AgentHost while the policy locks Ember down", () => {
     expect(sim.clients).toHaveLength(0);
     expect(bubbles.some(b => b.title === NOTICE_TITLE.policy && b.thought.includes(why))).toBe(true);
     expect(idleWord(host.getStatus())).toBe("Locked down");
+  });
+
+  it("offers Restart Ember, not settings, when the policy changed while Ember ran", async () => {
+    sim.clients = [];
+    const held = heldUntilRestart(parseAdminPolicy("{}", "/etc/ember/policy.json"));
+    const { host, bubbles } = makeHost({ refuseConnect: () => modelServiceRefusal(held), policyHeld: () => !!held.held });
+    await host.start(TOKEN, "stored");
+    await host.ask("what's on my screen?");
+    const notice = bubbles.find(b => b.title === NOTICE_TITLE.policy);
+    expect(notice?.thought).toMatch(/Restart Ember/);
+    expect(notice?.actions).toEqual([{ id: "ui:restart", label: "Restart Ember" }]);
+    // A policy that can't be used points to settings, where the problem is named.
+    const broken = makeHost({ refuseConnect: () => modelServiceRefusal(BROKEN), policyHeld: () => false });
+    await broken.host.start(TOKEN, "stored");
+    await broken.host.ask("what's on my screen?");
+    expect(broken.bubbles.find(b => b.title === NOTICE_TITLE.policy)?.actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
   });
 
   it("connects as before once nothing refuses", async () => {

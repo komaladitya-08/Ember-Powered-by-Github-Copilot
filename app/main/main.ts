@@ -35,7 +35,7 @@ import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
-import { watchAdminPolicy } from "./policy/admin-watch";
+import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
@@ -368,8 +368,8 @@ function start(): void {
     environment: await environmentNow(),
     logFile: log.file,
     settingsNotice,
-    admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
-      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
+    admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
+      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(admin),
       neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
       sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
@@ -1065,8 +1065,8 @@ function start(): void {
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
-    // The administrator's policy changed while Ember ran: a restart reads it whole.
-    if (id === "ui:restart") { app.relaunch(); app.quit(); return; }
+    // The administrator's policy changed while Ember ran: a restart reads it whole (inside an AppImage, the AppImage).
+    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv)); app.quit(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -1525,7 +1525,7 @@ function start(): void {
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
-      refuseConnect: () => modelServiceRefusal(admin),
+      refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
       onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },

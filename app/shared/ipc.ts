@@ -102,6 +102,8 @@ export interface Status {
     source: string | null;
     /** The policy file is broken, so Ember is locked down. */
     error: string | null;
+    /** The policy changed while Ember ran: it is locked down until a restart reads the new one (`error` says so too). */
+    held?: boolean;
     /** Settings the administrator decides. */
     managed: string[];
     features: AdminPolicy["features"];
@@ -109,7 +111,8 @@ export interface Status {
     provider: string | null;
     confirmEveryAction: boolean;
     allowGrants: boolean;
-    retentionDays: number;
+    /** Days the record of actions is kept; null while Ember is locked down, when none is deleted. */
+    retentionDays: number | null;
     /** Never-look entries the administrator set: shown locked; they never go into the user's own list. */
     neverLook: string[];
     /** Each kind of computer's commands mode (admin.ts commandMode): the Commands section shows what is locked. */

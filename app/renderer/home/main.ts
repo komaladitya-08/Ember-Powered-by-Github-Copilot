@@ -16,6 +16,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
+import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -297,15 +298,18 @@ const FEATURE_TEXT: Record<string, string> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
   cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", ...TARGET_FEATURE_TEXT,
 };
+/** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
+let sendAsWritten: Node[] | null = null;
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
   adminNeverLook = new Set((a.neverLook ?? []).map(x => x.trim().toLowerCase()));
   const el = $("managed");
   el.classList.toggle("error", !!a.error);
-  if (a.error) {
+  const locked = lockdownNotice(a);
+  if (locked) {
     el.hidden = false;
-    el.textContent = `Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${a.error}).`;
+    el.textContent = locked;
   } else if (a.source) {
     const off = Object.entries(a.features).filter(([, v]) => v === false).map(([k]) => FEATURE_TEXT[k] ?? k);
     const rules = [
@@ -319,8 +323,15 @@ function renderAdmin(a: Status["admin"]): void {
   } else {
     el.hidden = true;
   }
-  $("retention").textContent = String(a.retentionDays);
-  if (a.provider) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  $("retention").textContent = keptWords(a);
+  // Locked down, nothing goes to a model service: the data list says so instead of naming one.
+  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  const sendLine = lockdownSendLine(a);
+  if (send) {
+    sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
+    send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
+  }
+  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);

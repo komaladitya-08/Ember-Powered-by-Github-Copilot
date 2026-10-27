@@ -8,7 +8,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { AdminPolicySchema, commandMode, heldUntilRestart, lockedDown, modelServiceRefusal, parseAdminPolicy, samePolicy, type LoadedAdminPolicy } from "../../app/main/admin";
-import { ADMIN_WATCH_MS, watchAdminPolicy } from "../../app/main/policy/admin-watch";
+import { ADMIN_WATCH_MS, restartOptions, watchAdminPolicy } from "../../app/main/policy/admin-watch";
 
 const FILE = "/etc/ember/policy.json";
 const none: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -150,5 +150,15 @@ describe("watchAdminPolicy", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("restartOptions", () => {
+  it("restarts the AppImage itself, whose mounted copy is gone once Ember quits", () => {
+    const argv = ["/tmp/.mount_EmberAbc/ember", "--autostart"];
+    expect(restartOptions({ APPIMAGE: "/home/u/Apps/Ember.AppImage" }, argv)).toEqual({ execPath: "/home/u/Apps/Ember.AppImage", args: ["--autostart"] });
+    // Elsewhere Electron starts this program again with the same arguments.
+    expect(restartOptions({}, ["/opt/ember/ember"])).toBeUndefined();
+    expect(restartOptions({ APPIMAGE: "" }, argv)).toBeUndefined();
   });
 });

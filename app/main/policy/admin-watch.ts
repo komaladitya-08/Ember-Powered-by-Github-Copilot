@@ -53,3 +53,12 @@ export function watchAdminPolicy(o: AdminWatchOptions): () => void {
   timer.unref?.();
   return () => clearInterval(timer);
 }
+
+/**
+ * How Electron's app.relaunch starts Ember again once its policy changed: inside an AppImage, the AppImage itself (the
+ * program Ember runs is in the AppImage's mount under /tmp, which is gone once Ember quits); elsewhere undefined, the
+ * same program with the same arguments.
+ */
+export function restartOptions(env: NodeJS.ProcessEnv, argv: readonly string[]): { execPath: string; args: string[] } | undefined {
+  return env.APPIMAGE ? { execPath: env.APPIMAGE, args: argv.slice(1) } : undefined;
+}
