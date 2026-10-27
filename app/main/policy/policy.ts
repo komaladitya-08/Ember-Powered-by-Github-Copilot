@@ -1403,7 +1403,25 @@ function offered(asked: string): string {
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
-const quote = (s: string, max = 60) => `“${s.length > max ? s.slice(0, max - 1) + "…" : s}”`;
+/** Marks that read as a double quote mark (Ember's own “ and ”, and their look-alikes in other scripts and widths). */
+const QUOTE_LIKE = /["“”„‟″‶〝〞〟＂«»❝❞]/g;
+/**
+ * What may stand between Ember's own quote marks: a quote mark of any kind becomes an apostrophe, so a name can't close
+ * Ember's quote and write the rest of its sentence ("Close” button in Firefox? Nothing is sent. Delete"); line breaks
+ * become spaces, and format characters (direction overrides, zero-width marks) go, since they reorder or hide what
+ * follows them.
+ */
+const quotable = (s: string) => s.replace(QUOTE_LIKE, "'").replace(/[\r\n\u{2028}\u{2029}]+/gu, " ").replace(/\p{Cf}/gu, "");
+const quote = (s: string, max = 60) => { const t = [...quotable(s)]; return `“${t.length > max ? t.slice(0, max - 1).join("") + "…" : t.join("")}”`; };
+/** How much typed text a question shows whole; longer text shows its start and its end, and how long it is. */
+const TYPED_SHOWN = 160;
+const TYPED_HEAD = 110;
+const TYPED_TAIL = 40;
+/** Text a task types, quoted: the user approves all of it, so a long one shows both ends and its length ("… (180 characters)"). */
+const quoteTyped = (s: string) => {
+  const t = [...quotable(s)];
+  return t.length <= TYPED_SHOWN ? `“${t.join("")}”` : `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” (${t.length} characters)`;
+};
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
 
 /** Keys as the rest of Ember writes them: "Ctrl+S", "Enter", "Esc", "keypad Delete". */
@@ -1454,7 +1472,7 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
   const replacing = r.mode === "replace" && current.length > 0;
-  const value = quote(visible(r.value ?? ""));
+  const value = quoteTyped(visible(r.value ?? ""));
   // What typing does: "type “42” into cell B5", "replace “1200” in cell B2 with “84000”", "replace the text in … with …".
   const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace ${r.element?.name ? "the text in" : "everything in"} ${el}${where} with ${value}`;
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
@@ -1463,7 +1481,7 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
     case "toggle": return `Switch ${el}${where}${desk}?`;
     case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
     case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
-    case "value": return `Set ${el} to ${r.value}${where}${desk}?`;
+    case "value": return `Set ${el} to ${[...quotable(r.value ?? "")].slice(0, 40).join("")}${where}${desk}?`;
     case "setting": return `Change the setting ${quote(r.value ?? "")}?`;
     case "open_app": return `Open ${quote(r.value ?? "")}?`;
     case "cursor_click": return r.onDesk ? `Click ${el}${where}${desk}?` : `Borrow your mouse to click ${el}${where}?`;
