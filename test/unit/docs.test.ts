@@ -130,6 +130,24 @@ describe("README.md", () => {
     expect(ssh).toContain("sh ~/.local/share/ember-remote/versions/*/uninstall.sh");
   });
 
+  it("has an accessibility section: screen readers on each OS, a keyboard route for every mouse-only thing, the gaps", () => {
+    const a11y = flat(section(readme, "Accessibility"));
+    for (const reader of ["Orca", "NVDA", "JAWS", "Narrator", "VoiceOver"]) expect(a11y).toContain(reader);
+    // Every item of the handle's menu (pointer only: the handle never takes the keyboard) has a keyboard route here.
+    const main = read("app/main/main.ts");
+    const start = main.indexOf("const menu = Menu.buildFromTemplate([");
+    const menu = main.slice(start, main.indexOf("]);", start));
+    for (const item of ["Ask Ember…", "Stop everything", "Read the last answer", "Stay put", "Hide Ember", "Quit Ember", "Mute microphone"]) {
+      expect(menu, item).toContain(`"${item}"`);
+      expect(a11y, item).toContain(item === "Mute microphone" ? "microphone" : item);
+    }
+    expect(a11y).toContain("**Work on**");
+    // The desk's way back from a take-over, as the desk view handles it.
+    expect(read("app/renderer/desk/main.ts")).toMatch(/e\.key === "End"[^\n]*e\.ctrlKey && e\.altKey/);
+    expect(a11y).toContain("Ctrl+Alt+End");
+    for (const words of ["Calm mode", "Text size", "contrast", "**Always in this app**", "Known gaps"]) expect(a11y).toContain(words);
+  });
+
   it("gives Windows users blocked by Smart App Control the way forward", () => {
     const win = flat(section(readme, "Install on Windows"));
     // What the user sees, where the switch is, what turning it off costs, and who to ask on a managed PC.
