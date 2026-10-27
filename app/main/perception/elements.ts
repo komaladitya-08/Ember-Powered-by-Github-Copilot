@@ -6,6 +6,7 @@
  */
 
 import type { AxNode, AxWindow, Bounds } from "./sidecar";
+import { NEVER_LOOK_APP_ONLY } from "../../shared/never-look";
 
 const INTERACTIVE = new Set(["push button", "toggle button", "check box", "radio button", "combo box", "text", "entry",
   "password text", "spin button", "slider", "menu item", "menu", "link", "page tab", "list item", "table cell", "check menu item",
@@ -436,8 +437,15 @@ export function focusedElement(nodes: AxNode[]): AxNode | null {
   return found;
 }
 
-/** True when the app or window matches the user's "never look at" list. */
+/**
+ * True when the app or window matches the user's "never look at" list. A default entry that is an everyday word
+ * (NEVER_LOOK_APP_ONLY: "keeper", "seahorse") is matched against the app only, never the title.
+ */
 export function isNeverLook(window: { app: string; name: string }, list: string[]): boolean {
   const hay = `${window.app} ${window.name}`.toLowerCase();
-  return list.some(item => item.trim() && hay.includes(item.trim().toLowerCase()));
+  const app = window.app.toLowerCase();
+  return list.some(item => {
+    const i = item.trim().toLowerCase();
+    return !!i && (NEVER_LOOK_APP_ONLY.has(i) ? app.includes(i) : hay.includes(i));
+  });
 }
