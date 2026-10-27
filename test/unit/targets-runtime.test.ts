@@ -809,6 +809,18 @@ describe("SSH targets", () => {
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
   });
 
+  it("says nothing when the user cancels a password or passphrase card, as for the bubble's Cancel (review #193)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    // SA ends the attempt as cancelled when the user closes its sign-in card (connections.ts failureOf).
+    r.failConnect(new ConnectError("Connection cancelled", "cancelled", undefined, true));
+    const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(res).toEqual({ ok: false, message: "Cancelled." });
+    // The connecting bubble goes, and no "Can't connect" bubble with Try again comes.
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ visible: false }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
+  });
+
   it("shows progress while connecting, and Cancel stops it", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const release = r.holdConnect();

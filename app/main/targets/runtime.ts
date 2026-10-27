@@ -761,6 +761,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         c.abort = null;
         return connect(hostId, { ...o, again: true });
       }
+      // The user closed a sign-in card (Cancel, Esc): ended as the bubble's Cancel does, with no error bubble.
+      if (err instanceof ConnectError && err.kind === "cancelled") return stopped("Cancelled.");
       if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
       log.warn("targets.connect_failed", { err });
       return fail(`Ember couldn't connect to ${label}.`);
