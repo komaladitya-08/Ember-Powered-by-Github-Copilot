@@ -45,6 +45,8 @@ export interface ConductorDeps {
   showMe?: (goal: string) => string | Promise<string>;
   /** Finished-task results the conductor hasn't heard about yet. */
   takeReports?: () => string[];
+  /** Reports taken for a request that couldn't be sent: they go back, so the next request (or conversation) hears them. */
+  returnReports?: (reports: string[]) => void;
   /** Running and recent tasks, for "how's it going?", "stop the email one" and "use Firefox instead". */
   tasks?: ConductorTasks;
   /** Called for every model call with its token counts (usage meter). */
@@ -543,6 +545,8 @@ export class Conductor {
     } catch (err) {
       watch?.unsent();
       this.busy = false;
+      // The finished tasks' results were in the request that never went: they wait for the next one.
+      if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);

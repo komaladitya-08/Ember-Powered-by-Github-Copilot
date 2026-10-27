@@ -1145,6 +1145,8 @@ export class AgentHost {
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],
+        // Taken for a request that couldn't be sent (the runtime died): kept for the next conductor after the reconnect.
+        returnReports: reports => { this.carried.unshift(...reports); },
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },

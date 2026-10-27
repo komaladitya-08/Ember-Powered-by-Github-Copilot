@@ -2370,3 +2370,32 @@ describe("show_me beside running tasks (review #142)", () => {
     await host.stop();
   });
 });
+
+describe("a task's result when the request can't be sent (review #150)", () => {
+  it("goes back to the queue, and the next conversation hears it after the reconnect", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    // A task finished: its result waits for the user's next message.
+    sim.onSend = (s, prompt) => { if (s.sessionId.startsWith("ember-task-") && prompt.startsWith("Task:")) setTimeout(() => s.emit("session.error", { message: "boom" }), 10); };
+    host.tasks!.start("save the report as report.txt");
+    await vi.advanceTimersByTimeAsync(200);
+    sim.onSend = () => undefined;
+    // The runtime just died: the next request isn't sent.
+    let fail = true;
+    sim.sendGate = null;
+    const first = conductorSession();
+    first.send = async (m: { prompt: string }) => { first.sent.push(m.prompt); if (fail) throw new Error("Connection is disposed."); return "m"; };
+    await host.ask("how did it go?");
+    expect(first.sent.at(-1)).toContain("<task_results");
+    fail = false;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(host.getStatus().phase).toBe("ready");
+    const next = conductorSession();
+    expect(next).not.toBe(first);
+    await host.ask("how did it go?");
+    expect(next.sent.at(-1)).toContain("<task_results");
+    expect(next.sent.at(-1)).toContain("save the report as report.txt");
+    await host.stop();
+  });
+});
