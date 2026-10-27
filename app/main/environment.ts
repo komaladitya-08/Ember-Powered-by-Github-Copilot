@@ -171,7 +171,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
   if (i.accessibility) {
     const a = i.accessibility;
     if (!a.pyatspi) {
-      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi" });
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" });
     } else if (a.enabled === false) {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off, so Ember can only see screenshots. Turn it on, then restart open apps.", fix: "enable-accessibility" });
     } else {

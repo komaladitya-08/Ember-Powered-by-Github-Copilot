@@ -23,6 +23,8 @@ export interface LinuxDoctorDeps {
   exists?: (file: string) => boolean;
   fileWatchers?: () => { used: number; max: number } | null;
   desk?: () => { ok: boolean; missing: string[] };
+  /** The environment (APPIMAGE: running as an AppImage). */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Where Chromium finds speech-dispatcher's library (spd-say isn't packaged on RHEL 8, so the program alone can't be the test). */
@@ -48,7 +50,8 @@ export async function linuxDoctorProbes(d: LinuxDoctorDeps): Promise<PlatformDoc
     microphones,
     // What Chromium speaks through.
     speechDispatcher: d.which("speech-dispatcher") !== null || LIBSPEECHD.some(f => exists(f)),
-    sandbox: { userNamespaces, suidHelper },
+    // An AppImage's AppRun starts Ember with --no-sandbox where user namespaces are off (it can't carry the helper).
+    sandbox: { userNamespaces, suidHelper, appImage: !!(d.env ?? process.env).APPIMAGE },
     fileWatchers: (d.fileWatchers ?? (() => inotifyUse()))(),
     desk: (d.desk ?? (() => DeskManager.available()))(),
     extra: [],

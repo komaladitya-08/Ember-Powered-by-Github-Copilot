@@ -22,7 +22,19 @@ For “Hey Ember” without downloading the speech models on each computer, also
 `ember-voice-models-0.1.0-1.el8.noarch.rpm` when you build it (`node scripts/voice/prepare.mjs` before packaging;
 see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB) when voice is turned on.
 
-Or run `Ember-0.1.0-x86_64.AppImage` without installing.
+Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
+system packages the RPM would bring for reading apps:
+
+```bash
+sudo dnf install python3-pyatspi python3-gobject at-spi2-core
+# Optional, for speaking and Ember's desk:
+sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon
+chmod +x Ember-0.1.0-x86_64.AppImage
+./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
+```
+
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM). Where user
+namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, install the new RPM the same way, then quit Ember and start it again. To remove Ember, first remove its
 helper from the computers you added over SSH (below). Then turn off **Start Ember when I log in** in its settings (or

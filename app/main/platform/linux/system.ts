@@ -97,7 +97,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       },
       label: () => "Turn on",
     },
-    doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists }),
+    doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists, env: deps.env }),
     a11y: {
       screenReaderOn,
       // GNOME's "Animations" switch off counts as asking for calm mode.

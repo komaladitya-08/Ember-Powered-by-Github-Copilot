@@ -12,13 +12,20 @@ import { layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
 /** Text with its line breaks and runs of spaces made single spaces, so a phrase can span wrapped lines. */
 const flat = (s: string) => s.replace(/\s+/g, " ");
-/** One section of a Markdown file: from its heading to the next heading of the same or a higher level. */
+/**
+ * One section of a Markdown file: from its heading to the next heading of the same or a higher level (a `#` line in
+ * a fenced code block is a shell comment, not a heading).
+ */
 function section(text: string, heading: string): string {
   const lines = text.split("\n");
-  const at = lines.findIndex(l => l.startsWith("#") && l.replace(/^#+\s*/, "") === heading);
+  let fenced = false;
+  const level = lines.map(l => {
+    if (l.startsWith("```")) fenced = !fenced;
+    return !fenced && /^#+\s/.test(l) ? /^#+/.exec(l)![0].length : 0;
+  });
+  const at = lines.findIndex((l, i) => level[i] > 0 && l.replace(/^#+\s*/, "") === heading);
   if (at < 0) throw new Error(`no section "${heading}"`);
-  const level = /^#+/.exec(lines[at])![0].length;
-  const end = lines.findIndex((l, i) => i > at && /^#+\s/.test(l) && /^#+/.exec(l)![0].length <= level);
+  const end = level.findIndex((n, i) => i > at && n > 0 && n <= level[at]);
   return lines.slice(at, end < 0 ? undefined : end).join("\n");
 }
 

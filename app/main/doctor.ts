@@ -42,8 +42,8 @@ export interface DoctorProbes {
   admin: LoadedAdminPolicy;
   /** Ember's desk (Linux); null where there is none (the row is left out). */
   desk: { ok: boolean; missing: string[] } | null;
-  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). */
-  sandbox: { userNamespaces: boolean; suidHelper: boolean } | null;
+  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
+  sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
   fileWatchers?: { used: number; max: number } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
@@ -180,8 +180,9 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : micOk
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
       : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${sc.ask.label}) always works.` });
+  // The speech models RPM needs Ember's own RPM, so an AppImage is only told to download them.
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux ? ", or install ember-voice-models" : ""}.` }
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux && !p.sandbox?.appImage ? ", or install ember-voice-models" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
   out.push(off
     ? p.speechDispatcher
