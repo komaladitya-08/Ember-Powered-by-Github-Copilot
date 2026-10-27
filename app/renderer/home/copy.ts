@@ -8,6 +8,7 @@ import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { computersIntro, onboardingRest } from "./computers-copy";
+import { needsUser, type SetupRow } from "../../shared/setup-attention";
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
 export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
@@ -58,17 +59,54 @@ export function retryMessage(r: { found: boolean; source: string | null }, conne
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;
 }
 
-/** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */
+/** "one thing", "2 things": how many setup rows, in a sentence. */
+const things = (n: number) => (n === 1 ? "one thing" : `${n} things`);
+
+/**
+ * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Before Start it
+ * is always the first-run instruction (the setup check's own heading counts its rows, review #160).
+ */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
-  if (t.failing) return "Ember needs a couple of things fixed before it can work on this machine.";
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
+  if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer: see the setup check.`;
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   return `${where} Press ${askLabel} to ask it anything.`;
+}
+
+/** The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160). */
+export function checksNote(failing: number, warn: number): string {
+  const n = (k: number) => `${k} ${k === 1 ? "thing" : "things"}`;
+  return failing ? `${n(failing)} to fix` : warn ? `${n(warn)} to look at` : "All good";
+}
+
+/** What the setup check shows, and what the window remembers between statuses. */
+export interface SetupView {
+  failing: number;
+  warn: number;
+  /** Rows that need the user (setup-attention.ts needsUser): failing ones, and warnings that hold Ember back or have a button. */
+  needing: number;
+  /** Open the fold now (once per window: a user who closes it isn't overruled by the next status). */
+  open: boolean;
+  /** The setup check shows before Start too. */
+  beforeStart: boolean;
+  note: string;
+}
+
+/**
+ * The setup check for these rows, given what the window did before (`opened` the fold by itself, showed the check
+ * `beforeStart`). A row that needs the user opens the fold and shows the check before Start (review #94, #161), and
+ * the check then stays until Start, so fixing one row never takes the others' buttons off the first-run screen.
+ */
+export function setupView(rows: readonly SetupRow[], before: { opened: boolean; beforeStart: boolean }): SetupView {
+  const failing = rows.filter(r => r.status === "fail").length;
+  const warn = rows.filter(r => r.status === "warn").length;
+  const needing = rows.filter(needsUser).length;
+  return { failing, warn, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(failing, warn) };
 }
 
 /** "Today", "Yesterday", else the weekday and date. */

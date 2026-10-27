@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { homePatches, type HomePatch } from "../../app/renderer/home/copy";
+import { checksNote, homePatches, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
+import { holdsBack, needsUser, type SetupRow } from "../../app/shared/setup-attention";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS } from "../../app/shared/shortcuts";
@@ -104,5 +105,94 @@ describe("the first-run window", () => {
     expect(welcome).not.toMatch(/your never-look list/);
     expect(welcome).toContain("Password managers, password prompts and any app you add to the never-look list in settings are never read.");
     expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.");
+  });
+});
+
+// ───── Setup rows as each OS reports them (environment.ts) ─────
+const MAC_FIRST: SetupRow[] = [
+  { id: "platform", label: "Platform", status: "ok" },
+  { id: "os", label: "Operating system", status: "ok" },
+  { id: "accessibility", label: "Reading and using apps", status: "fail", fix: "open-accessibility-settings" },
+  { id: "screen-recording", label: "Screen Recording", status: "warn", fix: "open-screen-recording-settings" },
+  { id: "input-monitoring", label: "Input Monitoring", status: "warn", fix: "open-input-monitoring-settings" },
+  { id: "location", label: "Applications folder", status: "ok" },
+];
+const allowed = (rows: SetupRow[], ...ids: string[]): SetupRow[] => rows.map(r => (ids.includes(r.id) ? { id: r.id, label: r.label, status: "ok" } : r));
+const LINUX_A11Y_OFF: SetupRow[] = [
+  { id: "platform", label: "Platform", status: "ok" },
+  { id: "os", label: "Operating system", status: "ok" },
+  { id: "session", label: "Desktop session", status: "ok" },
+  { id: "accessibility", label: "Screen reading", status: "warn", fix: "enable-accessibility" },
+];
+
+describe("which setup rows need the user", () => {
+  it("counts a fail, a warning about reading, seeing or using apps, and any row with a fix button (review #94, #161)", () => {
+    expect(MAC_FIRST.filter(needsUser).map(r => r.id)).toEqual(["accessibility", "screen-recording", "input-monitoring"]);
+    expect(LINUX_A11Y_OFF.filter(needsUser).map(r => r.id)).toEqual(["accessibility"]);
+    // Linux without the Python bindings: no button, but Ember can't read apps.
+    expect(needsUser({ id: "accessibility", label: "Screen reading", status: "warn" })).toBe(true);
+    // Windows' helper blocked (a button), or restricted by the organisation (none): both hold Ember back.
+    expect(holdsBack({ id: "accessibility", label: "Screen reading", status: "warn", fix: "unblock-helper" })).toBe(true);
+    expect(holdsBack({ id: "accessibility", label: "Screen reading", status: "warn" })).toBe(true);
+    // A button the user can press: worth a look, though Ember works without it.
+    expect(needsUser({ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" })).toBe(true);
+    expect(holdsBack({ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" })).toBe(false);
+    expect(needsUser({ id: "wsl:Ubuntu", label: "Accessibility in Ubuntu", status: "warn", fix: "wsl-a11y:Ubuntu" })).toBe(true);
+    // A warning with nothing to do and nothing held back (another Linux, shortcuts taken) doesn't.
+    expect(needsUser({ id: "os", label: "Operating system", status: "warn" })).toBe(false);
+    expect(needsUser({ id: "shortcuts", label: "Keyboard shortcuts", status: "warn" })).toBe(false);
+    expect(needsUser({ id: "accessibility", label: "Screen reading", status: "ok", fix: "enable-accessibility" })).toBe(false);
+  });
+});
+
+describe("the setup check in the settings window", () => {
+  const first = { opened: false, beforeStart: false };
+
+  it("stays on the first-run screen until Start once a row needed the user, so fixing one row never hides the others (review #94)", () => {
+    const v1 = setupView(MAC_FIRST, first);
+    expect(v1).toMatchObject({ failing: 1, needing: 3, open: true, beforeStart: true, note: "1 thing to fix" });
+    // Accessibility allowed: Screen Recording and Input Monitoring keep their buttons on screen.
+    const v2 = setupView(allowed(MAC_FIRST, "accessibility"), { opened: true, beforeStart: v1.beforeStart });
+    expect(v2).toMatchObject({ failing: 0, needing: 2, open: false, beforeStart: true, note: "2 things to look at" });
+    // Everything allowed: the list (all OK) stays where the user was working until Start.
+    expect(setupView(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), { opened: true, beforeStart: v2.beforeStart }))
+      .toMatchObject({ needing: 0, beforeStart: true, note: "All good" });
+  });
+
+  it("opens and shows before Start for a warning with a fix, such as Linux's accessibility switch (review #161)", () => {
+    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing to look at" });
+    // A warning with nothing to do keeps the fold shut and the first-run screen as it was.
+    const other = LINUX_A11Y_OFF.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const } : r.id === "os" ? { ...r, status: "warn" as const } : r));
+    expect(setupView(other, first)).toMatchObject({ needing: 0, open: false, beforeStart: false, note: "1 thing to look at" });
+    // Opened by itself once: a user who closes it isn't overruled by the next status.
+    expect(setupView(LINUX_A11Y_OFF, { opened: true, beforeStart: true }).open).toBe(false);
+  });
+
+  it("counts the rows in words by the heading (review #160)", () => {
+    expect(checksNote(1, 0)).toBe("1 thing to fix");
+    expect(checksNote(2, 3)).toBe("2 things to fix");
+    expect(checksNote(0, 1)).toBe("1 thing to look at");
+    expect(checksNote(0, 2)).toBe("2 things to look at");
+    expect(checksNote(0, 0)).toBe("All good");
+  });
+
+  it("is drawn from setupView, the one place that decides it", () => {
+    expect(SCRIPT).toMatch(/const view = setupView\(environment\.checks, \{ opened: checksOpened, beforeStart: checksBeforeStart \}\);/);
+    expect(SCRIPT).toMatch(/\.classList\.toggle\("after-setup", !checksBeforeStart\)/);
+  });
+});
+
+describe("the line under the title in first run", () => {
+  const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
+
+  it("keeps the first-run instruction while setup rows fail; the count is by the setup check (review #160)", () => {
+    const firstRun = "Read how Ember works, pick who keeps you company, then agree and press Start.";
+    expect(tagline({ ...base, onboarded: false, failing: 1 })).toBe(firstRun);
+    expect(tagline({ ...base, onboarded: false, failing: 3, phase: "signed-out" })).toBe(firstRun);
+  });
+
+  it("counts what fails once Ember has started, and says computer (review #160)", () => {
+    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs one thing fixed before it can work on this computer: see the setup check.");
+    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer: see the setup check.");
   });
 });

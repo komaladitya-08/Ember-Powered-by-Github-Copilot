@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, setupView, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
@@ -171,6 +171,8 @@ function renderTagline(): void {
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
+/** The setup check shows on the first-run screen (a row needed the user), and stays there until Start. */
+let checksBeforeStart = false;
 /** The checks on screen, to leave them alone when a fresh status brings the same ones. */
 let shownChecks = "";
 function renderChecks(environment: Status["environment"]): void {
@@ -206,14 +208,16 @@ function renderChecks(environment: Status["environment"]): void {
     return li;
   }));
   if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
-  failing = environment.checks.filter(c => c.status === "fail").length;
-  const warn = environment.checks.filter(c => c.status === "warn").length;
+  const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
+  failing = view.failing;
   const note = $("checks-note");
-  note.textContent = failing ? `${failing} to fix` : warn ? `${warn} to look at` : "All good";
-  note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
-  // Something fails: the check opens by itself (once), and it shows even before Start.
-  if (failing && !checksOpened) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
-  $("checks-fold").closest("section")!.classList.toggle("after-setup", !failing);
+  note.textContent = view.note;
+  note.className = `fold-note${view.failing ? " fail" : view.warn ? " warn" : ""}`;
+  // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
+  // (once), and it shows before Start too, until Start.
+  if (view.open) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
+  checksBeforeStart = view.beforeStart;
+  $("checks-fold").closest("section")!.classList.toggle("after-setup", !checksBeforeStart);
   renderTagline();
 }
 
