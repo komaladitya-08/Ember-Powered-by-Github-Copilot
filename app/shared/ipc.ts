@@ -187,8 +187,12 @@ export interface Presence { hidden: boolean; paused: boolean; overlay: boolean }
 
 /** What the ask box shows: where Ember will look, and the user's recent questions (newest last). */
 export interface AskContext {
-  /** e.g. "Mousepad · notes.txt · 12 words selected", or null when Ember can't read the screen. */
+  /** The window's app and title, e.g. "Mousepad · notes.txt", or null when Ember can't read the screen. */
   sees: string | null;
+  /** What else a request sends from the screen (with `sees`): the selection or the field's text, other windows' titles. */
+  carries?: { selection: boolean; fieldText: boolean; windows: number };
+  /** The user is in a private window (never-look list, password prompt): Ember reads nothing there. */
+  privateWindow?: boolean;
   history: string[];
   /** The box has just opened (not a later update of what Ember will see): what was left in it is selected. */
   opened?: boolean;

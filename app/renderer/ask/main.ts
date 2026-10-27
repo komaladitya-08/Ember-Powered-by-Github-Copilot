@@ -7,6 +7,7 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChip } from "../handle/badge";
 import { AskHistory } from "./history";
 import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey } from "./field";
+import { seesView } from "./chips";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
@@ -17,6 +18,22 @@ const input = document.getElementById("q") as HTMLTextAreaElement;
 const sees = document.getElementById("sees")!;
 const where = document.getElementById("where")!;
 const cut = document.getElementById("cut")!;
+const seesLive = document.getElementById("sees-live")!;
+const seesText = document.getElementById("sees-text")!;
+/** Room the window's name keeps on the line before the key hints step aside (Esc first, then ↑, then Enter). */
+const NAME_ROOM = 160;
+/** The line under the field: the key hints give way, last first, while the window's name would be cut too short. */
+function fitMeta(): void {
+  const keys = [...document.querySelectorAll<HTMLElement>("#hint .key")];
+  for (const k of keys) k.classList.remove("crowded");
+  if (sees.hidden) return;
+  for (const k of keys.reverse()) {
+    if (seesText.scrollWidth <= seesText.clientWidth || seesText.clientWidth >= NAME_ROOM) break;
+    if (!k.hidden) k.classList.add("crowded");
+  }
+}
+/** What the live region last said in this opening (said once, when it arrives). */
+let said = "";
 const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
 /** The lines the window was last sized for (main opens it at one). */
@@ -72,8 +89,19 @@ window.emberAsk.onContext(c => {
   const chip = targetChip((c as AskContext & { target?: TargetSummary | null }).target);
   where.hidden = !chip;
   where.textContent = chip ?? "";
-  sees.hidden = !c.sees;
-  sees.textContent = c.sees ? `Ember will see: ${c.sees}` : "";
+  where.title = chip ?? "";
+  // The window's app and title (shortened on the chip), what else goes with a request, all of it in the tooltip.
+  const view = seesView(c);
+  sees.hidden = !view;
+  sees.title = view?.full ?? "";
+  sees.classList.toggle("private", c.privateWindow === true);
+  document.getElementById("sees-full")!.textContent = view?.full ?? "";
+  seesText.textContent = view?.text ?? "";
+  document.getElementById("sees-extra")!.textContent = view?.extra ?? "";
+  // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
+  if (c.opened) { said = ""; seesLive.textContent = ""; }
+  else if (view && view.full !== said) { said = view.full; seesLive.textContent = view.full; }
+  fitMeta();
   input.focus();
   // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of
   // running on from it ("draftwhat can you do"); End or a click keeps it. Main opened the window one line tall.

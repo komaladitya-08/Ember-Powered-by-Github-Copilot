@@ -22,12 +22,13 @@ import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/over
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
-import { friendlyApp, useAppNames } from "../shared/apps";
+import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
 import { notificationBody } from "./notification";
+import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
@@ -781,11 +782,9 @@ function start(): void {
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
-    // What Ember will read, shown as a chip once the quick look is done.
+    // What Ember will read, shown as a chip once the quick look is done: the window, and what else goes with a request.
     void callContext.then(c => {
-      const t = c?.target;
-      const sees = t ? [t.app && friendlyApp(t.app), t.title].filter(Boolean).join(" · ") || null : null;
-      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory, target: askTarget() };
+      const ctx: AskContext = { ...askSees(c), history: askHistory, target: askTarget() };
       askWindow.setContext(ctx);
     });
   };

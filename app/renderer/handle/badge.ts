@@ -23,10 +23,15 @@ export function targetBadge(t: TargetSummary | null | undefined): TargetBadge | 
   return { text: t.label, state, label: `Working on ${t.label}${STATE_WORDS[state]}` };
 }
 
-/** The ask box's chip: "On build-01", "In Ubuntu (WSL)"; null for this computer. */
+/**
+ * The ask box's chip: "On build-01", "In Ubuntu (WSL)", with the handle badge's state words while it isn't ready ("On
+ * build-01 (lost)"); null for this computer.
+ */
 export function targetChip(t: TargetSummary | null | undefined): string | null {
-  if (!t || t.id === "local" || t.kind === "local" || typeof t.label !== "string" || !t.label) return null;
-  return t.kind === "wsl" ? `In ${t.label}` : `On ${t.label}`;
+  const badge = targetBadge(t);
+  if (!badge || !t) return null;
+  const state = badge.label.slice(`Working on ${badge.text}`.length);
+  return `${t.kind === "wsl" ? "In" : "On"} ${badge.text}${state}`;
 }
 
 /** A `where` badge's words ("on build-01", "in Ubuntu (WSL)"), trimmed; null when there are none. */

@@ -26,18 +26,26 @@ textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 2
   box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; display: flex; gap: 12px; justify-content: space-between; align-items: center;
   flex: none; font: var(--type-footnote); line-height: 17px; color: var(--label-2);
   border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
-  width: fit-content; max-width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
+  width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
 }
-.sees { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--label); font-weight: 500; }
+/* What Ember will see: an eye, the window (shortened first), then what else is sent (never shortened). The line is
+   as wide as the field from the start, so it doesn't jump when this arrives after the quick look. */
+.sees { min-width: 0; overflow: hidden; display: inline-flex; align-items: center; gap: 5px; color: var(--label); font-weight: 500; }
+.sees[hidden] { display: none; }
+.eye { flex: none; width: 13px; height: 13px; fill: var(--label-2); }
+/* A private window: the words say Ember won't look, so no eye beside them. */
+.sees.private .eye { display: none; }
+.sees-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sees-extra { flex: none; color: var(--label-2); font-weight: 400; }
 /* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. */
-.where { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
+.where { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
 .where[hidden] { display: none; }
 /* A paste longer than what is sent was cut: said in words, in the warning colour. */
 .cut { flex: none; color: var(--yellow); font-weight: 500; }
 .cut[hidden] { display: none; }
 /* The keys as keycaps, each with its few words. */
-.hint { flex: none; display: inline-flex; gap: 10px; color: var(--label-2); }
-.hint [hidden] { display: none; }
+.hint { flex: none; margin-left: auto; display: inline-flex; gap: 10px; color: var(--label-2); }
+.hint [hidden], .hint .crowded { display: none; }
 .meta kbd { font-size: 10.5px; line-height: 13px; padding: 0 4px; vertical-align: 0; }
 /* No compositor: the whole window is an opaque panel (a transparent window would paint black). */
 html.opaque, html.opaque body { background: var(--glass-solid); }
