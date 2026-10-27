@@ -82,17 +82,31 @@ export function runLabel(kind: TargetKind, label: string): string {
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-function wslStatus(t: TargetSummary): string {
-  return t.state === "ready" ? "Running" : t.state === "connecting" ? "Starting…" : t.state === "unavailable" ? "Not available" : "Stopped";
+/** The registry's words (targets/registry.ts) for a distro listed while WSL is off in Ember, and for a link that stalled. */
+const WSL_OFF_CAN = "WSL is off in Ember";
+const STALLED_CAN = "isn't answering";
+/** The registry's words for a connected computer with neither apps nor commands to use. */
+const NOTHING_CAN = "nothing yet";
+
+/** A distro's status, and the note under it (WSL off in Ember: the distro is fine, only the switch is off). */
+function wslStatus(t: TargetSummary): { status: string; note: string | null } {
+  if (t.state === "unavailable" && t.can === WSL_OFF_CAN) return { status: "Off", note: null };
+  const status = t.state === "ready" ? "Running" : t.state === "connecting" ? "Starting…" : t.state === "unavailable" ? "Not available" : "Stopped";
+  return { status, note: t.can ? cap(t.can) : null };
 }
 
-function sshStatus(t: TargetSummary | undefined): string {
-  if (!t) return "Not connected";
-  if (t.state === "ready") return t.can ? `Connected: ${t.can}` : "Connected";
-  if (t.state === "connecting") return "Connecting…";
-  if (t.state === "lost") return "Lost: trying again";
-  if (t.state === "unavailable") return "Not available";
-  return "Not connected";
+/** A host's status from its state and what it can do (review #156, #190), and the note that says what to do next. */
+function sshStatus(t: TargetSummary | undefined, label: string): { status: string; note: string | null } {
+  if (!t) return { status: "Not connected", note: null };
+  if (t.state === "ready") {
+    if (t.can === STALLED_CAN) return { status: "Connected, but not answering", note: null };
+    if (t.can === NOTHING_CAN) return { status: "Connected, commands off", note: `Turn on commands for ${label} under Commands to use it.` };
+    return { status: t.can ? `Connected: ${t.can}` : "Connected", note: null };
+  }
+  if (t.state === "connecting") return { status: "Connecting…", note: null };
+  if (t.state === "lost") return { status: "Lost: trying again", note: null };
+  if (t.state === "unavailable") return { status: "Not available", note: null };
+  return { status: "Not connected", note: null };
 }
 
 /** The Computers section. */
@@ -103,9 +117,7 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
   let wsl: ComputersView["wsl"] = null;
   if (i.os === "win32") {
     const allowed = i.admin.features.wsl !== false;
-    const rows = !allowed ? [] : i.summaries.filter(t => t.kind === "wsl").map(t => ({
-      id: t.id, name: t.label, detail: null, status: wslStatus(t), note: t.can ? cap(t.can) : null, actions: [],
-    }));
+    const rows = !allowed ? [] : i.summaries.filter(t => t.kind === "wsl").map(t => ({ id: t.id, name: t.label, detail: null, ...wslStatus(t), actions: [] }));
     wsl = {
       rows,
       toggle: allowed ? { label: WSL_SWITCH, checked: i.settings.targets?.wsl?.on === true, disabled: false } : null,
@@ -119,12 +131,14 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
     const id = `ssh:${h.id}` as TargetId;
     const t = byId.get(id);
     const label = t?.label || h.id;
-    const connected = t?.state === "ready" || t?.state === "connecting";
     const actions: RowAction[] = [];
     if (sshAllowed) {
-      actions.push(connected
-        ? { label: "Disconnect", act: { kind: "disconnect", hostId: h.id }, ariaLabel: `Disconnect ${label}` }
-        : { label: "Connect", act: { kind: "connect", hostId: h.id }, ariaLabel: `Connect ${label}` });
+      // A connection still being made is cancelled (disconnect stops it), not ended.
+      actions.push(t?.state === "connecting"
+        ? { label: "Cancel", act: { kind: "disconnect", hostId: h.id }, ariaLabel: `Stop connecting to ${label}` }
+        : t?.state === "ready"
+          ? { label: "Disconnect", act: { kind: "disconnect", hostId: h.id }, ariaLabel: `Disconnect ${label}` }
+          : { label: "Connect", act: { kind: "connect", hostId: h.id }, ariaLabel: `Connect ${label}` });
     }
     actions.push({ label: "Forget", act: { kind: "forget", hostId: h.id }, ariaLabel: `Forget ${label}` });
     if (sshAllowed) {
@@ -135,7 +149,7 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
     }
     return {
       id, name: label, detail: `${h.resolved.user}@${h.resolved.hostname}`,
-      status: sshAllowed ? sshStatus(t) : "Not available", note: null, actions,
+      ...(sshAllowed ? sshStatus(t, label) : { status: "Not available", note: null }), actions,
     };
   });
   const managed = [...(!sshAllowed ? [SSH_MANAGED] : []), ...(sshAllowed && i.admin.sshHostsLimited ? [SSH_LIMITED] : [])];

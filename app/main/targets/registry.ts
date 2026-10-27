@@ -113,7 +113,8 @@ function canWords(apps: string | null, commands: CommandCapability["state"]): st
   const c = commandsWord(commands);
   if (apps && c) return `${apps} and ${c}`;
   if (apps) return apps;
-  return c ? `${c} only` : "nothing yet";
+  // "commands once you agree" is never "only": that says the rest is already there.
+  return c ? (commands === "on" ? `${c} only` : c) : "nothing yet";
 }
 
 /** The local entry. */
