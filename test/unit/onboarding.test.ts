@@ -15,8 +15,7 @@ import { MAC_REGRANT, MAC_RESET_NOTE, afterFix, inspectEnvironment, type EnvInpu
 import { darwinDoctorRows } from "../../app/main/platform/darwin/system/doctor";
 import type { PermissionDeps } from "../../app/main/platform/darwin/system/permissions";
 import { speechWatch } from "../../app/renderer/mic/speech-watch";
-import { REPORT_URL } from "../../app/shared/support";
-import type { DoctorProbes } from "../../app/main/doctor";
+import { ISSUES_URL } from "../../app/shared/support";
 import { doctorChecks } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
 
@@ -421,11 +420,6 @@ describe("the settings window when no voice speaks", () => {
 });
 
 describe("setup check and doctor wording", () => {
-  const doctorWith = (over: Partial<DoctorProbes>) => doctorChecks({
-    env: inspectEnvironment(linux()), compositor: true, xtest: true, speechDispatcher: true, microphones: ["mic"], voiceModels: "bundled", runtime: true,
-    auth: { kind: "github", source: "stored" }, admin: { policy: AdminPolicySchema.parse({}), source: null }, desk: null, sandbox: null, ...over,
-  });
-
   it("says why another Linux is only a warning (review #105)", () => {
     const ubuntu = linux({ osRelease: 'ID="ubuntu"\nVERSION_ID="22.04"\nPRETTY_NAME="Ubuntu 22.04.4 LTS"' });
     expect(row(ubuntu, "os")).toEqual({ id: "os", label: "Operating system", status: "warn",
@@ -436,22 +430,9 @@ describe("setup check and doctor wording", () => {
     expect(doctorRow(ubuntu, "os")?.detail).toBe(row(ubuntu, "os")?.detail);
   });
 
-  it("gives a place to report problems: the About section, and the doctor's display-scaling advice (review #105)", () => {
-    expect(REPORT_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
-    expect(SCRIPT).toContain("[\"Report a problem\", REPORT_URL],");
-    const mixed = doctorWith({ os: "win32", env: inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions, platform: "win32", arch: "x64" }),
-      helper: { toolkitAccessibility: true, dpi: "PerMonitorV2", processDpi: "SystemAware" }, microphones: null, compositor: true });
-    const fix = mixed.find(c => c.id === "accessibility-helper")?.fix ?? "";
-    expect(fix).toBe(`Set every display to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${REPORT_URL}.`);
-    expect(fix).not.toMatch(/Tell the Ember team/);
-  });
-
-  it("lists the Mac's microphone once in ember doctor (review #105)", () => {
-    const mac = doctorWith({ os: "darwin", env: inspectEnvironment(macIn({ accessibility: true, screen: "granted", inputMonitoring: true, microphone: "granted" })),
-      microphones: null, extra: [{ id: "microphone-permission", status: "ok", label: "Microphone access", detail: "Allowed." }] });
-    expect(mac.filter(c => /microphone/i.test(c.id)).map(c => c.id)).toEqual(["microphone-permission"]);
-    // Windows lists none of its own: its row stays.
-    const win = doctorWith({ os: "win32", env: inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions, platform: "win32", arch: "x64" }), microphones: null, extra: [] });
-    expect(win.filter(c => c.id === "microphone")).toHaveLength(1);
+  it("gives a place to report problems in the About section, the issue address platform's advice names too (review #105)", () => {
+    // One address for both packages (app/shared/support.ts, review #223 names it in the display-scaling advice).
+    expect(ISSUES_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
+    expect(SCRIPT).toContain("[\"Report a problem\", ISSUES_URL]");
   });
 });

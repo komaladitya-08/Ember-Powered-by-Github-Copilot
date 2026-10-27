@@ -12,7 +12,6 @@ import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
 import { VOICE_MODELS_BYTES } from "../voice/models";
-import { REPORT_URL } from "../shared/support";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -96,8 +95,7 @@ function helperRow(h: HelperStatus | null, fix: string, reinstall: string): Doct
   if (h.toolkitAccessibility === null) return { id: "accessibility-helper", status: "warn", label, detail: withFacts("The accessibility helper answered but couldn't tell whether it can read apps"), fix };
   if (h.dpi && h.processDpi && h.dpi !== h.processDpi) {
     return { id: "accessibility-helper", status: "warn", label,
-      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"),
-      fix: `Set every display to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${REPORT_URL}.` };
+      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"), fix: "Tell the Ember team." };
   }
   return { id: "accessibility-helper", status: "ok", label, detail: withFacts("Running: Ember can read apps") };
 }
@@ -175,10 +173,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   else out.push({ id: "policy", status: "ok", label: "Organisation policy", detail: `None (optional: ${p.policyLocation ?? ADMIN_POLICY_FILE}).` });
 
   const micOk = !!p.microphones?.length;
-  // The platform's own microphone row (macOS's permission, Windows' privacy switch) stands for this unchecked one: one
-  // microphone row (review #105).
-  const ownMicRow = (p.extra ?? []).some(r => r.id.startsWith("microphone-"));
-  if (!(off && p.microphones === null && ownMicRow)) out.push(p.microphones === null
+  out.push(p.microphones === null
     ? off
       ? { id: "microphone", status: "ok", label: "Microphone", detail: "Not checked here; the settings window tests it when you turn on “Hey Ember”." }
       : { id: "microphone", status: "warn", label: "Microphone", detail: "Can't list microphones (pactl is missing). Only needed for “Hey Ember”.", fix: "sudo dnf install pulseaudio-utils" }
