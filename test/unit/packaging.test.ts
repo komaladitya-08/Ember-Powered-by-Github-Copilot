@@ -199,6 +199,35 @@ describe("the RPM's licences", () => {
   });
 });
 
+// The RPM's scriptlet run with /bin/sh (which Windows doesn't have) against a stand-in /proc.
+describe.skipIf(process.platform === "win32")("the RPM's upgrade (review #203)", () => {
+  const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
+  const posttrans = /^%posttrans\n([\s\S]*?)\n(?=%files)/m.exec(spec)![1];
+  /** %posttrans with these processes running: each pid's /proc/<pid>/exe link says where its program is. */
+  const after = (exes: Record<string, string>) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-posttrans-"));
+    for (const [pid, exe] of Object.entries(exes)) {
+      fs.mkdirSync(path.join(d, "proc", pid), { recursive: true });
+      fs.symlinkSync(exe, path.join(d, "proc", pid, "exe"));
+    }
+    const script = posttrans.replace(/^\/usr\/bin\/gtk-update-icon-cache .*$/m, ":").split("/proc/").join(`${d}/proc/`);
+    return spawnSync("/bin/sh", ["-c", script], { encoding: "utf8" });
+  };
+  it("tells whoever upgrades that a running Ember must be started again to finish the update", () => {
+    // rpm replaced the file under the running Ember, so its link ends in " (deleted)".
+    for (const exe of ["/opt/ember/ember (deleted)", "/opt/ember/ember"]) {
+      const r = after({ 1: "/usr/lib/systemd/systemd", 4242: exe, 4243: exe });
+      expect(r.status, exe).toBe(0);
+      expect(r.stdout).toBe("Ember is still running the version before this update: quit Ember and start it again (each person using it on this computer) to finish the update.\n");
+    }
+  });
+  it("says nothing when no Ember from /opt/ember runs (an AppImage is another Ember)", () => {
+    const r = after({ 1: "/usr/lib/systemd/systemd", 77: "/tmp/.mount_EmberX/ember/ember", 78: "/opt/ember-old/ember" });
+    expect(r).toMatchObject({ status: 0, stdout: "" });
+    expect(after({})).toMatchObject({ status: 0, stdout: "" });
+  });
+});
+
 // The RPM's and the AppImage's sh launchers, run with /bin/sh (which Windows doesn't have).
 describe.skipIf(process.platform === "win32")("the launchers", () => {
   // Each runs with a stand-in Ember that prints its arguments, as root (uid 0) or a normal user.

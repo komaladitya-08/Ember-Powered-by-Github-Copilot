@@ -100,6 +100,16 @@ fi
 
 %posttrans
 /usr/bin/gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
+# Ember stays running from login, so an upgrade usually replaces its files under it: it keeps the old version in
+# memory but would open its windows from the new files. Whoever upgrades is told to have it started again.
+for exe in /proc/[0-9]*/exe; do
+  case "$(readlink "$exe" 2>/dev/null)" in
+    "/opt/ember/ember"|"/opt/ember/ember (deleted)")
+      echo "Ember is still running the version before this update: quit Ember and start it again (each person using it on this computer) to finish the update."
+      break ;;
+  esac
+done
+:
 
 %files -f files.list
 %dir /opt/ember
