@@ -13,7 +13,7 @@ import type { TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
-import type { AuditLog } from "../policy/audit";
+import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
@@ -119,7 +119,7 @@ export class TaskManager {
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
-    this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
+    this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
       ...(opts.targetId && opts.targetId !== "local" ? { target: opts.targetId } : {}) });
     this.pump();
     this.publish();
@@ -227,7 +227,8 @@ export class TaskManager {
     const max = this.d.maxRunning ?? 2;
     while (this.running.size < max && this.queue.length) {
       const { task, spec } = this.queue.shift()!;
-      const run = this.run(task, spec);
+      // run() ends every task on screen whatever happens (review #79); anything left over is logged, never unhandled.
+      const run = this.run(task, spec).catch(err => this.d.log.error("task.run_failed", { id: task.id, err }));
       this.runs.add(run);
       void run.finally(() => this.runs.delete(run));
     }
@@ -251,20 +252,27 @@ export class TaskManager {
       result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey: this.d.settingsKey }) };
     }
     this.running.delete(task.id);
-    if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-    // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
-    else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
-    const sessionId = worker.sessionId;
-    await worker.dispose();
-    if (sessionId) {
-      const timer = setTimeout(() => {
-        this.toDelete.delete(sessionId);
-        void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
-      }, this.d.keepMs ?? 10 * 60_000);
-      timer.unref?.();
-      this.toDelete.set(sessionId, timer);
+    try {
+      if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
+      // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
+      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
+    } finally {
+      // Whatever a listener did, the worker lets go and the queue moves on (review #79).
+      try {
+        const sessionId = worker.sessionId;
+        await worker.dispose();
+        if (sessionId) {
+          const timer = setTimeout(() => {
+            this.toDelete.delete(sessionId);
+            void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
+          }, this.d.keepMs ?? 10 * 60_000);
+          timer.unref?.();
+          this.toDelete.set(sessionId, timer);
+        }
+      } finally {
+        this.pump();
+      }
     }
-    this.pump();
   }
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
@@ -274,14 +282,29 @@ export class TaskManager {
     task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
-    this.d.audit?.write({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
-    this.d.onFinished?.(task);
     // Finished cards stay on screen briefly, then go; a failure stays longer so it can be read (and closed sooner).
     const timer = setTimeout(() => {
       if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
     }, status === "failed" ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
+    this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    this.d.onFinished?.(task);
+  }
+
+  /**
+   * A task's request or outcome in the audit log. It records what the queue did and never decides it: a write that
+   * fails (a full disk, an unwritable audit file) is logged and the queue goes on as if it had worked, so a task the
+   * user was told failed can't run later, and a finished one doesn't stay "Working…" (review #79). Steps in the
+   * user's apps fail closed in the worker instead.
+   */
+  private record(e: AuditEntry): void {
+    try {
+      this.d.audit?.write(e);
+    } catch (err) {
+      this.d.log.warn("task.audit_failed", { id: e.task, phase: e.phase, err });
+    }
   }
 
   private publish(): void {
