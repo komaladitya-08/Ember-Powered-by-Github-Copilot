@@ -1,18 +1,14 @@
 /**
- * The bubble's words for computers and commands (§8.2), as pure functions: the targets runtime and the agent put them
- * in BubbleState (adding the action ids they handle). Ember speaks in the first person here, as in every bubble.
- * Sentence case, British spelling; ui-copy.test.ts pins them. Renderer-safe and pure.
+ * The bubble's words for computers and commands (§8.2), as pure functions: the targets runtime and the presenter build
+ * every bubble of theirs from these (adding the action ids they handle), so ui-copy.test.ts pins what users see. Ember
+ * speaks in the first person here, as in every bubble. Sentence case, British spelling. Renderer-safe and pure.
+ * (A command's question and the commands card's question are the command flow's own, pinned by its tests.)
  */
 
 import type { TargetKind } from "../../shared/targets";
 
 /** A bubble's words: its title, its text, and its buttons (the first marked primary, when it is). */
 export interface BubbleWords { title: string; text: string; actions: { label: string; primary?: boolean }[] }
-
-/** How a place is said at the start of a sentence: "On build-01", "In Ubuntu (WSL)", "On this computer". */
-export function placeWords(kind: TargetKind, label: string): string {
-  return kind === "local" ? "On this computer" : kind === "wsl" ? `In ${label}` : `On ${label}`;
-}
 
 /** The user's own ssh was seen (R4). */
 export const sshSeen = (host: string): BubbleWords => ({
@@ -48,11 +44,27 @@ export function connecting(host: string, s: ConnectStep): BubbleWords {
   return { title: `Connecting to ${host}…`, text, actions: [{ label: "Cancel" }] };
 }
 
-/** Connected; a host with no desktop gets commands only. */
-export const connected = (host: string, headless: boolean): BubbleWords => ({
+/**
+ * Connected. A host with no desktop is worked on through commands only: said so only when they aren't off there, else
+ * what turns them on (a button, unless the organisation turned them off).
+ */
+export type ConnectedHow = "desktop" | "commands" | "commands-off" | "commands-off-by-admin";
+export const connected = (host: string, how: ConnectedHow): BubbleWords => ({
   title: `Ember is on ${host}`,
-  text: headless ? `${host} has no desktop, so I'll run commands there.` : "Ask away: I'll work there. Your voice and your sign-in stay on this computer.",
-  actions: [],
+  text: how === "desktop" ? "Ask away: I'll work there. Your voice and your sign-in stay on this computer."
+    : how === "commands" ? `${host} has no desktop, so I'll run commands there.`
+      : how === "commands-off-by-admin" ? `${host} has no desktop, and your organisation has turned off commands there, so I can't work on it.`
+        : `${host} has no desktop, and commands are off there. Turn them on so I can work there.`,
+  actions: how === "commands-off" ? [{ label: "Turn on commands", primary: true }] : [],
+});
+
+/** The commands of a host with no desktop, turned on from its connected bubble (or not, and why). */
+export const commandsOn = (host: string): BubbleWords => ({ title: `Commands are on for ${host}`, text: "Ask away: I'll run commands there.", actions: [] });
+export const commandsStayOff = (host: string, why: string): BubbleWords => ({ title: `Commands stay off on ${host}`, text: why, actions: [] });
+
+/** A connect failed (`why`: the connection's own words); Try again when another try may help. */
+export const cantConnect = (host: string, why: string, retry: boolean): BubbleWords => ({
+  title: `Can't connect to ${host}`, text: why, actions: retry ? [{ label: "Try again" }] : [],
 });
 
 /** The link has been silent for 5 s: its commands stop when the grace runs out (L10). */
@@ -65,10 +77,19 @@ export const stalled = (host: string, graceSeconds: number): BubbleWords => ({
 export const lost = (host: string): BubbleWords => ({
   title: `Lost ${host}`,
   text: "The connection dropped, so everything there stopped. I'll try to reconnect.",
-  actions: [{ label: "Reconnect" }, { label: "Stop trying" }],
+  actions: [{ label: "Reconnect", primary: true }, { label: "Stop trying" }],
 });
 
-export const signInAgain = (host: string): BubbleWords => ({ title: `${host} needs you to sign in again`, text: "Reconnect to sign in.", actions: [{ label: "Reconnect" }] });
+/** The connection came back by itself, from another computer under the same name: it isn't used (§7.4). */
+export const cameBackDifferent = (host: string): BubbleWords => ({
+  title: `Lost ${host}`, text: `${host} came back as a different computer, so Ember didn't use it. Reconnect to check it.`,
+  actions: [{ label: "Reconnect", primary: true }],
+});
+
+/** Reconnecting after a loss stopped (`why`: the connection's own words). */
+export const cantReconnect = (host: string, why: string): BubbleWords => ({ title: `Can't reconnect to ${host}`, text: why, actions: [{ label: "Reconnect", primary: true }] });
+
+export const signInAgain = (host: string): BubbleWords => ({ title: `${host} needs you to sign in again`, text: "Reconnect to sign in.", actions: [{ label: "Reconnect", primary: true }] });
 
 export const stoppedFromRemote = (host: string): BubbleWords => ({ title: `Stopped on ${host}`, text: `Someone at ${host} pressed Stop.`, actions: [] });
 
@@ -79,31 +100,20 @@ export const sessionInactive = (host: string): BubbleWords => ({ title: `Stopped
 
 export const backHere = (host: string): BubbleWords => ({ title: "Back on this computer", text: `${host} isn't connected any more, so I'll work here.`, actions: [] });
 
-/** A command question: the card itself shows in the command window (R7: never the command in the bubble). */
-export const commandQuestion = (kind: TargetKind, label: string): BubbleWords => ({
-  title: "May I run a command?",
-  text: `${placeWords(kind, label)}. It's shown in full in Ember's command window.`,
-  actions: [{ label: "Show the command" }, { label: "Not now" }],
-});
-
-/** An announcement (D4.4): `announce` is the flow's words ("Pushing to GitHub, as you asked"). */
-export const announcement = (announce: string, kind: TargetKind, label: string, seconds: number): BubbleWords => ({
-  title: announce,
-  text: `${placeWords(kind, label)}. It starts in ${Math.max(0, Math.round(seconds))} seconds.`,
+/**
+ * An announcement (D4.4): `announce` is the flow's words ("Pushing to GitHub, as you asked."), `where` the task's place
+ * as its badge says it ("on build-01"; absent: this computer).
+ */
+export const announcement = (announce: string, where: string | undefined, seconds: number): BubbleWords => ({
+  title: announce.trim().replace(/[.!]+$/, ""),
+  text: `${where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}` : "On this computer"}. It starts in ${Math.max(0, Math.round(seconds))} seconds.`,
   actions: [{ label: "Stop" }],
-});
-
-/** The commands card is waiting in the prompt window. */
-export const commandsCardQuestion = (kind: TargetKind, label: string): BubbleWords => ({
-  title: kind === "local" ? "Turn on commands on this computer?" : `Turn on commands on ${label}?`,
-  text: "Ember needs your OK first. Read what it means in the window that opened.",
-  actions: [{ label: "Read it" }, { label: "Not now" }],
 });
 
 export const wslFirstSeen = (): BubbleWords => ({
   title: "Ember can work in WSL",
   text: "It can read and use your Linux apps and run commands there. Turn it on in settings?",
-  actions: [{ label: "Open settings" }, { label: "Not now" }],
+  actions: [{ label: "Open settings", primary: true }, { label: "Not now" }],
 });
 
 /** What is spoken and put in a notification for a command question (R7: only this, never the command; §3.9.1). */

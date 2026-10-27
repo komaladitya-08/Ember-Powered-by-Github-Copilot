@@ -564,6 +564,15 @@ describe("the handle menu's computers (§8.1)", () => {
 describe("the bubble's words for computers and commands (§8.2)", () => {
   const all = (w: bubbleCopy.BubbleWords) => [keep(w.title), keep(w.text), ...w.actions.map(a => keep(a.label))].filter(Boolean);
 
+  it("holds only words the app shows: the targets runtime and the presenter build their bubbles from every one (review #24)", () => {
+    const [runtime, presenter] = ["main/targets/runtime.ts", "main/agent/presenter.ts"].map(f => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8"));
+    const imported = /import \{([^}]*)\} from "\.\.\/\.\.\/renderer\/overlay\/target-copy"/.exec(presenter)?.[1] ?? "";
+    expect(runtime).toContain('import * as words from "../../renderer/overlay/target-copy"');
+    for (const name of Object.keys(bubbleCopy)) {
+      expect(runtime.includes(`words.${name}(`) || (new RegExp(`\\b${name}\\b`).test(imported) && presenter.includes(`${name}(`)), name).toBe(true);
+    }
+  });
+
   it("offers to bring Ember along, and says how connecting goes", () => {
     expect(all(bubbleCopy.sshSeen("build-01"))).toEqual(["You're connected to build-01", "Bring Ember there too? It will open its own connection with your SSH settings.", "Bring Ember", "Not now", "Don't offer again"]);
     expect(bubbleCopy.sshSeen("build-01").actions[0].primary).toBe(true);
@@ -573,27 +582,31 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     expect(keep(bubbleCopy.connecting("build-01", { step: "downloading", doneMB: 12, totalMB: 29 }).text)).toBe("Downloading what Ember needs for build-01 (12 of 29 MB)…");
     expect(keep(bubbleCopy.connecting("build-01", { step: "copying", doneMB: 5.2, totalMB: 31 }).text)).toBe("Copying Ember's helper to build-01 (5 of 31 MB)…");
     expect(keep(bubbleCopy.connecting("build-01", { step: "starting" }).text)).toBe("Starting Ember on build-01…");
-    expect(all(bubbleCopy.connected("build-01", false))).toEqual(["Ember is on build-01", "Ask away: I'll work there. Your voice and your sign-in stay on this computer."]);
-    expect(keep(bubbleCopy.connected("build-01", true).text)).toBe("build-01 has no desktop, so I'll run commands there.");
+    expect(all(bubbleCopy.connected("build-01", "desktop"))).toEqual(["Ember is on build-01", "Ask away: I'll work there. Your voice and your sign-in stay on this computer."]);
+    expect(keep(bubbleCopy.connected("build-01", "commands").text)).toBe("build-01 has no desktop, so I'll run commands there.");
+    expect(all(bubbleCopy.connected("build-01", "commands-off"))).toEqual(["Ember is on build-01", "build-01 has no desktop, and commands are off there. Turn them on so I can work there.", "Turn on commands"]);
+    expect(keep(bubbleCopy.connected("build-01", "commands-off-by-admin").text)).toBe("build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.");
+    expect(all(bubbleCopy.commandsOn("build-01"))).toEqual(["Commands are on for build-01", "Ask away: I'll run commands there."]);
+    expect(all(bubbleCopy.commandsStayOff("build-01", "Not allowed."))).toEqual(["Commands stay off on build-01", "Not allowed."]);
+    expect(all(bubbleCopy.cantConnect("build-01", "Ember can't reach build-01.", true))).toEqual(["Can't connect to build-01", "Ember can't reach build-01.", "Try again"]);
+    expect(bubbleCopy.cantConnect("build-01", "x", false).actions).toEqual([]);
   });
 
   it("says when a connection stalls, drops or ends, and when Ember is back here", () => {
     expect(all(bubbleCopy.stalled("build-01", 20))).toEqual(["build-01 isn't answering", "Its running commands stop in 20 s unless the link comes back. Nothing new is sent meanwhile.", "Disconnect"]);
     expect(all(bubbleCopy.lost("build-01"))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
     expect(all(bubbleCopy.signInAgain("build-01"))).toEqual(["build-01 needs you to sign in again", "Reconnect to sign in.", "Reconnect"]);
+    expect(all(bubbleCopy.cameBackDifferent("build-01"))).toEqual(["Lost build-01", "build-01 came back as a different computer, so Ember didn't use it. Reconnect to check it.", "Reconnect"]);
+    expect(all(bubbleCopy.cantReconnect("build-02", "Ember can't reach build-02 (no route)."))).toEqual(["Can't reconnect to build-02", "Ember can't reach build-02 (no route).", "Reconnect"]);
     expect(all(bubbleCopy.stoppedFromRemote("build-01"))).toEqual(["Stopped on build-01", "Someone at build-01 pressed Stop."]);
     expect(all(bubbleCopy.screenLocked("build-01"))).toEqual(["Stopped on build-01", "build-01's screen locked, so I stopped working on its screen."]);
     expect(all(bubbleCopy.sessionInactive("build-01"))).toEqual(["Stopped on build-01", "build-01's desktop session isn't active any more, so I stopped working on its screen."]);
     expect(all(bubbleCopy.backHere("build-01"))).toEqual(["Back on this computer", "build-01 isn't connected any more, so I'll work here."]);
   });
 
-  it("points a command question at the command window, never showing the command, and counts an announcement down", () => {
-    expect(all(bubbleCopy.commandQuestion("ssh", "build-01"))).toEqual(["May I run a command?", "On build-01. It's shown in full in Ember's command window.", "Show the command", "Not now"]);
-    expect(bubbleCopy.commandQuestion("local", "This computer").text).toBe("On this computer. It's shown in full in Ember's command window.");
-    expect(bubbleCopy.commandQuestion("wsl", "Ubuntu (WSL)").text).toBe("In Ubuntu (WSL). It's shown in full in Ember's command window.");
-    expect(all(bubbleCopy.announcement("Pushing to GitHub, as you asked", "ssh", "build-01", 4))).toEqual(["Pushing to GitHub, as you asked", "On build-01. It starts in 4 seconds.", "Stop"]);
-    expect(all(bubbleCopy.commandsCardQuestion("ssh", "build-01"))).toEqual(["Turn on commands on build-01?", "Ember needs your OK first. Read what it means in the window that opened.", "Read it", "Not now"]);
-    expect(keep(bubbleCopy.commandsCardQuestion("local", "This computer").title)).toBe("Turn on commands on this computer?");
+  it("says a command never in the bubble, only where it runs, and counts an announcement down", () => {
+    expect(all(bubbleCopy.announcement("Pushing to GitHub, as you asked.", "on build-01", 4))).toEqual(["Pushing to GitHub, as you asked", "On build-01. It starts in 4 seconds.", "Stop"]);
+    expect(bubbleCopy.announcement("Pushing to GitHub, as you asked", undefined, 4).text).toBe("On this computer. It starts in 4 seconds.");
     expect(all(bubbleCopy.wslFirstSeen())).toEqual(["Ember can work in WSL", "It can read and use your Linux apps and run commands there. Turn it on in settings?", "Open settings", "Not now"]);
     expect(keep(bubbleCopy.commandSpoken("ssh", "build-01"))).toBe("Ember wants to run a command on build-01.");
     expect(bubbleCopy.commandSpoken("local", "This computer")).toBe("Ember wants to run a command on this computer.");

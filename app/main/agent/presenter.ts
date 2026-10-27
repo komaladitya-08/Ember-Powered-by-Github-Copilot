@@ -10,6 +10,7 @@ import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
+import { announcement } from "../../renderer/overlay/target-copy";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
@@ -718,11 +719,10 @@ export class Presenter {
     this.guiding = false;
     this.answering = false;
     this.silent = false;
-    const title = text.trim().replace(/[.!]+$/, "");
-    const where = this.where ? `${this.where.charAt(0).toUpperCase()}${this.where.slice(1)}` : "On this computer";
+    const w = announcement(text, this.where, ANNOUNCE_MS / 1000);
     this.apply({
       emotion: "focused", talking: false,
-      bubble: { visible: true, mood: "attention", title, thought: `${where}. It starts in ${Math.round(ANNOUNCE_MS / 1000)} seconds.`, step: null, streaming: false, actions: [{ id: stopId, label: "Stop" }] },
+      bubble: { visible: true, mood: "attention", title: w.title, thought: w.text, step: null, streaming: false, actions: [{ id: stopId, label: w.actions[0].label }] },
     }, "take");
     this.onAnnounce?.(text);
   }
