@@ -7,7 +7,6 @@
 import { openX11, type X11 } from "../../x11";
 import type { OwnWindowHandle, ScreenLike, WindowSystem } from "../types";
 import { primaryScaledUnion } from "../compose";
-import { WAYLAND_REASON, isWaylandSession } from "../../environment";
 
 /**
  * The X id of one of Ember's own windows (the native handle's first 32 bits on X11), or 0 when it can't be read
@@ -23,17 +22,14 @@ export function x11WindowId(win: OwnWindowHandle): number {
 
 /**
  * The X11 window system, or null without $DISPLAY (without calling `open`) or when the display can't be opened.
- * `screen` is Electron's (after app ready); `open` replaces openX11 in tests. In a Wayland session XWayland shows
- * Ember only X11 apps: their pixels (the rest of the screen is black or stale), their pointer and their keys, so the
- * user's taking over can't be seen. There its system-dialog check is always on, with WAYLAND_REASON for its words:
- * no screenshots and no borrowed mouse or keyboard (fail closed, review #240); reading apps goes on as before.
+ * `screen` is Electron's (after app ready); `open` replaces openX11 in tests.
  */
 export function openLinuxWindows(o: { screen: ScreenLike; env: NodeJS.ProcessEnv; open?: () => X11 | null }): WindowSystem | null {
   if (!o.env.DISPLAY) return null;
   const x = (o.open ?? (() => openX11()))();
   if (!x) return null;
   const scale = () => o.screen.getPrimaryDisplay().scaleFactor || 1;
-  const ws: WindowSystem = {
+  return {
     kind: "x11",
     compositorMayChange: true,
     hasCompositor: s => x.hasCompositor(s),
@@ -50,5 +46,4 @@ export function openLinuxWindows(o: { screen: ScreenLike; env: NodeJS.ProcessEnv
     toDipPoint: p => { const k = scale(); return { x: p.x / k, y: p.y / k }; },
     screenBounds: () => primaryScaledUnion(o.screen),
   };
-  return isWaylandSession(o.env) ? { ...ws, systemDialogOpen: () => true, systemDialogReason: () => WAYLAND_REASON } : ws;
 }

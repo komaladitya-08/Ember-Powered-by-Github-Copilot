@@ -102,20 +102,10 @@ describe("openLinuxWindows", () => {
 });
 
 describe("openLinuxWindows in a Wayland session (review #240)", () => {
-  const WAYLAND = "this is a Wayland session, so Ember can't take screenshots or use the mouse and keyboard here: log out and choose “GNOME on Xorg” on the login screen";
-
-  it("keeps Ember from screenshots and the mouse there, saying why: XWayland shows it only X11 apps", () => {
-    for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }]) {
-      const ws = openLinuxWindows({ screen, env, open: () => fakeX11().x })!;
-      expect(ws.systemDialogOpen?.()).toBe(true);
-      expect(ws.systemDialogReason?.()).toBe(WAYLAND);
-      // Reading through XWayland still works as it did (the accessibility tree is the session's own).
-      expect(ws.activeWindow()?.title).toBe("Notes");
-    }
-  });
-
-  it("changes nothing on Xorg, nor where the session type is unset without a Wayland display (Xvfb, xrdp, ssh -X)", () => {
-    for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, { DISPLAY: ":0", XDG_SESSION_TYPE: "x11", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":55" }]) {
+  // The SSH remote's desktop child opens X11 through it too, in the x11 session logind chose there: the Wayland rule is
+  // the Linux platform's own, for this computer (platform-linux.test.ts), and never reaches a remote.
+  it("adds no system-dialog check of its own: that is this computer's platform's", () => {
+    for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }]) {
       const ws = openLinuxWindows({ screen, env, open: () => fakeX11().x })!;
       expect("systemDialogOpen" in ws).toBe(false);
       expect("systemDialogReason" in ws).toBe(false);
