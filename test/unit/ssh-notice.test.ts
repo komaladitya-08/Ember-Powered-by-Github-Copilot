@@ -8,10 +8,12 @@ describe("sshDestination over OpenSSH's option grammar (§2.7)", () => {
     expect(ssh("build-01")).toEqual({ dest: "build-01" });
     expect(ssh("-v", "-p", "2222", "deploy@build-01")).toEqual({ dest: "deploy@build-01", port: 2222 });
     expect(ssh("-p2222", "-lroot", "build-01")).toEqual({ dest: "build-01", port: 2222, user: "root" });
-    expect(ssh("-4Cv", "-e", "none", "build-01", "uptime")).toEqual({ dest: "build-01" });
+    expect(ssh("-4Cv", "-e", "none", "build-01")).toEqual({ dest: "build-01" });
     expect(ssh("--", "build-01")).toEqual({ dest: "build-01" });
+    expect(ssh("build-01", "--")).toEqual({ dest: "build-01" });
     // ssh.c reads options after the destination too, until the command starts.
-    expect(ssh("build-01", "-p", "2200", "ls", "-p", "9")).toEqual({ dest: "build-01", port: 2200 });
+    expect(ssh("build-01", "-p", "2200")).toEqual({ dest: "build-01", port: 2200 });
+    expect(ssh("build-01", "-p", "2200", "-t", "ls", "-p", "9")).toEqual({ dest: "build-01", port: 2200 });
     expect(sshDestination(["/usr/bin/ssh", "build-01"])).toEqual({ dest: "build-01" });
     expect(sshDestination(["C:\\Windows\\System32\\OpenSSH\\ssh.exe", "build-01"])).toEqual({ dest: "build-01" });
   });
@@ -38,6 +40,33 @@ describe("sshDestination over OpenSSH's option grammar (§2.7)", () => {
     for (const a of [["-V"], ["-G", "build-01"], ["-O", "check", "build-01"], ["-Q", "cipher"], ["-N", "-L", "1:h:2", "build-01"], ["-W", "h:22", "bastion"], ["-fN", "build-01"]]) {
       expect(ssh(...a)).toBeNull();
     }
+  });
+
+  it("offers nothing for ssh that runs a command (git, scp, rsync), has no terminal, or reaches a git host (review #34)", () => {
+    for (const a of [
+      ["git@github.com", "git-upload-pack", "'o/r.git'"],
+      ["-x", "-oForwardAgent=no", "-oPermitLocalCommand=no", "-oClearAllForwardings=yes", "--", "build-01", "scp", "-t", "/tmp"],
+      ["-T", "-D", "1080", "devbox", "bash"],
+      ["-l", "deploy", "build-01", "rsync", "--server", "-vlogDtpre.iLsfxC", ".", "/srv"],
+      ["-4Cv", "-e", "none", "build-01", "uptime"],
+      ["build-01", "-p", "2200", "ls", "-p", "9"],
+      ["-T", "build-01"],
+      ["-T", "git@gitlab.com"],
+      ["git@github.com"],
+      ["-p", "443", "git@ssh.github.com"],
+      ["git@bitbucket.org"],
+      ["git@ssh.dev.azure.com"],
+    ]) {
+      expect(ssh(...a)).toBeNull();
+    }
+  });
+
+  it("still offers an interactive session that starts a program with a terminal (-t)", () => {
+    expect(ssh("-t", "build-01", "tmux", "attach")).toEqual({ dest: "build-01" });
+    expect(ssh("-tt", "deploy@build-01", "sudo", "-i")).toEqual({ dest: "deploy@build-01" });
+    expect(ssh("build-01", "-t", "top")).toEqual({ dest: "build-01" });
+    // A host that only looks like a git host is still a computer.
+    expect(ssh("deploy@github.com.example.org")).toEqual({ dest: "deploy@github.com.example.org" });
   });
 
   it("offers nothing when the route can't be reproduced safely or the host is unsafe", () => {
