@@ -24,6 +24,11 @@ see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing.
 
+To update, install the new RPM the same way, then quit Ember and start it again. To remove Ember, turn off **Start
+Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
+`sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
+settings, logs, audit log, speech models and sign-in) and `~/Ember` (what it made on its desk).
+
 ## Install on Windows
 
 1. Get `Ember-0.1.0-win-x64.zip`. `npm run package:win` builds it (docs/DEVELOPING.md §10.5), and a manual CI run with

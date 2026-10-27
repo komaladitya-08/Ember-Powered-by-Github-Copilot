@@ -84,3 +84,16 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
     expect(s31).toMatch(/When you ask for something in WSL while WSL is off for Ember/);
   });
 });
+
+describe("README.md", () => {
+  const readme = read("README.md");
+
+  it("says how to remove Ember on every OS, with the folders it leaves behind", () => {
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).toMatch(/To remove Ember, turn off \*\*Start Ember when I log in\*\*/);
+    expect(linux).toContain("sudo dnf remove ember");
+    // Where Ember keeps things on Linux (DEVELOPING.md §5): its data folder, and the desk's folder.
+    for (const p of ["~/.config/autostart/ember.desktop", "~/.config/ember", "~/Ember"]) expect(linux).toContain(p);
+    for (const os of ["Install on Windows", "Install on macOS"]) expect(flat(section(readme, os))).toMatch(/To remove Ember, turn off \*\*Start Ember when I log in\*\*/);
+  });
+});

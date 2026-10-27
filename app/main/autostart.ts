@@ -35,6 +35,9 @@ export function autostartEntry(command: string[]): string {
     "Name=Ember",
     "Comment=Your cursor companion, powered by GitHub Copilot",
     `Exec=${[...command, "--autostart"].map(execArg).join(" ")}`,
+    // The desktop skips the entry when this program is gone (dnf remove ember, a deleted AppImage): the file stays in
+    // ~/.config/autostart, which no package can reach.
+    `TryExec=${stringValue(command[0])}`,
     "Icon=ember",
     "Terminal=false",
     "NoDisplay=true",
@@ -42,6 +45,11 @@ export function autostartEntry(command: string[]): string {
     "X-GNOME-Autostart-Delay=3",
     "",
   ].join("\n");
+}
+
+/** A Desktop Entry string value (TryExec): no quoting or field codes, only the spec's escapes. */
+function stringValue(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/^ /, "\\s");
 }
 
 /** Makes the autostart entry match the setting; returns true if the file changed. */
