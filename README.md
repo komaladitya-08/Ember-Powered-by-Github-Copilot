@@ -11,7 +11,25 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+## Download
+
+Each release's files are on this repository's
+[Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases), with `SHA256SUMS`, the
+SHA-256 checksum of each file. Check what you downloaded before you open it:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing                  # Linux: "OK" after each file you have
+shasum -a 256 Ember-0.1.0-mac-arm64.dmg                   # macOS: the same as its line in SHA256SUMS
+(Get-FileHash .\Ember-0.1.0-win-x64.zip).Hash.ToLower()    # Windows PowerShell: the same as its line in SHA256SUMS
+```
+
+To build them yourself, see [docs/DEVELOPING.md](docs/DEVELOPING.md) (§7 Linux, §10.5 Windows, §11.5 macOS). A
+manual CI run with **packages** ticked also keeps them for 3 days as artifacts (`ember-packages`, `ember-windows`,
+`ember-macos`, `ember-macos-x64`).
+
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
+
+Download `ember-0.1.0-1.el8.x86_64.rpm` from the Releases page, then:
 
 ```bash
 sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm
@@ -19,8 +37,9 @@ ember doctor               # checks this computer and explains anything to fix
 ```
 
 For “Hey Ember” without downloading the speech models on each computer, also install
-`ember-voice-models-0.1.0-1.el8.noarch.rpm` when you build it (`node scripts/voice/prepare.mjs` before packaging;
-see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB) when voice is turned on.
+`ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
+before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (126 MB) when voice is
+turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -44,8 +63,7 @@ and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
 
-1. Get `Ember-0.1.0-win-x64.zip`. `npm run package:win` builds it (docs/DEVELOPING.md §10.5), and a manual CI run with
-   **packages** ticked keeps it for 3 days as the `ember-windows` artifact.
+1. Download `Ember-0.1.0-win-x64.zip` from the Releases page.
 2. Extract it into a folder of your own, for example `%LOCALAPPDATA%\Programs` (the zip holds an `Ember` folder), and
    start `Ember\Ember.exe`. The first start adds Ember to the Start menu.
 3. Ember isn't signed yet, so Windows checks with you first:
@@ -74,9 +92,7 @@ turn off **Start Ember when I log in** in its settings, quit it, and delete the 
 
 ## Install on macOS
 
-1. Get `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac). `npm run package:mac` builds them
-   (docs/DEVELOPING.md §11.5), and a manual CI run with **packages** ticked keeps them as the `ember-macos` artifact
-   (`ember-macos-x64` when **intel** is ticked too).
+1. Download `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac) from the Releases page.
 2. Open the dmg, drag Ember into **Applications** and open it from there. Run from the dmg or from Downloads, macOS
    starts Ember from a temporary copy, and its permissions and login item don't stick.
 3. Ember is signed ad hoc and not notarised, so macOS stops its first start:

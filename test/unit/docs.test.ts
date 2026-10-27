@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../../app/main/settings";
-import { layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
+import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
 /** Text with its line breaks and runs of spaces made single spaces, so a phrase can span wrapped lines. */
@@ -94,6 +94,17 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
 
 describe("README.md", () => {
   const readme = read("README.md");
+  const version = (JSON.parse(read("package.json")) as { version: string }).version;
+
+  it("says where to download every file a release has, and how to check it", () => {
+    const download = flat(section(readme, "Download"));
+    expect(download).toMatch(/\[Releases page\]\(https:\/\/github\.com\/[^/]+\/[^/]+\/releases\)/);
+    expect(download).toContain("SHA256SUMS");
+    // Each OS's own section names the files it installs from there.
+    const files = [`ember-${version}-1.el8.x86_64.rpm`, `Ember-${version}-x86_64.AppImage`, ...artifactNames(layoutFor("win32", "x64"), version), artifactNames(layoutFor("darwin", "arm64"), version)[1]];
+    for (const f of files) expect(readme).toContain(f);
+    for (const os of ["Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)", "Install on Windows", "Install on macOS"]) expect(flat(section(readme, os)), os).toMatch(/Releases page/);
+  });
 
   it("says how to remove Ember on every OS, with the folders it leaves behind", () => {
     const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
