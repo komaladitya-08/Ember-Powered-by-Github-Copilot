@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   LINUX_ENTRY_WORDS, NEVER_LOOK_DEFAULTS, auditCopySegments, auditDirLabel, chordSegments, describeEntry, emptyConversationText, entryWords, homePatches,
-  keyLabel, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
+  keyLabel, MANAGED_ROW, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
 } from "../../app/renderer/home/copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts";
@@ -379,4 +379,23 @@ describe("Computers and Commands before the targets runtime answers", () => {
     expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
   });
+});
+
+describe("a voice control the organisation manages", () => {
+  /** Element.closest for MANAGED_ROW's forms (a tag, or a class), on the page model: the element itself, then up. */
+  const closest = (root: El, id: string, selector: string): El | null => {
+    const trail = (n: El, up: El[]): El[] | null => {
+      if (n.attrs.id === id) return [...up, n];
+      for (const c of n.children) if (typeof c !== "string") { const t = trail(c, [...up, n]); if (t) return t; }
+      return null;
+    };
+    const is = (e: El, one: string) => (one.startsWith(".") ? (e.attrs.class ?? "").split(/\s+/).includes(one.slice(1)) : e.tag === one);
+    return [...trail(root, [])!].reverse().find(e => selector.split(",").some(one => is(e, one.trim()))) ?? null;
+  };
+
+  it.each([["wake", "Listen for “Hey Ember”"], ["speak", "Speak replies, questions and results out loud"]])(
+    "dims its whole row, its words included: %s (review #55)", (id, words) => {
+      const row = closest(page(), id, MANAGED_ROW);
+      expect(row && visible(row)).toContain(words);
+    });
 });

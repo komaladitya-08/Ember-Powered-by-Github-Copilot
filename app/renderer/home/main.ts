@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
   retryMessage, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -325,7 +325,7 @@ function renderAdmin(a: Status["admin"]): void {
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
-    (input.closest("label") ?? input).classList.toggle("locked", managed.has(key));
+    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
   privacyKey = "";

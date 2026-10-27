@@ -126,9 +126,10 @@ accessibility interface, so your mouse and keyboard stay yours. Before its first
 asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N**
 (not now), so you never need the mouse (the question shows the keys). **Always** is a click only: a global key could
 take an app's own shortcut and grant for good by accident. A hidden Ember shows itself to ask, and with
-**Speak replies** on (or a screen reader running) it says the question out loud. Buttons that send, delete, pay and
-the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and
-“Always” is never offered for them. Each task card has **Stop**; a failed card stays until you close it. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
+**Speak replies, questions and results out loud** set to **Always**, or a screen reader running and it set to **When a
+screen reader runs** (the default), it says the question out loud; **Never** keeps it quiet even for a screen reader.
+Buttons that send, delete, pay and the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button
+are always confirmed, and “Always” is never offered for them. Each task card has **Stop**; a failed card stays until you close it. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
 it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse,
 turn the wheel or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
