@@ -522,6 +522,8 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
+  /** "Commands are off" with Open settings was offered this run (review #40: once per run). */
+  private commandsHinted = false;
   /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
   private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
@@ -641,6 +643,25 @@ export class AgentHost {
     } finally {
       this.checkingSignIn = false;
     }
+  }
+
+  /**
+   * Commands are off only by the user's switch (caps.commandsOffered) and the user asked for a terminal or a command, or
+   * the answer said where to turn them on: once per run, after the answer, a bubble says commands are off, with Open
+   * settings (review #40). Never where the administrator turned commands off, or once they're on.
+   */
+  private hintCommands(): void {
+    if (this.commandsHinted) return;
+    let caps: PromptCaps | undefined;
+    try { caps = this.o.targets?.caps(); } catch { return; }
+    if (!caps?.commandsOffered || caps.commands) return;
+    this.commandsHinted = true;
+    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short).
+    const p = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, { shortcuts: this.sys.shortcuts });
+    p.outcome({
+      title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
+      emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
+    });
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -1038,7 +1059,8 @@ export class AgentHost {
           offerConnect: (name: string) => targets.offerConnect(name, this.userWordsOf(this.turn).words ?? ""),
         } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
-        onAnswer: this.o.onAnswer,
+        // An answer that tells the user where to turn commands on gets the button for it (once per run).
+        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn (?:commands|them) on/i.test(text)) this.hintCommands(); },
         onTurnEnd: this.o.onTurnEnd,
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
@@ -1477,6 +1499,9 @@ export class AgentHost {
     const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}) };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
+    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once).
+    const terminal = terminalRequest(this.sys.os, this.wslOn());
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\bcommands?\b/i.test(text)) this.hintCommands();
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {

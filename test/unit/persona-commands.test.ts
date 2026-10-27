@@ -129,3 +129,26 @@ describe("a worker with commands, on a computer without a desktop, or on another
     expect(workerIdentity(PLATFORM_WORDS.win32, wsl)).toBe(workerIdentity(PLATFORM_WORDS.win32));
   });
 });
+
+describe("commands off but the user could turn them on (review #40)", () => {
+  const OFFERED = { commands: false, targets: false, commandsOffered: true };
+
+  it("the conversation is told to point to Ember's settings (Commands), not that Ember doesn't act in terminals", () => {
+    for (const os of OSES) {
+      const w = PLATFORM_WORDS[os];
+      const rules = toolRules(w, OFFERED);
+      expect(rules, os).toMatch(/turn commands on in Ember's settings \(Commands\)/);
+      expect(rules, os).not.toMatch(/it doesn't act in terminals/);
+      expect(rules, os).toMatch(/Never quietly swap it for another app or route/);
+      const id = identity(w, OFFERED);
+      expect(id, os).not.toContain(TODAY_PARAGRAPH);
+      expect(id, os).toMatch(/Commands are off/);
+    }
+  });
+
+  it("with commands on, or nothing to offer, the prompts are as before", () => {
+    expect(toolRules(PLATFORM_WORDS.linux, { commands: true, targets: false, commandsOffered: true })).toBe(toolRules(PLATFORM_WORDS.linux, { commands: true, targets: false }));
+    expect(toolRules(PLATFORM_WORDS.linux, { commands: false, targets: false, commandsOffered: false })).toBe(TOOL_RULES);
+    expect(sha(emberSystemMessage(PLATFORM_WORDS.linux, NO_CAPS))).toBe(FROZEN_HASHES.ember);
+  });
+});

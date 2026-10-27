@@ -486,3 +486,55 @@ describe("the terminal the user asks for (§3.15)", () => {
     await wslOn.host.stop();
   });
 });
+
+describe("commands off, but the user could turn them on (review #40)", () => {
+  const offered = () => ({ commands: false, targets: false, commandsOffered: true });
+  function capture() {
+    let bubble: any = null;
+    return { setState: (p: any) => { if (p.bubble) bubble = p.bubble; }, bubble: () => bubble };
+  }
+
+  it("after the answer, a bubble says commands are off with Open settings, once per run", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = fakeTargets({ caps: offered });
+      const screen = capture();
+      const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState });
+      await host.ask("run df -h in the terminal");
+      session.emit("assistant.message", { content: "Commands are off. You can turn commands on in Ember's settings (Commands), or I can guide you." });
+      session.emit("session.idle", {});
+      // The answer is read first; the hint follows it.
+      expect(screen.bubble().title).not.toBe("Commands are off");
+      let seen: any = null;
+      for (let i = 0; i < 30 && !seen; i++) { await vi.advanceTimersByTimeAsync(1000); if (screen.bubble()?.title === "Commands are off" && screen.bubble()?.visible) seen = screen.bubble(); }
+      expect(seen).toMatchObject({ visible: true, title: "Commands are off", actions: [{ id: "ui:settings", label: "Open settings" }] });
+      await vi.advanceTimersByTimeAsync(31_000);
+      // Asked again: answered, but not offered again.
+      await host.ask("open a terminal and run ls");
+      session.emit("assistant.message", { content: "Commands are off: turn commands on in Ember's settings (Commands)." });
+      session.emit("session.idle", {});
+      for (let i = 0; i < 31; i++) { await vi.advanceTimersByTimeAsync(1000); expect(screen.bubble()?.title).not.toBe("Commands are off"); }
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("nothing is offered where the administrator turned commands off, or they are on", async () => {
+    vi.useFakeTimers();
+    try {
+      for (const caps of [() => ({ commands: false, targets: false }), () => ({ commands: true, targets: false })]) {
+        const { t } = fakeTargets({ caps });
+        const screen = capture();
+        const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState });
+        await host.ask("run df -h in the terminal");
+        session.emit("assistant.message", { content: "Okay. Turn commands on in Ember's settings (Commands)." });
+        session.emit("session.idle", {});
+        for (let i = 0; i < 31; i++) { await vi.advanceTimersByTimeAsync(1000); expect(screen.bubble()?.title).not.toBe("Commands are off"); }
+        await host.stop();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

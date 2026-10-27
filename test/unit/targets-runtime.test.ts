@@ -290,7 +290,8 @@ describe("with nothing set up", () => {
     expect(got.hands.binding).toEqual({ id: "local", kind: "local", label: "This computer", screenOs: "linux", shellOs: "linux", desktop: "screen" });
     expect(got.hands.leaseKey("1:x")).toBe("1:x");
     expect(r.t.agent.active).toBe("local");
-    expect(r.t.agent.caps()).toEqual({ commands: false, targets: false });
+    // Commands are off only by the user's switch: the conversation may say where to turn them on (review #40).
+    expect(r.t.agent.caps()).toEqual({ commands: false, targets: false, commandsOffered: true });
     expect(r.t.agent.activeLine()).toBe("");
     expect(r.t.menuItems()).toEqual([]);
     expect(r.t.summaries()).toEqual([{ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps", active: true }]);

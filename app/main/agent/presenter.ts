@@ -670,14 +670,14 @@ export class Presenter {
   }
 
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
-  outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"] }): void {
+  outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"]; actions?: BubbleState["actions"] }): void {
     if (this.silent) return;
     this.cancelHide();
     this.answering = false;
     this.guiding = false;
     this.apply({
       emotion: o.emotion, talking: false, gesture: o.gesture,
-      bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: [] },
+      bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: o.actions ?? [] },
     }, "reply");
     this.hideLater(Math.min(30000, (o.mood === "error" ? 12000 : 6000) + o.text.length * 50));
   }
