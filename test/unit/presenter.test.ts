@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, handStep, plainText, questionAloud, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, handStep, plainText, problemTitle, questionAloud, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -793,5 +793,31 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     const { p, last } = setup();
     p.notice({ title: "Copilot isn't running", text: "Ember's Copilot runtime stopped while connecting. Press Check again.", actions: [{ id: "ui:settings", label: "Open settings" }] });
     expect(last().bubble!.thought).toBe("Ember's Copilot runtime stopped while connecting. Open settings to try again.");
+  });
+});
+
+describe("the bubble's header says something the chip doesn't (review #21)", () => {
+  it("points with words of its own, not the guiding chip's 'Showing you'", () => {
+    expect(stepOf("point_at")).toBe("Pointing at it");
+  });
+
+  it("titles a problem with what failed, not 'Something went wrong'", () => {
+    const titleOf = (data: Record<string, unknown>, provider = false) => {
+      const states: Partial<EmberState>[] = [];
+      const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, provider);
+      p.userPrompt("hi");
+      p.event({ type: "session.error", data });
+      return states.at(-1)!.bubble!.title;
+    };
+    expect(titleOf({ message: "401", errorType: "authentication" })).toBe("Copilot didn't accept the sign-in");
+    expect(titleOf({ message: "fetch failed ECONNRESET" })).toBe("I can't reach Copilot");
+    expect(titleOf({ message: "429", statusCode: 429 })).toBe("Usage limit reached");
+    expect(titleOf({ message: "model_not_supported" })).toBe("That model isn't available");
+    expect(titleOf({ message: "content_filter" })).toBe("Request blocked");
+    expect(titleOf({ message: "503 Service Unavailable" })).toBe("Copilot had a problem");
+    expect(titleOf({ message: "something odd" }, true)).toBe("The model service had a problem");
+    expect(problemTitle("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.")).toBe("Copilot stopped");
+    expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.")).toBe("Copilot isn't answering");
+    expect(problemTitle("Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.")).toBe("Copilot can't work right now");
   });
 });

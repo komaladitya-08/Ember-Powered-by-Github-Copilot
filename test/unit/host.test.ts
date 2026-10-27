@@ -1014,7 +1014,7 @@ describe("review round 4", () => {
     await asked;
     await vi.advanceTimersByTimeAsync(100);
     expect(shown(patches.slice(n))).toEqual([]);
-    expect(shown(patches).filter(s => s.startsWith("Something went wrong"))).toEqual(["Something went wrong: Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment."]);
+    expect(shown(patches).filter(s => s.startsWith("Copilot stopped"))).toEqual(["Copilot stopped: Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment."]);
     await host.stop();
   });
 });

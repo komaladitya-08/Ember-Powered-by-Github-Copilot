@@ -98,6 +98,26 @@ export function settingsHelps(said: string): boolean {
 }
 
 /**
+ * A problem's title: what failed, in a few words ("I can't reach Copilot"), from its sentence (friendlyError's, or one
+ * of Ember's own); "Copilot had a problem" when it says nothing more particular. `provider`: the organisation's own
+ * model service is configured (a problem on its side is said as its).
+ */
+export function problemTitle(said: string, provider = false): string {
+  const service = provider ? "The model service" : "Copilot";
+  if (/content filter/i.test(said)) return "Request blocked";
+  if (/didn't accept the sign-in/i.test(said)) return "Copilot didn't accept the sign-in";
+  if (/\brefused\b/i.test(said)) return `${service} refused it`;
+  if (/usage limit/i.test(said)) return "Usage limit reached";
+  if (/model I'm set to use/i.test(said)) return "That model isn't available";
+  if (/too much for me/i.test(said)) return "Too much at once";
+  if (/can't reach|\bnetwork\b/i.test(said)) return provider ? "I can't reach the model service" : "I can't reach Copilot";
+  if (/isn't answering|didn't answer|not answering/i.test(said)) return "Copilot isn't answering";
+  if (/stopped unexpectedly/i.test(said)) return "Copilot stopped";
+  if (/file watchers/i.test(said)) return "Copilot can't work right now";
+  return `${service} had a problem`;
+}
+
+/**
  * A sentence written for the settings window, as the bubble says it: the bubble has no "Check again" button (its "Open
  * settings" leads there) and runs no commands, so those are said as where to go instead.
  */
@@ -337,7 +357,8 @@ export const TOOL_STEPS: Record<string, string> = {
   describe_screen: "Looking at your screen",
   start_task: "Starting a task",
   perceive_window: "Reading the window",
-  point_at: "Showing you",
+  // Not "Showing you": that is the guiding chip's word beside it.
+  point_at: "Pointing at it",
   wait_for_click: "Waiting for your click",
   list_windows: "Looking at your windows",
   switch_window: "Switching windows",
@@ -644,7 +665,7 @@ export class Presenter {
     const said = forBubble(message);
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
-      bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
+      bubble: { visible: true, mood: "error", title: problemTitle(said), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
     }, "take");
     this.onProblem?.(message);
     this.hideLater(12000);
@@ -926,7 +947,7 @@ export class Presenter {
         // "Open settings" where settings can fix it (a sign-in, the model, access), never for the network or a hiccup.
         this.apply({
           emotion: "sad", talking: false,
-          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
+          bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
         });
         this.onProblem?.(said);
         this.hideLater(12000);

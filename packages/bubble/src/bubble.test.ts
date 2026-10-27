@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, thoughtScrolls, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -11,6 +11,17 @@ describe("chipLabel", () => {
   it("calls an error a Problem", () => {
     expect(chipLabel("error", false)).toBe("Problem");
     expect(Object.values(BUBBLE_LABEL)).not.toContain("Stuck");
+  });
+});
+
+describe("titleRepeatsChip (review #21)", () => {
+  it("says a title is the chip's own word again, so the header doesn't read 'Thinking  Thinking…'", () => {
+    expect(titleRepeatsChip("Thinking…", chipLabel("thinking", true))).toBe(true);
+    expect(titleRepeatsChip("Listening…", chipLabel("listening", true))).toBe(true);
+    expect(titleRepeatsChip("showing you", chipLabel("guiding", false))).toBe(true);
+    expect(titleRepeatsChip("Checking the clock", chipLabel("thinking", true))).toBe(false);
+    expect(titleRepeatsChip("Ember", chipLabel("idle", false))).toBe(false);
+    expect(titleRepeatsChip("", chipLabel("idle", false))).toBe(false);
   });
 });
 

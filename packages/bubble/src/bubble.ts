@@ -34,6 +34,12 @@ export function chipLabel(mood: BubbleMood, streaming: boolean): string {
   return mood === "idle" && streaming ? "Answering" : BUBBLE_LABEL[mood];
 }
 
+/** The title only says the chip's word again ("Thinking…" beside "Thinking"): the bubble shows it once, in the chip. */
+export function titleRepeatsChip(title: string, chip: string): boolean {
+  const norm = (s: string) => s.trim().replace(/[.…]+$/, "").toLowerCase();
+  return !!norm(title) && norm(title) === norm(chip);
+}
+
 export interface BubbleView {
   visible: boolean;
   mood: BubbleMood;
@@ -253,6 +259,8 @@ export const BUBBLE_CSS = `
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A title that only repeats the chip's word ("Thinking…" beside Thinking) isn't shown twice. */
+.eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
   margin: 0; max-height: calc(20px * 6); overflow: hidden;
@@ -467,6 +475,7 @@ export class ReasoningBubble {
   setTitle(text: string): void {
     if (this.title.textContent === text) return;
     this.title.textContent = text;
+    this.updateTitle();
     this.changed();
   }
 
@@ -629,6 +638,14 @@ export class ReasoningBubble {
   private updateChip(): void {
     const label = chipLabel(this.mood, this.streaming);
     if (this.chipText.textContent !== label) this.chipText.textContent = label;
+    this.updateTitle();
+  }
+
+  /** Hides a title that only says the chip's word again (the chip shows unless it is a finished answer's "Ready"). */
+  private updateTitle(): void {
+    const chipShown = !(this.mood === "idle" && !this.streaming);
+    const hide = chipShown && titleRepeatsChip(this.title.textContent ?? "", chipLabel(this.mood, this.streaming));
+    if (this.title.hidden !== hide) this.title.hidden = hide;
   }
 
   /** One layout read: size, overflow, and where the clickable parts are. */
