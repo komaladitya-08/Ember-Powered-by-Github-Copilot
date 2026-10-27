@@ -808,8 +808,9 @@ function start(): void {
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
     void killSwitch.pull(source);
-    // Failure cards stay until closed, and only a click closes them: Stop everything clears them too
-    // (the keyboard's way, and the screen reader's).
+    // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
+    // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
+    // screen reader's).
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
     const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
     statusBy.listen = statusBy.mic = null;
