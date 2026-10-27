@@ -2069,6 +2069,16 @@
    "rules": [
     "yarn.publish"
    ]
+  },
+  {
+   "cmd": "cmake -E rm -rf /mnt/c/Users/ana/Documents",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

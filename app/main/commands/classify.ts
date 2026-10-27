@@ -665,6 +665,9 @@ const CMDLETS: Record<string, Handler> = {};
 const CMD_BUILTINS: Record<string, Handler> = {};
 const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handler): void => { for (const n of names) table[n] = fn; };
 
+/** A file name that is the program's stdin (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`). */
+const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
+
 /** A URL (`https://…`, `file:///…`, `s3://…`, `git@host:…`). */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const SCP_LIKE = /^(?:[A-Za-z0-9._%+-]+@)?[A-Za-z0-9.-]+:(?![\\/]{2})/;
@@ -703,6 +706,7 @@ export function writesUnnamedFiles(key: string, args: readonly Arg[]): boolean {
     return undefined;
   };
   switch (key) {
+    case "cmake": return vs[0] === "-E" && vs[1] === "tar" && writesUnnamedFiles("tar", args.slice(2));
     case "tar": case "bsdtar": case "gtar":
       return opt(/^--(extract|get)\b|^-[A-Za-z]*x/) || /^[A-Za-wyz]*x[A-Za-z]*$/.test(vs[0] ?? "");
     case "unzip": return !opt(/^-[A-Za-z]*[lvtZp]/);
@@ -761,6 +765,7 @@ export function unnamedWriteFolders(key: string, args: readonly Arg[], sc: Pick<
     return out;
   };
   switch (key) {
+    case "cmake": return vs[0] === "-E" && vs[1] === "tar" ? unnamedWriteFolders("tar", args.slice(2), sc) : null;
     case "tar": case "bsdtar": case "gtar": {
       const dirs: string[] = [];
       for (let k = 0; k < vs.length; k++) {
@@ -3964,9 +3969,11 @@ reg(NATIVE, ["msbuild"], h => {
 });
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
-  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl" };
+  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
   const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
+  if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the
   // makefile's recipes (`make SHELL='rm -rf ~' build`, `make CC='sh -c …'`).
   if (/make$/.test(h.key)) {
@@ -3991,6 +3998,88 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   }
   for (const a of h.args) if (a.v !== null && /^-?-?D?[A-Za-z0-9_.]*=/.test(a.v) && commandLineSecret(a.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
+
+/** ninja's tools (review #167): clean and cleandead delete build output, browse opens a browser on a web server, msvc runs the command after `--`. */
+function ninjaTool(h: H, tool: string | null): void {
+  if (tool === null) { h.e.unclear("unclear.ninja-tool", "Ember can't tell which ninja tool this runs."); return; }
+  if (tool === "clean" || tool === "cleandead") { h.e.add("destroy", "script.destroy", `Runs ninja -t ${tool}, which deletes build output.`); return; }
+  if (tool === "browse") { h.e.add("escape", "escape.launcher", SAYS.opensProgram); return; }
+  if (tool === "msvc") { const dd = h.args.findIndex(a => a.v === "--"); h.e.payload(dd >= 0 ? h.args.slice(dd + 1) : [], h.sc, "ninja -t msvc"); }
+}
+reg(NATIVE, ["bazel", "bazelisk"], h => {
+  // `bazel clean` deletes build output; `bazel run <target>` runs a target, judged by its name like a make target (review #167).
+  const verb = firstOperand(h.args);
+  if (verb.v === "clean") { h.e.add("destroy", "script.destroy", "Runs bazel clean, which deletes build output."); return; }
+  if (verb.v === "run") {
+    const target = h.args.slice(verb.at + 1).find(a => !isOption(a));
+    if (target?.v === null) h.e.unclear("unclear.target", "It runs a target Ember can't name.");
+    else if (target) nameCheck(h, target.v, `${h.prog} run ${target.v}`);
+    return;
+  }
+  generic(h);
+});
+
+// cmake (review #167): `cmake -E <command>` is a portable shell. Its rm, copy, rename, tar, touch and link commands are
+// judged like rm, cp, mv, tar, touch and ln; time, env and chdir run the command after them. `cmake -P <script>` runs a
+// CMake script (its execute_process runs programs), judged like an interpreter's script.
+reg(NATIVE, ["cmake"], h => {
+  const e = h.args.findIndex(a => a.v === "-E");
+  if (e >= 0) { cmakeCommand(h, h.args[e + 1], h.args.slice(e + 2)); return; }
+  const p = h.args.findIndex(a => a.v === "-P");
+  if (p >= 0) {
+    const script = h.args[p + 1];
+    if (!script) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
+    if (script.v !== null && STDIN_NAME.test(script.v)) { intoInterpreter(h); return; }
+    runScript(h, script);
+    return;
+  }
+  generic(h);
+});
+/** One `cmake -E` command, judged as the program it stands for. */
+function cmakeCommand(h: H, cmd: Arg | undefined, rest: Arg[]): void {
+  if (!cmd) return;
+  const as = (key: string, args: Arg[]): void => NATIVE[key]({ ...h, key, args });
+  switch (cmd.v) {
+    case "rm": as("rm", rest); return;
+    case "remove": as("rm", rest.filter(a => a.v !== "-f")); return;
+    case "remove_directory": as("rm", [lit("-r"), ...rest]); return;
+    case "rename": as("mv", rest); return;
+    case "copy": case "copy_if_different": case "copy_if_newer": as("cp", rest); return;
+    case "copy_directory": case "copy_directory_if_different": case "copy_directory_if_newer": {
+      // Each folder's contents go into the last one, over what is there.
+      const dest = rest[rest.length - 1];
+      objsOf(h, rest.slice(0, -1), "readTree");
+      if (!dest) return;
+      const obj = h.e.usePath(dest, "write", h.sc);
+      if (obj.abs === null) { h.e.add("destroy", "posix.cp", "Writes to a file Ember can't name.", { objects: [obj] }); return; }
+      h.e.judgeInside(obj.abs, "write", h.sc, obj.text);
+      h.e.add("destroy", "posix.cp", `Replaces files in ${obj.text} if they exist.`, { objects: [obj], ifExists: obj.abs });
+      return;
+    }
+    case "touch": case "touch_nocreate": as("touch", rest); return;
+    case "make_directory": as("mkdir", rest); return;
+    // An existing link or file of that name is replaced.
+    case "create_symlink": case "create_hardlink": as("ln", [lit("-f"), ...rest]); return;
+    case "tar": as("tar", rest); return;
+    case "time": h.e.payload(rest, h.sc, "cmake -E time"); return;
+    case "env": as("env", rest); return;
+    case "chdir": {
+      const dir = rest[0];
+      if (!dir) return;
+      const cwd = h.e.usePath(dir, "cd", h.sc).abs;
+      h.e.payload(rest.slice(1), child(h.sc, { cwd }), "cmake -E chdir");
+      return;
+    }
+    case "environment": h.e.add("secret", "secret.env", SAYS.env); return;
+    case "cat": h.e.readArgs(rest, h.sc, { unresolvedUnclear: true }); return;
+    case "echo": case "echo_append": textProgram({ ...h, args: rest }); return;
+    case "compare_files": case "md5sum": case "sha1sum": case "sha224sum": case "sha256sum": case "sha384sum": case "sha512sum":
+      h.e.readArgs(rest, h.sc, { unresolvedUnclear: true }); return;
+    case "capabilities": case "true": case "false": case "sleep": return;
+    case "delete_regv": case "write_regv": h.e.add("system", "system.registry", "Changes the Windows registry."); return;
+    default: h.e.unclear("unclear.cmake-command", "Ember can't tell which cmake command this runs.");
+  }
+}
 
 // System package managers (§3.5.5).
 reg(NATIVE, Object.keys(SYSTEM_PACKAGERS), h => {

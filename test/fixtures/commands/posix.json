@@ -10683,6 +10683,221 @@
    "verdict": "run",
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "cmake -E rm -rf ~/Documents",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cmake -E rm -rf /",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake -E remove_directory /home/ana",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake -E remove -f old.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cmake -E time rm -rf ~",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake -E copy x ~/.bashrc",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "cmake -E copy_directory assets ~/.config/autostart",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "cmake -E tar xf evil.tar --directory=/home/ana/.config/autostart",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "cmake -E create_symlink /etc/passwd ~/.bashrc",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "cmake -E rename a.txt ~/.profile",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "cmake -E chdir build rm -rf out",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cmake -E env FOO=1 rm -rf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cmake -E environment",
+   "verdict": "ask",
+   "rules": [
+    "secret.env"
+   ]
+  },
+  {
+   "cmd": "cmake -E copy x ~/.config/ember/settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake -E frobnicate x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmake-command"
+   ]
+  },
+  {
+   "cmd": "cmake -E tar xf release.tar && sh install.sh",
+   "verdict": "ask",
+   "rules": [
+    "unclear.script-written"
+   ]
+  },
+  {
+   "cmd": "cmake -E touch build/stamp",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E make_directory build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E copy_if_different src/a.h build/a.h",
+   "verdict": "run",
+   "missing": [
+    "build/a.h"
+   ]
+  },
+  {
+   "cmd": "cmake -E env CC=clang make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E echo hello",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E sha256sum release.tgz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E capabilities",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E tar czf out.tgz src",
+   "verdict": "run",
+   "missing": [
+    "out.tgz"
+   ]
+  },
+  {
+   "cmd": "cmake -P build.cmake",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -DX=1 -P scripts/deploy.cmake",
+   "verdict": "ask",
+   "rules": [
+    "script.publish"
+   ]
+  },
+  {
+   "cmd": "cmake -E copy x ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "ninja -t clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "ninja -C build -t cleandead",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "ninja -t browse",
+   "verdict": "ask",
+   "rules": [
+    "escape.launcher"
+   ]
+  },
+  {
+   "cmd": "ninja -t msvc -- rm -rf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "ninja -t targets all",
+   "verdict": "run"
+  },
+  {
+   "cmd": "bazel clean --expunge",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "bazel build //...",
+   "verdict": "run"
+  },
+  {
+   "cmd": "bazel run //tools:deploy",
+   "verdict": "ask",
+   "rules": [
+    "script.publish"
+   ]
+  },
+  {
+   "cmd": "bazelisk test //src/...",
+   "verdict": "run"
   }
  ]
 }

@@ -5191,6 +5191,27 @@
   {
    "cmd": "yarn npm info react",
    "verdict": "run"
+  },
+  {
+   "cmd": "cmake -E rm -rf C:\\Users\\ana\\Documents",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cmake -E copy x C:\\Users\\ana\\AppData\\Roaming\\Microsoft\\Windows\\Start` Menu\\Programs\\Startup\\x.bat",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "cmake -E remove_directory C:\\Users\\ana\\AppData\\Local\\ember",
+   "verdict": "refuse"
   }
  ]
 }
