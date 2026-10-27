@@ -317,9 +317,10 @@ export const BUBBLE_CSS = `
 .eb-step { display: flex; gap: 7px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(255, 255, 255, 0.09)); font: 400 13px/18px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
-/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
-.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
-.ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
+/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
+   is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."). */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-step-arrow { display: none; }
 .eb-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 /* Capsules (the floating layer's large controls, 28 px). The prominent one is the app's accent; the others carry
