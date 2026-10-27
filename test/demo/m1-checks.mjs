@@ -36,7 +36,7 @@ try {
     execFileSync("import", ["-window", "root", path.join(out, "fallback-handle-card.png")], { env: process.env });
     // M4: questions can be answered on the card too.
     await app.evaluate(() => {
-      globalThis.__answer = globalThis.__ember.confirmer().ask({ title: "May I?", prompt: "Click “Save” push button in Text Editor?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+      globalThis.__answer = globalThis.__ember.confirmer().ask({ title: "May I?", prompt: "Click the “Save” button in Text Editor?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
     });
     await sleep(800);
     const btn = await app.evaluate(async ({ BrowserWindow }) => {

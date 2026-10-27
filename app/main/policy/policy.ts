@@ -17,6 +17,7 @@
 import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
+import { roleWord } from "../../shared/role-words";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
 import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
@@ -1448,8 +1449,9 @@ const UNNAMED: Record<string, string> = { text: "text area", "document text": "d
 
 function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.linux): string {
   const cell = !!r.element && isSheetCell(r.element);
-  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on ${quote(r.place.name, 40)} ${r.place.role}`;
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
+  // Controls are called by the plain words the activity list uses ("the “Save” button", not "“Save” push button").
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${roleWord(r.place.role)}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `the ${quote(r.element.name)} ${roleWord(r.element.role)}` : `the ${UNNAMED[r.element.role] ?? roleWord(r.element.role)}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";

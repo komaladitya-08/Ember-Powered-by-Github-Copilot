@@ -5,6 +5,8 @@
  */
 
 import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
+// Plain words for an unnamed control's role: the same table the May I? question uses.
+import { aRoleWord } from "../../shared/role-words";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 
@@ -99,13 +101,6 @@ const KIND: Record<string, string> = {
   click: "Click", toggle: "Switch", text: "Type into", select: "Choose in", value: "Set", setting: "Change setting", open_app: "Open",
   cursor_click: "Click (your mouse)", cursor_text: "Type (your keyboard)", keys: "Press keys", scroll: "Scroll", point: "Point at", read: "Read",
 };
-/** Plain words for an unnamed control's role. */
-const ROLE: Record<string, string> = {
-  "push button": "a button", button: "a button", "toggle button": "a switch", switch: "a switch", "check box": "a checkbox",
-  "radio button": "an option", text: "a text field", entry: "a text field", "password text": "a password field",
-  "combo box": "a drop-down", "menu item": "a menu item", "list item": "a list item", link: "a link", slider: "a slider",
-  "spin button": "a number field", "page tab": "a tab",
-};
 
 export interface EntryView { tag: string; cls: string; what: string; why?: string }
 
@@ -178,7 +173,7 @@ export function forUser(why: string | undefined): string | undefined {
 /** One line of "What Ember did", or null for entries that the next line already says. */
 export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_WORDS): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
-  const control = e.element ? (e.element.name ? `“${e.element.name}”` : ROLE[e.element.role] ?? e.element.role) : e.value ? `“${e.value}”` : "";
+  const control = e.element ? (e.element.name ? `“${e.element.name}”` : aRoleWord(e.element.role)) : e.value ? `“${e.value}”` : "";
   const where = e.app ? `in ${friendlyApp(e.app)}` : "";
   const target = [control, where].filter(Boolean).join(" ");
   const chosen = typeof e.value === "string" && e.value ? e.value : "";
