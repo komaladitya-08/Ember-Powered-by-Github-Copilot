@@ -434,6 +434,7 @@ export function createConnections(o: {
       rename: (a, b) => fsp.rename(a, b),
       rm: (p, ro) => fsp.rm(p, ro),
       mkdir: (p, mo) => fsp.mkdir(p, mo),
+      readdir: p => fsp.readdir(p),
     };
   }
 
