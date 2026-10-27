@@ -1415,7 +1415,7 @@ const KEY_LABELS: Record<string, string> = {
   percent: "%", question: "?", exclam: "!", less: "<", greater: ">",
 };
 const keyWord = (p: string, labels: Readonly<Record<string, string>>): string => labels[p] ?? (p.length === 1 ? p.toUpperCase() : p.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
-/** KEY_LABELS with `kc`'s names for the modifiers ("Cmd", "Option" on macOS; Linux's are KEY_LABELS' own). */
+/** KEY_LABELS with `kc`'s names for the modifiers ("Command", "Option" on macOS; Linux's are KEY_LABELS' own). */
 const keyLabelsMade = new WeakMap<KeyConventions, Readonly<Record<string, string>>>();
 const keyLabelsOf = (kc: KeyConventions) => {
   let labels = keyLabelsMade.get(kc);
@@ -1424,7 +1424,7 @@ const keyLabelsOf = (kc: KeyConventions) => {
 };
 /**
  * A key combination for the user to read, built from its canonical form (never the model's own spelling), with `kc`'s
- * names for the modifiers ("Ctrl+S"; "Cmd+S" on macOS); null if Ember can't press it.
+ * names for the modifiers ("Ctrl+S"; "Command+S" on macOS); null if Ember can't press it.
  */
 export function keyLabel(keys: string, kc: KeyConventions = KEYS.linux): string | null {
   const k = canonicalKeys(keys, kc);
@@ -1481,7 +1481,7 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
 type Risk = { reason: string; about?: string; note?: string };
 /** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
 const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
-/** Select All as the user's keyboard names it ("Ctrl+A"; "Cmd+A" on macOS), for the reasons and notes below. */
+/** Select All as the user's keyboard names it ("Ctrl+A"; "Command+A" on macOS), for the reasons and notes below. */
 const selectAllLabel = (kc: KeyConventions) => keyLabel(kc.edit.selectAll, kc) ?? kc.edit.selectAll;
 const SELECTS_MORE = (kc: KeyConventions): Risk => ({ reason: `everything is selected (${selectAllLabel(kc)}), so this replaces it all`, note: "Everything there is selected, so this replaces it all." });
 const KEYS_SELECT_MORE = (kc: KeyConventions): Risk => ({

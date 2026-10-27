@@ -139,7 +139,7 @@ const KEY_NAMES_BY_OS: Readonly<Record<OS, Readonly<Record<string, string>>>> = 
   win32: keyNames(KEYS.win32),
   darwin: keyNames(KEYS.darwin),
 };
-/** A key as people write it on `os`: "ctrl+s" → "Ctrl+S", "Return" → "Enter" ("cmd+s" → "Cmd+S" on a Mac). */
+/** A key as people write it on `os`: "ctrl+s" → "Ctrl+S", "Return" → "Enter" ("cmd+s" → "Command+S" on a Mac). */
 export function keyLabel(key: string, os: OS = "linux"): string {
   const names = KEY_NAMES_BY_OS[os];
   return key.split("+").map(part => {
