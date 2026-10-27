@@ -317,14 +317,36 @@ describe("the page's buttons (pure press logic)", () => {
   });
 
   it("judges every word in view only with nothing left below, and never for a block it can't measure", () => {
-    expect(readThrough({ scrollTop: 0, scrollHeight: 198, clientHeight: 198 })).toBe(true);
-    expect(readThrough({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 })).toBe(false);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 198, clientHeight: 198 }, true)).toBe(true);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 }, true)).toBe(false);
     expect(moreBelow({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 })).toBe(true);
-    expect(readThrough({ scrollTop: 183.5, scrollHeight: 382, clientHeight: 198 })).toBe(true);
-    expect(readThrough({ scrollTop: 100, scrollHeight: 382, clientHeight: 198 })).toBe(false);
-    expect(readThrough({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 })).toBe(false);
-    expect(readThrough({ scrollTop: Number.NaN, scrollHeight: 10, clientHeight: 10 })).toBe(false);
+    expect(readThrough({ scrollTop: 183.5, scrollHeight: 382, clientHeight: 198 }, true)).toBe(true);
+    expect(readThrough({ scrollTop: 100, scrollHeight: 382, clientHeight: 198 }, true)).toBe(false);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, true)).toBe(false);
+    expect(readThrough({ scrollTop: Number.NaN, scrollHeight: 10, clientHeight: 10 }, true)).toBe(false);
     expect(CONSENT_READ_HINT).toBe("Scroll down to read it all first.");
+  });
+
+  it("counts nothing as read while the page's typeface is still loading: the words may yet run on below (review #182)", () => {
+    // A new window's first card is laid out in a fallback face until Ember's own has loaded. Measured in one at
+    // 1280x600: 466 px of words fit the 466 px block, and 478 px ran on below it once Ember's face had loaded.
+    const fits = { scrollTop: 0, scrollHeight: 466, clientHeight: 466 };
+    expect(readThrough(fits, false)).toBe(false);
+    expect(readThrough(fits, true)).toBe(true);
+    const atEnd = { scrollTop: 12, scrollHeight: 478, clientHeight: 466 };
+    expect(readThrough(atEnd, false)).toBe(false);
+    expect(readThrough(atEnd, true)).toBe(true);
+    // The fade is the layout's own: on while words are below what shows, whatever the typeface.
+    expect(moreBelow(fits)).toBe(false);
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 478, clientHeight: 466 })).toBe(true);
+    // The page says whether its fonts have loaded, read after the words are laid out (that starts the load), and judges
+    // again when they finish (read from the page's source).
+    const src = readFileSync(new URL("../../app/renderer/prompt/main.ts", import.meta.url), "utf8");
+    const judge = /function judge\(\): void \{[\s\S]*?\n\}/.exec(src)?.[0] ?? "";
+    expect(judge).toMatch(/const m = \{[^\n]*scrollHeight[^\n]*\};\n\s*const fontsLoaded = document\.fonts\.status === "loaded";/);
+    expect(judge).toMatch(/if \(readThrough\(m, fontsLoaded\)\) seen = true;/);
+    expect(src).toMatch(/document\.fonts\.addEventListener\("loadingdone", judge\);/);
+    expect(src).toMatch(/document\.fonts\.addEventListener\("loadingerror", judge\);/);
   });
 
   it("keeps the window's title \"Ember\" and builds nothing from HTML (read from the page's source)", () => {
@@ -461,9 +483,11 @@ describe("the keyboard (review #235)", () => {
 
 describe("the page's hint line", () => {
   it("says to read a consent card through first, and on a card that takes typing that the keyboard is elsewhere (review #182, #235)", () => {
-    const base = { consent: false, seen: false, field: false, focused: true, sinceShownMs: 5000 };
+    const base = { consent: false, seen: false, more: true, field: false, focused: true, sinceShownMs: 5000 };
     expect(promptHint({ ...base, consent: true })).toBe(CONSENT_READ_HINT);
-    expect(promptHint({ ...base, consent: true, seen: true })).toBe("");
+    expect(promptHint({ ...base, consent: true, seen: true, more: false })).toBe("");
+    // Not read yet with nothing below: only while the typeface loads (the yes stays off, and nothing says to scroll).
+    expect(promptHint({ ...base, consent: true, more: false })).toBe("");
     expect(promptHint({ ...base, field: true, focused: false })).toBe(KEYBOARD_ELSEWHERE_HINT);
     expect(KEYBOARD_ELSEWHERE_HINT).toBe("Click here before you type: the keyboard is still in another app.");
     // Not while the window is still being given the keyboard, not once it has it, and not on a card nothing is typed into.

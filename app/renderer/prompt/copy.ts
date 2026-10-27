@@ -43,23 +43,33 @@ const SLACK = 1;
 /** A card's words as the page measures them (the scrolling block's own numbers, CSS pixels). */
 export interface WordsMetrics { scrollTop: number; scrollHeight: number; clientHeight: number }
 
-/** Every word is in view now: nothing to scroll, or scrolled to the end. An empty or unmeasurable block isn't. */
-export function readThrough(m: WordsMetrics): boolean {
+/** Every word is in view in the layout now: nothing to scroll, or scrolled to the end. An empty or unmeasurable block isn't. */
+function allInView(m: WordsMetrics): boolean {
   const ok = [m.scrollTop, m.scrollHeight, m.clientHeight].every(Number.isFinite) && m.clientHeight > 0;
   return ok && m.scrollTop + m.clientHeight >= m.scrollHeight - SLACK;
 }
 
+/**
+ * Every word is in view in the card's final layout. While the page's typeface is still loading (a new window's first
+ * card) the words are laid out in a fallback face, and a card that fits in it can run on below once Ember's own face
+ * arrives (review #182), so no fit counts until `fontsLoaded`.
+ */
+export const readThrough = (m: WordsMetrics, fontsLoaded: boolean): boolean => fontsLoaded && allInView(m);
+
 /** The words run on below what shows (the page fades their foot and says to scroll). */
-export const moreBelow = (m: WordsMetrics): boolean => !readThrough(m);
+export const moreBelow = (m: WordsMetrics): boolean => !allInView(m);
 
 /** On a card that takes typing whose window hasn't the keyboard (review #235): typing would go to another app. */
 export const KEYBOARD_ELSEWHERE_HINT = "Click here before you type: the keyboard is still in another app.";
 /** How long a card's window may take to get the keyboard before the page says it hasn't. */
 export const PROMPT_FOCUS_GRACE_MS = 600;
 
-/** The line above a card's buttons, or "" for none: a consent card not yet read through, or typing that would go astray. */
-export function promptHint(o: { consent: boolean; seen: boolean; field: boolean; focused: boolean; sinceShownMs: number }): string {
-  if (o.consent && !o.seen) return CONSENT_READ_HINT;
+/**
+ * The line above a card's buttons, or "" for none: a consent card not yet read through whose words run on below
+ * (`more`), or typing that would go astray.
+ */
+export function promptHint(o: { consent: boolean; seen: boolean; more: boolean; field: boolean; focused: boolean; sinceShownMs: number }): string {
+  if (o.consent && !o.seen && o.more) return CONSENT_READ_HINT;
   if (o.field && !o.focused && o.sinceShownMs >= PROMPT_FOCUS_GRACE_MS) return KEYBOARD_ELSEWHERE_HINT;
   return "";
 }

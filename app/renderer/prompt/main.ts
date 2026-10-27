@@ -101,19 +101,26 @@ function paintArmed(): void {
 function judge(): void {
   if (!card) return;
   const m = { scrollTop: words.scrollTop, scrollHeight: words.scrollHeight, clientHeight: words.clientHeight };
-  if (readThrough(m)) seen = true;
-  words.classList.toggle("more", moreBelow(m));
+  const fontsLoaded = document.fonts.status === "loaded";
+  // Read after the words are laid out (in a new window that starts the typeface loading): a fit in a fallback face
+  // isn't the card's final layout, so it doesn't count (review #182). The page judges again once the face is in.
+  if (readThrough(m, fontsLoaded)) seen = true;
+  const more = moreBelow(m);
+  words.classList.toggle("more", more);
   // Words that scroll can be scrolled from the keyboard too (Tab to them, then the arrow keys or Page Down).
   if (m.scrollHeight > m.clientHeight + 1) words.tabIndex = 0;
   else words.removeAttribute("tabindex");
-  const h = promptHint({ consent: isConsent(card), seen, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
+  const h = promptHint({ consent: isConsent(card), seen, more, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
   if (hint.textContent !== h) hint.textContent = h;
   hint.hidden = !h;
   paintArmed();
 }
-// Measured again when the words scroll, when the window is fitted to the card, and when their lines rewrap; the
-// keyboard's line again when the window gets or loses it.
+// Measured again when the words scroll, when the window is fitted to the card, when their lines rewrap and when a
+// typeface finishes loading (or fails to: the fallback is then final); the keyboard's line again when the window gets
+// or loses it.
 words.addEventListener("scroll", judge, { passive: true });
+document.fonts.addEventListener("loadingdone", judge);
+document.fonts.addEventListener("loadingerror", judge);
 window.addEventListener("resize", judge);
 window.addEventListener("focus", judge);
 window.addEventListener("blur", judge);
