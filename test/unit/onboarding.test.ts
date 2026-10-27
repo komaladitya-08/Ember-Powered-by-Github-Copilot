@@ -16,7 +16,7 @@ import { darwinDoctorRows } from "../../app/main/platform/darwin/system/doctor";
 import type { PermissionDeps } from "../../app/main/platform/darwin/system/permissions";
 import { speechWatch } from "../../app/renderer/mic/speech-watch";
 import { ISSUES_URL } from "../../app/shared/support";
-import { doctorChecks, type DoctorProbes } from "../../app/main/doctor";
+import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { NEVER_LOOK_DEFAULTS } from "../../app/shared/never-look";
 
@@ -277,8 +277,12 @@ describe("Linux's accessibility switch after Turn on", () => {
 
   it("gives the same advice in the setup check and in ember doctor (review #98)", () => {
     const off = linux({ accessibility: { enabled: false, pyatspi: true } });
-    expect(row(off, "accessibility")?.detail).toBe("Accessibility is off, so Ember can only see screenshots. Turn it on, then restart apps that were already open (or log out and in).");
-    expect(doctorRow(off, "accessibility")?.fix).toBe("gsettings set org.gnome.desktop.interface toolkit-accessibility true, then restart apps that were already open (or log out and in)");
+    expect(row(off, "accessibility")?.detail).toBe("Accessibility is off, so Ember can only see screenshots. Turn it on, then restart apps that were already open, or log out and in.");
+    expect(doctorRow(off, "accessibility")?.fix).toBe("gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then restart apps that were already open, or log out and in)");
+    // The command stands apart on the report's fix line, so copying it copies a command gsettings takes.
+    const line = formatDoctor([doctorRow(off, "accessibility")!]).split("\n").find(l => l.includes("→"))!;
+    expect(line).toMatch(/→ gsettings set org\.gnome\.desktop\.interface toolkit-accessibility true {3}\(then restart apps that were already open, or log out and in\)$/);
+    expect(line.split("→ ")[1].split(/ {2,}/)[0]).toBe("gsettings set org.gnome.desktop.interface toolkit-accessibility true");
   });
 });
 

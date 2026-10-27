@@ -145,7 +145,7 @@ function speechCheck(i: EnvInputs, os: keyof typeof NO_VOICE): Check[] {
 }
 
 /** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
-export const LINUX_A11Y_RESTART = "restart apps that were already open (or log out and in)";
+export const LINUX_A11Y_RESTART = "restart apps that were already open, or log out and in";
 
 /**
  * The macOS fixes "Reset Ember's permissions" undoes: it takes Ember off the Accessibility, Screen Recording and Input

@@ -6,8 +6,9 @@
  * never by the wording of a check (Linux's fixes are dnf, gsettings and GNOME's).
  */
 
-import { LINUX_A11Y_RESTART, type EnvReport } from "./environment";
+import type { EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
+import { LINUX_A11Y_RESTART } from "./environment";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
@@ -135,7 +136,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const a11y = linux ? env("accessibility") : undefined;
   if (a11y) {
     const pyFix = /bindings are missing/i.test(a11y.detail) ? "sudo dnf install python3-pyatspi python3-gobject" : undefined;
-    const onFix = /is off/i.test(a11y.detail) ? `gsettings set org.gnome.desktop.interface toolkit-accessibility true, then ${LINUX_A11Y_RESTART}` : undefined;
+    const onFix = /is off/i.test(a11y.detail) ? `gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then ${LINUX_A11Y_RESTART})` : undefined;
     // The fix line carries the command, so the detail doesn't repeat it.
     const detail = a11y.detail.replace(/:\s*sudo dnf install.*$/, ".");
     out.push({ id: "accessibility", status: a11y.status, label: "Reading apps", detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
