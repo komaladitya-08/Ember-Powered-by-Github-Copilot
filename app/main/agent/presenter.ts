@@ -9,12 +9,13 @@ import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { plainMarkdown } from "@ember/bubble";
-import { ANNOUNCE_MS } from "../commands/flow";
-import { announcement } from "../../renderer/overlay/target-copy";
+import { announcement, firstPerson } from "../../renderer/overlay/target-copy";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
 const KEEP_CHARS = 600;
+/** The user's request as "Thinking…" quotes it: its first 120 characters, marked when cut short. */
+const quoted = (text: string) => `“${text.length > 120 ? `${text.slice(0, 119).trimEnd()}…` : text}”`;
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
@@ -118,11 +119,12 @@ export function problemTitle(said: string, provider = false): string {
 }
 
 /**
- * A sentence written for the settings window, as the bubble says it: the bubble has no "Check again" button (its "Open
- * settings" leads there) and runs no commands, so those are said as where to go instead.
+ * A sentence written for the settings window, as the bubble says it: in Ember's own voice (firstPerson), and since the
+ * bubble has no "Check again" button (its "Open settings" leads there) and runs no commands, those are said as where to
+ * go instead.
  */
 export function forBubble(text: string): string {
-  return text
+  return firstPerson(text)
     .replace(/,? or run “gh auth login” in a terminal and press Check again\./g, " in settings.")
     .replace(/\bPress Check again to retry\b/g, "Open settings to try again")
     .replace(/\bPress Check again\./g, "Open settings to try again.");
@@ -757,7 +759,7 @@ export class Presenter {
     this.asked = text;
     this.apply({
       emotion: "thinking", talking: false,
-      bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${text.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
+      bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: quoted(text), step: null, streaming: true, actions: [] },
     }, "take");
   }
 
@@ -806,7 +808,7 @@ export class Presenter {
     this.guiding = false;
     this.answering = false;
     this.silent = false;
-    const w = announcement(text, this.where, ANNOUNCE_MS / 1000);
+    const w = announcement(text, this.where);
     this.apply({
       emotion: "focused", talking: false,
       bubble: { visible: true, mood: "attention", title: w.title, thought: w.text, step: null, streaming: false, actions: [{ id: stopId, label: w.actions[0].label }] },
@@ -857,7 +859,7 @@ export class Presenter {
             this.cancelHide();
             this.apply({
               emotion: "thinking", talking: false,
-              bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: `“${asked.slice(0, 120)}”`, step: null, streaming: true, actions: [] },
+              bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: quoted(asked), step: null, streaming: true, actions: [] },
             });
           }
           const said = typeof d.content === "string" ? d.content.trimEnd() : null;

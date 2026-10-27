@@ -786,13 +786,13 @@ describe("a problem's buttons follow what failed (review #18)", () => {
   });
 
   it("never names a settings-window button in the bubble: Open settings is the button there", () => {
-    expect(forBubble("Ember's Copilot runtime stopped while connecting. Press Check again.")).toBe("Ember's Copilot runtime stopped while connecting. Open settings to try again.");
+    expect(forBubble("Ember's Copilot runtime stopped while connecting. Press Check again.")).toBe("My Copilot runtime stopped while connecting. Open settings to try again.");
     expect(forBubble("Copilot keeps stopping. Press Check again to retry, or restart Ember.")).toBe("Copilot keeps stopping. Open settings to try again, or restart Ember.");
     expect(forBubble("It may have expired. Sign in again, or run “gh auth login” in a terminal and press Check again."))
       .toBe("It may have expired. Sign in again in settings.");
     const { p, last } = setup();
     p.notice({ title: "Copilot isn't running", text: "Ember's Copilot runtime stopped while connecting. Press Check again.", actions: [{ id: "ui:settings", label: "Open settings" }] });
-    expect(last().bubble!.thought).toBe("Ember's Copilot runtime stopped while connecting. Open settings to try again.");
+    expect(last().bubble!.thought).toBe("My Copilot runtime stopped while connecting. Open settings to try again.");
   });
 });
 
@@ -819,5 +819,23 @@ describe("the bubble's header says something the chip doesn't (review #21)", () 
     expect(problemTitle("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.")).toBe("Copilot stopped");
     expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.")).toBe("Copilot isn't answering");
     expect(problemTitle("Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.")).toBe("Copilot can't work right now");
+  });
+});
+
+describe("the bubble speaks in one voice, Ember's own (review #22)", () => {
+  it("says what the settings window says of Ember in the first person, and runs no commands in the bubble", () => {
+    expect(forBubble("Ember can't reach GitHub right now. It will try again when the network is back.")).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    expect(forBubble("Ember's Copilot runtime is missing or can't start. Reinstall Ember (sudo dnf reinstall ember).")).toBe("My Copilot runtime is missing or can't start. Reinstall Ember.");
+    expect(forBubble("Copilot didn't accept the GitHub sign-in Ember found (from the GitHub CLI).")).toBe("Copilot didn't accept the GitHub sign-in I found (from the GitHub CLI).");
+    // Ember named inside a sentence (a setting, an app's permission) stays as it is.
+    expect(forBubble("If it's on your local network, allow Ember in System Settings.")).toBe("If it's on your local network, allow Ember in System Settings.");
+  });
+
+  it("marks a request it quotes cut short", () => {
+    const { p, last } = setup();
+    p.userPrompt("x".repeat(130));
+    expect(last().bubble?.thought).toBe(`“${"x".repeat(119)}…”`);
+    p.userPrompt("what's the time?");
+    expect(last().bubble?.thought).toBe("“what's the time?”");
   });
 });

@@ -47,10 +47,12 @@ They share one emotion rig, so switching never changes behaviour.
 
 - **Reasoning bubble** (`packages/bubble`): dark glass, always dark so it reads over any
   app; state (a dot and a word), one-line intent, streaming thought (last three lines),
-  current step with its reason, and buttons when Ember needs a decision. While Ember
-  thinks or listens, an ember-coloured glow breathes round its edge. The state says
+  current step with its reason, and buttons when Ember needs a decision. Ember speaks in
+  the first person there ("I'm on build-01"), and a number's unit never wraps away from it
+  ("15 seconds" in a sentence). While Ember thinks or listens, an ember-coloured glow
+  breathes round its edge. The state says
   "Needs you" only when a button needs a decision (a question, an offer, signing in);
-  a notice that asks nothing (a stop on another computer, "Ember is on build-01") has no
+  a notice that asks nothing (a stop on another computer, "I'm on build-01") has no
   state word, connecting to a computer is "Working", and a failure is "Problem".
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).

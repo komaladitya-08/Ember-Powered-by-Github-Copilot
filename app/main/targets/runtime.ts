@@ -186,7 +186,7 @@ type Said = NoticeBubble & { emotion: Emotion };
 function say(w: words.BubbleWords, ids: readonly string[], look: Look, step?: string): Said {
   const { mood, emotion } = LOOK[look];
   return {
-    title: w.title, thought: plainMarkdown(w.text), mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })),
+    title: w.title, thought: words.firstPerson(plainMarkdown(w.text)), mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })),
     ...(step ? { step } : {}),
   };
 }

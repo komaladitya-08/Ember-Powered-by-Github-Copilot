@@ -658,7 +658,7 @@ describe("SSH targets", () => {
     expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Your organisation has turned off commands on computers reached over SSH." });
     // The connected bubble says so, with nothing to turn on.
     expect(off.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
-      title: "Ember is on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
+      title: "I'm on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
     }) });
   });
 
@@ -666,7 +666,7 @@ describe("SSH targets", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "none", why: "build-01 has no desktop.", notice: "off" } }) });
     await connected(r);
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
-      title: "Ember is on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
+      title: "I'm on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
       actions: [{ id: "conn:build-01:commands", label: "Turn on commands", primary: true }],
     }) });
     expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
@@ -710,7 +710,7 @@ describe("SSH targets", () => {
     const l = await connected(r);
     l.move("stalled");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
-      title: "build-01 isn't answering", thought: "Its running commands stop in 15 s unless the link comes back. Nothing new is sent meanwhile.",
+      title: "build-01 isn't answering", thought: "Commands running there stop in 15 seconds unless it answers again. I'll send nothing new until then.",
       actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }],
     }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
@@ -741,7 +741,7 @@ describe("SSH targets", () => {
     const l2 = await connected(r, "build-02");
     l2.move("lost");
     failed("build-02", "network", false, "Ember can't reach build-02 (no route).");
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "Ember can't reach build-02 (no route).", mood: "error" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "I can't reach build-02 (no route).", mood: "error" }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-02")!.state).toBe("off");
     // A connect's own failure (not a reconnect's) is connect()'s to say.
     failed("build-02", "auth", false);
@@ -825,7 +825,7 @@ describe("SSH targets", () => {
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("connecting");
     expect(r.t.menuItems()[0].submenu!.map(i => i.label)).toEqual(["This computer", "build-01 (connecting…)"]);
     for (const p of r.progress) p("build-01", { step: "downloading", done: 12_000_000, total: 29_000_000 });
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connecting to build-01…", thought: "Downloading what Ember needs for build-01 (12 of 29 MB)…" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connecting to build-01…", thought: "Downloading what I need for build-01 (12 of 29 MB)…" }) });
     expect(r.t.busy().connections).toBe(1);
     expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
     release();
@@ -892,12 +892,12 @@ describe("WSL targets", () => {
     // Offered once discovery has shown a distro to work in.
     await flush();
     expect(r.wsl.facts).toHaveBeenCalled();
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
     r.showState.mockClear();
     const again = r.t.agent.bind({ userWords: "open gedit in WSL" });
     expect(again.ok && again.binding.id).toBe("local");
     await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
   });
@@ -915,7 +915,7 @@ describe("WSL targets", () => {
       // "Linux" alone never brings up the WSL offer.
       r.t.agent.bind({ userWords: "search for how to install Python on Linux" });
       await flush();
-      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
       for (const words of asks) {
         const b = r.t.agent.bind({ userWords: words });
         expect(b.ok && b.binding.id, `${JSON.stringify(o.wslFacts?.installed)} ${words}`).toBe("local");
@@ -950,7 +950,7 @@ describe("WSL targets", () => {
     const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
     expect(b.ok && b.binding.id).toBe("local");
     await flush(); await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
   });
 
   it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
@@ -958,7 +958,7 @@ describe("WSL targets", () => {
     const b = r.t.agent.bind({ userWords: "list my files in WSL" });
     expect(b.ok && b.binding.id).toBe("local");
     await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
   });
 
   it("with WSL on, still says why it can't work in WSL when discovery found no distro to work in", async () => {
@@ -1201,7 +1201,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     r.ticks[0]();
     await flush();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
-      title: "You're connected to build-01", thought: "Bring Ember there too? It will open its own connection with your SSH settings.",
+      title: "You're connected to build-01", thought: "Bring me there too? I'll open my own connection with your SSH settings.",
       actions: [{ id: "offer:1:bring", label: "Bring Ember", primary: true }, { id: "offer:1:later", label: "Not now" }, { id: "offer:1:never", label: "Don't offer again" }],
     }) });
     expect(r.t.bubbleAction("offer:1:bring")).toBe(true);
@@ -1338,7 +1338,7 @@ describe("the runtime's bubbles' state chip and face (review #15)", () => {
     release();
     await pending;
     const l = r.links.get("build-01")!;
-    expect([s.screen().title, s.look()]).toEqual(["Ember is on build-01", "idle/happy"]);
+    expect([s.screen().title, s.look()]).toEqual(["I'm on build-01", "idle/happy"]);
     l.emit("console.stop", { at: SINCE });
     expect([s.screen().title, s.look()]).toEqual(["Stopped on build-01", "idle/neutral"]);
     l.move("stalled");
@@ -1416,7 +1416,7 @@ describe("offer_connect (§2.6)", () => {
     expect(r.t.agent.offerConnect("build-01", "open the logs")).toBe("The user didn't name that computer, so Ember won't offer to connect to it.");
     expect(r.t.agent.offerConnect("build-03", "open the logs on build-03")).toMatch(/doesn't know a computer called build-03/);
     expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/showed the user a Connect button for build-01/);
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connect to build-01?", thought: "You asked for build-01. Ember isn't connected to it yet." }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connect to build-01?", thought: "You asked for build-01. I'm not connected to it yet." }) });
     expect(r.conns.connect).not.toHaveBeenCalled();
     r.t.bubbleAction("offer:1:connect");
     await flush(); await flush();
@@ -1525,8 +1525,8 @@ describe("small helpers", () => {
   });
 
   it("says each connecting step in §8.2's words", () => {
-    expect(progressWords("build-01", { step: "copying", done: 5_000_000, total: 31_000_000 })).toBe("Copying Ember's helper to build-01 (5 of 31 MB)…");
-    expect(progressWords("build-01", { step: "starting" })).toBe("Starting Ember on build-01…");
+    expect(progressWords("build-01", { step: "copying", done: 5_000_000, total: 31_000_000 })).toBe("Copying what I need to build-01 (5 of 31 MB)…");
+    expect(progressWords("build-01", { step: "starting" })).toBe("Starting up on build-01…");
     expect(progressWords("build-01", { step: "failed", message: "x", retry: false, kind: "dns" })).toBeNull();
   });
 });
@@ -1820,7 +1820,7 @@ describe("connection progress (review #20, #187)", () => {
     const texts = r.showState.mock.calls.map(c => (c[0] as Partial<EmberState>).bubble?.thought).filter(Boolean);
     expect(texts).toHaveLength(31);
     expect(new Set(texts).size).toBe(31);
-    expect(texts.at(-1)).toBe("Downloading what Ember needs for build-01 (30 of 30 MB)…");
+    expect(texts.at(-1)).toBe("Downloading what I need for build-01 (30 of 30 MB)…");
     release();
     await pending;
   });
@@ -1896,14 +1896,14 @@ describe("the runtime's bubbles in the shared bubble", () => {
     expect(r.t.bubbleAction(s.screen().actions[0].id)).toBe(true);
     await flush(); await flush();
     expect(r.conns.connect).toHaveBeenCalledWith(expect.objectContaining({ id: "build-01" }), expect.anything());
-    expect(s.screen().title).toBe("Ember is on build-01");
+    expect(s.screen().title).toBe("I'm on build-01");
   });
 
   it("never lets the connected bubble's timer blank an answer the user asked for meanwhile (review #10)", async () => {
     const s = screenRig();
     const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
     await connected(r);
-    expect(s.screen().title).toBe("Ember is on build-01");
+    expect(s.screen().title).toBe("I'm on build-01");
     s.advance(3000);
     s.convo.userPrompt("how many files are in /var/log?");
     s.advance(2000);

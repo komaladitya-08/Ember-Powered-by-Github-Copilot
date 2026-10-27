@@ -160,7 +160,7 @@ that task: any change asks again. After a "no", Ember doesn't try again or work 
 If your own words for this task asked for that kind of operation on that computer and that object, a dangerous
 command runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to
 GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
-announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds." and **Stop**), the command
+announcement ("Pushing feature-x to origin, as you asked.", with "It starts in a few seconds." and **Stop**), the command
 window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies, questions
 and results out loud** on, Ember says it and adds "Say 'Ember, stop' to cancel." **Stop** in either place, the stop
 chord or "Ember, stop" within those 4 seconds cancels it. The audit log records it as requested by you.
@@ -272,7 +272,7 @@ earlier command printed text that looked like instructions.").
 
 ### 3.1 Turning it on
 
-When Ember first sees WSL it offers "Ember can work in WSL" (**Open settings**, **Not now**). Settings › **Computers**
+When Ember first sees WSL it offers "I can work in WSL" (**Open settings**, **Not now**). Settings › **Computers**
 › **Let Ember work in WSL** shows the card "Use Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a
 small helper inside each distro that has a Linux app open, only while one is open, and never starts a distro on its
 own to read it; what it reads goes to Copilot as for your other windows; and commands in WSL, once you turn them on
@@ -343,7 +343,7 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   opens that section.
 - **Or let Ember notice your own `ssh`.** When the window you're in is a terminal and its title changes, Ember may
   look (at most every 10 seconds) at your own `ssh` processes: their command lines (the host and a few options), never
-  your terminal's contents. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own
+  your terminal's contents. It offers "You're connected to build-01" — "Bring me there too? I'll open my own
   connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). The offer waits until
   you've finished reading what the bubble shows, ignores a press in its first half second, and goes after 25 seconds
   unanswered (as **Not now**). Its buttons, like those of "Lost build-01" and "Can't connect", take only the mouse;
@@ -454,9 +454,9 @@ reconnect then runs unread, judged by its name like any other script too big to 
 downloaded before the reconnect is no longer known to run a download (this computer still remembers the task's
 downloads, so a command that runs one by name still asks) (§7, L8).
 
-If the connection goes silent for 5 seconds, the bubble says "build-01 isn't answering" — "Its running commands stop
-in 15 s unless the link comes back. Nothing new is sent meanwhile.", and each running command's tab counts down
-("build-01 isn't answering. This command stops in 12 s unless the link comes back.") until the link comes back or is
+If the connection goes silent for 5 seconds, the bubble says "build-01 isn't answering" — "Commands running there
+stop in 15 seconds unless it answers again. I'll send nothing new until then.", and each running command's tab counts
+down ("build-01 isn't answering. This command stops in 12 seconds unless it answers again.") until the link comes back or is
 lost; so a network blip doesn't kill a long build. The stop chord ends Ember's own connection at once, but while the
 network is down a command on build-01 ends only when build-01 notices, within 20 seconds of the last thing it heard
 (an administrator can set 3 to 120; the bubble and the tab say what is left of it).
@@ -476,8 +476,8 @@ rest of its output is dropped and you won't see it. After the stop chord, output
   accept your key. Add it to the ssh-agent (`ssh-add`), then connect again."), and accept an unknown host's key once
   yourself ("Connect once with `ssh build-01` in a terminal, check its key, then try again.").
 - **`ssh` typed in a WSL tab** is noticed too. Ember connects with Windows' SSH unless connecting through the distro
-  has been proven to work; then the offer says "Ember connects with Windows' SSH. Add your key to Windows' ssh-agent,
-  or connect once from PowerShell, then bring Ember there." Connections through a distro use its keys and agent only,
+  has been proven to work; then the offer says "I connect with Windows' SSH. Add your key to Windows' ssh-agent,
+  or connect once from PowerShell, then bring me there." Connections through a distro use its keys and agent only,
   with no password window.
 - **Jump hosts** from your SSH config or `ssh -J` are carried over (up to three; on a Windows PC one). A sign-in
   helper set as your `ProxyCommand` runs as your own `ssh` would run it.
