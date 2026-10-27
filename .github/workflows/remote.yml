@@ -290,7 +290,10 @@ jobs:
         run: |
           XDG_RUNTIME_DIR="$(mktemp -d /tmp/ewl.XXXXXX)" && chmod 700 "$XDG_RUNTIME_DIR" && export XDG_RUNTIME_DIR
           dbus-run-session -- bash -c '
-            mutter --headless --wayland --no-x11 --virtual-monitor 1280x1024 --wayland-display ember-wl & sleep 3
+            mutter --headless --wayland --no-x11 --virtual-monitor 1280x1024 --wayland-display ember-wl &
+            # Until its socket exists: mutter took 4.4 s to open it in run 1, so a fixed sleep 3 started GTK too early.
+            for i in $(seq 1 60); do [ -S "$XDG_RUNTIME_DIR/ember-wl" ] && break; sleep 0.5; done
+            [ -S "$XDG_RUNTIME_DIR/ember-wl" ] || { echo "mutter never opened its Wayland socket" >&2; exit 1; }
             WAYLAND_DISPLAY=ember-wl node scripts/run-integration.mjs --allow-missing test/integration/remote-wayland.test.ts'
         env:
           EMBER_SSH_TEST: "1"
