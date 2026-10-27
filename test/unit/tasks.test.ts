@@ -449,7 +449,7 @@ describe("review round 4: how tasks end", () => {
     const key = manager(fails("Authentication failed with provider at http://llm.corp/v1 (HTTP 401). Check your COPILOT_PROVIDER_API_KEY."), { provider: true });
     const b = key.tm.start("Turn on Night Light");
     await vi.waitFor(() => expect(b.status).toBe("failed"));
-    expect(b.result?.summary).toBe("Your organisation's AI endpoint refused the request. Ask your administrator to check Ember's endpoint settings.");
+    expect(b.result?.summary).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
     expect(key.cards.at(-1)?.[0].detail).toBe(b.result?.summary);
   });
 
