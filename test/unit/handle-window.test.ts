@@ -4,6 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { OVERLAY } from "../../app/shared/overlay";
 
 const made: FakeWin[] = [];
@@ -122,6 +123,32 @@ describe("the handle window", () => {
     expect(win.sent[1].args[0]).toMatchObject({ fallback: false, settings });
     expect(win.sent[2].args[0]).toBe(state);
     expect(win.shown).toBe(1);
+  });
+
+  it("widens the pill with the text size, so its words aren't cut, and moves it along its corner when that changes (review #57)", () => {
+    let now = { size: "medium", textSize: "larger" } as never;
+    const pill = new HandleWindow(() => now, false);
+    const win = pill.win as unknown as FakeWin;
+    // 200 × 1.3; still 56 px high (its two lines fit at every size), 12 px in from the corner.
+    expect(win.options.width).toBe(260);
+    expect(win.bounds).toEqual({ x: 1108, y: 782, width: 260, height: 56 });
+    now = { size: "medium", textSize: "large" } as never;
+    expect(pill.sendSettings(now)).toBe(true);
+    expect(win.bounds).toEqual({ x: 1138, y: 782, width: 230, height: 56 });
+    // Another setting: it stays where it is.
+    expect(pill.sendSettings(now)).toBe(false);
+    now = { size: "medium", textSize: "default" } as never;
+    expect(pill.sendSettings(now)).toBe(true);
+    expect(win.bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
+    // The card keeps its width (its words wrap) and grows to what it shows, as before.
+    const card = new HandleWindow(() => ({ size: "medium", textSize: "larger" }) as never, true);
+    expect((card.win as unknown as FakeWin).bounds).toEqual({ x: 1008, y: 688, width: 360, height: 150 });
+    expect(card.sendSettings({ size: "medium", textSize: "default" } as never)).toBe(false);
+  });
+
+  it("is moved by main when the text size changes it, with the desk view beside it", () => {
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toMatch(/if \(handle\?\.sendSettings\(s\)\) deskViewRef\?\.handleMoved\(\);/);
   });
 
   it("takes its display listeners with it when destroyed, and stops sending to it", () => {

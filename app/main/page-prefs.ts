@@ -22,6 +22,30 @@ const TEXT_SIZES: readonly Settings["textSize"][] = ["default", "large", "larger
  */
 const FIXED_TYPE = new Set(["ask", "desk", "mic"]);
 
+/**
+ * How much the text grows at each size (ember.css's --text-scale): the windows sized for their words (the handle's
+ * pill, the command and prompt windows) grow by it too.
+ */
+const TEXT_SCALE: Readonly<Record<Settings["textSize"], number>> = { default: 1, large: 1.15, larger: 1.3 };
+
+/** The text's scale for a text size (an unknown one is the default's, 1). */
+export function textScale(size: Settings["textSize"] | undefined): number {
+  return size !== undefined && TEXT_SIZES.includes(size) ? TEXT_SCALE[size] : 1;
+}
+
+/**
+ * A window's size for the text size: each length times `scale`, rounded, but no larger than `room` (the work area)
+ * where that is smaller; never smaller than the usual size, so the default size is exactly as before.
+ */
+export function scaledSize<T extends Record<string, number>>(size: T, scale: number, room?: { width: number; height: number }): T {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(size)) {
+    const max = room ? (/width/i.test(k) ? room.width : room.height) : Infinity;
+    out[k] = Math.max(v, Math.min(Math.round(v * scale), max));
+  }
+  return out as T;
+}
+
 /** The display settings to apply, from Ember's settings (an unknown text size is the default). */
 export function pagePrefs(s: Pick<Settings, "reduceMotion" | "textSize">): PagePrefs {
   return { calm: s.reduceMotion === true, textSize: TEXT_SIZES.includes(s.textSize) ? s.textSize : "default" };

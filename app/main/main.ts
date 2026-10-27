@@ -1085,7 +1085,7 @@ function start(): void {
 
   settings.onChange((s) => {
     overlay?.broadcastSettings(s);
-    handle?.sendSettings(s);
+    if (handle?.sendSettings(s)) deskViewRef?.handleMoved();
   });
   // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step.
   const autostart = () => {

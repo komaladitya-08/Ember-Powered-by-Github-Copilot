@@ -17,8 +17,10 @@ import { revive } from "./revive";
 import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
+import { scaledSize, textScale } from "./page-prefs";
 
 const appDir = __dirname;
+/** At the default text size; it widens with the text (its two lines fit its height at every size). */
 const PILL = { width: 200, height: 56 };
 const CARD = { width: 360, height: 150 };
 /** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
@@ -33,7 +35,8 @@ export class HandleWindow {
    * workspace); `o.forward`: click-through forwards the pointer's moves (macOS).
    */
   constructor(private settings: () => Settings, readonly fallback: boolean, private o: { floating?: FloatingWindow; forward?: boolean } = {}) {
-    const size = fallback ? CARD : PILL;
+    const size = fallback ? CARD : this.pill();
+    this.pillWidth = size.width;
     this.win = new BrowserWindow({
       ...size,
       ...this.corner(size),
@@ -109,8 +112,21 @@ export class HandleWindow {
     else this.win.setIgnoreMouseEvents(on);
   }
 
-  sendSettings(s: Settings): void {
-    if (!this.win.isDestroyed()) this.win.webContents.send(OVERLAY.settings, s);
+  /** Sends the settings to the page; true when the text size changed the pill's width, which then moves (main tells the desk view). */
+  sendSettings(s: Settings): boolean {
+    if (this.win.isDestroyed()) return false;
+    this.win.webContents.send(OVERLAY.settings, s);
+    if (this.fallback || this.pill().width === this.pillWidth) return false;
+    this.reposition();
+    return true;
+  }
+
+  /** The pill's width as last placed. */
+  private pillWidth = PILL.width;
+
+  /** The pill at the text size: wider as its words grow ("Microphone problem", the computer's name), as high. */
+  private pill(): { width: number; height: number } {
+    return { width: scaledSize({ width: PILL.width }, textScale(this.settings().textSize)).width, height: PILL.height };
   }
 
   private corner(size: { width: number; height: number }) {
@@ -127,7 +143,8 @@ export class HandleWindow {
 
   private reposition = (): void => {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : PILL;
+    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.pill();
+    if (!this.fallback) this.pillWidth = size.width;
     this.win.setBounds({ ...size, ...this.corner(size) });
   };
 }

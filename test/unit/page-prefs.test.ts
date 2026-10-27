@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { applyPagePrefs, pageOf, pagePrefs, prefsScript, type PrefsPage } from "../../app/main/page-prefs";
+import { applyPagePrefs, pageOf, pagePrefs, prefsScript, scaledSize, textScale, type PrefsPage } from "../../app/main/page-prefs";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const url = (page: string) => `file:///opt/Ember/resources/app/dist/app/renderer/${page}/index.html`;
@@ -135,6 +135,23 @@ describe("the text size", () => {
     expect(unscaled(".a { font: var(--type-body); }")).toEqual([]);
     // A twin with another size (the one outside the media query) doesn't count.
     expect(unscaled(".j { font-size: 13px; } html[data-text-size] .j { font-size: calc(13px * var(--text-scale)); } @media (min-width: 640px) { .j { font: 500 14px/20px x; } }")).toEqual([".j"]);
+  });
+
+  it("grows the windows sized for their words by the same scale as the type, inside the work area (review #57)", () => {
+    // The same numbers as ember.css's --text-scale.
+    for (const size of ["large", "larger"] as const) {
+      const css = new RegExp(`html\\[data-text-size="${size}"\\] \\{ --text-scale: ([\\d.]+); \\}`).exec(shared)![1];
+      expect(textScale(size), size).toBe(Number(css));
+    }
+    expect(textScale("default")).toBe(1);
+    expect(textScale(undefined)).toBe(1);
+    expect(textScale("huge" as never)).toBe(1);
+    const usual = { width: 760, height: 480, minWidth: 480, minHeight: 280 };
+    expect(scaledSize(usual, 1)).toEqual(usual);
+    expect(scaledSize(usual, 1.3)).toEqual({ width: 988, height: 624, minWidth: 624, minHeight: 364 });
+    // No larger than the work area, and never smaller than the usual size (a small screen keeps today's window).
+    expect(scaledSize(usual, 1.3, { width: 1024, height: 560 })).toEqual({ width: 988, height: 560, minWidth: 624, minHeight: 364 });
+    expect(scaledSize(usual, 1.3, { width: 700, height: 400 })).toEqual({ width: 760, height: 480, minWidth: 624, minHeight: 364 });
   });
 
   it("is a setting in Comfort & access", () => {
