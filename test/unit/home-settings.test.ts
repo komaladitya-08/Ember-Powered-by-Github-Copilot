@@ -51,3 +51,12 @@ describe("the sidebar shows that it scrolls (review #250)", () => {
     expect(sidebar).toMatch(/scrollbar-width: auto;/);
   });
 });
+
+describe("the Size slider says its value once (review #56)", () => {
+  it("leaves the value to the slider's own aria-valuetext: the number beside it isn't a live region", () => {
+    expect(page).not.toMatch(/<output/);
+    expect(page).toContain('<label for="size">Size <span id="size-out" class="size-out" aria-hidden="true">60 px</span></label>');
+    expect(page).toMatch(/<input type="range" id="size"[^>]*aria-valuetext="60 pixels">/);
+    expect(css).toMatch(/\.pick-row \.size-out \{/);
+  });
+});

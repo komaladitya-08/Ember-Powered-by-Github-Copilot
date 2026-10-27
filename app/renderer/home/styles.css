@@ -84,7 +84,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* Size: a slider in its row (the filled part of the track follows the value: main.ts sets --fill). */
 .pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .pick-row label { color: var(--fg); min-width: 96px; }
-.pick-row output { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+/* The number beside "Size" is for the eye: the slider's aria-valuetext says it once (an <output> said it twice). */
+.pick-row .size-out { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .pick-row input[type="range"] {
   flex: 1; min-width: 140px; height: 22px; margin: 0; background: transparent; cursor: pointer;
   -webkit-appearance: none; appearance: none;
