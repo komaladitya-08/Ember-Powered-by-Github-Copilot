@@ -628,10 +628,17 @@ export class AxDarwinProvider implements AxProvider {
     return n;
   }
 
-  /** The keys of one answer's elements (answerKeys in KEY_MODE), a collision noted in the log. */
+  /**
+   * The keys of one answer's elements (answerKeys in KEY_MODE), a collision noted in the log with the colliding elements'
+   * roles and index paths (never their text): the evidence for whether AppKit gives two live elements one hash.
+   */
   private keysFor(api: AxApi, items: KeyItem[]): string[] {
     const { keys, collisions } = answerKeys(items, ref => api.hash(ref));
-    if (collisions) this.note("ax.key_collision", { count: collisions });
+    if (collisions) {
+      const collided = items.filter((_, k) => !/^\d+:h[0-9a-f]+$/.test(keys[k]!))
+        .slice(0, 12).map(i => `${i.role}@${i.path ? i.path.join(".") : "?"}`);
+      this.note("ax.key_collision", { count: collisions, of: items.length, collided });
+    }
     return keys;
   }
 

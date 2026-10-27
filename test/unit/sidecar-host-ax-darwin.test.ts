@@ -219,7 +219,8 @@ describe("the macOS AX provider's keys", () => {
     expect(keyOf("Save")).toBe("4300:p9001/10:AXButton");
     expect(keyOf("Remember me")).toBe("4300:p9001/5:AXCheckBox");
     expect(snap.nodes.find(n => n.platformRole === "AXSlider")!.key).toMatch(/^4300:h/);
-    expect(notes).toContainEqual(["ax.key_collision", { count: 2 }]);
+    // The log names the colliding elements by role and index path (never their text), out of the answer's size.
+    expect(notes).toContainEqual(["ax.key_collision", { count: 2, of: snap.nodes.length, collided: ["AXCheckBox@5", "AXButton@10"] }]);
     // A look later says the key the answer gave.
     const save = snap.nodes.find(n => n.name === "Save")!;
     expect((await p.element(save.handle))!.key).toBe("4300:p9001/10:AXButton");

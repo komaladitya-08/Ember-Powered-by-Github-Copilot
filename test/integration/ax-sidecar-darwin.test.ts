@@ -273,7 +273,8 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
 
   it("reads the 200-row list by range with no two keys alike, and logs no key collision", async () => {
     const notes: string[] = [];
-    const p = new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner: process.pid, note: e => notes.push(e) });
+    const details: unknown[] = [];
+    const p = new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner: process.pid, note: (e, f) => { notes.push(e); details.push({ e, ...f }); } });
     try {
       await p.start();
       const w = (await p.topWindows()).find(x => x.key === String(windowId));
@@ -283,7 +284,7 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
       const table = snap.nodes.find(n => n.platformRole === "AXTable");
       expect(table, JSON.stringify(snap.nodes.map(n => n.platformRole))).toBeTruthy();
       const rows = (await p.children(table!.handle, 1000)).filter(n => n.platformRole === "AXRow");
-      console.log(`ax-sidecar-darwin: ${rows.length} rows, ${new Set(rows.map(r => r.key)).size} keys, notes ${JSON.stringify(notes)}`);
+      console.log(`ax-sidecar-darwin: ${rows.length} rows, ${new Set(rows.map(r => r.key)).size} keys, notes ${JSON.stringify(details)}`);
       expect(rows).toHaveLength(200);
       expect(new Set(rows.map(r => r.key)).size).toBe(200);
       expect(notes).not.toContain("ax.key_collision");
