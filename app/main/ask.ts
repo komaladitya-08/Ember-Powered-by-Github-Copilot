@@ -6,6 +6,9 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import { IPC, type AskContext } from "../shared/ipc";
+import type { FloatingWindow } from "./platform/types";
+import { applyAllWorkspaces } from "./platform/compose";
+import { x11WindowId } from "./platform/linux/window-system";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
@@ -69,13 +72,24 @@ export class AskWindow {
   private source = "unknown";
 
   /**
-   * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives X window
-   * `xid` the keyboard (a window manager that prevents focus stealing would leave it with the app the user is in,
-   * and their first letters would go there). `hasFocus`: whether X itself says the box has the keyboard now (Electron
-   * can report focus before the window manager has moved it). `onReveal`: every time the box is actually shown (the
-   * only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
+   * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
+   * window `id`, the keyboard (on X11 a window manager that prevents focus stealing would leave it with the app the
+   * user is in, and their first letters would go there); called on every reveal with whatever `windowId` answered, 0
+   * included, and the caller decides what to do with it. `hasFocus`: whether X itself says the box has the keyboard
+   * now (Electron can report focus before the window manager has moved it). `onReveal`: every time the box is
+   * actually shown (the only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
+   * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
+   * `floating`: the platform's window options and workspace rule (default: today's Linux window).
    */
-  constructor(private o: { keepOff?: () => Box | null; takeFocus?: (xid: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void } = {}) {}
+  constructor(private o: {
+    keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow;
+  } = {}) {}
+
+  /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
+  private idOf(win: BrowserWindow): number {
+    try { return (this.o.windowId ?? x11WindowId)(win); } catch { return 0; }
+  }
 
   /** Makes the box ahead of time (hidden), so the first Ctrl+Alt+Space opens it at once. */
   prepare(): void {
@@ -92,12 +106,14 @@ export class AskWindow {
       transparent: !opaque, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
       fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Ask Ember",
       backgroundColor: opaque ? "#242022" : "#00000000",
+      ...(this.o.floating?.options ?? {}),
       webPreferences: {
         preload: path.join(appDir, "preload", "ask.cjs"),
         contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
       },
     });
     win.setAlwaysOnTop(true, "screen-saver");
+    if (this.o.floating) applyAllWorkspaces(win, this.o.floating.allWorkspaces);
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
     win.on("blur", () => { if (this.win === win) this.hide(); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
@@ -120,7 +136,8 @@ export class AskWindow {
     this.o.onReveal?.(this.source);
     win.show();
     win.focus();
-    try { const xid = win.getNativeWindowHandle().readUInt32LE(0); if (xid) this.o.takeFocus?.(xid); } catch { /* not X11 */ }
+    // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
+    try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
     this.sendContext();
   }
 
@@ -219,8 +236,11 @@ export class AskWindow {
     return !!this.win && !this.win.isDestroyed() && this.win.webContents === sender;
   }
 
-  /** Is X window `xid` the box (it closes when it loses focus, so focus never goes back to it)? */
-  isWindow(xid: number): boolean {
-    try { return !!this.win && !this.win.isDestroyed() && this.win.getNativeWindowHandle().readUInt32LE(0) === xid; } catch { return false; }
+  /**
+   * Is window `id` the box (it closes when it loses focus, so focus never goes back to it)? Never for 0: an id that
+   * can't be told is no window, so it never matches a box whose own id can't be told either.
+   */
+  isWindow(id: number): boolean {
+    return id !== 0 && !!this.win && !this.win.isDestroyed() && this.idOf(this.win) === id;
   }
 }

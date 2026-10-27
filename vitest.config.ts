@@ -15,5 +15,9 @@ export default defineConfig({
     include: process.env.EMBER_INTEGRATION ? ["test/integration/**/*.test.ts"] : ["test/unit/**/*.test.ts", "packages/**/*.test.ts"],
     fileParallelism: !process.env.EMBER_INTEGRATION,
     environment: "node",
+    // Windows starts processes slowly (antivirus scans each new file) and its timers tick every 15.6 ms, so tests that
+    // spawn helpers or chain real waits (worker-scroll's take about 3 s on Linux) get more than the default 5 s there.
+    // Their own time bounds still apply.
+    ...(process.platform === "win32" ? { testTimeout: 15_000 } : {}),
   },
 });

@@ -7,6 +7,7 @@
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
+import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { plainMarkdown } from "@ember/bubble";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
@@ -27,9 +28,10 @@ export function plainText(s: string): string {
 /**
  * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
  * `raw` is kept for the log by the caller. `provider`: the organisation's own endpoint
- * is configured (there is no GitHub sign-in to blame then).
+ * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
+ * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E").
  */
-export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean } = {}): string {
+export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string } = {}): string {
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
   const service = ctx.provider ? "your organisation's AI endpoint" : "Copilot";
@@ -42,7 +44,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (status === 403) return refused;
   if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return "Copilot didn't accept the sign-in. Open settings to sign in again.";
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The AI endpoint's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
-  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return "The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).";
+  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
@@ -230,6 +232,8 @@ export interface PresenterOptions {
   onEvent?: (e: PresenterEvent) => void;
   /** Something went wrong and the bubble says so (the conversation section keeps it). */
   onProblem?: (text: string) => void;
+  /** Ember's shortcuts on this OS, for the settings shortcut errors name (default Linux's). */
+  shortcuts?: ShortcutTable;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -338,6 +342,8 @@ export class Presenter {
   private readonly onProblem?: (text: string) => void;
   /** The task whose bubbles these are (BubbleState.task). */
   private readonly taskId?: string;
+  /** The settings shortcut as this OS writes it, for the errors that send the user there. */
+  private readonly settingsKey: string;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
   private stalledTitle = "";
   /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
@@ -363,6 +369,7 @@ export class Presenter {
     this.owner = BubbleOwner.of(owner);
     this.onEvent = opts.onEvent;
     this.onProblem = opts.onProblem;
+    this.settingsKey = (opts.shortcuts ?? SHORTCUTS.linux).settings.label;
     if (typeof opts.task === "string") this.taskId = opts.task;
   }
 
@@ -716,7 +723,7 @@ export class Presenter {
         this.answering = false;
         this.produced = true;
         const said = friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
-          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider });
+          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey });
         this.apply({
           emotion: "sad", talking: false,
           bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: [] },

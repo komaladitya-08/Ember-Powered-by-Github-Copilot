@@ -1,8 +1,10 @@
 // Electron's fuses: switches compiled into the binary that turn features off for good, whatever the command line or
-// the environment say. stage.mjs flips them in the staged "ember" binary; CI reads them back.
+// the environment say. stage.mjs flips them in the staged binary (layout.mjs's fuseFile: "ember" on Linux, Ember.exe
+// on Windows, the Electron Framework binary inside Ember.app on macOS); CI reads them back.
 // The wire, as Electron builds it (build/fuses/fuses.json5) and @electron/fuses writes it: the sentinel below, a
 // version byte (1), a length byte, then one byte per fuse: "0" off, "1" on, "r" removed. The order (version 1)
-// is fixed: a new fuse is only ever appended.
+// is fixed: a new fuse is only ever appended. A universal (fat) macOS binary holds one wire per architecture; Ember
+// stages one architecture per build, so it is refused rather than half flipped.
 // usage: node scripts/package/fuses.mjs <electron binary>            prints every fuse
 //        node scripts/package/fuses.mjs --check <electron binary>    exits 1 unless EMBER_FUSES are set
 import fs from "node:fs";
@@ -27,8 +29,9 @@ const OFF = 0x30, ON = 0x31, REMOVED = 0x72;
 
 /**
  * What the installed Ember needs. No debugger and no code injected through the environment: the app ignores
- * --inspect* and NODE_OPTIONS. RunAsNode stays on: Ember runs its desk helper (app/main/desk/agent.ts) with its
- * own binary as plain Node (ELECTRON_RUN_AS_NODE). In that mode Node's own --inspect still works, which gives
+ * --inspect* and NODE_OPTIONS. RunAsNode stays on: Ember runs helpers with its own binary as plain Node
+ * (ELECTRON_RUN_AS_NODE): the desk helper on Linux (app/main/desk/agent.ts) and the accessibility host
+ * (dist/app/ax-sidecar.cjs) on Windows and macOS. In that mode Node's own --inspect still works, which gives
  * whoever starts it nothing beyond running the binary themselves (the running Ember is unaffected).
  * (main.ts also refuses --remote-debugging-* and --inspect* in a packaged build.)
  */
@@ -38,8 +41,23 @@ export const EMBER_FUSES = {
   EnableNodeCliInspectArguments: false,
 };
 
+/**
+ * How many architectures a universal (fat) Mach-O binary holds; 0 for any other file. The fat header is big-endian:
+ * the magic (0xcafebabe, or 0xcafebabf for 64-bit offsets), then the slice count. Java class files share the magic,
+ * but their next word (the class file version, 45 or more) is far beyond any real slice count.
+ */
+export function fatArchCount(bin) {
+  if (bin.length < 8) return 0;
+  const magic = bin.readUInt32BE(0);
+  if (magic !== 0xcafebabe && magic !== 0xcafebabf) return 0;
+  const count = bin.readUInt32BE(4);
+  return count > 0 && count < 32 ? count : 0;
+}
+
 /** Where the fuse wire is in `bin`: the position of its first fuse byte and how many there are. */
 export function findWire(bin) {
+  const slices = fatArchCount(bin);
+  if (slices) throw new Error(`a universal binary (${slices} architectures, one fuse wire each): stage one architecture per build`);
   const at = bin.indexOf(SENTINEL_BYTES);
   if (at < 0) throw new Error("no fuse wire in this binary (is it Electron 12 or later?)");
   if (bin.indexOf(SENTINEL_BYTES, at + 1) >= 0) throw new Error("more than one fuse wire in this binary");

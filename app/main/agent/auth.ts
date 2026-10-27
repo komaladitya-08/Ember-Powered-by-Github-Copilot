@@ -44,9 +44,19 @@ export class TokenStore {
     }
   }
 
+  /**
+   * Keeps the token encrypted; false when it can't be kept (no keyring, or the keyring refused: macOS's Keychain
+   * prompt answered "Deny" makes encryptString throw), so sign-in carries on with "sign in again next time".
+   */
   save(token: string): boolean {
     if (!this.canPersist()) return false;
-    fs.writeFileSync(this.file, this.box.encryptString(token), { mode: 0o600 });
+    let sealed: Buffer;
+    try {
+      sealed = this.box.encryptString(token);
+    } catch {
+      return false;
+    }
+    fs.writeFileSync(this.file, sealed, { mode: 0o600 });
     return true;
   }
 
@@ -55,26 +65,40 @@ export class TokenStore {
   }
 }
 
-export function ghCliToken(timeoutMs = 3000): Promise<string | null> {
+/** How to ask the GitHub CLI: where it is (default "gh" on PATH) and the platform's spawn options (Windows: windowsHide). */
+export interface GhCliOptions {
+  /** An absolute path from the platform's ghCliPath() (macOS apps started from Finder lack Homebrew on PATH). */
+  path?: string;
+  /** Spread into execFile (the platform's spawnDefaults: no console window flashing on Windows every 3 s of a sign-in). */
+  spawn?: { windowsHide?: boolean };
+  timeoutMs?: number;
+}
+
+/** The GitHub CLI's token (`gh auth token`), or null when gh is missing, signed out or gives an unusable token. */
+export function ghCliToken(o: GhCliOptions = {}): Promise<string | null> {
   return new Promise(resolve => {
-    execFile("gh", ["auth", "token"], { timeout: timeoutMs }, (err, stdout) => {
+    execFile(o.path ?? "gh", ["auth", "token"], { ...o.spawn, timeout: o.timeoutMs ?? 3000 }, (err, stdout) => {
       const t = stdout?.trim();
       resolve(!err && isUsableToken(t) ? t : null);
     });
   });
 }
 
+/**
+ * The token Ember uses: its own stored one, then the environment's, then the GitHub CLI's. `gh` is how the CLI is
+ * asked: a function (tests), or the options ghCliToken takes (main passes the platform's path and spawn options).
+ */
 export async function resolveToken(
   store: TokenStore | null,
   env: NodeJS.ProcessEnv = process.env,
-  gh: () => Promise<string | null> = ghCliToken,
+  gh: (() => Promise<string | null>) | GhCliOptions = {},
 ): Promise<ResolvedToken | null> {
   const stored = store?.load();
   if (stored) return { token: stored, source: "stored" };
   for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
     if (isUsableToken(env[name])) return { token: env[name]!.trim(), source: "environment" };
   }
-  const fromGh = await gh();
+  const fromGh = await (typeof gh === "function" ? gh() : ghCliToken(gh));
   return fromGh ? { token: fromGh, source: "github-cli" } : null;
 }
 

@@ -17,6 +17,8 @@ import { emberSystemMessage } from "./persona";
 import { friendlyError, type Presenter } from "./presenter";
 import type { Logger } from "../logger";
 import { CHARACTERS, type SettingsStore } from "../settings";
+import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
+import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
 
 export interface ConductorDeps {
   client: CopilotClient;
@@ -67,6 +69,10 @@ export interface ConductorDeps {
   turnSilentMs?: number;
   /** How long a silent turn, once aborted, may take to end before the runtime is given up on (TURN_END_GRACE_MS). */
   turnEndGraceMs?: number;
+  /** The OS's words for the prompt and describe_screen's fallback (default Linux's). */
+  words?: PlatformWords;
+  /** Ember's shortcuts on this OS, for the settings shortcut errors name (default Linux's). */
+  shortcuts?: ShortcutTable;
 }
 
 export interface ConductorTasks {
@@ -88,8 +94,9 @@ function checkedTool<S extends z.ZodType>(name: string, description: string, par
   });
 }
 
+/** The conductor's tools. `words`: the OS's, for describe_screen's answer when there is no screen to read (default Linux's). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>, startTask?: (goal: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: () => Promise<string>, startTask?: (goal: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   return [
     checkedTool("set_appearance", "Change how Ember looks: one of cinder, wisp, glassling, glint; optionally its size in pixels (36-110).",
@@ -105,7 +112,7 @@ export function conductorTools(settings: SettingsStore, describeScreen?: () => P
       z.object({}),
       async () => describeScreen
         ? describeScreen()
-        : "Ember can't read the screen in this session (no X11 display or accessibility service). Tell the user."),
+        : `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`),
     checkedTool("start_task", "Start a task in the user's applications (opening apps, clicking, typing, changing settings). It runs in the background; the user keeps working. Results arrive with the user's next message.",
       z.object({ goal: z.string().min(3).max(500).describe("One clear goal, in the user's words, with any details they gave") }),
       async ({ goal }) => startTask
@@ -364,7 +371,7 @@ export class Conductor {
   private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks).map(t => t.name);
+    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words).map(t => t.name);
   }
 
   private guarded<R extends string | Promise<string>>(start?: (goal: string) => R): ((goal: string) => string | R) | undefined {
@@ -392,8 +399,8 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks),
-      systemMessage: emberSystemMessage(),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words),
+      systemMessage: emberSystemMessage(d.words),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
     });
@@ -477,7 +484,7 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: (this.deps.shortcuts ?? SHORTCUTS.linux).settings.label }));
       throw new ConnectionLost(msg);
     }
   }

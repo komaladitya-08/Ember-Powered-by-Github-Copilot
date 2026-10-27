@@ -1,0 +1,42 @@
+{
+  "BuildMachineOSBuild": -1,
+  "Built": {
+    "$date": "2024-05-06T07:08:09Z"
+  },
+  "CFBundleDevelopmentRegion": "en",
+  "CFBundleDisplayName": "TextEdit",
+  "CFBundleDocumentTypes": [
+    {
+      "CFBundleTypeName": "NSRTFPboardType",
+      "CFBundleTypeRole": "Editor",
+      "LSHandlerRank": "Default",
+      "LSItemContentTypes": [
+        "public.rtf"
+      ]
+    },
+    {
+      "CFBundleTypeName": "NSStringPboardType",
+      "CFBundleTypeRole": "Editor",
+      "LSItemContentTypes": [
+        "public.plain-text"
+      ]
+    }
+  ],
+  "CFBundleExecutable": "TextEdit",
+  "CFBundleIdentifier": "com.apple.TextEdit",
+  "CFBundleInfoDictionaryVersion": "6.0",
+  "CFBundleName": "TextEdit",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "1.19",
+  "CFBundleVersion": "380",
+  "DTPlatformBuild": 23,
+  "LSApplicationCategoryType": "public.app-category.productivity",
+  "LSMinimumSystemVersion": "13.0",
+  "LargeNumber": 4294967296,
+  "NSSupportsAutomaticTermination": true,
+  "NSSupportsSuddenTermination": false,
+  "Ratio": 0.5,
+  "Signature": {
+    "$data": "AAEC/v8="
+  }
+}

@@ -11,6 +11,7 @@ import { DESK, type DeskInput } from "../../shared/desk";
 import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
+import { x11WindowId } from "../platform/linux/window-system";
 
 const appDir = path.join(__dirname);
 const SMALL = { width: 340, height: 238 };
@@ -98,9 +99,10 @@ export class DeskView {
    * compositor is wider than the pill); the pill's place when not given.
    * `userFocus`: called as the user takes over; what it returns gives the keyboard back to their window on hand back,
    * when the view still has it.
+   * `windowId`: the view's id in the window system's id space (default: its X id), 0 when it can't be told.
    */
   constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined,
-    private o: { lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void } = {}) {
+    private o: { lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
@@ -199,9 +201,10 @@ export class DeskView {
     this.setControl(false);
   }
 
-  /** Whether `xid` (an X client window) is the view's window. */
-  isWindow(xid: number): boolean {
-    try { return !!this.win && !this.win.isDestroyed() && this.win.getNativeWindowHandle().readUInt32LE(0) === xid; } catch { return false; }
+  /** Whether window `id` is the view's window (never for 0: an id that can't be told is no window). */
+  isWindow(id: number): boolean {
+    if (id === 0 || !this.win || this.win.isDestroyed()) return false;
+    try { return (this.o.windowId ?? x11WindowId)(this.win) === id; } catch { return false; }
   }
 
   owns(sender: Electron.WebContents): boolean {

@@ -1,5 +1,6 @@
 /**
- * libX11 through koffi, on a real display (skipped without DISPLAY): captures
+ * libX11 through koffi, on a real display (skipped without DISPLAY, and off
+ * Linux, where XQuartz may set DISPLAY but Ember never uses X11): captures
  * that reach off the screen, input after the display was closed (both used to
  * end the whole process), the stacking order, finding windows by title, and
  * the list of apps' windows.
@@ -61,7 +62,7 @@ function windowMaker() {
 
 const settle = () => new Promise(r => setTimeout(r, 300));
 
-describe.skipIf(!process.env.DISPLAY)("X11 on a real display", () => {
+describe.skipIf(!process.env.DISPLAY || process.platform !== "linux")("X11 on a real display", () => {
   it("clips captures to the screen instead of failing", () => {
     const x11 = openX11();
     if (!x11) return;

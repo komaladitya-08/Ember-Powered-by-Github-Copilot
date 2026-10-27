@@ -1,11 +1,14 @@
 /**
- * Client for the Python AT-SPI sidecar (sidecar/atspi/ember_atspi.py):
- * newline-delimited JSON-RPC over stdio, started on demand. The sidecar
- * answers one request at a time, so a request that doesn't come back in time
- * holds up every other one: that process is killed, and a fresh one starts at
- * once (as after any exit or crash), so one stays connected (see revive).
- * Element ids are only valid in the process that issued them; what it knows
- * about secret fields is kept here too and handed to every new process.
+ * Client for the accessibility sidecar: the Python AT-SPI one on Linux
+ * (sidecar/atspi/ember_atspi.py), or on Windows and macOS the TypeScript host
+ * (app/sidecar-host, run by Ember's own binary as plain Node: see SidecarLaunch)
+ * that speaks the same protocol. Newline-delimited JSON-RPC over stdio, started
+ * on demand. The sidecar answers one request at a time, so a request that
+ * doesn't come back in time holds up every other one: that process is killed,
+ * and a fresh one starts at once (as after any exit or crash), so one stays
+ * connected (see revive). Element ids are only valid in the process that issued
+ * them; what it knows about secret fields is kept here too and handed to every
+ * new process.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -157,7 +160,22 @@ export interface CanDo {
  */
 export interface ActionResult { ok: boolean; action?: string; option?: string; before?: ElementInfo; after: ElementInfo | null; gone?: boolean; busy?: boolean; unchecked?: number }
 
-export interface SidecarStatus { version: number; python: string; toolkitAccessibility: boolean | null; apps: number }
+/**
+ * The helper's `status`. The sidecar host (Windows, macOS) also says why its provider couldn't start (`detail`, with
+ * `toolkitAccessibility` false; null while it is still starting), the Windows bridge's `languageMode` from its fatal
+ * line ("ConstrainedLanguage"), and the DPI awareness of the bridge's UI Automation threads (`dpi`) and of its process
+ * (`processDpi`). The Python sidecar sends none of these.
+ */
+export interface SidecarStatus {
+  version: number;
+  python: string;
+  toolkitAccessibility: boolean | null;
+  apps: number;
+  detail?: string;
+  languageMode?: string;
+  dpi?: string;
+  processDpi?: string;
+}
 
 /** A rectangle in physical pixels, from one reported by an app that draws `k` physical pixels per pixel it reports. */
 export function scaleBounds(b: Bounds, k: number): Bounds {
@@ -174,6 +192,27 @@ export function pickPython(env: NodeJS.ProcessEnv = process.env, exists: (p: str
 }
 
 /**
+ * How to start a sidecar other than the Python one: the TypeScript host on Windows and macOS, run by Ember's own binary
+ * with ELECTRON_RUN_AS_NODE. Without one, the Python sidecar starts as it always has (`python` + `script`).
+ */
+export interface SidecarLaunch {
+  command: string;
+  args: string[];
+  /** Its whole environment (EMBER_ATSPI_ID_BASE is added to it). */
+  env: NodeJS.ProcessEnv;
+  /**
+   * How long a request to a new process may take until the process first answers one that is waited on (a cold start:
+   * Windows PowerShell compiling the UI Automation bridge, with antivirus scanning it, takes seconds), so a slow start
+   * isn't killed over and over. The secret fields handed to a new process first don't count: nothing waits on that
+   * answer, and the host gives it without starting its bridge. Later requests get their own timeout. Default: their own
+   * timeout from the start.
+   */
+  firstRequestMs?: number;
+  /** Windows: no console window for it (or for what it starts). */
+  windowsHide?: boolean;
+}
+
+/**
  * Every sidecar process (the user's display, Ember's desk, restarts) numbers
  * its elements from its own block, so an id from another process never names
  * an element by accident.
@@ -182,8 +221,11 @@ export const ID_BLOCK = 10_000_000;
 let idBlocks = 0;
 
 interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
-/** One sidecar process and the requests waiting on it; `answered`: it has answered something (it works). */
-interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean }
+/**
+ * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
+ * answered a request waited on (see SidecarLaunch.firstRequestMs).
+ */
+interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean }
 
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
@@ -207,18 +249,28 @@ export class AtspiSidecar {
   private stopped = false;
   private reviving = false;
 
-  /** `env`: the environment of the desktop to read (Ember's desk has its own display and bus). */
-  constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env) {}
+  /**
+   * `env`: the environment of the desktop to read (Ember's desk has its own display and bus). `launch`: how to start a
+   * sidecar other than the Python one (then `script`, `python` and `env` aren't used).
+   */
+  constructor(private script: string, private log: Logger, private python = pickPython(), private env: NodeJS.ProcessEnv = process.env, private launch?: SidecarLaunch) {}
 
   private ensure(): Helper {
     const live = this.helper;
     if (live && !live.done && live.child.exitCode === null && live.child.signalCode === null) return live;
     if (live) this.retire(live, "accessibility helper stopped");
-    const child = spawn(this.python, [this.script], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: String(++idBlocks * ID_BLOCK) },
-    });
-    const h: Helper = { child, pending: new Map(), done: false, answered: false };
+    const base = String(++idBlocks * ID_BLOCK);
+    const child = this.launch
+      ? spawn(this.launch.command, this.launch.args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...this.launch.env, EMBER_ATSPI_ID_BASE: base },
+        ...(this.launch.windowsHide ? { windowsHide: true } : {}),
+      })
+      : spawn(this.python, [this.script], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: base },
+      });
+    const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false };
     this.helper = h;
     readline.createInterface({ input: child.stdout }).on("line", line => this.answer(h, line));
     readline.createInterface({ input: child.stderr }).on("line", line => {
@@ -271,6 +323,7 @@ export class AtspiSidecar {
     if (id !== null) h.answered = true;
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
+    h.warm = true;
     clearTimeout(p.timer);
     h.pending.delete(id!);
     if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
@@ -312,13 +365,16 @@ export class AtspiSidecar {
     return new Promise<T>((resolve, reject) => {
       const h = this.ensure();
       const id = this.nextId++;
+      // A process that hasn't answered a request yet may still be starting (see SidecarLaunch.firstRequestMs).
+      const first = this.launch?.firstRequestMs;
+      const ms = first !== undefined && !h.warm ? Math.max(timeoutMs, first) : timeoutMs;
       const timer = setTimeout(() => {
         h.pending.delete(id);
-        reject(new Error(`accessibility helper did not answer ${method} in ${timeoutMs} ms`));
+        reject(new Error(`accessibility helper did not answer ${method} in ${ms} ms`));
         // One request at a time: a stuck call (a hung app) would hold up every later one. Start over.
-        this.log.warn("sidecar.timeout", { method, timeoutMs });
+        this.log.warn("sidecar.timeout", { method, timeoutMs: ms });
         this.retire(h, "accessibility helper was restarted (an earlier request took too long)", "SIGKILL");
-      }, timeoutMs);
+      }, ms);
       h.pending.set(id, { resolve: v => resolve(v as T), reject, timer });
       h.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });

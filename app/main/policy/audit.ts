@@ -71,13 +71,28 @@ export class AuditLog {
   }
 }
 
+/** systemd-cat, when there is a journal to write to (its program and the journal's socket both exist). */
+function systemdCat(exists: (p: string) => boolean): string | undefined {
+  const bin = ["/usr/bin/systemd-cat", "/bin/systemd-cat"].find(p => exists(p));
+  return bin && exists("/run/systemd/journal/stdout") ? bin : undefined;
+}
+
+/**
+ * Is there a systemd journal journalSink can copy audit lines to? (The settings window mentions the journal only
+ * then; Windows and macOS have none, and neither has every Linux.)
+ */
+export function journalAvailable(exists: (p: string) => boolean = fs.existsSync): boolean {
+  return systemdCat(exists) !== undefined;
+}
+
 /**
  * A copy of each audit line in the systemd journal (`journalctl -t ember-audit`),
  * through one long-lived systemd-cat. Returns undefined where there's no journal.
  */
 export function journalSink(onError: (err: unknown) => void = () => undefined): ((line: string) => void) | undefined {
-  const bin = ["/usr/bin/systemd-cat", "/bin/systemd-cat"].find(p => fs.existsSync(p));
-  if (!bin || !fs.existsSync("/run/systemd/journal/stdout")) return undefined;
+  // The same test as journalAvailable(), so the settings window names the journal exactly when lines go there.
+  const bin = systemdCat(fs.existsSync);
+  if (!bin) return undefined;
   let child: ReturnType<typeof spawn> | null = null;
   let broken = false;
   const start = () => {

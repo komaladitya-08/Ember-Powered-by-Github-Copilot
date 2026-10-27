@@ -110,8 +110,12 @@ describe("startup errors", () => {
 });
 
 describe("runtime", () => {
-  it("finds the bundled Copilot runtime in node_modules", () => {
-    expect(locateRuntime({ appPath: process.cwd(), env: {} }).exists).toBe(true);
+  // npm installs only this machine's package (@github/copilot-sdk-win32-x64…); each OS's paths name it (runtimeId and
+  // runtimeExe, as main passes them). Linux is linux-x64 only, the default. TODO(port): macOS (darwin-<arch>,
+  // copilot-runtime) once its CI job has shown the path.
+  const ownRuntime = process.platform === "win32" ? { runtimeId: `win32-${process.arch}`, exe: "copilot-runtime.exe" } : null;
+  it.skipIf(process.platform === "linux" ? process.arch !== "x64" : !ownRuntime)("finds the bundled Copilot runtime in node_modules", () => {
+    expect(locateRuntime({ appPath: process.cwd(), env: {}, ...ownRuntime }).exists).toBe(true);
   });
   it("honours EMBER_COPILOT_RUNTIME", () => {
     const fake = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-rt-")), "copilot-runtime");

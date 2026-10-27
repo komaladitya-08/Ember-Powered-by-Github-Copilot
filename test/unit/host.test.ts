@@ -1705,7 +1705,8 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     await host.stop();
   });
 
-  it("this user's inotify instances are counted in /proc against the system's limit", async () => {
+  // Linux only: inotify and /proc are Linux's (and the fake /proc needs process.getuid, which Windows lacks).
+  it.skipIf(process.platform !== "linux")("this user's inotify instances are counted in /proc against the system's limit", async () => {
     const { inotifyUsedUp } = await import("../../app/main/agent/host");
     const proc = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
     fs.mkdirSync(path.join(proc, "sys/fs/inotify"), { recursive: true });

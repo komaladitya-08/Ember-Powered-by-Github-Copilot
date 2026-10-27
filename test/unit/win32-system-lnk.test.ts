@@ -1,0 +1,204 @@
+/**
+ * The Windows shortcut reader (lnk.ts) against real MS-SHLLINK bytes written by other tools, not by Ember: pylnk3
+ * wrote most of them and LnkParse3 read each back (the expected values are LnkParse3's); two were built field by field
+ * for what pylnk3 can't write (a LinkInfo with Unicode offsets and a non-ASCII path, a CommonPathSuffix, a property
+ * store with a string-named storage before the AUMID). Covered: LinkInfo targets, IDList-only targets, %VARIABLE%
+ * targets, network shares, advertised (MSI) shortcuts with their AppUserModelId, ANSI strings, and broken files.
+ */
+
+import { describe, expect, it } from "vitest";
+import { expandEnvironmentStrings, LnkError, parseShellLink } from "../../app/main/platform/win32/system/lnk";
+import { buildLnk } from "./win32-system-fakes";
+
+const FIXTURES: Record<string, string> = {
+  linkinfo: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEa3AAAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAABkBFAAf",
+    "UOBP0CDqOmkQotgIACswMJ0ZAC9DOlwAAAAAAAAAAAAAAAAAAAAAAAAATgAyAAAAAAChWABgEABQcm9ncmFtIEZpbGVzADIAAwAEAO++oVgA",
+    "YKFYAGAUAAAAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwAAABwAVAAyAAAAAAChWABgEABNb3ppbGxhIEZpcmVmb3gANgADAAQA776hWABg",
+    "oVgAYBQAAABNAG8AegBpAGwAbABhACAARgBpAHIAZQBmAG8AeAAAAB4ASAAyAAAAAAChWABgEABmaXJlZm94LmV4ZQAuAAMABADvvqFYAGCh",
+    "WABgFAAAAGYAaQByAGUAZgBvAHgALgBlAHgAZQAAABoAAABiAAAAHAAAAAEAAAAcAAAANAAAAAAAAABhAAAAGAAAAAMAAADNqzQSEAAAAFdp",
+    "bmRvd3MAQzpcUHJvZ3JhbSBGaWxlc1xNb3ppbGxhIEZpcmVmb3hcZmlyZWZveC5leGUAABkAQgByAG8AdwBzAGUAIAB0AGgAZQAgAFcAbwBy",
+    "AGwAZAAgAFcAaQBkAGUAIABXAGUAYgAgAEMAOgBcAFAAcgBvAGcAcgBhAG0AIABGAGkAbABlAHMAXABNAG8AegBpAGwAbABhACAARgBpAHIA",
+    "ZQBmAG8AeAAfAC0AUAAgACIAZABlAGYAYQB1AGwAdAAgAHAAcgBvAGYAaQBsAGUAIgAgAC0AbgBvAC0AcgBlAG0AbwB0AGUAAAAAAA==",
+  ].join(""),
+  idlist: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEaFAQAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAA0BFAAf",
+    "UOBP0CDqOmkQotgIACswMJ0ZAC9DOlwAAAAAAAAAAAAAAAAAAAAAAAAATgAyAAAAAAChWABgEABQcm9ncmFtIEZpbGVzADIAAwAEAO++oVgA",
+    "YKFYAGAUAAAAUAByAG8AZwByAGEAbQAgAEYAaQBsAGUAcwAAABwAQgAyAAAAAAChWABgEABOb3RlcGFkKysAKgADAAQA776hWABgoVgAYBQA",
+    "AABOAG8AdABlAHAAYQBkACsAKwAAABgATgAyAAAAAAChWABgEABub3RlcGFkKysuZXhlADIAAwAEAO++oVgAYKFYAGAUAAAAbgBvAHQAZQBw",
+    "AGEAZAArACsALgBlAHgAZQAAABwAAAAJAE4AbwB0AGUAcABhAGQAKwArAAAAAAA=",
+  ].join(""),
+  envvar: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEanAgAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAOcAFAAf",
+    "UOBP0CDqOmkQotgIACswMJ0ZAC9DOlwAAAAAAAAAAAAAAAAAAAAAAAAAPAAyAAAAAAChWABgEABXaW5kb3dzACYAAwAEAO++oVgAYKFYAGAU",
+    "AAAAVwBpAG4AZABvAHcAcwAAABYAQAAyAAAAAAChWABgEABTeXN0ZW0zMgAAKAADAAQA776hWABgoVgAYBQAAABTAHkAcwB0AGUAbQAzADIA",
+    "AAAYADwAMgAAAAAAoVgAYBAAY21kLmV4ZQAmAAMABADvvqFYAGChWABgFAAAAGMAbQBkAC4AZQB4AGUAAAAWAAAAUQAAABwAAAABAAAAHAAA",
+    "ADQAAAAAAAAAUAAAABgAAAADAAAAzas0EhAAAABXaW5kb3dzAEM6XFdpbmRvd3NcU3lzdGVtMzJcY21kLmV4ZQAALQBQAGUAcgBmAG8AcgBt",
+    "AHMAIAB0AGUAeAB0AC0AYgBhAHMAZQBkACAAKABjAG8AbQBtAGEAbgBkAC0AbABpAG4AZQApACAAZgB1AG4AYwB0AGkAbwBuAHMALgAPAC8A",
+    "awAgAHYAcwBkAGUAdgBjAG0AZAAuAGIAYQB0ABQDAAABAACgJXdpbmRpciVcc3lzdGVtMzJcY21kLmV4ZQAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlAHcAaQBuAGQAaQByACUAXABzAHkAcwB0AGUA",
+    "bQAzADIAXABjAG0AZAAuAGUAeABlAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAA==",
+  ].join(""),
+  advertised: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEaHEAAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAJMBFAAf",
+    "UOBP0CDqOmkQotgIACswMJ0ZAC9DOlwAAAAAAAAAAAAAAAAAAAAAAAAAPAAyAAAAAAChWABgEABXaW5kb3dzACYAAwAEAO++oVgAYKFYAGAU",
+    "AAAAVwBpAG4AZABvAHcAcwAAABYAQgAyAAAAAAChWABgEABJbnN0YWxsZXIAKgADAAQA776hWABgoVgAYBQAAABJAG4AcwB0AGEAbABsAGUA",
+    "cgAAABgAmgAyAAAAAAChWABgEAB7OTAxNjAwMDAtMDAxMS0wMDAwLTAwMDAtMDAwMDAwMEZGMUNFfQAAZAADAAQA776hWABgoVgAYBQAAAB7",
+    "ADkAMAAxADYAMAAwADAAMAAtADAAMAAxADEALQAwADAAMAAwAC0AMAAwADAAMAAtADAAMAAwADAAMAAwADAARgBGADEAQwBFAH0AAAA2AEwA",
+    "MgAAAAAAoVgAYBAAd29yZGljb24uZXhlAAAwAAMABADvvqFYAGChWABgFAAAAHcAbwByAGQAaQBjAG8AbgAuAGUAeABlAAAAHAAAAH4AAAAc",
+    "AAAAAQAAABwAAAA0AAAAAAAAAH0AAAAYAAAAAwAAAM2rNBIQAAAAV2luZG93cwBDOlxXaW5kb3dzXEluc3RhbGxlclx7OTAxNjAwMDAtMDAx",
+    "MS0wMDAwLTAwMDAtMDAwMDAwMEZGMUNFfVx3b3JkaWNvbi5leGUAABoAQwByAGUAYQB0AGUAIABiAGUAYQB1AHQAaQBmAHUAbAAgAGQAbwBj",
+    "AHUAbQBlAG4AdABzABQDAAAGAACgd18xXlZYISEhISEhISEhTUtLU2tXT1JERmlsZXM+dFd7fiQ0UV1jQElJPWwyeGFUTzVaAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB3AF8AMQBeAFYAWAAhACEAIQAhACEAIQAhACEAIQBNAEsASwBTAGsAVwBP",
+    "AFIARABGAGkAbABlAHMAPgB0AFcAewB+ACQANABRAF0AYwBAAEkASQA9AGwAMgB4AGEAVABPADUAWgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAfQAAAAkAAKBx",
+    "AAAAMVNQU1UoTJ95nzlLqNDh1C3h1fNVAAAABQAAAAAfAAAAIQAAAE0AaQBjAHIAbwBzAG8AZgB0AC4ATwBmAGYAaQBjAGUALgBXAEkATgBX",
+    "AE8AUgBEAC4ARQBYAEUALgAxADUAAAAAAAAAAAAAAAAAAAAAAAAA",
+  ].join(""),
+  unc: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEaGAgAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAFMAAAAc",
+    "AAAAAgAAAAAAAAAAAAAAHAAAAFIAAAA2AAAAAgAAABQAAAAAAAAAAAACAFxcRklMRVNFUlZFUlxBUFBTAFRvb2xzXHJlcG9ydC5leGUADgBN",
+    "AG8AbgB0AGgAbAB5ACAAcgBlAHAAbwByAHQAFAMAAAEAAKBcXGZpbGVzZXJ2ZXJcYXBwc1xUb29sc1xyZXBvcnQuZXhlAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFwAXABmAGkAbABlAHMAZQByAHYAZQByAFwAYQBw",
+    "AHAAcwBcAFQAbwBvAGwAcwBcAHIAZQBwAG8AcgB0AC4AZQB4AGUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAA",
+  ].join(""),
+  ansi: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEYnAAAAAAAAAABguhe/m9oBAGC6F7+b2gEAYLoXv5vaAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAKsAFAAf",
+    "UOBP0CDqOmkQotgIACswMJ0ZAC9DOlwAAAAAAAAAAAAAAAAAAAAAAAAANgAyAAAAAAChWABgEABUb29scwAiAAMABADvvqFYAGChWABgFAAA",
+    "AFQAbwBvAGwAcwAAABQARgAyAAAAAAChWABgEAB2aWV3ZXIuZXhlAAAsAAMABADvvqFYAGChWABgFAAAAHYAaQBlAHcAZQByAC4AZQB4AGUA",
+    "AAAaAAAASQAAABwAAAABAAAAHAAAADQAAAAAAAAASAAAABgAAAADAAAAzas0EhAAAABXaW5kb3dzAEM6XFRvb2xzXHZpZXdlci5leGUAAAYA",
+    "Vmlld2VyBgAtLWZhc3QAAAAA",
+  ].join(""),
+  unicode: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEaiAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAK4AAAAk",
+    "AAAAAQAAACQAAAA1AAAAAAAAAFwAAABeAAAArAAAABEAAAADAAAA/soAABAAAAAAQzpcUHJvZ3JhbSBGaWxlc1xVbmljb2RlIEFwcHNcY2Fm",
+    "Py5leGUAAABDADoAXABQAHIAbwBnAHIAYQBtACAARgBpAGwAZQBzAFwA3ABuAO8AYwBvAGQAZQAgAEEAcABwAHMAXABjAGEAZgDpAC4AZQB4",
+    "AGUAAAAAACEALQAtAHMAdABhAHIAdAAgACIAQwA6AFwAVQBzAGUAcgBzAFwASgBvAHMA6QBcAEQAbwBjAHUAbQBlAG4AdABzACIApwAAAAkA",
+    "AKBBAAAAMVNQUwXVzdWcLhsQk5cIACss+a4lAAAADAAAAABUAGkAdABsAGUAAAAfAAAAAwAAAEgAaQAAAAAAAAAAAFoAAAAxU1BTVShMn3mf",
+    "OUuo0OHULeHV8xEAAAADAAAAABMAAAAHAAAALQAAAAUAAAAAHwAAAA0AAABDAG8AbgB0AG8AcwBvAC4AVABvAG8AbAAAAAAAAAAAAAAAAAAA",
+    "AAAA",
+  ].join(""),
+  suffix: [
+    "TAAAAAEUAgAAAAAAwAAAAAAAAEYCAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAEQAAAAc",
+    "AAAAAQAAABwAAAAtAAAAAAAAADYAAAARAAAAAwAAAAEAAAAQAAAAAEM6XEFwcHNcAFRvb2xcdG9vbC5leGUAAAAAAA==",
+  ].join(""),
+};
+
+const bytes = (name: string) => Buffer.from(FIXTURES[name], "base64");
+
+describe("parseShellLink", () => {
+  it("reads a LinkInfo target with its arguments, description and working folder", () => {
+    expect(parseShellLink(bytes("linkinfo"))).toEqual({
+      target: "C:\\Program Files\\Mozilla Firefox\\firefox.exe", arguments: "-P \"default profile\" -no-remote",
+      description: "Browse the World Wide Web", workingDir: "C:\\Program Files\\Mozilla Firefox", aumid: null, advertised: false, runAsUser: false,
+    });
+  });
+
+  it("reads the target from the IDList when there is no LinkInfo (This PC, a drive, then long file names)", () => {
+    const link = parseShellLink(bytes("idlist"));
+    expect(link.target).toBe("C:\\Program Files\\Notepad++\\notepad++.exe");
+    expect(link.description).toBe("Notepad++");
+  });
+
+  it("prefers the %VARIABLE% target of the environment block when the shortcut says so", () => {
+    const link = parseShellLink(bytes("envvar"));
+    expect(link.target).toBe("%windir%\\system32\\cmd.exe");
+    expect(link.arguments).toBe("/k vsdevcmd.bat");
+    expect(expandEnvironmentStrings(link.target!, { WinDir: "C:\\Windows" })).toBe("C:\\Windows\\system32\\cmd.exe");
+  });
+
+  it("reads a target written in quotes as the path inside them, as Windows does (Anaconda's shortcuts)", () => {
+    const quoted = parseShellLink(buildLnk({ envTarget: "\"%windir%\\System32\\cmd.exe\"", args: "/K C:\\Miniconda\\Scripts\\activate.bat" }));
+    expect(quoted.target).toBe("%windir%\\System32\\cmd.exe");
+    expect(quoted.arguments).toBe("/K C:\\Miniconda\\Scripts\\activate.bat");
+    expect(parseShellLink(buildLnk({ target: "\"C:\\Tools\\a b.exe\"" })).target).toBe("C:\\Tools\\a b.exe");
+    // One pair around the whole path only.
+    expect(parseShellLink(buildLnk({ target: "C:\\x\\\"odd\".exe" })).target).toBe("C:\\x\\\"odd\".exe");
+  });
+
+  it("marks an advertised (MSI) shortcut and reads its AppUserModelId from the property store", () => {
+    const link = parseShellLink(bytes("advertised"));
+    expect(link.advertised).toBe(true);
+    expect(link.aumid).toBe("Microsoft.Office.WINWORD.EXE.15");
+    expect(link.target).toBe("C:\\Windows\\Installer\\{90160000-0011-0000-0000-0000000FF1CE}\\wordicon.exe");
+  });
+
+  it("reads a program on a network share", () => {
+    expect(parseShellLink(bytes("unc")).target).toBe("\\\\fileserver\\apps\\Tools\\report.exe");
+  });
+
+  it("reads ANSI string data", () => {
+    const link = parseShellLink(bytes("ansi"));
+    expect(link).toMatchObject({ target: "C:\\Tools\\viewer.exe", arguments: "--fast", description: "Viewer" });
+  });
+
+  it("prefers the LinkInfo's Unicode path, and skips a string-named property storage to find the AUMID", () => {
+    const link = parseShellLink(bytes("unicode"));
+    expect(link.target).toBe("C:\\Program Files\\Ünïcode Apps\\café.exe");
+    expect(link.arguments).toBe("--start \"C:\\Users\\José\\Documents\"");
+    expect(link.aumid).toBe("Contoso.Tool");
+  });
+
+  it("joins a LinkInfo base path and its common path suffix", () => {
+    expect(parseShellLink(bytes("suffix")).target).toBe("C:\\Apps\\Tool\\tool.exe");
+  });
+
+  it("reads the Run as administrator flag", () => {
+    const b = Buffer.from(bytes("ansi"));
+    b.writeUInt32LE(b.readUInt32LE(20) | 0x2000, 20);
+    expect(parseShellLink(b).runAsUser).toBe(true);
+  });
+
+  it("throws LnkError for files that aren't shortcuts, or are cut short", () => {
+    expect(() => parseShellLink(Buffer.alloc(0))).toThrow(LnkError);
+    expect(() => parseShellLink(Buffer.from("not a shortcut at all, but long enough to have a header of seventy-six bytes"))).toThrow(LnkError);
+    const full = bytes("linkinfo");
+    for (const cut of [20, 80, 200, full.length - 30]) expect(() => parseShellLink(full.subarray(0, cut)), `cut at ${cut}`).toThrow(LnkError);
+    const badClsid = Buffer.from(full);
+    badClsid[4] ^= 0xff;
+    expect(() => parseShellLink(badClsid)).toThrow(LnkError);
+  });
+
+  it("throws LnkError for an extra-data block that claims more bytes than the file has", () => {
+    const b = Buffer.concat([bytes("ansi").subarray(0, bytes("ansi").length - 4), Buffer.from([0xff, 0, 0, 0, 1, 0, 0, 0xa0])]);
+    expect(() => parseShellLink(b)).toThrow(LnkError);
+  });
+
+  it("gives no target for a shortcut to a shell item it can't name", () => {
+    // The IDList fixture with its root changed from This PC to another folder (no LinkInfo to fall back on).
+    const b = Buffer.from(bytes("idlist"));
+    b[76 + 2 + 4] ^= 0xff;
+    expect(parseShellLink(b).target).toBeNull();
+  });
+});
+
+describe("expandEnvironmentStrings", () => {
+  it("replaces known variables case-insensitively and leaves unknown ones as they are", () => {
+    const env = { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Program Files" };
+    expect(expandEnvironmentStrings("%systemroot%\\explorer.exe", env)).toBe("C:\\Windows\\explorer.exe");
+    expect(expandEnvironmentStrings("%PROGRAMFILES%\\A\\%NOPE%\\b.exe", env)).toBe("C:\\Program Files\\A\\%NOPE%\\b.exe");
+    expect(expandEnvironmentStrings("100% sure", env)).toBe("100% sure");
+  });
+});

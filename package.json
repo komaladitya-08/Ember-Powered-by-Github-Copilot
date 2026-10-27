@@ -13,6 +13,7 @@
   "scripts": {
     "build": "node scripts/build-app.mjs",
     "dev": "node scripts/build-app.mjs && electron .",
+    "dev:mac": "node scripts/build-app.mjs && open -n -W node_modules/electron/dist/Electron.app --args \"$PWD\"",
     "start": "electron .",
     "build:lab": "node scripts/build-demo.mjs character-lab",
     "typecheck": "tsc --noEmit",
@@ -21,10 +22,12 @@
     "test:smoke": "node test/smoke/launch.mjs",
     "check:symvers": "scripts/check-symvers.sh node_modules",
     "rebuild:el8": "scripts/rebuild-el8.sh",
-    "test:integration": "EMBER_INTEGRATION=1 vitest run",
+    "test:integration": "node scripts/run-integration.mjs",
     "test:sidecar": "python3 -B sidecar/atspi/test_ember_atspi.py",
     "package": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh && scripts/package/appimage.sh",
     "package:rpm": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh",
+    "package:win": "npm run build && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
+    "package:mac": "npm run build && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "doctor": "node scripts/build-app.mjs && electron . --doctor",
     "eval": "node eval/run.mjs"
   },
@@ -47,6 +50,7 @@
     "eslint": "10.11.0",
     "globals": "17.12.0",
     "playwright-core": "1.56.1",
+    "resedit": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
     "vitest": "5.0.2"
