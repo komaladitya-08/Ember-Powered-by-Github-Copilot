@@ -21,6 +21,21 @@ export function launchCommand(o: { packaged: boolean; execPath: string; appPath:
   return [o.execPath, o.appPath];
 }
 
+/**
+ * The entry's TryExec line: the program it starts, so the desktop skips the entry quietly once that program is gone
+ * (dnf remove ember, a deleted AppImage), as the file stays in ~/.config/autostart, which no package can reach. None
+ * without a program: an older Ember's entry, from before TryExec, has none.
+ */
+function tryExec(command: readonly string[] | null): string[] {
+  const program = command?.[0];
+  return program ? [`TryExec=${stringValue(program)}`] : [];
+}
+
+/** A Desktop Entry string value (TryExec): no quoting or field codes, only the spec's escapes. */
+function stringValue(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/^ /, "\\s");
+}
+
 /** One Exec argument, quoted per the Desktop Entry spec (and escaped again as a string value). */
 export function execArg(a: string): string {
   if (/^[A-Za-z0-9_\-./=:+,@]+$/.test(a)) return a;
@@ -35,21 +50,14 @@ export function autostartEntry(command: string[]): string {
     "Name=Ember",
     "Comment=Your cursor companion, powered by GitHub Copilot",
     `Exec=${[...command, "--autostart"].map(execArg).join(" ")}`,
-    // The desktop skips the entry when this program is gone (dnf remove ember, a deleted AppImage): the file stays in
-    // ~/.config/autostart, which no package can reach.
-    `TryExec=${stringValue(command[0])}`,
     "Icon=ember",
+    ...tryExec(command),
     "Terminal=false",
     "NoDisplay=true",
     "X-GNOME-Autostart-enabled=true",
     "X-GNOME-Autostart-Delay=3",
     "",
   ].join("\n");
-}
-
-/** A Desktop Entry string value (TryExec): no quoting or field codes, only the spec's escapes. */
-function stringValue(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/^ /, "\\s");
 }
 
 /** Makes the autostart entry match the setting; returns true if the file changed. */
