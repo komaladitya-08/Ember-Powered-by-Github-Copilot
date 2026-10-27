@@ -16,11 +16,11 @@ import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, setTextScale, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
-import { applyPagePrefs, pagePrefs } from "./page-prefs";
+import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
@@ -405,12 +405,15 @@ function start(): void {
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
   });
-  // And again when it changes (only then: the size slider changes the settings many times a second).
+  // And again when it changes (only then: the size slider changes the settings many times a second). The command and
+  // prompt windows open larger with the text size.
   let pagePrefsKey = JSON.stringify(pagePrefs(settings.get()));
+  setTextScale(textScale(settings.get().textSize));
   settings.onChange(s => {
     const prefs = pagePrefs(s);
     if (JSON.stringify(prefs) === pagePrefsKey) return;
     pagePrefsKey = JSON.stringify(prefs);
+    setTextScale(textScale(prefs.textSize));
     for (const w of BrowserWindow.getAllWindows()) void applyPagePrefs(w.webContents, prefs);
   });
 

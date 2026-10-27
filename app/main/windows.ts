@@ -6,10 +6,11 @@
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
  */
 
-import { BrowserWindow } from "electron";
+import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
+import { scaledSize } from "./page-prefs";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -46,6 +47,19 @@ const webPreferences = (page: string) => ({
   spellcheck: false,
 });
 
+/** The text's scale (1, 1.15 or 1.3: page-prefs.ts's textScale), which main keeps up to date with the settings. */
+let textScaleNow = 1;
+export function setTextScale(scale: number): void {
+  textScaleNow = Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+/**
+ * A window's usual size grown with the text, so its words keep their room (review #57); inside the primary display's
+ * work area. At the default size it is the usual size.
+ */
+const forText = <T extends Record<string, number>>(size: T): T =>
+  textScaleNow === 1 ? size : scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
+
 /**
  * The command window ("Ember commands", §3.10, §8.5): hidden until its controller shows it. macOS: a non-activating panel
  * whose first click counts (one click allows; the user's app stays active). Windows: its controller shows it inactive.
@@ -53,10 +67,7 @@ const webPreferences = (page: string) => ({
  */
 export function createCommandWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
-    width: 760,
-    height: 480,
-    minWidth: 480,
-    minHeight: 280,
+    ...forText({ width: 760, height: 480, minWidth: 480, minHeight: 280 }),
     title: "Ember commands",
     show: false,
     backgroundColor: "#121011",
@@ -75,8 +86,7 @@ export function createCommandWindow(os: OS): BrowserWindow {
  */
 export function createPromptWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
-    width: 440,
-    height: 300,
+    ...forText({ width: 440, height: 300 }),
     resizable: false,
     minimizable: false,
     maximizable: false,

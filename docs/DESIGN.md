@@ -65,8 +65,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
   scales the type tokens and each page's own px sizes (`html[data-text-size]`, set by main's
   `page-prefs.ts`) in Settings, the bubble, task cards, the handle and the command and prompt
-  windows; the Ask box, the desk's bar and the terminal keep their size (their windows or cells
-  can't grow with it).
+  windows. The handle's pill and the command and prompt windows grow by the same scale (the pill
+  wider, the windows as they open, inside the work area); the Ask box, the desk's bar and the
+  terminal keep their size (their windows or cells can't grow with it).
 - **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
   system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %.
