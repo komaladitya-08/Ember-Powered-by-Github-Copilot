@@ -27,6 +27,7 @@ import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
+import { notificationBody } from "./notification";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
@@ -699,7 +700,7 @@ function start(): void {
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;
   const notify = (title: string, body: string) => {
-    try { if (Notification.isSupported()) new Notification({ title, body: body.slice(0, 240), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
+    try { if (Notification.isSupported()) new Notification({ title, body: notificationBody(body), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
   };
   let askHistory: string[] = [];
   /** Speak replies (or a screen reader runs: Orca, Narrator, VoiceOver), unless the organisation turned speaking off. */
