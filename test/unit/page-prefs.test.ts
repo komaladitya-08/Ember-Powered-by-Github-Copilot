@@ -81,6 +81,30 @@ describe("Ember's display settings in every window", () => {
   });
 });
 
+/**
+ * The selectors in `css` that set a font size in px (not through a token or the scale) and have no scaled twin
+ * (`html[data-text-size] <selector>` with the same size times var(--text-scale)), the rules inside its media queries
+ * included.
+ */
+function unscaled(css: string): string[] {
+  let plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Media queries (and @supports) unwrapped, nested ones too: their rules are checked like the others.
+  for (let m; (m = /@(media|supports)[^{]*\{/.exec(plain)); ) {
+    let depth = 1, i = m.index + m[0].length;
+    for (; i < plain.length && depth > 0; i++) depth += plain[i] === "{" ? 1 : plain[i] === "}" ? -1 : 0;
+    plain = plain.slice(0, m.index) + plain.slice(m.index + m[0].length, i - 1) + plain.slice(i);
+  }
+  // The rules that set a size in px (not through a token), outside the text-size rules themselves, with that size.
+  const px = (d: string) => /(?:font: [\d ]*?|font-size: )(\d+(?:\.\d+)?)px/.exec(d)?.[1];
+  const literal = [...plain.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, sel, d]) => px(d) && !sel.includes("data-text-size") && !/^\s*@/.test(sel))
+    .flatMap(([, sel, d]) => sel.trim().replace(/^.*\}\s*/s, "").split(",").map(s => ({ sel: s.trim(), size: px(d)! })));
+  // Their twins: the same selector under html[data-text-size], the same size times the scale.
+  const scaled = [...plain.matchAll(/([^{}]+)\{([^}]*var\(--text-scale[^}]*)\}/g)]
+    .flatMap(([, sel, d]) => sel.trim().split(",").map(s => `${s.trim()} ${/font-size: calc\((\d+(?:\.\d+)?)px \* var\(--text-scale(?:, 1)?\)\)/.exec(d)?.[1]}`));
+  return literal.filter(l => !scaled.includes(`html[data-text-size] ${l.sel} ${l.size}`)).map(l => l.sel);
+}
+
 describe("the text size", () => {
   const shared = read("app/renderer/shared/ember.css");
 
@@ -99,18 +123,18 @@ describe("the text size", () => {
       ["shared", shared], ["bubble", BUBBLE_CSS],
       ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
-    for (const [name, css] of sheets) {
-      const plain = css.replace(/\/\*[\s\S]*?\*\//g, "");
-      // The rules that set a size in px (not through a token), outside the text-size rules themselves.
-      const literal = [...plain.matchAll(/([^{}]+)\{([^}]*)\}/g)]
-        .filter(([, sel, d]) => /(font: [\d ]*\d+(\.\d+)?px|font-size: \d+(\.\d+)?px)/.test(d) && !sel.includes("data-text-size") && !/^\s*@/.test(sel))
-        .map(([, sel]) => sel.trim().replace(/^.*\}\s*/s, ""));
-      const scaled = [...plain.matchAll(/([^{}]+)\{([^}]*var\(--text-scale[^}]*)\}/g)].map(([, sel]) => sel.trim());
-      for (const sel of literal) {
-        const each = sel.split(",").map(s => s.trim());
-        for (const s of each) expect(scaled.some(x => x.split(",").map(y => y.trim()).includes(`html[data-text-size] ${s}`)) || /var\(--text-scale/.test(sel), `${name}: ${s}`).toBe(true);
-      }
-    }
+    for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
+  });
+
+  it("checks the rules inside a media query too, against their scaled twins there", () => {
+    expect(unscaled("@media (min-width: 640px) { .jump a { font-size: 15px; } }")).toEqual([".jump a"]);
+    expect(unscaled("@media (min-width: 640px) { .a { color: red; } .jump a, .b { font: 600 15px/20px x; } }")).toEqual([".jump a", ".b"]);
+    expect(unscaled("@media (min-width: 640px) { .jump a { font-size: 15px; } html[data-text-size] .jump a { font-size: calc(15px * var(--text-scale)); } }")).toEqual([]);
+    expect(unscaled("@media (forced-colors: active) { @media (min-width: 1px) { .deep { font-size: 9px; } } }")).toEqual([".deep"]);
+    expect(unscaled(".a { font-size: 12px; } @keyframes k { 50% { opacity: 1; } }")).toEqual([".a"]);
+    expect(unscaled(".a { font: var(--type-body); }")).toEqual([]);
+    // A twin with another size (the one outside the media query) doesn't count.
+    expect(unscaled(".j { font-size: 13px; } html[data-text-size] .j { font-size: calc(13px * var(--text-scale)); } @media (min-width: 640px) { .j { font: 500 14px/20px x; } }")).toEqual([".j"]);
   });
 
   it("is a setting in Comfort & access", () => {
