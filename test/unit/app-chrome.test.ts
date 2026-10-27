@@ -1,7 +1,8 @@
 /**
  * Ember's app-wide chrome (windows.ts): the application menu, the About panel, the native theme and DevTools in a
- * packaged build (review #243, #176, #232, #245). Windows and Linux had Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened
- * DevTools on the password card, Ctrl+R reloaded a card, Ctrl+W closed the ask box and Alt showed a menu bar.
+ * packaged build (review #243, #176, #232, #245), and the quit question's words (review #226). Windows and Linux had
+ * Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened DevTools on the password
+ * card, Ctrl+R reloaded a card, Ctrl+W closed the ask box and Alt showed a menu bar.
  * main.ts can't be loaded in a unit test (it is Electron's entry point), so its call is read from its source; the
  * rest runs against fakes of Electron's Menu, nativeTheme and app.
  */
@@ -14,7 +15,7 @@ import type { OS } from "../../app/shared/shortcuts";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, nativeTheme: {}, app: {} }));
 
-const { aboutPanel, appMenuTemplate, lockDevTools, setUpAppChrome } = await import("../../app/main/windows");
+const { aboutPanel, appMenuTemplate, lockDevTools, quitQuestion, setUpAppChrome } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -141,5 +142,12 @@ describe("the native theme (review #245)", () => {
       setUpAppChrome({ os, appMenu, actions: actions() }, f.e as never);
       expect(f.e.nativeTheme.themeSource).toBe("dark");
     }
+  });
+});
+
+describe("the quit question's words (review #226)", () => {
+  it("says them for several tasks, it for one", () => {
+    expect(quitQuestion(1, { commands: 0, connections: 0 })?.detail).toBe("Quitting stops it where it is.");
+    expect(quitQuestion(3, { commands: 0, connections: 0 })).toEqual({ message: "Ember is still working on 3 tasks.", detail: "Quitting stops them where they are." });
   });
 });

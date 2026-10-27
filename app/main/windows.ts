@@ -198,12 +198,12 @@ export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; 
 /**
  * The quit question's words (§8.9) when quitting would stop something: tasks under way, commands running, computers
  * connected over SSH (`connected`: their names, when known). null when nothing would: Ember quits at once. With tasks
- * only, today's words.
+ * only, today's words; several tasks are "them", as in the mixed case (review #226).
  */
 export function quitQuestion(tasks: number, busy: { commands: number; connections: number }, connected: string[] = []): { message: string; detail: string } | null {
   const { commands, connections } = busy;
   if (tasks <= 0 && commands <= 0 && connections <= 0) return null;
-  if (commands <= 0 && connections <= 0) return { message: `Ember is still working on ${tasks === 1 ? "a task" : `${tasks} tasks`}.`, detail: "Quitting stops it where it is." };
+  if (commands <= 0 && connections <= 0) return { message: `Ember is still working on ${tasks === 1 ? "a task" : `${tasks} tasks`}.`, detail: `Quitting ${tasks === 1 ? "stops it where it is" : "stops them where they are"}.` };
   const work = [
     ...(tasks > 0 ? [`working on ${tasks === 1 ? "a task" : `${tasks} tasks`}`] : []),
     ...(commands > 0 ? [`running ${commands === 1 ? "1 command" : `${commands} commands`}`] : []),

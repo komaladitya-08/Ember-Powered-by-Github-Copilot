@@ -45,7 +45,7 @@ describe("settings window words", () => {
     expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
     expect(tagline({ ...base, failing: 2 })).toMatch(/fixed/);
     // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
-    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks running are done.");
+    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks that are running finish.");
   });
 
   it("names days Today and Yesterday", () => {

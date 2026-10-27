@@ -64,7 +64,7 @@ export function tagline(t: {
   if (t.failing) return "Ember needs a couple of things fixed before it can work on this machine.";
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
-  if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
+  if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks that are running finish.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   return `${where} Press ${askLabel} to ask it anything.`;

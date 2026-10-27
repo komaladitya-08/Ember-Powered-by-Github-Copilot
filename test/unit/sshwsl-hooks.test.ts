@@ -656,7 +656,7 @@ describe("the quit question (§8.9)", () => {
 
   it("says today's words with tasks only", () => {
     expect(quitQuestion(1, { commands: 0, connections: 0 })).toEqual({ message: "Ember is still working on a task.", detail: "Quitting stops it where it is." });
-    expect(quitQuestion(2, { commands: 0, connections: 0 })).toEqual({ message: "Ember is still working on 2 tasks.", detail: "Quitting stops it where it is." });
+    expect(quitQuestion(2, { commands: 0, connections: 0 })).toEqual({ message: "Ember is still working on 2 tasks.", detail: "Quitting stops them where they are." });
   });
 
   it("names running commands and the computers it is connected to", () => {

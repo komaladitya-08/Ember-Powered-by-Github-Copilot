@@ -463,7 +463,7 @@ function renderAgent(a: AgentStatus | null): void {
   const waiting = a.waitingForTasks === true;
   $("sign-in").hidden = !notConnected || signingIn || waiting;
   $("retry").hidden = !notConnected || signingIn;
-  $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
+  $("retry").textContent = waiting ? "Reconnect now (stops the tasks that are running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
   $("models").hidden = a.phase !== "ready" || a.models.length === 0;
