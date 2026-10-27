@@ -4672,18 +4672,74 @@ reg(NATIVE, ["dconf"], h => {
 });
 /** macOS preference domains whose settings weaken a protection: the screen saver's password, the firewall, remote access, updates. */
 const DEFAULTS_SECURITY = /^com\.apple\.(screensaver|alf|security(\..+)?|screensharing|remotemanagement|remotedesktop|softwareupdate|commerce)$/i;
+/** macOS preference domains that start something at login or choose which program opens a file or link (review #175). */
+const DEFAULTS_AUTOSTART = /^com\.apple\.(loginitems|loginwindow|backgroundtaskmanagementagent|launchservices)(\/|$)/i;
 reg(NATIVE, ["defaults"], h => {
-  // defaults [-currentHost | -host NAME] <verb> <domain> …; the domain may be `-g`, `-app NAME` or a name.
+  // defaults [-currentHost | -host NAME] <verb> <domain> …; the domain may be `-g`, `-app NAME`, a name or a path.
   let k = 0;
   while (h.args[k]?.v === "-currentHost" || h.args[k]?.v === "-host") k += h.args[k].v === "-host" ? 2 : 1;
   const verb = h.args[k]?.v;
-  if (verb === undefined || (verb !== null && !/^(write|delete|import|rename)$/.test(verb))) return;
+  if (verb === undefined) return;
   const rest = h.args.slice(k + 1);
-  const domain = rest[0]?.v === "-app" ? null : rest[0]?.v ?? null;
   const app = rest[0]?.v === "-app";
-  if (verb === null || (!app && domain === null) || rest.some(a => /LSQuarantine/i.test(a.v ?? "")) || (domain !== null && DEFAULTS_SECURITY.test(domain))) {
+  const domain = app ? null : rest[0]?.v ?? null;
+  // A domain given as a path is that file, `.plist` added when missing (review #175).
+  const file = domain !== null && /^[~/]/.test(domain) ? lit(domain.endsWith(".plist") ? domain : `${domain}.plist`) : null;
+  if (verb === "export") {
+    if (file) h.e.usePath(file, "read", h.sc);
+    if (rest[1]) overwrites(h, rest[1]);
+    return;
+  }
+  if (verb !== null && !/^(write|delete|import|rename)$/.test(verb)) { if (file) h.e.usePath(file, "read", h.sc); return; }
+  if (verb === "import" && rest[1] && rest[1].v !== "-") h.e.usePath(rest[1], "read", h.sc);
+  if (file) { h.e.usePath(file, "write", h.sc); return; }
+  const unknown = verb === null || (!app && domain === null);
+  if (unknown || rest.some(a => /LSQuarantine/i.test(a.v ?? "")) || (domain !== null && DEFAULTS_SECURITY.test(domain))) {
     h.e.add("system", "system.security", "Turns off or weakens a security protection.");
-  } else if (rest.some(a => /^\/Library\//.test(a.v ?? ""))) h.e.add("system", "path.system", "Changes system files.");
+  }
+  if (unknown || (domain !== null && DEFAULTS_AUTOSTART.test(domain) && !rest.some(a => /LSQuarantine/i.test(a.v ?? "")))) {
+    h.e.add("system", "path.autostart", "Schedules something to run later or at login.");
+  }
+});
+// Property lists edited in place (review #175): a LaunchAgent built with PlistBuddy or plutil runs at the next login.
+reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
+  // PlistBuddy [-x] [-c "<command>"]… <file>: Set, Add, Delete, Clear, Copy, Merge and Import change the file (Merge
+  // and Import read another one); with no -c it reads its commands from the terminal or stdin.
+  const cmds: (string | null)[] = [];
+  const ops: Arg[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (v === "-c") { cmds.push(h.args[k + 1]?.v ?? null); k++; continue; }
+    if (v !== null && /^-[xh]$/.test(v)) continue;
+    ops.push(h.args[k]);
+  }
+  const file = ops[0];
+  let writes = false;
+  for (const c of cmds) {
+    if (c === null) { writes = true; continue; }
+    const [verb, ...words] = c.trim().split(/\s+/);
+    const w = (verb ?? "").toLowerCase();
+    if (/^(set|add|delete|clear|copy|merge|import|save|revert)$/.test(w)) writes = true;
+    const other = w === "merge" ? words[0] : w === "import" ? words[1] : undefined;
+    if (other) h.e.usePath(lit(other), "read", h.sc);
+  }
+  if (cmds.length === 0) {
+    if (h.s.stdin === null) h.e.unclear("unclear.interactive", SAYS.interactive);
+    else { writes = true; h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."); }
+  }
+  if (file) h.e.usePath(file, writes ? "write" : "read", h.sc);
+});
+reg(NATIVE, ["plutil"], h => {
+  // plutil -insert|-replace KEY -TYPE VALUE FILE, -remove KEY FILE, -create FORMAT FILE, -convert FORMAT [-o OUT] FILE…
+  // change their file in place, or write -o's (`-` is stdout); -lint, -p and -help only read.
+  const vs = h.args.map(a => a.v);
+  const verb = vs.find(v => v !== null && /^-(insert|replace|remove|create|convert|extract)$/.test(v));
+  const outAt = vs.findIndex(v => v === "-o");
+  const out = outAt >= 0 ? h.args[outAt + 1] : undefined;
+  if (out && out.v !== "-") h.e.usePath(out, "write", h.sc);
+  const last = h.args[h.args.length - 1];
+  if (!verb || !last || last === out) { h.e.readArgs(h.args.filter((a, k) => !isOption(a) && k !== outAt + 1), h.sc); return; }
+  h.e.usePath(last, out || verb === "-extract" ? "read" : "write", h.sc);
 });
 // Which certificates the computer trusts (review #108): NSS's certutil, p11-kit's trust, the system bundle, macOS's
 // trust settings. Windows' certutil is judged below its own handler.

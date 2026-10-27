@@ -10488,6 +10488,201 @@
    "verdict": "ask",
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Add :ProgramArguments array' ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Set :RunAtLoad true' -c 'Print' ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Print :Label' ~/Library/LaunchAgents/x.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Merge ~/.ssh/id_rsa' Info.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c \"$cmd\" ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Set :x 1' ~/Library/Application\\ Support/ember/x.plist",
+   "verdict": "refuse",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -create xml1 ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -insert RunAtLoad -bool true ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace ProgramArguments -json '[\"/bin/sh\",\"-c\",\"id\"]' ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -convert xml1 -o ~/Library/LaunchAgents/x.plist in.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -convert xml1 Info.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -lint ~/Library/LaunchAgents/x.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -p Info.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -convert json -o - Info.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/LaunchAgents/com.x RunAtLoad -bool true",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/com.x.plist"
+   ]
+  },
+  {
+   "cmd": "defaults write com.apple.loginitems x y",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write com.apple.loginwindow LoginHook /tmp/x.sh",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers -array-add x",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write /Library/Preferences/com.x k v",
+   "verdict": "ask",
+   "rules": [
+    "path.system"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults export com.apple.dock ~/.zshrc",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults export com.apple.dock -",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults read ~/Library/LaunchAgents/com.x",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }
