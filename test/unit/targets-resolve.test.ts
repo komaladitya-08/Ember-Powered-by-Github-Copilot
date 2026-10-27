@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placesNamed, targetOfChoice, targetsNamed,
+  NOT_NAMED, TWO_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placeMentions, placesNamed, targetOfChoice, targetsNamed,
   type NamedTarget,
 } from "../../app/main/targets/resolve";
 
@@ -240,5 +240,20 @@ describe("placesNamed (the lead's ruling: a computer Ember doesn't know, named a
     "regenerate my ssh keys", "Note: delete build/", "copy it from main.ts", "on the server, delete build/",
   ])("names no computer in %j", words => {
     expect(placesNamed(words, all)).toEqual([]);
+  });
+});
+
+describe("placeMentions (review #31)", () => {
+  it("says how each mention of a place was introduced", () => {
+    expect(placeMentions("delete the build folder in my-project", "my-project")).toEqual(["in"]);
+    expect(placeMentions("remove dist on feature-x, then push feature-x", "feature-x")).toEqual(["on"]);
+    expect(placeMentions("delete build/ in my-app and ssh my-app", "my-app")).toEqual(["in", "ssh"]);
+    expect(placeMentions("delete logs on the server web-2", "web-2")).toEqual(["server"]);
+    expect(placeMentions("prod-db: delete build/", "prod-db")).toEqual([":"]);
+    expect(placeMentions("delete build/ in my-app", "other-app")).toEqual([]);
+  });
+
+  it("leaves placesNamed as it was", () => {
+    expect(placesNamed("delete build/ in my-project on prod-db at deploy@10.0.0.5", [])).toEqual(["my-project", "prod-db", "deploy@10.0.0.5"]);
   });
 });

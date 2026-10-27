@@ -245,6 +245,46 @@ function wordsOf(userWords: string): Words {
   return { raw, list: userWordList(userWords), tokens: userTokens(userWords), asked: requestStarts(raw) };
 }
 
+/** Words that say which folder a named path is in ("build/ in my-app", "the build folder inside packages/app"). */
+const IN_FOLDER = new Set(["in", "inside", "within", "under"]);
+const AFTER_OBJECT = new Set(["folder", "folders", "directory", "directories", "dir", "file", "files"]);
+const BEFORE_FOLDER = new Set(["the", "my", "our", "your", "this", "that"]);
+
+/**
+ * The folder the user's words put the path at token `idx` in, when they name one by a path or a name with a dot, a
+ * hyphen or a digit ("delete build/ in my-app", "the build folder in packages/app"), else null. Everyday words ("in my
+ * home folder") and amounts ("in 5 minutes") name none.
+ */
+function folderNamed(idx: number, w: Words): string | null {
+  let k = idx + 1;
+  while (AFTER_OBJECT.has(w.tokens[k] ?? "")) k++;
+  if (!IN_FOLDER.has(w.tokens[k] ?? "")) return null;
+  k++;
+  while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
+  const t = w.tokens[k] ?? "";
+  if (/^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
+  return /[\\/]/.test(t) || /^[\p{L}\p{N}_]+(?:[.-][\p{L}\p{N}_]+)+$/u.test(t) || /\p{L}\d|\d\p{L}/u.test(t) ? t : null;
+}
+
+/**
+ * Whether `resolved` is inside a folder the words named (folderNamed): the folder's path, as written, is a run of the
+ * folders above it ("my-app" in /home/ana/my-app/build, "packages/app" in …/packages/app/build). Review #31: once
+ * "in my-app" no longer counts as another computer, the path must really be in it.
+ */
+function inNamedFolder(resolved: string, folder: string): boolean {
+  const above = resolved.toLowerCase().split(/[\\/]+/).filter(Boolean).slice(0, -1);
+  const want = normPath(folder).split(/[\\/]+/).filter(x => x !== "" && x !== ".");
+  if (want.length === 0) return false;
+  for (let i = 0; i + want.length <= above.length; i++) if (want.every((x, j) => above[i + j] === x)) return true;
+  return false;
+}
+
+/** The path at `idx` is where the words put it: in the folder they named after it, when they named one. */
+const whereNamed = (resolved: string, idx: number, w: Words): boolean => {
+  const folder = folderNamed(idx, w);
+  return folder === null || inNamedFolder(resolved, folder);
+};
+
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -360,7 +400,10 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (!asks(w, ["discard", "revert", "undo", "restore", "throw away"])) return null;
     const objs = fs.flatMap(f => f.objects);
     if (objs.length === 0 || fs.some(f => f.widening.some(x => x === "--source" || x === "real-path"))) return null;
-    for (const o of objs) if (!o.resolved || pathToken(o, w, ctx) < 0) return null;
+    for (const o of objs) {
+      const idx = o.resolved ? pathToken(o, w, ctx) : -1;
+      if (idx < 0 || !whereNamed(o.resolved!, idx, w)) return null;
+    }
     return { intent: "git.discard", announce: `Discarding changes to ${joinList(objs.map(o => o.text))}, as you asked.` };
   },
   "git.clean": (fs, w, ctx) => {
@@ -389,7 +432,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         if (["/", "~", ".", "..", "*", "\\"].includes(o.text) || /^[A-Za-z]:\\?$/.test(o.text)) return null;
         if (isBroadPath(o.resolved, env)) return null;
         const idx = o.kind === "glob" ? w.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, w, ctx);
-        if (idx < 0) return null;
+        if (idx < 0 || !whereNamed(o.resolved, idx, w)) return null;
         const inside = isUnder(o.resolved, ctx.cwd, env) || (ctx.home !== "" && isUnder(o.resolved, ctx.home, env));
         if (!inside && !w.tokens.some(t => normPath(t) === normPath(o.resolved!) || (isAbsoluteText(o.text, ctx.os) && normPath(t) === normPath(o.text)))) return null;
         if (recursive && !recursionNear(idx, w)) return null;
@@ -405,7 +448,8 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     for (const f of fs) {
       if (f.widening.includes("real-path")) return null;
       const o = f.objects.find(x => x.kind === "path");
-      if (!o || !o.resolved || pathToken(o, w, ctx) < 0) return null;
+      const idx = o?.resolved ? pathToken(o, w, ctx) : -1;
+      if (!o || !o.resolved || idx < 0 || !whereNamed(o.resolved, idx, w)) return null;
       if (homeDotFile(o.resolved, env)) return null;
       texts.push(o.text);
     }

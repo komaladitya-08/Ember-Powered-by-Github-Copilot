@@ -179,10 +179,14 @@ runs on, even without a place word ("build-01 delete build/" while Ember works o
 looks like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5", "from the server web-2",
 "ssh prod-db and …", "prod-db: …": a name with a dot, a hyphen or a digit, or `user@host`, after on, in, at, inside,
 over, via, into, onto, from or ssh, or first in the request before a colon or a comma), nothing in that task runs on
-an announcement: every dangerous command asks, and the card's first line says where it runs ("You named prod-db, but
-this runs on this computer.", "You also named build-01, but this runs on this computer."). Ordinary commands still
-run. Everyday places ("on the desktop", "in my home folder", "on line 12", "in main.ts", "in 5 minutes") don't count,
-nor do dates and number ranges ("on 2026-10-22,", "from 10-20"). A name in quotes, backticks, guillemets or brackets,
+an announcement: every dangerous command asks, and the card's first line says where it runs ("It looks like you named
+another computer (prod-db), but this runs on this computer.", "You also named build-01, but this runs on this
+computer."). Ordinary commands still run. Everyday places ("on the desktop", "in my home folder", "on line 12", "in
+main.ts", "in 5 minutes") don't count, nor do dates and number ranges ("on 2026-10-22,", "from 10-20"). Nor does a
+folder or a branch the computer shows: "in my-app" (or inside, into) when my-app is a folder where the task works or
+one of the folders it is in, and "on feature-x" when feature-x is the branch the task's folder is on; the command then
+announces only if it acts on what is in that folder ("delete build/ in my-app" covers `rm -r my-app/build`, not
+`rm -r build` elsewhere). When the computer can't say, it asks. A name in quotes, backticks, guillemets or brackets,
 written with any kind of dash, with a port or a folder after it ("prod-db:22", "deploy@prod-db:/srv"), or after a word
 such as server, host or machine ("on the server prod-db", "ssh to prod-db") counts too. On a Windows PC where WSL
 isn't on in Ember (or isn't installed, or your organisation turned it off), "WSL", "Linux" and "the Linux side" don't

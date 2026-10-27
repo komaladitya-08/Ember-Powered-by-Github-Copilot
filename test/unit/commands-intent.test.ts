@@ -298,3 +298,27 @@ describe("matchIntent: only a request counts (review #28)", () => {
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
 });
+
+describe("matchIntent: the folder the words put a path in (review #31)", () => {
+  it.each([
+    ["rm -r build", "delete build/ in my-project", null],
+    ["rm -r my-project/build", "delete build/ in my-project", "Deleting my-project/build, as you asked."],
+    ["rm -r build", "delete the build folder in packages/app", null],
+    ["rm -rf packages/app/build", "delete the build folder in packages/app", "Deleting packages/app/build, as you asked."],
+    ["rm -r step2/cache", "clean up the cache folder in step2", "Deleting step2/cache, as you asked."],
+    ["rm -r cache", "clean up the cache folder in step2", null],
+    ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ in my home folder", "Deleting build, as you asked."],
+    ["echo x > notes.txt", "overwrite notes.txt in my-app", null],
+    ["echo x > my-app/notes.txt", "overwrite notes.txt in my-app", "Overwriting my-app/notes.txt, as you asked."],
+  ])("`%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it("reads the task's own folder as the folder named", () => {
+    const ctx = contextOf("linux");
+    const inside = { ...ctx, cwd: "/home/ana/my-project" };
+    const cls = classifyCommand("rm -r build", "bash", inside);
+    expect(matchIntent(cls, "delete build/ in my-project", { ...inside, git: null })?.announce).toBe("Deleting build, as you asked.");
+  });
+});

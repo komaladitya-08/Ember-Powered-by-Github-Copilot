@@ -226,28 +226,53 @@ function hostOfPlace(word: string): string | null {
  */
 export function placesNamed(words: string, targets: readonly NamedTarget[]): string[] {
   const known = new Set(targets.flatMap(t => t.names.map(normaliseName)).filter(n => n !== ""));
+  const out: string[] = [];
+  for (const { word, host } of scanPlaces(words)) {
+    if (out.length >= 5) break;
+    const n = normaliseName(host);
+    if (n === "" || known.has(n) || out.some(o => o.toLowerCase() === word.toLowerCase())) continue;
+    out.push(word);
+  }
+  return out.slice(0, 5);
+}
+
+/**
+ * Every computer-looking place in the words, in order (placesNamed's reading): the word as written, its host, and what
+ * introduced it: the place word ("in", "on", "from"…), the host noun when one stood between ("server"), or ":" for rule
+ * 3's first-word form.
+ */
+function scanPlaces(words: string): { word: string; host: string; via: string }[] {
   const raw = String(words ?? "").normalize("NFKC").replace(DASHES, "-").split(/\s+/u).filter(t => t !== "");
   const tokens = raw.map(t => t.replace(AROUND, "")).filter(t => t !== "");
-  const out: string[] = [];
-  const consider = (token: string) => {
+  const out: { word: string; host: string; via: string }[] = [];
+  const consider = (token: string, via: string) => {
     // "on prod-db's desktop": the name without its possessive.
     const word = token.replace(/['’]s$/u, "");
     const host = hostOfPlace(word);
     if (host === null || word.length > 64) return;
-    const n = normaliseName(host);
-    if (n === "" || known.has(n) || out.some(o => o.toLowerCase() === word.toLowerCase())) return;
-    out.push(word);
+    out.push({ word, host, via });
   };
   // Rule 3's other form: the request's first word, then ":" or "," ("prod-db: delete build/").
-  if (raw.length > 1 && /[:,]$/.test(raw[0])) consider(raw[0].replace(AROUND, ""));
-  for (let i = 0; i < tokens.length - 1 && out.length < 5; i++) {
+  if (raw.length > 1 && /[:,]$/.test(raw[0])) consider(raw[0].replace(AROUND, ""), ":");
+  for (let i = 0; i < tokens.length - 1; i++) {
     if (!HOST_PLACE.has(tokens[i].toLowerCase())) continue;
     let k = i + 1;
+    let via = tokens[i].toLowerCase();
     if (DETERMINER.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) k++;
-    if (HOST_NOUN.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) k++;
-    consider(tokens[k]);
+    if (HOST_NOUN.has(tokens[k].toLowerCase()) && k + 1 < tokens.length) via = tokens[k++].toLowerCase();
+    consider(tokens[k], via);
   }
-  return out.slice(0, 5);
+  return out;
+}
+
+/**
+ * How the user's words introduce `place` (one of placesNamed's), each time they name it: "in", "on", "from"…, a host
+ * noun such as "server" when one stood between, ":" for the first-word form (review #31). The command flow takes a
+ * place out of D4.4's unknown-place guard only when every mention reads as a folder ("in my-app") and the target shows
+ * that folder, or as a branch ("on feature-x") and it is the branch the task's folder is on.
+ */
+export function placeMentions(words: string, place: string): string[] {
+  return scanPlaces(words).filter(p => p.word.toLowerCase() === place.toLowerCase()).map(p => p.via);
 }
 
 /** The target a name given by the model stands for (exactly one of its names, or this computer's fixed words), or null. */

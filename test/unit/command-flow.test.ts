@@ -1108,7 +1108,7 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     expect(h.announced).toEqual([]);
     expect(h.windowAnnounce).toEqual([]);
     const q = h.asked[0] as { where?: string; prompt: string; armMs: number; panel: { card: CommandCard } };
-    expect(q.panel.card.says[0]).toBe("You named prod-db, but this runs on this computer.");
+    expect(q.panel.card.says[0]).toBe("It looks like you named another computer (prod-db), but this runs on this computer.");
     expect(q.panel.card.mode).toBe("ask");
     expect(q.where).toBe("on this computer");
     expect(q.armMs).toBeGreaterThanOrEqual(1500);
@@ -1123,7 +1123,7 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     const local = harness({ binding: LOCAL, words: "delete build/ on prod-db", answers: ["deny"] });
     await call(local, { target: "this computer", command: "rm -r build" });
     expect(local.announced).toEqual([]);
-    expect((local.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You named prod-db, but this runs on this computer.");
+    expect((local.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("It looks like you named another computer (prod-db), but this runs on this computer.");
     // The bound computer's own name is no other place: it announces.
     const remote = harness({ binding: REMOTE, words: "delete build/ on build-01", answers: [] });
     await call(remote, { command: "rm -r build" });
@@ -1136,7 +1136,7 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     const h = harness({ binding: WSL, words: "on prod-db or build-01 delete build/", othersNamed: () => ["build-01"], placesNamed: () => ["prod-db", "build-01"], answers: ["deny"] });
     await call(h, { target: "Ubuntu", command: "rm -r build" });
     expect((h.asked[0].panel as { card: CommandCard }).card.says.slice(0, 3)).toEqual([
-      "You named prod-db, but this runs in Ubuntu (WSL).", "You also named build-01, but this runs in Ubuntu (WSL).", "Deletes build and everything in it.",
+      "It looks like you named another computer (prod-db), but this runs in Ubuntu (WSL).", "You also named build-01, but this runs in Ubuntu (WSL).", "Deletes build and everything in it.",
     ]);
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ rules: ["rm.recursive", "wrong-target", "unknown-place"] });
   });
@@ -1152,7 +1152,37 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     const broken = harness({ binding: LOCAL, words: "delete build/", placesNamed: () => { throw new Error("no registry"); }, answers: ["deny"] });
     await call(broken, { target: "this computer", command: "rm -r build" });
     expect(broken.announced).toEqual([]);
-    expect((broken.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("You named another computer, but this runs on this computer.");
+    expect((broken.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("It looks like you named another computer, but this runs on this computer.");
+  });
+
+  it("a folder or the branch the task is on isn't another computer, when the target shows it (review #31)", async () => {
+    pushes();
+    const folders = (have: string[]) => (p: string) => ({ exists: have.some(h => p.endsWith(`/${h}`)), real: p });
+    // A folder there, a folder the task is in, the branch it is on: it announces.
+    for (const o of [
+      { words: "delete the build folder in my-project", paths: folders(["my-project", "build"]) },
+      { words: "clean the cache in step2", paths: folders(["step2", "build"]) },
+      { words: "delete build/ in my-app", paths: folders(["build"]), state: { cwd: "/home/ana/my-app", downloaded: new Set<string>(), running: false } },
+      { words: "remove dist on feature-x", paths: folders(["build"]), git: { branch: "feature-x", pushDefault: null, upstream: null } },
+    ]) {
+      const h = harness({ binding: LOCAL, ...o });
+      await call(h, { target: "this computer", command: "rm -r build" });
+      expect(h.asked, o.words).toEqual([]);
+      expect(h.announced, o.words).toHaveLength(1);
+    }
+    // Not there, not that branch, "on" a name that is only a folder, or a target that can't say: it asks.
+    for (const o of [
+      { words: "delete the build folder in my-project", paths: folders(["build"]) },
+      { words: "remove dist on feature-x", paths: folders(["build"]), git: { branch: "main", pushDefault: null, upstream: null } },
+      { words: "delete build/ on prod-db", paths: folders(["prod-db", "build"]) },
+      { words: "delete build/ in my-app", inspect: async (ps: string[]) => ps.map(() => ({ exists: null, real: null })) },
+      { words: "delete build/ in the server my-app", paths: folders(["my-app", "build"]) },
+    ]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], ...o });
+      await call(h, { target: "this computer", command: "rm -r build" });
+      expect(h.announced, o.words).toEqual([]);
+      expect((h.asked[0].panel as { card: CommandCard }).card.says[0], o.words).toMatch(/^It looks like you named another computer \(/);
+    }
   });
 
   it("leaves ordinary commands alone: they run anywhere", async () => {
