@@ -69,7 +69,9 @@ describe("Windows setup checks", () => {
 
   it("warn, with the button that opens the setting, when Windows keeps desktop apps from the microphone (review #100)", () => {
     expect(check(win({ microphone: "denied" }), "microphone")).toEqual({ id: "microphone", label: "Microphone", status: "warn", fix: "open-microphone-settings",
-      detail: "Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. Turn on “Let desktop apps access your microphone” in Settings › Privacy & security › Microphone (Settings › Privacy › Microphone on Windows 10)." });
+      detail: "Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. Turn on desktop apps' access to the microphone: "
+        + "Settings › Privacy & security › Microphone › Let desktop apps access your microphone "
+        + "(on Windows 10: Settings › Privacy › Microphone › Allow desktop apps to access your microphone)." });
     expect(check(win({ microphone: "restricted" }), "microphone")?.status).toBe("warn");
     for (const m of ["granted", "not-determined", "unknown", undefined] as const) expect(check(win({ microphone: m }), "microphone")).toBeUndefined();
   });

@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, voiceFix, type HomePatch, type Segment,
+  retryMessage, tagline, usageLine, voiceFix, voiceFixFailed, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -805,7 +805,12 @@ $("voice-fix").addEventListener("click", () => {
   if (!fix) return;
   const btn = $("voice-fix") as HTMLButtonElement;
   btn.disabled = true;
-  window.ember.applyFix(fix).then(renderChecks, () => undefined).finally(() => { btn.disabled = false; });
+  window.ember.applyFix(fix).then(renderChecks, err => {
+    // Said on the voice line (and to screen readers) until the next voice status, as the setup check's button does.
+    const text = voiceFixFailed(err);
+    $("voice-text").textContent = text;
+    voiceLive(text);
+  }).finally(() => { btn.disabled = false; });
 });
 function renderVoice(v: VoiceStatus): void {
   voice = v;

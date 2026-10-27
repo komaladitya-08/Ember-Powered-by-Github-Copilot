@@ -99,6 +99,11 @@ export function voiceFix<F extends string>(state: string, checks: readonly { id:
   return checks.find(c => c.id === "microphone" && c.fix)?.fix ?? null;
 }
 
+/** What the voice line says when its fix button's fix was refused (main's own words, as the setup check's button). */
+export function voiceFixFailed(err: unknown): string {
+  return `Couldn't open it: ${ipcErrorText(err)}`;
+}
+
 /** Download progress for screen readers: only at 0, 25, 50, 75 and 100 %. */
 export function progressStep(fraction: number): number {
   return Math.min(100, Math.floor(Math.max(0, fraction) * 4) * 25);

@@ -245,8 +245,13 @@ function windowsName(build: number): string {
  */
 export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If it still clicks in the wrong place, report it at ${ISSUES_URL}.`;
 
-/** Where the microphone's privacy switch is, on both supported Windows (Windows 10 22H2 calls the page "Privacy"). */
-export const WINDOWS_MIC_PATH = "Settings › Privacy & security › Microphone (Settings › Privacy › Microphone on Windows 10)";
+/**
+ * How to turn the microphone's privacy switch on, with its whole path on both supported Windows (Windows 10 22H2 calls
+ * the page "Privacy" and the switch "Allow desktop apps to access your microphone"). The same words in the setup check
+ * and the doctor.
+ */
+export const WINDOWS_MIC_FIX = "Turn on desktop apps' access to the microphone: Settings › Privacy & security › Microphone › Let desktop apps access your microphone "
+  + "(on Windows 10: Settings › Privacy › Microphone › Allow desktop apps to access your microphone).";
 
 /** Windows 10 22H2 is the oldest Windows Ember is tested on; 1809 (17763) the oldest it may work on. */
 const WINDOWS_TESTED = 19045, WINDOWS_OLDEST = 17763;
@@ -290,7 +295,7 @@ function inspectWindows(i: EnvInputs): EnvReport {
     // Not asked yet is fine (Windows asks, or it is on); off, “Hey Ember” hears nothing, and the voice line points here.
     if (w.microphone === "denied" || w.microphone === "restricted") {
       checks.push({ id: "microphone", label: "Microphone", status: "warn", fix: "open-microphone-settings",
-        detail: `Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. Turn on “Let desktop apps access your microphone” in ${WINDOWS_MIC_PATH}.` });
+        detail: `Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. ${WINDOWS_MIC_FIX}` });
     }
 
     if (w.dpiMixed) {

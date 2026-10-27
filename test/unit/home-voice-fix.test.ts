@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { voiceFix } from "../../app/renderer/home/copy";
+import { voiceFix, voiceFixFailed } from "../../app/renderer/home/copy";
 
 const mic = { id: "microphone", label: "Microphone", status: "warn", detail: "…", fix: "open-microphone-settings" };
 
@@ -19,6 +19,14 @@ describe("voiceFix", () => {
     expect(voiceFix("error", [])).toBeNull();
     expect(voiceFix("error", [{ ...mic, fix: undefined }])).toBeNull();
     expect(voiceFix("error", [{ ...mic, id: "microphone-privacy" }])).toBeNull();
+  });
+
+  it("says why when the fix fails, in main's words without Electron's IPC prefix, as the setup check's own button does", () => {
+    expect(voiceFixFailed(new Error("Error invoking remote method 'ember:apply-fix': Error: Settings didn't open"))).toBe("Couldn't open it: Settings didn't open");
+    // The button's click shows it on the voice line (and to screen readers) instead of swallowing the refusal.
+    const src = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    const click = src.slice(src.indexOf('$("voice-fix").addEventListener("click"'));
+    expect(click.slice(0, click.indexOf("\n});"))).toMatch(/applyFix\(fix\)\.then\(renderChecks, err => \{[^}]*voiceFixFailed\(err\)/);
   });
 
   it("has its button beside the voice line, hidden until it applies", () => {
