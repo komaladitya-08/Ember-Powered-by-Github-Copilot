@@ -170,6 +170,28 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
       expect(catalogue.find(apps, "System Settings")?.name).toBe("System Settings");
     });
 
+    // Apple's own bundles, as macOS ships them (review #239): their German names come from InfoPlist.loctable or
+    // de.lproj/InfoPlist.strings, so open_app("Rechner") finds Calculator and its window's owner name matches.
+    it("knows Apple's apps by the names a German Mac shows", () => {
+      const german = darwinApps({ languages: () => ["de-DE"] });
+      const list = german.list();
+      /** What the bundle has for German, so a miss says which layout this macOS uses. */
+      const layout = (bundle: string | undefined) => {
+        try {
+          return fs.readdirSync(path.join(bundle ?? "", "Contents", "Resources")).filter(n => /^(de|German)([._-]|$)|loctable$/i.test(n)).join(", ") || "none";
+        } catch (err) {
+          return String(err);
+        }
+      };
+      for (const [id, name] of [["com.apple.calculator", "rechner"], ["com.apple.systempreferences", "systemeinstellungen"]] as const) {
+        const app = list.find(a => a.id.toLowerCase() === id);
+        expect(app, `${id} in the catalogue`).toBeDefined();
+        expect(app!.programs, `${id}'s names (German resources: ${layout(app!.file)})`).toContain(name);
+        expect(app!.keywords).toContain(name);
+      }
+      expect(german.find(list, "Rechner")?.id.toLowerCase()).toBe("com.apple.calculator");
+    });
+
     // Needs the macOS terminal vocabulary (package V, hands/terminals.ts), which Ember can't be switched on without.
     it("refuses Terminal", () => {
       const terminal = apps.find(a => a.id.toLowerCase() === "com.apple.terminal");
