@@ -143,12 +143,16 @@ describe("settings keep what the user set (review fixes)", () => {
   it("a trailing comma or a comment in a hand edit is read anyway (and the file tidied)", () => {
     const dir = tmp();
     const file = path.join(dir, "settings.json");
-    const s = new SettingsStore(file);
+    let now = 0;
+    const s = new SettingsStore(file, null, { clock: () => now });
     s.load();
     s.update({ privacy: { neverLook: ["payroll"] } });
     const edited = fs.readFileSync(file, "utf8").replace('"payroll"', '"payroll", "salary", // added by hand\n');
     fs.writeFileSync(file, edited);
     touch(file);
+    // Tidied once the edit has stayed the same for a couple of seconds, not under the editor (review #92).
+    expect(s.reloadIfChanged()).toBe(false);
+    now += 2000;
     expect(s.reloadIfChanged()).toBe(true);
     expect(s.get().privacy.neverLook).toEqual(["payroll", "salary"]);
     expect(() => JSON.parse(fs.readFileSync(file, "utf8"))).not.toThrow();

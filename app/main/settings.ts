@@ -235,6 +235,11 @@ const BUSY_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
 /** How long to wait between those retries. */
 const RENAME_RETRY_MS = 50;
 
+/** How long a repairable hand edit must stay the same before Ember rewrites it (the watcher looks every 2 s). */
+const SETTLE_MS = 2000;
+/** How many copies of unusable versions (settings.json.bad-<time>) are kept. */
+const KEEP_BACKUPS = 3;
+
 /** Read errors another program's hold or a network home's hiccup causes for a moment (at login, scans and syncs run). */
 const BUSY_READ = new Set(["EBUSY", "EPERM", "EACCES", "EIO", "ETIMEDOUT", "EAGAIN"]);
 /** How long to wait before each further try of a start-up read (about 350 ms in all, only when it fails). */
@@ -264,6 +269,8 @@ export interface SettingsStoreOptions {
    * paths.renameRetries: 0 on Linux and macOS, as before; 5 on Windows, whose antivirus and sync locks are brief).
    */
   renameRetries?: number;
+  /** Milliseconds now (tests): how long a hand edit has stayed the same. */
+  clock?: () => number;
 }
 
 export interface LoadResult {
@@ -291,9 +298,11 @@ export class SettingsStore {
   private pendingTimer: NodeJS.Timeout | null = null;
 
   private renameRetries: number;
+  private clock: () => number;
 
   constructor(readonly file: string, private admin: AdminPolicy | null = null, o: SettingsStoreOptions = {}) {
     this.renameRetries = Math.max(0, Math.floor(o.renameRetries ?? 0));
+    this.clock = o.clock ?? Date.now;
   }
 
   load(): LoadResult {
@@ -318,7 +327,7 @@ export class SettingsStore {
    * trailing comma) never replaces the settings in use: they stay, and the file is read again
    * when it next changes. JSON with a few bad values is repaired value by value either way.
    */
-  private read(running: boolean): LoadResult {
+  private read(running: boolean, settle = running): LoadResult {
     let raw: string;
     this.seen = this.mtime();
     try {
@@ -367,6 +376,12 @@ export class SettingsStore {
       if (this.troubled) this.problem(null);
       return { settings: this.current };
     }
+    // An editor that saves as the user types may be mid-edit ("size": 800 on the way to 80): the file is
+    // rewritten only once it has stayed the same for SETTLE_MS, never under the editor (review #92).
+    if (settle && !this.settled()) {
+      this.seen = null; // looked at again at the next check
+      return { settings: this.current };
+    }
     // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
     // read at all, at least the never-look list.
     if (parsed.success) this.current = parsed.data;
@@ -384,13 +399,41 @@ export class SettingsStore {
     return { settings: this.current, recoveredFrom: backup ?? undefined };
   }
 
+  /** The version of a repairable hand edit being waited on (its time stamp), and since when it has looked the same. */
+  private settling: { mtime: number | null; since: number } | null = null;
+
+  /** Has the file (as last read) stayed the same for SETTLE_MS? */
+  private settled(): boolean {
+    const now = this.clock();
+    if (!this.settling || this.settling.mtime !== this.seen) this.settling = { mtime: this.seen, since: now };
+    return now - this.settling.since >= SETTLE_MS;
+  }
+
   /** A copy of the file as it is now (once per version of it), before Ember writes over it. */
   private kept: number | null = null;
+  private lastBackup = 0;
   private keep(): string | null {
     const m = this.mtime();
     if (m !== null && m === this.kept) return null;
-    const backup = `${this.file}.bad-${Date.now()}`;
-    try { fs.copyFileSync(this.file, backup); this.kept = m; return backup; } catch { return null; }
+    // Two versions within a millisecond still get a copy each.
+    this.lastBackup = Math.max(Date.now(), this.lastBackup + 1);
+    const backup = `${this.file}.bad-${this.lastBackup}`;
+    try { fs.copyFileSync(this.file, backup); this.kept = m; } catch { return null; }
+    this.pruneBackups();
+    return backup;
+  }
+
+  /** Only the newest KEEP_BACKUPS copies stay: an editor that saves as the user types makes one per save (review #92). */
+  private pruneBackups(): void {
+    const dir = path.dirname(this.file);
+    const prefix = `${path.basename(this.file)}.bad-`;
+    try {
+      const old = fs.readdirSync(dir)
+        .filter(n => n.startsWith(prefix) && /^\d+$/.test(n.slice(prefix.length)))
+        .sort((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)))
+        .slice(KEEP_BACKUPS);
+      for (const n of old) fs.rmSync(path.join(dir, n), { force: true });
+    } catch { /* tidied the next time */ }
   }
 
   private problem(msg: string | null): void {
@@ -453,7 +496,8 @@ export class SettingsStore {
    */
   update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
     // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
-    if (this.unread || this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
+    // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
+    if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
     const next = SettingsSchema.parse({ ...this.current, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
     if (this.unread) {
