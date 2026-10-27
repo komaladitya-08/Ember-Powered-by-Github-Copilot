@@ -4,10 +4,11 @@
  * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
- * chrome main sets once Electron is ready: the application menu, the About panel and DevTools in a packaged build.
+ * chrome main sets once Electron is ready: the application menu, the About panel, the native theme and DevTools
+ * in a packaged build.
  */
 
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
@@ -157,6 +158,7 @@ export function lockDevTools(contents: DevToolsHost): void {
 /** The parts of Electron setUpAppChrome uses (tests pass fakes). */
 export interface ChromeElectron {
   Menu: { buildFromTemplate(template: MenuItemConstructorOptions[]): Menu; setApplicationMenu(menu: Menu | null): void };
+  nativeTheme: { themeSource: "system" | "light" | "dark" };
   app: {
     readonly isPackaged: boolean;
     getVersion(): string;
@@ -167,10 +169,13 @@ export interface ChromeElectron {
 
 /**
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
- * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS and, in a packaged
- * build, DevTools locked on every page made from then on.
+ * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, dark native chrome
+ * on every OS and, in a packaged build, DevTools locked on every page made from then on. Every page is dark-only
+ * (ember.css says color-scheme: dark), so title bars, native menus and dialogs follow it rather than a light system
+ * theme around a near-black window (review #245); a light appearance would be a design of its own.
  */
-export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, app }): void {
+export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
+  e.nativeTheme.themeSource = "dark";
   if (o.appMenu) e.app.setAboutPanelOptions(aboutPanel(e.app.getVersion()));
   const template = appMenuTemplate(o.appMenu, o.actions);
   e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);

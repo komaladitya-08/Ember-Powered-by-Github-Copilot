@@ -65,7 +65,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   monospace labels.
 - **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
   system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
-  is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %.
+  is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
+  dark only, native chrome included: title bars, native menus and dialogs are dark whatever the
+  system's appearance.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every
   surface, dark text on filled buttons, control edges.
 - **Layers:** the settings window and the desk are the content layer: opaque grouped sections, a

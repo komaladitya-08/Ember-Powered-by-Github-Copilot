@@ -1,9 +1,9 @@
 /**
- * Ember's app-wide chrome (windows.ts): the application menu, the About panel and DevTools in a packaged build
- * (review #243, #176, #232). Windows and Linux had Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened
+ * Ember's app-wide chrome (windows.ts): the application menu, the About panel, the native theme and DevTools in a
+ * packaged build (review #243, #176, #232, #245). Windows and Linux had Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened
  * DevTools on the password card, Ctrl+R reloaded a card, Ctrl+W closed the ask box and Alt showed a menu bar.
  * main.ts can't be loaded in a unit test (it is Electron's entry point), so its call is read from its source; the
- * rest runs against fakes of Electron's Menu and app.
+ * rest runs against fakes of Electron's Menu, nativeTheme and app.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ import path from "node:path";
 import type { MenuItemConstructorOptions } from "electron";
 import type { OS } from "../../app/shared/shortcuts";
 
-vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, app: {} }));
+vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, nativeTheme: {}, app: {} }));
 
 const { aboutPanel, appMenuTemplate, lockDevTools, setUpAppChrome } = await import("../../app/main/windows");
 
@@ -36,6 +36,7 @@ function fakeElectron(o: { packaged?: boolean } = {}) {
       buildFromTemplate: (t: MenuItemConstructorOptions[]) => { built.push(t); return "built menu"; },
       setApplicationMenu: (m: string | null) => { menus.push(m); },
     },
+    nativeTheme: { themeSource: "system" as "system" | "light" | "dark" },
     app: {
       isPackaged: o.packaged ?? false,
       getVersion: () => "0.1.0",
@@ -130,5 +131,15 @@ describe("DevTools in a packaged Ember (review #176)", () => {
     const contents = { on: vi.fn(), closeDevTools: vi.fn() };
     lockDevTools(contents);
     expect(contents.on).toHaveBeenCalledWith("devtools-opened", expect.any(Function));
+  });
+});
+
+describe("the native theme (review #245)", () => {
+  it("is dark on every OS, as every page is, so title bars, native menus and dialogs match them", () => {
+    for (const [os, appMenu] of [["linux", false], ["win32", false], ["darwin", true]] as [OS, boolean][]) {
+      const f = fakeElectron();
+      setUpAppChrome({ os, appMenu, actions: actions() }, f.e as never);
+      expect(f.e.nativeTheme.themeSource).toBe("dark");
+    }
   });
 });
