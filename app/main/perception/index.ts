@@ -755,13 +755,16 @@ export class Perception {
   /**
    * The whole frames of the remote surfaces on screen (Windows: a remote desktop's or a WSLg app's window), from the
    * stack, which sees every top-level window: what they show can't be checked against the never-look list or for a
-   * password prompt. [] without the check (Linux, macOS); null when the stack can't be read (no picture then).
+   * password prompt. [] without the check; null when the stack can't be read (no picture then). A window is one by its
+   * whole app name (Windows' program, macOS's "Screen Sharing") or by either part of Linux's WM_CLASS ("remmina
+   * Org.remmina.Remmina"), as the security-window check reads them.
    */
   private remoteSurfaces(stack?: StackedWindow[] | null): Bounds[] | null {
     const remote = this.o.isRemoteSurface;
     if (!remote) return [];
     const s = stack ?? this.stackNow();
-    return s && s.filter(w => remote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
+    const isRemote = (app: string) => remote(app) || app.split(/\s+/).some(part => !!part && part !== app && remote(part));
+    return s && s.filter(w => isRemote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 }
 
