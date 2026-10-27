@@ -319,8 +319,22 @@ export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "up
 export const NAME_DESTROY = new Set(["clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback"]);
 export const NAME_SYSTEM = new Set(["install", "setup", "bootstrap", "provision"]);
 
-/** Read verbs of the cloud and cluster CLIs (§3.5.2): anything else changes the service; delete verbs are c. */
-export const CLOUD_READ = new Set(["get", "list", "describe", "show", "logs", "top", "plan", "version", "status", "whoami", "explain", "diff", "help"]);
+/**
+ * Read verbs of the cloud and cluster CLIs (§3.5.2): anything else changes the service; delete verbs are c. Review #30
+ * added the read-only ones a cloud engineer runs first (`aws s3 ls`, `aws logs tail`, `terraform validate`, `terraform
+ * output`, `terraform fmt`, `helm history`, `gsutil ls`, `kubectl api-resources`).
+ */
+export const CLOUD_READ = new Set([
+  "get", "list", "describe", "show", "logs", "top", "plan", "version", "status", "whoami", "explain", "diff", "help",
+  "ls", "tail", "validate", "output", "fmt", "history", "search", "lint", "template", "providers", "graph", "cat", "du", "stat", "events",
+  "api-resources", "api-versions", "cluster-info",
+]);
+/** Read commands of the cloud and cluster CLIs that take more than one word (§3.5.2, review #30): matched at the start. */
+export const CLOUD_READ_PHRASES: readonly string[] = [
+  "s3 ls", "config view", "config current-context", "config get-contexts", "config get-clusters", "config get-users", "auth list", "auth can-i",
+  "auth whoami", "rollout status", "rollout history", "repo list", "dependency list", "plugin list", "state list", "state show",
+  "workspace list", "workspace show", "stack ls",
+];
 export const CLOUD_DELETE = new Set(["delete", "destroy", "remove", "rm", "terminate", "purge", "drain", "uninstall", "rb", "deregister", "detach"]);
 export const CLOUD_CLIS: Readonly<Record<string, string>> = {
   kubectl: "Kubernetes", oc: "OpenShift", helm: "Kubernetes", terraform: "the infrastructure", tofu: "the infrastructure",

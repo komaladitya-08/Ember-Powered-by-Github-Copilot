@@ -24,7 +24,7 @@ import {
   resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
-  CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
+  CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
   GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
   OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
   SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type PsCmdletSpec,
@@ -3604,6 +3604,8 @@ function compose(h: H, prog: string, rest: Arg[]): void {
 // Cloud and cluster command-line tools (§3.5.2, §3.5.3, §3.5.4).
 /** Verbs the cloud CLIs use for changes (a resource name after them isn't the verb). */
 const CLOUD_VERBS = new Set(["create", "update", "set", "add", "start", "stop", "restart", "reset", "deploy", "run", "apply", "attach", "import", "export", "upload", "download", "copy", "move", "resize", "scale", "enable", "disable", "ssh", "scp", "connect", "invoke", "publish", "tag", "untag", "patch", "replace", "edit", "rollout", "login", "logout", "configure", "assign", "grant", "revoke", "rotate", "promote", "suspend", "resume", "reboot", "cancel", "approve", "submit", "write", "put", "push", "pull", "sync", "mount", "unmount", "init", "exec", "cp", "mv", "label", "annotate", "cordon", "uncordon", "taint", "expose", "autoscale", "port-forward", "proxy", "certificate"]);
+/** Verb shapes that change a cloud service ("run-instances", "put-object", "modify-db-instance", "s3 mb"). */
+const CLOUD_CHANGE = /^(?:s3 \S+|(?:create|update|put|set|run|start|stop|reboot|modify|attach|associate|disassociate|add|import|export|enable|disable|register|tag|untag|send|publish|invoke|apply|replace|restore|copy|reset|change|cancel|accept|reject|authorize|revoke|allocate|release|request|upload|deploy|scale|rotate|install|upgrade|rollback|promote|refresh|new|select|force-unlock|untaint|push|mv)(?:-.*)?)$/;
 const AWS_SECRET = /^(get-session-token|assume-role.*|get-login-password|get-authorization-token|get-secret-value|get-parameters?|get-parameters-by-path|decrypt|get-federation-token|create-access-key|get-credentials-for-identity|get-signin-token)$/;
 reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const service = CLOUD_CLIS[h.key];
@@ -3620,6 +3622,8 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     positional.push(a.v);
   }
   const verbs = positional.map(p => p.toLowerCase());
+  // A dry run reads (review #30): `ansible-playbook --check`, a syntax check or a listing changes no computer.
+  if (h.key === "ansible-playbook" && h.args.some(a => /^(--check|-C|--syntax-check|--list-hosts|--list-tasks|--list-tags)$/.test(a.v ?? ""))) return;
   if (verbs.length === 0) {
     if (h.args.some(a => /^(--?version|--?help|-h|version|help)$/.test(a.v ?? ""))) return;
     if (h.key === "ansible" || h.key === "ansible-playbook") { h.e.add("publish", "cloud.change", `Changes ${service}.`); return; }
@@ -3667,13 +3671,20 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   }
   if ((h.key === "terraform" || h.key === "tofu" || h.key === "pulumi") && verb === "apply" && h.args.some(a => a.v === "-destroy")) verb = "destroy";
   if ((h.key === "kubectl" || h.key === "oc") && (verb === "edit" || (verb === "exec" && h.args.some(a => /^-[a-z]*i[a-z]*t|^-[a-z]*t[a-z]*i/.test(a.v ?? ""))))) h.e.unclear("unclear.interactive", SAYS.interactive);
-  const read = CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || all === "config view" || all === "auth list" || all === "auth can-i";
+  const read = CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `));
   if (read) return;
+  // `terraform init` changes no infrastructure: it installs the providers and modules the folder's configuration names.
+  if ((h.key === "terraform" || h.key === "tofu") && verb === "init") {
+    h.e.add("system", "pkg.language", "Installs the providers and modules this folder's configuration uses.", { program: `${h.key} init` });
+    return;
+  }
   if (CLOUD_DELETE.has(verb) || /^(delete|terminate|remove|deregister|purge)-/.test(verb) || verb.endsWith(" rm") || verb === "s3 rb") {
     h.e.add("remote-delete", "cloud.delete", `Deletes something in ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
     return;
   }
-  h.e.add("publish", "cloud.change", `Changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
+  // A verb Ember doesn't know may only read: the card says it can't tell rather than that it changes the service.
+  const changes = CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook");
+  h.e.add("publish", "cloud.change", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
 // ------------------------------------------------------------------------------------------------------------------
