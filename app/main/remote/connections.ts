@@ -165,10 +165,10 @@ export function createConnections(o: {
     let wsl: Client["wsl"];
     if (via && via !== "local") {
       const distro = via.slice(4);
-      if (os !== "win32" || !DISTRO_NAME.test(distro)) throw new ConnectError(MESSAGES.noClient(), "no-client");
+      if (os !== "win32" || !DISTRO_NAME.test(distro)) throw new ConnectError(MESSAGES.noClient(os === "win32" ? "linux" : os), "no-client");
       if (!internals.viaWsl) throw new ConnectError(`Ember can't use ${distro}'s SSH yet: connect from Windows' SSH, or add your key to Windows' ssh-agent.`, "via-wsl");
       const facts = await o.wsl()?.facts().catch(() => null);
-      if (!facts?.wslExe) throw new ConnectError(MESSAGES.noClient(), "no-client");
+      if (!facts?.wslExe) throw new ConnectError(MESSAGES.noClient("linux"), "no-client");
       ssh = "/usr/bin/ssh";
       wsl = { exe: facts.wslExe, distro };
     } else {
@@ -176,7 +176,7 @@ export function createConnections(o: {
     }
     const r = await exec(sshVersionArgv({ ssh, wsl }), { env: sshEnv(env(), { os, mode: "batch" }), timeoutMs: QUICK_MS });
     const version = parseSshVersion(`${r.stderr}\n${r.stdout}`);
-    if (!version) throw new ConnectError(MESSAGES.noClient(), "no-client");
+    if (!version) throw new ConnectError(MESSAGES.noClient(wsl ? "linux" : os), "no-client");
     const min = minimumVersion(wsl ? "linux" : os);
     if (!versionAtLeast(version, min.major, min.minor)) {
       throw new ConnectError(os === "win32" && !wsl ? MESSAGES.tooOldWindows() : MESSAGES.tooOld(), "too-old");
@@ -441,7 +441,7 @@ export function createConnections(o: {
   function failureOf(r: Extract<AttemptResult, { kind: "failed" }>, p: Prepared, h: string, mode: "batch" | "interactive", cancelledByUser: boolean): SshFailure {
     if (r.cancelled || cancelledByUser) return { kind: "cancelled", message: MESSAGES.cancelled(), retry: true };
     if (r.deadline) return { kind: "timeout", message: MESSAGES.timeout(h), retry: true };
-    if (r.spawnFailed) return { kind: "no-client", message: MESSAGES.noClient(), retry: false };
+    if (r.spawnFailed) return { kind: "no-client", message: MESSAGES.noClient(os), retry: false };
     if (r.error) return bootstrapFailure(r.error.code, r.error.detail, h);
     const darwinMajor = os === "darwin" ? Number((internals.osRelease ?? nodeOs.release)().split(".")[0]) : undefined;
     const f = classifySshFailure(r.exit?.stderr ?? "", r.exit?.code ?? null, { probeBegan: r.probeBegan, os, darwinMajor, lan: p.lan, host: h });
