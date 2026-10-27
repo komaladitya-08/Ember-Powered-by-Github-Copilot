@@ -2047,6 +2047,8 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await host.ask("are you there?");
     // (Copilot is reachable: the title names what is wrong, not "I can't reach Copilot".)
     expect(screen().bubble).toMatchObject({ title: "Copilot isn't answering", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    // Settings can't help while it reconnects by itself: no Open settings (review #18).
+    expect(screen().bubble?.actions).toEqual([]);
     expect(conductorSession().sent.at(-1)).toMatch(/Tokyo$/);
     // The task ends (here the user stops it): Copilot is reconnected now, and the next ask goes out.
     host.tasks!.cancel(t.id);

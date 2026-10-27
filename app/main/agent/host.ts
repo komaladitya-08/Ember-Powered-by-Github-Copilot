@@ -1369,8 +1369,10 @@ export class AgentHost {
       const signedOut = this.status.phase === "signed-out";
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
       const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
-      // Not signed in: signing in is what to do next (as the greeting says it), not a problem.
-      this.presenter.notice({ title, text: why, actions: [{ id: "ui:settings", label: "Open settings" }], ...(signedOut ? { mood: "attention" as const } : {}) });
+      // Not signed in: signing in is what to do next (as the greeting says it), not a problem. Settings is offered only
+      // where it can help: not while Ember waits for the network or reconnects by itself.
+      const selfMending = !signedOut && (this.status.phase === "starting" || this.status.reason === "network" || this.status.reason === "not-answering");
+      this.presenter.notice({ title, text: why, actions: selfMending ? [] : [{ id: "ui:settings", label: "Open settings" }], ...(signedOut ? { mood: "attention" as const } : {}) });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
       this.remember("you", text);

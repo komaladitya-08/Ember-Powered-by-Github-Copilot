@@ -88,6 +88,26 @@ export function questionAloud(q: { prompt: string; where?: string }, o: { keys?:
   };
 }
 
+/**
+ * Whether Ember's settings can fix the problem `said` (friendlyError's sentence): a sign-in, the model, the account's
+ * access or the organisation's endpoint settings. Not the network, a limit, a filter or a hiccup on Copilot's side: an
+ * "Open settings" there would lead nowhere.
+ */
+export function settingsHelps(said: string): boolean {
+  return /\bsettings?\b|sign(?:-| )?in|for your account|Copilot seat|isn't available to this account/i.test(said);
+}
+
+/**
+ * A sentence written for the settings window, as the bubble says it: the bubble has no "Check again" button (its "Open
+ * settings" leads there) and runs no commands, so those are said as where to go instead.
+ */
+export function forBubble(text: string): string {
+  return text
+    .replace(/,? or run “gh auth login” in a terminal and press Check again\./g, " in settings.")
+    .replace(/\bPress Check again to retry\b/g, "Open settings to try again")
+    .replace(/\bPress Check again\./g, "Open settings to try again.");
+}
+
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
 const ACK_MS = 1500;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
@@ -611,16 +631,20 @@ export class Presenter {
     this.push({ emotion: "neutral", talking: false, bubble: this.state.bubble });
   }
 
-  /** Something went wrong outside the session's own events (the runtime died, a send failed). */
+  /**
+   * Something went wrong outside the session's own events (the runtime died, a send failed). "Open settings" only when
+   * settings can fix it (settingsHelps): a runtime that reconnects by itself needs nothing from there.
+   */
   fail(message: string): void {
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
     this.asked = null;
     this.silent = false;
+    const said = forBubble(message);
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
-      bubble: { visible: true, mood: "error", title: "Something went wrong", thought: message, step: null, streaming: false, actions: [{ id: "ui:settings", label: "Open settings" }] },
+      bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
     }, "take");
     this.onProblem?.(message);
     this.hideLater(12000);
@@ -639,7 +663,7 @@ export class Presenter {
     const mood = n.mood ?? "error";
     this.apply({
       emotion: mood === "attention" ? "curious" : "confused", talking: false,
-      bubble: { visible: true, mood, title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
+      bubble: { visible: true, mood, title: n.title, thought: forBubble(n.text), step: null, streaming: false, actions: n.actions ?? [] },
     }, "take");
     this.hideLater(n.ms ?? 12000);
   }
@@ -899,9 +923,10 @@ export class Presenter {
         this.produced = true;
         const said = friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
           { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey });
+        // "Open settings" where settings can fix it (a sign-in, the model, access), never for the network or a hiccup.
         this.apply({
           emotion: "sad", talking: false,
-          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: [] },
+          bubble: { visible: true, mood: "error", title: "Something went wrong", thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
         });
         this.onProblem?.(said);
         this.hideLater(12000);

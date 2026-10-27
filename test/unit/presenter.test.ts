@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, handStep, plainText, questionAloud, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, handStep, plainText, questionAloud, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -759,5 +759,39 @@ describe("a question said aloud and in a notification names where it comes from 
     const words = questionAloud({ prompt: "Click **Save** in gedit?", where: "on build-01" }, { keys: ["Control Alt Y to allow"], spoken: s => s.replace(/\*/g, "") });
     expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? Press Control Alt Y to allow.", notify: "On build-01: Click **Save** in gedit?" });
     expect(questionAloud({ prompt: "Click Save?" })).toEqual({ say: "Ember asks: Click Save?", notify: "Click Save?" });
+  });
+});
+
+describe("a problem's buttons follow what failed (review #18)", () => {
+  const errorOf = (data: Record<string, unknown>) => {
+    const { p, last } = setup();
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data });
+    return last().bubble!;
+  };
+
+  it("offers Open settings where settings can fix it (sign-in, model, access), never for the network or a hiccup", () => {
+    expect(errorOf({ message: "401 Unauthorized", errorType: "authentication" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "model_not_supported" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "403", statusCode: 403 }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "fetch failed ECONNRESET" }).actions).toEqual([]);
+    expect(errorOf({ message: "503 Service Unavailable" }).actions).toEqual([]);
+    expect(errorOf({ message: "429 rate limited", statusCode: 429 }).actions).toEqual([]);
+  });
+
+  it("offers nothing for a runtime that stopped and reconnects by itself", () => {
+    const { p, last } = setup();
+    p.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    expect(last().bubble!.actions).toEqual([]);
+  });
+
+  it("never names a settings-window button in the bubble: Open settings is the button there", () => {
+    expect(forBubble("Ember's Copilot runtime stopped while connecting. Press Check again.")).toBe("Ember's Copilot runtime stopped while connecting. Open settings to try again.");
+    expect(forBubble("Copilot keeps stopping. Press Check again to retry, or restart Ember.")).toBe("Copilot keeps stopping. Open settings to try again, or restart Ember.");
+    expect(forBubble("It may have expired. Sign in again, or run “gh auth login” in a terminal and press Check again."))
+      .toBe("It may have expired. Sign in again in settings.");
+    const { p, last } = setup();
+    p.notice({ title: "Copilot isn't running", text: "Ember's Copilot runtime stopped while connecting. Press Check again.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    expect(last().bubble!.thought).toBe("Ember's Copilot runtime stopped while connecting. Open settings to try again.");
   });
 });
