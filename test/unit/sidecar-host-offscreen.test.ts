@@ -169,6 +169,32 @@ describe("names that say what a secret field the read didn't list holds (review 
     expect((await read(call)).truncated).toBe(false);
   });
 
+  it("judges an unnamed field it doesn't list by the label the read lists beside or above it", async () => {
+    // The field has no name of its own: the text just above it, which shows, says what it holds (secret_by_labels).
+    const cell = (label: string, name: string, value: string | undefined): FakeElementSpec => ({ role: "DataItem", name, bounds: at(10, 540, 400, 80), children: [
+      { role: "Text", name: label, bounds: at(10, 562, 100, 16) },
+      field("", value, at(10, 584, 200, 24), { offscreen: true })] });
+    const page = (c: FakeElementSpec) => [web([{ role: "Hyperlink", name: "Help", bounds: at(500, 40, 40, 16) }, c])];
+    const known = harness(page(cell("Card number", "Card number 4111 1111 1111 1111", "4111 1111 1111 1111")));
+    const r = await read(known.call);
+    expect(JSON.stringify(r.nodes)).not.toContain("4111");
+    const held = r.nodes.find(n => n.role === "table cell")!;
+    expect(held).toMatchObject({ name: "", withheld: true });
+    expect((await known.call<{ name: string }>("read_element", { id: held.id })).name).toBe("");
+    // Its value is remembered: a name that says it later, elsewhere in the app, is withheld too.
+    expect(known.host.secrets.saysSecret("Pay with 4111 1111 1111 1111", 30)).toBe(true);
+    // Beside it on its row, as well as above it.
+    const beside: FakeElementSpec = { role: "DataItem", name: "PIN 4821", bounds: at(10, 560, 400, 30), children: [
+      { role: "Text", name: "PIN", bounds: at(10, 566, 40, 16) }, field("", "4821", at(60, 562, 80, 24), { offscreen: true })] };
+    expect(JSON.stringify((await read(harness(page(beside)).call)).nodes)).not.toContain("4821");
+    // What it holds can't be told (macOS reads no offscreen values): a name that says something like a value is withheld.
+    const unknown = await read(harness(page(cell("Card number", "Card number 4111 1111 1111 1111", undefined))).call);
+    expect(JSON.stringify(unknown.nodes)).not.toContain("4111");
+    // A plain label leaves the name alone.
+    const plain = await read(harness(page(cell("Ship to", "Ship to Ada 12 Main Street", "Ada 12 Main Street"))).call);
+    expect(plain.nodes.find(n => n.role === "table cell")?.name).toBe("Ship to Ada 12 Main Street");
+  });
+
   it("leaves names alone outside a web page, and when the field isn't secret", async () => {
     const { call } = harness([{ role: "Group", name: "Order 4111 1111", bounds: at(10, 270, 280, 46), children: [
       field("Reference", "4111 1111", at(12, 296, 260, 20), { offscreen: true })] }]);

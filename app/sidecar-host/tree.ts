@@ -7,14 +7,15 @@
  * handed over yet cut "loading" (see notHandedOver); nothing
  * inside a secret field. `shown` is the part of an element its scrolling container or window lets show. Secret fields
  * the read doesn't list (scrolled out of view, or past `maxNodes`) are still found, with what they hold, under the
- * listed element nearest them: Chromium names a cell or a section after its fields' values (Secrets.redact).
+ * listed element nearest them: Chromium names a cell or a section after its fields' values (Secrets.redact); so are
+ * the unnamed fields among them, which a label the read lists beside them may make secret.
  */
 
 import type { AxNode, Bounds } from "../main/perception/sidecar";
 import type { RawNode, Rect } from "./provider";
 import type { SecretValues } from "./secrets";
 import {
-  CLIP_ROLES, DOCUMENT_ROLES, INTERACTIVE_ROLES, LAZY_ACTION_ROLES, SKIP_ROLES, TEXT_ROLES, UNNAMED_TEXT_ROLES, VALUE_ROLES,
+  CLIP_ROLES, DOCUMENT_ROLES, FIELD_ROLES, INTERACTIVE_ROLES, LAZY_ACTION_ROLES, SKIP_ROLES, TEXT_ROLES, UNNAMED_TEXT_ROLES, VALUE_ROLES,
   actionNames, atspiRole, childContext, statesOf, type RoleContext,
 } from "./roles";
 
@@ -78,6 +79,14 @@ export interface BuildOptions {
  */
 export interface UnlistedSecret { parent: number | null; values: SecretValues | null }
 
+/**
+ * An unnamed field a read doesn't list (it doesn't show, or the read was full) and that isn't secret by itself, under
+ * `parent` (the nearest listed element): the label the read lists beside or above it may make it secret (as the
+ * Python sidecar's secret_by_labels, see Secrets.redact). `index`: its place in the snapshot; `name`: a combo box's
+ * (one named after what it shows counts as unnamed); `values`: what it holds, or null where the snapshot doesn't say.
+ */
+export interface UnlistedField { index: number; parent: number; role: string; name: string; bounds: Bounds | null; values: SecretValues | null }
+
 /** The nodes of a read, and what the host needs to finish it. */
 export interface Built {
   nodes: AxNode[];
@@ -94,6 +103,8 @@ export interface Built {
   wanted: TextWanted[];
   /** Secret fields it doesn't list (see UnlistedSecret), password fields left out (their values never reach a name). */
   unlisted: UnlistedSecret[];
+  /** Unnamed fields it doesn't list, under a listed element, that only a label beside them could make secret. */
+  unnamed: UnlistedField[];
 }
 
 /** The first selected option a combo box holds, two levels down at most, by its name. */
@@ -115,6 +126,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
   const cut: string[] = [];
   const wanted: TextWanted[] = [];
   const unlisted: UnlistedSecret[] = [];
+  const unnamed: UnlistedField[] = [];
   const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
   // Per index: nothing inside it is listed (it doesn't show, it is secret, or it lies too deep); the id of the nearest
   // listed element at or above it; the clip what is inside it shows within; whether it is in a web page.
@@ -139,9 +151,12 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
       const c = lookCtx[i] = { ...childContext(pc, raw[p], roles[p] || lookRole[p]), depth: n.depth };
       const role = lookRole[i] = atspiRole(o.vocabulary, n, c);
       listedAt[i] = listedAt[p];
-      if (TEXT_ROLES.has(role) && o.isSecret(i, role, n.name.trim())) {
+      const own = n.name.trim();
+      if (TEXT_ROLES.has(role) && o.isSecret(i, role, own)) {
         closed[i] = true;
         if (role !== "password text" && !n.password) unlisted.push({ parent: listedAt[i], values: unlistedValues(raw, i, role) });
+      } else if (FIELD_ROLES.has(role) && (!own || role === "combo box") && listedAt[i] !== null) {
+        unnamed.push({ index: i, parent: listedAt[i]!, role, name: own.slice(0, 200), bounds: boundsOf(n.bounds), values: unlistedValues(raw, i, role) });
       }
       continue;
     }
@@ -224,7 +239,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
       webFor[i] = web;
     }
   }
-  return { nodes, hidden, indexOf, roles, ctx, cut, wanted, unlisted };
+  return { nodes, hidden, indexOf, roles, ctx, cut, wanted, unlisted, unnamed };
 }
 
 /**

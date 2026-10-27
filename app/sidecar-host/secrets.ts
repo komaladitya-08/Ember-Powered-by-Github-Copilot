@@ -10,9 +10,9 @@
 import { insideSecrets, isSecretLabel, withheldIds } from "../main/perception/elements";
 import type { AxNode } from "../main/perception/sidecar";
 import type { RawNode } from "./provider";
-import { secretByLayout } from "./labels";
+import { secretByLayout, secretByLayoutAmong } from "./labels";
 import { DOCUMENT_ROLES, FIELD_ROLES, LABEL_ROLES, WINDOW_ROLES } from "./roles";
-import type { UnlistedSecret } from "./tree";
+import type { UnlistedField, UnlistedSecret } from "./tree";
 
 /** An element's key on the wire: two strings that name it across host restarts (opaque to Ember). */
 export type WireKey = [string, string];
@@ -56,6 +56,10 @@ export interface Redaction { nodes: AxNode[]; secretKeys: WireKey[]; withheldKey
 export interface Unlisted {
   /** Secret fields it found but doesn't list (tree.ts UnlistedSecret). */
   fields?: UnlistedSecret[];
+  /** Unnamed fields it doesn't list (tree.ts UnlistedField): secret too when a label it lists beside them says so. */
+  unnamed?: UnlistedField[];
+  /** An unlisted field's key, by its index in the snapshot (one found secret stays secret). */
+  keyAt?: (index: number) => WireKey | null;
   /** The snapshot ended where the read did (cut short, or the app stopped answering): what came after is unknown. */
   unreadAfter?: boolean;
   /** Is this listed element in a web page (the only place names are made from what elements hold)? */
@@ -105,9 +109,10 @@ export class Secrets {
    * names that say what a secret field holds are withheld (its listed containers', and any element's that says what the
    * user put in one as words of their own); names withheld before stay withheld; and what is inside a secret field
    * goes (Chromium lists a text box's text inside it). `keyOf` gives an id's key. `unlisted`: the secret fields the
-   * read found but doesn't list (scrolled out of view, past where it stopped), whose values are looked for in the names
-   * of what holds them too; where a value can't be told, or the page went on past what the snapshot read, a name that
-   * holds something like a value nothing listed in it says is withheld (see unreadValueNames).
+   * read found but doesn't list (scrolled out of view, past where it stopped), and the unnamed ones beside or under a
+   * secret label it lists, whose values are looked for in the names of what holds them too; where a value can't be
+   * told, or the page went on past what the snapshot read, a name that holds something like a value nothing listed in
+   * it says is withheld (see unreadValueNames).
    */
   redact(nodes: AxNode[], hidden: Map<number, SecretValues>, keyOf: (id: number) => WireKey | null, pid: number | null, unlisted: Unlisted = {}): Redaction {
     for (const id of secretByLayout(nodes)) this.makeSecret(nodes.find(n => n.id === id)!, hidden, keyOf);
@@ -121,7 +126,8 @@ export class Secrets {
     // list stand under the listed element nearest them, for this check only too.
     const told = nodes.map(n => (hidden.has(n.id) ? { ...n, ...hidden.get(n.id)! } : n));
     const unknown: number[] = [];
-    (unlisted.fields ?? []).forEach((f, k) => {
+    const fields = [...unlisted.fields ?? [], ...this.unlistedByLayout(nodes, unlisted)];
+    fields.forEach((f, k) => {
       if (!f.values) {
         if (f.parent !== null) unknown.push(f.parent);
         return;
@@ -179,6 +185,23 @@ export class Secrets {
   /** A name as it may be reported: none for one withheld before (by its key). */
   saidName(name: string, key: WireKey | null, pid?: number | null): string {
     return !name || this.withheld.has(key) || this.saysSecret(name, pid) ? "" : name;
+  }
+
+  /**
+   * The unnamed fields a read doesn't list that sit beside or under a secret label it lists ("Card number" over a
+   * field scrolled out of view): secret, as a listed one would be, and they stay secret by their keys.
+   */
+  private unlistedByLayout(nodes: AxNode[], unlisted: Unlisted): UnlistedSecret[] {
+    const unnamed = unlisted.unnamed ?? [];
+    const asNodes = unnamed.map((f, k): AxNode => ({
+      id: -1 - k, parent: f.parent, depth: 0, role: f.role, name: f.name, states: [], bounds: f.bounds,
+      ...(f.values?.text ? { text: f.values.text } : {}), ...(f.values?.selected ? { selected: f.values.selected } : {}),
+    }));
+    const found = secretByLayoutAmong(nodes, asNodes);
+    return unnamed.filter((_, k) => found.has(-1 - k)).map(f => {
+      this.fields.add(unlisted.keyAt?.(f.index));
+      return { parent: f.parent, values: f.values };
+    });
   }
 
   /** A node found secret after it was listed: what it holds goes (kept apart), and it stays secret. */

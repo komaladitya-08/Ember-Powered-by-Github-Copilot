@@ -198,7 +198,7 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       // it read, as with "nodes": the names from there up may carry its value.
       const unreadAfter = !!snap.busy || (snap.truncated && snap.cut.some(c => c === "nodes" || c === "time" || c === "offscreen"));
       const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid, {
-        fields: built.unlisted, unreadAfter, inWeb: id => !!built.ctx[built.indexOf.get(id)!]?.inWeb || DOCUMENT_ROLES.has(built.roles[built.indexOf.get(id)!]),
+        fields: built.unlisted, unnamed: built.unnamed, keyAt: i => host.keyOf(snap.nodes[i]), unreadAfter, inWeb: id => !!built.ctx[built.indexOf.get(id)!]?.inWeb || DOCUMENT_ROLES.has(built.roles[built.indexOf.get(id)!]),
       });
       for (const id of red.removed) host.snapshots.remove(id);
       nodes = red.nodes;
