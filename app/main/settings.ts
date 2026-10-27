@@ -15,6 +15,7 @@ import { CONSENT_VERSION } from "../shared/consent";
 import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
 import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
 import { HOST_OS } from "./platform/os";
+import { readTextFile } from "./text-file";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
@@ -302,7 +303,8 @@ export class SettingsStore {
     let raw: string;
     this.seen = this.mtime();
     try {
-      raw = fs.readFileSync(this.file, "utf8");
+      // Whatever Unicode form an editor or script saved it in (a byte-order mark, UTF-16): review #82.
+      raw = readTextFile(this.file);
     } catch (err) {
       if (running) {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);

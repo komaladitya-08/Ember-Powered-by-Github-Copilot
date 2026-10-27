@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { Settings } from "./settings";
 import type { TargetKind } from "../shared/targets";
 import type { CommandMode } from "./commands/types";
+import { readTextFile, stripBom } from "./text-file";
 
 export const ADMIN_POLICY_FILE = "/etc/ember/policy.json";
 
@@ -120,7 +121,8 @@ export function lockedDown(source: string, error: string): LoadedAdminPolicy {
  */
 export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy {
   try {
-    const parsed = AdminPolicySchema.safeParse(JSON.parse(raw));
+    // A byte-order mark is no reason to lock Ember down (review #82).
+    const parsed = AdminPolicySchema.safeParse(JSON.parse(stripBom(raw)));
     if (parsed.success) return { policy: parsed.data, source };
     const issue = parsed.error.issues[0];
     return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}`);
@@ -138,7 +140,7 @@ export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy
 export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwned?: boolean } = {}): LoadedAdminPolicy {
   let raw: string;
   try {
-    raw = fs.readFileSync(file, "utf8");
+    raw = readTextFile(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { policy: AdminPolicySchema.parse({}), source: null };
     return lockedDown(file, `can't read ${file}: ${(err as Error).message}`);

@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
+import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
@@ -201,7 +202,7 @@ async function doctorHelper(): Promise<HelperStatus | null | undefined> {
 /** The user's settings file as it is on disk (the doctor only reads it), or null. */
 function settingsText(): string | null {
   try {
-    return fs.readFileSync(path.join(userData, "settings.json"), "utf8");
+    return readTextFile(path.join(userData, "settings.json"));
   } catch {
     return null; // none yet: defaults, WSL off
   }
