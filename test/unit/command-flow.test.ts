@@ -220,6 +220,17 @@ describe("CL's own judge (the default)", () => {
     expect(h.tainted).toEqual(["output.ignore-instructions"]);
     expect(r.textResultForLlm).toContain("(The output contained text that looks like instructions; it was not followed.");
   });
+
+  it("finishes a run that printed 2 MiB of one unbroken token without freezing (review #26)", async () => {
+    setCommandJudge(null);
+    const chunk = "a".repeat(64 * 1024);
+    const h = harness({ binding: LOCAL, run: () => ({ output: Array.from({ length: 32 }, () => chunk) }) });
+    const t0 = performance.now();
+    const r = await call(h, { target: "this computer", command: "make test" });
+    expect(performance.now() - t0).toBeLessThan(3000);
+    expect(r.resultType).toBe("success");
+    expect(r.textResultForLlm).toContain(`${"a".repeat(1000)}…`);
+  });
 });
 
 /** The rules of a harness's last decision. */

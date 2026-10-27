@@ -27,6 +27,11 @@ export const OUTPUT_HEAD_LINES = 40;
 export const OUTPUT_TAIL_LINES = 160;
 export const OUTPUT_MAX_BYTES = 16 * 1024;
 export const OUTPUT_MAX_LINE = 1000;
+/**
+ * The longest line steps 3-4 and the instruction check (step 7) read: step 5 keeps at most OUTPUT_MAX_LINE characters
+ * of a line, so the rest can't reach the model, and reading it would only cost Ember's main thread time.
+ */
+export const CLEAN_MAX_LINE = 4096;
 
 export const SECRET_ANSWERED = "[a prompt for a secret: the user answered it]";
 export const SECRET_UNANSWERED = "[a prompt for a secret: the command couldn't be answered here]";
@@ -115,9 +120,16 @@ function cutTyped(text: string, typed: string[]): string {
   return text.replace(new RegExp(lines.map(escapeRe).join("|"), "g"), TYPED_BY_USER);
 }
 
+/** Every line of `text` cut to at most `max` characters (the text itself when none is longer). */
+export function capLines(text: string, max = CLEAN_MAX_LINE): string {
+  const lines = text.split("\n");
+  if (!lines.some(l => l.length > max)) return text;
+  return lines.map(l => (l.length > max ? l.slice(0, max) : l)).join("\n");
+}
+
 /**
- * Steps 1-4 (§3.11): the text before it is bounded and wrapped. outputTaint (step 7) reads this, so nothing can hide
- * in the part step 5 leaves out.
+ * Steps 1-4 (§3.11): the text before it is bounded and wrapped, each line cut to CLEAN_MAX_LINE after the user's typed
+ * lines are taken out. outputTaint (step 7) reads this, so nothing can hide in the lines step 5 leaves out.
  */
 export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string {
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
@@ -127,7 +139,7 @@ export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "se
   // for a key and its value.
   return plain
     .split(/([\ue000\ue001])/)
-    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(cutTyped(part, o.typed))))
+    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(capLines(cutTyped(part, o.typed)))))
     .join("");
 }
 

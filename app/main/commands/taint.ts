@@ -15,11 +15,12 @@ const RULES: readonly TaintRule[] = [
   { re: /\b(assistant|system|developer)\s*:/i, why: "output.role-label" },
   { re: /<\/?(system|instructions?|prompt)>/i, why: "output.role-tag" },
   { re: /\bas an ai\b/i, why: "output.as-an-ai" },
-  // Download-and-run text.
-  { re: /curl[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/i, why: "output.curl-pipe-shell" },
-  { re: /wget[^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b/i, why: "output.wget-pipe-shell" },
-  { re: /\b(iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|\s*(iex|invoke-expression)\b/i, why: "output.iwr-pipe-iex" },
-  { re: /base64\s+-d[^\n|]*\|\s*(ba|z)?sh\b/i, why: "output.base64-pipe-shell" },
+  // Download-and-run text. Each is anchored at the pipe and looks back along its line for the download: read from
+  // the download forward, a line repeating "curl " with no pipe was rescanned from every "curl" in it.
+  { re: /\|(?<=curl[^\n|]*\|)\s*(sudo\s+)?(ba|z|da)?sh\b/i, why: "output.curl-pipe-shell" },
+  { re: /\|(?<=wget[^\n|]*\|)\s*(sudo\s+)?(ba|z)?sh\b/i, why: "output.wget-pipe-shell" },
+  { re: /\|(?<=\b(iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|)\s*(iex|invoke-expression)\b/i, why: "output.iwr-pipe-iex" },
+  { re: /\|(?<=base64\s+-d[^\n|]*\|)\s*(ba|z)?sh\b/i, why: "output.base64-pipe-shell" },
   // A request to run, paste or type something, addressed to Ember, the assistant or the agent.
   { re: /\b(ember|assistant|agent)\s*[,:]\s*(please\s+)?(now\s+)?(run|execute|paste|type|enter)\b/i, why: "output.addressed-request" },
   { re: /\bif you('re| are) (an? )?(ai|llm|language model|assistant|agent|ember)\b[^\n]{0,80}\b(run|execute|paste|type)\b/i, why: "output.addressed-request" },

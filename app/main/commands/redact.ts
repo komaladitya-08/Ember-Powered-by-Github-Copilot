@@ -8,16 +8,25 @@
 /** What every redacted value becomes. */
 export const SECRET_HIDDEN = "[secret hidden]";
 
-/** Whole-match token patterns (§3.11 step 4), in the order they are applied. */
+/**
+ * Private key blocks. Hidden by hidePrivateKeys, not by a global replace: the regex engine retries every later BEGIN
+ * line when no END follows, which is quadratic on output that repeats one (a hostile remote can print that).
+ */
+const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+
+/**
+ * Whole-match token patterns (§3.11 step 4), in the order they are applied. Each one runs in time linear in its input:
+ * output can be megabytes of one unbroken token, and redaction runs on Ember's main thread.
+ */
 const TOKEN_PATTERNS: readonly RegExp[] = [
   // GitHub tokens.
   /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g,
   // AWS access key ids.
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
-  // Private key blocks.
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  // JSON web tokens.
-  /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+  PRIVATE_KEY,
+  // JSON web tokens. The first part stops at the next "-eyJ", so a run like "-eyJ-eyJ-eyJ…" is read once, not once
+  // per "eyJ" in it.
+  /\beyJ(?:[A-Za-z0-9_]|-(?!eyJ)){10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
   // Slack.
   /xox[abposr]-[A-Za-z0-9-]{10,}/g,
   // Google API keys.
@@ -40,10 +49,12 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 /**
  * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may
  * carry a prefix or suffix (`DB_PASSWORD`, `client_secret_id`); the value runs to whitespace, a quote, a comma or a
- * semicolon. A value that is already hidden is left alone.
+ * semicolon. A value that is already hidden is left alone. The match starts at the secret word (a prefix stays in the
+ * text as it is) and the suffix is at most 64 characters: an open-ended class on either side made every start in a
+ * long run of letters rescan the whole run, which froze Ember for minutes on one long token of output.
  */
 const KEY_VALUE =
-  /([A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
+  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]{0,64}["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google and
@@ -52,11 +63,33 @@ const KEY_VALUE =
  */
 export function redactSecrets(text: string): string {
   let out = text;
-  for (const re of TOKEN_PATTERNS) out = out.replace(re, SECRET_HIDDEN);
+  for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
   out = out.replace(KEY_VALUE, (m, keep: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;
+}
+
+/**
+ * PRIVATE_KEY's global replace, in linear time: each BEGIN line up to the first END line after it becomes one hidden
+ * value; once a BEGIN has no END after it, no later one has either, so the search stops there.
+ */
+function hidePrivateKeys(text: string): string {
+  const begin = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+  const end = /-----END [A-Z ]*PRIVATE KEY-----/g;
+  let out = "";
+  let at = 0;
+  for (;;) {
+    begin.lastIndex = at;
+    const b = begin.exec(text);
+    if (!b) break;
+    end.lastIndex = b.index + b[0].length;
+    const e = end.exec(text);
+    if (!e) break;
+    out += text.slice(at, b.index) + SECRET_HIDDEN;
+    at = e.index + e[0].length;
+  }
+  return at === 0 ? text : out + text.slice(at);
 }
 
 /**

@@ -28,7 +28,7 @@ import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
-import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
@@ -404,7 +404,8 @@ function checkedText(text: string, spans: { from: number; to: number }[], typed:
   }
   out += text.slice(at);
   for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) out = out.split(t).join(" ");
-  return out.replace(TERMINAL_CODES, "");
+  // Lines cut as cleanOutput cuts them: what is past that can't reach the model, and reading it costs main-thread time.
+  return capLines(out.replace(TERMINAL_CODES, ""));
 }
 
 /** A question with S0b's panel fields (confirm.ts §3.9.1): `where`, `armMs`, `panel`, `clickOnly`. */

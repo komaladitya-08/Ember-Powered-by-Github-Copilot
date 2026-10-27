@@ -64,3 +64,59 @@ describe("commandLineSecret", () => {
     for (let k = 0; k < 3; k++) expect(commandLineSecret(GH)).toBe(true);
   });
 });
+
+describe("redactSecrets on long output (review #26)", () => {
+  /** The patterns as they were before they were made linear: the oracle for what is hidden. */
+  const before = (text: string): string => {
+    let out = text;
+    for (const re of [
+      /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g,
+      /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+      /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+      /xox[abposr]-[A-Za-z0-9-]{10,}/g,
+      /AIza[0-9A-Za-z_-]{35}/g,
+      /npm_[A-Za-z0-9]{36}/g,
+    ]) out = out.replace(re, SECRET_HIDDEN);
+    for (const re of [/(aws_secret_access_key\s*[=:]\s*)\S+/gi, /(AccountKey=)[^;\s]+/g, /(SharedAccessSignature=)[^;\s]+/g, /(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+/gi]) {
+      out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
+    }
+    out = out.replace(/:\/\/[^/\s:@]+:[^/\s@]+@/g, `://${SECRET_HIDDEN}@`);
+    const kv = /([A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
+    return out.replace(kv, (m, keep: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  };
+
+  it.each([
+    "DB_PASSWORD=hunter2 and APP.SECRET.KEY: x",
+    "my-app.client_secret_id = 'abc' ; next_token=def",
+    "export GITHUB_TOKEN=abc; PWD=/home/ana",
+    "x.y.z-password-for-db=1 tokenizer=fast max_tokens: 100",
+    "secret_token_value=abc password=mytoken=x",
+    `x-eyJ${"a".repeat(12)}.eyJ${"b".repeat(12)}.${"c".repeat(12)} y`,
+    `${JWT} ${JWT}-eyJ`,
+    "-----BEGIN RSA PRIVATE KEY-----\nAAA\n-----BEGIN EC PRIVATE KEY-----\nBBB\n-----END EC PRIVATE KEY-----\ntail",
+    "-----BEGIN A PRIVATE KEY-----\nno end here\n-----BEGIN B PRIVATE KEY-----\nnor here",
+    "one\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----\nmid\n-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----",
+    "Authorization: Bearer abc password: [secret hidden] token=[secret hidden]",
+    `https://ana:pw@example.com ${GH} AKIAABCDEFGHIJKLMNOP`,
+  ])("hides what the earlier patterns hid in %j", text => {
+    expect(redactSecrets(text)).toBe(before(text));
+  });
+
+  const size = 1024 * 1024;
+  const repeat = (unit: string) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+  it.each([
+    ["one long token", repeat("a")],
+    ["a long run of dots and dashes", repeat(".-")],
+    ["a secret word repeated in one token", repeat("password")],
+    ["a secret word repeated on 4 KiB lines", repeat(`${"DB_TOKEN".repeat(511)}\n`)],
+    ["private key headers without an end", repeat("-----BEGIN RSA PRIVATE KEY-----\n")],
+    ["a run of -eyJ", repeat("-eyJ")],
+    ["URL-like runs", repeat("://a:")],
+  ])("takes linear time on %s (1 MiB)", (_name, text) => {
+    const t0 = performance.now();
+    redactSecrets(text);
+    // Linear work here is tens of milliseconds; the quadratic patterns took minutes to hours at this size.
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});

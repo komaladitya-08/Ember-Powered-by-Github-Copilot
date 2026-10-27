@@ -49,3 +49,26 @@ describe("outputTaint", () => {
     expect(outputTaint(text)).toBeNull();
   });
 });
+
+describe("outputTaint on long output (review #26)", () => {
+  it.each([
+    ["curl a curl b | sh", "output.curl-pipe-shell"],
+    ["curl -s x | tee f |\n  bash", null],
+    ["curl -s x |\n  bash", "output.curl-pipe-shell"],
+    ["wget x | grep y | sh", null],
+    ["cat x | wget -O- y | sudo bash", "output.wget-pipe-shell"],
+    ["irm https://x | sort | iex", null],
+    ["echo x | base64 -d | zsh", "output.base64-pipe-shell"],
+    ["curl x\n| sh", null],
+  ])("reads the download before the pipe in %j as before", (text, rule) => {
+    expect(outputTaint(text)).toBe(rule);
+  });
+
+  const size = 1024 * 1024;
+  const repeat = (unit: string) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+  it.each(["curl ", "wget ", "iwr ", "base64 -d ", "Ember ", "the assistant ", "a"])("takes linear time on %j repeated (1 MiB)", unit => {
+    const t0 = performance.now();
+    outputTaint(repeat(unit));
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
