@@ -420,8 +420,11 @@ export class Perception {
     if (!x11) return noShot("screenshots aren't available on this display");
     // A window's picture needs the window: one that closed, never matched or whose app is hung (no window read), or one
     // of Ember's own, gets no picture, never one of the whole screen, which no secret-field check has looked through.
+    // Not found, the text says only that (not "use the screenshot").
     if (opts.scope === "window" && !seen.window && !seen.x11Window) {
-      return noShot(seen.ember ? "Ember takes no pictures of its own windows" : "the window can't be found (it may have closed, or its app isn't answering)");
+      if (seen.ember) return noShot("Ember takes no pictures of its own windows");
+      if (seen.busy) return noShot("the app isn't answering");
+      return { ...seen, text: WINDOW_NOT_FOUND, capture: null };
     }
     // macOS gives no picture without Screen Recording (never allowed, or taken back): say that, not "off screen".
     if (this.noScreenAccess(x11)) return noShot(this.words.noScreenAccess ?? NO_SCREEN_ACCESS);
@@ -772,6 +775,7 @@ const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's d
 /** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */
 const NO_SCREEN_ACCESS = "Ember isn't allowed to capture the screen";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
+const WINDOW_NOT_FOUND = "That window can't be found (it may have closed, or its app isn't answering).";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
 
 /** One open window as the "Open windows" lists say it: its app (as the user knows it), its title, and how it is. */

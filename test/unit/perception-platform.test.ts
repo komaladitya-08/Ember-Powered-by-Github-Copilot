@@ -54,8 +54,9 @@ function desktop(o: {
   window?: AxWindow | null; nodes?: AxNode[]; listed?: AxWindow[];
   shell?: { overlays: ShellOverlay[]; complete?: boolean } | Error;
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
-  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; screenRecording?: () => boolean;
+  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean;
   screen?: Bounds; neverLook?: string[];
+  screenRecording?: () => boolean;
   secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
 } & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
@@ -79,12 +80,12 @@ function desktop(o: {
     activeWindow: () => o.active ?? null,
     focusWindow: () => o.focus ?? null,
     clientWindows: () => o.clients ?? [],
+    ...(o.screenRecording ? { screenRecording: o.screenRecording } : {}),
     capture: (x, y, width, height) => {
       captures.push([x, y, width, height]);
       return (o.capture ?? ((cx, cy, cw, ch) => greyImage(screen, cx, cy, cw, ch)))(x, y, width, height);
     },
     ...(o.systemDialogOpen ? { systemDialogOpen: o.systemDialogOpen } : {}),
-    ...(o.screenRecording ? { screenRecording: o.screenRecording } : {}),
   };
   const { log, warnings } = recordingLog();
   const perception = new Perception({
@@ -404,7 +405,21 @@ describe("Perception's window screenshots when the window can't be found", () =>
     expect(p.capture).toBeNull();
     expect(captures).toEqual([]);
     expect(shellAsked()).toBe(0);
-    expect(p.text).toContain("(No screenshot: the window can't be found (it may have closed, or its app isn't answering).)");
+    // One plain sentence: nothing says "use the screenshot" or "the focused window" (a window was named).
+    expect(p.text).toBe("That window can't be found (it may have closed, or its app isn't answering).");
+  });
+
+  it("says the app is busy when it is, and Ember's own window when the user is in one", async () => {
+    const busy = desktop({ window: null, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const seen = { window: null, x11Window: null, nodes: [], blocked: false, busy: true, truncated: null, others: [], ms: 1, axScale: 1 };
+    busy.perception.read = async () => seen;
+    const b = await busy.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(b.capture).toBeNull();
+    expect(b.text).toBe("The app is busy and didn't answer (it may be loading something). Try again in a moment.\n(No screenshot: the app isn't answering.)");
+    busy.perception.read = async () => ({ ...seen, busy: false, ember: true });
+    const own = await busy.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(own.text).toContain("(No screenshot: Ember takes no pictures of its own windows.)");
+    expect(busy.captures).toEqual([]);
   });
 
   it("still takes a picture of the whole screen when that is what was asked for", async () => {
