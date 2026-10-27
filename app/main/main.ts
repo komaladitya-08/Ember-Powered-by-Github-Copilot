@@ -13,6 +13,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, 
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
+import { dataFolderProblem } from "./data-folder";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
@@ -117,7 +118,8 @@ function startupFailed(err: unknown): void {
   void app.whenReady().then(() => {
     // A dialog with no parent window comes up in front only once Ember is the active app (macOS).
     sys.lifecycle.focusOwnApp();
-    dialog.showErrorBox("Ember couldn't start", `${message}\n\nThe details are in ${log.file}.`);
+    // A log that couldn't be written (its folder can't be) isn't pointed to.
+    dialog.showErrorBox("Ember couldn't start", fs.existsSync(log.file) ? `${message}\n\nThe details are in ${log.file}.` : message);
     app.exit(1);
   });
 }
@@ -126,8 +128,13 @@ if (process.argv.includes("--doctor")) {
   // A check-up, not a second Ember: runs even while Ember is running.
   void runDoctor();
 } else if (!app.requestSingleInstanceLock()) {
-  log.info("instance.handover", { pid: process.pid });
-  app.quit();
+  // Chromium can't take the lock in a data folder it can't write to either: that isn't another Ember (review #80).
+  const unusable = dataFolderProblem(userData);
+  if (unusable) startupFailed(new Error(unusable));
+  else {
+    log.info("instance.handover", { pid: process.pid });
+    app.quit();
+  }
 } else {
   try {
     start();
