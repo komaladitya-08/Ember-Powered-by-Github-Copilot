@@ -743,40 +743,66 @@ const plainText = (s: string) => foldLabel(normalizeLabel(s));
  */
 const RUNS_PROGRAM = /\b(allow(ed)? execut(ing|e)|execut(able|e) as (a )?program|run as (a )?program|run in (a )?terminal|launch as (a )?program|make (it |the file |file )?executable|trust and launch)\b/;
 const TRUST_AND_LAUNCH = anyOf(["vertrauen und starten", "faire confiance et lancer", "confiar y ejecutar", "dai fiducia e lancia", "confiar e iniciar"]);
-/** By its words: running with a program or a terminal ("Datei als Programm ausführen", "Lancer dans un terminal", "Esegui nel terminale"). */
+/**
+ * By its words: running with a program or a terminal ("Datei als Programm ausführen", "Lancer dans un terminal", "Esegui nel
+ * terminale", "Разрешить выполнение файла как программы", "Kör i terminal"), in the languages of RISKY_WORDS (Nautilus
+ * 3.28's own words where it has them), written with their accents (folded when matched). RUN_ANYWHERE and
+ * PROGRAM_ANYWHERE are the scripts without spaces between words, matched anywhere in the label.
+ */
 const RUN_WORDS = ["run", "execute", "executing", "execution", "launch", "ausführen", "ausführung", "exécuter", "exécution", "lancer", "ejecutar",
-  "ejecución", "eseguire", "esegui", "esecuzione", "executar", "execução"];
+  "ejecución", "eseguire", "esegui", "esecuzione", "executar", "execução",
+  "uitvoeren", "uit te voeren", "uitvoering", "uruchom", "uruchomić", "uruchamianie", "uruchomienie", "wykonywanie", "wykonywania", "wykonać",
+  "запустить", "запуск", "запуска", "выполнение", "выполнения", "выполнить", "выполнять", "исполнение", "kör", "köra", "körning", "kør", "køre",
+  "kørsel", "kjør", "kjøre", "kjøring", "suorita", "suorittaa", "suorittaminen", "suoritus", "spustit", "spouštění", "spuštění", "spouštět",
+  "çalıştır", "çalıştırma", "çalıştırılması", "çalıştırılmasına"];
+const RUN_ANYWHERE = ["実行", "执行", "執行", "运行", "運行", "실행"];
 const RUN_WORD = anyOf(RUN_WORDS);
-const PROGRAM_WORD = anyOf(["programs?", "programm", "programmes?", "programas?", "programma", "terminal", "terminale"]);
+const RUN_SOMEWHERE = new RegExp(foldLabel(RUN_ANYWHERE.join("|")), "u");
+const PROGRAM_WORD = anyOf(["programs?", "programm", "programmes?", "programas?", "programma", "terminal", "terminale", "programu", "programem",
+  "terminalu", "terminalvenster", "программа", "программы", "программу", "программой", "терминал", "терминале", "programmet", "terminalen",
+  "ohjelma", "ohjelmana", "ohjelmaa", "pääte", "päätteessä", "terminálu", "terminál", "uçbirim", "uçbirimde"]);
+const PROGRAM_SOMEWHERE = new RegExp(foldLabel(["プログラム", "端末", "程序", "程式", "终端", "終端", "프로그램", "터미널"].join("|")), "u");
 /** A check box that is only "Execute" ("Ausführen:", "Exécution :"), or says the file is executable ("Is executable", "Ausführbar"). */
-const RUN_ONLY = new RegExp(`^\\s*(${foldLabel(RUN_WORDS.join("|"))})\\s*:?\\s*$`, "u");
-const EXECUTABLE_WORD = anyOf(["executables?", "ausführbar(e[nrs]?)?", "exécutables?", "ejecutables?", "eseguibil[ei]", "executáve(l|is)"]);
+const RUN_ONLY = new RegExp(`^\\s*(${foldLabel([...RUN_WORDS, ...RUN_ANYWHERE].join("|"))})\\s*[:：]?\\s*$`, "u");
+const EXECUTABLE_WORD = anyOf(["executables?", "ausführbar(e[nrs]?)?", "exécutables?", "ejecutables?", "eseguibil[ei]", "executáve(l|is)",
+  "uitvoerbaar", "uitvoerbare", "wykonywaln(y|ym|ego|a|e|ą|ych)", "исполняем(ый|ым|ого|ая|ое|ые|ых)", "körbar[at]?", "kørbare?", "kjørbare?",
+  "suoritettava[na]?", "spustiteln(ý|ým|ého|á|é)", "çalıştırılabilir"]);
+const EXECUTABLE_SOMEWHERE = new RegExp(foldLabel(["実行可能", "可执行", "可執行", "실행 가능"].join("|")), "u");
 const TOGGLE_ROLES = /check box|toggle|switch/;
 /**
  * The file manager's "Do you want to run …, or display its contents?" question (and its autorun one), as Nautilus
- * versions word it: its "Run" runs the file.
+ * versions word it, in the languages of RISKY_WORDS: its "Run" runs the file.
  */
 const RUN_FILE_DIALOG = anyOf(["do you want to run", "display its contents", "would you like to run it", "inhalt anzeigen",
   "automatisch ausgeführt werden soll", "afficher son contenu", "souhaitez-vous le lancer", "(ver|mostrar) su contenido", "quiere ejecutarlo",
-  "il suo contenuto", "visualizzarne il contenuto", "eseguirlo", "(exibir|mostrar) (o )?seu conteúdo", "gostaria de executá-lo"]);
-/** That dialog's "Run" ("Ausführen", "Lancer", "Ejecutar", "Esegui", "Executar"). */
-const RUN_ANSWER = /^(run|execute|launch|ausfuhren|lancer|ejecutar|esegui|executar)\b/;
+  "il suo contenuto", "visualizzarne il contenuto", "eseguirlo", "(exibir|mostrar) (o )?seu conteúdo", "gostaria de executá-lo",
+  "inhoud ervan tonen", "wyświetlić jego zawartość", "показать его содержимое", "visa dess innehåll", "vise dens indhold", "vise innholdet",
+  "näyttää sen sisällön", "zobrazit jeho obsah", "içeriğini görüntülemek"]);
+const RUN_FILE_DIALOG_SOMEWHERE = new RegExp(foldLabel(["内容を表示", "显示它的内容", "顯示它的內容", "내용을 표시"].join("|")), "u");
+/** That dialog's "Run" ("Ausführen", "Lancer", "Ejecutar", "Esegui", "Executar", "Запустить", "Kör", "実行する"), starting the label. */
+const RUN_ANSWER = new RegExp(`^(${foldLabel(["run", "execute", "launch", "ausführen", "lancer", "ejecutar", "esegui", "executar", "uitvoeren", "uruchom",
+  "запустить", "kör", "kør", "kjør", "suorita", "spustit", "çalıştır"].join("|"))})(?=$|[^\\p{L}\\p{N}])|^(${foldLabel(RUN_ANYWHERE.join("|"))})`, "u");
 /** RUNS_PROGRAM_EXTRA[os] and RUN_FILE_DIALOG_EXTRA[os] (./vocabulary.ts) as expressions, or null where the OS adds none. */
 const runsProgramExtra = perOS(os => (RUNS_PROGRAM_EXTRA[os].length ? anyOf([...RUNS_PROGRAM_EXTRA[os]]) : null));
 const runFileDialogExtra = perOS(os => (RUN_FILE_DIALOG_EXTRA[os].length ? anyOf([...RUN_FILE_DIALOG_EXTRA[os]]) : null));
 /** RUN_ANSWER_EXTRA[os] (./vocabulary.ts) as a whole word starting the label, as RUN_ANSWER is, or null where the OS adds none. */
 const runAnswerExtra = perOS(os => (RUN_ANSWER_EXTRA[os].length ? new RegExp(`^(${foldLabel(RUN_ANSWER_EXTRA[os].join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u") : null));
+/** A text in both forms the checks below read: with look-alikes mapped (plainText), and as written (Cyrillic stays Cyrillic). */
+const bothForms = (s: string) => { const a = plainText(s), b = foldLabel(s); return a === b ? [a] : [a, b]; };
 /** Does activating this control make a file executable or run one (by `os`'s words too)? */
 function runsProgram(role: string, name: string, dialog: { name: string; text: string } | undefined, os: OS): boolean {
-  const label = plainText(name);
-  if (RUNS_PROGRAM.test(label) || TRUST_AND_LAUNCH.test(label) || runsProgramExtra(os)?.test(label)) return true;
-  if (ACTIVATING_ROLES.test(role) && RUN_WORD.test(label) && PROGRAM_WORD.test(label)) return true;
+  const labels = bothForms(name);
+  const has = (re: RegExp | null) => !!re && labels.some(l => re.test(l));
+  if (has(RUNS_PROGRAM) || has(TRUST_AND_LAUNCH) || has(runsProgramExtra(os))) return true;
+  if (ACTIVATING_ROLES.test(role) && labels.some(l => (RUN_WORD.test(l) || RUN_SOMEWHERE.test(l)) && (PROGRAM_WORD.test(l) || PROGRAM_SOMEWHERE.test(l)))) return true;
   // The file's execute bit, by a check box on its Permissions page.
-  if (TOGGLE_ROLES.test(role) && (RUN_ONLY.test(label) || EXECUTABLE_WORD.test(label))) return true;
-  const asks = plainText(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
-  const osRunDialog = !!runFileDialogExtra(os)?.test(asks);
+  if (TOGGLE_ROLES.test(role) && (has(RUN_ONLY) || has(EXECUTABLE_WORD) || has(EXECUTABLE_SOMEWHERE))) return true;
+  const asks = bothForms(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
+  const said = (re: RegExp | null) => !!re && asks.some(a => re.test(a));
+  const osRunDialog = said(runFileDialogExtra(os));
   // The OS's own answers (Gatekeeper's "Open") run the file only in its own dialogs.
-  return (RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks) || osRunDialog)) || (osRunDialog && !!runAnswerExtra(os)?.test(label));
+  const runDialog = said(RUN_FILE_DIALOG) || said(RUN_FILE_DIALOG_SOMEWHERE) || said(EXECUTABLE_WORD) || said(EXECUTABLE_SOMEWHERE) || osRunDialog;
+  return (has(RUN_ANSWER) && runDialog) || (osRunDialog && has(runAnswerExtra(os)));
 }
 /** "Paste" menu items and buttons, in the languages of RISKY_WORDS (GTK's and the browsers' own words). */
 const PASTE_WORDS = ["paste", "einfügen", "coller", "pegar", "incolla", "colar", "plakken", "wklej", "вставить", "вставь", "klistra in", "indsæt",
