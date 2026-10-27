@@ -30,10 +30,14 @@ const OFF = 0x30, ON = 0x31, REMOVED = 0x72;
 /**
  * What the installed Ember needs. No debugger and no code injected through the environment: the app ignores
  * --inspect* and NODE_OPTIONS. RunAsNode stays on: Ember runs helpers with its own binary as plain Node
- * (ELECTRON_RUN_AS_NODE): the desk helper on Linux (app/main/desk/agent.ts) and the accessibility host
- * (dist/app/ax-sidecar.cjs) on Windows and macOS. In that mode Node's own --inspect still works, which gives
- * whoever starts it nothing beyond running the binary themselves (the running Ember is unaffected).
- * (main.ts also refuses --remote-debugging-* and --inspect* in a packaged build.)
+ * (ELECTRON_RUN_AS_NODE): the desk helper on Linux (app/main/desk/agent.ts), the accessibility host
+ * (dist/app/ax-sidecar.cjs) on Windows and macOS, the commands' job host and SSH's askpass helper. So any program
+ * the user runs can start Ember's binary as Node with a script of its own (Node's --inspect works there too). The
+ * running Ember is unaffected, but on macOS what the system grants Ember (Accessibility, Screen Recording) can go
+ * with it: started so that macOS holds Ember responsible for it (by launchd, say), that process acts with Ember's
+ * grants. The hardened runtime closes the DYLD_* and debugger ways in (mac-bundle.mjs); this one stays open until
+ * the helpers no longer need node mode (review #177). (main.ts also refuses --remote-debugging-* and --inspect* in
+ * a packaged build.)
  */
 export const EMBER_FUSES = {
   RunAsNode: true,

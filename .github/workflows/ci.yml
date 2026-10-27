@@ -535,6 +535,10 @@ jobs:
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The hardened runtime (review #177): macOS ignores DYLD_* for Ember, so a library named there isn't
+          # loaded (without it, dyld would stop Ember: the library doesn't exist).
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           # The accessibility host runs as Ember's binary in node mode; NODE_OPTIONS is ignored there too.
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
@@ -713,6 +717,9 @@ jobs:
           test "$machos" -gt 0
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The hardened runtime (review #177): DYLD_* is ignored for Ember (dyld would stop it otherwise).
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log

@@ -1,8 +1,8 @@
 // Finishes a staged Ember.app on macOS, after every other byte is in place: Info.plist says "Ember" (with the bundle
 // id TCC grants are keyed to and the usage texts macOS shows in its prompts), the icon, then an ad hoc signature
-// over the whole bundle. Signing must come last: flipping the fuses changed the Electron Framework binary, which
-// voids Electron's signature, and arm64 macOS kills code whose signature doesn't match. Real certificates and
-// notarisation are out of scope (an ad hoc signature is a new identity to TCC on every build).
+// over the whole bundle, under the hardened runtime. Signing must come last: flipping the fuses changed the Electron
+// Framework binary, which voids Electron's signature, and arm64 macOS kills code whose signature doesn't match. Real
+// certificates and notarisation are out of scope (an ad hoc signature is a new identity to TCC on every build).
 // Info.plist is edited with plutil and read back key by key; the commands go through an injectable runner so the
 // sequence can be tested on any OS.
 import { spawnSync } from "node:child_process";
@@ -42,6 +42,36 @@ export function infoPlistValues(version) {
     // so can a computer Ember works on over SSH (design §5.1.8, critique remote-29).
     ["NSLocalNetworkUsageDescription", "string", "Ember connects to your organisation's AI service or proxy, and to computers you connect to over SSH, when they are on your local network."],
   ];
+}
+
+/**
+ * The entitlements Ember.app is signed with, under the hardened runtime (review #177). The hardened runtime makes
+ * macOS ignore DYLD_INSERT_LIBRARIES and the other DYLD_* variables for Ember and refuse other processes a debugger's
+ * hold on it, so another program the user runs can't put its code into Ember that way and use Ember's Accessibility
+ * and Screen Recording grants. Each entitlement gives back only what Ember needs:
+ * - allow-jit, allow-unsigned-executable-memory: V8 compiles JavaScript in main, in every page and in each helper
+ *   Ember runs in node mode (Electron's own signing defaults carry both);
+ * - disable-library-validation: an ad hoc signature has no team, and library validation loads only libraries of the
+ *   same team or Apple's, so Electron's framework and the native modules (koffi, sharp, the speech runtime) would be
+ *   refused;
+ * - device.audio-input: the microphone ("Hey Ember"), which the hardened runtime otherwise refuses without a prompt;
+ * - automation.apple-events: dark mode through System Events (NSAppleEventsUsageDescription below).
+ */
+export const ENTITLEMENTS = [
+  "com.apple.security.cs.allow-jit",
+  "com.apple.security.cs.allow-unsigned-executable-memory",
+  "com.apple.security.cs.disable-library-validation",
+  "com.apple.security.device.audio-input",
+  "com.apple.security.automation.apple-events",
+];
+
+/** Entitlements Ember.app must never carry: each lets another process's code in again (DYLD_* variables, a debugger). */
+export const FORBIDDEN_ENTITLEMENTS = ["com.apple.security.cs.allow-dyld-environment-variables", "com.apple.security.get-task-allow"];
+
+/** ENTITLEMENTS as the XML property list codesign --entitlements reads. */
+export function entitlementsPlist() {
+  const keys = ENTITLEMENTS.map(k => `  <key>${k}</key>\n  <true/>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${keys}\n</dict>\n</plist>\n`;
 }
 
 /** Keys of Electron's that don't describe Ember: dropped when present. */
@@ -97,12 +127,25 @@ export async function finishMacBundle(o) {
   if (!fs.existsSync(icns)) throw new Error(`iconutil wrote no ${icns}`);
   fs.rmSync(path.join(o.app, "Contents", "Resources", "electron.icns"), { force: true });
 
-  // 3. The signature, over everything (frameworks and helper apps inside out, then the app). Extended attributes
-  //    (a quarantine flag, Finder info) make codesign refuse with "resource fork … not allowed".
+  // 3. The signature, over everything (frameworks and helper apps inside out, then the app), under the hardened
+  //    runtime with ENTITLEMENTS. Extended attributes (a quarantine flag, Finder info) make codesign refuse with
+  //    "resource fork … not allowed".
   must("xattr", ["-cr", o.app], "clearing extended attributes");
-  must("codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", o.app], "signing Ember.app ad hoc");
+  const entitlements = path.join(o.tmp, "ember.entitlements");
+  fs.writeFileSync(entitlements, entitlementsPlist());
+  must("codesign", ["--force", "--deep", "--options", "runtime", "--entitlements", entitlements, "--sign", "-", "--timestamp=none", o.app], "signing Ember.app ad hoc");
   must("codesign", ["--verify", "--deep", "--strict", "--verbose=2", o.app], "verifying Ember.app's signature");
-  log("  signed ad hoc and verified (codesign --verify --deep --strict)");
+  // Read back: the hardened runtime's flag, and exactly the entitlements meant (fail closed).
+  const shown = must("codesign", ["--display", "--verbose=2", o.app], "reading Ember.app's signature");
+  const flags = `${shown.stdout}${shown.stderr}`.match(/flags=\S+/)?.[0] ?? "no flags";
+  if (!/^flags=0x[0-9a-f]+\([^)]*\bruntime\b[^)]*\)/.test(flags)) throw new Error(`Ember.app isn't signed with the hardened runtime (${flags})`);
+  const granted = must("codesign", ["--display", "--entitlements", "-", "--xml", o.app], "reading Ember.app's entitlements").stdout;
+  const wrong = [
+    ...ENTITLEMENTS.filter(k => !granted.includes(`<key>${k}</key>`)).map(k => `${k} is missing`),
+    ...FORBIDDEN_ENTITLEMENTS.filter(k => granted.includes(k)).map(k => `${k} must not be there`),
+  ];
+  if (wrong.length) throw new Error(`Ember.app's entitlements are wrong: ${wrong.join(", ")}`);
+  log(`  signed ad hoc under the hardened runtime (${flags}) and verified (codesign --verify --deep --strict)`);
 }
 
 /** Runs a command, capturing its output. */
