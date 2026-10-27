@@ -362,6 +362,19 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
   return msg;
 }
 
+/**
+ * Why a sign-in (the device flow) failed, in one plain sentence for the settings window. Nothing retries a sign-in, so
+ * unlike a start's error it never promises one; a reply that wasn't GitHub's (a proxy's error page) isn't shown raw.
+ */
+export function explainSignInError(err: unknown, ctx: { online?: boolean; reinstall?: string } = {}): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
+  if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
+  if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. Check the network, then sign in again.";
+  if (/refused the sign-in request \(5\d\d\)|is not valid JSON|Unexpected token|JSON/i.test(msg)) return "GitHub's sign-in page didn't answer properly (a proxy or a problem on GitHub's side). Try signing in again in a moment.";
+  return explainStartError(err, ctx);
+}
+
 /** How long main's own bubble holds off everything else at most, if main doesn't give it back sooner. */
 const MAIN_HOLD_MS = 30_000;
 /**

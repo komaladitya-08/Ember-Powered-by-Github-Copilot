@@ -162,10 +162,14 @@ export async function startDeviceFlow(fetch: Fetch, clientId: string, scope = "r
   };
 }
 
-/** Polls until the user approves, the code expires, or `signal` aborts. */
+/**
+ * Polls until the user approves, the code expires, or `signal` aborts. A request that fails, a reply that isn't GitHub's
+ * JSON (a proxy's HTML error page) or a 5xx is a blip (Wi-Fi roaming, a VPN reconnecting): it waits one interval and
+ * asks again, so the code the user is entering isn't lost. `onBlip` hears each one (the log).
+ */
 export async function pollDeviceFlow(
   fetch: Fetch, clientId: string, code: DeviceCode,
-  opts: { signal?: AbortSignal; sleep?: (ms: number) => Promise<void> } = {},
+  opts: { signal?: AbortSignal; sleep?: (ms: number) => Promise<void>; onBlip?: (err: unknown) => void } = {},
 ): Promise<string> {
   const sleep = opts.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
   let interval = code.interval;
@@ -176,11 +180,21 @@ export async function pollDeviceFlow(
     await sleep(interval * 1000);
     // Cancelled (or signed out) while waiting: nothing more is fetched, and no token comes back.
     if (opts.signal?.aborted) throw cancelled();
-    const res = await fetch("https://github.com/login/oauth/access_token", {
-      method: "POST", headers: HEADERS,
-      body: form({ client_id: clientId, device_code: code.deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
-    });
-    const j = await res.json() as Record<string, unknown>;
+    let res: Awaited<ReturnType<Fetch>>;
+    let j: Record<string, unknown>;
+    try {
+      res = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST", headers: HEADERS,
+        body: form({ client_id: clientId, device_code: code.deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+      });
+      if (res.status >= 500) throw new Error(`GitHub answered ${res.status}`);
+      j = await res.json() as Record<string, unknown>;
+      if (!j || typeof j !== "object") throw new Error("GitHub's answer wasn't JSON");
+    } catch (err) {
+      if (opts.signal?.aborted) throw cancelled();
+      opts.onBlip?.(err);
+      continue;
+    }
     if (opts.signal?.aborted) throw cancelled();
     if (typeof j.access_token === "string") return j.access_token;
     switch (j.error) {

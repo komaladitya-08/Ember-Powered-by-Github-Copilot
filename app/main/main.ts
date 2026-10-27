@@ -41,7 +41,7 @@ import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
 import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -951,13 +951,8 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && /^https:\/\/github\.com\//.test(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
-  /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"). */
-  const signInError = (err: unknown): string => {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
-    if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
-    return explainStartError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
-  };
+  /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
+  const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**
    * "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. Nothing found: `hint`
    * says what signing in needs in this build (the GitHub CLI, and how to install it here, without Ember's own app).
@@ -1011,7 +1006,7 @@ function start(): void {
       // Only GitHub's own page is ever opened.
       signInPage = code.verificationUri;
       openSignInPage();
-      const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal });
+      const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal, onBlip: err => log.warn("auth.poll_blip", { err }) });
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
       const kept = tokens?.save(token) ?? false;
