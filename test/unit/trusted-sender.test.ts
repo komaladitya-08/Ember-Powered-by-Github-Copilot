@@ -56,6 +56,21 @@ describe("isTrustedSender", () => {
   it("doesn't take a Windows backslash as a folder separator in a URL", () => {
     expect(isTrustedSender("file:///C:/evil/%5Crenderer%5C/index.html")).toBe(false);
   });
+
+  it("doesn't take an encoded slash as a folder separator either", () => {
+    expect(isTrustedSender("file:///tmp/evil%2Frenderer%2Findex.html")).toBe(false);
+    expect(isTrustedSender("file:///tmp/evil/%2Frenderer%2F/index.html")).toBe(false);
+  });
+
+  it("trusts Ember's pages in a folder whose name has a % in it, as Chromium writes their URL, and never throws", () => {
+    // loadFile leaves a literal % as it is (checked with Electron 44): "100% Free" becomes "100%%20Free", which
+    // decodeURIComponent refuses ("URI malformed"), and that failed every settings and status request there.
+    expect(isTrustedSender("file:///D:/Tools/100%%20Free/Ember/resources/app/dist/app/renderer/home/index.html")).toBe(true);
+    expect(isTrustedSender("file:///home/zoe/Tools%20C%23%20100%%20Free%20(x86)%20&%20Zo%C3%AB's%20[x]/ember/resources/app/dist/app/renderer/home/index.html")).toBe(true);
+    expect(isTrustedSender("file:///opt/50%AB/ember/resources/app/dist/app/renderer/home/index.html")).toBe(true);
+    expect(() => isTrustedSender("file:///tmp/100%/evil.html")).not.toThrow();
+    expect(isTrustedSender("file:///tmp/100%/evil.html")).toBe(false);
+  });
 });
 
 // ───── The SSH/WSL windows' channels (critique integration-5): each only from its own window ─────

@@ -132,8 +132,10 @@ export function quitQuestion(tasks: number, busy: { commands: number; connection
 
 /**
  * True when an IPC message comes from one of our own bundled pages. File URLs use "/" on every OS: path.sep is "\" on
- * Windows, which never appears in one, so testing for it refused every settings request there.
+ * Windows, which never appears in one, so testing for it refused every settings request there. The URL is read as it
+ * is, never decoded: loadFile leaves a literal % in a folder name as it is ("100%%20Free"), which decodeURIComponent
+ * throws on, and an encoded "/" (%2F) is no folder separator.
  */
 export function isTrustedSender(url: string): boolean {
-  return url.startsWith("file://") && decodeURIComponent(url).includes("/renderer/");
+  return url.startsWith("file://") && url.includes("/renderer/");
 }

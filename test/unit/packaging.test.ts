@@ -108,6 +108,12 @@ describe("start at login", () => {
     expect(autostartEntry(["/usr/bin/ember"])).toContain("Exec=/usr/bin/ember --autostart\n");
   });
 
+  it("doubles a % in an Exec argument, which the Desktop Entry spec reserves for field codes", () => {
+    expect(execArg("/home/ada/100%/Ember.AppImage")).toBe('"/home/ada/100%%/Ember.AppImage"');
+    expect(execArg("/home/ada/50%AB/Ember.AppImage")).toBe('"/home/ada/50%%AB/Ember.AppImage"');
+    expect(autostartEntry(["/home/ada/Tools 100% Free/Ember.AppImage"])).toContain('Exec="/home/ada/Tools 100%% Free/Ember.AppImage" --autostart\n');
+  });
+
   it("writes, keeps and removes the autostart entry to match the setting", () => {
     const file = autostartFile({ XDG_CONFIG_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "ember-xdg-")) });
     expect(syncAutostart(true, ["/usr/bin/ember"], file)).toBe(true);
