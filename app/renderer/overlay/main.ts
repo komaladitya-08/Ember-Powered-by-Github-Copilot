@@ -12,7 +12,7 @@ import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, ty
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
+import { STATE_WORD, foldCount, foldedLine, stackOrder, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
 
@@ -232,8 +232,6 @@ function measureTasks(): void {
 }
 
 interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
-/** A card's state in words, for screen readers (its symbol says it to the eye). */
-const STATE_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();

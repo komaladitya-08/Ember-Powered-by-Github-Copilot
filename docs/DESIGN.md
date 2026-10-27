@@ -74,8 +74,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   cards, handle, Ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px).
-- **State:** one symbol family (working, waiting for you, done, failed, stopped) beside the words on
-  every surface, with the state in words for screen readers; never colour alone.
+- **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)
+  beside the words on every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
 - **Motion:** springs as CSS `linear()` curves. Endless animations (pulses, the thinking glow, the
   focus ring's glow) change only opacity, each on a layer of its own, so they never repaint. Calm mode

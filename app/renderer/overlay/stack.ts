@@ -2,8 +2,13 @@
 
 import type { TaskCard } from "../../shared/overlay";
 
-/** A task still under way: its card has Stop. */
-export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "waiting";
+/** A task still under way (running, in line, or waiting for the user): its card has Stop. */
+export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "queued" || t.status === "waiting";
+
+/** A card's state in words, for screen readers (its symbol says it to the eye): a task in line doesn't need the user. */
+export const STATE_WORD: Record<TaskCard["status"], string> = {
+  running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: ",
+};
 
 /**
  * The cards from the top of the stack down: the tasks that ended (oldest first), then those under way, so
