@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, thoughtScrolls, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -210,6 +210,15 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*visibility: hidden/);
     expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
+  });
+
+  it("shows all of a problem as of a question: up to ten lines, then it scrolls (review #17)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\):not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*max-height: calc\(20px \* 10\); overflow-y: auto;[^}]*pointer-events: auto;/);
+    expect(thoughtScrolls({ mood: "error", expanded: false, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "attention", expanded: false, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "idle", expanded: true, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "idle", expanded: false, streaming: false })).toBe(false);
+    expect(thoughtScrolls({ mood: "error", expanded: false, streaming: true })).toBe(false);
   });
 
   it("shows the last line of a long answer opened with Read all (no overflow fade over its scroll box)", () => {

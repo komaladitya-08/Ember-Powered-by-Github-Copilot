@@ -28,6 +28,7 @@ import { commandMode, type LoadedAdminPolicy } from "../admin";
 import type { Question } from "../agent/confirm";
 import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
 import type { Emotion } from "@ember/characters";
+import { plainMarkdown } from "@ember/bubble";
 import type { WorkerSystem } from "../agent/worker";
 import { createLocalRunner } from "../commands/run/local";
 import type { CommandCapability, CommandRunner, CommandService, CommandWindowPort } from "../commands/types";
@@ -178,11 +179,17 @@ type Look = keyof typeof LOOK;
 /** A runtime bubble as it is posted, with Ember's face for it. */
 type Said = NoticeBubble & { emotion: Emotion };
 
-/** A bubble's words as the runtime posts them: its buttons get the ids the runtime answers, in order. */
+/**
+ * A bubble's words as the runtime posts them: its buttons get the ids the runtime answers, in order. Its text is made
+ * plain as the conversation's is: messages from SSH and the remote carry `code` spans the bubble would show raw.
+ */
 function say(w: words.BubbleWords, ids: readonly string[], look: Look): Said {
   const { mood, emotion } = LOOK[look];
-  return { title: w.title, thought: w.text, mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })) };
+  return { title: w.title, thought: plainMarkdown(w.text), mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })) };
 }
+
+/** The Close button of a bubble that stays until the user has read it (a failure). */
+const CLOSE_ID = "conn:close";
 
 /** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
 export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv }): string[] {
@@ -421,6 +428,8 @@ interface Conn {
   activate: boolean;
   /** It was the picker's choice when its connection dropped: it is again if SA brings it back (and nothing else was picked). */
   wasActive?: boolean;
+  /** Why its last connect or reconnect failed, until it connects again (the settings row says it: TargetSummary.problem). */
+  problem?: string;
 }
 
 /** An offer on screen: an ssh Ember saw the user run, or offer_connect's button. */
@@ -559,7 +568,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
   const activeId = (): TargetId => activeOf(entries, settings.get().targets.active);
   const entryOf = (id: TargetId) => entries.find(e => e.id === id) ?? null;
-  const summaries = (): TargetSummary[] => { const a = activeId(); return entries.map(e => summaryOf(e, a)); };
+  /** Each target's summary, with why a host's last connection failed while it isn't connected (the settings row keeps it). */
+  const summaries = (): TargetSummary[] => {
+    const a = activeId();
+    return entries.map(e => {
+      const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
+      return { ...summaryOf(e, a), ...(problem ? { problem } : {}) };
+    });
+  };
   const ipc = registerTargetsIpc({
     ipc: deps.ipc, isHome: deps.isHome, log,
     // The settings window opening is a moment to look for WSL distros again (WA caches them for a minute).
@@ -693,6 +709,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     }
     c.link = link;
     c.target = target;
+    delete c.problem;
     c.state = link.state === "stalled" ? "stalled" : link.state === "ready" ? "ready" : "closed";
     try { c.offs.push(link.onState(s => onLinkState(hostId, link, s))); } catch (err) { log.warn("targets.link_listen_failed", { err }); }
     return true;
@@ -741,6 +758,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const c = connState(hostId);
     // Connected again by the user's own choice: that choice (o.activate) says where to work, not the one before the loss.
     c.wasActive = false;
+    // A new try: the last one's reason is no longer what the settings row says.
+    delete c.problem;
     if (c.state === "connecting") { c.activate ||= o.activate; return { ok: true }; }
     if ((c.state === "ready" || c.state === "stalled") && c.target) { if (o.activate) setActive(targetIdOf("ssh", hostId)); return { ok: true }; }
     const label = host.id;
@@ -753,11 +772,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     progressSaid.set(hostId, first.text);
     bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "working"));
     const stopped = (message: string): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message }; };
-    const fail = (message: string, retry = false): ActResult => {
+    /** The connect failed: said until the user closes it (it may be the only place the reason shows), and kept for the row. */
+    const fail = (message: string, retry = false, said = message): ActResult => {
       c.state = "closed";
       c.abort = null;
+      c.problem = plainMarkdown(message);
       refresh();
-      bubble(`fail:${hostId}`, say(words.cantConnect(label, message, retry), [`conn:${hostId}:reconnect`], "failed"), retry ? undefined : 2 * INFO_MS);
+      bubble(`fail:${hostId}`, say(words.cantConnect(label, said, retry), retry ? [`conn:${hostId}:reconnect`, CLOSE_ID] : [CLOSE_ID], "failed"));
       return { ok: false, message };
     };
     try {
@@ -817,14 +838,28 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         c.abort = null;
         return connect(hostId, { ...o, again: true });
       }
+      if (err instanceof ConnectError && err.kind === "host-key-changed") {
+        // Its card says it whole, with the fix's command as code (§4.1); the bubble says it in a sentence.
+        showKeyChanged(label);
+        return fail(err.fix ? `${err.message} ${err.fix}` : err.message, false, words.identityChanged(label));
+      }
       if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
       log.warn("targets.connect_failed", { err });
       return fail(`Ember couldn't connect to ${label}.`);
     }
   }
+  /** A changed host key, as the prompt window's card says it (§4.1): shown once per failure, closed by the user. */
+  function showKeyChanged(host: string): void {
+    try {
+      void promptWindow.ask({ id: `key-changed-${++cardSeq}`, kind: "host-key-changed", host }).catch(err => log.warn("targets.key_card_failed", { err }));
+    } catch (err) {
+      log.warn("targets.key_card_failed", { err });
+    }
+  }
   async function disconnect(hostId: string): Promise<void> {
     const c = conns.get(hostId);
     if (c?.abort) c.abort.abort();
+    if (c) delete c.problem;
     // Its link listener goes with the target: the tasks there stop here, as at any close.
     if (c) { if (c.target) stopTasks(hostId, "closed"); dropTarget(c); c.state = "closed"; c.wasActive = false; }
     try { await connections?.disconnect(hostId); } catch (err) { log.warn("targets.disconnect_failed", { err }); }
@@ -839,7 +874,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }, o: { bubble?: boolean } = {}): Promise<ActResult> {
     const refused = (message: string): ActResult => {
       const label = hostPart(raw.dest);
-      if (o.bubble) bubble(`fail:${label}`, say(words.cantConnect(label, message, false), [], "failed"), 2 * INFO_MS);
+      if (o.bubble) bubble(`fail:${label}`, say(words.cantConnect(label, message, false), [CLOSE_ID], "failed"));
       return { ok: false, message };
     };
     if (!sshAllowed(admin())) return refused("Your organisation doesn't allow Ember on other computers.");
@@ -1149,7 +1184,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           // password, a passphrase outside the agent, a host key to accept) is §8.2's "sign in again".
           c.state = "closed";
           const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
-          const w = signIn ? words.signInAgain(hostId) : words.cantReconnect(hostId, p.fix ? `${p.message} ${p.fix}` : p.message);
+          const why = p.fix ? `${p.message} ${p.fix}` : p.message;
+          c.problem = plainMarkdown(why);
+          if (p.kind === "host-key-changed") showKeyChanged(hostId);
+          const w = signIn ? words.signInAgain(hostId) : words.cantReconnect(hostId, p.kind === "host-key-changed" ? words.identityChanged(hostId) : why);
           bubble(`lost:${hostId}`, say(w, [`conn:${hostId}:reconnect`], signIn ? "decide" : "failed"));
           refresh();
           return;
@@ -1513,6 +1551,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         else { hideBubble(); void disconnect(hostId); }
         return true;
       }
+      if (id === CLOSE_ID) { hideBubble(); return true; }
       if (id === "offer:wsl:settings") { hideBubble("offer:wsl"); deps.openSettings("computers"); return true; }
       if (id === "offer:wsl:later") { hideBubble("offer:wsl"); return true; }
       m = /^offer:(\d+):(bring|later|never|connect)$/.exec(id);

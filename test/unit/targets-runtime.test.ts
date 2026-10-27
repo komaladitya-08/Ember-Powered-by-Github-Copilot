@@ -811,7 +811,7 @@ describe("SSH targets", () => {
     r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", "Check you're on the right network or VPN.", true));
     const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
     expect(res).toEqual({ ok: false, message: "Ember can't reach build-01 (no route). Check you're on the right network or VPN." });
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01", actions: [{ id: "conn:build-01:reconnect", label: "Try again" }] }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01", actions: [{ id: "conn:build-01:reconnect", label: "Try again" }, { id: "conn:close", label: "Close" }] }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
   });
 
@@ -1717,6 +1717,53 @@ function answers(p: Presenter, text: string): void {
   p.event({ type: "assistant.message", data: { content: text } });
   p.event({ type: "session.idle", data: {} });
 }
+
+describe("connection failures (review #183, #17)", () => {
+  const keyChanged = () => new ConnectError(
+    "The key build-01 shows isn't the one this computer knows. Someone may be pretending to be build-01, or it was reinstalled. Ember won't connect.",
+    "host-key-changed", "If you know why it changed, remove the old key in a terminal with `ssh-keygen -R build-01`, then connect again.", false);
+
+  it("stay until the user closes them, and the host's settings row keeps the reason", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("build-01 refused after too many keys. Add `IdentitiesOnly yes` to your SSH config.", "too-many-keys", undefined, false));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    s.advance(10 * 60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01", thought: "build-01 refused after too many keys. Add IdentitiesOnly yes to your SSH config.", actions: [{ label: "Close" }] });
+    expect(r.t.summaries().find(t => t.id === "ssh:build-01")).toMatchObject({ state: "off", problem: "build-01 refused after too many keys. Add IdentitiesOnly yes to your SSH config." });
+    expect(r.t.bubbleAction(s.screen().actions[0].id)).toBe(true);
+    expect(s.screen().visible).toBe(false);
+    // A connect that works clears the row's reason.
+    r.failConnect(null);
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(r.t.summaries().find(t => t.id === "ssh:build-01")!.problem).toBeUndefined();
+  });
+
+  it("show a changed host key in its card, with the bubble saying so in a sentence", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(keyChanged());
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(r.pw.ask).toHaveBeenCalledWith(expect.objectContaining({ kind: "host-key-changed", host: "build-01" }));
+    expect(s.screen()).toMatchObject({ title: "Can't connect to build-01", thought: "build-01's identity changed, so I won't connect. The window that opened says what to do.", mood: "error" });
+  });
+
+  it("show once a question that was up meanwhile is answered", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("Ember can't find build-01. Check the name, or add it to your SSH config.", "dns", undefined, false));
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    s.ask("May I?");
+    release();
+    await pending;
+    expect(s.screen().title).toBe("May I?");
+    await s.answer();
+    s.advance(2000);
+    expect(s.screen().title).toBe("Can't connect to build-01");
+  });
+});
 
 describe("connection progress (review #20, #187)", () => {
   it("rewrites the bubble only when its words change, not on every downloaded chunk", async () => {

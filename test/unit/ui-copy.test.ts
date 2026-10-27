@@ -461,6 +461,10 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const statusOf = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "commands only" })] }).ssh.rows[0].status;
     expect(["connecting", "lost", "off"].map(s => keep(statusOf(s as TargetSummary["state"])))).toEqual(["Connecting…", "Lost: trying again", "Not connected"]);
     expect(statusOf("ready")).toBe("Connected: commands only");
+    // Why the last connection failed stays on the row once the bubble has gone (review #183).
+    const failed = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "", problem: "Ember can't find build-01." })] }).ssh.rows[0].note;
+    expect(failed("off")).toBe("Ember can't find build-01.");
+    expect(failed("ready")).toBeNull();
     const linux = computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({})] });
     expect(linux.wsl).toBeNull();
     expect(keep(linux.local.status)).toBe("Apps");
@@ -588,8 +592,9 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     expect(keep(bubbleCopy.connected("build-01", "commands-off-by-admin").text)).toBe("build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.");
     expect(all(bubbleCopy.commandsOn("build-01"))).toEqual(["Commands are on for build-01", "Ask away: I'll run commands there."]);
     expect(all(bubbleCopy.commandsStayOff("build-01", "Not allowed."))).toEqual(["Commands stay off on build-01", "Not allowed."]);
-    expect(all(bubbleCopy.cantConnect("build-01", "Ember can't reach build-01.", true))).toEqual(["Can't connect to build-01", "Ember can't reach build-01.", "Try again"]);
-    expect(bubbleCopy.cantConnect("build-01", "x", false).actions).toEqual([]);
+    expect(all(bubbleCopy.cantConnect("build-01", "Ember can't reach build-01.", true))).toEqual(["Can't connect to build-01", "Ember can't reach build-01.", "Try again", "Close"]);
+    expect(bubbleCopy.cantConnect("build-01", "x", false).actions).toEqual([{ label: "Close" }]);
+    expect(keep(bubbleCopy.identityChanged("build-01"))).toBe("build-01's identity changed, so I won't connect. The window that opened says what to do.");
   });
 
   it("says when a connection stalls, drops or ends, and when Ember is back here", () => {

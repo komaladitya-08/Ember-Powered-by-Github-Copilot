@@ -493,6 +493,10 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 ### 4.8 When connecting fails
 
+The bubble ("Can't connect to build-01") stays until you close it (**Try again** too when another try may help), and
+build-01's row in Settings › **Computers** keeps the reason until it connects. A changed host key also opens the
+"build-01's identity changed" card with the fix.
+
 | Ember says | What to do |
 |---|---|
 | "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again." | As it says |

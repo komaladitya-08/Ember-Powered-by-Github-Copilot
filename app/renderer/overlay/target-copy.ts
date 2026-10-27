@@ -62,10 +62,13 @@ export const connected = (host: string, how: ConnectedHow): BubbleWords => ({
 export const commandsOn = (host: string): BubbleWords => ({ title: `Commands are on for ${host}`, text: "Ask away: I'll run commands there.", actions: [] });
 export const commandsStayOff = (host: string, why: string): BubbleWords => ({ title: `Commands stay off on ${host}`, text: why, actions: [] });
 
-/** A connect failed (`why`: the connection's own words); Try again when another try may help. */
+/** A connect failed (`why`: the connection's own words); Try again when another try may help. It stays until closed. */
 export const cantConnect = (host: string, why: string, retry: boolean): BubbleWords => ({
-  title: `Can't connect to ${host}`, text: why, actions: retry ? [{ label: "Try again" }] : [],
+  title: `Can't connect to ${host}`, text: why, actions: retry ? [{ label: "Try again" }, { label: "Close" }] : [{ label: "Close" }],
 });
+
+/** The host's key changed: the prompt window's card says why and what to do (§4.1). */
+export const identityChanged = (host: string): string => `${host}'s identity changed, so I won't connect. The window that opened says what to do.`;
 
 /** The link has been silent for 5 s: its commands stop when the grace runs out (L10). */
 export const stalled = (host: string, graceSeconds: number): BubbleWords => ({

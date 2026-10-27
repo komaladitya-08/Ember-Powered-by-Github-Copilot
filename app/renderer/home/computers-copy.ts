@@ -135,7 +135,7 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
     }
     return {
       id, name: label, detail: `${h.resolved.user}@${h.resolved.hostname}`,
-      status: sshAllowed ? sshStatus(t) : "Not available", note: null, actions,
+      status: sshAllowed ? sshStatus(t) : "Not available", note: !connected && t?.problem ? t.problem : null, actions,
     };
   });
   const managed = [...(!sshAllowed ? [SSH_MANAGED] : []), ...(sshAllowed && i.admin.sshHostsLimited ? [SSH_LIMITED] : [])];

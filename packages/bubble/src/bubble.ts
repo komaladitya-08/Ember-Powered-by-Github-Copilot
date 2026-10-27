@@ -60,6 +60,14 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   }
 }
 
+/**
+ * Whether the finished thought scrolls inside the bubble when it is longer than it shows (BUBBLE_CSS): a question's and
+ * a problem's (up to ten lines), and an answer opened with "Read all". Its scroll area then takes the pointer.
+ */
+export function thoughtScrolls(v: { mood: BubbleMood; expanded: boolean; streaming: boolean }): boolean {
+  return !v.streaming && (v.mood === "attention" || v.mood === "error" || v.expanded);
+}
+
 const MARGIN = 8;
 const GAP = 6;
 /** The narrowest the bubble gets (border box, px) to fit beside something it keeps off. */
@@ -258,8 +266,9 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
 }
-/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
-.ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
+/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence; so does a
+   problem, whose last sentence is usually what to do about it. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]):not([data-streaming="true"]) .eb-thought {
   max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
@@ -614,7 +623,7 @@ export class ReasoningBubble {
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
-    if (over && (this.mood === "attention" || this.expanded) && !this.streaming) hot.push(rel(t));
+    if (over && thoughtScrolls({ mood: this.mood, expanded: this.expanded, streaming: this.streaming })) hot.push(rel(t));
     return { box, hot, over };
   }
 
