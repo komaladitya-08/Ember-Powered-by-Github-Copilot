@@ -576,8 +576,9 @@ A locked-down Ember (a broken policy) also connects to no model service, neither
 own endpoint, and prunes nothing from the audit log, until the policy reads fine again.
 
 Ember reads the PC's policy again every 10 seconds, as the helper on a remote does. When what it says changes (tightened,
-repaired, added or removed), Ember stops everything, holds itself locked down as above, and asks the user to restart it;
-the restart reads the new policy whole.
+repaired, added or removed) and the next read says so too, Ember stops everything, holds itself locked down as above,
+and asks the user to restart it; the restart reads the new policy whole. One read that differs (a file caught mid-write)
+is let pass when the next one says what the policy said before; three reads in a row that differ count as a change.
 
 **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
 before this release reads `commands`, `ssh`, `features.wsl` or `features.ssh` as a mistake and locks down (no actions,
