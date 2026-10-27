@@ -85,7 +85,8 @@ export const KEYS: Readonly<Record<OS, KeyConventions>> = {
     // Only the spellings a model is told about on a Mac ("cmd+s", "option+left"); no "mod"/"primary"/"cmdorctrl".
     extraModifiers: { cmd: "Super_L", command: "Super_L", option: "Alt_L", opt: "Alt_L" },
     logoToken: "cmd", logoAliases: /^\s*(win|windows|logo|mod4)\s*$/i, modifierOrder: ["ctrl", "alt", "shift", "cmd"],
-    labels: { ctrl: "Control", alt: "Option", shift: "Shift", cmd: "Cmd" },
+    // "Command", as the shortcut table and macOS itself name the key (never "Cmd" in one place and "Command" in another).
+    labels: { ctrl: "Control", alt: "Option", shift: "Shift", cmd: "Command" },
     // Cocoa text: ⌘↓ is the end of the document; LibreOffice for Mac: ⌘Home and ⌘⇧F5 (verify in CI).
     edit: { selectAll: "cmd+a", paste: "cmd+v", textEnd: "cmd+down", sheetHome: "cmd+home", nameBox: "shift+cmd+f5" },
     // App switcher, Spotlight, Force Quit, lock screen, log out, screenshots, Mission Control and Spaces.

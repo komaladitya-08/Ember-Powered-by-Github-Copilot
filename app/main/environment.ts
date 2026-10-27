@@ -259,7 +259,7 @@ function inspectMac(i: EnvInputs): EnvReport {
   const m = i.mac;
   const checks: Check[] = [];
   checks.push(i.arch === "arm64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Apple silicon" }
-    : i.arch === "x64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Intel" }
+    : i.arch === "x64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Intel (best effort)" }
       : { id: "platform", label: "Platform", status: "fail", detail: `macOS on ${i.arch} is not supported` });
   if (m) {
     checks.push(!m.version ? { id: "os", label: "Operating system", status: "warn", detail: "macOS (Ember couldn't read its version)" }

@@ -84,7 +84,7 @@ describe("macOS setup checks", () => {
     expect(ids(mac())).toEqual(["platform", "os", "accessibility", "screen-recording", "input-monitoring", "location", "shortcuts"]);
     expect(r.os).toBe("macOS 14.6.1");
     expect(check(mac(), "platform")?.detail).toBe("macOS on Apple silicon");
-    expect(check(mac({}, { arch: "x64" }), "platform")?.detail).toBe("macOS on Intel");
+    expect(check(mac({}, { arch: "x64" }), "platform")?.detail).toBe("macOS on Intel (best effort)");
   });
 
   it("on macOS 14 without Screen Recording or Input Monitoring, warn about both with their fixes and the re-grant advice", () => {

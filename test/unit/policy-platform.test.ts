@@ -159,9 +159,9 @@ describe("macOS keys in the policy", () => {
   const onDesk = (value: string) => mac.decide(keys(value, { onDesk: true }));
 
   it("allows ⌘ shortcuts, naming them as a Mac does, and asks every time on the user's screen", () => {
-    expect(mac.decide(keys("cmd+s"))).toMatchObject({ verdict: "confirm", prompt: "Borrow your keyboard to press Cmd+S in TextEdit?" });
+    expect(mac.decide(keys("cmd+s"))).toMatchObject({ verdict: "confirm", prompt: "Borrow your keyboard to press Command+S in TextEdit?" });
     expect(mac.decide(keys("option+left")).prompt).toBe("Borrow your keyboard to press Option+Left in TextEdit?");
-    expect(plainQuestion(keys("cmd+shift+z"), KEYS.darwin)).toBe("Borrow your keyboard to press Shift+Cmd+Z in TextEdit?");
+    expect(plainQuestion(keys("cmd+shift+z"), KEYS.darwin)).toBe("Borrow your keyboard to press Shift+Command+Z in TextEdit?");
   });
 
   it("judges ⌘ by the \"mod\" tables: safe ones go without a question where nothing is borrowed, destructive and unknown ones are asked", () => {
@@ -191,10 +191,10 @@ describe("macOS keys in the policy", () => {
     expect(isActivatingKey("Return", KEYS.darwin)).toBe(true);
     expect(keyTables(KEYS.darwin).cut).toBe("cmd+x");
     const d = mac.decide({ taskId: "t", kind: "cursor_text", app: "TextEdit", window: "notes.txt", element: { role: "paragraph", name: "" }, value: "hello", mode: "replace" });
-    expect(d.reason).toBe("replacing with the keyboard selects everything (Cmd+A), which here may be the whole document");
-    expect(d.prompt).toContain("To replace it I select everything with Cmd+A");
+    expect(d.reason).toBe("replacing with the keyboard selects everything (Command+A), which here may be the whole document");
+    expect(d.prompt).toContain("To replace it I select everything with Command+A");
     const all = mac.decide(keys("x", { element: { role: "text", name: "Notes" }, afterSelectAll: true, currentText: "a".repeat(120) }));
-    expect(all.reason).toBe("everything is selected (Cmd+A), so this replaces all 120 characters already there");
+    expect(all.reason).toBe("everything is selected (Command+A), so this replaces all 120 characters already there");
   });
 
   it("asks before a ⌘ cut takes the rows selected in a list", () => {

@@ -57,7 +57,7 @@ export const PLATFORM_WORDS: Readonly<Record<OS, PlatformWords>> = {
   darwin: {
     desktop: "Mac", apps: "Mac applications", fileManager: "Finder", settingsApp: "System Settings",
     openAppExamples: "TextEdit, Finder, System Settings", keyExamples: "\"cmd+s\", \"Return\", \"cmd+shift+t\"",
-    fileDialogPathHint: "in a file dialog press Cmd+Shift+G, type the folder's path, then choose the file",
+    fileDialogPathHint: "in a file dialog press Command+Shift+G, type the folder's path, then choose the file",
     noScreen: "Ember doesn't have Accessibility permission", reinstall: "Install Ember again (drag a fresh Ember.app into Applications).",
     shellUnchecked: "macOS didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment",
     overviewOpen: "Mission Control or the app switcher is open (it shows every window), so Ember looks away until it's closed",

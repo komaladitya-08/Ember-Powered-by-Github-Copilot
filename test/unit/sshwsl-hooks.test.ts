@@ -441,8 +441,9 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     }
     const today = out.filter(x => (x as { app: string }).app !== "Ember commands");
     expect(today).toHaveLength(78);
-    // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out.
-    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("c8585b24618a027e");
+    // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out; a
+    // Mac names ⌘ "Command" since (review #230): the one change is "press Cmd+V" → "press Command+V" (c8585b24618a027e).
+    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("0ac8fec6bc81ec3f");
     expect(seam.calls).toHaveLength(3 * CORPUS.length);
     expect(seam.calls.slice(0, 3).map(([, o]) => o)).toEqual(["linux", "linux", "linux"]);
     expect(seam.calls.at(-1)?.[1]).toBe("darwin");

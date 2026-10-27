@@ -252,17 +252,17 @@ describe("the settings window with a Windows or macOS status", () => {
   it("names keys the way each OS does", () => {
     expect(keyLabel("super+e", "win32")).toBe("Win+E");
     expect(keyLabel("ctrl+shift+Escape", "win32")).toBe("Ctrl+Shift+Esc");
-    expect(keyLabel("cmd+s", "darwin")).toBe("Cmd+S");
-    expect(keyLabel("ctrl+alt+shift+cmd+Return", "darwin")).toBe("Control+Option+Shift+Cmd+Enter");
-    expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "cmd+s", app: "TextEdit" }, entryWords(MAC))?.what).toBe("Press Cmd+S in TextEdit");
+    expect(keyLabel("cmd+s", "darwin")).toBe("Command+S");
+    expect(keyLabel("ctrl+alt+shift+cmd+Return", "darwin")).toBe("Control+Option+Shift+Command+Enter");
+    expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "cmd+s", app: "TextEdit" }, entryWords(MAC))?.what).toBe("Press Command+S in TextEdit");
   });
 
   it("reads every spelling of a modifier as the OS names it (keys are logged as the model wrote them)", () => {
     expect(keyLabel("control+a", "darwin")).toBe(keyLabel("ctrl+a", "darwin"));
     expect(keyLabel("control+a", "darwin")).toBe("Control+A");
-    expect(keyLabel("command+option+s", "darwin")).toBe("Cmd+Option+S");
+    expect(keyLabel("command+option+s", "darwin")).toBe("Command+Option+S");
     expect(keyLabel("opt+left", "darwin")).toBe("Option+Left");
-    expect(keyLabel("super+space", "darwin")).toBe("Cmd+Space");
+    expect(keyLabel("super+space", "darwin")).toBe("Command+Space");
     expect(keyLabel("meta+e", "win32")).toBe("Win+E");
     expect(keyLabel("Control+Escape", "win32")).toBe("Ctrl+Esc");
   });
