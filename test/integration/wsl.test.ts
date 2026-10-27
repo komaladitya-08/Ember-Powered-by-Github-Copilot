@@ -249,7 +249,9 @@ suite("WSL on a real Windows runner", () => {
   }, LONG);
 
   it("names a program that outlives the run, and leaves it alone", async () => {
-    const { exit, cmd } = await run(runner, "setsid sleep 1000 >/dev/null 2>&1 < /dev/null & echo started");
+    // HUP ignored before the fork: bash's exit hangs up the PTY's foreground group, which the background child is in
+    // until setsid has run, so a bare `setsid sleep &` dies with the run (every time under script(1), Linux included).
+    const { exit, cmd } = await run(runner, "trap '' HUP; setsid sleep 1000 >/dev/null 2>&1 < /dev/null & echo started");
     expect(exit.code).toBe(0);
     // Known once the look a run that ended by itself gets has come back.
     const named = await cmd.stragglers;

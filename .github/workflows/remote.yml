@@ -331,13 +331,20 @@ jobs:
           ssh-keygen -A
           mkdir -p /run/sshd
           setsid /usr/sbin/sshd -p 2222 < /dev/null > /dev/null 2>&1 &
-      - name: The distro's Lxss values, for the log
+          sleep 1
+          pgrep -x sshd > /dev/null || { echo "::error::sshd didn't start in the distro"; exit 1; }
+      - name: The distro's Lxss values, and whether it still runs after the step that started sshd, for the log
         shell: pwsh
         run: |
           Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | ForEach-Object {
             $v = Get-ItemProperty $_.PSPath
             "{0}: Version={1} Flags={2} DefaultUid={3} RunOOBE={4} State={5}" -f $v.DistributionName, $v.Version, $v.Flags, $v.DefaultUid, $v.RunOOBE, $v.State
           }
+          # The inbox wsl.exe writes UTF-16: read it as such. Neither call starts a distro.
+          [Console]::OutputEncoding = [Text.Encoding]::Unicode
+          wsl.exe --list --verbose
+          wsl.exe --list --running --quiet; "exit $LASTEXITCODE"
+          "sshd on 2222 reachable from Windows: $((Test-NetConnection 127.0.0.1 -Port 2222 -WarningAction SilentlyContinue).TcpTestSucceeded)"
       - name: What wsl.test.ts expects here (WSL1, setup-wsl's root default user, running for sshd)
         run: |
           printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=1" "EMBER_WSL_EXPECT_ROOT=1" >> "$GITHUB_ENV"
