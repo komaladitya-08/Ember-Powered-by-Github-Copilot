@@ -711,20 +711,28 @@ export function createConnections(o: {
       return l && (l.state === "ready" || l.state === "stalled") ? l : null;
     },
 
-    async uninstall(host) {
+    async uninstall(host, uo = {}) {
       const h = hostLabel(host.dest);
       await disconnect(host.id);
       const abort = new AbortController();
+      // The user's Cancel (settings' row) stops the removal where it is.
+      const onAbort = () => abort.abort();
+      uo.signal?.addEventListener("abort", onAbort, { once: true });
+      if (uo.signal?.aborted) abort.abort();
+      const cancelled = () => { if (abort.signal.aborted) throw new ConnectError(MESSAGES.cancelled(), "cancelled", undefined, true); };
       try {
         progress(host.id, { step: "resolving" });
+        cancelled();
         const p = await prepare(host.dest, host.port, host.extra, host.via, h);
         // Removal goes only to the computer the user allowed, as a connection does.
         sameResolution(p, host, h);
+        cancelled();
         let run = await attempt(p, host, h, "batch", false, abort.signal, "uninstall");
         if (run.r.kind === "failed") {
           await run.port.terminate().catch(() => undefined);
           const f = failureOf(run.r, p, h, "batch", false);
           if ((f.kind !== "unknown-host-key" && f.kind !== "auth") || !(await askpassReady(p.client))) throw refuse(f);
+          cancelled();
           run = await attempt(p, host, h, "interactive", f.kind === "unknown-host-key", abort.signal, "uninstall");
         }
         await run.port.terminate().catch(() => undefined);
@@ -736,6 +744,8 @@ export function createConnections(o: {
         audit({ step: "failed", host: host.id, kind: e.kind, uninstall: true });
         progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
         throw e;
+      } finally {
+        uo.signal?.removeEventListener("abort", onAbort);
       }
     },
 

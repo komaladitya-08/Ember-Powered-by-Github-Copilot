@@ -45,7 +45,11 @@ export interface TargetsAdmin {
  * One button on a row: what it says, what it asks for, and the question it asks first (Forget, Remove helper). `pending`
  * and `done` are what the section's message line says while it works and once it worked (Remove helper, review #191).
  */
-export interface RowAction { label: string; act: TargetsAct; confirm?: string; ariaLabel?: string; pending?: string; done?: string }
+export interface RowAction {
+  label: string; act: TargetsAct; confirm?: string; ariaLabel?: string; pending?: string; done?: string;
+  /** Its answer leaves the message line alone (Cancel during a removal: the removal's own answer says how it ended). */
+  silent?: boolean;
+}
 export interface ComputerRow { id: TargetId; name: string; detail: string | null; status: string; note: string | null; actions: RowAction[] }
 /** A switch; `ariaLabel` when its words alone don't say which computer it is for (its words come first). */
 export interface Switch { label: string; checked: boolean; disabled: boolean; ariaLabel?: string }
@@ -153,8 +157,14 @@ export function computersView(i: {
     const t = byId.get(id);
     const label = t?.label || h.id;
     const detail = `${h.resolved.user}@${h.resolved.hostname}`;
-    // Removal under way (it can take a minute, and may ask to sign in): said in the row, nothing to press meanwhile.
-    if (i.removing?.has(h.id)) return { id, name: label, detail, status: "Removing Ember's helper…", note: null, actions: [] };
+    // Removal under way (it can take a minute, and may ask to sign in): said in the row, with a Cancel that stops it
+    // (a disconnect stops a removal).
+    if (i.removing?.has(h.id)) {
+      return {
+        id, name: label, detail, status: "Removing Ember's helper…", note: null,
+        actions: [{ label: "Cancel", act: { kind: "disconnect", hostId: h.id }, ariaLabel: `Stop removing Ember's helper from ${label}`, silent: true }],
+      };
+    }
     const actions: RowAction[] = [];
     if (sshAllowed) {
       // A connection still being made is cancelled (disconnect stops it), not ended.

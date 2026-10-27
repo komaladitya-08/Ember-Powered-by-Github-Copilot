@@ -1453,6 +1453,21 @@ describe("the remote and WSL seams (INT)", () => {
     expect(r.t.agent.active).toBe("local");
   });
 
+  it("stops a removal when the user cancels it from its row, and keeps the computer (review #191)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    await connected(r);
+    let signal: AbortSignal | undefined;
+    vi.mocked(r.conns.uninstall as (h: HostRecord, o?: { signal?: AbortSignal }) => Promise<undefined>).mockImplementationOnce((_h, o) => new Promise<undefined>((_resolve, reject) => {
+      signal = o?.signal;
+      signal?.addEventListener("abort", () => reject(new ConnectError("Connection cancelled", "cancelled")));
+    }));
+    const removing = r.invoke(TARGETS_IPC.act, r.home, { kind: "uninstall", hostId: "build-01" });
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" })).resolves.toEqual({ ok: true });
+    await expect(removing).resolves.toEqual({ ok: false, message: "Stopped removing Ember's helper from build-01. Part of it may still be there: remove it again to finish." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+  });
+
   it("stops the tasks on a computer whose link drops or closes, where someone pressed Stop, or whose screen locked; only there", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);

@@ -55,10 +55,14 @@ const removing = new Set<string>();
  */
 async function rowAction(a: RowAction): Promise<void> {
   const api = window.emberTargets;
-  if (a.act.kind !== "uninstall" || !api) { await act(a.act, "computers-msg"); return; }
+  if (!api) return;
+  if (a.silent) { await api.act(a.act).catch(() => { /* the removal's own answer says how it ended */ }); return; }
+  if (a.act.kind !== "uninstall") { await act(a.act, "computers-msg"); return; }
   const hostId = a.act.hostId;
   removing.add(hostId);
   draw();
+  // Focus goes to the row's Cancel (the button pressed is gone).
+  $("computers-list").querySelector<HTMLElement>(`li[data-id="ssh:${CSS.escape(hostId)}"] button`)?.focus();
   say("computers-msg", a.pending ?? "");
   try {
     say("computers-msg", actResult(await api.act(a.act), a.done ?? ""));
@@ -120,6 +124,7 @@ function switchRow(s: Switch, onWant: (on: boolean) => void, cls = "switch-row")
 
 function computerItem(r: ComputerRow): HTMLLIElement {
   const li = el("li", "target-row");
+  li.dataset.id = r.id;
   const text = el("span", "target-text");
   // "build-01 · deploy@build-01.example.com" on one line, then the status.
   const name = el("span", "target-name");

@@ -477,7 +477,8 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 - **With Ember**: Settings › **Computers** › build-01's **Remove helper** ("Remove Ember's helper from build-01? This
   stops anything Ember is running there and forgets build-01 here. Its record of what Ember did there stays on
   build-01."). Ember connects, removes the helper, its consent record and its logs, and keeps the audit record; the row
-  says "Removing Ember's helper…" meanwhile, and "Removed. build-01 is no longer in your list." once it is done.
+  says "Removing Ember's helper…" meanwhile, with a **Cancel** that stops it where it is (remove it again to finish),
+  and "Removed. build-01 is no longer in your list." once it is done.
   **Forget** (it asks first too) removes the computer and your OKs for it from Ember's list without touching it.
 - **Without Ember**, on build-01: run the `uninstall.sh` in any version folder of the helper,
   `sh ~/.local/share/ember-remote/versions/<version>/uninstall.sh` (macOS:

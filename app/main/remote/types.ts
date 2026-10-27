@@ -73,7 +73,8 @@ export interface Connections {
   connect(host: HostRecord, o: { interactive: boolean; signal?: AbortSignal }): Promise<RemoteLink>;
   disconnect(hostId: string): Promise<void>;
   link(hostId: string): RemoteLink | null;
-  uninstall(host: HostRecord): Promise<void>;
+  /** Removes Ember's helper from the host (§5.2.7); `signal` stops it where it is (the user's Cancel in settings). */
+  uninstall(host: HostRecord, o?: { signal?: AbortSignal }): Promise<void>;
   /** ssh -G for a destination the user typed (settings' Add, the consent card), with its carried options. */
   resolve(dest: string, o?: { port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }): Promise<HostRecord["resolved"] & { controlPath: string | null }>;
   onProgress(fn: (hostId: string, p: ConnectProgress) => void): () => void;

@@ -588,6 +588,13 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(moved.spawned).toEqual([]);
   });
 
+  it("stops a removal the user cancelled, before anything runs there (review #191)", async () => {
+    const r = track(rig());
+    await expect(r.conns.uninstall(record(), { signal: AbortSignal.abort() })).rejects.toMatchObject({ kind: "cancelled" });
+    expect(r.spawned).toEqual([]);
+    expect(r.audits.at(-1)).toMatchObject({ step: "failed", host: "build-01", kind: "cancelled", uninstall: true });
+  });
+
   it("resolves a typed destination for the consent card, with its jump hops", async () => {
     const r = track(rig({ g: argv => (argv.at(-1) === "build-01" ? gOut({ extra: ["proxyjump deploy@[10.0.0.5]:2200", "controlpath /home/ana/.ssh/cm-1"] }) : gOut({ hostname: "10.0.0.5" })) }));
     expect(await r.conns.resolve("build-01")).toEqual({ user: "deploy", hostname: "build-01.example.com", port: 22, jump: ["deploy@10.0.0.5:2200"], controlPath: null });

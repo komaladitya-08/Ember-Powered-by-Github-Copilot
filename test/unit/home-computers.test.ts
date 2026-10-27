@@ -94,8 +94,8 @@ describe("removing Ember from a computer, and forgetting one (review #191, #163)
       pending: "Removing Ember's helper from build-01…", done: "Removed. build-01 is no longer in your list." });
   });
 
-  it("shows the removal under way in the row, with nothing to press meanwhile", () => {
-    expect(row(new Set(["build-01"]))).toMatchObject({ status: "Removing Ember's helper…", note: null, actions: [] });
+  it("shows the removal under way in the row", () => {
+    expect(row(new Set(["build-01"]))).toMatchObject({ status: "Removing Ember's helper…", note: null });
   });
 
   it("says how it went", () => {
@@ -145,5 +145,12 @@ describe("the Computers section fits its OS and the window (review #198, #163)",
     expect(css).toMatch(/\.targets li \{[^}]*flex-wrap: wrap;/);
     expect(css).toMatch(/\.target-actions \{[^}]*flex: 1 1 100%;/);
     expect(css).not.toMatch(/\.target-actions \{[^}]*max-width: 60%/);
+  });
+});
+
+describe("a removal under way can be cancelled from its row (review #191)", () => {
+  it("offers Cancel, which stops it (Disconnect does, during a removal), without clearing what the line says", () => {
+    const row = cc.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({}), ssh({})], removing: new Set(["build-01"]) }).ssh.rows[0];
+    expect(row.actions).toEqual([{ label: "Cancel", act: { kind: "disconnect", hostId: "build-01" }, ariaLabel: "Stop removing Ember's helper from build-01", silent: true }]);
   });
 });

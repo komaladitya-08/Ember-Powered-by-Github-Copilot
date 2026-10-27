@@ -766,7 +766,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       return fail(`Ember couldn't connect to ${label}.`);
     }
   }
+  /** Removals under way, by host: the row's Cancel (a disconnect meanwhile) stops one (review #191). */
+  const removals = new Map<string, AbortController>();
   async function disconnect(hostId: string): Promise<void> {
+    removals.get(hostId)?.abort();
     const c = conns.get(hostId);
     if (c?.abort) c.abort.abort();
     // Its link listener goes with the target: the tasks there stop here, as at any close.
@@ -838,8 +841,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const host = hostOf(a.hostId);
         if (!host || !connections) return { ok: false, message: "Ember doesn't know that computer." };
         // The PC then forgets the host record (§5.2.7): Ember isn't there any more.
-        try { await connections.uninstall(host); await forget(host.id); return { ok: true }; } catch (err) {
+        const removal = new AbortController();
+        removals.set(host.id, removal);
+        try { await connections.uninstall(host, { signal: removal.signal }); await forget(host.id); return { ok: true }; } catch (err) {
+          if (removal.signal.aborted) return { ok: false, message: `Stopped removing Ember's helper from ${host.id}. Part of it may still be there: remove it again to finish.` };
           return { ok: false, message: err instanceof ConnectError ? err.message : `Ember couldn't remove its helper from ${host.id}.` };
+        } finally {
+          if (removals.get(host.id) === removal) removals.delete(host.id);
         }
       }
       case "add": {
