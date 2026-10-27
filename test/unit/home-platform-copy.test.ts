@@ -175,6 +175,11 @@ describe("the settings window before a status names an OS", () => {
     expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
     expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit"]);
   });
+
+  it("names where Stop everything was pressed: the handle's menu or settings", () => {
+    expect(describeEntry({ t, event: "stop", source: "menu" })?.what).toBe("Everything stopped (menu)");
+    expect(describeEntry({ t, event: "stop", source: "settings" })?.what).toBe("Everything stopped (settings)");
+  });
 });
 
 describe("the settings window with Linux's status", () => {

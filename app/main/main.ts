@@ -810,8 +810,8 @@ function start(): void {
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
   ], log.child("killswitch"), () => audit);
-  /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
-  const stopEverything = (source: "hotkey" | "voice" | "menu") => {
+  /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
+  const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
     void killSwitch.pull(source);
     // Failure cards stay until closed, and only a click closes them: Stop everything clears them too
     // (the keyboard's way, and the screen reader's).
@@ -1023,7 +1023,7 @@ function start(): void {
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
-  ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("menu"); }));
+  ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;

@@ -212,7 +212,7 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: forUser(e.error) };
     case "stop":
-      return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : "menu"})` };
+      return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : "menu"})` };
     default:
       return null;
   }

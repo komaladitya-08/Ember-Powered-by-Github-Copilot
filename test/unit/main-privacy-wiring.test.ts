@@ -141,4 +141,9 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
   it("lets the kill switch stop commands right after the agent", () => {
     expect(MAIN).toMatch(/\{ name: "agent", stop: \(\) => agent\?\.abortAll\(\) \}, \{ name: "targets", stop: \(\) => targets\?\.stopAll\(\) \},/);
   });
+
+  it("records settings' Stop everything as coming from settings, the handle's as from its menu", () => {
+    expect(MAIN).toContain('ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));');
+    expect(MAIN).toContain('click: () => stopEverything("menu") }');
+  });
 });
