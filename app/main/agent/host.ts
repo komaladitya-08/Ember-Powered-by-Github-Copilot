@@ -1141,8 +1141,8 @@ export class AgentHost {
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const t = tasks.start(goal, { target, mode: "guide" });
           this.announced.add(t.id);
-          // Only one guide points at a time: this one waits for the one before (nothing points yet, so no "follow me").
-          if (t.status === "queued") return `Guide ${t.id} is waiting: another guide is still showing the user something, and this one starts when it ends. Tell the user that, in a few words; don't tell them to follow Ember's pointer yet.`;
+          // Guides have a limit of their own: this one waits for one before it to end (nothing points yet, so no "follow me").
+          if (t.status === "queued") return `Guide ${t.id} is waiting: other guides are still showing the user something, and this one starts when one of them ends. Tell the user that, in a few words; don't tell them to follow Ember's pointer yet.`;
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],

@@ -2357,16 +2357,17 @@ describe("a sign-in refused after connecting (review #138)", () => {
 describe("show_me beside running tasks (review #142)", () => {
   const showMe = () => conductorSession().config.tools.find((t: any) => t.name === "show_me").handler({ goal: "change the font" }, {});
 
-  it("a guide starts at once while two tasks act; a second guide is said to wait, without promising the pointer", async () => {
+  it("a guide starts at once while two tasks act; one over the guides' own limit is said to wait, without promising the pointer", async () => {
     const { host } = makeHost({ hands: hands() });
     await host.start(TOKEN, "stored");
     host.tasks!.start("tidy the desktop");
     host.tasks!.start("rename the photos");
     await host.ask("show me how to change the font");
     expect(await showMe()).toMatch(/^Guide .* started/);
-    const second = await showMe();
-    expect(second).toMatch(/^Guide .* is waiting/);
-    expect(second).toMatch(/don't tell them to follow Ember's pointer yet/);
+    expect(await showMe()).toMatch(/^Guide .* started/);
+    const third = await showMe();
+    expect(third).toMatch(/^Guide .* is waiting/);
+    expect(third).toMatch(/don't tell them to follow Ember's pointer yet/);
     await host.stop();
   });
 });

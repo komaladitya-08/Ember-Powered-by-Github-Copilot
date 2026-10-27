@@ -27,15 +27,16 @@ describe("a guide beside running tasks (review #142)", () => {
     expect(tm.get(c.id)!.status).toBe("queued");
   });
 
-  it("runs one guide at a time: a second waits for the first, and tasks don't wait for guides", async () => {
+  it("gives guides a limit of their own: a third waits for one of two, and tasks don't wait for guides", async () => {
     const results: ((r: WorkerResult) => void)[] = [];
     const { tm } = manager({ makeWorker: () => ({ run: () => new Promise<WorkerResult>(r => results.push(r)), steer: async () => false, dispose: async () => undefined, sessionId: null }) as unknown as Worker });
     const g1 = tm.start("show me the clock settings", { mode: "guide" });
     const g2 = tm.start("show me the sound settings", { mode: "guide" });
+    const g3 = tm.start("show me the mouse settings", { mode: "guide" });
     const t = tm.start("tidy the desktop");
-    expect([g1, g2, t].map(x => tm.get(x.id)!.status)).toEqual(["running", "queued", "running"]);
+    expect([g1, g2, g3, t].map(x => tm.get(x.id)!.status)).toEqual(["running", "running", "queued", "running"]);
     results[0]({ success: true, summary: "Shown." });
-    await vi.waitFor(() => expect(tm.get(g2.id)!.status).toBe("running"));
+    await vi.waitFor(() => expect(tm.get(g3.id)!.status).toBe("running"));
   });
 });
 
