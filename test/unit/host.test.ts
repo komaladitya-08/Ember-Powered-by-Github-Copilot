@@ -473,6 +473,8 @@ describe("asking", () => {
     await host.start(null);
     await host.ask("hi");
     expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first" });
+    // Signing in is what to do next, as the greeting says it: Needs you, not a problem (review #15).
+    expect(screen()).toMatchObject({ emotion: "curious", bubble: { mood: "attention", actions: [{ id: "ui:settings", label: "Open settings" }] } });
   });
 });
 

@@ -595,16 +595,20 @@ export class Presenter {
     this.hideLater(12000);
   }
 
-  /** A short message from Ember itself (not the model), with optional buttons; it goes away on its own. */
-  notice(n: { title: string; text: string; actions?: { id: string; label: string }[]; ms?: number }): void {
+  /**
+   * A short message from Ember itself (not the model), with optional buttons; it goes away on its own. `mood`: "error"
+   * (a problem, the default), or "attention" when its button is what the user has to do next (sign in first).
+   */
+  notice(n: { title: string; text: string; actions?: { id: string; label: string }[]; ms?: number; mood?: "error" | "attention" }): void {
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
     this.asked = null;
     this.silent = false;
+    const mood = n.mood ?? "error";
     this.apply({
-      emotion: "confused", talking: false,
-      bubble: { visible: true, mood: "error", title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
+      emotion: mood === "attention" ? "curious" : "confused", talking: false,
+      bubble: { visible: true, mood, title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
     }, "take");
     this.hideLater(n.ms ?? 12000);
   }

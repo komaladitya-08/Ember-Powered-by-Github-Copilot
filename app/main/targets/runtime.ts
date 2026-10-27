@@ -27,6 +27,7 @@ import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type Tar
 import { commandMode, type LoadedAdminPolicy } from "../admin";
 import type { Question } from "../agent/confirm";
 import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
+import type { Emotion } from "@ember/characters";
 import type { WorkerSystem } from "../agent/worker";
 import { createLocalRunner } from "../commands/run/local";
 import type { CommandCapability, CommandRunner, CommandService, CommandWindowPort } from "../commands/types";
@@ -160,9 +161,27 @@ export function progressWords(label: string, p: ConnectProgress): string | null 
   return step ? words.connecting(label, step).text : null;
 }
 
+/**
+ * How a runtime bubble looks: its state chip (mood) and Ember's face. "Needs you" only where a button needs a decision;
+ * a notice that asks nothing has no chip; connecting is work (no thinking glow); a failure is a problem.
+ */
+const LOOK = {
+  notice: { mood: "idle", emotion: "neutral" },
+  good: { mood: "idle", emotion: "happy" },
+  working: { mood: "acting", emotion: "focused" },
+  decide: { mood: "attention", emotion: "curious" },
+  trouble: { mood: "error", emotion: "worried" },
+  failed: { mood: "error", emotion: "sad" },
+} as const satisfies Record<string, { mood: NoticeBubble["mood"]; emotion: Emotion }>;
+type Look = keyof typeof LOOK;
+
+/** A runtime bubble as it is posted, with Ember's face for it. */
+type Said = NoticeBubble & { emotion: Emotion };
+
 /** A bubble's words as the runtime posts them: its buttons get the ids the runtime answers, in order. */
-function say(w: words.BubbleWords, ids: readonly string[], mood: NoticeBubble["mood"]): NoticeBubble {
-  return { title: w.title, thought: w.text, mood, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })) };
+function say(w: words.BubbleWords, ids: readonly string[], look: Look): Said {
+  const { mood, emotion } = LOOK[look];
+  return { title: w.title, thought: w.text, mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })) };
 }
 
 /** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
@@ -577,12 +596,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   let bubbleSeq = 0;
   let shown: { key: string; seq: number } | null = null;
   const board = (): NoticeBoard | null => { try { return deps.bubbles?.() ?? null; } catch { return null; } };
-  const bubble = (key: string, b: NoticeBubble, o: number | NoticeOptions = {}) => {
+  const bubble = (key: string, said: Said, o: number | NoticeOptions = {}) => {
+    const { emotion, ...b } = said;
     const opts: NoticeOptions = typeof o === "number" ? { ms: o } : o;
     const seq = ++bubbleSeq;
     shown = { key, seq };
     const nb = board();
-    if (nb) { try { nb.post(b, opts); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
+    if (nb) { try { nb.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
     try { deps.showState({ bubble: { ...IDLE_BUBBLE, visible: true, ...b } }); } catch (err) { log.warn("targets.bubble_failed", { err }); return; }
     if (opts.ms) parts.setTimeout(() => { if (shown?.seq === seq) hideBubble(key); }, opts.ms);
   };
@@ -655,13 +675,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           // A screen that locks or a session that goes inactive mid-task stops the tasks using that desktop (§5.3.4 step
           // 8); tasks running only commands there go on (their window is on this PC). The next task asks for it again.
           stopTasks(hostId, locked ? "locked" : "inactive", "desktop");
-          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, say(locked ? words.screenLocked(host.id) : words.sessionInactive(host.id), [], "attention"), INFO_MS);
+          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, say(locked ? words.screenLocked(host.id) : words.sessionInactive(host.id), [], "notice"), INFO_MS);
           refresh();
         },
         onConsoleStop: () => {
           // Everything stopped there (§5.3.9): its tasks here too, or a worker would go on with commands after the Stop.
           stopTasks(hostId, "stopped-there");
-          bubble(`console:${hostId}`, say(words.stoppedFromRemote(host.id), [], "attention"), INFO_MS);
+          bubble(`console:${hostId}`, say(words.stoppedFromRemote(host.id), [], "notice"), INFO_MS);
         },
       });
     } catch (err) {
@@ -683,7 +703,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (s === "stalled") {
       c.state = "stalled";
       // Stalled at 5 s of silence; the grace counts from the last frame, as the command tabs' countdown does.
-      bubble(`stalled:${hostId}`, say(words.stalled(hostId, link.welcome.graceSeconds - 5), [`conn:${hostId}:disconnect`], "attention"));
+      bubble(`stalled:${hostId}`, say(words.stalled(hostId, link.welcome.graceSeconds - 5), [`conn:${hostId}:disconnect`], "trouble"));
     } else if (s === "ready") {
       c.state = "ready";
       hideBubble(`stalled:${hostId}`);
@@ -695,7 +715,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       c.wasActive = settings.get().targets.active === targetIdOf("ssh", hostId);
       if (c.wasActive) setActive(LOCAL_TARGET);
       // It stays until the user answers it or the connection comes back: the stopped tasks' results wait behind it.
-      bubble(`lost:${hostId}`, say(words.lost(hostId, c.wasActive), [`conn:${hostId}:reconnect`, `conn:${hostId}:stop`], "error"));
+      bubble(`lost:${hostId}`, say(words.lost(hostId, c.wasActive), [`conn:${hostId}:reconnect`, `conn:${hostId}:stop`], "trouble"));
     } else {
       dropTarget(c);
       c.state = "closed";
@@ -703,7 +723,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       hideBubble(`stalled:${hostId}`);
       if (settings.get().targets.active === targetIdOf("ssh", hostId)) {
         setActive(LOCAL_TARGET);
-        bubble("back", say(words.backHere(hostId), [], "attention"), INFO_MS);
+        bubble("back", say(words.backHere(hostId), [], "notice"), INFO_MS);
       }
     }
     refresh();
@@ -731,13 +751,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     refresh();
     const first = words.connecting(label, { step: "checking" });
     progressSaid.set(hostId, first.text);
-    bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "thinking"));
+    bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "working"));
     const stopped = (message: string): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message }; };
     const fail = (message: string, retry = false): ActResult => {
       c.state = "closed";
       c.abort = null;
       refresh();
-      bubble(`fail:${hostId}`, say(words.cantConnect(label, message, retry), [`conn:${hostId}:reconnect`], "error"), retry ? undefined : 2 * INFO_MS);
+      bubble(`fail:${hostId}`, say(words.cantConnect(label, message, retry), [`conn:${hostId}:reconnect`], "failed"), retry ? undefined : 2 * INFO_MS);
       return { ok: false, message };
     };
     try {
@@ -780,7 +800,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       let byAdmin = false;
       try { byAdmin = off && c.target?.service.mode() === "off"; } catch { byAdmin = true; } // a mode that can't be read is off
       const how: words.ConnectedHow = !headless ? "desktop" : !off ? "commands" : byAdmin ? "commands-off-by-admin" : "commands-off";
-      bubble(`connected:${hostId}`, say(words.connected(label, how), [`conn:${hostId}:commands`], off ? "attention" : "done"), how === "commands-off" ? undefined : INFO_MS);
+      bubble(`connected:${hostId}`, say(words.connected(label, how), [`conn:${hostId}:commands`], how === "commands-off" ? "decide" : how === "commands-off-by-admin" ? "failed" : "good"), how === "commands-off" ? undefined : INFO_MS);
       return { ok: true };
     } catch (err) {
       if (abort.signal.aborted) return stopped("Cancelled.");
@@ -819,7 +839,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }, o: { bubble?: boolean } = {}): Promise<ActResult> {
     const refused = (message: string): ActResult => {
       const label = hostPart(raw.dest);
-      if (o.bubble) bubble(`fail:${label}`, say(words.cantConnect(label, message, false), [], "error"), 2 * INFO_MS);
+      if (o.bubble) bubble(`fail:${label}`, say(words.cantConnect(label, message, false), [], "failed"), 2 * INFO_MS);
       return { ok: false, message };
     };
     if (!sshAllowed(admin())) return refused("Your organisation doesn't allow Ember on other computers.");
@@ -999,10 +1019,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     // Nobody asked for it: it waits for the bubble to be free (an answer being read stays), and goes unanswered.
     const unasked: NoticeOptions = { ms: OFFER_MS, claim: "reply" };
     if (s.via && s.via !== "local" && !WSL_SSH_PROVEN) {
-      bubble(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "attention"), unasked);
+      bubble(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "decide"), unasked);
       return;
     }
-    bubble(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "attention"), unasked);
+    bubble(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "decide"), unasked);
   }
   const bringSeen = (s: SshSeen) => {
     const extra: HostRecord["extra"] = {
@@ -1079,7 +1099,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   function offerWsl(): void {
     if (wslOffered || questionUp()) return;
     wslOffered = true;
-    bubble("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "attention"), { ms: OFFER_MS, claim: "reply" });
+    bubble("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "decide"), { ms: OFFER_MS, claim: "reply" });
   }
 
   // ── Start ──
@@ -1109,7 +1129,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
             void cs.disconnect(hostId).catch(() => undefined);
             dropTarget(c);
             c.state = "lost";
-            bubble(`lost:${hostId}`, say(words.cameBackDifferent(hostId), [`conn:${hostId}:reconnect`], "error"));
+            bubble(`lost:${hostId}`, say(words.cameBackDifferent(hostId), [`conn:${hostId}:reconnect`], "trouble"));
             refresh();
             return;
           }
@@ -1119,7 +1139,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
             c.wasActive = false;
             if (again) setActive(targetIdOf("ssh", hostId));
             const lostUp = shown?.key === `lost:${hostId}`;
-            bubble(`back:${hostId}`, say(words.backThere(hostId, again), [], "idle"), lostUp ? INFO_MS : { ms: INFO_MS, claim: "reply" });
+            bubble(`back:${hostId}`, say(words.backThere(hostId, again), [], "good"), lostUp ? INFO_MS : { ms: INFO_MS, claim: "reply" });
             refresh();
           }
           return;
@@ -1130,7 +1150,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           c.state = "closed";
           const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
           const w = signIn ? words.signInAgain(hostId) : words.cantReconnect(hostId, p.fix ? `${p.message} ${p.fix}` : p.message);
-          bubble(`lost:${hostId}`, say(w, [`conn:${hostId}:reconnect`], signIn ? "attention" : "error"));
+          bubble(`lost:${hostId}`, say(w, [`conn:${hostId}:reconnect`], signIn ? "decide" : "failed"));
           refresh();
           return;
         }
@@ -1142,7 +1162,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const w = words.connecting(hostId, step);
         if (shown?.key !== `connecting:${hostId}` || progressSaid.get(hostId) === w.text) return;
         progressSaid.set(hostId, w.text);
-        bubble(`connecting:${hostId}`, say(w, [`conn:${hostId}:cancel`], "thinking"), { claim: "reply" });
+        bubble(`connecting:${hostId}`, say(w, [`conn:${hostId}:cancel`], "working"), { claim: "reply" });
       }));
     } catch (err) { log.warn("targets.progress_listen_failed", { err }); }
   }
@@ -1418,7 +1438,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (questionUp()) return `Ember can't show the button while a question is waiting. Tell the user to connect ${label} from Ember's menu.`;
       const k = ++offerSeq;
       offers.set(k, { kind: "connect", hostId: host?.id ?? null, alias: label });
-      bubble(`offer:${k}`, say(words.offerConnect(label), [`offer:${k}:connect`, `offer:${k}:later`], "attention"), OFFER_MS);
+      bubble(`offer:${k}`, say(words.offerConnect(label), [`offer:${k}:connect`, `offer:${k}:later`], "decide"), OFFER_MS);
       return `Ember showed the user a Connect button for ${label}. Tell them to click it; once it is connected, start the task there.`;
     } catch (err) {
       log.warn("targets.offer_connect_failed", { err });
@@ -1486,8 +1506,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           // A headless host's commands, turned on from its connected bubble: the commands card first (setCommands).
           hideBubble(`connected:${hostId}`);
           void setCommands(targetIdOf("ssh", hostId), true).then(r => {
-            if (r.ok) bubble(`connected:${hostId}`, say(words.commandsOn(hostId), [], "done"), INFO_MS);
-            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, say(words.commandsStayOff(hostId, r.message ?? ""), [], "error"), INFO_MS);
+            if (r.ok) bubble(`connected:${hostId}`, say(words.commandsOn(hostId), [], "good"), INFO_MS);
+            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, say(words.commandsStayOff(hostId, r.message ?? ""), [], "failed"), INFO_MS);
           }, err => log.warn("targets.commands_switch_failed", { err }));
         }
         else { hideBubble(); void disconnect(hostId); }

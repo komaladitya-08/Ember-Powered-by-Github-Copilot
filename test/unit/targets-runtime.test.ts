@@ -1283,6 +1283,37 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 });
 
+describe("the runtime's bubbles' state chip and face (review #15)", () => {
+  it("say Needs you only when a button needs a decision, never Done or Thinking for a connection, and set Ember's face", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    expect([s.screen().title, s.look()]).toEqual(["Connecting to build-01…", "acting/focused"]);
+    release();
+    await pending;
+    const l = r.links.get("build-01")!;
+    expect([s.screen().title, s.look()]).toEqual(["Ember is on build-01", "idle/happy"]);
+    l.emit("console.stop", { at: SINCE });
+    expect([s.screen().title, s.look()]).toEqual(["Stopped on build-01", "idle/neutral"]);
+    l.move("stalled");
+    expect([s.screen().title, s.look()]).toEqual(["build-01 isn't answering", "error/worried"]);
+    l.move("lost");
+    expect([s.screen().title, s.look()]).toEqual(["Lost build-01", "error/worried"]);
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/Connect button/);
+    expect([s.screen().title, s.look()]).toEqual(["Connect to build-01?", "attention/curious"]);
+  });
+
+  it("says Problem for a failed connect, with a sorry face", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", undefined, false));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect([s.screen().title, s.look()]).toEqual(["Can't connect to build-01", "error/sad"]);
+  });
+});
+
 describe("offers in the bubble (review #14)", () => {
   const notice = {
     sshDestination: (argv: readonly string[]) => ({ dest: argv[argv.length - 1] }),
@@ -1658,7 +1689,9 @@ function screenRig() {
   };
   const question = { up: false };
   const answered: (() => void)[] = [];
+  let face: EmberState["emotion"] = "neutral";
   const setState = guardWhileAsking(() => question.up, (patch: Partial<EmberState>) => {
+    if (patch.emotion) face = patch.emotion;
     if (!patch.bubble) return;
     screen = patch.bubble;
     seen.push(screen.visible ? `${screen.title} | ${screen.thought} [${screen.actions.map(a => a.label).join("/")}]` : "(hidden)");
@@ -1670,6 +1703,8 @@ function screenRig() {
   return {
     convo, notices, owner, setState, advance, seen, question,
     screen: () => screen,
+    /** The bubble's chip (its mood) and Ember's face now. */
+    look: () => `${screen.mood}/${face}`,
     /** A question goes up (main's Confirmer writes it past the guard), or is answered. */
     ask: (title: string) => { question.up = true; screen = { ...IDLE_BUBBLE, visible: true, mood: "attention", title, actions: [{ id: "q1:once", label: "Allow" }] }; },
     answer: async () => { question.up = false; for (const r of answered.splice(0)) r(); await flush(); },
