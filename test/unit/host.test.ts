@@ -147,6 +147,16 @@ describe("connecting and signing in", () => {
     expect(host.getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
   });
 
+  it("says why when the system's keyring refused Ember's saved sign-in, instead of a bare “not connected” (review #241)", async () => {
+    let why: string | null = "macOS didn't let Ember read its saved sign-in from your login keychain.";
+    const { host } = makeHost({ signedOutWhy: () => why });
+    expect(await host.start(null)).toBe("signed-out");
+    expect(host.getStatus().detail).toBe("macOS didn't let Ember read its saved sign-in from your login keychain.");
+    why = null;
+    expect(await host.start(null)).toBe("signed-out");
+    expect(host.getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
+  });
+
   it("connecting doesn't wait for stale task sessions to be deleted", async () => {
     sim.taskSessions = ["ember-task-old"];
     sim.deleteHangs = true;

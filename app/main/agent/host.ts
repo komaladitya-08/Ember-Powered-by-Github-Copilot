@@ -135,6 +135,11 @@ export interface HostOptions {
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
   /**
+   * Why there is no sign-in when that has a reason the user should hear (macOS's login keychain refused Ember's saved
+   * one after an update, review #241): the signed-out status says it instead of the bare "not connected". null: no reason.
+   */
+  signedOutWhy?: () => string | null;
+  /**
    * Can GitHub be reached right now (see gitHubReachable)? Copilot says "not authenticated" both for a
    * sign-in it refuses and for a GitHub it can't reach (a VPN not up yet, a proxy, a captive portal):
    * with this, the sign-in is blamed only when GitHub answers and Copilot still refuses it.
@@ -749,7 +754,7 @@ export class AgentHost {
     await this.doStop();
     if (gen !== this.gen) return;
     if (!token && !this.o.provider) {
-      this.setStatus({ phase: "signed-out", detail: SIGNED_OUT, login: undefined, source: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? SIGNED_OUT, login: undefined, source: undefined });
       return;
     }
     this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });

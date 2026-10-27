@@ -27,6 +27,12 @@ export function isUsableToken(t: string | undefined | null): t is string {
 }
 
 export class TokenStore {
+  /**
+   * The last load() found a saved sign-in the keyring wouldn't open (decryptString threw: macOS's keychain prompt
+   * answered Deny or Cancel, which an ad-hoc-signed Ember meets after every update). The file is kept, to try again.
+   */
+  unreadable = false;
+
   constructor(private file: string, private box: SecretBox) {}
 
   /** Whether a token can be kept across restarts on this machine. */
@@ -34,12 +40,25 @@ export class TokenStore {
     return this.box.isEncryptionAvailable() && this.box.getSelectedStorageBackend?.() !== "basic_text";
   }
 
+  /** Is a sign-in saved (whether or not the keyring will open it)? Reads no secret. */
+  hasSaved(): boolean {
+    return fs.existsSync(this.file);
+  }
+
   load(): string | null {
+    let raw: Buffer;
     try {
-      const raw = fs.readFileSync(this.file);
+      raw = fs.readFileSync(this.file);
+    } catch {
+      this.unreadable = false;
+      return null; // none saved
+    }
+    try {
       const t = this.box.decryptString(raw);
+      this.unreadable = false;
       return isUsableToken(t) ? t : null;
     } catch {
+      this.unreadable = true;
       return null;
     }
   }
@@ -57,10 +76,12 @@ export class TokenStore {
       return false;
     }
     fs.writeFileSync(this.file, sealed, { mode: 0o600 });
+    this.unreadable = false;
     return true;
   }
 
   clear(): void {
+    this.unreadable = false;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
   }
 }

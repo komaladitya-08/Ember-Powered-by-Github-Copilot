@@ -160,6 +160,9 @@ function voiceModelsRoot(): { root: string; bundled: boolean } {
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
 const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnDefaults });
 
+/** How long Ember's windows get to come up before a saved sign-in is read on macOS (the keychain may ask; ms). */
+const KEYCHAIN_PAUSE_MS = 800;
+
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
   ? path.join(process.resourcesPath, "sidecar", "atspi", "ember_atspi.py")
@@ -834,11 +837,11 @@ function start(): void {
   let sidecarRef: AtspiSidecar | null = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
   let showBorrowing: (() => void) | null = null;
-  /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
-  const statusBy: { borrow: string | null; listen: string | null; mic: string | null } = { borrow: null, listen: null, mic: null };
+  /** One status line, several writers: the borrow comes first, then listening, then the microphone, then the keychain. */
+  const statusBy: { borrow: string | null; listen: string | null; mic: string | null; keychain?: string | null } = { borrow: null, listen: null, mic: null };
   const setStatus = (owner: keyof typeof statusBy, text: string | null) => {
     statusBy[owner] = text;
-    setState({ status: statusBy.borrow ?? statusBy.listen ?? statusBy.mic });
+    setState({ status: statusBy.borrow ?? statusBy.listen ?? statusBy.mic ?? statusBy.keychain ?? null });
   };
   /** What Ember showed before a wake, put back if the wake turns out to be another word. */
   let beforeWake: Pick<EmberState, "emotion" | "bubble"> | null = null;
@@ -1511,6 +1514,8 @@ function start(): void {
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
+      // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
+      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
       onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
@@ -1557,8 +1562,16 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
-      const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
-      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
+      // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
+      // ad-hoc-signed Ember), and the read holds the main process until that is answered: Ember's windows come up
+      // first, and its status says what the prompt is for (review #241).
+      const keychain = !provider && platform.os === "darwin" && !!tokens?.hasSaved();
+      if (keychain) {
+        setStatus("keychain", "Reading your saved sign-in from the keychain…");
+        await new Promise(r => setTimeout(r, KEYCHAIN_PAUSE_MS));
+      }
+      const found = provider ? null : await resolveToken(tokens, process.env, ghOptions()).finally(() => { if (keychain) setStatus("keychain", null); });
+      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
       currentToken = found?.token ?? null;
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use).
