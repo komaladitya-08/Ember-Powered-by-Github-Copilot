@@ -546,6 +546,15 @@ describe("CursorBorrow on macOS input", () => {
     expect(log.filter(l => /^(key|text)/.test(l))).toEqual([]);
   });
 
+  it("under an input method lets the typing path's Command shortcuts and Delete through its up-front key check (review #62)", async () => {
+    const { s, log, input } = setup();
+    s.layoutSource = false;
+    const b = new CursorBorrow(input, { keys: KEYS.darwin });
+    await b.borrow(async hand => { for (const k of ["cmd+a", "Delete", "cmd+down", "cmd+v"]) hand.checkKeys!(k); }, fast);
+    await expect(b.borrow(async hand => hand.checkKeys!("a"), fast)).rejects.toThrow(INPUT_METHOD_REASON);
+    expect(log.filter(l => /^(key|text)/.test(l))).toEqual([]); // a check presses nothing
+  });
+
   it("keeps the layout's Command-level answer for a digit shortcut (review #63 changes Windows and Linux only)", async () => {
     // On this AZERTY "1" is the shifted level of key 0x12 with Command held too, so Command+1 takes Shift here.
     const { log, input } = setup();

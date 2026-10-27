@@ -2102,6 +2102,12 @@ export class Worker {
       result = await this.withCursor(kind, element, async hand => {
         // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
         if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
+        // So are keys the keyboard can't press now (Typing Assist; an input method, for keys that type): before the
+        // click, and before Ember's text goes on the user's clipboard.
+        if (kind === "cursor_text" && typeof hand.checkKeys === "function") {
+          const edit = this.kc.edit;
+          for (const k of [...(mode === "replace" ? [edit.selectAll, "Delete"] : mode === "append" ? [edit.textEnd] : []), ...(paste ? [edit.paste] : [])]) hand.checkKeys(k);
+        }
         // The user may have copied something new while Ember waited for its turn (a picture always counts as new): that
         // is what goes back afterwards, so if it can't be saved, nothing is touched.
         if (paste && !(await this.clipboard!.unchanged(saved!).catch(() => false))) {

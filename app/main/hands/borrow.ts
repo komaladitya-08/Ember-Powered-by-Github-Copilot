@@ -68,6 +68,11 @@ export interface Hand {
   type(text: string): Promise<void>;
   /** Throws, typing nothing, when `text` can't be typed exactly with the keyboard layout in use. */
   checkTyping(text: string): void;
+  /**
+   * Throws, pressing nothing, when the keyboard can't press the key combination `combo` now (X11: Typing Assist; macOS:
+   * an input method, for keys that type), as keys(combo) would before its first key. Optional for hands that can't tell.
+   */
+  checkKeys?(combo: string): void;
   scroll(direction: "up" | "down" | "left" | "right", steps: number): Promise<void>;
 }
 
@@ -334,6 +339,18 @@ export class CursorBorrow {
       if (down) held.set(code, sym); else held.delete(code);
     };
     const SHIFT_L = 0xffe1;
+    /** The key and the modifiers' keysyms of the combination `combo` (an error for a key there is no keysym for). */
+    const comboKeys = (combo: string): { sym: number; mods: number[] } => {
+      // The logo key's other names ("win", "logo") as the policy read them (policy.canonicalKeys: ⌘ on macOS), so the
+      // key pressed is the one the user was asked about. On Linux the policy refuses every logo-key combination, and
+      // the spellings stay today's.
+      const kc = this.keys;
+      const spelled = kc.os === "linux" ? combo : combo.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+");
+      const { modifiers, key } = parseCombo(spelled, kc);
+      const sym = x.keysymOf(key);
+      if (!sym) throw new Error(`unknown key "${key}"`);
+      return { sym, mods: modifiers.map(m => x.keysymOf(m)) };
+    };
     /** The keys for `text` on the layout in use, or an error before anything is typed. */
     const planText = (text: string): { strokes: TypedKey[]; shift: number; byCode: boolean } => {
       if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard");
@@ -429,15 +446,8 @@ export class CursorBorrow {
         check();
         keyboardOnTarget();
         keyboardFree();
-        // The logo key's other names ("win", "logo") as the policy read them (policy.canonicalKeys: ⌘ on macOS), so the
-        // key pressed is the one the user was asked about. On Linux the policy refuses every logo-key combination, and
-        // the spellings stay today's.
         const kc = this.keys;
-        const spelled = kc.os === "linux" ? combo : combo.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+");
-        const { modifiers, key } = parseCombo(spelled, kc);
-        const sym = x.keysymOf(key);
-        if (!sym) throw new Error(`unknown key "${key}"`);
-        const mods = modifiers.map(m => x.keysymOf(m));
+        const { sym, mods } = comboKeys(combo);
         keyboardUsable({ modifiers: [...mods], sym });
         // The key in the active layout when it has one (with Shift if it's on the shifted level there, like
         // "plus" on a US keyboard); else in another layout of the keyboard (Ctrl+C still works with a Russian
@@ -503,6 +513,10 @@ export class CursorBorrow {
           await sleep(12);
         }
         check();
+      },
+      checkKeys: combo => {
+        const { sym, mods } = comboKeys(combo);
+        keyboardUsable({ modifiers: mods, sym });
       },
       checkTyping: text => {
         keyboardUsable();
