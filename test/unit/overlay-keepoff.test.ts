@@ -1,7 +1,8 @@
 /**
  * Ember keeps off its handle and the task cards, on the display it is on: another display's cards never push it
  * away from the cursor (review #127). Beside a control it works on, it never parks under the cards, and the cards
- * make way for the control's ring (review #126).
+ * make way for the control's ring (review #126). Near the seam between two displays, only the display Ember is on
+ * shows its bubble (review #128).
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +33,7 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl } from "../../app/main/follow";
-import { cardsCorner } from "../../app/renderer/overlay/layout";
+import { bubbleHere, cardsCorner } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -169,5 +170,32 @@ describe("the task cards and the ring round a control", () => {
 
   it("stay where they are when the ring would be under them in either corner (a bar as wide as the screen)", () => {
     expect(cardsCorner({ x: 0, y: 640, width: vw, height: 30 }, stack, vw)).toBe("right");
+  });
+});
+
+describe("Ember near the seam between two displays", () => {
+  const a = { ...display(1, 0, 0), bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 0, width: 1440, height: 900 } };
+  const b = { ...display(2, 1440, 0), bounds: { x: 1440, y: 0, width: 1440, height: 900 }, workArea: { x: 1440, y: 0, width: 1440, height: 900 } };
+
+  it("every overlay is told which display Ember is on (the one nearest its centre)", async () => {
+    const { settle, sent } = await manager([a, b], [null, null], null);
+    // The cursor just inside B: Ember follows to its right, about 47 px further in.
+    const at = settle({ x: 1450, y: 400 });
+    expect(at.x).toBeGreaterThan(1440);
+    const last = (id: number) => sent.filter(m => m.channel === "overlay:frame" && m.display === id).at(-1)!.value as { on?: number };
+    expect(last(1).on).toBe(2);
+    expect(last(2).on).toBe(2);
+  });
+
+  it("only that display shows the bubble, though both draw Ember's body", () => {
+    const frame = { ember: { x: 1470, y: 400 }, on: 2 };
+    expect(bubbleHere(frame, 1, a.bounds)).toBe(false);
+    expect(bubbleHere(frame, 2, b.bounds)).toBe(true);
+  });
+
+  it("without main's word, the display that holds Ember's centre shows it", () => {
+    const frame = { ember: { x: 1430, y: 400 } };
+    expect(bubbleHere(frame, 1, a.bounds)).toBe(true);
+    expect(bubbleHere(frame, 2, b.bounds)).toBe(false);
   });
 });

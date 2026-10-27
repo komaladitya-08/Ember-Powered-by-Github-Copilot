@@ -171,7 +171,7 @@ export class OverlayManager {
   }
 
   private lastHandleCheck = 0;
-  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
+  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; on: number; at: number } | null = null;
 
   getState(): EmberState {
     return this.state;
@@ -374,10 +374,12 @@ export class OverlayManager {
     const ember = aside
       ? this.follower.step(aside, dt, true)
       : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff(display)), dt);
-    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
+    // Which display Ember is on (only its overlay shows the bubble; each display it straddles draws its body).
+    const on = screen.getDisplayNearestPoint({ x: Math.round(ember.x), y: Math.round(ember.y) }).id;
+    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking), on };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;
-    const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
+    const still = !!p && p.visible === frame.visible && p.on === on && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
       && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
     if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
 

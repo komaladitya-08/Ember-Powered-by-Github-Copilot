@@ -59,3 +59,14 @@ export function pillBottom(bounds: Rect, workArea: Rect | null, handle: Rect | n
   if (handle) return bounds.height - (handle.y + handle.height) + PILL_BOTTOM_GAP;
   return PILL_BOTTOM_GAP;
 }
+
+/**
+ * Whether this overlay (display `displayId`, `bounds` in global DIP) shows Ember's bubble for frame `f`: only the
+ * display Ember is on (`f.on`, main's word: the display nearest its centre) does, though every display it straddles
+ * draws its body. Without main's word, the display that holds its centre. A bubble drawn on both sides of a seam
+ * would show a question twice, with two sets of buttons.
+ */
+export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, displayId: number, bounds: Rect): boolean {
+  if (f.on !== undefined) return f.on === displayId;
+  return f.ember.x >= bounds.x && f.ember.x < bounds.x + bounds.width && f.ember.y >= bounds.y && f.ember.y < bounds.y + bounds.height;
+}

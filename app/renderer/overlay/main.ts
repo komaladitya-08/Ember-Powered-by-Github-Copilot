@@ -15,7 +15,7 @@ import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
-import { cardsCorner, pillBottom, pillSpot } from "./layout";
+import { bubbleHere, cardsCorner, pillBottom, pillSpot } from "./layout";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -44,6 +44,8 @@ const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let character: Character = characters.cinder;
 let settings: Settings | null = null;
 let bounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+/** This overlay's display. */
+let displayId = -1;
 /** This display's work area (global DIP; the taskbar or Dock is outside it), when main says. */
 let workArea: Rect | null = null;
 let viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -95,6 +97,7 @@ function applySettings(s: Settings): void {
 
 api.onInit((i: OverlayInit) => {
   bounds = i.bounds;
+  displayId = i.displayId;
   workArea = i.workArea ?? null;
   // The handle's place, when the main process says (`handle`, global DIP; null = on another display).
   // Otherwise it is where it always is: the bottom-right corner, 200×56, 12 px in.
@@ -523,7 +526,8 @@ function draw(now: number): void {
 
   const fr = frame;
   const here = isHere(fr);
-  const showBubble = here && !!state?.bubble.visible;
+  // Ember's body is drawn on each display it straddles; its bubble only on the one it is on.
+  const showBubble = here && bubbleHere(fr, displayId, bounds) && !!state?.bubble.visible;
   if (here) {
     const lx = fr.ember.x - bounds.x, ly = fr.ember.y - bounds.y;
     const moving = !drawnAt || moved(fr.ember, drawnAt.ember, 0.05);
@@ -575,7 +579,8 @@ function draw(now: number): void {
     // itself (no room beside one as wide as the screen), a click there is meant for the control.
     const body = { x: Math.round(lx - size * 0.45), y: Math.round(ly - size * 0.55), width: Math.round(size * 0.9), height: Math.round(size * 1.05) };
     const onTarget = !!f && overlaps(body, { x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height });
-    setBody((f || (showBubble && asks)) && !onTarget ? body : null);
+    // (Asking near a display's edge: the body catches clicks on both sides of the seam, where it is drawn.)
+    setBody((f || (!!state?.bubble.visible && asks)) && !onTarget ? body : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;

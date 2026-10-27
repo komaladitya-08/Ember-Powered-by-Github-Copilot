@@ -40,6 +40,8 @@ export interface OverlayFrame {
   ember: { x: number; y: number };
   cursor: { x: number; y: number };
   visible: boolean;
+  /** The display Ember is on (the one nearest its centre): only its overlay shows the bubble. */
+  on?: number;
 }
 
 export interface BubbleState {
