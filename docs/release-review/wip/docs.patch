@@ -1,0 +1,75 @@
+diff --git a/README.md b/README.md
+index ee53c85..d2c7eab 100644
+--- a/README.md
++++ b/README.md
+@@ -153,45 +153,47 @@ same things. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox
+ 
+ Almost all of Ember works from the keyboard and with a screen reader (the rest is under **Known gaps**). Its own
+ windows (settings, the ask box, the command window, the sign-in and consent cards) are ordinary pages with headings,
+-labels and a visible focus. Ember itself, its bubble, its task cards and its handle never take the keyboard, so Ember
+-never pulls the focus out of your app: the keys below reach what they do. Ember hasn't been tried with Orca, NVDA,
+-JAWS, Narrator or VoiceOver on real computers yet; please
++labels and a visible focus. Ember itself, its bubble, its task cards and its handle can't be reached with the keyboard,
++so Ember never pulls the keyboard out of your app: the keys below reach what they do. Ember hasn't been tried with
++Orca, NVDA, JAWS, Narrator or VoiceOver on real computers yet; please
+ [report](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) what doesn't work.
+ 
+ **Screen readers.** Ember notices Orca on Linux (GNOME's screen reader switch), NVDA, JAWS and Narrator on Windows,
+-and VoiceOver on a Mac. While one runs, Ember also speaks its questions and results itself, even with **Speak replies,
+-questions and results out loud** off (unless your organisation turned speaking off); the command window reads out what
+-a command prints, and its lines can be read again one by one; and a dangerous command you asked for waits 15 seconds
+-instead of 4 before it runs. The bubble's words are read out as they change: a question with the keys that answer it
+-("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"), and where to find a question shown in another of Ember's windows.
++and VoiceOver on a Mac. While one runs:
++
++- Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
++  replies, questions and results out loud**: **When a screen reader runs** (the default), **Always** or **Never**.
++  When your organisation turns speaking off, Ember never speaks.
++- The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
++  Ctrl+Alt+N not now"), and for a question shown in another of Ember's windows, how to get there ("press Alt+Tab to
++  go there").
++- The command window reads out what a command prints, and its lines can be read again one by one. A dangerous command
++  you asked for waits 15 seconds instead of 4 before it runs.
+ 
+ **Keyboard routes.** The keys named here are Linux's; Windows and macOS use their own (see **Shortcuts**).
+ 
+ | To | From the keyboard |
+ |---|---|
+-| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends, ↑ and ↓ bring back earlier requests, Esc closes. If another app holds the shortcut: **Ask Ember…** in settings, under **Comfort & access › Ember on screen** |
++| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds the shortcut: **Ask Ember…** in settings, under **Comfort & access › Ember on screen** |
+ | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good |
+-| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once |
++| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds the shortcut: **Stop everything** under **Comfort & access › Ember on screen** |
+ | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
+-| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Work on**: name the computer in your request ("on build-01, …") |
+-| A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, while the card shows the whole command |
++| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
++| A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command |
+ | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
+ | Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
+-| Sign-in and consent cards | Their window takes the keyboard: Tab to a button, Enter for the highlighted one, Esc cancels a sign-in. A consent card is answered there only, never with Ember's keys or by voice |
+-| Ember's desk (Linux) | **Take over** is a click; while you have the desk, every key goes to it, Tab included, until Ctrl+Alt+End hands it back |
++| Sign-in and consent cards | Their window takes the keyboard (if it hasn't, Alt+Tab to it: the bubble says so). Tab to a button, Enter presses the highlighted one, Esc cancels (**Not now** on a consent card). A consent card's yes counts once you have read all of it: Tab to its words and scroll with the arrow keys or Page Down. It is answered there only, never with Ember's keys or by voice |
++| Ember's desk (Linux) | **Take over** is a click; while you have the desk, every key goes to it, Tab included, until Ctrl+Alt+End hands it back. A screen reader is told so when you take over |
+ 
+-**Seeing and motion.** Settings › **Comfort & access** has **Calm mode** (no hops, bounces or fidgets; also on when
+-your system asks for less motion) and **Text size** (Large or Larger, for settings, the bubble, task cards, the handle
+-and the command windows; the ask box keeps its size). Windows' contrast themes keep switches, edges, focus and state
+-visible, and the handle's microphone and computer badges change shape as well as colour.
++**Seeing, motion and time.** Settings › **Comfort & access** has **Text size** (Large or Larger, for settings, the
++bubble, task cards, the handle, the command window and the password and consent cards; the ask box keeps its size),
++**Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More time to read
++and answer** (messages stay three times as long, and a question waits 6 minutes instead of 2 before it counts as
++**Not now**). Windows' contrast themes keep switches, edges, focus and state visible, and the handle's microphone and
++computer badges change shape as well as colour.
+ 
+ **Known gaps.**
+ - A task card's own **Stop** and the desk's **Take over** are clicks only: the stop shortcut stops every task.
+-- A question waits 2 minutes and then counts as **Not now**; an answer leaves the bubble after a few seconds
+-  (settings' **Conversation** keeps it).
+-- While a screen reader runs, Ember speaks its questions and results even with **Speak replies** off; only the
+-  organisation's policy turns that off.
+-- The desk's way back (Ctrl+Alt+End) isn't announced by screen readers when you take it over.
+ - Ember's shortcuts can't be changed; when another app holds one, use the routes in the table.
+ - On Windows, a command can't take typing (§2.9 of [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)). On a Mac,
+   Command+Tab doesn't list the command window: answer a command card with Ember's allow and not-now keys.

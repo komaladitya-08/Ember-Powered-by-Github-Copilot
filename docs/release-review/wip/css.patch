@@ -1,0 +1,196 @@
+diff --git a/app/renderer/handle/live.ts b/app/renderer/handle/live.ts
+index aaab0a2..ef9e3cd 100644
+--- a/app/renderer/handle/live.ts
++++ b/app/renderer/handle/live.ts
+@@ -1,11 +1,9 @@
+ /**
+- * What the handle says in its live region, which a screen reader reads once per change: pure, so it is unit-tested
+- * (handle-mic.test.ts). The pill says only news about the microphone; the no-compositor card, where nothing else
+- * speaks for Ember, also says the bubble's words and the status line.
++ * What the handle says about the status line and the microphone in its live region, which a screen reader reads once
++ * per change: pure, so it is unit-tested (handle-mic.test.ts). The pill says only news about the microphone; the
++ * no-compositor card, where nothing else speaks for Ember, also says the status line (and the bubble's words, main.ts).
+  */
+ 
+-import { announcement } from "@ember/bubble";
+-import type { BubbleState } from "../../shared/overlay";
+ import type { MicState } from "../../shared/voice";
+ import { micAnnouncement } from "../../shared/mic";
+ 
+@@ -17,8 +15,6 @@ import { micAnnouncement } from "../../shared/mic";
+ const PASSING: ReadonlySet<MicState> = new Set(["starting", "downloading"]);
+ 
+ export class HandleLive {
+-  /** The bubble's words last said: what was said while the card showed nothing new isn't repeated when it shows again. */
+-  private announced = "";
+   /** The status line last said. */
+   private announcedStatus = "";
+   /** Whether a microphone state came before: the first one is only what it was, no news. */
+@@ -28,8 +24,6 @@ export class HandleLive {
+   /** The microphone's news last said, until the status line next changes (main often puts the same words there). */
+   private micSaid: string | null = null;
+ 
+-  constructor(private readonly name: string) {}
+-
+   /** What to say about the microphone with this update (a change to a problem, voice not set up, muted), or null. */
+   micNews(mic: MicState | undefined): string | null {
+     const first = !this.seenMic;
+@@ -41,16 +35,12 @@ export class HandleLive {
+   }
+ 
+   /**
+-   * The card's live text for this update, or null when nothing new is said: the bubble's words, the status line ("Using
+-   * your mouse: move it to take over", "I only caught the first part…"), which the card shows even under a bubble, and
+-   * news about the microphone. All at once go out together (one live update).
++   * What the card says with this update besides the bubble's words: the status line when it changed ("Using your mouse:
++   * move it to take over", "I only caught the first part…"), which the card shows even under a bubble, and the
++   * microphone's news; the same words only once.
+    */
+-  card(b: BubbleState, status: string | null, micNews: string | null): string | null {
++  news(status: string | null, micNews: string | null): string[] {
+     const parts: string[] = [];
+-    if (b.visible) {
+-      const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, this.name);
+-      if (text && text !== this.announced) { this.announced = text; parts.push(text); }
+-    }
+     if ((status ?? "") !== this.announcedStatus) {
+       this.announcedStatus = status ?? "";
+       // Muting by the shortcut or the menu: the microphone's news said "Microphone off", then the status line says it
+@@ -60,6 +50,6 @@ export class HandleLive {
+     }
+     // And the other way round: the status line already says it.
+     if (micNews && micNews !== this.announcedStatus) { parts.push(micNews); this.micSaid = micNews; }
+-    return parts.length ? parts.join(" ") : null;
++    return parts;
+   }
+ }
+diff --git a/app/renderer/handle/main.ts b/app/renderer/handle/main.ts
+index 18d38a7..d9912da 100644
+--- a/app/renderer/handle/main.ts
++++ b/app/renderer/handle/main.ts
+@@ -1,14 +1,14 @@
+ /** Handle: Ember's face and status in the corner; click for Ember's menu. */
+ 
+ import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
+-import { onPress, plainStream } from "@ember/bubble";
+-import type { EmberState, HandleApi, TaskCard } from "../../shared/overlay";
++import { announcement, onPress, plainStream } from "@ember/bubble";
++import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/overlay";
+ import { cardTask, cardText } from "./card";
+ import { armMsFor } from "./arm";
+ import { targetBadge } from "./badge";
++import type { Settings } from "../../main/settings";
+ import { idleLine, micBadge } from "../../shared/mic";
+ import { HandleLive } from "./live";
+-import type { Settings } from "../../main/settings";
+ 
+ declare global { interface Window { emberHandle: HandleApi } }
+ 
+@@ -72,9 +72,25 @@ let wasStreaming = false;
+ /**
+  * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once
+  * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
+- * News about the microphone is said in both (live.ts).
+  */
+-const live = new HandleLive(name);
++let announced = "";
++/** The status line and the microphone's news, each said once (live.ts): in the card, and the microphone's in the pill. */
++const live = new HandleLive();
++/**
++ * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
++ * caught the first part…"), which the card shows even under a bubble, and news about the microphone. All at once go
++ * out together (one live update).
++ */
++function announce(b: BubbleState, status: string | null, micNews: string | null): void {
++  const parts: string[] = [];
++  // What was said while the card showed nothing new isn't repeated when it shows again.
++  if (b.visible) {
++    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
++    if (text && text !== announced) { announced = text; parts.push(text); }
++  }
++  parts.push(...live.news(status, micNews));
++  if (parts.length) $("live").textContent = parts.join(" ");
++}
+ /** The picker's target beside Ember's name (§8.1): nothing for this computer. */
+ let badgeKey = "";
+ function renderTarget(s: EmberState): void {
+@@ -115,8 +131,7 @@ api.onState(s => {
+     $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+     return;
+   }
+-  const said = live.card(b, s.status ?? null, micNews);
+-  if (said) $("live").textContent = said;
++  announce(b, s.status ?? null, micNews);
+   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
+   const task = cardTask(s.tasks, b.visible ? b : undefined);
+   const text = cardText(b, name, s.status ?? idle, task?.title);
+diff --git a/test/unit/handle-mic.test.ts b/test/unit/handle-mic.test.ts
+index f0d73a1..b9e229d 100644
+--- a/test/unit/handle-mic.test.ts
++++ b/test/unit/handle-mic.test.ts
+@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
+ import { idleLine, micAnnouncement, micBadge, MIC_PROBLEM_MENU } from "../../app/shared/mic";
+ import type { MicState } from "../../app/shared/voice";
+ import { HandleLive } from "../../app/renderer/handle/live";
+-import { IDLE_BUBBLE } from "../../app/shared/overlay";
+ 
+ const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+ const STATES: MicState[] = ["off", "needs-models", "downloading", "starting", "waiting", "active", "muted", "error"];
+@@ -78,7 +77,7 @@ describe("the microphone badge", () => {
+ 
+ describe("what the handle says about the microphone in its live region", () => {
+   /** Feeds microphone states in order, as main sends them; what is said at each. */
+-  const said = (states: MicState[]) => { const live = new HandleLive("Ember"); return states.map(s => live.micNews(s)); };
++  const said = (states: MicState[]) => { const live = new HandleLive(); return states.map(s => live.micNews(s)); };
+ 
+   it("says a microphone problem once while Ember keeps retrying, not at every retry (review #73)", () => {
+     // VoiceService.restartLater: error, starting again after 1 s, error, after 5 s, error, then every 30 s.
+@@ -98,8 +97,9 @@ describe("what the handle says about the microphone in its live region", () => {
+ 
+   it("says \"Microphone off\" once in the no-compositor card when the shortcut mutes it (review #59)", () => {
+     // main's toggleMute: the voice state changes to muted, then its status line says the same words for 2.5 s.
+-    const live = new HandleLive("Ember");
+-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
++    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
++    const live = new HandleLive();
++    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
+     expect(update("waiting", null)).toBeNull();
+     expect(update("muted", null)).toBe("Microphone off");
+     expect(update("muted", "Microphone off")).toBeNull();
+@@ -114,8 +114,9 @@ describe("what the handle says about the microphone in its live region", () => {
+   });
+ 
+   it("says it once in whichever order the two updates come, or when they come together (review #59)", () => {
+-    const live = new HandleLive("Ember");
+-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
++    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
++    const live = new HandleLive();
++    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
+     update("waiting", null);
+     expect(update("waiting", "Microphone off")).toBe("Microphone off");
+     expect(update("muted", "Microphone off")).toBeNull();
+@@ -124,8 +125,9 @@ describe("what the handle says about the microphone in its live region", () => {
+   });
+ 
+   it("still says the same status line again later, once the microphone's news is used up", () => {
+-    const live = new HandleLive("Ember");
+-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
++    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
++    const live = new HandleLive();
++    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
+     update("waiting", null);
+     expect(update("muted", null)).toBe("Microphone off");
+     expect(update("muted", "Using your mouse: move it to take over")).toBe("Using your mouse: move it to take over");
+@@ -135,9 +137,10 @@ describe("what the handle says about the microphone in its live region", () => {
+ 
+   it("is what the handle page uses, in the pill and the card alike", () => {
+     const main = read("app/renderer/handle/main.ts");
+-    expect(main).toContain("new HandleLive(name)");
++    expect(main).toContain("const live = new HandleLive();");
+     expect(main).toMatch(/const micNews = live\.micNews\(s\.mic\)/);
+-    expect(main).toMatch(/live\.card\(b, s\.status \?\? null, micNews\)/);
++    expect(main).toMatch(/parts\.push\(\.\.\.live\.news\(status, micNews\)\);/);
++    expect(main).toMatch(/announce\(b, s\.status \?\? null, micNews\);/);
+   });
+ });
+ 

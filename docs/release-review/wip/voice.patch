@@ -1,0 +1,226 @@
+diff --git a/app/voice/speakers.ts b/app/voice/speakers.ts
+index 97bccd2..09c3122 100644
+--- a/app/voice/speakers.ts
++++ b/app/voice/speakers.ts
+@@ -3,8 +3,9 @@
+  * mono frames, for rejecting wake words that come out of the speakers. It counts as on only once parec has
+  * started, and it's kept running: if parec stops (PulseAudio restarted), it starts again after 1 s, 5 s, then
+  * every 30 s. Without parec installed it stays off. parec takes the monitor of the output that is the default
+- * when it starts, and stays on it: when the default output changes (headphones, a Bluetooth speaker), `pactl
+- * subscribe` says so, and parec starts again on the new one (review #260).
++ * when it starts, and stays on it: when the server's defaults change, `pactl subscribe` says so, and parec starts
++ * again on the new output if the default output is another one (headphones, a Bluetooth speaker; `pactl info` says
++ * which: PulseAudio 14 on RHEL 8 has no get-default-sink), review #260.
+  */
+ 
+ import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+@@ -13,6 +14,12 @@ const RETRY_MS = [1000, 5000, 30_000];
+ const FRAME_BYTES = 512 * 4;
+ /** A change of the default output comes with others (the old one goes, the new one is set up): parec starts again once they settle (ms). */
+ const SWITCH_MS = 500;
++/** `pactl info` that hasn't answered in this long can't tell (ms). */
++const INFO_MS = 2000;
++/** pactl's words are translated: it's always read in English. */
++const PACTL_ENV = (): NodeJS.ProcessEnv => ({ ...process.env, LC_ALL: "C" });
++
++type Spawn = (cmd: string, args: string[], o: { stdio: ["ignore", "pipe", "ignore"]; env?: NodeJS.ProcessEnv }) => ChildProcess;
+ 
+ export class SpeakerMonitor {
+   private child: ChildProcess | null = null;
+@@ -24,11 +31,13 @@ export class SpeakerMonitor {
+   private watcher: ChildProcess | null = null;
+   private switchTimer: NodeJS.Timeout | undefined;
+   private replaced: ChildProcess | null = null;
++  /** The default output when parec's current run started (the one it monitors); null: unknown. */
++  private sink: string | null = null;
+ 
+   constructor(
+     private onFrame: (frame: Float32Array) => void,
+     private onState: (on: boolean, reason?: string) => void,
+-    private spawn: (cmd: string, args: string[], o: { stdio: ["ignore", "pipe", "ignore"] }) => ChildProcess = nodeSpawn,
++    private spawn: Spawn = nodeSpawn,
+   ) {}
+ 
+   start(): void {
+@@ -49,7 +58,12 @@ export class SpeakerMonitor {
+       if (this.startedAt && Date.now() - this.startedAt > 60_000) this.failures = 0; // it had been running fine
+       this.retry = setTimeout(() => this.start(), RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]);
+     };
+-    p.once("spawn", () => { this.startedAt = Date.now(); this.onState(true); });
++    this.sink = null;
++    p.once("spawn", () => {
++      this.startedAt = Date.now();
++      this.onState(true);
++      void this.defaultSink().then(sink => { if (this.child === p) this.sink = sink; });
++    });
+     p.once("error", (err: NodeJS.ErrnoException) => end(err.code === "ENOENT" ? "parec isn't installed (pulseaudio-utils)" : err.message, err.code !== "ENOENT"));
+     p.once("exit", (code, signal) => end(`parec stopped (${signal ?? `exit ${code}`})`, true));
+     let rest: Buffer = Buffer.alloc(0);
+@@ -78,7 +92,7 @@ export class SpeakerMonitor {
+    */
+   private watchDefaults(): void {
+     if (this.watcher) return;
+-    const w = this.spawn("pactl", ["subscribe"], { stdio: ["ignore", "pipe", "ignore"] });
++    const w = this.spawn("pactl", ["subscribe"], { stdio: ["ignore", "pipe", "ignore"], env: PACTL_ENV() });
+     this.watcher = w;
+     const gone = () => { if (this.watcher === w) this.watcher = null; };
+     w.once("error", gone);
+@@ -89,17 +103,37 @@ export class SpeakerMonitor {
+       line = lines.pop() ?? "";
+       if (lines.some(l => /^Event 'change' on server\b/.test(l))) {
+         clearTimeout(this.switchTimer);
+-        this.switchTimer = setTimeout(() => this.switchOutput(), SWITCH_MS);
++        this.switchTimer = setTimeout(() => void this.switchOutput(), SWITCH_MS);
+       }
+     });
+   }
+ 
+-  /** The default output (may have) changed: parec starts again at once, so it takes the new default's monitor. */
+-  private switchOutput(): void {
++  /**
++   * The server's defaults changed: if the default output is another one now, parec starts again at once, so it takes the
++   * new default's monitor. A change of something else (the default input, under pipewire-pulse other server settings)
++   * leaves it running, without a gap. Not knowing which output is the default, it starts again, to be sure.
++   */
++  private async switchOutput(): Promise<void> {
+     const p = this.child;
+     if (this.stopped || !p) return;
++    const sink = await this.defaultSink();
++    if (this.stopped || this.child !== p) return;
++    if (sink !== null && sink === this.sink) return;
+     this.replaced = p;
+     p.kill();
+     this.start();
+   }
++
++  /** The default output's name (`pactl info`'s "Default Sink:" line), or null when it can't be told. */
++  private defaultSink(): Promise<string | null> {
++    return new Promise(resolve => {
++      let out = "";
++      const q = this.spawn("pactl", ["info"], { stdio: ["ignore", "pipe", "ignore"], env: PACTL_ENV() });
++      const timer = setTimeout(() => { q.kill(); resolve(null); }, INFO_MS);
++      const done = (sink: string | null) => { clearTimeout(timer); resolve(sink); };
++      q.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
++      q.once("error", () => done(null));
++      q.once("exit", code => done(code === 0 ? /^Default Sink: (.+)$/m.exec(out)?.[1].trim() ?? null : null));
++    });
++  }
+ }
+diff --git a/test/unit/voice-speakers.test.ts b/test/unit/voice-speakers.test.ts
+index e6cefbd..5257c49 100644
+--- a/test/unit/voice-speakers.test.ts
++++ b/test/unit/voice-speakers.test.ts
+@@ -6,20 +6,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { SpeakerMonitor } from "../../app/voice/speakers";
+ import { FrameWatchdog } from "../../app/voice/watchdog";
+ 
+-/** `children`: parec's runs; `watchers`: pactl's (what it is asked is in `watched`). */
++/**
++ * `children`: parec's runs; `watchers`: `pactl subscribe`'s (what it is asked is in `watched`); `infos`: `pactl info`'s,
++ * answered with `answer`. `locales`: the LC_ALL each pactl ran with.
++ */
+ function setup() {
+   type Child = EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> };
+-  const children: Child[] = [], watchers: Child[] = [];
++  const children: Child[] = [], watchers: Child[] = [], infos: Child[] = [];
+   const watched: string[][] = [];
++  const locales: (string | undefined)[] = [];
+   const states: [boolean, string?][] = [];
+   const frames: Float32Array[] = [];
+-  const spawn = (cmd: string, args: string[]) => {
++  const spawn = (cmd: string, args: string[], o: { env?: NodeJS.ProcessEnv }) => {
+     const p = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), kill: vi.fn() });
+-    if (cmd === "pactl") { watchers.push(p); watched.push(args); } else children.push(p);
++    if (cmd === "pactl") locales.push(o.env?.LC_ALL);
++    if (cmd === "pactl" && args[0] === "info") infos.push(p);
++    else if (cmd === "pactl") { watchers.push(p); watched.push(args); } else children.push(p);
+     return p as unknown as ChildProcess;
+   };
+   const monitor = new SpeakerMonitor(f => frames.push(f), (on, reason) => states.push(reason ? [on, reason] : [on]), spawn);
+-  return { monitor, children, watchers, watched, states, frames };
++  /** `pactl info` number `i` answers with `sink` as the default output (null: it fails). */
++  const answer = async (i: number, sink: string | null) => {
++    if (sink === null) infos[i].emit("exit", 1, null);
++    else { infos[i].stdout.emit("data", Buffer.from(`Server String: /run/user/1000/pulse/native\nDefault Sink: ${sink}\nDefault Source: alsa_input.pci-0000_00_1f.3.analog-stereo\n`)); infos[i].emit("exit", 0, null); }
++    await vi.advanceTimersByTimeAsync(0);
++  };
++  return { monitor, children, watchers, watched, infos, locales, answer, states, frames };
+ }
+ 
+ beforeEach(() => vi.useFakeTimers());
+@@ -71,29 +83,69 @@ describe("speakers' stream", () => {
+     expect(s.states).toEqual([[false, "parec isn't installed (pulseaudio-utils)"]]);
+   });
+ 
+-  it("starts parec again on the new default output when it changes (headphones, a Bluetooth speaker) (review #260)", () => {
++  it("starts parec again on the new default output when it changes (headphones, a Bluetooth speaker) (review #260)", async () => {
+     const s = setup();
+     s.monitor.start();
+     s.children[0].emit("spawn");
+     expect(s.watched).toEqual([["subscribe"]]);
++    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo"); // the output parec took
+     s.watchers[0].stdout.emit("data", Buffer.from("Event 'new' on sink-input #12\nEvent 'change' on sink #1\n"));
+-    vi.advanceTimersByTime(1000);
+-    expect(s.children).toHaveLength(1); // something played: the default output is the same
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(s.infos).toHaveLength(1); // something played: nothing to ask
+     s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on ser"));
+     s.watchers[0].stdout.emit("data", Buffer.from("ver #4294967295\n"));
+-    vi.advanceTimersByTime(499);
++    await vi.advanceTimersByTimeAsync(499);
++    expect(s.infos).toHaveLength(1);
++    await vi.advanceTimersByTimeAsync(1);
++    expect(s.infos).toHaveLength(2);
+     expect(s.children[0].kill).not.toHaveBeenCalled();
+-    vi.advanceTimersByTime(1);
++    await s.answer(1, "bluez_sink.00_1B_66_A1_B2_C3.a2dp_sink");
+     expect(s.children[0].kill).toHaveBeenCalled();
+     expect(s.children).toHaveLength(2); // at once, on the new default's monitor
+     s.children[0].emit("exit", null, "SIGTERM");
+     s.children[1].emit("spawn");
+     expect(s.states).toEqual([[true], [true]]); // never reported off meanwhile
+-    vi.advanceTimersByTime(60_000);
++    await vi.advanceTimersByTimeAsync(60_000);
+     expect(s.children).toHaveLength(2); // nor started again after the old one's end
+     expect(s.watchers).toHaveLength(1);
+   });
+ 
++  it("leaves parec running when the server changed but the default output didn't (the default input, a server setting) (review #260)", async () => {
++    const s = setup();
++    s.monitor.start();
++    s.children[0].emit("spawn");
++    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
++    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
++    await vi.advanceTimersByTimeAsync(500);
++    await s.answer(1, "alsa_output.pci-0000_00_1f.3.analog-stereo");
++    expect(s.children[0].kill).not.toHaveBeenCalled();
++    expect(s.children).toHaveLength(1);
++    // The output does change later: compared with the one parec still monitors.
++    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
++    await vi.advanceTimersByTimeAsync(500);
++    await s.answer(2, "alsa_output.usb-Logitech_Headset-00.analog-stereo");
++    expect(s.children).toHaveLength(2);
++  });
++
++  it("starts parec again when it can't tell which output is the default (review #260)", async () => {
++    const s = setup();
++    s.monitor.start();
++    s.children[0].emit("spawn");
++    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
++    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
++    await vi.advanceTimersByTimeAsync(500);
++    await s.answer(1, null);
++    expect(s.children).toHaveLength(2);
++  });
++
++  it("reads pactl in English, whatever the user's language (its words are translated) (review #260)", async () => {
++    const s = setup();
++    s.monitor.start();
++    s.children[0].emit("spawn");
++    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
++    expect(s.locales).toEqual(["C", "C"]);
++  });
++
+   it("stop() ends it for good", () => {
+     const s = setup();
+     s.monitor.start();

@@ -1,0 +1,345 @@
+diff --git a/app/main/agent/auth.ts b/app/main/agent/auth.ts
+index e100e02..5bc1a9d 100644
+--- a/app/main/agent/auth.ts
++++ b/app/main/agent/auth.ts
+@@ -19,6 +19,8 @@ export interface SecretBox {
+   isEncryptionAvailable(): boolean;
+   encryptString(s: string): Buffer;
+   decryptString(b: Buffer): string;
++  /** Electron's asynchronous read: the keyring's key is fetched off the main process's thread (macOS's keychain prompt). */
++  decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
+   /** "basic_text" means no keyring: nothing secret should be written to disk. */
+   getSelectedStorageBackend?(): string;
+ }
+@@ -34,8 +36,11 @@ export class TokenStore {
+    */
+   unreadable = false;
+ 
+-  /** `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate). */
+-  constructor(private file: string, private box: SecretBox, private opts: { version?: string } = {}) {}
++  /**
++   * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
++   * `asyncDecrypt` (macOS): load() opens it with decryptStringAsync, so the keychain prompt holds no main thread.
++   */
++  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncDecrypt?: boolean } = {}) {}
+ 
+   /** Whether a token can be kept across restarts on this machine. */
+   canPersist(): boolean {
+@@ -74,7 +79,7 @@ export class TokenStore {
+     } catch { /* only the keychain words come once more */ }
+   }
+ 
+-  load(): string | null {
++  async load(): Promise<string | null> {
+     let raw: Buffer;
+     try {
+       raw = fs.readFileSync(this.file);
+@@ -83,7 +88,9 @@ export class TokenStore {
+       return null; // none saved
+     }
+     try {
+-      const t = this.box.decryptString(raw);
++      // Sealed by encryptString, opened by decryptStringAsync on macOS: the same keychain key, so shouldReEncrypt is
++      // false and the file is left as it is (darwin-system checks both on a real Mac).
++      const t = this.opts.asyncDecrypt && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
+       this.unreadable = false;
+       this.stamp();
+       return isUsableToken(t) ? t : null;
+@@ -145,7 +152,7 @@ export async function resolveToken(
+   env: NodeJS.ProcessEnv = process.env,
+   gh: (() => Promise<string | null>) | GhCliOptions = {},
+ ): Promise<ResolvedToken | null> {
+-  const stored = store?.load();
++  const stored = await store?.load();
+   if (stored) return { token: stored, source: "stored" };
+   for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
+     if (isUsableToken(env[name])) return { token: env[name]!.trim(), source: "environment" };
+diff --git a/app/main/main.ts b/app/main/main.ts
+index 3d37151..95e320d 100644
+--- a/app/main/main.ts
++++ b/app/main/main.ts
+@@ -1302,7 +1302,8 @@ function start(): void {
+     }
+ 
+     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
+-    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion() });
++    // On macOS the saved sign-in is opened asynchronously: the keychain prompt after an update holds no main thread.
++    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncDecrypt: platform.os === "darwin" });
+     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
+     let adminKey: string | undefined;
+     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
+@@ -1563,9 +1564,9 @@ function start(): void {
+       if (brainStarted || !consented()) return;
+       brainStarted = true;
+       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
+-      // ad-hoc-signed Ember), and the read holds the main process until that is answered: Ember's windows come up
+-      // first, and its status says what the prompt is for (review #241). Only on the first start of a new version:
+-      // other starts read at once, without the keychain words.
++      // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
++      // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
++      // without the keychain words.
+       const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
+       if (keychain) {
+         setStatus("keychain", "Reading your saved sign-in from the keychain…");
+diff --git a/test/integration/darwin-system.test.ts b/test/integration/darwin-system.test.ts
+index e366b62..c4f2444 100644
+--- a/test/integration/darwin-system.test.ts
++++ b/test/integration/darwin-system.test.ts
+@@ -97,20 +97,67 @@ app.whenReady().then(async () => {
+ });
+ `;
+ 
++/**
++ * The keychain child (review #241): seals a sign-in with safeStorage.encryptString, as TokenStore.save does, and opens
++ * it with decryptStringAsync, as TokenStore.load does on macOS (so the keychain prompt after an update holds no main
++ * thread), directly and through TokenStore itself. It prints "EMBER_RESULT <json>" and quits. It adds an
++ * "ember-darwin-system-keychain Safe Storage" item to the login keychain.
++ */
++const KEYCHAIN_CHILD = `
++import { app, safeStorage } from "electron";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { TokenStore } from "./app/main/agent/auth";
++
++app.whenReady().then(async () => {
++  const out: Record<string, unknown> = {};
++  try {
++    out.available = safeStorage.isEncryptionAvailable();
++    out.asyncAvailable = await safeStorage.isAsyncEncryptionAvailable();
++    const opened = await safeStorage.decryptStringAsync(safeStorage.encryptString("gho_EmberKeychainCheck1"));
++    out.result = opened.result;
++    out.shouldReEncrypt = opened.shouldReEncrypt;
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-keychain-"));
++    try {
++      const store = new TokenStore(path.join(dir, "github-token.bin"), safeStorage, { version: "0.0.0-test", asyncDecrypt: true });
++      out.saved = store.save("gho_EmberKeychainCheck2");
++      out.loaded = await store.load();
++      out.unreadable = store.unreadable;
++    } finally {
++      fs.rmSync(dir, { recursive: true, force: true });
++    }
++  } catch (err) {
++    out.error = String(err);
++  }
++  process.stdout.write("EMBER_RESULT " + JSON.stringify(out) + "\\n");
++  app.exit(0);
++});
++`;
++
++/** What the keychain child reports (see KEYCHAIN_CHILD). */
++interface KeychainReport {
++  available?: boolean; asyncAvailable?: boolean; result?: string; shouldReEncrypt?: boolean;
++  saved?: boolean; loaded?: string | null; unreadable?: boolean; error?: string;
++}
++
+ /** The Electron binary the electron package installed (its main export is the path). */
+ const electronBinary = () => createRequire(import.meta.url)("electron") as unknown as string;
+ 
+-/** Builds CHILD into .cache/test (so it loads koffi from the repository's node_modules) and runs it under Electron. */
+-async function runChild(): Promise<ChildReport> {
+-  const dir = path.join(root, ".cache", "test", "darwin-system-electron");
++/**
++ * Builds a child (CHILD by default) into .cache/test/<folder> (so it loads koffi from the repository's node_modules)
++ * and runs it under Electron as the app `name`.
++ */
++async function runChild<R = ChildReport>(source = CHILD, folder = "darwin-system-electron", name = "ember-darwin-system-test"): Promise<R> {
++  const dir = path.join(root, ".cache", "test", folder);
+   fs.mkdirSync(dir, { recursive: true });
+   buildSync({
+-    stdin: { contents: CHILD, loader: "ts", resolveDir: root, sourcefile: "darwin-system-child.ts" },
++    stdin: { contents: source, loader: "ts", resolveDir: root, sourcefile: `${folder}-child.ts` },
+     bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "koffi"], outfile: path.join(dir, "main.cjs"), logLevel: "silent",
+   });
+-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-darwin-system-test", main: "main.cjs" }));
++  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, main: "main.cjs" }));
+   const electron = electronBinary();
+-  return new Promise<ChildReport>((resolve, reject) => {
++  return new Promise<R>((resolve, reject) => {
+     // ELECTRON_RUN_AS_NODE from the caller would start a plain Node instead of the app.
+     const child = spawn(electron, [dir], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0", ELECTRON_RUN_AS_NODE: undefined } });
+     let stdout = "", stderr = "";
+@@ -122,7 +169,7 @@ async function runChild(): Promise<ChildReport> {
+       const line = stdout.split("\n").find(l => l.startsWith("EMBER_RESULT "));
+       if (!line) return reject(new Error(`Electron exited ${code} without a report\n${stderr}`));
+       if (stderr.trim()) console.log(`Electron child's stderr:\n${stderr}`);
+-      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as ChildReport);
++      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as R);
+     });
+   });
+ }
+@@ -255,6 +302,17 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
+     }
+   }, 40_000);
+ 
++  // Writes an item to the login keychain: only where asked for, as CI does.
++  it.runIf(required)("opens a sign-in sealed with encryptString through decryptStringAsync, as TokenStore does on macOS (review #241)", async () => {
++    const r = await runChild<KeychainReport>(KEYCHAIN_CHILD, "darwin-system-keychain", "ember-darwin-system-keychain");
++    console.log(`keychain child: ${JSON.stringify(r)}`);
++    expect(r.error).toBeUndefined();
++    expect({ available: r.available, asyncAvailable: r.asyncAvailable }).toEqual({ available: true, asyncAvailable: true });
++    // The same key either way: a token TokenStore.save sealed opens, and needn't be sealed again.
++    expect({ result: r.result, shouldReEncrypt: r.shouldReEncrypt }).toEqual({ result: "gho_EmberKeychainCheck1", shouldReEncrypt: false });
++    expect({ saved: r.saved, loaded: r.loaded, unreadable: r.unreadable }).toEqual({ saved: true, loaded: "gho_EmberKeychainCheck2", unreadable: false });
++  }, 90_000);
++
+   describe("inside Electron", () => {
+     let report: ChildReport | null = null;
+     let missing = "";
+@@ -266,7 +324,7 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
+         if (required) throw new Error(missing);
+         return;
+       }
+-      report = await runChild();
++      report = await runChild<ChildReport>();
+       console.log(`Electron child: ${JSON.stringify(report)}`);
+       // On a developer's Mac the grant belongs to whichever app started the run (Terminal, an editor): skip without it.
+       if (report.screenAccess !== "granted") missing = `Screen Recording is ${report.screenAccess} for the app that started this run`;
+diff --git a/test/unit/auth-save.test.ts b/test/unit/auth-save.test.ts
+index 78a9495..c628eeb 100644
+--- a/test/unit/auth-save.test.ts
++++ b/test/unit/auth-save.test.ts
+@@ -20,11 +20,11 @@ const box = (over: Partial<SecretBox> = {}): SecretBox => ({
+ });
+ 
+ describe("TokenStore.save", () => {
+-  it("keeps the token when the keyring works (as before)", () => {
++  it("keeps the token when the keyring works (as before)", async () => {
+     const f = file();
+     const store = new TokenStore(f, box());
+     expect(store.save("gho_abc")).toBe(true);
+-    expect(store.load()).toBe("gho_abc");
++    expect(await store.load()).toBe("gho_abc");
+   });
+ 
+   it("answers false, writing nothing, when the keyring refuses (macOS: the Keychain prompt answered Deny)", () => {
+@@ -41,37 +41,37 @@ describe("TokenStore.save", () => {
+ });
+ 
+ describe("TokenStore.load when the keyring refuses (review #241)", () => {
+-  it("tells a saved sign-in the keyring wouldn't open apart from none at all", () => {
++  it("tells a saved sign-in the keyring wouldn't open apart from none at all", async () => {
+     const f = file();
+     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+     // macOS's keychain prompt answered Deny (or Cancel) after an update: decryptString throws.
+     const refused = new TokenStore(f, box({ decryptString: () => { throw new Error("Error while decrypting the ciphertext provided to safeStorage.decryptString."); } }));
+     expect(refused.hasSaved()).toBe(true);
+-    expect(refused.load()).toBeNull();
++    expect(await refused.load()).toBeNull();
+     expect(refused.unreadable).toBe(true);
+     // Allowed the next time: readable again.
+     const allowed = new TokenStore(f, box());
+-    expect(allowed.load()).toBe("gho_abc");
++    expect(await allowed.load()).toBe("gho_abc");
+     expect(allowed.unreadable).toBe(false);
+     // Nothing saved: not "unreadable".
+     const none = new TokenStore(file(), box({ decryptString: () => { throw new Error("never asked"); } }));
+     expect(none.hasSaved()).toBe(false);
+-    expect(none.load()).toBeNull();
++    expect(await none.load()).toBeNull();
+     expect(none.unreadable).toBe(false);
+   });
+ 
+-  it("forgets the refusal once the user signs in again or out", () => {
++  it("forgets the refusal once the user signs in again or out", async () => {
+     const f = file();
+     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+     let deny = true;
+     const store = new TokenStore(f, box({ decryptString: b => { if (deny) throw new Error("denied"); return b.toString().replace(/^sealed:/, ""); } }));
+-    store.load();
++    await store.load();
+     expect(store.unreadable).toBe(true);
+     deny = false;
+     expect(store.save("gho_def")).toBe(true);
+     expect(store.unreadable).toBe(false);
+     deny = true;
+-    store.load();
++    await store.load();
+     store.clear();
+     expect(store.unreadable).toBe(false);
+     expect(store.hasSaved()).toBe(false);
+@@ -94,17 +94,51 @@ describe("TokenStore.load when the keyring refuses (review #241)", () => {
+   });
+ });
+ 
++describe("TokenStore.load on macOS, off the main thread (review #241)", () => {
++  /** The keyring's synchronous decryptString may not be asked: it would hold Ember while macOS's keychain prompt is open. */
++  const asyncBox = (decryptStringAsync: SecretBox["decryptStringAsync"]) => box({ decryptString: () => { throw new Error("decryptString held the main process"); }, decryptStringAsync });
++
++  it("opens the saved sign-in with decryptStringAsync when asked to (main does on macOS)", async () => {
++    const f = file();
++    expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
++    const seen: string[] = [];
++    const store = new TokenStore(f, asyncBox(async b => { seen.push(b.toString()); return { result: b.toString().replace(/^sealed:/, ""), shouldReEncrypt: false }; }), { asyncDecrypt: true, version: "1.0.0" });
++    expect(await store.load()).toBe("gho_abc");
++    expect(seen).toEqual(["sealed:gho_abc"]);
++    expect(store.unreadable).toBe(false);
++    expect(store.firstReadSinceUpdate()).toBe(false);
++    expect(await resolveToken(store, {}, async () => null)).toEqual({ token: "gho_abc", source: "stored" });
++  });
++
++  it("tells a refusal (the keychain prompt answered Deny) apart, and keeps the file", async () => {
++    const f = file();
++    expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
++    const refused = new TokenStore(f, asyncBox(async () => { throw new Error("Error while decrypting the ciphertext provided to safeStorage.decryptStringAsync."); }), { asyncDecrypt: true });
++    expect(await refused.load()).toBeNull();
++    expect(refused.unreadable).toBe(true);
++    expect(fs.existsSync(f)).toBe(true);
++  });
++
++  it("reads as before where it isn't asked to (Linux, Windows, the doctor) or the keyring has no asynchronous read", async () => {
++    const f = file();
++    expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
++    const neverAsync = box({ decryptStringAsync: async () => { throw new Error("asked the asynchronous read"); } });
++    expect(await new TokenStore(f, neverAsync).load()).toBe("gho_abc");
++    expect(await new TokenStore(f, box(), { asyncDecrypt: true }).load()).toBe("gho_abc");
++  });
++});
++
+ describe("TokenStore.firstReadSinceUpdate (review #241)", () => {
+   const stamp = (f: string) => path.join(path.dirname(f), "token-read-version");
+ 
+-  it("is true only until this version of Ember has read the saved sign-in: the keychain asks after an update, not every start", () => {
++  it("is true only until this version of Ember has read the saved sign-in: the keychain asks after an update, not every start", async () => {
+     const f = file();
+     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+     // Saved by an earlier Ember that kept no stamp: the first read of this version may ask.
+     fs.rmSync(stamp(f), { force: true });
+     const v1 = new TokenStore(f, box(), { version: "1.0.0" });
+     expect(v1.firstReadSinceUpdate()).toBe(true);
+-    expect(v1.load()).toBe("gho_abc");
++    expect(await v1.load()).toBe("gho_abc");
+     expect(fs.readFileSync(stamp(f), "utf8")).toBe("1.0.0");
+     expect(v1.firstReadSinceUpdate()).toBe(false);
+     // The next start of the same version: no pause, no keychain words.
+@@ -113,18 +147,18 @@ describe("TokenStore.firstReadSinceUpdate (review #241)", () => {
+     expect(new TokenStore(f, box(), { version: "1.1.0" }).firstReadSinceUpdate()).toBe(true);
+   });
+ 
+-  it("stays true after a refused read, and is false with nothing saved", () => {
++  it("stays true after a refused read, and is false with nothing saved", async () => {
+     const f = file();
+     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+     fs.rmSync(stamp(f), { force: true });
+     const refused = new TokenStore(f, box({ decryptString: () => { throw new Error("denied"); } }), { version: "1.0.0" });
+-    expect(refused.load()).toBeNull();
++    expect(await refused.load()).toBeNull();
+     expect(refused.firstReadSinceUpdate()).toBe(true);
+     expect(fs.existsSync(stamp(f))).toBe(false);
+     expect(new TokenStore(file(), box(), { version: "1.0.0" }).firstReadSinceUpdate()).toBe(false);
+   });
+ 
+-  it("is stamped by a sign-in this version saved (the keychain let it in), and asks no stamp of a store without a version", () => {
++  it("is stamped by a sign-in this version saved (the keychain let it in), and asks no stamp of a store without a version", async () => {
+     const f = file();
+     const store = new TokenStore(f, box(), { version: "2.0.0" });
+     expect(store.save("gho_abc")).toBe(true);
+@@ -133,7 +167,7 @@ describe("TokenStore.firstReadSinceUpdate (review #241)", () => {
+     const g = file();
+     const doctor = new TokenStore(g, box());
+     expect(doctor.save("gho_abc")).toBe(true);
+-    expect(doctor.load()).toBe("gho_abc");
++    expect(await doctor.load()).toBe("gho_abc");
+     expect(fs.existsSync(stamp(g))).toBe(false);
+     expect(doctor.firstReadSinceUpdate()).toBe(true);
+   });
