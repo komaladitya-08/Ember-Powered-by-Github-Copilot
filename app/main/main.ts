@@ -1009,10 +1009,12 @@ function start(): void {
       const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal, onBlip: err => log.warn("auth.poll_blip", { err }) });
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
-      const kept = tokens?.save(token) ?? false;
-      if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
+      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
+      const kept = tokens?.saveResult(token) ?? "no-keyring";
+      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       currentToken = token;
-      await connected(await agent?.start(token, "stored"), kept ? undefined : `Signed in. ${sys.words.keyringMissing}, so you'll need to sign in again next time.`);
+      const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
+      await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }

@@ -297,10 +297,34 @@ function proxyNote(p?: { url: string | null; socks?: string }): string {
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models)/;
 
-/** Why a start failed, in the order explainStartError judges it. */
-export function startErrorReason(err: unknown, ctx: { online?: boolean } = {}): AgentReason {
+/**
+ * The runtime can't start: starting it failed ("spawn … ENOENT"), the SDK didn't find it, or a file error names the
+ * runtime's own path (`runtime`). Any other file error is about a file of Ember's (fileTrouble).
+ */
+function runtimeMissing(msg: string, runtime?: string): boolean {
+  return /not found at|spawn /i.test(msg) || (!!runtime && /\b(ENOENT|EACCES|EPERM)\b/.test(msg) && msg.includes(runtime));
+}
+
+/** A file Ember needs couldn't be used (not the runtime's): why, in a sentence naming the file; null for other errors. */
+function fileTrouble(msg: string): string | null {
+  const code = /\b(ENOENT|EACCES|EPERM|EBUSY|ENOSPC|EDQUOT|EROFS)\b/.exec(msg)?.[1];
+  if (!code) return null;
+  const file = /'([^']+)'/.exec(msg)?.[1];
+  const it = file ?? "one of its files";
+  switch (code) {
+    case "ENOSPC": case "EDQUOT": return `Ember couldn't save ${it}: the disk (or your storage quota) is full. Free some space, then press Check again.`;
+    case "EROFS": return `Ember couldn't save ${it}: the disk is read-only. Ask IT to check Ember's data folder, then press Check again.`;
+    case "EACCES": case "EPERM": return `Ember isn't allowed to use ${it}. Check that its folder belongs to you, then press Check again.`;
+    case "EBUSY": return `${file ?? "One of Ember's files"} is in use by another program. Close it, then press Check again.`;
+    default: return `Ember couldn't find ${it}. Press Check again; if it keeps happening, restart Ember.`;
+  }
+}
+
+/** Why a start failed, in the order explainStartError judges it. `runtime`: the runtime's path (a file error naming it is its). */
+export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?: string } = {}): AgentReason {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "runtime";
+  if (runtimeMissing(msg, ctx.runtime)) return "runtime";
+  if (fileTrouble(msg)) return "other";
   if (NO_MODEL.test(msg)) return "models";
   if (ctx.online === false || NETWORK.test(msg) || /certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "network";
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "runtime";
@@ -341,10 +365,12 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
  * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
  * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
  */
-export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string } = {}): string {
+export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string; runtime?: string } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
+  if (runtimeMissing(msg, ctx.runtime)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
+  const files = fileTrouble(msg);
+  if (files) return files;
   if (NO_MODEL.test(msg)) return msg;
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
@@ -1111,7 +1137,7 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall };
+      const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
       await this.doStop();
       // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the

@@ -48,18 +48,34 @@ export class TokenStore {
 
   /**
    * Keeps the token encrypted; false when it can't be kept (no keyring, or the keyring refused: macOS's Keychain
-   * prompt answered "Deny" makes encryptString throw), so sign-in carries on with "sign in again next time".
+   * prompt answered "Deny" makes encryptString throw; or the file can't be written: a full, read-only or missing
+   * folder), so sign-in carries on with "sign in again next time". Never throws.
    */
   save(token: string): boolean {
-    if (!this.canPersist()) return false;
+    return this.saveResult(token) === "kept";
+  }
+
+  /**
+   * save(), saying why a token wasn't kept: "no-keyring" (nothing secret may go to disk, or the keyring refused) or
+   * "write-failed". The file is written whole or not at all (a temporary file renamed over it), owner-only.
+   */
+  saveResult(token: string): "kept" | "no-keyring" | "write-failed" {
+    if (!this.canPersist()) return "no-keyring";
     let sealed: Buffer;
     try {
       sealed = this.box.encryptString(token);
     } catch {
-      return false;
+      return "no-keyring";
     }
-    fs.writeFileSync(this.file, sealed, { mode: 0o600 });
-    return true;
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmp, sealed, { mode: 0o600 });
+      fs.renameSync(tmp, this.file);
+      return "kept";
+    } catch {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
+      return "write-failed";
+    }
   }
 
   clear(): void {
