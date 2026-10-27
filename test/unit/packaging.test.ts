@@ -603,6 +603,61 @@ describe("staging in CI", () => {
   });
 });
 
+describe("the SSH, WSL and commands workflow, remote.yml (review #38)", () => {
+  const wf = fs.readFileSync(path.resolve(".github/workflows/remote.yml"), "utf8");
+  const on = wf.slice(wf.indexOf("\non:\n"), wf.indexOf("\npermissions:"));
+  /** A job's text, from its key to the next job's. */
+  const job = (name: string) => {
+    const start = wf.indexOf(`\n  ${name}:\n`);
+    expect(start, name).toBeGreaterThan(0);
+    const next = wf.slice(start + 1).search(/\n {2}[\w-]+:\n/);
+    return next < 0 ? wf.slice(start) : wf.slice(start, start + 1 + next);
+  };
+  const jobs = [...wf.slice(wf.indexOf("\njobs:\n")).matchAll(/^ {2}([\w-]+):$/gm)].map(m => m[1]);
+
+  it("runs on pull requests and pushes to main that touch SSH, WSL or commands code, and on every release tag", () => {
+    expect(on).toMatch(/^ {2}pull_request:\n {4}paths:\n/m);
+    expect(on).toMatch(/^ {4}branches: \[main, /m);
+    expect(on).toMatch(/^ {4}tags: \["v\*"\]$/m);
+    // The same paths for pushes and pull requests.
+    for (const p of ["app/main/commands/**", "app/main/remote/**", "app/main/wsl/**", "app/main/targets/**", "app/remote/**", "scripts/package/**", ".github/workflows/remote.yml"]) {
+      expect(on.split(`- "${p}"`).length - 1, p).toBe(2);
+    }
+    expect(jobs.length).toBeGreaterThan(10);
+    // Every job that runs on a push runs on a pull request too; macOS and arm64 (costly) on release tags instead.
+    for (const name of jobs.filter(n => !["ssh-macos", "ssh-linux-arm64"].includes(n))) expect(job(name), name).toContain("github.event_name == 'pull_request'");
+    for (const name of ["ssh-macos", "ssh-linux-arm64"]) expect(job(name), name).toContain("startsWith(github.ref, 'refs/tags/')");
+  });
+
+  it("runs the transport suite with RHEL 8's own OpenSSH client (8.0), as a normal user in rockylinux:8", () => {
+    const el8 = job("ssh-el8-client");
+    expect(el8).toMatch(/container:\n\s+image: rockylinux:8\n/);
+    expect(el8).toContain("openssh-clients openssh-server");
+    expect(el8).toMatch(/sudo -u ci env [\s\S]*EMBER_SSH_TEST=1[\s\S]*node scripts\/run-integration\.mjs test\/integration\/ssh-transport\.test\.ts/);
+    expect(el8).not.toContain("--allow-missing");
+  });
+
+  it("signs in with a password, and keyboard-interactive, through Ember's prompt with both clients", () => {
+    for (const name of ["ssh-linux", "ssh-el8-client"]) {
+      const j = job(name);
+      expect(j, name).toContain('"PasswordAuthentication yes"');
+      expect(j, name).toContain('"EMBER_SSH_TEST_PASSWORD_PORT=2224"');
+      expect(j, name).toContain('echo "::add-mask::$pw"');
+    }
+    const transport = fs.readFileSync(path.resolve("test/integration/ssh-transport.test.ts"), "utf8");
+    expect(transport).toContain("process.env.EMBER_SSH_TEST_PASSWORD_PORT");
+    expect(transport).toMatch(/for \(const method of \["password", "keyboard-interactive"\]\)/);
+  });
+
+  it("installs and runs the agent on a Linux arm64 computer, where the repository has such a runner", () => {
+    const arm = job("ssh-linux-arm64");
+    expect(arm).toContain("runs-on: ${{ vars.EMBER_ARM64_RUNNER || 'ubuntu-24.04-arm' }}");
+    expect(arm).toContain("vars.EMBER_ARM64_RUNNER != 'none'");
+    expect(arm).toContain('test "$(uname -m)" = aarch64');
+    for (const f of ["remote-ssh.test.ts", "remote-e2e.test.ts", "remote-desktop.test.ts"]) expect(arm).toContain(`test/integration/${f}`);
+  });
+});
+
 describe("the Windows and macOS CI jobs", () => {
   const ci = fs.readFileSync(path.resolve(".github/workflows/ci.yml"), "utf8");
   /** A job's text, from its key to the next job's. */

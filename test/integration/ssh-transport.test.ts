@@ -134,6 +134,33 @@ describe.skipIf(!run)("SSH transport against real OpenSSH (ssh-linux)", () => {
     await expect(c.connect(host("nokey", { extra: { configFile: cfg } }), { interactive: false })).rejects.toMatchObject({ kind: "auth" });
   });
 
+  // remote.yml's ssh-linux and ssh-el8-client jobs start an sshd that takes passwords (PasswordAuthentication and
+  // keyboard-interactive, nothing else) for a user of their own with a password made for the run (review #38).
+  const pw = process.env.EMBER_SSH_TEST_PASSWORD_PORT
+    ? { port: Number(process.env.EMBER_SSH_TEST_PASSWORD_PORT), user: process.env.EMBER_SSH_TEST_PASSWORD_USER ?? "", secret: process.env.EMBER_SSH_TEST_PASSWORD ?? "" }
+    : null;
+  it.skipIf(!pw)("asks for a password through the prompt window, by password and keyboard-interactive, and signs in with the answer", async () => {
+    const { port, user: pwUser, secret } = pw!;
+    for (const method of ["password", "keyboard-interactive"]) {
+      const cfg = join(tmp, `config-${method}`);
+      writeFileSync(cfg, `Host pw-${method}\n  HostName 127.0.0.1\n  Port ${port}\n  User ${pwUser}\n  PubkeyAuthentication no\n  IdentityAgent none\n  PreferredAuthentications ${method}\n`);
+      const record = host(`pw-${method}`, { port, resolved: { user: pwUser, hostname: "127.0.0.1", port, jump: [] }, extra: { configFile: cfg } });
+      cards.length = 0;
+      const c = connections({ answer: card => (card.kind === "secret" ? { ok: true, value: secret } : { ok: false }) });
+      await c.uninstall(record);
+      expect(cards.map(x => x.kind), method).toEqual(["secret"]);
+      expect(cards[0]).toMatchObject({ kind: "secret", secret: "password" });
+    }
+    // A wrong answer is an authentication failure, asked once (the config allows one prompt), never retried by Ember.
+    const cfg = join(tmp, "config-wrong-password");
+    writeFileSync(cfg, `Host pw-wrong\n  HostName 127.0.0.1\n  Port ${port}\n  User ${pwUser}\n  PubkeyAuthentication no\n  IdentityAgent none\n  PreferredAuthentications password\n  NumberOfPasswordPrompts 1\n`);
+    cards.length = 0;
+    const wrong = connections({ answer: () => ({ ok: true, value: `${secret}-not` }) });
+    await expect(wrong.uninstall(host("pw-wrong", { port, resolved: { user: pwUser, hostname: "127.0.0.1", port, jump: [] }, extra: { configFile: cfg } })))
+      .rejects.toMatchObject({ kind: "auth" });
+    expect(cards.map(x => x.kind)).toEqual(["secret"]);
+  }, 60_000);
+
   it("goes through the 2223 jump host with the hop hardened as a ProxyCommand", async () => {
     const c = connections();
     await c.uninstall(host("ember-jumped", { resolved: { user, hostname: "127.0.0.1", port: PORT, jump: ["127.0.0.1:2223"] } }));

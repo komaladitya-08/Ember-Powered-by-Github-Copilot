@@ -4,15 +4,67 @@
 # (run-integration.mjs --allow-missing), so every job is green or skipped until its package lands.
 #
 # Each job's owner (named above it) edits only that job's set-up steps; ci.yml is not touched by any SSH/WSL package.
-# Run one job by hand with workflow_dispatch, `only` set to its group (unit, commands, wsl, ssh, macos, wayland).
-# macOS minutes cost ten times Linux's: the macOS job runs only on dispatch (only: all or macos) and once a week.
+# It runs on pull requests and pushes to main that touch SSH, WSL or commands code (the paths below), and on every
+# release tag (paths don't apply to tags). Run one job by hand with workflow_dispatch, `only` set to its group (unit,
+# commands, wsl, ssh, macos, wayland, arm64).
+# macOS minutes cost ten times Linux's: the macOS job runs only on release tags, on dispatch (only: all or macos) and
+# once a week; so does the Linux arm64 job, whose runner (vars.EMBER_ARM64_RUNNER, default ubuntu-24.04-arm) the
+# repository may not have: set that variable to "none" to leave the job out.
 name: remote
 
 on:
   push:
-    branches: ["ember-improve/20261022-sshwsl-*"]
+    branches: [main, "ember-improve/20261022-sshwsl-*"]
+    tags: ["v*"]
+    paths:
+      - "app/main/commands/**"
+      - "app/main/remote/**"
+      - "app/main/wsl/**"
+      - "app/main/targets/**"
+      - "app/main/admin.ts"
+      - "app/remote/**"
+      - "app/askpass/**"
+      - "app/shared/**"
+      - "app/renderer/command/**"
+      - "app/renderer/prompt/**"
+      - "app/preload/command.ts"
+      - "app/preload/prompt.ts"
+      - "sidecar/atspi/**"
+      - "scripts/package/**"
+      - "scripts/build-app.mjs"
+      - "scripts/run-integration.mjs"
+      - "test/integration/commands-*"
+      - "test/integration/remote-*"
+      - "test/integration/ssh-*"
+      - "test/integration/wsl*"
+      - "package-lock.json"
+      - ".github/workflows/remote.yml"
+  pull_request:
+    paths:
+      - "app/main/commands/**"
+      - "app/main/remote/**"
+      - "app/main/wsl/**"
+      - "app/main/targets/**"
+      - "app/main/admin.ts"
+      - "app/remote/**"
+      - "app/askpass/**"
+      - "app/shared/**"
+      - "app/renderer/command/**"
+      - "app/renderer/prompt/**"
+      - "app/preload/command.ts"
+      - "app/preload/prompt.ts"
+      - "sidecar/atspi/**"
+      - "scripts/package/**"
+      - "scripts/build-app.mjs"
+      - "scripts/run-integration.mjs"
+      - "test/integration/commands-*"
+      - "test/integration/remote-*"
+      - "test/integration/ssh-*"
+      - "test/integration/wsl*"
+      - "package-lock.json"
+      - ".github/workflows/remote.yml"
   schedule:
-    # Mondays 04:23 UTC: the macOS job only.
+    # Mondays 04:23 UTC: the macOS and Linux arm64 jobs only.
     - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
@@ -21,9 +73,9 @@ on:
         type: string
         default: ""
       only:
-        description: "Run only one group of jobs (pushes run every group but macOS)"
+        description: "Run only one group of jobs (pushes and pull requests run every group but macOS and arm64)"
         type: choice
-        options: [all, unit, commands, wsl, ssh, macos, wayland]
+        options: [all, unit, commands, wsl, ssh, macos, wayland, arm64]
         default: all
 
 permissions:
@@ -41,11 +93,11 @@ jobs:
   # Owner: S0a. The SSH/WSL unit files (OS-neutral by rule) on Linux and Windows, and on macOS when dispatched.
   unit-matrix:
     name: SSH/WSL unit tests (${{ matrix.os }})
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'unit'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'unit'))
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","windows-2022","macos-15"]' || '["ubuntu-24.04","windows-2022"]') }}
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && '["ubuntu-24.04","windows-2022","macos-15"]' || '["ubuntu-24.04","windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -73,7 +125,7 @@ jobs:
   # Owner: RUN. Local commands on Ubuntu 24.04 (util-linux script with a PTY).
   commands-linux:
     name: Commands on Linux (Ubuntu 24.04)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -102,7 +154,7 @@ jobs:
   # Owner: RUN. Local commands on RHEL 8's util-linux 2.32 (script ends its session at stdin's EOF), as a normal user.
   commands-linux-el8:
     name: Commands on Linux (rockylinux:8, util-linux 2.32)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'commands'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
@@ -141,7 +193,7 @@ jobs:
   # a GTK 3 window under Xvfb and a session bus for the desktop part.
   ssh-linux:
     name: SSH to Linux (sshd on localhost, Ubuntu 24.04)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -182,12 +234,27 @@ jobs:
             "  ProxyJump 127.0.0.1:2223" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
           ssh -o BatchMode=yes -p 2222 127.0.0.1 true
+      - name: A third sshd (127.0.0.1:2224) that takes only passwords, for a user with a password made for this run
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/sshd"
+          pw="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
+          echo "::add-mask::$pw"
+          sudo useradd -m -s /bin/bash embertest
+          echo "embertest:$pw" | sudo chpasswd
+          printf '%s\n' "Port 2224" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd-2224.pid" \
+            "PubkeyAuthentication no" "PasswordAuthentication yes" "KbdInteractiveAuthentication yes" "UsePAM yes" \
+            "AllowUsers embertest" > "$d/sshd-2224.conf"
+          sudo /usr/sbin/sshd -t -f "$d/sshd-2224.conf"
+          sudo /usr/sbin/sshd -f "$d/sshd-2224.conf"
+          ssh-keyscan -p 2224 127.0.0.1 >> ~/.ssh/known_hosts
+          printf '%s\n' "EMBER_SSH_TEST_PASSWORD_PORT=2224" "EMBER_SSH_TEST_PASSWORD_USER=embertest" "EMBER_SSH_TEST_PASSWORD=$pw" >> "$GITHUB_ENV"
       - run: npm install -g npm@11.6.2
       - run: npm ci
       - run: npm run build
       - name: The remote agent's parts (dist/remote-parts), as the suites install them
         run: node scripts/package/remote-parts.mjs
-      - name: Transport (ssh -G, batch and interactive connects, host keys, ProxyJump, ControlMaster) and the agent
+      - name: Transport (ssh -G, batch and interactive connects, host keys, passwords, ProxyJump, ControlMaster) and the agent
         run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
         env:
           EMBER_SSH_TEST: "1"
@@ -207,7 +274,7 @@ jobs:
   # its own address (not loopback) on port 2222.
   ssh-el8:
     name: SSH to RHEL 8 (rockylinux:8 container)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -248,10 +315,83 @@ jobs:
         env:
           EMBER_SSH_TEST: "1"
 
+  # Owner: packaging (review #38). RHEL 8's own OpenSSH 8.0 as the client, which the jobs above never run (they use the
+  # runner's 9.6): its askpass goes through DISPLAY, without SSH_ASKPASS_REQUIRE. The transport suite in a
+  # rockylinux:8 container as a normal user, against sshds in the same container: keys, a jump host, and passwords.
+  ssh-el8-client:
+    name: SSH from RHEL 8's client (OpenSSH 8.0, rockylinux:8)
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: rockylinux:8
+    steps:
+      - name: System packages (OpenSSH 8.0's client and server, build tools, file and binutils for the binary check)
+        run: |
+          dnf -y -q install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3 file binutils \
+            openssh-clients openssh-server
+          useradd -m ci
+          ssh -V
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Rebuild native modules on glibc 2.28 and check every binary (as ci.yml's el8 job does)
+        run: scripts/rebuild-el8.sh --here
+      - run: npm run build
+      - name: The remote agent's parts (dist/remote-parts), as the suite installs them
+        run: node scripts/package/remote-parts.mjs
+      - name: sshds in the container (127.0.0.1:2222, 2223 as a jump host, 2224 with passwords only) and ci's new key
+        run: |
+          set -euo pipefail
+          sudo -u ci sh -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519 \
+            && cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+          d=/etc/ember-ci-sshd && mkdir -p "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_ed25519"
+          # No systemd in the container removes /run/nologin, and pam_nologin refuses every login while it exists.
+          rm -f /run/nologin /etc/nologin
+          for port in 2222 2223; do
+            printf '%s\n' "Port $port" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd-$port.pid" \
+              "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" "ChallengeResponseAuthentication no" \
+              "UsePAM yes" "AllowTcpForwarding yes" > "$d/sshd-$port.conf"
+            /usr/sbin/sshd -t -f "$d/sshd-$port.conf"
+            /usr/sbin/sshd -f "$d/sshd-$port.conf"
+          done
+          pw="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
+          echo "::add-mask::$pw"
+          useradd -m embertest
+          echo "embertest:$pw" | chpasswd
+          printf '%s\n' "Port 2224" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd-2224.pid" \
+            "PubkeyAuthentication no" "PasswordAuthentication yes" "ChallengeResponseAuthentication yes" "UsePAM yes" \
+            "AllowUsers embertest" > "$d/sshd-2224.conf"
+          /usr/sbin/sshd -t -f "$d/sshd-2224.conf"
+          /usr/sbin/sshd -f "$d/sshd-2224.conf"
+          for _ in $(seq 1 20); do sudo -u ci ssh-keyscan -p 2222 127.0.0.1 > /dev/null 2>&1 && break; sleep 1; done
+          sudo -u ci sh -c 'for port in 2222 2223 2224; do ssh-keyscan -p "$port" 127.0.0.1 >> ~/.ssh/known_hosts 2>/dev/null; done'
+          # The aliases ssh-transport.test.ts uses: a shared master connection, and a hop through the jump host.
+          sudo -u ci sh -c 'printf "%s\n" "Host ember-master" "  HostName 127.0.0.1" "  Port 2222" "  ControlMaster auto" \
+            "  ControlPath ~/.ssh/cm-%C" "  ControlPersist 60" "Host ember-jumped" "  HostName 127.0.0.1" "  Port 2222" \
+            "  ProxyJump 127.0.0.1:2223" >> ~/.ssh/config && chmod 600 ~/.ssh/config'
+          sudo -u ci ssh -o BatchMode=yes -p 2222 127.0.0.1 true
+          printf '%s\n' "EMBER_SSH_TEST_PASSWORD_PORT=2224" "EMBER_SSH_TEST_PASSWORD_USER=embertest" "EMBER_SSH_TEST_PASSWORD=$pw" >> "$GITHUB_ENV"
+      - name: Transport with OpenSSH 8.0 (ssh -G, batch and interactive connects, host keys, passwords, ProxyJump, ControlMaster)
+        run: |
+          chown -R ci .
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_SSH_TEST=1 EMBER_TEST_ALLOW_LOOPBACK_SSH=1 \
+            EMBER_SSH_TEST_PASSWORD_PORT="$EMBER_SSH_TEST_PASSWORD_PORT" EMBER_SSH_TEST_PASSWORD_USER="$EMBER_SSH_TEST_PASSWORD_USER" \
+            EMBER_SSH_TEST_PASSWORD="$EMBER_SSH_TEST_PASSWORD" \
+            node scripts/run-integration.mjs test/integration/ssh-transport.test.ts
+
   # Owner: SB. A headless mutter Wayland session with AT-SPI and a GTK test window: the "text" desktop path (L5).
   wayland-remote:
     name: SSH to a Wayland session (headless mutter)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wayland'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wayland'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -303,7 +443,7 @@ jobs:
   # Windows PowerShell commands under the job host; Win32-OpenSSH to the WSL1 sshd.
   wsl-windows:
     name: WSL1, Windows commands and Windows SSH (windows-2022)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
     runs-on: windows-2022
     timeout-minutes: 40
     defaults:
@@ -387,7 +527,7 @@ jobs:
   # Owner: WA. The Store WSL as WSL2 with a non-root default user (critique wsl-12).
   wsl2-windows:
     name: WSL2 (windows-2025)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -444,7 +584,7 @@ jobs:
   # Owner: WB. Records what WSLg looks like on the runner (artefacts only: never pass or fail until it is stable).
   wslg-probe:
     name: WSLg probe (windows-2025, artefacts only)
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -498,10 +638,10 @@ jobs:
           retention-days: 14
 
   # Owner: SB. Commands on macOS (zsh, BSD script) and SSH to the runner's own sshd (commands only on macOS remotes).
-  # Only on dispatch (only: all or macos) and weekly.
+  # Only on release tags, on dispatch (only: all or macos) and weekly.
   ssh-macos:
     name: Commands and SSH on macOS (macos-15)
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'macos'))
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'macos'))
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -539,3 +679,65 @@ jobs:
         run: node scripts/run-integration.mjs --allow-missing test/integration/remote-ssh.test.ts
         env:
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+
+  # Owner: packaging (review #38). A Linux arm64 computer, which Ember supports and ships parts for (Node and koffi for
+  # arm64), reached over SSH: the runner's own sshd, the agent installed and serving, and its desktop child. Only on
+  # release tags, on dispatch (only: all, ssh or arm64) and weekly; vars.EMBER_ARM64_RUNNER names the runner ("none"
+  # leaves the job out where the repository has no arm64 runner).
+  ssh-linux-arm64:
+    name: SSH to Linux arm64 (sshd on localhost)
+    if: >-
+      vars.EMBER_ARM64_RUNNER != 'none' && (github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+      || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ssh' || inputs.only == 'arm64')))
+    runs-on: ${{ vars.EMBER_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: This runner is arm64 (the parts and Node runtime the agent gets follow from it)
+        run: test "$(uname -m)" = aarch64
+      - name: System packages (sshd, Xvfb, a session bus, AT-SPI, GTK 3 for the test window)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q openssh-server xvfb xauth dbus-x11 at-spi2-core python3-gi python3-pyatspi gir1.2-gtk-3.0 \
+            dconf-gsettings-backend dconf-service
+      - name: An sshd of the test's own on 127.0.0.1:2222 with the runner's new key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          d="$RUNNER_TEMP/sshd" && mkdir -p "$d"
+          ssh-keygen -q -t ed25519 -N "" -f "$d/host_ed25519"
+          sudo mkdir -p /run/sshd
+          printf '%s\n' "Port 2222" "ListenAddress 127.0.0.1" "HostKey $d/host_ed25519" "PidFile $d/sshd.pid" \
+            "AuthorizedKeysFile .ssh/authorized_keys" "PasswordAuthentication no" "KbdInteractiveAuthentication no" \
+            "UsePAM yes" > "$d/sshd.conf"
+          sudo /usr/sbin/sshd -t -f "$d/sshd.conf"
+          sudo /usr/sbin/sshd -f "$d/sshd.conf"
+          ssh-keyscan -p 2222 127.0.0.1 >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -p 2222 127.0.0.1 true
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run build
+      - name: The remote agent's parts (dist/remote-parts), as the suites install them
+        run: node scripts/package/remote-parts.mjs
+      - name: The agent on an arm64 remote (the arm64 Node runtime downloaded and its parts uploaded, serve, commands)
+        run: node scripts/run-integration.mjs test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+      - name: The remote desktop child on arm64 against Xvfb (koffi's arm64 build)
+        run: >-
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"
+          node scripts/run-integration.mjs test/integration/remote-desktop.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+          EMBER_REMOTE_DEV: "1"
