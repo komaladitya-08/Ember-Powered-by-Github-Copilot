@@ -1437,6 +1437,32 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.stop();
   });
 
+  it("words heard where Ember can't tell the user from its speakers are left out of a task's command words (review #252)", async () => {
+    const { host, specs, steered, session, tool } = await withTasks();
+    const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };
+    // A typed answer to a spoken request: only the typed words count for commands.
+    await host.ask("delete the old drafts in Mail", mail, undefined, { voiceUnchecked: true });
+    say("Which account: work or home?");
+    await host.ask("yes please, the work one", mail);
+    await tool("start_task")({ goal: "delete the old drafts in the work account" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ userWords: "delete the old drafts in Mail.\nyes please, the work one", commandWords: "yes please, the work one" });
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    // Spoken alone: no words count for commands.
+    await host.ask("delete the build folder", mail, undefined, { voiceUnchecked: true });
+    await tool("start_task")({ goal: "delete the build folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1]).toMatchObject({ userWords: "delete the build folder", commandWords: "" });
+    for (const t of host.tasks!.list()) host.tasks!.cancel(t.id);
+    // Typed: nothing is left out, so the task has no command words of its own (its userWords count).
+    await host.ask("delete the build folder", mail);
+    await tool("start_task")({ goal: "delete the build folder" });
+    await vi.waitFor(() => expect(specs).toHaveLength(3));
+    expect((specs[2] as { commandWords?: string }).commandWords).toBeUndefined();
+    expect(steered).toEqual([]);
+    await host.stop();
+  });
+
   it("a task started by the user's answer to Ember's question carries the request it answers too; a request of its own doesn't (W10-2)", async () => {
     const { host, specs, session, tool } = await withTasks();
     const say = (text: string) => { session.emit("assistant.message_delta", { deltaContent: text }); session.emit("assistant.message", { content: text }); session.emit("session.idle", {}); };

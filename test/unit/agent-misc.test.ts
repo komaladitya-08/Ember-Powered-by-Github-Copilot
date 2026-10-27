@@ -277,6 +277,28 @@ describe("the user's own words (review round 5)", () => {
     await new Promise(r => setTimeout(r, 50));
     expect(specs[1]).toMatchObject({ goal: "tidy the drafts\n(The user then added: delete them)", userWords: "tidy my drafts\nand delete the drafts" });
   });
+
+  it("words heard where Ember can't tell the user from its speakers stay out of a waiting task's command words (review #252)", async () => {
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const specs: { goal: string; userWords?: string; commandWords?: string }[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, maxRunning: 1,
+      makeWorker: spec => { specs.push(spec); return { run: async () => { await gate; return { success: true, summary: "ok" }; }, dispose: async () => undefined, sessionId: spec.id } as never; },
+    });
+    tm.start("first", { userWords: "do the first thing" });
+    const heard = tm.start("tidy the drafts", { userWords: "tidy my drafts", commandWords: "" });
+    expect(await tm.steer(heard.id, "delete them", "and delete the drafts")).toBe(true);
+    const typed = tm.start("clean up", { userWords: "clean up build/" });
+    expect(await tm.steer(typed.id, "and dist", "and dist/ too", undefined, undefined, "")).toBe(true);
+    release();
+    await vi.waitFor(() => expect(specs).toHaveLength(3));
+    expect(specs[1]).toMatchObject({ userWords: "tidy my drafts\nand delete the drafts", commandWords: "and delete the drafts" });
+    expect(specs[2]).toMatchObject({ userWords: "clean up build/\nand dist/ too", commandWords: "clean up build/" });
+    expect(specs[0].commandWords).toBeUndefined();
+  });
 });
 
 describe("a request the runtime takes but never begins (review round 7)", () => {

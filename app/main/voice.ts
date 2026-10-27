@@ -92,6 +92,8 @@ export class VoiceService {
   private retry: NodeJS.Timeout | null = null;
   private failures = 0;
   private readyAt = 0;
+  /** The current voice process hears the speakers' own stream, so it rejects wake words that come out of them. */
+  private hearsSpeakers = false;
 
   constructor(private o: VoiceOptions) {
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -228,6 +230,7 @@ export class VoiceService {
     this.micLost = false;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
+    this.hearsSpeakers = false;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
       if (this.proc === proc) { this.o.log.warn("voice.exit", { code }); this.restartLater("The voice process stopped."); }
@@ -237,7 +240,7 @@ export class VoiceService {
       if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
       if (m.type === "error") { this.o.log.error("voice.error", { message: m.message }); this.setState("error", m.message); this.teardown(); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
-      if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "monitor") { this.hearsSpeakers = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
         if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
@@ -294,6 +297,14 @@ export class VoiceService {
     const p = this.proc;
     this.proc = null;
     p?.kill();
+  }
+
+  /**
+   * Whether Ember can tell the user's voice from its speakers now: the voice process hears the speakers' stream (Linux
+   * with parec, speaker rejection on). Elsewhere a call, a video or Ember's own voice can say a request (OWNER V1).
+   */
+  get rejectsSpeakers(): boolean {
+    return this.proc !== null && this.hearsSpeakers;
   }
 
   stop(): void {

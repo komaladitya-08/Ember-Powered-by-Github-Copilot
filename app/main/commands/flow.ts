@@ -28,6 +28,7 @@ import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
+import { mentioned } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -48,6 +49,11 @@ export interface CommandFlowContext {
     title: string;
     /** The user's own words only (Worker.commandWords, §3.7): never the goal; "" when none. */
     commandWords: () => string;
+    /**
+     * The task's words when some of them were heard where Ember can't tell the user from its speakers (OWNER V1): they
+     * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
+     */
+    spokenWords?: () => string;
     agreed: () => Agreement[];
     tainted: () => boolean;
     /** Marks the task tainted (command output that reads like instructions, §3.11 step 7); audited. */
@@ -106,6 +112,9 @@ let judge: CommandJudge = CL_JUDGE;
 export function setCommandJudge(j: CommandJudge | null): void {
   judge = j ?? CL_JUDGE;
 }
+
+/** The card's line when the user asked for it by voice where Ember can't tell their voice from the speakers (OWNER V1). */
+export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
 
 /** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
 export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
@@ -656,6 +665,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       reason: others.length ? "It asks first: the user's words also name another computer." : "It asks first: the user's words name a computer Ember doesn't know.",
       armMs: Math.max(d.armMs, 1500),
     };
+  }
+  // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
+  // says so instead of "You didn't ask for this."
+  const spoken = ctx.task.spokenWords?.() ?? "";
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && mentioned(cls.findings, spoken)) {
+    const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
+    if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
+    d = { ...d, unasked: false, says };
   }
   if (d.verdict === "ask" && (others.length || places.length)) {
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];

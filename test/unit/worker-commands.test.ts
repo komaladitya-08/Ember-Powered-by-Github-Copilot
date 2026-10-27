@@ -173,6 +173,21 @@ describe("the command flow hears the user's own words only (critique security-1)
     expect(decided[1].userWords).toBe("push my branch\nand tag it v2");
   });
 
+  it("words heard where Ember can't tell the user from its speakers aren't the flow's words (review #252)", async () => {
+    const decided = recordingJudge();
+    const made = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "push the branch", userWords: "push my branch", commandWords: "" } });
+    (made.w as unknown as { session: unknown }).session = { send: async () => undefined };
+    await run(made.call);
+    expect(decided[0].userWords).toBe("");
+    // A steer heard the same way adds nothing; a typed one (no command words of its own) counts.
+    await made.w.steer("tag it", "and tag it v2", undefined, undefined, "");
+    await run(made.call);
+    expect(decided[1].userWords).toBe("");
+    await made.w.steer("push it", "push feature-x to origin");
+    await run(made.call);
+    expect(decided[2].userWords).toBe("push feature-x to origin");
+  });
+
   it("a task the user steered with words but started without them gets only the steer's words", async () => {
     const decided = recordingJudge();
     const made = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "push the branch" } });

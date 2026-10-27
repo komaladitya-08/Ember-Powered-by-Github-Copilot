@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool,
+  ANNOUNCE_MS, CARD_LINES, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage,
 } from "../../app/main/commands/flow";
@@ -123,6 +123,7 @@ function harness(o: {
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
+  spoken?: string;
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -171,6 +172,7 @@ function harness(o: {
   const ctx: CommandFlowContext = {
     task: {
       id: "t1", title: "Clean the build", commandWords: () => o.words ?? "", agreed: () => [], tainted: () => (o.tainted?.() ?? false) || isTainted,
+      ...(o.spoken !== undefined ? { spokenWords: () => o.spoken ?? "" } : {}),
       taint: why => { isTainted = true; tainted.push(why); }, readFrom: () => o.readFrom ?? [],
     },
     service,
@@ -1158,6 +1160,35 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     const h = harness({ binding: LOCAL, words: "list the files on prod-db", placesNamed: unknown });
     expect((await call(h, { target: "this computer", command: "ls" })).resultType).toBe("success");
     expect(h.asked).toEqual([]);
+  });
+});
+
+describe("words heard where Ember can't tell the user from its speakers (review #252, OWNER V1)", () => {
+  it("never announce: the command asks, and the card says the user asked by voice", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, words: "", spoken: "hey ember delete build/", answers: ["deny"] });
+    const r = await call(h, { target: "this computer", command: "rm -r build" });
+    expect(r.resultType).toBe("denied");
+    expect(h.announced).toEqual([]);
+    expect(h.starts).toEqual([]);
+    const card = (h.asked[0].panel as { card: CommandCard }).card;
+    expect(card.mode).toBe("ask");
+    expect(card.says).toContain(SPOKEN_LINE);
+    expect(card.says).not.toContain("You didn't ask for this.");
+    expect(card.unasked).toBe(false);
+  });
+
+  it("typed words still announce, and a task whose spoken words didn't name it still says the user didn't ask", async () => {
+    setCommandJudge(null);
+    const typed = harness({ binding: LOCAL, words: "delete build/", spoken: "delete build/\nand show me the logs" });
+    await call(typed, { target: "this computer", command: "rm -r build" });
+    expect(typed.asked).toEqual([]);
+    expect(typed.windowAnnounce).toHaveLength(1);
+    const other = harness({ binding: LOCAL, words: "", spoken: "show me the logs", answers: ["deny"] });
+    await call(other, { target: "this computer", command: "rm -r build" });
+    const card = (other.asked[0].panel as { card: CommandCard }).card;
+    expect(card.says).toContain("You didn't ask for this.");
+    expect(card.says).not.toContain(SPOKEN_LINE);
   });
 });
 

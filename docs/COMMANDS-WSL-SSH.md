@@ -162,7 +162,11 @@ and results out loud** on, Ember says it and adds "Say 'Ember, stop' to cancel."
 chord or "Ember, stop" within those 4 seconds cancels it. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
-task that didn't start from your own words always asks. Your words have to ask for it: "delete build/", "please delete
+task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from
+what your speakers play (Linux with speaker rejection on and parec installed): on Windows, on macOS and on Linux
+without it, a call, a video or Ember's own voice could say the same words, so a dangerous command you asked for by
+voice asks ("You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.");
+typed words still count. Your words have to ask for it: "delete build/", "please delete
 build/", "Ember, delete build/" and "can you delete build/?" do; a question ("should I delete build/?", "how do I push
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. Anything broader than what you named asks: a force flag, a

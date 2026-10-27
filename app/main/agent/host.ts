@@ -375,6 +375,8 @@ interface UserRequest {
   screen: string[];
   /** The target the context was read on (QuickContext.targetId; absent: this computer). */
   targetId?: TargetId;
+  /** Heard where Ember can't tell the user from its speakers: never the user's own words for commands (OWNER V1). */
+  voiceUnchecked?: boolean;
 }
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
@@ -460,6 +462,8 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** The user's lines in the transcript that were heard where Ember can't tell the user from its speakers (V1). */
+  private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /**
    * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
    * refused it: a later turn (the user answering how else) isn't held to them again.
@@ -629,10 +633,14 @@ export class AgentHost {
    * `agreed`: Ember's questions in those turns that the user's reply agreed to or answered ("I can delete the old
    * installers. Shall I?" "Sure, go ahead."), the reply within ten minutes; a task's result asking ("Want me to send
    * it?") counts for the reply right after it only. A risky step one of them names is still asked about (PolicyEngine).
+   *
+   * `commandWords`: the same words without those heard where Ember can't tell the user from its speakers (OWNER V1:
+   * a call or a video can say "delete the build folder"), present only when some were left out. Commands hear these.
    */
-  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[] } {
+  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[]; commandWords?: string } {
     if (!r) return {};
     const said = [r.words];
+    const typed = r.voiceUnchecked ? [] : [r.words];
     const agreed: Agreement[] = [];
     const log = this.transcript;
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
@@ -649,9 +657,10 @@ export class AgentHost {
       if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
       if (isRiskyLabel(reply, this.sys.os) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
+      if (!this.voiceUnchecked.has(before)) typed.unshift(said[0]);
       at = k;
     }
-    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}) };
+    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}), ...(typed.length < said.length ? { commandWords: typed.join("\n") } : {}) };
   }
 
   private remember(who: TranscriptEntry["who"], text: string): TranscriptEntry {
@@ -1008,6 +1017,7 @@ export class AgentHost {
           const where = binding ? whereWords(binding) : undefined;
           const t = tasks.start(goal, {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
+            ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}),
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
           });
           if (binding) this.taskBindings.set(t.id, binding);
@@ -1044,7 +1054,7 @@ export class AgentHost {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
-          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed); },
+          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
         } : undefined,
       });
       await this.conductor.start();
@@ -1323,7 +1333,8 @@ export class AgentHost {
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
    * before reading the screen); a Stop since then drops the request instead of sending it.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch): Promise<void> {
+  /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
     if (epoch !== this.stopEpoch) return;
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
@@ -1356,15 +1367,20 @@ export class AgentHost {
       this.presenter.notice({ title, text: why, actions: [{ id: "ui:settings", label: "Open settings" }] });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
-      this.remember("you", text);
+      const asked = this.remember("you", text);
+      if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       this.remember("problem", `${title}: ${why}`);
       return;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
-    this.remember("you", text);
+    const asked = this.remember("you", text);
+    if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
-    const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}) };
+    const request: UserRequest = {
+      target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}),
+    };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
     this.queued.push(request);
