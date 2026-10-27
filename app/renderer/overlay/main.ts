@@ -173,9 +173,14 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
  * The status pill keeps off the control Ember works on: at the top, or at the bottom (above the taskbar or Dock)
  * while the control's ring is under it at the top (an address bar, a ribbon's tabs).
  */
+let statusAt = "";
 function placeStatus(): void {
   if (statusEl.hidden) return;
   const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  // Measured only when something it depends on changed (a streaming answer sends many states).
+  const key = JSON.stringify([statusEl.textContent, f, viewport, bounds, workArea, handleRect]);
+  if (key === statusAt) return;
+  statusAt = key;
   const bottom = pillBottom(bounds, workArea, handleRect);
   const low = !!f && pillSpot({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height },
     { width: statusEl.offsetWidth, height: statusEl.offsetHeight }, viewport, bottom) === "bottom";
@@ -234,8 +239,13 @@ function placeTasks(): void {
  * while its ring is under them, they go to the bottom-left corner, so the user sees what Ember clicks or asks about.
  * True when they moved (and were measured where they are now).
  */
+let cornerAt = "";
 function cornerTasks(): boolean {
   const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  // Measured only when something it depends on changed (a streaming answer sends many states).
+  const key = JSON.stringify([f, tasksKey, viewport, handleRect]);
+  if (key === cornerAt) return false;
+  cornerAt = key;
   let left = false;
   if (f && tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
