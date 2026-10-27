@@ -917,7 +917,7 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
-  /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead (review #139). */
+  /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /** The sign-in to use: the first source whose token Copilot hasn't refused this run. */
   const findToken = () => resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null);
@@ -944,6 +944,8 @@ function start(): void {
     await agent?.forgetConversation();
     tokens?.clear();
     currentToken = null;
+    // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
+    refusedTokens.clear();
     askHistory = [];
     await agent?.start(null);
   }));

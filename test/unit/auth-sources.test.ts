@@ -4,6 +4,8 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 const { execFile } = vi.hoisted(() => ({ execFile: vi.fn() }));
 vi.mock("node:child_process", () => ({ execFile }));
@@ -65,6 +67,19 @@ describe("a refused sign-in", () => {
     expect(r.phase).toBe("error");
     expect(tried).toEqual([ENV_PAT]);
     expect(refused.size).toBe(0);
+  });
+
+  it("is forgotten when the user signs out, so a GitHub CLI sign-in refused before is tried afresh (a new Copilot seat)", async () => {
+    // As main: the GitHub CLI's token was refused (the account had no Copilot then), so looking for a sign-in passes it over.
+    const refused = new Set([GH]);
+    expect(await resolveToken(null, {}, async () => GH, refused)).toBeNull();
+    // main's Sign out forgets the refusals with the sign-in in use, before the next "Connect with GitHub CLI" looks.
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8").replace(/\/\/.*$/gm, "").replace(/\s+/g, " ");
+    const signOut = /ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{(.*?)\}\)\);/.exec(main)?.[1] ?? "";
+    expect(signOut).toContain("currentToken = null;");
+    expect(signOut).toContain("refusedTokens.clear();");
+    refused.clear();
+    expect(await resolveToken(null, {}, async () => GH, refused)).toEqual({ token: GH, source: "github-cli" });
   });
 
   it("names the variable in the message, and how to get past it", () => {
