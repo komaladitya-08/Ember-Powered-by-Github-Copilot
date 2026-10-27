@@ -106,7 +106,9 @@ Ember stops and asks before a command that:
   `env`, `printenv`); reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
   written on the command line;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
-  `brew`, `winget`, `npm install`, `pip install`), services, the registry, the firewall, users and groups,
+  `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
+  `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
+  certificates the computer trusts, users and groups,
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
   hooks;

@@ -4271,6 +4271,7 @@ reg(NATIVE, ["security"], h => {
   if (/^(find-generic-password|find-internet-password|dump-keychain|export|unlock-keychain|add-generic-password|add-internet-password|delete-generic-password|delete-internet-password|find-certificate|import|set-keychain-password|create-keychain|delete-keychain|set-generic-password-partition-list|authorizationdb|export-identities|find-identity)$/.test(verb)) {
     h.e.add("secret", "secret.program", SAYS.secrets);
   }
+  if (/^(add-trusted-cert|remove-trusted-cert|add-certificates|delete-certificate|trust-settings-import)$/.test(verb)) h.e.add("system", "system.security", TRUST_SAYS);
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
@@ -4342,6 +4343,14 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   if (patchFile) h.e.usePath(patchFile, "read", sc);
 });
 reg(NATIVE, ["certutil"], h => {
+  // NSS's certutil (Linux, macOS): a capital letter names its command; adding, changing or deleting a certificate or
+  // key changes what this computer trusts (review #108), and -W changes the store's password.
+  if (h.sc.os !== "win32" && h.sc.family === "posix" && !h.pn.interop) {
+    const cmds = h.args.map(a => a.v ?? "?");
+    if (cmds.includes("-W")) h.e.add("secret", "secret.program", SAYS.secrets);
+    if (cmds.some(c => /^(-[ABDEFGMNST]|--(merge|upgrade-merge|rename))$/.test(c))) h.e.add("system", "system.security", TRUST_SAYS);
+    return;
+  }
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
@@ -4578,17 +4587,9 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
   }
   if ((h.key === "gdb" || h.key === "lldb") && !h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
 });
-reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapon", "swapoff", "mountvol", "bcdedit", "bcdboot", "csrutil", "kextload", "kextunload", "kmutil", "nvram", "hdiutil", "fsutil", "sfc", "chkdsk", "defrag", "powercfg", "w32tm", "label", "subst", "dmsetup", "zfs", "btrfs", "lvcreate", "lvextend", "vgcreate", "pvcreate", "tune2fs", "e2fsck", "fsck", "xfs_repair", "update-grub", "grub-install", "grub2-mkconfig", "dracut", "mkinitcpio", "update-initramfs", "depmod", "sysctl", "setcap", "systemd-tmpfiles", "ldconfig", "update-alternatives", "alternatives", "gsettings", "dconf", "defaults"], h => {
+reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapon", "swapoff", "mountvol", "bcdedit", "bcdboot", "csrutil", "kextload", "kextunload", "kmutil", "nvram", "hdiutil", "fsutil", "sfc", "chkdsk", "defrag", "powercfg", "w32tm", "label", "subst", "dmsetup", "zfs", "btrfs", "lvcreate", "lvextend", "vgcreate", "pvcreate", "tune2fs", "e2fsck", "fsck", "xfs_repair", "update-grub", "grub-install", "grub2-mkconfig", "dracut", "mkinitcpio", "update-initramfs", "depmod", "sysctl", "setcap", "systemd-tmpfiles", "ldconfig", "update-alternatives", "alternatives"], h => {
   const a = h.args.map(x => x.v ?? "");
   if (h.key === "sysctl" && !a.some(x => /^-w$|=/.test(x) || x === "-p" || x === "--system" || x === "--load")) return;
-  if ((h.key === "gsettings" || h.key === "dconf") && !/^(set|reset|reset-recursively|write|reset|load|update|compile)$/.test(a[0] ?? "")) return;
-  if (h.key === "gsettings" || h.key === "dconf") return;
-  if (h.key === "defaults") {
-    if (!/^(write|delete|import|rename)$/.test(a[0] ?? "")) return;
-    if (a.some(x => /LSQuarantine/i.test(x))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
-    else if (a.some(x => /^\/Library\//.test(x) || /^-g$|^NSGlobalDomain$/.test(x) && false)) h.e.add("system", "path.system", "Changes system files.");
-    return;
-  }
   if (h.key === "hdiutil" && !/^(attach|mount|detach|eject|create|convert|resize|makehybrid|burn|erase)$/.test(a[0] ?? "")) return;
   if ((h.key === "fsutil" || h.key === "chkdsk" || h.key === "powercfg" || h.key === "w32tm" || h.key === "bcdedit") && a.length && a.every(x => /^[/-](query|list|l|enum|v|scan|stripchart|tz|monitor|getactivescheme|batteryreport|energy|requests|a|\?|help)/i.test(x) || /^(query|info|fsinfo|volume)$/i.test(x))) return;
   if (h.key === "csrutil" && /^(disable|enable|clear)/.test(a[0] ?? "")) { h.e.add("system", "system.security", "Turns off or weakens a security protection."); return; }
@@ -4596,6 +4597,108 @@ reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapo
   if (h.key === "subst") h.e.unclear("unclear.windows-path", "Ember can't tell which file this names.");
   if (h.key === "mount" && a.length === 0) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   h.e.add("system", "system.kernel", "Changes how the system works.");
+});
+// Desktop settings (review #108, #168). Every GNOME settings write (gsettings, dconf) changes the desktop's settings, as
+// a registry write does on Windows (D4.3 e). Some weaken a protection the GUI policy asks about too (the proxy, the
+// screen lock, remote access, privacy), and some set something that runs later (a keyboard shortcut's command, a shell
+// extension, a default program): those say so. macOS's defaults asks for the domains that weaken a protection.
+/** GNOME settings areas, as dotted key prefixes (`org.gnome.desktop.screensaver` holds `….lock-enabled`), and what changing one does. */
+const SETTINGS_AREAS: readonly { rule: string; says: string; prefixes: readonly string[] }[] = [
+  { rule: "system.network", says: "Changes the firewall or network settings.", prefixes: ["org.gnome.system.proxy"] },
+  {
+    rule: "system.security", says: "Turns off or weakens a security protection.",
+    prefixes: [
+      "org.gnome.desktop.screensaver", "org.gnome.desktop.lockdown", "org.gnome.desktop.remote-desktop", "org.gnome.desktop.privacy",
+      "org.gnome.desktop.media-handling", "org.gnome.desktop.session.idle-delay", "org.gnome.settings-daemon.plugins.sharing",
+      "org.gnome.settings-daemon.plugins.remote-display", "org.gnome.login-screen", "org.gnome.system.location",
+    ],
+  },
+  {
+    rule: "system.autostart", says: "Sets a command, an extension or a default program that runs later.",
+    prefixes: [
+      "org.gnome.settings-daemon.plugins.media-keys", "org.gnome.shell.enabled-extensions", "org.gnome.shell.disabled-extensions",
+      "org.gnome.shell.disable-user-extensions", "org.gnome.shell.allow-extension-installation", "org.gnome.shell.development-tools",
+      "org.gnome.shell.extensions", "org.gnome.desktop.default-applications",
+    ],
+  },
+];
+/**
+ * A GNOME settings write to `key` (dotted, lower case; null: a key Ember can't see, which could be any): the areas it
+ * reaches, or plain desktop settings. `tree`: everything under `key` changes (a reset of a folder, a load).
+ */
+function settingsWrite(h: H, key: string | null, tree: boolean): void {
+  let hit = false;
+  for (const area of SETTINGS_AREAS) {
+    const reaches = key === null || area.prefixes.some(p => key === p || key.startsWith(`${p}.`) || (tree && (key === "" || p.startsWith(`${key}.`))));
+    if (reaches) { hit = true; h.e.add("system", area.rule, area.says); }
+  }
+  if (!hit) h.e.add("system", "system.settings", "Changes your desktop settings.");
+}
+reg(NATIVE, ["gsettings"], h => {
+  // gsettings [--schemadir DIR] <command> SCHEMA[:PATH] [KEY] [VALUE]: only set, reset and reset-recursively change anything.
+  let k = 0;
+  while (h.args[k]?.v === "--schemadir") k += 2;
+  if (h.args[k]?.v?.startsWith("--schemadir=")) k++;
+  const verb = h.args[k];
+  if (!verb) return;
+  if (verb.v === null) { settingsWrite(h, null, true); return; }
+  if (!/^(set|reset|reset-recursively)$/.test(verb.v)) return;
+  const schema = h.args[k + 1]?.v ?? null;
+  const name = h.args[k + 2]?.v ?? null;
+  const recursive = verb.v === "reset-recursively";
+  if (schema === null || (!recursive && name === null)) { settingsWrite(h, null, true); return; }
+  const id = schema.split(":")[0].toLowerCase();
+  settingsWrite(h, recursive ? id : `${id}.${name!.toLowerCase()}`, recursive);
+});
+reg(NATIVE, ["dconf"], h => {
+  // dconf write KEY VALUE, reset [-f] KEY|DIR/, load [-f] DIR/ (keys from stdin), update and compile (the system's or a
+  // file's database). Keys are paths (`/org/gnome/desktop/screensaver/lock-enabled`); a folder ends with `/`.
+  const verb = h.args[0]?.v;
+  if (verb === undefined) return;
+  if (verb === null) { settingsWrite(h, null, true); return; }
+  const ops = h.args.slice(1).filter(a => a.v !== "-f");
+  const dotted = (p: string): string => p.replace(/^\/+|\/+$/g, "").replace(/\//g, ".").toLowerCase();
+  switch (verb) {
+    case "write": case "reset": case "load": {
+      const target = ops[0]?.v ?? null;
+      if (target === null) { settingsWrite(h, null, true); return; }
+      settingsWrite(h, dotted(target), verb === "load" || target.endsWith("/"));
+      return;
+    }
+    case "update": settingsWrite(h, null, true); return;
+    case "compile": { const out = ops[0]; if (out) h.e.usePath(out, "write", h.sc); h.e.readArgs(ops.slice(1), h.sc); return; }
+    default: return;
+  }
+});
+/** macOS preference domains whose settings weaken a protection: the screen saver's password, the firewall, remote access, updates. */
+const DEFAULTS_SECURITY = /^com\.apple\.(screensaver|alf|security(\..+)?|screensharing|remotemanagement|remotedesktop|softwareupdate|commerce)$/i;
+reg(NATIVE, ["defaults"], h => {
+  // defaults [-currentHost | -host NAME] <verb> <domain> …; the domain may be `-g`, `-app NAME` or a name.
+  let k = 0;
+  while (h.args[k]?.v === "-currentHost" || h.args[k]?.v === "-host") k += h.args[k].v === "-host" ? 2 : 1;
+  const verb = h.args[k]?.v;
+  if (verb === undefined || (verb !== null && !/^(write|delete|import|rename)$/.test(verb))) return;
+  const rest = h.args.slice(k + 1);
+  const domain = rest[0]?.v === "-app" ? null : rest[0]?.v ?? null;
+  const app = rest[0]?.v === "-app";
+  if (verb === null || (!app && domain === null) || rest.some(a => /LSQuarantine/i.test(a.v ?? "")) || (domain !== null && DEFAULTS_SECURITY.test(domain))) {
+    h.e.add("system", "system.security", "Turns off or weakens a security protection.");
+  } else if (rest.some(a => /^\/Library\//.test(a.v ?? ""))) h.e.add("system", "path.system", "Changes system files.");
+});
+// Which certificates the computer trusts (review #108): NSS's certutil, p11-kit's trust, the system bundle, macOS's
+// trust settings. Windows' certutil is judged below its own handler.
+const TRUST_SAYS = "Changes which certificates your computer trusts.";
+reg(NATIVE, ["trust"], h => {
+  const verb = firstOperand(h.args);
+  if (verb.v === null) { if (verb.at < h.args.length) h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb.v === "anchor" || verb.v === "extract-compat") { h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb.v === "extract") { const out = h.args.slice(verb.at + 1).filter(a => !isOption(a)).pop(); if (out) overwrites(h, out); }
+});
+reg(NATIVE, ["update-ca-trust", "update-ca-certificates"], h => { h.e.add("system", "system.security", TRUST_SAYS); });
+reg(NATIVE, ["systemsetup"], h => {
+  const flags = h.args.map(a => (a.v ?? "").toLowerCase());
+  if (flags.some(f => /^-set(remotelogin|remoteappleevents)$/.test(f))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
+  else if (flags.some(f => f.startsWith("-set") || f === "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 reg(NATIVE, ["setenforce", "semanage", "auditctl", "aa-disable", "aa-complain", "apparmor_parser", "spctl", "xattr", "vssadmin", "wbadmin", "wevtutil", "auditpol"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
