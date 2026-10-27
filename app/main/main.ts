@@ -15,8 +15,7 @@ import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
-import { afterFix, inspectEnvironment, type EnvReport, type FixId } from "./environment";
-import { holdsBack, setupHello, whereAfterStart } from "../shared/setup-attention";
+import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -61,6 +60,9 @@ import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
+import { afterFix, type FixId } from "./environment";
+import { settingsSection } from "../shared/setup-attention";
+import { hello } from "./hello";
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -453,19 +455,13 @@ function start(): void {
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
-    // Connected, but a setup row holds Ember back (a permission, screen reading): the hello names it (review #95).
-    const gaps = connected && !waiting ? setupHello(setupRows(), settingsOpen) : null;
-    const where = overlay ? "I'll stay by your cursor." : "This session can't show me beside your cursor, so I'll wait here.";
-    const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
-      : !connected
-      ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
-      : `${where}${gaps ? ` ${gaps}` : ""} ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected && !gaps ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
-      actions: (connected && !gaps) || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+    // What Ember says and for how long (hello.ts): connected, it names a setup row that holds it back (review #95).
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: hasKey(sc.settings.accel) ? sc.settings.label : null, settingsOpen, rows: connected ? setupRows() : [] });
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
-    greetTimer = hideIfStill(bubble, connected && !gaps ? 7000 : 15000);
+    greetTimer = hideIfStill(bubble, h.holdMs);
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
@@ -652,9 +648,9 @@ function start(): void {
   /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
     showHome();
-    const phase = agent?.getStatus().phase;
-    if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
-    else if (setupRows().some(holdsBack)) sendToHome(IPC.focusSection, "checks");
+    // Copilot to connect, or a setup row that holds Ember back (review #95).
+    const where = settingsSection(agent?.getStatus().phase, setupRows());
+    if (where) sendToHome(IPC.focusSection, where);
   };
 
   const sendToHome = (channel: string, value: unknown) => {
@@ -1123,7 +1119,7 @@ function start(): void {
       // stays and shows how to connect (asking would only say "not connected"); if a setup row holds Ember back (a
       // permission, screen reading), it stays at the setup check (review #95).
       void settledPhase().then(phase => {
-        const where = whereAfterStart(phase, setupRows());
+        const where = settingsSection(phase, setupRows());
         if (where) {
           // Settings stays open there; Ember says hello once it closes, not over it.
           sendToHome(IPC.focusSection, where);

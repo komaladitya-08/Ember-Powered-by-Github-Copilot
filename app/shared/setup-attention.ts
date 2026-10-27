@@ -1,6 +1,6 @@
 /**
  * Which setup-check rows need the user. Shared by the settings window (what shows before Start, the fold, the counts,
- * the sidebar's badge) and main (whether Start closes the window, what Ember's hello says), so the two always agree.
+ * the sidebar's badge) and main (where settings opens, what Ember's hello says), so the two always agree.
  * Pure and renderer-safe. A warning about reading, seeing or using apps holds Ember back as much as a failure does,
  * and a row with a button that fixes it is worth the user's look, because one click settles it (review #94, #95, #161).
  */
@@ -30,11 +30,12 @@ export function needsUser(r: SetupRow): boolean {
 }
 
 /**
- * Where the settings window goes once Start has connected (or failed to connect) Copilot: to Copilot when it isn't
- * connected, to the setup check when a row holds Ember back (it would otherwise close and Ember would greet as if
- * ready, review #95), or nowhere (null: it closes and Ember says hello).
+ * The section the settings window goes to, once Start has connected (or failed to connect) Copilot and whenever settings
+ * is opened: Copilot when it isn't connected, the setup check when a row holds Ember back (after Start the window would
+ * otherwise close and Ember greet as if ready, review #95), or none (null: after Start, the window closes and Ember
+ * says hello).
  */
-export function whereAfterStart(phase: string | undefined, rows: readonly SetupRow[]): "copilot" | "checks" | null {
+export function settingsSection(phase: string | undefined, rows: readonly SetupRow[]): "copilot" | "checks" | null {
   if (phase === "signed-out" || phase === "error") return "copilot";
   return rows.some(holdsBack) ? "checks" : null;
 }

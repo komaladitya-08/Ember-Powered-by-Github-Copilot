@@ -6,7 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { SPEAK_NO_VOICE, checksNote, homePatches, setupBadge, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
-import { holdsBack, needsUser, setupHello, whereAfterStart, type SetupRow } from "../../app/shared/setup-attention";
+import { holdsBack, needsUser, settingsSection, setupHello, type SetupRow } from "../../app/shared/setup-attention";
+import { hello, type HelloInputs } from "../../app/main/hello";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS } from "../../app/shared/shortcuts";
@@ -25,8 +26,6 @@ const PAGE = read("renderer/home/index.html");
 const STYLES = read("renderer/home/styles.css");
 const SCRIPT = read("renderer/home/main.ts");
 const MAIN = read("main/main.ts");
-const MIC = read("renderer/mic/main.ts");
-const VOICE_MAIN = read("main/voice.ts");
 
 /** The element with `id` in the page: its tag and attributes, in whatever order the markup writes them. */
 const tagOf = (id: string): { tag: string; attrs: Record<string, string> } => {
@@ -51,9 +50,8 @@ describe("the settings window's first paint", () => {
     // The window is shown at ready-to-show, before the status (it waits up to 3 s for other computers' rows) arrives.
     expect(PAGE).toMatch(/<body class="loading">/);
     expect(STYLES).toMatch(/body\.loading \.home \{ visibility: hidden; \}/);
-    // The first settings applied lift the gate, and so does the cap.
-    expect(SCRIPT).toMatch(/function applySettings\(s: Settings\): void \{[\s\S]*?document\.body\.classList\.remove\("loading"\);[\s\S]*?\n\}/);
-    expect(SCRIPT).toContain("setTimeout(() => document.body.classList.remove(\"loading\"), 1500);");
+    // The first settings applied lift the gate (applySettings), and so does the 1.5 s cap: two places.
+    expect(SCRIPT.split("document.body.classList.remove(\"loading\")").length - 1).toBe(2);
   });
 });
 
@@ -90,7 +88,6 @@ describe("WSL in the onboarding line", () => {
     expect(computersCopy.targetFeatureApplies("wsl")).toBe(false);
     for (const os of ["linux", "darwin", "win32"] as const) expect(computersCopy.targetFeatureApplies("ssh", os)).toBe(true);
     expect(computersCopy.targetFeatureApplies("voice", "darwin")).toBe(true);
-    expect(SCRIPT).toMatch(/\.filter\(\(\[k, v\]\) => v === false && targetFeatureApplies\(k, platform\?\.os\)\)/);
   });
 });
 
@@ -192,11 +189,6 @@ describe("the setup check in the settings window", () => {
     expect(checksNote(0, 2)).toBe("2 things to look at");
     expect(checksNote(0, 0)).toBe("All good");
   });
-
-  it("is drawn from setupView, the one place that decides it", () => {
-    expect(SCRIPT).toMatch(/const view = setupView\(environment\.checks, \{ opened: checksOpened, beforeStart: checksBeforeStart \}\);/);
-    expect(SCRIPT).toMatch(/\.classList\.toggle\("after-setup", !checksBeforeStart\)/);
-  });
 });
 
 describe("the line under the title in first run", () => {
@@ -216,38 +208,78 @@ describe("the line under the title in first run", () => {
 
 describe("pressing Start while something holds Ember back", () => {
   it("keeps settings open at the setup check instead of closing it and greeting as if ready (review #95)", () => {
-    expect(whereAfterStart("ready", MAC_FIRST)).toBe("checks");
-    expect(whereAfterStart("ready", LINUX_A11Y_OFF)).toBe("checks");
-    expect(whereAfterStart("ready", [{ id: "session", label: "Desktop session", status: "fail" }])).toBe("checks");
+    expect(settingsSection("ready", MAC_FIRST)).toBe("checks");
+    expect(settingsSection("ready", LINUX_A11Y_OFF)).toBe("checks");
+    expect(settingsSection("ready", [{ id: "session", label: "Desktop session", status: "fail" }])).toBe("checks");
     // Copilot isn't connected: its sign-in comes first, as before.
-    expect(whereAfterStart("signed-out", MAC_FIRST)).toBe("copilot");
-    expect(whereAfterStart("error", [])).toBe("copilot");
+    expect(settingsSection("signed-out", MAC_FIRST)).toBe("copilot");
+    expect(settingsSection("error", [])).toBe("copilot");
     // Nothing holds Ember back (a fix button for a nicety doesn't count): the window closes and Ember says hello.
-    expect(whereAfterStart("ready", allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"))).toBeNull();
-    expect(whereAfterStart("ready", [{ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" }])).toBeNull();
-    expect(whereAfterStart(undefined, [])).toBeNull();
-    // main.ts decides with it, and sends the window to that section.
-    expect(MAIN).toMatch(/const where = whereAfterStart\(phase, setupRows\(\)\);\s*if \(where\) \{[^}]*sendToHome\(IPC\.focusSection, where\);/);
+    expect(settingsSection("ready", allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"))).toBeNull();
+    expect(settingsSection("ready", [{ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" }])).toBeNull();
+    expect(settingsSection(undefined, [])).toBeNull();
   });
 
-  it("has Ember's hello name what isn't set up, and settings open at the setup check (review #95)", () => {
+  it("names what isn't set up (review #95)", () => {
     expect(setupHello(MAC_FIRST, false)).toBe("Still to set up: “Reading and using apps”, “Screen Recording” and “Input Monitoring”. The setup check in settings shows how.");
     expect(setupHello(LINUX_A11Y_OFF, true)).toBe("Still to set up: “Screen reading”. The setup check in this window shows how.");
     const four = [...MAC_FIRST, { id: "session", label: "Desktop session", status: "fail" as const }];
     expect(setupHello(four, false)).toBe("Still to set up: “Reading and using apps”, “Screen Recording” and 2 more. The setup check in settings shows how.");
     expect(setupHello(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), false)).toBeNull();
-    // The hello says it, offers Open settings while settings is closed, and Open settings goes to the setup check.
-    expect(MAIN).toMatch(/const gaps = connected && !waiting \? setupHello\(setupRows\(\), settingsOpen\) : null;/);
-    expect(MAIN).toMatch(/actions: \(connected && !gaps\) \|\| settingsOpen \|\| waiting \? \[\] : \[\{ id: "ui:settings", label: "Open settings" \}\]/);
-    expect(MAIN).toMatch(/else if \(setupRows\(\)\.some\(holdsBack\)\) sendToHome\(IPC\.focusSection, "checks"\);/);
+  });
+});
+
+describe("Ember's hello once it starts", () => {
+  const keys = "Press Ctrl+Alt+Space to ask me anything; Ctrl+Alt+X stops me.";
+  const at = (more: Partial<HelloInputs>): HelloInputs => ({ phase: "ready", waiting: false, overlay: true, keys, settingsKey: "Ctrl+Alt+E", settingsOpen: false, rows: [], ...more });
+  const settingsButton = [{ id: "ui:settings", label: "Open settings" }];
+
+  it("says where Ember is and how to ask when everything is set up", () => {
+    expect(hello(at({}))).toEqual({ thought: `I'll stay by your cursor. ${keys}`, mood: "idle", actions: [], holdMs: 7000 });
+    expect(hello(at({ overlay: false })).thought).toBe(`This session can't show me beside your cursor, so I'll wait here. ${keys}`);
+    // Still connecting is said as ready is (the handle shows the connecting).
+    expect(hello(at({ phase: "starting" }))).toEqual(hello(at({})));
+    expect(hello(at({ phase: undefined }))).toEqual(hello(at({})));
+    // A warning that holds nothing back changes nothing.
+    expect(hello(at({ rows: [{ id: "os", label: "Operating system", status: "warn" }] }))).toEqual(hello(at({})));
   });
 
+  it("names a setup row that holds Ember back, with Open settings while settings is closed, for longer (review #95)", () => {
+    expect(hello(at({ rows: MAC_FIRST }))).toEqual({
+      thought: `I'll stay by your cursor. Still to set up: “Reading and using apps”, “Screen Recording” and “Input Monitoring”. The setup check in settings shows how. ${keys}`,
+      mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    // Settings is open (Start kept it at the setup check): no button, and "this window".
+    expect(hello(at({ rows: LINUX_A11Y_OFF, settingsOpen: true }))).toEqual({
+      thought: `I'll stay by your cursor. Still to set up: “Screen reading”. The setup check in this window shows how. ${keys}`,
+      mood: "attention", actions: [], holdMs: 15000,
+    });
+  });
+
+  it("asks to connect Copilot first, and doesn't name setup rows then", () => {
+    expect(hello(at({ phase: "signed-out", rows: MAC_FIRST }))).toEqual({
+      thought: "I'm not connected to Copilot yet. Open settings (Ctrl+Alt+E) to connect me.", mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    // Another app holds the settings shortcut: not named.
+    expect(hello(at({ phase: "error", settingsKey: null })).thought).toBe("I'm not connected to Copilot yet. Open settings to connect me.");
+    expect(hello(at({ phase: "signed-out", settingsOpen: true }))).toEqual({
+      thought: "I'm not connected to Copilot yet: connect me in the settings window.", mood: "attention", actions: [], holdMs: 15000,
+    });
+  });
+
+  it("waits for the network without a button when offline at start", () => {
+    expect(hello(at({ phase: "error", waiting: true, rows: MAC_FIRST }))).toEqual({
+      thought: "I can't reach GitHub yet: I'll connect as soon as the network is back.", mood: "error", actions: [], holdMs: 15000,
+    });
+  });
+});
+
+describe("the settings window's setup badge and line", () => {
   it("badges the sidebar's Setup link and mentions what to look at in the tagline (review #95)", () => {
     expect(setupBadge(0)).toBeNull();
     // Failing rows are counted as the heading counts them; else the rows that need a look.
     expect(setupBadge(3, 1)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
     expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things to look at", tone: "warn" });
-    expect(SCRIPT).toMatch(/renderSetupBadge\(view\.needing, view\.failing\);/);
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has one thing to look at.");
     expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things to look at.");
@@ -278,9 +310,6 @@ describe("Linux's accessibility switch after Turn on", () => {
     expect(row(linux(), "accessibility")?.detail).toBe("Accessibility is on");
     expect(afterFix([], "enable-accessibility")).toEqual(["enable-accessibility"]);
     expect(afterFix(["enable-accessibility"], "enable-accessibility")).toEqual(["enable-accessibility"]);
-    // main.ts records each fix applied through the setup check and passes them to every read.
-    expect(MAIN).toMatch(/if \(!done\) fixesApplied = afterFix\(fixesApplied, fix as FixId\);/);
-    expect(MAIN).toContain("inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied");
   });
 
   it("gives the same advice in the setup check and in ember doctor (review #98)", () => {
@@ -329,10 +358,6 @@ describe("macOS permissions that stay off", () => {
   it("start the advice again after a reset, which took Ember off every list (review #99)", () => {
     const pressed = afterFix(afterFix(afterFix(["open-microphone-settings"], "open-accessibility-settings"), "open-screen-recording-settings"), "open-input-monitoring-settings");
     expect(afterFix(pressed, "reset-permissions")).toEqual(["open-microphone-settings", "reset-permissions"]);
-  });
-
-  it("draw a second button for the row's other fix in the settings window (review #99)", () => {
-    expect(SCRIPT).toMatch(/for \(const fix of \[c\.fix, c\.alt\]\) \{\s*if \(!fix\) continue;/);
   });
 
   it("say the re-grant sentence once in ember doctor, not under every permission (review #99)", () => {
@@ -441,17 +466,6 @@ describe("the settings window when no voice speaks", () => {
     expect(voice.indexOf("id=\"speak-note\"")).toBeGreaterThan(voice.indexOf("id=\"speak\""));
     expect(voice.indexOf("id=\"speak\"")).toBeGreaterThan(0);
     expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status", hidden: "" } });
-    expect(SCRIPT).toMatch(/const missing = v\.speechMissing === true;/);
-  });
-
-  it("is wired from the speaking page through main (review #101)", () => {
-    // The page watches every reply and tells main; main keeps it for the setup check and the voice status.
-    expect(MIC).toMatch(/const watch = speechWatch\(\{/);
-    expect(MIC).toContain("report: ok => api.speech(ok)");
-    expect(VOICE_MAIN).toMatch(/ipcMain\.on\(VOICE\.speech, \(e, ok: unknown\) => \{\s*if \(!\(this\.mic && e\.sender === this\.mic\.webContents\) && e\.sender !== this\.speaker\?\.wc\) return;\s*this\.o\.onSpeech\?\.\(ok === true\);/);
-    expect(MAIN).toContain("applied: fixesApplied, speech: speechHeard");
-    expect(MAIN).toMatch(/onSpeech: ok => \{\s*if \(speechHeard === ok\) return;\s*speechHeard = ok;/);
-    expect(MAIN).toContain("speechMissing: speechHeard === false");
   });
 });
 
@@ -496,5 +510,35 @@ describe("setup check and doctor wording", () => {
     // One address for both packages (app/shared/support.ts, review #223 names it in the display-scaling advice).
     expect(ISSUES_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
     expect(SCRIPT).toContain("[\"Report a problem\", ISSUES_URL]");
+  });
+});
+
+/**
+ * Where the main process and the settings window use the decisions tested above: one check per call site, of the call
+ * alone, so a reformat or a merge around it doesn't break them. The speaking page's and VoiceService's part is tested as
+ * behaviour (onboard-speech.test.ts).
+ */
+describe("the call sites", () => {
+  it("in main.ts", () => {
+    for (const call of [
+      "applied: fixesApplied, speech: speechHeard", // every read of the setup check (#98, #101)
+      "fixesApplied = afterFix(fixesApplied", // the setup check's fix handler (#98, #99)
+      "hello({", // greet (#95)
+      "settingsSection(phase, setupRows())", // after Start (#95)
+      "settingsSection(agent?.getStatus().phase, setupRows())", // Open settings (#95)
+      "onSpeech: ok =>", // the speaking page's finding (#101)
+      "speechMissing: speechHeard === false", // the voice status (#101)
+    ]) expect(MAIN, call).toContain(call);
+  });
+
+  it("in the settings window", () => {
+    for (const call of [
+      "setupView(environment.checks", // renderChecks (#94, #160, #161)
+      "toggle(\"after-setup\", !checksBeforeStart)", // the check before Start (#94)
+      "renderSetupBadge(view.needing, view.failing)", // the sidebar's badge (#95)
+      "[c.fix, c.alt]", // a row's second button (#99)
+      "targetFeatureApplies(k, platform?.os)", // the policy line (#221)
+      "v.speechMissing === true", // the note under Speak (#101)
+    ]) expect(SCRIPT, call).toContain(call);
   });
 });
