@@ -392,3 +392,32 @@ describe("Perception with the OS's security-window check", () => {
     expect((await desktop({ listed, stack }).perception.windows()).map(w => w.name)).toEqual(["Windows Security", "User Account Control", "notes.txt"]);
   });
 });
+
+describe("Perception's window screenshots when the window can't be found", () => {
+  // review #5: the window asked for has closed, never matched, or its app is hung (the read has no window). Its picture
+  // must not become a picture of the whole screen, which no secret-field check has looked through.
+  it("takes no picture at all, not one of the whole screen", async () => {
+    const { perception, captures, shellAsked } = desktop({ window: null, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42, title: "gone" } });
+    expect(p.capture).toBeNull();
+    expect(captures).toEqual([]);
+    expect(shellAsked()).toBe(0);
+    expect(p.text).toContain("(No screenshot: the window can't be found (it may have closed, or its app isn't answering).)");
+  });
+
+  it("still takes a picture of the whole screen when that is what was asked for", async () => {
+    const { perception, captures } = desktop({ window: null });
+    const p = await perception.perceive({ image: true, scope: "screen", target: { pid: 42 } });
+    expect(p.capture).not.toBeNull();
+    expect(captures).toEqual([[0, 0, 300, 200]]);
+  });
+
+  it("takes a window's picture as before when the window system knows the window the user is in", async () => {
+    // No accessibility, but the window system's active window: its picture is still a window's.
+    const active = win(5, 42, "notes.txt", "gedit");
+    const { perception, captures } = desktop({ window: null, active, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const p = await perception.perceive({ image: true, scope: "window" });
+    expect(p.capture?.rect).toEqual({ x: 10, y: 10, width: 100, height: 100 });
+    expect(captures).toEqual([[10, 10, 100, 100]]);
+  });
+});

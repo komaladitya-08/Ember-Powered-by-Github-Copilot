@@ -407,6 +407,11 @@ export class Perception {
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
     const x11 = this.o.x11;
     if (!x11) return noShot("screenshots aren't available on this display");
+    // A window's picture needs the window: one that closed, never matched or whose app is hung (no window read), or one
+    // of Ember's own, gets no picture, never one of the whole screen, which no secret-field check has looked through.
+    if (opts.scope === "window" && !seen.window && !seen.x11Window) {
+      return noShot(seen.ember ? "Ember takes no pictures of its own windows" : "the window can't be found (it may have closed, or its app isn't answering)");
+    }
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
