@@ -1414,6 +1414,39 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
   });
 });
 
+describe("output past what is kept (review #32)", () => {
+  /** What the keeper should hand on: the first 64 Ki characters, a note, and the last 4 Mi - 64 Ki characters. */
+  const expected = (all: string): string => {
+    const head = 64 * 1024, room = 4 * 1024 * 1024 - head;
+    if (all.length <= head + room) return all;
+    const dropped = all.length - head - room;
+    return `${all.slice(0, head)}\n[… ${dropped} characters of output left out …]\n${all.slice(all.length - room)}`;
+  };
+
+  it("keeps the first and last parts of 12 MiB printed in 4 KiB chunks, without recopying the tail per chunk", async () => {
+    const j = makeJudge();
+    const chunks = Array.from({ length: 3 * 1024 }, (_, k) => `${String(k).padStart(5, "0")} ${"x".repeat(4090)}\n`);
+    const h = harness({ run: () => ({ output: chunks }) });
+    const t0 = performance.now();
+    await call(h);
+    // Recopying the 4 MiB tail per chunk took seconds here; keeping chunks takes tens of milliseconds.
+    expect(performance.now() - t0).toBeLessThan(1500);
+    expect(j.shaped[0].raw === expected(chunks.join(""))).toBe(true);
+    expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ outBytes: chunks.join("").length });
+  });
+
+  it("keeps the same text as before for output of every size around the limits", async () => {
+    for (const total of [1000, 64 * 1024 + 5, 4 * 1024 * 1024 - 1, 4 * 1024 * 1024 + 7, 9 * 1024 * 1024 + 3]) {
+      const j = makeJudge();
+      const all = `${"abcdefghijklmnopqrstuvwxyz".repeat(Math.ceil(total / 26))}`.slice(0, total);
+      const chunks: string[] = [];
+      for (let at = 0, n = 1; at < all.length; at += n, n = (n * 7) % 300_001 + 1) chunks.push(all.slice(at, at + n));
+      await call(harness({ run: () => ({ output: chunks }) }));
+      expect(j.shaped[0].raw === expected(all), `total ${total}`).toBe(true);
+    }
+  });
+});
+
 describe("an announcement and the run slots", () => {
   it("counts down only once a slot is free, so the run follows its announcement at once", async () => {
     makeJudge({ decide: i => (i.cls.programs[0] === "git" ? decision({ verdict: "announce", says: ["Pushes."], requested: { intent: "git.push", announce: "Pushing, as you asked." } }) : decision()) });

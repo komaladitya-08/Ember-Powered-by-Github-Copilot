@@ -344,11 +344,13 @@ const TERMINAL_CODES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\
 /**
  * The output a run printed, decoded as it comes: the first HEAD_CHARS characters and a rolling tail up to KEEP_CHARS
  * (the middle counted, not kept), and where its secret prompts were (the tracker sees every character and every Enter
- * the user pressed, never what they typed).
+ * the user pressed, never what they typed). The tail is a list of chunks, cut back to size only when it holds twice
+ * what is kept: cutting a single string per chunk copied 4 MiB each time and saturated the main thread.
  */
 class OutputKeeper {
   private head = "";
-  private tail = "";
+  private tail: string[] = [];
+  private tailLength = 0;
   private dropped = 0;
   private decoder = new TextDecoder("utf-8");
   bytes = 0;
@@ -373,24 +375,34 @@ class OutputKeeper {
       text = text.slice(take);
     }
     if (!text) return;
-    this.tail += text;
+    this.tail.push(text);
+    this.tailLength += text.length;
+    if (this.tailLength > 2 * (KEEP_CHARS - HEAD_CHARS)) this.trim();
+  }
+
+  /** Cuts the tail to its last KEEP_CHARS - HEAD_CHARS characters, counting what goes. */
+  private trim(): string {
     const room = KEEP_CHARS - HEAD_CHARS;
-    if (this.tail.length > room) {
-      const cut = this.tail.length - room;
-      this.tail = this.tail.slice(cut);
-      this.dropped += cut;
+    let tail = this.tail.join("");
+    if (tail.length > room) {
+      this.dropped += tail.length - room;
+      tail = tail.slice(tail.length - room);
     }
+    this.tail = [tail];
+    this.tailLength = tail.length;
+    return tail;
   }
 
   /** The text kept, with a note where the middle went, and `spans` (positions in everything printed) moved into it. */
   kept(spans: { from: number; to: number }[]): { text: string; spans: { from: number; to: number }[] } {
+    const tail = this.trim();
     const h = this.head.length;
-    if (!this.dropped) return { text: this.head + this.tail, spans };
+    if (!this.dropped) return { text: this.head + tail, spans };
     const note = `\n[… ${this.dropped} characters of output left out …]\n`;
     const end = h + this.dropped;
     const from = (p: number) => (p < h ? p : p < end ? h : p - this.dropped + note.length);
     const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - this.dropped + note.length);
-    return { text: this.head + note + this.tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
+    return { text: this.head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
   }
 }
 
