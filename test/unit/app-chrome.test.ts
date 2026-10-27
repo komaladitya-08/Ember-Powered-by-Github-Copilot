@@ -14,9 +14,29 @@ import path from "node:path";
 import type { MenuItemConstructorOptions } from "electron";
 import type { OS } from "../../app/shared/shortcuts";
 
-vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, nativeTheme: {}, app: {} }));
+/** The window factories' BrowserWindows: each one's options and the handlers put on its page. */
+const electron = vi.hoisted(() => ({
+  made: [] as { options: Record<string, unknown>; page: { handlers: Map<string, (...args: never[]) => void>; level: number } }[],
+}));
+vi.mock("electron", () => ({
+  BrowserWindow: class {
+    webContents = {
+      handlers: new Map<string, (...args: never[]) => void>(),
+      level: 0,
+      on(event: string, fn: (...args: never[]) => void) { this.handlers.set(event, fn); return this; },
+      getZoomLevel() { return this.level; },
+      setZoomLevel(level: number) { this.level = level; },
+    };
+    constructor(options: Record<string, unknown>) { electron.made.push({ options, page: this.webContents }); }
+    once() { /* shown by main */ }
+    loadFile() { return Promise.resolve(); }
+    setContentProtection() { /* not what these tests look at */ }
+    setAlwaysOnTop() { /* not what these tests look at */ }
+  },
+  Menu: {}, nativeTheme: {}, app: {},
+}));
 
-const { WINDOW_ICON, aboutPanel, appMenuTemplate, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor } = await import("../../app/main/windows");
+const { WINDOW_ICON, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -138,11 +158,22 @@ describe("DevTools in a packaged Ember (review #176)", () => {
 });
 
 describe("the native theme (review #245)", () => {
-  it("is dark on every OS, as every page is, so title bars, native menus and dialogs match them", () => {
+  it("is dark on every OS, as every page is", () => {
     for (const [os, appMenu] of [["linux", false], ["win32", false], ["darwin", true]] as [OS, boolean][]) {
       const f = fakeElectron();
       setUpAppChrome({ os, appMenu, actions: actions() }, f.e as never);
       expect(f.e.nativeTheme.themeSource).toBe("dark");
+    }
+  });
+
+  it("asks GTK for its dark variant on the settings, command and prompt windows, so GNOME draws their title bars dark", () => {
+    // themeSource doesn't reach a GTK window: Mutter reads the window's _GTK_THEME_VARIANT, which darkTheme sets.
+    // Windows and macOS ignore the option.
+    for (const os of ["linux", "win32", "darwin"] as OS[]) {
+      for (const [name, make] of [["settings", () => createHomeWindow()], ["command", () => createCommandWindow(os)], ["prompt", () => createPromptWindow(os)]] as const) {
+        make();
+        expect(electron.made.at(-1)!.options.darkTheme, `${name} on ${os}`).toBe(true);
+      }
     }
   });
 });

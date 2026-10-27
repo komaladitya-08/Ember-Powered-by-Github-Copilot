@@ -26,6 +26,9 @@ export function createHomeWindow(): BrowserWindow {
     title: "Ember",
     show: false,
     backgroundColor: "#121011",
+    // Linux: GTK's dark variant, so GNOME draws the title bar dark, as the page is (review #245). nativeTheme
+    // (setUpAppChrome) doesn't reach GTK; Windows and macOS ignore this and follow nativeTheme.
+    darkTheme: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(appDir, "preload", "home.cjs"),
@@ -63,6 +66,7 @@ export function createCommandWindow(os: OS): BrowserWindow {
     title: "Ember commands",
     show: false,
     backgroundColor: "#121011",
+    darkTheme: true,
     autoHideMenuBar: true,
     ...(os === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("command"),
@@ -89,6 +93,7 @@ export function createPromptWindow(os: OS): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: false,
     backgroundColor: "#121011",
+    darkTheme: true,
     autoHideMenuBar: true,
     webPreferences: webPreferences("prompt"),
   });
@@ -187,11 +192,13 @@ export interface ChromeElectron {
 
 /**
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
- * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, dark native chrome
- * on every OS, and from then on Ember's icon on every window on Linux and, in a packaged build, DevTools locked on
- * every page. Every page is dark-only (ember.css says color-scheme: dark), so title bars, native menus and dialogs
- * follow it rather than a light system theme around a near-black window (review #245); a light appearance would be a
- * design of its own.
+ * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, the dark native
+ * theme, and from then on Ember's icon on every window on Linux and, in a packaged build, DevTools locked on every
+ * page. Every page is dark-only (ember.css says color-scheme: dark), so the native theme is too, whatever the system's
+ * appearance (review #245): on Windows it makes the title bars and Electron's menus dark, and on macOS the title bars,
+ * menus and dialogs. Windows' message boxes (the quit question) have no dark mode and stay light. On Linux it reaches
+ * nothing GTK draws: the windows ask GTK for its dark variant themselves (darkTheme in their factories), so GNOME's
+ * title bars are dark, and menus and dialogs follow the GTK theme. A light appearance would be a design of its own.
  */
 export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
   e.nativeTheme.themeSource = "dark";
