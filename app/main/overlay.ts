@@ -39,7 +39,7 @@ export class OverlayManager {
   private follower: Follower;
   private timer: NodeJS.Timeout | null = null;
   private topTimer: NodeJS.Timeout | null = null;
-  private last = Date.now();
+  private last = performance.now();
   private hidden = false;
   /** While Ember borrows the cursor its windows never take clicks, so every click reaches the app. */
   private borrowing = false;
@@ -338,8 +338,10 @@ export class OverlayManager {
 
   private tick(): void {
     const now = Date.now();
-    const dt = (now - this.last) / 1000;
-    this.last = now;
+    // A frame's time on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88).
+    const mono = performance.now();
+    const dt = (mono - this.last) / 1000;
+    this.last = mono;
     if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
