@@ -6,6 +6,7 @@ import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import { targetBadge } from "./badge";
+import { idleLine, micAnnouncement, micBadge } from "../../shared/mic";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -75,9 +76,10 @@ let announced = "";
 let announcedStatus = "";
 /**
  * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
- * caught the first part…"), which the card shows even under a bubble. Both at once go out together (one live update).
+ * caught the first part…"), which the card shows even under a bubble, and news about the microphone. All at once go
+ * out together (one live update).
  */
-function announce(b: BubbleState, status: string | null): void {
+function announce(b: BubbleState, status: string | null, micNews: string | null): void {
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
@@ -88,8 +90,11 @@ function announce(b: BubbleState, status: string | null): void {
     announcedStatus = status ?? "";
     if (status) parts.push(status);
   }
+  if (micNews) parts.push(micNews);
   if (parts.length) $("live").textContent = parts.join(" ");
 }
+/** The microphone state last shown: a change the user must know about is said once (the first state isn't news). */
+let lastMic: EmberState["mic"] | null = null;
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. */
 let badgeKey = "";
 function renderTarget(s: EmberState): void {
@@ -112,21 +117,29 @@ api.onState(s => {
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
   const b = s.bubble;
+  // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
-  mic.hidden = !micShown;
+  const micState = micBadge(s.mic);
+  mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
-  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : s.mic === "error" ? "Microphone problem" : "";
+  mic.dataset.glyph = micState?.glyph ?? "";
+  mic.title = micState?.label ?? "";
+  mic.setAttribute("aria-label", micState?.label ?? "Microphone");
+  const micNews = lastMic !== null && s.mic !== lastMic ? micAnnouncement(s.mic) : null;
+  lastMic = s.mic;
+  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work.
+  const idle = idleLine(s.idle, s.mic);
   if (!fallback) {
+    if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
     return;
   }
-  announce(b, s.status ?? null);
+  announce(b, s.status ?? null, micNews);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
-  const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
+  const text = cardText(b, name, s.status ?? idle, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;

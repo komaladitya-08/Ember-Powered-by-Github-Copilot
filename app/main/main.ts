@@ -19,6 +19,7 @@ import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
+import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
@@ -538,6 +539,8 @@ function start(): void {
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
+      // A microphone that can't hear "Hey Ember": the way to fix it (Settings, at Voice, says why and how).
+      ...(voice?.micState === "error" ? [{ label: MIC_PROBLEM_MENU, click: () => { opens = true; showHome(); sendToHome(IPC.focusSection, "voice"); } }] : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
       { label: label("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },

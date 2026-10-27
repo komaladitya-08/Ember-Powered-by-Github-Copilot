@@ -14,7 +14,8 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
 #face { display: block; width: 46px; height: 46px; }
 .text { display: grid; min-width: 0; }
 /* Ember's name, and beside it the computer Ember works on when that isn't this one (§8.1): a small capsule with a dot
-   for its state (green ready, amber connecting, grey not connected, red lost; its words say the state too). */
+   for its state (green ready, amber connecting, grey not connected, red lost; its accessible name says the state too).
+   Never colour alone: every state but ready is a symbol of the family (working, stopped, failed), so its shape says it. */
 .name-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .target {
   display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 110px; padding: 0 6px; border-radius: var(--r-capsule);
@@ -23,9 +24,10 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
 .target[hidden] { display: none; }
 .target > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .target-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
-.target[data-state="connecting"] .target-dot { background: var(--yellow); }
-.target[data-state="off"] .target-dot { background: var(--gray); }
-.target[data-state="lost"] .target-dot { background: var(--red); }
+.target:not([data-state="ready"]) .target-dot { width: 10px; height: 10px; border-radius: 0; }
+.target[data-state="connecting"] .target-dot { background: var(--yellow); -webkit-mask: var(--sym-working) center / 10px no-repeat; }
+.target[data-state="off"] .target-dot { background: var(--gray); -webkit-mask: var(--sym-stopped) center / 10px no-repeat; }
+.target[data-state="lost"] .target-dot { background: var(--red); -webkit-mask: var(--sym-failed) center / 10px no-repeat; }
 .text b { font: var(--type-headline); font-size: 13px; line-height: 17px; letter-spacing: -0.003em; }
 #line { color: var(--label-2); font: var(--type-footnote); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thought, .step, .task { display: none; }
@@ -93,15 +95,25 @@ body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px
 #task-detail { color: var(--label-2); }
 .task-actions { flex: none; display: flex; gap: 6px; }
 .task-actions button { min-height: 24px; padding: 3px 12px; font-size: 12px; line-height: 16px; }
-/* Microphone: a badge on the face's lower right, in the glass's colour ring. The accent while it is open (as the
-   system's own privacy dot), its halo breathing while it hears you (by opacity, on a layer of its own); grey when
-   muted, red on a problem. Its tooltip says which. */
-.mic { position: absolute; left: 38px; top: 36px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--glass-solid); }
-.mic::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--accent) 75%, transparent) 30%, transparent 70%); opacity: 0; }
+/* Microphone: a badge on the face's lower right, a symbol on a dark disc (so it never reads as part of the character,
+   as an orange dot on Cinder's mitten did). Its shape says the state, not only its colour (app/shared/mic.ts): a
+   microphone in the accent while it listens (as the system's own privacy dot), its halo breathing while it hears you
+   (by opacity, on a layer of its own); struck out in grey when muted or not set up; Ember's working ring while it
+   starts; a red mark on a problem. Its accessible name and tooltip say which. */
+.mic {
+  --mic-tint: var(--accent); --mic-glyph: var(--sym-mic);
+  position: absolute; left: 34px; top: 30px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--glass-solid); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55);
+  /* Its own layer stack: the halo goes over the disc but under the symbol. */
+  isolation: isolate;
+}
+.mic::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--mic-tint); -webkit-mask: var(--mic-glyph) center / 12px no-repeat; }
+.mic::after { content: ""; position: absolute; inset: -5px; z-index: -1; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--accent) 75%, transparent) 30%, transparent 70%); opacity: 0; }
 .mic[data-state="active"]::after { animation: mic-pulse 0.9s ease-in-out infinite; }
-.mic[data-state="muted"] { background: var(--gray); }
-.mic[data-state="error"] { background: var(--red); }
-body.fallback .mic { left: 86px; top: 94px; }
+.mic[data-glyph="mic-off"] { --mic-tint: var(--gray); --mic-glyph: var(--sym-mic-off); }
+.mic[data-glyph="working"] { --mic-tint: var(--gray); --mic-glyph: var(--sym-working); }
+.mic[data-glyph="problem"] { --mic-tint: var(--red); --mic-glyph: var(--sym-failed); }
+body.fallback .mic { left: 82px; top: 90px; }
 @keyframes mic-pulse { 50% { opacity: 1; } }
 /* Calm: no breathing, so hearing you shows as a still halo (waiting shows none). */
 @media (prefers-reduced-motion: reduce) { .mic::after { animation: none !important; } .mic[data-state="active"]::after { opacity: 0.85; } }
