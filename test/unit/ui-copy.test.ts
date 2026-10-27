@@ -247,6 +247,13 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
     expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
+    expect(keep(commandCopy.askHeading({ target: "local", targetLabel: "This computer" }))).toBe("Ember wants to run this command");
+    expect(keep(commandCopy.askHeading({ target: "ssh:build-01", targetLabel: "build-01" }))).toBe("Ember wants to run this command on build-01");
+    expect(keep(commandCopy.askHeading({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe("Ember wants to run this command in Ubuntu (WSL)");
+    expect(commandCopy.isRiskyCard({ classes: ["destroy"] })).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: ["remote-delete", "publish"] })).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
+    expect(commandCopy.isRiskyCard({})).toBe(false);
     expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
     expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
@@ -281,8 +288,8 @@ describe("the command window's words (§8.5)", () => {
     expect(say({ ended: "refused-remote", code: null, error: "its policy turns commands off" })).toBe("build-01 refused it: its policy turns commands off.");
     expect(say({ ended: "stopped-task", code: null, ms: 900 })).toBe("Stopped with its task after 0.9 s. What it already changed stays.");
     expect(say({ ended: "exit", code: null, signal: "SIGKILL", ms: 61_000 })).toBe("Ended by SIGKILL after 1 min 1 s.");
-    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make.");
-    expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b.");
+    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make. Ask Ember to stop it, or end it yourself.");
+    expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b. Ask Ember to stop them, or end them yourself.");
     expect(keep(commandCopy.reaskText("build-01"))).toBe("Not run: build-01's own check asks for your OK first.");
     expect(commandCopy.durationText(9_960)).toBe("10 s");
     expect(commandCopy.durationText(59_600)).toBe("1 min");

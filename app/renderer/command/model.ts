@@ -30,6 +30,8 @@ export interface TabView extends CommandTabView {
   rows: number;
   /** How it is going, for the tab's symbol (its words are the status line). */
   outcome: "running" | "done" | "failed" | "stopped";
+  /** The computer it runs on when it isn't this one ("build-01", "Ubuntu (WSL)"): a badge on the tab (review #275). */
+  where?: string;
 }
 
 /** A task whose command has no tab yet, and its line ("Starting Ubuntu…"). */

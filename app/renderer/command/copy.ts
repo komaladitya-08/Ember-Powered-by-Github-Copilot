@@ -14,6 +14,18 @@ export const WINDOW_TITLE = "Ember commands";
 export const EMPTY_TEXT = "No commands yet.";
 
 export const ASK_HEADING = "Ember wants to run this command";
+
+/** The question card's heading, naming the computer when it isn't this one (review #275): "… on build-01", "… in Ubuntu (WSL)". */
+export function askHeading(card: Pick<CommandCard, "target" | "targetLabel">): string {
+  const kind = parseTargetId(card.target)?.kind;
+  if (!kind || kind === "local") return ASK_HEADING;
+  return `${ASK_HEADING} ${kind === "wsl" ? "in" : "on"} ${outsideText(card.targetLabel, 64)}`;
+}
+
+/** A card for a command that deletes data (here or in a remote service): it gets a quiet marker and no prominent Allow (review #275). */
+export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
+  return Array.isArray(card.classes) && card.classes.some(c => c === "destroy" || c === "remote-delete");
+}
 /** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
 export const ANNOUNCE_HEADING = "About to run this, as you asked";
 export const ALLOW_LABEL = "Allow";
@@ -88,11 +100,16 @@ export function outsideText(s: unknown, max: number): string {
 /** A reason in a sentence (shown as outsideText), without the full stop it may already end with. */
 const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+$/, "");
 
-/** "1 program it started is still running: make." / "2 programs it started are still running: a, b." */
+/**
+ * "1 program it started is still running: make. Ask Ember to stop it, or end it yourself." / "2 programs it started
+ * are still running: a, b. Ask Ember to stop them, or end them yourself." (what to do about them: review #275).
+ */
 export function stragglerText(names: readonly string[]): string {
   if (!names.length) return "";
   const list = names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "");
-  return names.length === 1 ? `1 program it started is still running: ${list}.` : `${names.length} programs it started are still running: ${list}.`;
+  return names.length === 1
+    ? `1 program it started is still running: ${list}. Ask Ember to stop it, or end it yourself.`
+    : `${names.length} programs it started are still running: ${list}. Ask Ember to stop them, or end them yourself.`;
 }
 
 /**

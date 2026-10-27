@@ -683,6 +683,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
+    ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
   });
   /** Asks with the command card; "once", "no" (said no or let it expire) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "stopped"> => {

@@ -16,7 +16,7 @@ import type { OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
-import type { CommandCard, CommandWindowPort, RunExit, RunningCommand } from "./types";
+import type { CommandCard, CommandWindowPort, DangerClass, RunExit, RunningCommand } from "./types";
 import { RUNNING_STATUS, announceKeyText, headerLine, outsideText, reaskText, statusLine, typingHint } from "../../renderer/command/copy";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
@@ -100,6 +100,8 @@ interface Announcement {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+/** The danger classes a card may carry (anything else: not a card Ember made). */
+const DANGER_CLASSES: readonly DangerClass[] = ["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear"];
 const isRunId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{16}$/.test(v);
 const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
@@ -122,6 +124,7 @@ export function validCard(c: unknown): c is CommandCard {
     && (c.command as string).length > 0 && isSha(c.sha256) && str(c.taskId, 200) && str(c.taskTitle, 1000)
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
     && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0
+    && (c.classes === undefined || (Array.isArray(c.classes) && c.classes.length <= DANGER_CLASSES.length && c.classes.every(x => DANGER_CLASSES.includes(x as DangerClass))))
     && cardSha256(c as unknown as CommandCard) === c.sha256;
 }
 
@@ -224,8 +227,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
   function tabView(t: Tab): TabView {
     const interactive = !t.ended && t.run.interactive === true;
+    const kind = parseTargetId(t.card.target)?.kind;
     return {
       runId: t.card.runId, seq: t.seq, header: headerLine(t.card), command: t.card.command,
+      // The tab names the computer when it isn't this one (review #275).
+      ...(kind && kind !== "local" ? { where: outsideText(t.card.targetLabel, 40) } : {}),
       status: t.note && !t.ended ? t.note : t.status, interactive, ended: t.ended, title: t.card.taskTitle,
       typing: typingHint({ interactive, ended: t.ended }, o.os), cols: t.size.cols, rows: t.size.rows, outcome: t.outcome,
     };

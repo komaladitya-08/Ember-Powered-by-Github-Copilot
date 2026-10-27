@@ -11,8 +11,8 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, ASK_HEADING, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
-  NOT_NOW_LABEL, STOP_LABEL, cardLines, countdownText, headerLine, tabLabel,
+  ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
+  NOT_NOW_LABEL, STOP_LABEL, askHeading, cardLines, countdownText, headerLine, isRiskyCard, tabLabel,
 } from "./copy";
 import { shouldFocusTerminal } from "./keys";
 import {
@@ -112,7 +112,7 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   root.setAttribute("aria-labelledby", "ask-h");
   const where = headerNode(headerLine(card));
   root.append(where.node);
-  const h = el("h1", "heading", ASK_HEADING);
+  const h = el("h1", "heading", askHeading(card));
   h.id = "ask-h";
   root.append(h);
   const { block, legend } = commandBlock(card.command, "The command, every character shown", "ask-cmd");
@@ -123,7 +123,11 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   hint.setAttribute("aria-live", "polite");
   hint.hidden = true;
   const row = el("div", "buttons");
-  const allow = el("button", "btn", ALLOW_LABEL);
+  // A command that deletes data gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's
+  // "Trust and connect" doesn't): habit shouldn't carry the user through it (review #275).
+  const risky = isRiskyCard(card);
+  root.classList.toggle("risky", risky);
+  const allow = el("button", risky ? "btn quiet" : "btn", ALLOW_LABEL);
   allow.type = "button";
   allow.disabled = true;
   // Allow says what it allows: the command is its description.
@@ -276,7 +280,9 @@ function buildTab(t: TabView): TabEls {
   tab.id = `tab-${t.seq}`;
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-controls", `panel-${t.seq}`);
-  tab.append(el("span", "sr"), el("span", "tab-label", visibleText(tabLabel(t.command)).map(segmentLabel).join("")));
+  // The computer's badge reads "build-01: make test" to a screen reader.
+  const where = t.where ? [el("span", "tab-where", t.where), el("span", "sr", ": ")] : [];
+  tab.append(el("span", "sr"), ...where, el("span", "tab-label", visibleText(tabLabel(t.command)).map(segmentLabel).join("")));
   tab.title = t.title;
   tab.addEventListener("click", () => select(t.runId));
   tab.addEventListener("keydown", tabKeys);
@@ -286,11 +292,11 @@ function buildTab(t: TabView): TabEls {
   panel.setAttribute("role", "tabpanel");
   panel.setAttribute("aria-labelledby", tab.id);
   panel.hidden = true;
-  const where = headerNode(t.header);
+  const header = headerNode(t.header);
   const { block, legend } = commandBlock(t.command, "The command");
   block.classList.add("small");
   // What the marks in the header and the command mean, as on the card (review #266).
-  const legends = [...new Set([...where.legend, ...legend])].map(line => el("p", "legend", line));
+  const legends = [...new Set([...header.legend, ...legend])].map(line => el("p", "legend", line));
   const host = el("div", "term");
   host.setAttribute("aria-roledescription", "terminal");
   host.setAttribute("aria-label", "What the command shows");
@@ -322,7 +328,7 @@ function buildTab(t: TabView): TabEls {
   foot.append(status, copy, action);
   // The status line and Stop come before the terminal, on screen and in the Tab order: they are reached without
   // passing through it (reviews #42, #261).
-  panel.append(where.node, block, ...legends, foot, host, typing);
+  panel.append(header.node, block, ...legends, foot, host, typing);
   const term = createRunTerminal({
     cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", screenReader: model.view?.screenReader === true,
     onInput: data => api.input(t.runId, data),
@@ -419,7 +425,7 @@ function render(): void {
     e.tab.setAttribute("aria-selected", String(on));
     e.tab.tabIndex = on ? 0 : -1;
     e.tab.dataset.status = t.outcome === "running" ? "running" : t.outcome;
-    const sr = e.tab.querySelector(".sr")!;
+    const sr = e.tab.querySelector(".sr")!; // the first .sr: how it is going
     if (sr.textContent !== OUTCOME_WORD[t.outcome]) sr.textContent = OUTCOME_WORD[t.outcome];
     if (e.status.textContent !== t.status) e.status.textContent = t.status;
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;

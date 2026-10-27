@@ -1005,6 +1005,13 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ requested: "user", intent: "git.push" });
   });
 
+  it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."] }) });
+    const h = harness();
+    await call(h, { command: "rm -r build" });
+    expect((h.asked[0].panel as { card: CommandCard }).card.classes).toEqual(["destroy"]);
+  });
+
   it("counts down as long as the command window says (longer while a screen reader runs), in the bubble too (review #46)", async () => {
     makeJudge({ decide: () => decision({ verdict: "announce", classes: ["publish"], rules: ["git.push"], says: ["Pushes feature-x to origin."], requested: { intent: "git.push", announce: "Pushing feature-x to origin, as you asked." } }) });
     const h = harness({ words: "push my branch to GitHub", announceMs: base => Math.max(base, 15_000) });

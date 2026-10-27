@@ -147,17 +147,20 @@ cmd) takes `..` out of a name before anything opens it, as Ember does, so nothin
 asks), and so is an overwrite (`echo x > sub/../notes.txt` asks when the notes.txt it would really overwrite exists).
 
 **How it asks.** The bubble says "May I run a command?" with **Show the command** and **Not now**, and the command
-window shows the card "Ember wants to run this command": the whole command in monospace, nothing cut, with characters
-you wouldn't see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (each folder of a path is judged
-on its own, so `C:\Users\Иван` marks nothing), and Hebrew or Arabic text shown in the order it runs, as the terminal
-shows it; then why it asks ("Deletes build and
-everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.", "This can reach your Windows files.");
-then the model's reason, quoted. **Allow** stays off until the whole command has been in view ("Read the whole
-command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works only while that card
-shows the whole command; **Not now** and the deny chord always work. There is never an "Always" for commands, a voice
-"yes" never approves one, and a notification only says "Ember wants to run a command on build-01." A question nobody
-answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that computer, in that folder, for
-that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+window shows the card "Ember wants to run this command" ("… on build-01", "… in Ubuntu (WSL)" for another computer; a
+tab there carries the computer's name too): the whole command in monospace, nothing cut, with characters you wouldn't
+see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (each folder of a path is judged on its own,
+so `C:\Users\Иван` marks nothing), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
+then why it asks ("Deletes build and everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.",
+"This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
+on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
+stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
+view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works
+only while that card shows the whole command; **Not now** and the deny chord always work. There is never an "Always"
+for commands, a voice "yes" never approves one, and a notification only says "Ember wants to run a command on
+build-01." A question nobody answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that
+computer, in that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around
+it.
 
 ### 2.5 When you asked for exactly that
 

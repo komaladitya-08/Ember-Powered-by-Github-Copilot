@@ -541,7 +541,7 @@ describe("a run's tab", () => {
     expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays.");
     looked(["sleep", "\u202emalware"]);
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware.");
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware. Ask Ember to stop them, or end them yourself.");
     // A run that says nothing (a remote's) keeps its line as it was.
     const quiet = new FakeRun("00000000000000aa");
     ctl.attach(card({ runId: quiet.runId }), quiet);
@@ -684,7 +684,7 @@ describe("a run's tab", () => {
     expect(status).not.toMatch(/[\u202e\n]/);
     expect([...status].length).toBeLessThan(400);
     const names = statusLine({ code: 0, signal: null, ended: "exit", ms: 1000, stragglers: ["ma\u200bke", "y".repeat(500)] } as RunExit, { label: "build-01", os: "linux" });
-    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}….`);
+    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}…. Ask Ember to stop them, or end them yourself.`);
   });
 
   it("names how a run ended for its tab's symbol", () => {
@@ -835,5 +835,21 @@ describe("a run the remote's own check sent back for the user's OK (review #274)
     await vi.advanceTimersByTimeAsync(0);
     ctl.attach(card({ runId: "2222222222222222", command: "ls" }), new FakeRun("2222222222222222"));
     expect(page().last().tabs.map(t => t.runId)).toEqual(["2222222222222222", "1111111111111111", "0123456789abcdef"]);
+  });
+});
+
+describe("where a command runs, and what kind it is, on the card and the tab (review #275)", () => {
+  it("names the computer on a tab that isn't this computer's", () => {
+    const { ctl, page } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    ctl.attach(card({ runId: "1111111111111111", target: "local", targetLabel: "This computer", login: undefined }), new FakeRun("1111111111111111"));
+    ctl.attach(card({ runId: "2222222222222222", target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", login: undefined }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.where ?? null)).toEqual(["Ubuntu (WSL)", null, "build-01"]);
+  });
+
+  it("takes a card's danger classes, and refuses a card with ones Ember doesn't know", () => {
+    expect(validCard(card({ classes: ["destroy", "publish"] }))).toBe(true);
+    expect(validCard(card({ classes: ["nuke" as never] }))).toBe(false);
+    expect(validCard({ ...card(), classes: "destroy" })).toBe(false);
   });
 });

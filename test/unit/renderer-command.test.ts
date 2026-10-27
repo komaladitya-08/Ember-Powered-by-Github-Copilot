@@ -418,7 +418,7 @@ describe("a run's terminal and the keyboard (reviews #42, #261, #264, #268)", ()
     expect(term).toMatch(/attachCustomKeyEventHandler\(/);
     expect(term).toMatch(/termKeyAction\(e, /);
     expect(term).toMatch(/tabIndex = interactive \? 0 : -1/);
-    expect(main).toMatch(/panel\.append\(where\.node, block, \.\.\.legends, foot, host, typing\)/);
+    expect(main).toMatch(/panel\.append\(header\.node, block, \.\.\.legends, foot, host, typing\)/);
     expect(main).toMatch(/foot\.append\(status, copy, action\)/);
     expect(css).toMatch(/\.term:focus-within\s*\{[^}]*--focus-ring/);
   });
