@@ -35,6 +35,7 @@ import type { TargetId } from "../../shared/targets";
 import { placeName, whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
+import { SessionToolsTimeoutError } from "./session-config";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -301,6 +302,8 @@ function proxyNote(p?: { url: string | null; socks?: string }): string {
  * with one is retried with the offline backoff, and asking retries at once, as offline.
  */
 const TRANSIENT = /\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|\b429\b|too many requests|rate.?limit|timed? ?out|timeout/i;
+/** One of those: a TRANSIENT message, or the conversation's tools not reported in time (its message says neither). */
+const transient = (err: unknown, msg: string) => err instanceof SessionToolsTimeoutError || TRANSIENT.test(msg);
 /** What settings show for one, while the retry waits. */
 const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
 
@@ -340,7 +343,7 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "runtime";
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic|\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "no-access";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) return "sign-in";
-  if (TRANSIENT.test(msg)) return "not-answering";
+  if (transient(err, msg)) return "not-answering";
   return "other";
 }
 
@@ -396,7 +399,7 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
     }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
-  if (TRANSIENT.test(msg)) return TRANSIENT_DETAIL;
+  if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
 }
 

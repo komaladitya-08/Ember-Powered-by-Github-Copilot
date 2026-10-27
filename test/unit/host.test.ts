@@ -40,6 +40,8 @@ const sim = vi.hoisted(() => ({
   /** What client.start() and client.listModels() throw (a GitHub 5xx, the SDK's own timeouts), or nothing. */
   startError: null as Error | null,
   modelsError: null as Error | null,
+  /** The runtime never says which tools a session has (verifySessionTools times out). */
+  toolsHang: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -49,7 +51,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     listeners = new Set<(e: any) => void>();
     sent: string[] = [];
     aborted = 0;
-    rpc = { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: (this.config.tools ?? []).map((t: any) => ({ name: t.name })) }) } };
+    rpc = { tools: { initializeAndValidate: async () => { if (sim.toolsHang) await hang(); return {}; }, getCurrentMetadata: async () => ({ tools: (this.config.tools ?? []).map((t: any) => ({ name: t.name })) }) } };
     constructor(public sessionId: string, public config: any) {}
     on(fn: (e: any) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
     emit(type: string, data: Record<string, unknown> = {}) { for (const l of [...this.listeners]) l({ type, data }); }
@@ -139,6 +141,7 @@ beforeEach(() => {
   sim.models = null;
   sim.startError = null;
   sim.modelsError = null;
+  sim.toolsHang = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -2283,6 +2286,30 @@ describe("a passing problem while connecting (review #137)", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(sim.clients).toHaveLength(2);
     await asked;
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a conversation whose tools Copilot doesn't report in time is retried too, and said plainly", async () => {
+    vi.useFakeTimers();
+    sim.toolsHang = true;
+    const { host } = makeHost({ isOnline: () => true });
+    const started = host.start(TOKEN, "stored");
+    // verifySessionTools gives up after 10 s.
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(await started).toBe("error");
+    const s = host.getStatus();
+    expect(s.reason).toBe("not-answering");
+    expect(s.detail).not.toMatch(/session tools/);
+    expect(s.detail).toMatch(/try again/);
+    expect(idleWord(s)).toBe("Reconnecting…");
+    // It tries again on its own after about 15 s, and connects.
+    sim.toolsHang = false;
+    const before = sim.clients.length;
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(sim.clients).toHaveLength(before);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sim.clients).toHaveLength(before + 1);
     expect(host.getStatus().phase).toBe("ready");
     await host.stop();
   });
