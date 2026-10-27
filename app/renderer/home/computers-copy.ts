@@ -34,8 +34,11 @@ export interface TargetsAdmin {
   sshHostsLimited?: boolean;
 }
 
-/** One button on a row: what it says, what it asks for, and the question it asks first (Remove Ember…). */
-export interface RowAction { label: string; act: TargetsAct; confirm?: string; ariaLabel?: string }
+/**
+ * One button on a row: what it says, what it asks for, and the question it asks first (Forget, Remove helper). `pending`
+ * and `done` are what the section's message line says while it works and once it worked (Remove helper, review #191).
+ */
+export interface RowAction { label: string; act: TargetsAct; confirm?: string; ariaLabel?: string; pending?: string; done?: string }
 export interface ComputerRow { id: TargetId; name: string; detail: string | null; status: string; note: string | null; actions: RowAction[] }
 /** A switch; `ariaLabel` when its words alone don't say which computer it is for (its words come first). */
 export interface Switch { label: string; checked: boolean; disabled: boolean; ariaLabel?: string }
@@ -114,7 +117,11 @@ function sshStatus(t: TargetSummary | undefined, label: string): { status: strin
 }
 
 /** The Computers section. */
-export function computersView(i: { os: OS | undefined; summaries: readonly TargetSummary[]; settings: Settings; admin: TargetsAdmin }): ComputersView {
+export function computersView(i: {
+  os: OS | undefined; summaries: readonly TargetSummary[]; settings: Settings; admin: TargetsAdmin;
+  /** Hosts whose helper is being removed now (the page's own Remove helper, until its answer comes). */
+  removing?: ReadonlySet<string>;
+}): ComputersView {
   const commandsHere = i.settings.commands?.local?.on === true && modeFor(i.admin, "local") !== "off";
   const local: ComputerRow = { id: "local", name: "This computer", detail: null, status: commandsHere ? "Apps and commands" : "Apps", note: null, actions: [] };
 
@@ -135,6 +142,9 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
     const id = `ssh:${h.id}` as TargetId;
     const t = byId.get(id);
     const label = t?.label || h.id;
+    const detail = `${h.resolved.user}@${h.resolved.hostname}`;
+    // Removal under way (it can take a minute, and may ask to sign in): said in the row, nothing to press meanwhile.
+    if (i.removing?.has(h.id)) return { id, name: label, detail, status: "Removing Ember's helper…", note: null, actions: [] };
     const actions: RowAction[] = [];
     if (sshAllowed) {
       // A connection still being made is cancelled (disconnect stops it), not ended.
@@ -144,17 +154,19 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
           ? { label: "Disconnect", act: { kind: "disconnect", hostId: h.id }, ariaLabel: `Disconnect ${label}` }
           : { label: "Connect", act: { kind: "connect", hostId: h.id }, ariaLabel: `Connect ${label}` });
     }
-    actions.push({ label: "Forget", act: { kind: "forget", hostId: h.id }, ariaLabel: `Forget ${label}` });
+    // Forget drops the record and its OKs (adding it again asks again): it asks first too (review #163).
+    actions.push({
+      label: "Forget", act: { kind: "forget", hostId: h.id }, ariaLabel: `Forget ${label}`,
+      confirm: `Forget ${label}? Ember disconnects, removes it from this list and forgets your OKs for it. Ember's helper stays on ${label}.`,
+    });
     if (sshAllowed) {
       actions.push({
-        label: `Remove Ember from ${label}`, act: { kind: "uninstall", hostId: h.id },
-        confirm: `Remove Ember's helper from ${label}? Its record of what Ember did there stays on ${label}.`,
+        label: "Remove helper", act: { kind: "uninstall", hostId: h.id }, ariaLabel: `Remove Ember's helper from ${label}`,
+        confirm: `Remove Ember's helper from ${label}? This stops anything Ember is running there and forgets ${label} here. Its record of what Ember did there stays on ${label}.`,
+        pending: `Removing Ember's helper from ${label}…`, done: `Removed. ${label} is no longer in your list.`,
       });
     }
-    return {
-      id, name: label, detail: `${h.resolved.user}@${h.resolved.hostname}`,
-      ...(sshAllowed ? sshStatus(t, label) : { status: "Not available", note: null }), actions,
-    };
+    return { id, name: label, detail, ...(sshAllowed ? sshStatus(t, label) : { status: "Not available", note: null }), actions };
   });
   const managed = [...(!sshAllowed ? [SSH_MANAGED] : []), ...(sshAllowed && i.admin.sshHostsLimited ? [SSH_LIMITED] : [])];
   return {
@@ -224,6 +236,12 @@ export function hostInput(s: string): string | null {
 export const ADD_INVALID = "Type a host name, or user@host.";
 /** When the targets runtime couldn't be reached for an action. */
 export const ACT_FAILED = "That didn't work. Try again.";
+
+/** What the message line says once an act answered: `done` when it worked (else the runtime's own words). */
+export function actResult(r: unknown, done: string): string {
+  const ok = !!r && typeof r === "object" && (r as { ok?: unknown }).ok === true;
+  return ok ? done : actMessage(r) ?? ACT_FAILED;
+}
 
 /** What the add form says while its card or the connection is pending (review #188). */
 export function addPending(dest: string): string {

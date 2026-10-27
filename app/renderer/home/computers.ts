@@ -10,8 +10,8 @@ import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, addPending, addResult, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi, type Switch,
-  type TargetsAdmin,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
 declare global { interface Window { emberTargets?: EmberTargetsApi } }
@@ -44,6 +44,29 @@ async function act(a: TargetsAct, msg: string): Promise<void> {
     say(msg, actMessage(await api.act(a)) ?? "");
   } catch {
     say(msg, ACT_FAILED);
+  }
+}
+
+/** Hosts whose helper is being removed (their rows say so until the answer comes). */
+const removing = new Set<string>();
+/**
+ * A row's button. Remove helper says it is working, in its row and the message line, and how it went (review #191):
+ * it can take a minute, and on success the row goes.
+ */
+async function rowAction(a: RowAction): Promise<void> {
+  const api = window.emberTargets;
+  if (a.act.kind !== "uninstall" || !api) { await act(a.act, "computers-msg"); return; }
+  const hostId = a.act.hostId;
+  removing.add(hostId);
+  draw();
+  say("computers-msg", a.pending ?? "");
+  try {
+    say("computers-msg", actResult(await api.act(a.act), a.done ?? ""));
+  } catch {
+    say("computers-msg", ACT_FAILED);
+  } finally {
+    removing.delete(hostId);
+    draw();
   }
 }
 
@@ -113,7 +136,7 @@ function computerItem(r: ComputerRow): HTMLLIElement {
       if (a.ariaLabel) b.setAttribute("aria-label", a.ariaLabel);
       b.addEventListener("click", () => {
         if (a.confirm && !window.confirm(a.confirm)) return;
-        void act(a.act, "computers-msg");
+        void rowAction(a);
       });
       buttons.append(b);
     }
@@ -139,7 +162,7 @@ function draw(): void {
   const shown = summaries !== null && settings !== null;
   for (const id of ["computers", "commands", "jump-computers", "jump-commands"]) $(id).hidden = !shown;
   if (!shown) return;
-  const c = computersView({ os, summaries: summaries!, settings: settings!, admin });
+  const c = computersView({ os, summaries: summaries!, settings: settings!, admin, removing });
   const rows = [c.local, ...(c.wsl?.rows ?? []), ...c.ssh.rows];
   const key = JSON.stringify(rows);
   if (key !== computersKey) {

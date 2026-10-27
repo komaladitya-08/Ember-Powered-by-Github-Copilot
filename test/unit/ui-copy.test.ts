@@ -457,8 +457,11 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(v.wsl?.rows.map(r => [r.name, keep(r.status), r.note])).toEqual([["Ubuntu (WSL)", "Stopped", "Commands only"]]);
     expect(v.wsl?.toggle).toEqual({ label: "Let Ember work in WSL", checked: true, disabled: false });
     expect(v.ssh.rows[0]).toMatchObject({ name: "build-01", detail: "deploy@build-01.example.com", status: "Connected: apps and commands" });
-    expect(v.ssh.rows[0].actions.map(a => keep(a.label))).toEqual(["Disconnect", "Forget", "Remove Ember from build-01"]);
-    expect(keep(v.ssh.rows[0].actions[2].confirm!)).toBe("Remove Ember's helper from build-01? Its record of what Ember did there stays on build-01.");
+    expect(v.ssh.rows[0].actions.map(a => keep(a.label))).toEqual(["Disconnect", "Forget", "Remove helper"]);
+    // What Remove does, before it does it (review #191), and Forget asks too (review #163).
+    expect(keep(v.ssh.rows[0].actions[2].confirm!)).toBe("Remove Ember's helper from build-01? This stops anything Ember is running there and forgets build-01 here. Its record of what Ember did there stays on build-01.");
+    expect(keep(v.ssh.rows[0].actions[1].confirm!)).toBe("Forget build-01? Ember disconnects, removes it from this list and forgets your OKs for it. Ember's helper stays on build-01.");
+    expect([v.ssh.rows[0].actions[2].pending!, v.ssh.rows[0].actions[2].done!].map(keep)).toEqual(["Removing Ember's helper from build-01…", "Removed. build-01 is no longer in your list."]);
     const statusOf = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "commands only" })] }).ssh.rows[0].status;
     expect(["connecting", "lost", "off"].map(s => keep(statusOf(s as TargetSummary["state"])))).toEqual(["Connecting…", "Lost: trying again", "Not connected"]);
     expect(statusOf("ready")).toBe("Connected: commands only");

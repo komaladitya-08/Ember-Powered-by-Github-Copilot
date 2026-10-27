@@ -80,3 +80,26 @@ describe("adding a computer keeps what was typed until it is added (review #159,
     expect(cc.addPending("bild-01.example.com")).toBe("Connecting to bild-01.example.com… If Ember asks, answer in the window that opens.");
   });
 });
+
+describe("removing Ember from a computer, and forgetting one (review #191, #163)", () => {
+  const row = (removing?: Set<string>) => cc.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({}), ssh({})], ...(removing ? { removing } : {}) }).ssh.rows[0];
+
+  it("says before what Remove and Forget do, and that Forget leaves the helper there", () => {
+    const [, forget, remove] = row().actions;
+    expect(forget).toMatchObject({ label: "Forget", ariaLabel: "Forget build-01",
+      confirm: "Forget build-01? Ember disconnects, removes it from this list and forgets your OKs for it. Ember's helper stays on build-01." });
+    expect(remove).toMatchObject({ label: "Remove helper", ariaLabel: "Remove Ember's helper from build-01", act: { kind: "uninstall", hostId: "build-01" },
+      confirm: "Remove Ember's helper from build-01? This stops anything Ember is running there and forgets build-01 here. Its record of what Ember did there stays on build-01.",
+      pending: "Removing Ember's helper from build-01…", done: "Removed. build-01 is no longer in your list." });
+  });
+
+  it("shows the removal under way in the row, with nothing to press meanwhile", () => {
+    expect(row(new Set(["build-01"]))).toMatchObject({ status: "Removing Ember's helper…", note: null, actions: [] });
+  });
+
+  it("says how it went", () => {
+    expect(cc.actResult({ ok: true }, "Removed. build-01 is no longer in your list.")).toBe("Removed. build-01 is no longer in your list.");
+    expect(cc.actResult({ ok: false, message: "Ember couldn't remove its helper from build-01." }, "Removed.")).toBe("Ember couldn't remove its helper from build-01.");
+    expect(cc.actResult(undefined, "Removed.")).toBe(cc.ACT_FAILED);
+  });
+});
