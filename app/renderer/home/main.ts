@@ -15,7 +15,7 @@ import {
   retryMessage, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
-import { TARGET_FEATURE_TEXT } from "./computers-copy";
+import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -307,7 +307,7 @@ function renderAdmin(a: Status["admin"]): void {
     el.hidden = false;
     el.textContent = `Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${a.error}).`;
   } else if (a.source) {
-    const off = Object.entries(a.features).filter(([, v]) => v === false).map(([k]) => FEATURE_TEXT[k] ?? k);
+    const off = Object.entries(a.features).filter(([k, v]) => v === false && targetFeatureApplies(k, platform?.os)).map(([k]) => FEATURE_TEXT[k] ?? k);
     const rules = [
       off.length ? `Turned off: ${off.join(", ")}.` : "",
       a.confirmEveryAction ? "Ember asks before every action." : "",

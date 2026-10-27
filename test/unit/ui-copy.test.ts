@@ -438,7 +438,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
       computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.ADD_BUTTON, computersCopy.ASK_EVERY_SWITCH, computersCopy.OPEN_COMMANDS,
       computersCopy.WSL_MANAGED, computersCopy.SSH_MANAGED, computersCopy.SSH_LIMITED, computersCopy.ASK_EVERY_MANAGED, computersCopy.ADD_INVALID, computersCopy.ACT_FAILED,
     ].map(keep)).toEqual([
-      "Computers", "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
+      "Computers", "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
       "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.",
       "Let Ember work in WSL", "Offer to bring Ember along when I connect with ssh", "An SSH host, e.g. build-01 or deploy@build-01.example.com", "Connect",
       "Ask me before every command", "Open the command window", "Your organisation doesn't allow Ember to work in WSL.",
@@ -505,8 +505,12 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
   it("adds the onboarding line to \"Before Ember starts\" exactly", () => {
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
-    expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b>${l.rest}</li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    // WSL is Windows' alone (review #221).
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(computersCopy.computersIntro("win32"))).toBe("Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.");
+    expect(computersCopy.computersIntro("darwin")).toBe(computersCopy.COMPUTERS_INTRO);
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }

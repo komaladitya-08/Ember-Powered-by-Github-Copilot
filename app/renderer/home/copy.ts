@@ -7,6 +7,7 @@
 import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
+import { computersIntro, onboardingRest } from "./computers-copy";
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
 export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
@@ -270,6 +271,9 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },
     { selector: "#audit-dir", content: [auditDirLabel(p)] },
     p.auditCopy ? { selector: "#journal-hint", content: auditCopySegments(p.auditCopy), hidden: false } : { selector: "#journal-hint", hidden: true },
+    // WSL is Windows' alone: the onboarding line and the Computers intro name it only there (review #221).
+    { selector: "#targets-note", content: [onboardingRest(p.os)] },
+    { selector: "#computers-intro", content: [computersIntro(p.os)] },
   ];
 }
 

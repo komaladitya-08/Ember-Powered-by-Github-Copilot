@@ -11,7 +11,9 @@ import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
 
 export const COMPUTERS_HEADING = "Computers";
-export const COMPUTERS_INTRO = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+/** The intro as the page writes it (Linux's, and macOS's): WSL exists only on Windows, so only Windows' names it (review #221). */
+export const COMPUTERS_INTRO = "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+export const COMPUTERS_INTRO_WINDOWS = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
 export const WSL_SWITCH = "Let Ember work in WSL";
@@ -20,8 +22,22 @@ export const ADD_PLACEHOLDER = "An SSH host, e.g. build-01 or deploy@build-01.ex
 export const ADD_BUTTON = "Connect";
 export const ASK_EVERY_SWITCH = "Ask me before every command";
 export const OPEN_COMMANDS = "Open the command window";
-/** The onboarding list's line (§8.9; new users only, CONSENT_VERSION unchanged). */
-export const ONBOARDING_LINE = { lead: "Other computers and commands", rest: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first." } as const;
+/** The onboarding list's line (§8.9; new users only, CONSENT_VERSION unchanged): `rest` as the page writes it, WSL on Windows only. */
+export const ONBOARDING_LINE = {
+  lead: "Other computers and commands",
+  rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.",
+  restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.",
+} as const;
+
+/** The Computers intro on `os` (the page's own words off Windows). */
+export function computersIntro(os: OS = "linux"): string {
+  return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
+}
+
+/** The onboarding line after its bold lead on `os` (the page's own words off Windows). */
+export function onboardingRest(os: OS = "linux"): string {
+  return os === "win32" ? ONBOARDING_LINE.restWindows : ONBOARDING_LINE.rest;
+}
 
 /** What the administrator decides about computers and commands, as the settings window learns it. */
 export interface TargetsAdmin {
@@ -178,6 +194,11 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
 
 /** The words for an admin feature in the managed line ("Turned off: …"). */
 export const TARGET_FEATURE_TEXT: Readonly<Record<string, string>> = { wsl: "working in WSL", ssh: "working on other computers" };
+
+/** Whether an organisation's switch means anything on `os`: WSL's only on Windows, so elsewhere it isn't listed as turned off. */
+export function targetFeatureApplies(key: string, os: OS = "linux"): boolean {
+  return key !== "wsl" || os === "win32";
+}
 
 /** The settings window's bridge for computers (app/preload/home.ts exposes it as `window.emberTargets`): TARGETS_IPC only. */
 export interface EmberTargetsApi {

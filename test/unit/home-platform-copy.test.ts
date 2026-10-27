@@ -376,7 +376,17 @@ describe("Computers and Commands before the targets runtime answers", () => {
     // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
     const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
     expect(plug).toHaveLength(1);
-    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
+    // WSL is named on Windows only (review #221), in the onboarding line and in the Computers intro.
+    const win = apply(page(), homePatches(WINDOWS));
+    const winPlug = elements(byId(win, "welcome")).filter(e => e.attrs["data-icon"] === "plug")[0];
+    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(byId(win, "computers-intro"))).toMatch(/^Ember can work on this computer, in WSL, and on computers you reach over SSH\./);
+    for (const os of [MAC, LINUX]) {
+      const root2 = apply(page(), homePatches(os));
+      expect(visible(byId(root2, "welcome")), os.os).not.toMatch(/WSL/);
+      expect(visible(byId(root2, "computers-intro")), os.os).not.toMatch(/WSL/);
+    }
   });
 });

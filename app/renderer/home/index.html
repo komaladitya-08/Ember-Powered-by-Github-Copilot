@@ -33,7 +33,7 @@
         <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</li>
         <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code id="data-dir">~/.config/ember</code>. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.</li>
         <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
-        <li data-icon="plug"><b>Other computers and commands</b> are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.</li>
+        <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
       </ul>
     </section>
 
@@ -124,7 +124,7 @@
     <section class="after-setup" id="computers" aria-labelledby="computers-h" hidden>
       <h2 id="computers-h" tabindex="-1">Computers</h2>
       <div class="stack">
-        <p class="intro">Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
+        <p class="intro" id="computers-intro">Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
         <ul class="plain-list targets" id="computers-list" aria-labelledby="computers-h"></ul>
         <div class="group" id="computers-switches">
           <label class="switch-row" id="wsl-row" hidden><input type="checkbox" id="wsl-on" role="switch"><span>Let Ember work in WSL</span></label>
