@@ -48,13 +48,14 @@ export function helperEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
- * The SidecarLaunch for `distro`'s helper (§4.3), exactly: wsl.exe -d <distro> --cd ~ --exec /usr/bin/env
+ * The SidecarLaunch for `distro`'s helper (§4.3), exactly: wsl.exe -d <distro> --cd / --exec /usr/bin/env
  * EMBER_ATSPI_FIND_BUS=1 python3 -I <script>, under the job host, never a shell, never booting a distro (`mayStart`),
  * never revived on its own (`noRevive`, critique wsl-20). `python3 -I` keeps the script's folder and user
  * site-packages off sys.path and every PYTHON* variable out.
  */
 export function helperLaunch(o: { wslExe: string; distro: string; scriptLinuxPath: string; env: NodeJS.ProcessEnv; jobHost: JobHostRef | null; mayStart: () => boolean }): SidecarLaunch {
-  const args = ["-d", o.distro, "--cd", "~", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", o.scriptLinuxPath];
+  // Started in /: the inbox wsl.exe can't take --cd ~ (CI's WSL 1 runner), and the helper needs no folder.
+  const args = ["-d", o.distro, "--cd", "/", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", o.scriptLinuxPath];
   const run = underJobHost(o.wslExe, args, helperEnv(o.env), o.jobHost);
   return { command: run.command, args: run.args, env: run.env, firstRequestMs: HELPER_FIRST_REQUEST_MS, windowsHide: true, mayStart: o.mayStart, noRevive: true };
 }
@@ -84,8 +85,9 @@ export function fixedScriptStdin(script: string, input: readonly string[] = []):
  */
 export function runFixedScript(o: { wslExe: string; distro: string; script: string; input?: string[]; env: NodeJS.ProcessEnv; jobHost: JobHostRef | null; spawn?: SpawnLike; timeoutMs?: number }): Promise<string | null> {
   // In the user's home, as §4.1's fixed scripts: never Ember's Windows folder translated (it may not be mounted).
-  const run = underJobHost(o.wslExe, ["-d", o.distro, "--cd", "~", "--exec", "/bin/sh", "-s"], helperEnv(o.env), o.jobHost);
-  const text = fixedScriptStdin(o.script, o.input);
+  // wsl.exe starts the shell in / and the script goes home itself (runner.ts cdLine: --cd ~ fails on the inbox wsl.exe).
+  const run = underJobHost(o.wslExe, ["-d", o.distro, "--cd", "/", "--exec", "/bin/sh", "-s"], helperEnv(o.env), o.jobHost);
+  const text = fixedScriptStdin(`cd || exit 97\n${o.script}`, o.input);
   if (text === null) return Promise.resolve(null);
   return new Promise(resolve => {
     let child: ReturnType<SpawnLike>;

@@ -118,6 +118,18 @@ function carriable(line: string): boolean {
 }
 
 /**
+ * A script's first line: go to `cwd` ("~": the user's home), or exit 97 when it isn't there. wsl.exe's own --cd can't
+ * be trusted with a folder (the inbox wsl.exe can't take "~"; the Store one runs in the home folder when the folder is
+ * missing), so every shell Ember starts in a distro starts in / (IN_DISTRO) and goes to its folder itself.
+ */
+export function cdLine(cwd: string): string {
+  return cwd === "~" ? "cd || exit 97" : `cd -- '${cwd.replace(/'/g, "'\\''")}' || exit 97`;
+}
+
+/** wsl.exe's arguments for a fixed script read by /bin/sh from stdin in `distro`, started in /. */
+const inDistroSh = (distro: string): string[] => ["-d", distro, "--cd", "/", "--exec", "/bin/sh", "-s"];
+
+/**
  * The text Ember writes to `/bin/sh -s`: the fixed `script`, then `exit` (stdin stays open: see the module comment).
  * `lines` reach the script as its stdin through a quoted here-document (`<<'EMBER_DATA_<random>'`), so the shell never
  * parses them: they are data whatever they hold. Throws when a line can't be carried (a line break or NUL in it).
@@ -491,7 +503,7 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
 
   const readFacts = async (): Promise<{ facts: RunnerFacts; lines: FactsLines }> => {
     await usable();
-    const r = await mayStart(() => d.exec.run(["-d", name, "--cd", "~", "--exec", "/bin/sh", "-s"], { stdin: scriptInput(FACTS_SCRIPT), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
+    const r = await mayStart(() => d.exec.run(inDistroSh(name), { stdin: scriptInput(`${cdLine("~")}\n${FACTS_SCRIPT}`), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
     if (r.error) throw new Error(r.error);
     if (r.timedOut) throw new Error(`${name} took too long to start`);
     const lines = parseFacts(r.stdout.toString("utf8"));
@@ -519,8 +531,8 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
       if (!o.mayBoot && !(await d.runningNow()).has(name)) return null;
       const cwd = o.cwd ?? "~";
       if (cwd !== "~" && (!cwd.startsWith("/") || /["\\]/.test(cwd) || CONTROL.test(cwd))) return null;
-      const input = scriptInput(script, o.lines);
-      const call = () => d.exec.run(["-d", name, "--cd", cwd, "--exec", "/bin/sh", "-s"], { stdin: input, timeoutMs: o.timeoutMs ?? BOOT_TIMEOUT_MS, inDistro: true });
+      const input = scriptInput(`${cdLine(cwd)}\n${script}`, o.lines);
+      const call = () => d.exec.run(inDistroSh(name), { stdin: input, timeoutMs: o.timeoutMs ?? BOOT_TIMEOUT_MS, inDistro: true });
       const r = o.mayBoot ? await mayStart(call) : await call();
       if (r.error || r.timedOut) return null;
       return { code: r.code, stdout: r.stdout, stderr: decodeMessage(r.stderr) };
@@ -531,7 +543,7 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
   };
 
   const boot = async (): Promise<boolean> => {
-    const r = await mayStart(() => d.exec.run(["-d", name, "--cd", "~", "--exec", "/bin/sh", "-s"], { stdin: scriptInput("true"), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
+    const r = await mayStart(() => d.exec.run(inDistroSh(name), { stdin: scriptInput(`${cdLine("~")}\ntrue`), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
     return !r.error && !r.timedOut && r.code === 0;
   };
 

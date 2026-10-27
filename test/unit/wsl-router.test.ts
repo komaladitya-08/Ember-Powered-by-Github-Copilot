@@ -470,16 +470,16 @@ describe("the helper's launch (§4.3)", () => {
   const jobHost = { execPath: "C:\\Ember\\Ember.exe", script: "C:\\Ember\\resources\\app\\dist\\app\\job-host.cjs" };
   const env = { Path: "C:\\Windows", WslEnv: "USERPROFILE/p", GH_TOKEN: "ghp_secret", EMBER_LOG_LEVEL: "debug", EMBER_ADMIN_POLICY: "x", NODE_OPTIONS: "--inspect" };
 
-  it("is wsl.exe -d <distro> --cd ~ --exec /usr/bin/env EMBER_ATSPI_FIND_BUS=1 python3 -I <script>, under the job host, never a shell", () => {
+  it("is wsl.exe -d <distro> --cd / --exec /usr/bin/env EMBER_ATSPI_FIND_BUS=1 python3 -I <script>, under the job host, never a shell", () => {
     const mayStart = () => true;
     const l = helperLaunch({ wslExe: "C:\\Program Files\\WSL\\wsl.exe", distro: "Ubuntu", scriptLinuxPath: "/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py", env, jobHost, mayStart });
     expect(l.command).toBe(jobHost.execPath);
-    expect(l.args).toEqual([jobHost.script, "--interactive", "--", "C:\\Program Files\\WSL\\wsl.exe", "-d", "Ubuntu", "--cd", "~", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", "/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py"]);
+    expect(l.args).toEqual([jobHost.script, "--interactive", "--", "C:\\Program Files\\WSL\\wsl.exe", "-d", "Ubuntu", "--cd", "/", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", "/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py"]);
     expect(l).toMatchObject({ firstRequestMs: 15_000, windowsHide: true, noRevive: true, mayStart });
     // Ember's secrets and switches stay behind; only the id base crosses into Linux (WSLENV replaced, any spelling).
     expect(l.env).toEqual({ Path: "C:\\Windows", EMBER_LOG_LEVEL: "debug", WSL_UTF8: "1", WSLENV: "EMBER_ATSPI_ID_BASE/u", ELECTRON_RUN_AS_NODE: "1" });
     const bare = helperLaunch({ wslExe: "C:\\Windows\\System32\\wsl.exe", distro: "Debian", scriptLinuxPath: "/x.py", env: {}, jobHost: null, mayStart });
-    expect([bare.command, ...bare.args]).toEqual(["C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "~", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", "/x.py"]);
+    expect([bare.command, ...bare.args]).toEqual(["C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "/", "--exec", "/usr/bin/env", "EMBER_ATSPI_FIND_BUS=1", "python3", "-I", "/x.py"]);
     expect(bare.env).toEqual({ WSL_UTF8: "1", WSLENV: "EMBER_ATSPI_ID_BASE/u" });
   });
 
@@ -488,9 +488,10 @@ describe("the helper's launch (§4.3)", () => {
     const spawn = fakeSpawn(runs, "/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py\n", 0);
     const out = await runFixedScript({ wslExe: "C:\\WSL\\wsl.exe", distro: "Ubuntu", script: WSLPATH_SCRIPT, input: ["C:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py"], env: {}, jobHost, spawn });
     expect(parseLinuxPath(out)).toBe("/mnt/c/Ember/resources/sidecar/atspi/ember_atspi.py");
-    expect(runs[0].args).toEqual([jobHost.script, "--interactive", "--", "C:\\WSL\\wsl.exe", "-d", "Ubuntu", "--cd", "~", "--exec", "/bin/sh", "-s"]);
+    expect(runs[0].args).toEqual([jobHost.script, "--interactive", "--", "C:\\WSL\\wsl.exe", "-d", "Ubuntu", "--cd", "/", "--exec", "/bin/sh", "-s"]);
     // Not a line after the script: dash reads ahead, so `read` would get nothing and the path would run as a command.
-    expect(runs[0].stdin).toBe("{ IFS= read -r p; wslpath -a -u \"$p\"; } <<'EMBER_INPUT_END'\nC:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py\nEMBER_INPUT_END\nexit\n");
+    // Started in / (the inbox wsl.exe can't take --cd ~), the script goes home itself first.
+    expect(runs[0].stdin).toBe("cd || exit 97\n{ IFS= read -r p; wslpath -a -u \"$p\"; } <<'EMBER_INPUT_END'\nC:\\Ember\\resources\\sidecar\\atspi\\ember_atspi.py\nEMBER_INPUT_END\nexit\n");
     expect(runs[0].args.join(" ")).not.toContain("ember_atspi");
     // The job host's stdin is held open until the shell has finished (its end would end the job), then closed.
     expect(runs[0].ended).toBe(true);

@@ -33,7 +33,7 @@ import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths, readScriptText } from "./inspect";
 import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
-import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "./shells";
+import { NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "./shells";
 import { linesKept, RUN_ID, sweepLocal } from "./sweep";
 import { JOB_FAILED, JOB_FAILED_PREFIX, jobHostArgv } from "./win32-job";
 
@@ -76,7 +76,7 @@ const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
  * What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). PWD is the run's
  * folder as Ember named it (posixPwd), never Windows' own.
  */
-export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_CWD", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
 /**
  * The PWD a POSIX run's shell starts with: its folder as Ember judged it. A POSIX shell keeps an inherited PWD that
  * names its current folder (through links too) and otherwise starts from the folder's real path, so with the task's
@@ -130,10 +130,10 @@ export function launchArgv(
     if (WSL_CWD_BAD.test(spec.cwd) || !spec.cwd.startsWith("/")) throw new LaunchError("Ember can't pass that folder to WSL.");
     const { shell, path } = posixPath();
     const pty = safeScript?.kind === "util-linux";
-    const inner = pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64" });
+    const inner = `${WSL_CD}; ${pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64" })}`;
     const rest = pty
-      ? ["-d", o.wsl.distro, "--cd", spec.cwd, "--exec", "/usr/bin/env", "SHELL=/bin/sh", safeScript.path, "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null"]
-      : ["-d", o.wsl.distro, "--cd", spec.cwd, "--exec", path, ...NO_RC[shell], "-c", WSL_EVAL];
+      ? ["-d", o.wsl.distro, "--cd", "/", "--exec", "/usr/bin/env", "SHELL=/bin/sh", safeScript.path, "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null"]
+      : ["-d", o.wsl.distro, "--cd", "/", "--exec", path, ...NO_RC[shell], "-c", WSL_EVAL];
     const argv = jobHostArgv(o.jobHost, o.wsl.exe, rest, pty);
     return {
       command: argv[0],
@@ -145,6 +145,8 @@ export function launchArgv(
         EMBER_INNER: inner,
         EMBER_CMD_B64: Buffer.from(spec.command, "utf8").toString("base64"),
         EMBER_RUN_ID: spec.runId,
+        // WSL_CD's folder: the run's, as decided.
+        EMBER_CWD: spec.cwd,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),
         TERM: pty ? "xterm-256color" : "dumb",
         ...posixPwd(spec),

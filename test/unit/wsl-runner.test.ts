@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NO_RC, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { NO_RC, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import { OPEN_SPAN_END } from "../../app/main/commands/prompts";
 import type { CommandCard, CommandService, JobHostRef, RunSpec, RunExit } from "../../app/main/commands/types";
 import { runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
@@ -161,19 +161,22 @@ describe("wslLaunch", () => {
   it("runs util-linux script under env SHELL=/bin/sh, through the job host, with WSL_EVAL as the only -c text (PTY)", () => {
     const l = wslLaunch(spec(), pty, o);
     expect([l.command, ...l.args]).toEqual([
-      JOB.execPath, JOB.script, "--interactive", "--", EXE, "-d", "Ubuntu", "--cd", "/home/ana/proj",
+      JOB.execPath, JOB.script, "--interactive", "--", EXE, "-d", "Ubuntu", "--cd", "/",
       "--exec", "/usr/bin/env", "SHELL=/bin/sh", "/usr/bin/script", "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null",
     ]);
-    expect(l.env.EMBER_INNER).toBe(posixInner("bash", "/bin/bash", "b64"));
+    // wsl.exe starts in /: the shell goes to the run's folder itself (the inbox wsl.exe can't take --cd ~, and the
+    // Store one runs in the home folder when the folder is missing: CI's WSL runners).
+    expect(l.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixInner("bash", "/bin/bash", "b64")}`);
+    expect(l.env.EMBER_CWD).toBe("/home/ana/proj");
     expect(l.env.TERM).toBe("xterm-256color");
   });
 
   it("runs the shell itself without rc files on pipes (no script)", () => {
     const l = wslLaunch(spec(), pipes, o);
     expect([l.command, ...l.args]).toEqual([
-      JOB.execPath, JOB.script, "--batch", "--", EXE, "-d", "Ubuntu", "--cd", "/home/ana/proj", "--exec", "/bin/bash", ...NO_RC.bash, "-c", WSL_EVAL,
+      JOB.execPath, JOB.script, "--batch", "--", EXE, "-d", "Ubuntu", "--cd", "/", "--exec", "/bin/bash", ...NO_RC.bash, "-c", WSL_EVAL,
     ]);
-    expect(l.env.EMBER_INNER).toBe(posixBody({ pty: false, from: "b64" }));
+    expect(l.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64" })}`);
     expect(l.env.TERM).toBe("dumb");
     expect(wslLaunch(spec({ shell: "sh" }), pipes, o).args.slice(-4)).toEqual(["--exec", "/bin/sh", "-c", WSL_EVAL]);
   });
@@ -194,13 +197,13 @@ describe("wslLaunch", () => {
 
   it("replaces the user's WSLENV with exactly Ember's variables, and sets WSL_UTF8", () => {
     const p = wslLaunch(spec(), pty, o).env;
-    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u");
+    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u");
     expect(p.PWD).toBe("/home/ana/proj");
     expect(Object.keys(p).filter(k => k.toUpperCase() === "WSLENV")).toEqual(["WSLENV"]);
     expect(p).toMatchObject({ WSL_UTF8: "1", EMBER_RUN_ID: RUN_ID, EMBER_COLS: "120", EMBER_ROWS: "30", ELECTRON_RUN_AS_NODE: "1" });
     // Pipes also send §3.3.1's non-interactive defaults across.
     const q = wslLaunch(spec(), pipes, o).env;
-    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
     expect(q).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
     expect(p.GIT_TERMINAL_PROMPT).toBeUndefined();
   });
@@ -218,7 +221,7 @@ describe("wslLaunch", () => {
     for (const cwd of ['/home/ana/a"b', "/home/ana/a\\b", "/home/ana/a\nb", "/home/ana/\x1b", "proj", "~/proj"]) {
       expect(() => wslLaunch(spec({ cwd }), pty, o)).toThrow("Ember can't pass that folder to WSL");
     }
-    expect(wslLaunch(spec({ cwd: "/home/ana/my project (1)" }), pty, o).args).toContain("/home/ana/my project (1)");
+    expect(wslLaunch(spec({ cwd: "/home/ana/my project (1)" }), pty, o).env.EMBER_CWD).toBe("/home/ana/my project (1)");
   });
 
   it("refuses a shell the distro doesn't have, a NUL, a bad run id and a command too long for Windows' environment", () => {
@@ -274,7 +277,7 @@ function distro(o: {
           const out = o.inspect ? o.inspect(hereDoc(script)) : hereDoc(script).map(p => `1\t${p}\n`).join("");
           if (out === null) answerWith(call, { stderr: utf16("chdir failed\r\n"), code: 1 });
           else answerWith(call, { stdout: out });
-        } else if (script === "true\nexit\n") {
+        } else if (script.endsWith("\ntrue\nexit\n")) {
           boots.push(call);
           if (!o.hang?.includes("boot")) answerWith(call, { stdout: "" });
         } else if (script.includes(READ_SCRIPT)) {
@@ -721,7 +724,9 @@ describe("WSL runner: inspect and git facts", () => {
     const facts = await w.runner.inspect(["/home/ana/k", "/home/ana/a\nb", "/tmp/$(reboot)"], "/home/ana/proj");
     expect(facts).toEqual([{ exists: true, real: "/home/ana/.ssh" }, { exists: null, real: null }, { exists: false, real: "/tmp/$(reboot)" }]);
     const call = w.probes.at(-1)!;
-    expect(call.wsl).toEqual(["-d", "Ubuntu", "--cd", "/home/ana/proj", "--exec", "/bin/sh", "-s"]);
+    // Started in /, the script goes to the run's folder itself and stops there if it's missing.
+    expect(call.wsl).toEqual(["-d", "Ubuntu", "--cd", "/", "--exec", "/bin/sh", "-s"]);
+    expect(call.child.stdinText().startsWith("{\ncd -- '/home/ana/proj' || exit 97\n")).toBe(true);
     expect(hereDoc(call.child.stdinText())).toEqual(["/home/ana/k", "/tmp/$(reboot)"]);
   });
 
@@ -746,8 +751,8 @@ describe("WSL runner: inspect and git facts", () => {
   it("reads git's push facts read-only in the folder", async () => {
     const w = distro({ git: "branch=feature-x\npush=simple\nupstream=origin/feature-x\n" });
     expect(await w.runner.gitFacts("/home/ana/proj")).toEqual({ branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" });
-    expect(w.probes.at(-1)!.wsl.slice(0, 4)).toEqual(["-d", "Ubuntu", "--cd", "/home/ana/proj"]);
-    expect(w.probes.at(-1)!.child.stdinText()).toBe(`${GIT_SCRIPT}\nexit\n`);
+    expect(w.probes.at(-1)!.wsl.slice(0, 4)).toEqual(["-d", "Ubuntu", "--cd", "/"]);
+    expect(w.probes.at(-1)!.child.stdinText()).toBe(`cd -- '/home/ana/proj' || exit 97\n${GIT_SCRIPT}\nexit\n`);
     expect(await distro({ git: "branch=\npush=\nupstream=\n" }).runner.gitFacts("/tmp")).toBeNull();
   });
 

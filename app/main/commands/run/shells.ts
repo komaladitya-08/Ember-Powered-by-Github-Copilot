@@ -48,6 +48,14 @@ export function posixInner(shell: "bash" | "zsh" | "sh", shellPath: string, from
  */
 export const WSL_EVAL = "set -f; eval $EMBER_INNER";
 
+/**
+ * What a WSL run's EMBER_INNER starts with: the shell goes to the run's folder (EMBER_CWD) itself, and fails before the
+ * start marker when it isn't there (so the run failed to start, its stderr the reason). wsl.exe's own --cd can't be
+ * trusted with it: the inbox wsl.exe can't take "~", and the Store one runs the command in the home folder when the
+ * folder is missing (CI's WSL runners); so wsl.exe always starts the shell in /. Single spaces only (WSL_EVAL's split).
+ */
+export const WSL_CD = 'cd -- "$EMBER_CWD" || exit 97';
+
 /** PowerShell's fixed launcher (§3.3, critique integration-10). */
 export const PS_INNER =
   "if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; $OutputEncoding = New-Object Text.UTF8Encoding $false }; " +

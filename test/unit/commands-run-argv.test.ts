@@ -4,7 +4,7 @@ import type { SpawnOptions } from "node:child_process";
 import type { RunnerFacts, RunSpec } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
 import type { Timers } from "../../app/main/commands/run/kill";
-import { NO_RC, PS_INNER, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import {
   createRunner, DEFAULT_TIMEOUT_MS, isKeptRun, KEEP_BYTES, KEEP_HEAD_BYTES, launchArgv, LaunchError, START_MARKER,
   type ChildLike, type KeptRun, type RunnerDeps, type RunnerOptions,
@@ -239,25 +239,27 @@ describe("launchArgv", () => {
     expect(got.command).toBe(JOB_HOST.execPath);
     expect(got.args).toEqual([
       JOB_HOST.script, "--interactive", "--", "C:\\Windows\\System32\\wsl.exe",
-      "-d", "Ubuntu-22.04", "--cd", "/home/ana/src", "--exec", "/usr/bin/env", "SHELL=/bin/sh", "/usr/bin/script", "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null",
+      "-d", "Ubuntu-22.04", "--cd", "/", "--exec", "/usr/bin/env", "SHELL=/bin/sh", "/usr/bin/script", "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null",
     ]);
     expect(got.options).toEqual({ detached: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     expect(got.env).toEqual({
-      ELECTRON_RUN_AS_NODE: "1", WSL_UTF8: "1", EMBER_INNER: posixInner("bash", "/usr/bin/bash", "b64"),
-      EMBER_CMD_B64: Buffer.from(s.command, "utf8").toString("base64"), EMBER_RUN_ID: RUN_ID, EMBER_COLS: "100", EMBER_ROWS: "30",
-      TERM: "xterm-256color", PWD: "/home/ana/src", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u",
+      ELECTRON_RUN_AS_NODE: "1", WSL_UTF8: "1", EMBER_INNER: `${WSL_CD}; ${posixInner("bash", "/usr/bin/bash", "b64")}`,
+      EMBER_CMD_B64: Buffer.from(s.command, "utf8").toString("base64"), EMBER_RUN_ID: RUN_ID, EMBER_CWD: "/home/ana/src", EMBER_COLS: "100", EMBER_ROWS: "30",
+      TERM: "xterm-256color", PWD: "/home/ana/src", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u",
     });
     expect(Buffer.from(got.env.EMBER_CMD_B64, "base64").toString("utf8")).toBe(s.command);
   });
 
   it("runs WSL commands without script in batch mode on WSL_EVAL", () => {
     const got = launchArgv(spec(), linuxPipes, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Debian" } });
-    expect(got.args).toEqual([JOB_HOST.script, "--batch", "--", "C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "/home/ana/src", "--exec", "/usr/bin/bash", "--noprofile", "--norc", "-c", WSL_EVAL]);
-    expect(got.env.EMBER_INNER).toBe(posixBody({ pty: false, from: "b64" }));
+    expect(got.args).toEqual([JOB_HOST.script, "--batch", "--", "C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "/", "--exec", "/usr/bin/bash", "--noprofile", "--norc", "-c", WSL_EVAL]);
+    // wsl.exe starts the shell in /; the shell goes to the run's folder itself, failing when it isn't there (CI).
+    expect(got.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64" })}`);
+    expect(got.env.EMBER_CWD).toBe("/home/ana/src");
     expect(got.env.TERM).toBe("dumb");
     // Nobody can type into a pipe run: the non-interactive defaults (fixed values) cross into the distro (RUN's gap).
     expect(got.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
-    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
     // The shell inside starts with the run's folder as Ember named it, links included (§3.6, L25).
     expect(got.env.PWD).toBe("/home/ana/src");
   });
