@@ -1,7 +1,7 @@
 /**
  * TaskManager: runs workers in the background while the user keeps working.
  * Plain TypeScript (no model decides scheduling): at most `maxRunning` tasks
- * run at once, the rest queue; two tasks never act in the same window at the
+ * act at once, the rest queue (a guide runs beside them, one at a time); two tasks never act in the same window at the
  * same moment (window leases); finished worker sessions are deleted after
  * ten minutes (or at once when Ember stops); results wait for the conductor
  * to pick them up. Every finished card can be closed; a failure stays longer so
@@ -60,6 +60,7 @@ export interface TaskManagerDeps {
   settingsKey?: string;
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
+  /** How many tasks that act run at once (default 2); guides don't count (one runs at a time beside them). */
   maxRunning?: number;
   /** How long a finished worker session is kept for follow-up questions. */
   keepMs?: number;
@@ -223,10 +224,18 @@ export class TaskManager {
     };
   }
 
+  /**
+   * Starts what may start now, in order: at most `maxRunning` tasks that act, and beside them one guide at a time (a
+   * guide only points and waits for the user's clicks, so it never waits behind tasks that may run for minutes).
+   */
   private pump(): void {
     const max = this.d.maxRunning ?? 2;
-    while (this.running.size < max && this.queue.length) {
-      const { task, spec } = this.queue.shift()!;
+    const guide = (s: TaskSpec) => s.mode === "guide";
+    const running = (g: boolean) => [...this.running.keys()].filter(id => (this.tasks.get(id)?.mode === "guide") === g).length;
+    for (let i = 0; i < this.queue.length;) {
+      const { task, spec } = this.queue[i];
+      if (running(guide(spec)) >= (guide(spec) ? 1 : max)) { i++; continue; }
+      this.queue.splice(i, 1);
       const run = this.run(task, spec);
       this.runs.add(run);
       void run.finally(() => this.runs.delete(run));
