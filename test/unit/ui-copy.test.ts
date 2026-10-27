@@ -12,7 +12,9 @@ import * as commandCopy from "../../app/renderer/command/copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
-import { radioLabel, targetMenu } from "../../app/renderer/handle/menu-copy";
+import { targetMenu } from "../../app/main/targets/menu";
+import type { TargetEntry } from "../../app/main/targets/registry";
+import type { MenuItemLike } from "../../app/main/targets/types";
 import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
@@ -538,26 +540,24 @@ describe("where Ember works, on the floating layer (§8.1, §2.4)", () => {
 });
 
 describe("the handle menu's computers (§8.1)", () => {
-  const t = (over: Partial<TargetSummary>): TargetSummary => ({ id: "local", kind: "local", label: "This computer", state: "ready", can: "", active: false, ...over });
-  const labels = (items: ReturnType<typeof targetMenu>): unknown[] => items.map(i => (i.type === "separator" ? "—" : i.type === "submenu" ? [i.label, labels(i.submenu)] : i.label));
+  // The live menu's words (targets/menu.ts); its rules are pinned in target-menu.test.ts.
+  const e = (over: Partial<TargetEntry>): TargetEntry => ({ id: "local", kind: "local", label: "This computer", state: "ready", can: "", usable: true, listedOnly: false, names: [], ...over });
+  const ssh = (id: string, state: TargetEntry["state"]) => e({ id: `ssh:${id}`, kind: "ssh", label: id, state, host: { id } as TargetEntry["host"] });
+  const labels = (items: MenuItemLike[]): unknown[] => items.map(i => (i.type === "separator" ? "—" : i.submenu ? [i.label, labels(i.submenu)] : i.label));
+  const menu = (entries: TargetEntry[], active: TargetEntry["id"], sshAllowed = true) => targetMenu({ entries, active, sshAllowed, pick() {}, bring() {}, disconnect() {} });
 
   it("adds nothing with only this computer and SSH off, so the menu is as it was", () => {
-    expect(targetMenu({ summaries: [t({ active: true })], sshAllowed: false })).toEqual([]);
+    expect(menu([e({})], "local", false)).toEqual([]);
   });
 
-  it("offers \"Bring Ember to a computer…\" while SSH is allowed, and \"Work on\" once there are two targets", () => {
-    expect(labels(targetMenu({ summaries: [t({ active: true })], sshAllowed: true })).map(x => keep(x as string))).toEqual(["Bring Ember to a computer…"]);
-    const items = targetMenu({
-      sshAllowed: true,
-      summaries: [t({ id: "ssh:build-01", kind: "ssh", label: "build-01", state: "ready", active: true }), t({}), t({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", state: "off" }), t({ id: "ssh:db", kind: "ssh", label: "db", state: "lost" })],
-    });
-    expect(labels(items)).toEqual([["Work on", ["This computer", "build-01", "Ubuntu (WSL)", "db (lost)"]], "—", "Bring Ember to a computer…", "Disconnect build-01"]);
-    keep("Work on");
-    keep("Disconnect build-01");
-    const sub = (items[0] as Extract<(typeof items)[number], { type: "submenu" }>).submenu as Extract<(typeof items)[number], { type: "radio" }>[];
-    expect(sub.map(r => [r.checked, r.enabled, r.activate])).toEqual([[false, true, "local"], [true, true, "ssh:build-01"], [false, true, "wsl:Ubuntu"], [false, false, "ssh:db"]]);
-    expect(items.at(-1)).toEqual({ type: "normal", label: "Disconnect build-01", action: "disconnect", hostId: "build-01" });
-    expect(keep(radioLabel({ label: "build-01", state: "connecting" }))).toBe("build-01 (connecting…)");
+  it("says \"Bring Ember to a computer…\", \"Work on\", the targets' states, \"Disconnect\" and \"Cancel connecting\"", () => {
+    expect(labels(menu([e({})], "local")).map(x => (x === "—" ? x : keep(x as string)))).toEqual(["—", "Bring Ember to a computer…"]);
+    const items = menu([e({}), ssh("deploy", "ready"), e({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", state: "off" }), ssh("podman", "lost"), ssh("build-01", "connecting")], "ssh:deploy");
+    expect(labels(items)).toEqual([
+      ["Work on", ["This computer", "deploy", "Ubuntu (WSL)", "podman (lost)", "build-01 (connecting…)"]], "—", "Bring Ember to a computer…", "Disconnect deploy", "Cancel connecting to build-01",
+    ]);
+    for (const w of ["Work on", "This computer", "podman (lost)", "build-01 (connecting…)", "Disconnect deploy", "Cancel connecting to build-01"]) keep(w);
+    expect(items[0].submenu!.map(r => [r.checked, r.enabled])).toEqual([[false, true], [true, true], [false, true], [false, false], [false, true]]);
   });
 });
 
