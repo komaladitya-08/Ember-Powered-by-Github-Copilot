@@ -128,7 +128,9 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
   const noTasks = "Ember cannot operate applications in this session (no desktop access). Tell the user and offer to explain how to do it instead.";
-  const goal = z.string().min(3).max(500).describe("One clear goal, in the user's words, with any details they gave");
+  // Room for everything the ask box takes (2,000 characters: text the user wants typed) and the instruction around it:
+  // the worker sees only the goal, and its type_text takes 5,000.
+  const goal = z.string().min(3).max(4000).describe("One clear goal, in the user's words, with any details they gave");
   return [
     checkedTool("set_appearance", "Change how Ember looks: one of cinder, wisp, glassling, glint; optionally its size in pixels (36-110).",
       z.object({
