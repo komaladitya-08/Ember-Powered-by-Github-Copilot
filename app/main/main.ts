@@ -523,15 +523,12 @@ function start(): void {
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
-    // Linux: Esc (or releasing the click that opened the menu) can fire the first item. Ignore clicks after the menu
-    // has started closing; a real pick runs before menu-will-close.
-    let menuClosing = false;
+    // No guard on menu-will-close: Electron sends it just before the picked item's click, so such a guard swallowed
+    // every real pick. The release of the click that opened the menu can't pick (the menu opens once the button is
+    // up), and an ask box that opens without a pick is put away once the menu has closed (ask.spurious_after_menu).
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", sc.ask), registerAccelerator: false, click: () => {
-        if (menuClosing) { log.info("ask.menu_ignored", { reason: "menu-closing" }); return; }
-        opens = true; openAsk({ look: false, over: back, source: "menu" });
-      } },
+      { label: label("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
       { label: label("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
       ...toMenu(targets?.menuItems() ?? []),
@@ -562,7 +559,6 @@ function start(): void {
     const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
     const askWasVisible = askWindow.visible;
-    menu.on("menu-will-close", () => { menuClosing = true; });
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
       // Esc dismissed the menu but the first item still opened Ask: put it away (it never went through a pick).
