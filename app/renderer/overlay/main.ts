@@ -15,6 +15,7 @@ import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
+import { cardsCorner } from "./layout";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -150,9 +151,9 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   } else if (statusText.textContent && !statusClear) {
     statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
   }
-  // Cards sit at a fixed place, so their buttons are measured only when the cards change.
-  if (renderTasks(s.tasks)) measureTasks();
-  else if (keepOffKey(s) !== avoidKey) measureTasks();
+  // Cards sit at a fixed place, so their buttons are measured only when the cards change (or change corner).
+  const changed = renderTasks(s.tasks);
+  if (!cornerTasks() && (changed || keepOffKey(s) !== avoidKey)) measureTasks();
   requestDraw();
 });
 
@@ -185,17 +186,41 @@ let tasksRoom = Infinity;
 
 /** The handle's pill is drawn this far inside its window (.handle's inset in handle/styles.css). */
 const PILL_INSET = 4;
+/** The cards are in the bottom-left corner: the ring round the control Ember works on was under them in their own. */
+let cardsLeft = false;
 
 function placeTasks(): void {
   const h = handleRect;
   // Lined up with the pill as it shows (its right edge, a card's gap above it), not with its window.
   const bottom = h ? Math.max(8, viewport.height - (h.y + PILL_INSET) + CARD_GAP) : 80;
-  tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width - PILL_INSET)) : 12}px`;
+  const inset = `${h ? Math.max(8, viewport.width - (h.x + h.width - PILL_INSET)) : 12}px`;
+  tasksEl.style.right = cardsLeft ? "auto" : inset;
+  tasksEl.style.left = cardsLeft ? inset : "auto";
   tasksEl.style.bottom = `${bottom}px`;
   tasksRoom = Math.max(80, viewport.height - bottom - TOP_ROOM);
   tasksEl.style.maxHeight = `${tasksRoom}px`;
   fitTasks();
   measureTasks();
+}
+
+/**
+ * The cards make way for the control Ember works on (a chat button or a wizard's Next in the bottom-right corner):
+ * while its ring is under them, they go to the bottom-left corner, so the user sees what Ember clicks or asks about.
+ * True when they moved (and were measured where they are now).
+ */
+function cornerTasks(): boolean {
+  const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  let left = false;
+  if (f && tasksEl.children.length) {
+    const r = tasksEl.getBoundingClientRect();
+    // Where the stack is in its own corner (it may be in the other one now: the same distance in, mirrored).
+    const own = { x: cardsLeft ? viewport.width - r.x - r.width : r.x, y: r.y, width: r.width, height: r.height };
+    left = cardsCorner({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height }, own, viewport.width) === "left";
+  }
+  if (left === cardsLeft) return false;
+  cardsLeft = left;
+  placeTasks();
+  return true;
 }
 
 let lastCards = "null";

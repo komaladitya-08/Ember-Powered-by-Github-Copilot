@@ -44,13 +44,28 @@ export function besideRect(r: Rect, size: number, area: Rect, y: number, gap = 1
   return null;
 }
 
-/** Beside a control Ember works on, always on screen (inside it when the control is as wide as the screen). */
-export function besideControl(r: Rect, size: number, area: Rect): Point {
+/** Ember's body (`half` each way round `p`) overlaps `r`. */
+export const overlapsBody = (p: Point, half: number, r: Rect): boolean =>
+  p.x + half > r.x && p.x - half < r.x + r.width && p.y + half > r.y && p.y - half < r.y + r.height;
+
+/**
+ * Beside a control Ember works on, always on screen (inside it when the control is as wide as the screen). Where
+ * that spot is under `avoid` (its handle and the task cards), the other side, or above or below the control, if one
+ * of those is clear: it never parks under the card of the very task it works for.
+ */
+export function besideControl(r: Rect, size: number, area: Rect, avoid: Rect | null = null): Point {
   const half = size * 0.6;
-  return besideRect(r, size, area, r.y + r.height / 2) ?? {
-    x: Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half),
-    y: Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half),
-  };
+  const cy = Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half);
+  const cx = Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half);
+  const spot = besideRect(r, size, area, r.y + r.height / 2) ?? { x: cx, y: cy };
+  if (!avoid || !overlapsBody(spot, half, avoid)) return spot;
+  const gap = 10;
+  const onScreen = (p: Point) => p.x - half >= area.x && p.x + half <= area.x + area.width && p.y - half >= area.y && p.y + half <= area.y + area.height;
+  const spots = [
+    { x: r.x + r.width + gap + half, y: cy }, { x: r.x - gap - half, y: cy },
+    { x: cx, y: r.y - gap - half }, { x: cx, y: r.y + r.height + gap + half },
+  ];
+  return spots.find(p => onScreen(p) && !overlapsBody(p, half, avoid)) ?? spot;
 }
 
 export class Follower {

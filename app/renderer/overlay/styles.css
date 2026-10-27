@@ -18,7 +18,8 @@ body { font: var(--type-callout); color: var(--label); }
 .status[hidden] { display: none; opacity: 0; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
 
-/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
+/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly, in the bottom-left while
+   the control Ember works on is under them there); above Ember, which keeps off them. */
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
@@ -90,8 +91,9 @@ body { font: var(--type-callout); color: var(--label); }
 /* The control Ember is working on: Apple's focus ring in Ember's colour, between two dark keylines so it reads on a
    white app as on a dark one (3:1 either way). The ring stays still; its glow (a layer of its own) breathes by
    opacity, so the pulse costs the compositor and never repaints. */
+/* Drawn above everything else of Ember's (the cards, the status pill): nothing of Ember's hides the control it works on. */
 .focus {
-  position: absolute; pointer-events: none; border-radius: var(--r-md);
+  position: absolute; z-index: 4; pointer-events: none; border-radius: var(--r-md);
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 1px rgba(20, 12, 4, 0.75), inset 0 0 0 1px rgba(20, 12, 4, 0.45), 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent);
   transition: left 0.3s var(--spring-smooth), top 0.3s var(--spring-smooth), width 0.3s var(--spring-smooth), height 0.3s var(--spring-smooth), opacity 0.2s;

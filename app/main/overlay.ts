@@ -12,7 +12,7 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
+import { Follower, followTarget, contains, besideRect, besideControl, overlapsBody, takesPointer } from "./follow";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
@@ -149,7 +149,7 @@ export class OverlayManager {
       const c = this.cursor();
       const here = () => { const d = screen.getDisplayNearestPoint(c); return followTarget(c, size, d.workArea, this.keepOff(d)); };
       // ("Stay put": it answers where it already is.)
-      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
+      this.follower.park(f ? this.besideFocus(f) : now ? (this.paused ? this.follower.position : here()) : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -181,9 +181,24 @@ export class OverlayManager {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
   }
 
+  /** Where Ember holds still beside the control it works on (null: it isn't). */
+  private beside: { x: number; y: number } | null = null;
+
+  /** Beside the control Ember works on, off its handle and that display's task cards. */
+  private besideFocus(f: Rect): { x: number; y: number } {
+    const d = screen.getDisplayMatching(f);
+    this.beside = besideControl(f, this.settings().size, d.workArea, this.keepOff(d));
+    return this.beside;
+  }
+
   /** Called by IPC when a renderer reports where its task cards are. */
   setCards(sender: Electron.WebContents, r: Rect | null): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
+    // Cards that came up over where Ember holds still beside a control: it moves off them (only then: a question's
+    // buttons move with it).
+    const f = this.state.focus;
+    const off = f && this.beside ? this.keepOff(screen.getDisplayMatching(f)) : null;
+    if (f && this.beside && off && overlapsBody(this.beside, this.settings().size * 0.6, off)) this.follower.park(this.besideFocus(f));
   }
 
   /**

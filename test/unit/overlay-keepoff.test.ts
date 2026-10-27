@@ -1,6 +1,7 @@
 /**
  * Ember keeps off its handle and the task cards, on the display it is on: another display's cards never push it
- * away from the cursor (review #127).
+ * away from the cursor (review #127). Beside a control it works on, it never parks under the cards, and the cards
+ * make way for the control's ring (review #126).
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,8 @@ vi.mock("electron", () => {
 import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
+import { besideControl } from "../../app/main/follow";
+import { cardsCorner } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -107,5 +110,64 @@ describe("what Ember keeps off, with more than one display", () => {
     const { settle } = await manager([primary, left], [cardsOn(primary), c], handle);
     const at = settle({ x: c.x + 100, y: c.y + 120 });
     expect(at.y + 36).toBeLessThanOrEqual(c.y);
+  });
+});
+
+/** Ember's body (about 36 px each way at size 60) overlaps `r`. */
+const under = (p: { x: number; y: number }, r: Box, half = 36) => p.x + half > r.x && p.x - half < r.x + r.width && p.y + half > r.y && p.y - half < r.y + r.height;
+
+describe("Ember beside a control near the task cards", () => {
+  const screen = display(1, 0, 0);
+  const area = screen.workArea;
+  const cards = cardsOn(screen);
+  /** A "Next" button just left of the card column. */
+  const next: Box = { x: cards.x - 90, y: cards.y + 100, width: 80, height: 30 };
+
+  it("parks on the side of the control away from the cards (beside it, above or below)", () => {
+    expect(under(besideControl(next, 60, area), cards)).toBe(true);
+    const p = besideControl(next, 60, area, cards);
+    expect(under(p, cards)).toBe(false);
+    expect(p.x).toBeLessThan(next.x);
+  });
+
+  it("parks where it always did when nothing is in the way", () => {
+    const far: Box = { x: 400, y: 300, width: 80, height: 30 };
+    expect(besideControl(far, 60, area, cards)).toEqual(besideControl(far, 60, area));
+  });
+
+  it("the overlay manager parks it off the cards of that display", async () => {
+    const { m, settle } = await manager([screen], [cards], null);
+    m.setState({ focus: next });
+    expect(under(settle({ x: 300, y: 300 }), cards)).toBe(false);
+  });
+
+  it("moves off when cards come up over where it holds still beside the control", async () => {
+    const { m, settle } = await manager([screen], [null], null);
+    m.setState({ focus: next });
+    expect(under(settle({ x: 300, y: 300 }), cards)).toBe(true);
+    const overlay = [...(m as unknown as { overlays: Map<number, { win: { webContents: Electron.WebContents } }> }).overlays.values()][0];
+    m.setCards(overlay.win.webContents, cards);
+    expect(under(settle({ x: 300, y: 300 }), cards)).toBe(false);
+  });
+});
+
+describe("the task cards and the ring round a control", () => {
+  const vw = 1366;
+  /** The stack at the bottom-right, 270 wide, 12 px in. */
+  const stack: Box = { x: vw - 282, y: 420, width: 270, height: 268 };
+
+  it("stay in their corner when the ring is elsewhere (or there is none)", () => {
+    expect(cardsCorner(null, stack, vw)).toBe("right");
+    expect(cardsCorner({ x: 260, y: 48, width: 920, height: 32 }, stack, vw)).toBe("right");
+  });
+
+  it("move to the other corner when the ring is under them", () => {
+    expect(cardsCorner({ x: 1210, y: 620, width: 80, height: 30 }, stack, vw)).toBe("left");
+    // The ring's glow counts: a control just beside the column still moves them.
+    expect(cardsCorner({ x: stack.x - 84, y: 600, width: 80, height: 30 }, stack, vw)).toBe("left");
+  });
+
+  it("stay where they are when the ring would be under them in either corner (a bar as wide as the screen)", () => {
+    expect(cardsCorner({ x: 0, y: 640, width: vw, height: 30 }, stack, vw)).toBe("right");
   });
 });
