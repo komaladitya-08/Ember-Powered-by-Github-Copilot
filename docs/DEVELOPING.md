@@ -945,7 +945,7 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 
 | Symptom | Fix |
 |---|---|
-| A permission is switched on but doesn't work | A new build is a new identity to macOS: remove Ember from the list with **−** and add it again |
+| A permission is switched on but doesn't work | A new build is a new identity to macOS. Once a row's **Open System Settings** didn't take, the setup check adds **Reset Ember's permissions**: it takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again. By hand: remove Ember from the list with **−** and add it again |
 | Ember can't change Dark Mode | Allow Ember to control System Events: **Privacy & Security › Automation** |
 | Ember won't type, and says to switch to a keyboard layout | An input method (Japanese, Pinyin, Korean…) is selected, and it would compose from Ember's keys. Choose a keyboard layout; Ember can still fill fields directly |
 | **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |

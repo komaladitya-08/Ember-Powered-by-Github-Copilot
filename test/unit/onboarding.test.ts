@@ -322,7 +322,8 @@ describe("macOS permissions that stay off", () => {
     expect(row(pressed, "microphone")?.alt).toBeUndefined();
     // Allowed after all: no note, no second button.
     expect(row(macIn({ accessibility: true }, { applied: ["open-accessibility-settings"] }), "accessibility")).toEqual({ id: "accessibility", label: "Reading and using apps", status: "ok", detail: "Accessibility is allowed" });
-    expect(MAC_RESET_NOTE).toBe("Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, then switch it on again.");
+    // The reset takes Ember off all three lists, so pressing it on one row also undoes a grant that worked: said.
+    expect(MAC_RESET_NOTE).toBe("Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again.");
   });
 
   it("start the advice again after a reset, which took Ember off every list (review #99)", () => {

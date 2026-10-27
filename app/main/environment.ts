@@ -299,8 +299,11 @@ function inspectWindows(i: EnvInputs): EnvReport {
  * microphone (and once in `ember doctor`, where there are no buttons).
  */
 export const MAC_REGRANT = "If Ember is already listed and switched on, remove it with − and add it again: macOS ties the permission to this exact copy of Ember.";
-/** A row's note once its System Settings button was pressed and the permission is still off: the Reset button beside it. */
-export const MAC_RESET_NOTE = "Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, then switch it on again.";
+/**
+ * A row's note once its System Settings button was pressed and the permission is still off: the Reset button beside it.
+ * The reset clears all three (RESET_UNDOES), so the note says so: pressed for one row, it also undoes a grant that works.
+ */
+export const MAC_RESET_NOTE = "Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again.";
 
 function inspectMac(i: EnvInputs): EnvReport {
   const m = i.mac;
