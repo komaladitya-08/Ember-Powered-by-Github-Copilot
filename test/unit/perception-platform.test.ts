@@ -56,6 +56,7 @@ function desktop(o: {
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
   capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; screenRecording?: () => boolean;
   screen?: Bounds; neverLook?: string[];
+  secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
 } & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
   const captures: number[][] = [];
@@ -71,7 +72,7 @@ function desktop(o: {
       if (o.shell instanceof Error) throw o.shell;
       return o.shell ?? { overlays: [] };
     },
-    secretFields: async () => ({ fields: [], complete: true, ms: 1 }),
+    secretFields: async (w: { pid: number; path: string }) => ({ ms: 1, ...(o.secretFields ? o.secretFields(w) : { fields: [], complete: true }) }),
   } as unknown as AtspiSidecar;
   const ws: NonNullable<PerceptionOptions["x11"]> = {
     stack: () => o.stack ?? [],
@@ -489,5 +490,44 @@ describe("Perception's read of a page the browser hasn't handed over yet (review
     expect(text).toContain("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
     expect(text).not.toContain("nested too deeply");
     expect(await p.describe()).toContain("(The page is still loading");
+  });
+});
+
+describe("the app's own popups in its window's picture (review #7)", () => {
+  // Menus, lists, completion and autofill panels are popups of the app (override-redirect): they are part of what a
+  // window's picture shows, so the secret fields in them are blacked out like the window's own.
+  const frame = { x: 10, y: 10, width: 200, height: 150 };
+  const popupAt = { x: 50, y: 50, width: 120, height: 80 };
+  const popup: StackedWindow = { ...top(6, 42, popupAt, ""), overrideRedirect: true };
+  const window = { ...axWin("gedit", 42, "notes.txt", frame), path: "/w/1" };
+  const popupWin = { ...axWin("gedit", 42, "", popupAt), role: "window", path: "/w/2", active: false };
+  const card = { id: 9, bounds: { x: 60, y: 60, width: 100, height: 20 } };
+  const shot = async (o: Parameters<typeof desktop>[0]) => {
+    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], ...o });
+    const p = await d.perception.perceive({ image: true, scope: "window" });
+    return { p, at: async (x: number, y: number) => pixel(p.capture!.data, x - frame.x, y - frame.y) };
+  };
+
+  it("blacks out a secret field in a popup over the window, and shows the rest of it", async () => {
+    const { p, at } = await shot({ listed: [window, popupWin], secretFields: w => ({ fields: w.path === "/w/2" ? [card] : [], complete: true }) });
+    expect(p.capture).not.toBeNull();
+    expect(isBlack(await at(110, 70))).toBe(true);
+    expect(isGrey(await at(110, 120))).toBe(true);
+    expect(isGrey(await at(30, 30))).toBe(true);
+  });
+
+  it("blacks out the whole popup when it can't be looked through, and says so", async () => {
+    for (const fields of [() => ({ fields: [], complete: false }), () => { throw new Error("gone"); }]) {
+      const { p, at } = await shot({ listed: [window, popupWin], secretFields: w => (w.path === "/w/2" ? fields() : { fields: [], complete: true }) });
+      expect(isBlack(await at(110, 120))).toBe(true);
+      expect(isGrey(await at(30, 30))).toBe(true);
+      expect(p.text).toContain("(Screenshot: a popup Ember couldn't check for password fields is hidden.)");
+    }
+  });
+
+  it("leaves a popup accessibility doesn't list as a window as it was (a menu on macOS, a shadow on Windows)", async () => {
+    const { p, at } = await shot({ listed: [window] });
+    expect(isGrey(await at(110, 120))).toBe(true);
+    expect(p.text).not.toContain("popup");
   });
 });

@@ -16,7 +16,7 @@ import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
-import { coveringRects, elementScales, matchFrame, OVERLAY_TITLE, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
+import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
 import type { PerceptionSidecar } from "./ports";
@@ -445,12 +445,23 @@ export class Perception {
       return at ? coveringRects(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : null;
     };
     let covers: Bounds[] = [];
+    // The app's own popups over the window are in its picture: their secret fields are blacked out, and so is a popup
+    // that can't be looked through (one that opens while the picture is taken, too).
+    let popups: { masks: Bounds[]; hidden: boolean } = { masks: [], hidden: false };
+    const popupsSeen = new Set<number>();
+    const popupsOver = (s: StackedWindow[] | null): StackedWindow[] => {
+      const at = s && this.locate(seen, s);
+      return at ? samePopups(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : [];
+    };
     if (windowScope) {
       const at = stack && this.locate(seen, stack);
       if (!at) return noShot("Ember couldn't find the window on screen, so it can't tell what covers it");
       rect = at.rect;
       covers = coveringRects(stack!, at.index, rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own);
       if (uncoveredArea(rect, covers) <= 0.01 * rect.width * rect.height) return noShot("the window is covered by other windows");
+      const over = popupsOver(stack!);
+      for (const p of over) popupsSeen.add(p.id);
+      if (over.length) popups = await this.popupMasks(over, seen.axScale);
     }
     const mask = await this.privateWindows(stack);
     if (mask === null) {
@@ -478,7 +489,7 @@ export class Perception {
       const known = new Set(secrets.map(n => rectKey(n.bounds!)));
       unread = more.filter(f => !physical(f.bounds, k).some(b => known.has(rectKey(b))));
     }
-    const blacked = [...mask, ...covers, ...mine, ...shell.masks];
+    const blacked = [...mask, ...covers, ...mine, ...shell.masks, ...popups.masks];
     let coveredAfter = false;
     let dialogAfter = false;
     const capture = await (this.o.capture ?? captureRect)(x11, rect, {
@@ -515,8 +526,11 @@ export class Perception {
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
-        blacked.push(...after);
-        return [...priv, ...fields, ...after];
+        // A popup of the app's that opened meanwhile wasn't looked through: blacked out whole.
+        const opened = popupsOver(now).filter(p => !popupsSeen.has(p.id)).map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height }));
+        if (opened.length) popups.hidden = true;
+        blacked.push(...after, ...opened);
+        return [...priv, ...fields, ...after, ...opened];
       },
       hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
       // No marks on what is blacked out (an element under another window can't be clicked either).
@@ -527,8 +541,44 @@ export class Perception {
         : this.noScreenAccess(x11) ? this.words.noScreenAccess ?? NO_SCREEN_ACCESS
         : "the window is off screen, or the screen couldn't be captured safely");
     }
-    const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
+    const note = (covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "")
+      + (popups.hidden ? "\n(Screenshot: a popup Ember couldn't check for password fields is hidden.)" : "");
     return { ...seen, text: text + note, capture };
+  }
+
+  /**
+   * What to black out of the app's own popups over its window (`popups`, from the stack): each one accessibility lists
+   * as a window of the app is looked through for secret fields like a window (secret_fields), and those are blacked
+   * out; one that can't be looked through whole (the scan is cut short, its app is busy, the call fails) is blacked out
+   * whole (`hidden` then). One accessibility doesn't list as a window (a macOS menu, a Windows menu's shadow) can't be
+   * looked through and is left as before: blacking it out would hide every open menu. `k`: the app's scale.
+   */
+  private async popupMasks(popups: StackedWindow[], k: number): Promise<{ masks: Bounds[]; hidden: boolean }> {
+    let listed: AxWindow[] = [];
+    try {
+      listed = (await this.o.sidecar.listWindows({ ownPid: this.ownPid })).windows;
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+    }
+    const masks: Bounds[] = [];
+    let hidden = false;
+    for (const p of popups) {
+      const w = listed.find(l => l.path && isPopupOf(l, p, k));
+      if (!w) continue;
+      const whole = { x: p.x, y: p.y, width: p.width, height: p.height };
+      try {
+        const r = await this.o.sidecar.secretFields({ pid: w.pid!, path: w.path! });
+        if (r.complete) {
+          masks.push(...r.fields.flatMap(f => physical(f.bounds, k).map(pad)));
+          continue;
+        }
+      } catch (err) {
+        this.o.log.warn("perception.secret_scan_failed", { err });
+      }
+      masks.push(whole);
+      hidden = true;
+    }
+    return { masks, hidden };
   }
 
   /**
