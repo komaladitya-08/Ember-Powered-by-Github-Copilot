@@ -96,6 +96,19 @@ export function progressStep(fraction: number): number {
   return Math.min(100, Math.floor(Math.max(0, fraction) * 4) * 25);
 }
 
+/**
+ * A setup check's fix button as a screen reader names it (review #155, #49): the words it shows, then its row, so four
+ * "Open System Settings" buttons or one "Turn on" per distro can be told apart.
+ */
+export function fixButtonName(fixLabel: string, checkLabel: string): string {
+  return `${fixLabel}: ${checkLabel}`;
+}
+
+/** What the setup check's status line says when a fix was refused (main's reason, in its own words). */
+export function fixFailedText(checkLabel: string, reason: string): string {
+  return `${checkLabel}: couldn't change it. ${reason}`;
+}
+
 const KIND: Record<string, string> = {
   click: "Click", toggle: "Switch", text: "Type into", select: "Choose in", value: "Set", setting: "Change setting", open_app: "Open",
   cursor_click: "Click (your mouse)", cursor_text: "Type (your keyboard)", keys: "Press keys", scroll: "Scroll", point: "Point at", read: "Read",

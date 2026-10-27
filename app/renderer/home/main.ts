@@ -11,7 +11,7 @@ import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
   retryMessage, tagline, usageLine, withCommandShells, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -176,8 +176,11 @@ let shownChecks = "";
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
   const hadFocus = $("checks").contains(document.activeElement);
+  // A fix button that had focus keeps it when its row is drawn again (the row's check id says which).
+  const hadFix = hadFocus ? document.activeElement?.closest<HTMLElement>("li")?.dataset.check : undefined;
   $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
+    li.dataset.check = c.id;
     const pill = document.createElement("span");
     pill.className = `pill ${c.status}`;
     pill.textContent = c.status === "ok" ? "OK" : c.status === "warn" ? "Check" : "Fix";
@@ -193,19 +196,30 @@ function renderChecks(environment: Status["environment"]): void {
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
       btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
+      btn.setAttribute("aria-label", fixButtonName(btn.textContent, c.label));
       btn.addEventListener("click", () => {
-        btn.disabled = true;
+        // Busy, not disabled: a disabled button drops keyboard focus to the page.
+        if (btn.getAttribute("aria-disabled") === "true") return;
+        btn.setAttribute("aria-disabled", "true");
+        $("checks-msg").textContent = "";
         window.ember.applyFix(fix).then(renderChecks, err => {
-          btn.disabled = false;
-          // A refused fix says why in its own words (main's message, without Electron's IPC prefix).
-          detail.textContent = `Couldn't change it: ${ipcErrorText(err)}`;
+          btn.removeAttribute("aria-disabled");
+          // A refused fix says why in its own words (main's message, without Electron's IPC prefix), in its row and
+          // in the status line a screen reader reads; focus stays on the button.
+          const why = ipcErrorText(err);
+          detail.textContent = `Couldn't change it: ${why}`;
+          $("checks-msg").textContent = fixFailedText(c.label, why);
+          if (btn.isConnected) btn.focus();
         });
       });
       li.append(btn);
     }
     return li;
   }));
-  if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
+  if (hadFocus) {
+    const again = hadFix ? $("checks").querySelector<HTMLElement>(`li[data-check="${CSS.escape(hadFix)}"] .check-fix`) : null;
+    (again ?? ($("checks-fold").querySelector("summary") as HTMLElement)).focus();
+  }
   failing = environment.checks.filter(c => c.status === "fail").length;
   const warn = environment.checks.filter(c => c.status === "warn").length;
   const note = $("checks-note");
