@@ -568,8 +568,12 @@ npm run package:win        # npm run build, then node scripts/package/stage.mjs 
 
 | Output | What it is |
 |---|---|
-| `dist/package/Ember/` | The app folder: `Ember.exe` (Electron's `electron.exe`, renamed), `resources\app\` (the built app and its production modules, Windows builds only), `resources\sidecar\uia\` (the helper's two files), `resources\ember.ico`, `ember-doctor.cmd`, `THIRD_PARTY_NOTICES` and Electron's licences |
+| `dist/package/Ember/` | The app folder: `Ember.exe` (Electron's `electron.exe`, renamed), `resources\app\` (the built app and its production modules, Windows builds only), `resources\sidecar\uia\` (the accessibility helper's two files, compiled at first use: §10.4), `resources\sidecar\atspi\ember_atspi.py` (the helper Ember runs inside a WSL distro, with the distro's own Python, to read its Linux apps), `resources\ssh\ember_askpass.cs` (SSH's password helper, compiled at first use into `%LOCALAPPDATA%\ember\ssh\`), `resources\remote-parts\` (the helper archives Ember copies to computers it reaches over SSH, with `remote-parts.json` and `remote-runtime.json`, which hold their SHA-256s and the pinned Node.js), `resources\ember.ico`, `ember-doctor.cmd`, `THIRD_PARTY_NOTICES` and Electron's licences |
 | `dist/package/Ember-<v>-win-x64.zip` | That folder, zipped by Windows' own `tar.exe` |
+
+Of these, only the two `.cs` files become programs on Windows: Windows PowerShell compiles them with `Add-Type` (an
+application-control policy that allows Ember must allow those builds too). `ember_atspi.py` runs only inside WSL, and
+the remote parts only on the computers Ember connects to.
 
 `scripts/package/layout.mjs` says what each target holds; `stage.mjs` stages for the OS it runs on, never another.
 For Windows it:
