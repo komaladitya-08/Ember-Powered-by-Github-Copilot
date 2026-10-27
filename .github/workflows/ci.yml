@@ -591,7 +591,7 @@ jobs:
           # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           cat "$report"
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Reading and using apps=fail" "Accessibility helper=fail" || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
       - name: Grant Ember.app by its bundle id, with its real code requirement
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
@@ -607,7 +607,7 @@ jobs:
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           cat "$report"
           # Copilot warns (not signed in on a runner) rather than failing: a missing runtime is the failure.
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Reading and using apps=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
       - name: "Input Monitoring evidence (Q10), as Ember sees it: Ember.app with Accessibility but no Input Monitoring row of its own"
         # Prints what Ember's check-up says of Input Monitoring once the bundle's listen row is gone (the evidence the
         # suites can't give: their processes need Accessibility to post the key they look for), then puts it back.

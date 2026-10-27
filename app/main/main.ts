@@ -233,7 +233,8 @@ async function runDoctor(): Promise<void> {
     extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
-  process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
+  // The settings window's name for it (review #229).
+  process.stdout.write(`Ember ${app.getVersion()} setup check\n\n${formatDoctor(checks)}\n`);
   input?.close();
   ws?.close();
   app.exit(checks.some(c => c.status === "fail") ? 1 : 0);

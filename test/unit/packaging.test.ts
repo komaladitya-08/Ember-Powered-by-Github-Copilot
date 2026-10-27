@@ -558,9 +558,10 @@ describe("the Windows and macOS CI jobs", () => {
     const at = (s: string) => { const i = macos.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     expect(at("tcc.mjs grant-paths --ancestors")).toBeLessThan(at("node scripts/run-integration.mjs"));
     expect(at("tcc.mjs approve-capture")).toBeLessThan(at("node scripts/run-integration.mjs"));
-    expect(at("node scripts/package/stage.mjs")).toBeLessThan(at('"Accessibility=fail" "Accessibility helper=fail"'));
-    expect(at('"Accessibility=fail" "Accessibility helper=fail"')).toBeLessThan(at("tcc.mjs grant-bundle dist/package/Ember.app"));
-    expect(at("tcc.mjs grant-bundle dist/package/Ember.app")).toBeLessThan(at('"Accessibility=ok" "Accessibility helper=ok"'));
+    // The doctor's Accessibility row is called what the setup check calls it (review #229).
+    expect(at("node scripts/package/stage.mjs")).toBeLessThan(at('"Reading and using apps=fail" "Accessibility helper=fail"'));
+    expect(at('"Reading and using apps=fail" "Accessibility helper=fail"')).toBeLessThan(at("tcc.mjs grant-bundle dist/package/Ember.app"));
+    expect(at("tcc.mjs grant-bundle dist/package/Ember.app")).toBeLessThan(at('"Reading and using apps=ok" "Accessibility helper=ok"'));
     // Through LaunchServices, so Ember.app is its own responsible process.
     expect(macos.match(/open -n -W --stdout "\$report" --stderr "\$RUNNER_TEMP\/doctor-(before|after)\.err" -a "\$PWD\/dist\/package\/Ember\.app" --args --doctor/g)).toHaveLength(2);
     // Ember.app's executable is no path client, which would muddy the first attribution run; it is only approved to capture.

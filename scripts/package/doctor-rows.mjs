@@ -27,7 +27,8 @@ const ROW = /^(ok {2}|warn|FAIL) {2}(\S+(?: \S+)*?)(?: {2,}(.*))?$/;
  */
 export function parseDoctorReport(text) {
   const lines = String(text ?? "").split(/\r?\n/);
-  const header = lines.find(l => /^Ember \S+ check-up$/.test(l.trim()))?.trim() ?? null;
+  // "setup check" since the window's name was given to the report too ("check-up" before).
+  const header = lines.find(l => /^Ember \S+ (?:setup check|check-up)$/.test(l.trim()))?.trim() ?? null;
   const rows = [];
   for (const line of lines) {
     const m = ROW.exec(line.replace(/\s+$/, ""));
