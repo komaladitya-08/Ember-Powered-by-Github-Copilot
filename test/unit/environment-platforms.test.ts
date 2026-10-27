@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { MAC_REGRANT, inspectEnvironment, type EnvInputs, type MacEnvInputs, type WindowsEnvInputs } from "../../app/main/environment";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
+import { ISSUES_URL } from "../../app/shared/support";
 
 const versions = { electron: "44.5.0", chrome: "152", node: "24.21.0" };
 const common = { env: {}, osRelease: null, glibc: null, versions };
@@ -64,6 +65,14 @@ describe("Windows setup checks", () => {
     expect(check(win({ elevated: null }), "elevated")).toBeUndefined();
     expect(check(win({ dpiMixed: true }), "display-scaling")).toMatchObject({ status: "warn", detail: expect.stringMatching(/mixed display scaling/) });
     expect(check(win(), "display-scaling")).toBeUndefined();
+  });
+
+  it("give mixed display scaling a way out and a place to report it, not a dead end (review #223)", () => {
+    const detail = check(win({ dpiMixed: true }), "display-scaling")!.detail;
+    expect(detail).not.toMatch(/Tell the Ember team/);
+    expect(detail).toBe("Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. "
+      + `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${ISSUES_URL}.`);
+    expect(ISSUES_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
   });
 
   it("name Windows' own shortcuts, and the ones another app took by their Windows labels", () => {

@@ -6,7 +6,7 @@
  * never by the wording of a check (Linux's fixes are dnf, gsettings and GNOME's).
  */
 
-import type { EnvReport } from "./environment";
+import { MIXED_SCALING_FIX, type EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
@@ -95,7 +95,7 @@ function helperRow(h: HelperStatus | null, fix: string, reinstall: string): Doct
   if (h.toolkitAccessibility === null) return { id: "accessibility-helper", status: "warn", label, detail: withFacts("The accessibility helper answered but couldn't tell whether it can read apps"), fix };
   if (h.dpi && h.processDpi && h.dpi !== h.processDpi) {
     return { id: "accessibility-helper", status: "warn", label,
-      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"), fix: "Tell the Ember team." };
+      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"), fix: MIXED_SCALING_FIX };
   }
   return { id: "accessibility-helper", status: "ok", label, detail: withFacts("Running: Ember can read apps") };
 }

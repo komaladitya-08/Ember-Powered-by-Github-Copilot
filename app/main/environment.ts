@@ -8,6 +8,7 @@
 
 import type { FixId } from "./platform/types";
 import { SHORTCUTS, type ShortcutTable } from "../shared/shortcuts";
+import { ISSUES_URL } from "../shared/support";
 
 export type { FixId };
 
@@ -203,6 +204,12 @@ function windowsName(build: number): string {
   return build >= 22000 ? `Windows 11 (build ${build})` : build >= 10240 ? `Windows 10 (build ${build})` : `Windows (build ${build})`;
 }
 
+/**
+ * The way out of mixed display scaling (the helper and Ember disagree on DPI awareness): with every monitor at the same
+ * scale the two agree on every coordinate. The same words in the setup check and the doctor.
+ */
+export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${ISSUES_URL}.`;
+
 /** Windows 10 22H2 is the oldest Windows Ember is tested on; 1809 (17763) the oldest it may work on. */
 const WINDOWS_TESTED = 19045, WINDOWS_OLDEST = 17763;
 
@@ -244,7 +251,7 @@ function inspectWindows(i: EnvInputs): EnvReport {
 
     if (w.dpiMixed) {
       checks.push({ id: "display-scaling", label: "Display scaling", status: "warn",
-        detail: "Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. Tell the Ember team." });
+        detail: `Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. ${MIXED_SCALING_FIX}` });
     }
     if (w.elevated) {
       checks.push({ id: "elevated", label: "Administrator", status: "warn", detail: "Ember is running as administrator: start it normally so it can't act with administrator rights by mistake." });
