@@ -424,6 +424,10 @@ first click **Allow**.
   ("build-01's screen locked, so I stopped working on its screen.", or "build-01's desktop session isn't active any
   more, …"). A task that has only run commands there goes on: its command window is on this computer. A click on the
   notice's **Stop**, a lost connection, **Disconnect** and the stop chord still stop everything there.
+  This computer's own screen is treated the same way: while it is locked, or its session isn't the one in front,
+  Ember doesn't listen for "Hey Ember", doesn't speak and takes no requests, and the tasks using this computer's
+  screen stop ("Your screen locked, so I stopped the task working on it.", once you're back); one that has only run
+  commands goes on. Listening starts again when you unlock it.
 - **No desktop, or only a VNC or xrdp session**: commands only ("build-01's desktop is a remote session: Ember will run
   commands only."). VNC and xrdp desktops aren't used because Ember can't be sure who sees its notice there.
 - **Wayland**: reading and using controls only, no screenshots. Until Ember's own test of it passes, a Wayland desktop

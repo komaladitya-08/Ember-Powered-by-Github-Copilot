@@ -181,6 +181,33 @@ describe("VoiceService", () => {
     expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say 'Ember, stop' to cancel.");
   });
 
+  it("stops listening and speaking while the screen is locked, and listens again once it's unlocked (review #81)", async () => {
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    v.setLocked(true);
+    expect(mic.webContents.send).toHaveBeenCalledWith(VOICE.hush);
+    expect(proc.kill).toHaveBeenCalled();
+    expect(mic.destroyed).toBe(true);
+    expect(states.at(-1)).toEqual({ s: "off", detail: "Not listening while the screen is locked." });
+    v.setMuted(false); // nothing starts while it's locked
+    await v.setWanted(true);
+    await flush();
+    expect(electron.procs).toHaveLength(1);
+    v.setLocked(false);
+    await flush();
+    expect(electron.procs).toHaveLength(2);
+    // Locked and unlocked while listening is off: nothing starts.
+    await v.setWanted(false);
+    v.setLocked(true);
+    v.setLocked(false);
+    await flush();
+    expect(electron.procs).toHaveLength(2);
+    expect(states.at(-1)?.s).toBe("off");
+  });
+
   it("ignores a replaced voice process", async () => {
     const { v, states, events } = service();
     await v.setWanted(true);

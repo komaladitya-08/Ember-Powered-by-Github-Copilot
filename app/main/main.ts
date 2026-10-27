@@ -48,6 +48,7 @@ import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { speaksAloud } from "../shared/speech";
+import { ScreenLock, execText, loginctlLocked } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -703,7 +704,7 @@ function start(): void {
    * Speak replies: always, or while a screen reader runs (Orca, Narrator, VoiceOver; the default), or never, as the user
    * chose (review #55); never when the organisation turned speaking off.
    */
-  const maySpeak = () => policy.features.speak !== false && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
+  const maySpeak = () => policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
@@ -730,6 +731,8 @@ function start(): void {
   let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
+  /** This computer's screen lock (review #81): while locked, Ember doesn't listen, speak or take requests. */
+  let screenLock: ScreenLock | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
@@ -750,6 +753,8 @@ function start(): void {
   };
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
+    // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81).
+    if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1617,6 +1622,40 @@ function start(): void {
       if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
     });
     app.on("will-quit", () => voice?.stop());
+
+    // ───── Screen lock (review #81) ─────
+    // While this computer's screen is locked, or its session isn't the one in front, whoever is there isn't the user:
+    // Ember stops listening and speaking and takes no requests, and the tasks working on its desktop stop, as on a
+    // remote computer whose screen locks (also one that turns to the desktop later: checked every 2 s). What stopped
+    // is said once the user is back.
+    let stoppedWhileLocked = 0;
+    let lockSweep: NodeJS.Timeout | null = null;
+    const stopDesktopTasks = () => { stoppedWhileLocked += agent?.cancelTasksOn("local", "desktop") ?? 0; };
+    screenLock = new ScreenLock({
+      events: powerMonitor,
+      initial: () => powerMonitor.getSystemIdleState(1) === "locked",
+      ...(platform.os === "linux" ? { poll: () => loginctlLocked(execText, { sessionId: process.env.XDG_SESSION_ID, uid: process.getuid?.() ?? -1 }) } : {}),
+      onChange: locked => {
+        log.info("screen.lock", { locked });
+        voice?.setLocked(locked);
+        if (lockSweep) clearInterval(lockSweep);
+        lockSweep = null;
+        if (locked) {
+          stopDesktopTasks();
+          lockSweep = setInterval(stopDesktopTasks, 2000);
+          return;
+        }
+        if (stoppedWhileLocked) {
+          const bubble = { visible: true, mood: "idle" as const, title: "Stopped while your screen was locked", thought: `Your screen locked, so I stopped ${stoppedWhileLocked === 1 ? "the task" : "the tasks"} working on it.`, step: null, streaming: false, actions: [] };
+          setState({ emotion: "neutral", bubble });
+          hideIfStill(bubble, 8000);
+        }
+        stoppedWhileLocked = 0;
+      },
+    });
+    screenLock.start();
+    if (screenLock.locked) voice.setLocked(true);
+    app.on("will-quit", () => screenLock?.stop());
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
     if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();

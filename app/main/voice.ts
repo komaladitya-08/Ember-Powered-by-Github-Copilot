@@ -39,6 +39,8 @@ const RESTART_MS = [1000, 5000, 30_000];
  * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
  */
 const ALIVE_MS = 15_000;
+/** What the voice line says while the screen is locked (review #81). */
+const LOCKED_TEXT = "Not listening while the screen is locked.";
 /** What the voice line says while the microphone sends only digital silence (review #255). */
 const SILENT_TEXT = "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.";
 
@@ -87,6 +89,8 @@ export class VoiceService {
   private state: MicState = "off";
   private muted = false;
   private wanted = false;
+  /** The screen is locked: no listening and no speech until it's unlocked. */
+  private locked = false;
   private downloading: Promise<void> | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
@@ -169,6 +173,20 @@ export class VoiceService {
     return this.muted;
   }
 
+  /**
+   * The screen locked, or this session isn't the one in front (review #81): no listening and no speech until it's back,
+   * so nobody in the room talks to Ember (the wake word isn't the user's alone) or hears it read out the user's apps.
+   */
+  setLocked(on: boolean): void {
+    if (on === this.locked) return;
+    this.locked = on;
+    if (!on) { void this.start(); return; }
+    this.hush();
+    this.cancelRetry();
+    this.teardown();
+    if (this.wanted && !this.muted) this.setState("off", LOCKED_TEXT);
+  }
+
   /** Rejects if the download fails; the state has then already gone back (with what went wrong as its detail). */
   async downloadModels(progress: ModelsProgress): Promise<void> {
     if (!this.downloading && !this.modelsReady) {
@@ -222,6 +240,7 @@ export class VoiceService {
   }
 
   speak(text: string): void {
+    if (this.locked) return;
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
     if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + SPEECH_START_MS);
@@ -248,6 +267,7 @@ export class VoiceService {
     if (!this.wanted || this.proc) return;
     this.cancelRetry();
     if (this.muted) { this.setState("muted"); return; }
+    if (this.locked) { this.setState("off", LOCKED_TEXT); return; }
     if (!this.modelsReady) { this.setState(this.downloading ? "downloading" : "needs-models"); return; }
     this.setState("starting");
     this.readyAt = 0;
