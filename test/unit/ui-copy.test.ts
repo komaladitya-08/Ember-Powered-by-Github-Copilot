@@ -261,6 +261,11 @@ describe("the command window's words (§8.5)", () => {
     expect([commandCopy.ALLOW_LABEL, commandCopy.NOT_NOW_LABEL, commandCopy.STOP_LABEL, commandCopy.CLOSE_LABEL].map(keep)).toEqual(["Allow", "Not now", "Stop", "Close"]);
     expect(keep(commandCopy.READ_ALL_HINT)).toBe("Read the whole command to allow it.");
     expect(keep(commandCopy.ANSWER_RETRY_HINT)).toBe("Ember couldn't take that answer just now. Try again.");
+    expect(keep(commandCopy.closeHeading(1))).toBe("A command is still running");
+    expect(keep(commandCopy.closeHeading(2))).toBe("2 commands are still running");
+    expect(keep(commandCopy.closeLine(1))).toBe("Closing this window stops it. What it already changed stays.");
+    expect(keep(commandCopy.closeLine(3))).toBe("Closing this window stops them. What they already changed stays.");
+    expect([commandCopy.STOP_AND_CLOSE_LABEL, commandCopy.KEEP_OPEN_LABEL].map(keep)).toEqual(["Stop and close", "Keep it open"]);
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");
     expect(keep(commandCopy.LEGEND_MIXED)).toBe("Letters from another alphabet are underlined.");
     expect(keep(commandCopy.LEGEND_RTL)).toBe("Right-to-left text is shown in the order it runs.");

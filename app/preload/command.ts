@@ -20,6 +20,7 @@ const api: CommandsApi = {
   cardSeen: m => ipcRenderer.send(COMMANDS_IPC.cardSeen, { n: m.n, inView: m.inView, seen: m.seen }),
   close: runId => ipcRenderer.send(COMMANDS_IPC.close, { runId }),
   size: s => ipcRenderer.send(COMMANDS_EXTRA_IPC.size, { cols: s.cols, rows: s.rows }),
+  closeWindow: stop => ipcRenderer.send(COMMANDS_EXTRA_IPC.closeWindow, { stop: stop === true }),
 };
 
 contextBridge.exposeInMainWorld("emberCommands", api);

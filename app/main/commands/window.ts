@@ -61,6 +61,12 @@ export interface CommandWindowExtras {
   announceMs(base: number): number;
 }
 
+/**
+ * What windows.ts's createCommandWindow adds to its window (review #262): a guard its close button asks first, which
+ * keeps the window when it returns true. Ember quitting or the session ending never asks it.
+ */
+export interface CloseGuarded { setCloseGuard(fn: () => boolean): void }
+
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
 export const MAX_PENDING = 8;
 
@@ -179,6 +185,10 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
   const pendings = new Map<string, string>();
   const answerFns = new Set<(a: AnswerMsg) => boolean | void>();
+  /** The user closed the window while commands ran: the page asks whether to stop them (review #262). */
+  let closeAsk = false;
+  /** The window is closing because the user said so (or Ember closes it): the guard lets it go. */
+  let closing = false;
   let size: { cols: number; rows: number } | null = null;
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
@@ -201,16 +211,51 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       return null;
     }
     win = w;
+    closing = false;
+    closeAsk = false;
     try { wire(); } catch (err) { note("error", "commands.ipc_failed", { err }); }
+    // Closing the window while a command runs never leaves it running unseen (R1): the page asks first (review #262).
+    safe("close-guard", () => (w as BrowserWindowLike & Partial<CloseGuarded>).setCloseGuard?.(() => keepOnClose(w)));
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
       view = null;
+      closeAsk = false;
       // Closed during a countdown: the user didn't get to see it to the end, so no command waiting there runs (fail
       // closed), and the window doesn't come back for the next one.
       cancelAnnouncements();
     });
     return w;
+  }
+
+  /** The runs still going in the window. */
+  const runningTabs = () => tabs.filter(t => !t.ended);
+
+  /**
+   * The window's close button was pressed: true keeps the window and asks whether to stop the commands still running in
+   * it. Nothing running, Ember closing it, or the user pressing it again while it asks: it closes (the second press
+   * stops them first, so none runs on unseen).
+   */
+  function keepOnClose(w: BrowserWindowLike): boolean {
+    if (disposed || closing || w !== live()) return false;
+    const running = runningTabs();
+    if (!running.length) return false;
+    if (closeAsk) { stopAllAndClose(); return true; }
+    closeAsk = true;
+    push();
+    safe("close-ask", () => { w.show(); w.focus(); });
+    return true;
+  }
+
+  /** Stops every running command (the user's Stop) and every countdown, then closes the window. */
+  function stopAllAndClose(): void {
+    closeAsk = false;
+    for (const t of runningTabs()) safe("stop", () => t.run.stop("user"));
+    cancelAnnouncements();
+    const w = live();
+    if (!w) return;
+    closing = true;
+    safe("close", () => w.close());
   }
 
   function keyHint(): string | null {
@@ -249,6 +294,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
       os: o.os,
       screenReader: screenReader(),
+      closing: closeAsk ? { running: runningTabs().length } : null,
     };
   }
 
@@ -437,6 +483,14 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       settle();
     });
 
+    o.ipc.on(COMMANDS_EXTRA_IPC.closeWindow, (e, raw) => {
+      if (disposed || !owns(e?.sender)) { refused(COMMANDS_EXTRA_IPC.closeWindow); return; }
+      if (!closeAsk || !isObj(raw) || typeof raw.stop !== "boolean") return;
+      if (raw.stop) { stopAllAndClose(); return; }
+      closeAsk = false;
+      push();
+    });
+
     o.ipc.on(COMMANDS_EXTRA_IPC.size, (e, raw) => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_EXTRA_IPC.size); return; }
       if (!isObj(raw)) return;
@@ -532,6 +586,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         if (t.ended || !tabs.includes(t)) return;
         flush(t);
         t.ended = true;
+        // The last run ended while the window asked whether to stop it: nothing left to ask about.
+        if (closeAsk && !runningTabs().length) closeAsk = false;
         // The remote's own check wants the user's OK first: nothing ran, and the question comes up now (§3.16).
         if (exit?.ended === "refused-remote" && exit.needsConfirm === true) {
           t.reask = true;

@@ -15,7 +15,11 @@ import { READ_ALL_HINT } from "./copy";
  * Channels of the command window beyond COMMANDS_IPC (they share its "commands:" prefix, so the trusted-sender rule
  * covers them): the page reports the terminal size that fits it, so new runs start at that size (§3.10).
  */
-export const COMMANDS_EXTRA_IPC = { size: "commands:size" } as const;
+export const COMMANDS_EXTRA_IPC = {
+  size: "commands:size",
+  /** Page → main: the answer to "close while a command runs" (review #262): `{ stop: true }` stops them and closes. */
+  closeWindow: "commands:close-window",
+} as const;
 
 /** A run's tab as main sends it: the contract's view plus what the page needs to draw it. */
 export interface TabView extends CommandTabView {
@@ -52,6 +56,8 @@ export interface WindowView extends CommandWindowState {
   screenReader?: boolean;
   /** Under the announcement's countdown: the stop chord ("Or press Ctrl+Alt+X to stop everything."), while one is up. */
   announceKeys?: string;
+  /** The user closed the window while commands run: the page asks whether to stop them (review #262). */
+  closing?: { running: number } | null;
 }
 
 /** At most this many pending lines are drawn. */
@@ -103,6 +109,8 @@ export interface CommandsApi {
   cardSeen(m: SeenMsg): void;
   close(runId: string): void;
   size(s: { cols: number; rows: number }): void;
+  /** The answer to closing while commands run: stop them and close, or keep the window open. */
+  closeWindow(stop: boolean): void;
 }
 
 /** The card's command block and its window as the page measured them (CSS px; `visible`: the page can be seen). */

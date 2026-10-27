@@ -66,7 +66,9 @@ Commands run in Ember's own window, **Ember commands**, never in your own termin
 into a terminal of yours. Each command gets a tab (the newest first, the last 20 kept) with a header such as
 "On build-01 as deploy · bash · in ~/src/app", a status line ("Running…", "Finished in 3.2 s.", "Ended with exit
 code 2 after 1.1 s.") with **Copy output** and **Stop**, then its live output. What a command already changed stays
-changed when you stop it.
+changed when you stop it. Closing the window while a command runs asks first ("A command is still running"): **Stop
+and close** stops it and closes the window, **Keep it open** leaves both, and closing it again stops and closes, so a
+command never runs on where you can't see it. Quitting Ember asks its own question.
 
 When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command;
 paste with Ctrl+V. Ember never sees what you type." (Command+V on a Mac). The keyboard is already in the command's

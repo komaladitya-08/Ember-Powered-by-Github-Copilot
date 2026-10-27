@@ -6,10 +6,11 @@
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
  */
 
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
+import type { CloseGuarded } from "./commands/window";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -51,7 +52,7 @@ const webPreferences = (page: string) => ({
  * whose first click counts (one click allows; the user's app stays active). Windows: its controller shows it inactive.
  * On Windows and macOS it is left out of screen captures too (Linux has no such switch: Perception masks it, §3.10).
  */
-export function createCommandWindow(os: OS): BrowserWindow {
+export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded {
   const win = new BrowserWindow({
     width: 760,
     height: 480,
@@ -66,7 +67,19 @@ export function createCommandWindow(os: OS): BrowserWindow {
   });
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
-  return win;
+  // Its close button asks the controller's guard first, so a command never runs on unseen (review #262). Never while
+  // Ember quits or the session ends: then nothing holds the window (a held window would stop the quit).
+  let guard: (() => boolean) | null = null;
+  let leaving = false;
+  const onLeave = () => { leaving = true; };
+  app.on("before-quit", onLeave);
+  win.on("session-end", onLeave);
+  win.on("closed", () => app.removeListener("before-quit", onLeave));
+  const keep = (): boolean => {
+    try { return !leaving && guard?.() === true; } catch { return false; } // a guard that fails never holds the window
+  };
+  win.on("close", e => { if (keep()) e.preventDefault(); });
+  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; } });
 }
 
 /**

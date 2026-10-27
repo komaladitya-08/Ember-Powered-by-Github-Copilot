@@ -20,6 +20,7 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 }
 .card { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface-1); box-shadow: var(--group-edge); }
 .card.announce { box-shadow: var(--group-edge), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.closing-line { margin: 0; font: var(--type-callout); color: var(--label); }
 .where { margin: 0; font: var(--type-footnote); color: var(--label-2); overflow-wrap: anywhere; }
 .heading { margin: 0; font: var(--type-title-2); letter-spacing: -0.009em; text-wrap: balance; }
 .command {

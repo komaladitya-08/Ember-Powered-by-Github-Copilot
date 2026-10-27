@@ -59,6 +59,11 @@ class FakeWindow implements BrowserWindowLike {
   setContentProtection() { /* windows.ts sets it */ }
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
   emit(event: string) { for (const fn of this.handlers.get(event) ?? []) fn(); }
+  /** createCommandWindow's guard on the window's close button (review #262). */
+  guard: (() => boolean) | null = null;
+  setCloseGuard(fn: () => boolean) { this.guard = fn; }
+  /** The user's close button: the guard may keep the window open. */
+  requestClose() { if (this.guard?.() === true) { this.calls.push("close-kept"); return; } this.close(); }
 }
 
 const logs: { level: string; msg: string; fields?: unknown }[] = [];
@@ -851,5 +856,65 @@ describe("where a command runs, and what kind it is, on the card and the tab (re
     expect(validCard(card({ classes: ["destroy", "publish"] }))).toBe(true);
     expect(validCard(card({ classes: ["nuke" as never] }))).toBe(false);
     expect(validCard({ ...card(), classes: "destroy" })).toBe(false);
+  });
+});
+
+describe("closing the window while a command runs (review #262)", () => {
+  it("keeps the window and asks first; Stop and close stops every running command and closes it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const a = new FakeRun("0123456789abcdef");
+    const b = new FakeRun("1111111111111111");
+    ctl.attach(card(), a);
+    ctl.attach(card({ runId: "1111111111111111", command: "make" }), b);
+    win().requestClose();
+    expect(win().destroyed).toBe(false);
+    expect(win().calls).toContain("close-kept");
+    expect(page().last().closing).toEqual({ running: 2 });
+    expect(win().calls.slice(-3)).toEqual(expect.arrayContaining(["show", "focus"]));
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: true });
+    expect(a.stops).toEqual(["user"]);
+    expect(b.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("Keep it open takes the question away and stops nothing; a second close while it asks stops and closes", () => {
+    const { ipc, ctl, win, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: false });
+    expect(page().last().closing ?? null).toBeNull();
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
+    win().requestClose();
+    win().requestClose();
+    expect(run.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("closes at once when nothing runs, and never holds the window when Ember closes it itself", async () => {
+    const a = setup();
+    const done = new FakeRun("0123456789abcdef");
+    a.ctl.attach(card(), done);
+    done.finish();
+    await vi.advanceTimersByTimeAsync(0);
+    a.win().requestClose();
+    expect(a.win().destroyed).toBe(true);
+    const b = setup();
+    const run = new FakeRun("0123456789abcdef");
+    b.ctl.attach(card(), run);
+    b.ctl.dispose();
+    expect(b.win().destroyed).toBe(true);
+    expect(b.win().guard?.() ?? false).toBe(false);
+  });
+
+  it("takes the answer only from its own page", () => {
+    const { ipc, ctl, win } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, new FakeContents(9999), { stop: true });
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
   });
 });

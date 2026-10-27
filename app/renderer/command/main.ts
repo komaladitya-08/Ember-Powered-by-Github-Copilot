@@ -12,7 +12,8 @@
 import type { CommandCard } from "../../main/commands/types";
 import {
   ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
-  NOT_NOW_LABEL, STOP_LABEL, askHeading, cardLines, countdownText, headerLine, isRiskyCard, tabLabel,
+  KEEP_OPEN_LABEL, NOT_NOW_LABEL, STOP_AND_CLOSE_LABEL, STOP_LABEL, askHeading, cardLines, closeHeading, closeLine, countdownText, headerLine, isRiskyCard,
+  tabLabel,
 } from "./copy";
 import { shouldFocusTerminal } from "./keys";
 import {
@@ -266,6 +267,34 @@ function tickCountdown(): void {
   if (announce.count.textContent !== t) announce.count.textContent = t;
 }
 
+// ───── Closing while commands run (review #262) ─────
+interface ClosingEls { running: number; root: HTMLElement }
+let closingCard: ClosingEls | null = null;
+
+/** The question the window asks when the user closes it while commands run: stop them and close, or keep it open. */
+function buildClosing(running: number): ClosingEls {
+  const root = el("section", "card closing");
+  root.setAttribute("role", "alertdialog");
+  root.setAttribute("aria-labelledby", "closing-h");
+  root.setAttribute("aria-describedby", "closing-d");
+  const h = el("h1", "heading", closeHeading(running));
+  h.id = "closing-h";
+  const d = el("p", "closing-line", closeLine(running));
+  d.id = "closing-d";
+  const row = el("div", "buttons");
+  const stop = el("button", "btn", STOP_AND_CLOSE_LABEL);
+  stop.type = "button";
+  const keep = el("button", "btn quiet", KEEP_OPEN_LABEL);
+  keep.type = "button";
+  stop.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(true); } });
+  keep.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(false); } });
+  row.append(stop, keep);
+  root.append(h, d, row);
+  // The safe answer has the keyboard: Enter keeps the commands running.
+  requestAnimationFrame(() => keep.focus());
+  return { running, root };
+}
+
 // ───── Tabs ─────
 interface TabEls {
   seq: number; runId: string; command: string; tab: HTMLButtonElement; panel: HTMLElement; status: HTMLElement; typing: HTMLElement;
@@ -362,13 +391,22 @@ function select(runId: string): void {
 // ───── Rendering from the model ─────
 function render(): void {
   const v = model.view;
-  // The card area: the announcement (counting down) above the question.
+  // The card area: the question about closing first, then the announcement (counting down), then the question.
+  const closingRunning = v?.closing?.running ?? 0;
+  if ((closingCard?.running ?? 0) !== closingRunning) {
+    closingCard?.root.remove();
+    closingCard = closingRunning > 0 ? buildClosing(closingRunning) : null;
+    if (closingCard) $("cards").prepend(closingCard.root);
+  }
   const ann = v?.announce ?? null;
   const annKey = ann ? `${ann.card.runId}:${ann.endsAt}` : "";
   if ((announce?.key ?? "") !== annKey) {
     announce?.root.remove();
     announce = ann ? buildAnnounce(ann.card, ann.endsAt, v?.announceKeys ?? "") : null;
-    if (announce) $("cards").prepend(announce.root);
+    if (announce) {
+      if (closingCard) closingCard.root.after(announce.root);
+      else $("cards").prepend(announce.root);
+    }
   }
   if (announce && !countTimer) countTimer = setInterval(tickCountdown, 250);
   if (!announce && countTimer) { clearInterval(countTimer); countTimer = null; }
@@ -383,7 +421,7 @@ function render(): void {
       requestAnimationFrame(measureCard);
     }
   }
-  $("cards").hidden = !announce && !ask;
+  $("cards").hidden = !announce && !ask && !closingCard;
   // An answer the card sent that wasn't taken: its buttons work again (review #271).
   if (ask && card && (card.retry ?? 0) > ask.retry) {
     ask.retry = card.retry ?? 0;
@@ -469,7 +507,7 @@ function focusTerminal(): void {
   const e = t ? tabEls.get(t.seq) : undefined;
   if (!t || !e?.term.opened) return;
   const a = document.activeElement;
-  if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce, focusIdle: !a || a === document.body })) e.term.focus();
+  if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce || !!closingCard, focusIdle: !a || a === document.body })) e.term.focus();
 }
 
 /** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
