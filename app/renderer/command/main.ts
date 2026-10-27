@@ -11,7 +11,7 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
+  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
   cardLines, countdownText, headerLine, tabLabel,
 } from "./copy";
 import {
@@ -45,7 +45,7 @@ function visibleNodes(s: string): { nodes: Node[]; legend: string[] } {
     if (breaksLine(seg)) nodes.push(document.createTextNode("\n"));
   }
   const l = legendFor(segs);
-  return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : [])] };
+  return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : []), ...(l.rtl ? [LEGEND_RTL] : [])] };
 }
 
 /**

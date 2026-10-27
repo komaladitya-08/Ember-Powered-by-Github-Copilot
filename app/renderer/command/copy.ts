@@ -24,6 +24,8 @@ export const READ_ALL_HINT = "Read the whole command to allow it.";
 export const UNASKED_LINE = "You didn't ask for this.";
 export const LEGEND_TOKENS = "Characters you wouldn't see are shown in ⟨ ⟩.";
 export const LEGEND_MIXED = "Letters from another alphabet are underlined.";
+/** Under a command with Hebrew or Arabic letters: the card draws them in the order the shell reads them (review #273). */
+export const LEGEND_RTL = "Right-to-left text is shown in the order it runs.";
 export const TYPING_HINT = "Type here to answer the command. Ember never sees what you type.";
 export const NO_TYPING_HINT = "This command can't take typing here.";
 export const RUNNING_STATUS = "Running…";

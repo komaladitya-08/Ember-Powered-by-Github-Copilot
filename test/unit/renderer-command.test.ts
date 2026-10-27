@@ -309,10 +309,10 @@ describe("visibleText (critique security-10)", () => {
   });
 
   it("says which legend lines a string needs, and breaks lines after a newline token", () => {
-    expect(legendFor(visibleText("ls"))).toEqual({ tokens: false, mixed: false });
-    expect(legendFor(visibleText("ls\u200b"))).toEqual({ tokens: true, mixed: false });
-    expect(legendFor(visibleText("bu\u0456ld"))).toEqual({ tokens: false, mixed: true });
-    expect(legendFor(visibleText("a\tb"))).toEqual({ tokens: false, mixed: false });
+    expect(legendFor(visibleText("ls"))).toEqual({ tokens: false, mixed: false, rtl: false });
+    expect(legendFor(visibleText("ls\u200b"))).toEqual({ tokens: true, mixed: false, rtl: false });
+    expect(legendFor(visibleText("bu\u0456ld"))).toEqual({ tokens: false, mixed: true, rtl: false });
+    expect(legendFor(visibleText("a\tb"))).toEqual({ tokens: false, mixed: false, rtl: false });
     // A newline is the command's own line break (a here-document spans lines): kept as itself, the page's pre-wrap
     // block ends the line there; a segment that carries it as a control still ends its line.
     expect(kinds("a\nb")).toEqual([["plain", "a\nb"]]);
@@ -328,5 +328,23 @@ describe("visibleText (critique security-10)", () => {
     expect(segmentLabel({ kind: "nbsp", text: "\u00a0" })).toBe("⟨NBSP⟩");
     expect(segmentLabel({ kind: "invisible", text: "⟨ZWSP⟩" })).toBe("⟨ZWSP⟩");
     expect(segmentLabel({ kind: "mixed", text: "\u0456" })).toBe("\u0456");
+  });
+});
+
+describe("right-to-left letters in a command (review #273)", () => {
+  it("are noted by a legend line, so the user knows the card shows the order that runs", () => {
+    expect(legendFor(visibleText("chmod -R 755 \u05e9\u05dc\u05d5\u05dd 777 /srv/data")).rtl).toBe(true);
+    expect(legendFor(visibleText("cat \u0645\u0644\u0641.txt")).rtl).toBe(true);
+    expect(legendFor(visibleText("rm -r build")).rtl).toBe(false);
+    expect(legendFor(visibleText("ls \u043f\u0430\u043f\u043a\u0430")).rtl).toBe(false);
+  });
+
+  it("are drawn in the order the shell reads them: the command, the header and a tab's label override bidi", () => {
+    const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const sel of [".command", ".where", ".tab-label"]) {
+      const block = css.split("}").find(b => b.split("{")[0].split(",").map(x => x.trim()).includes(sel) && /unicode-bidi/.test(b)) ?? "";
+      expect(block, sel).toMatch(/direction:\s*ltr/);
+      expect(block, sel).toMatch(/unicode-bidi:\s*bidi-override/);
+    }
   });
 });

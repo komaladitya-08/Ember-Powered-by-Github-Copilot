@@ -142,7 +142,9 @@ asks), and so is an overwrite (`echo x > sub/../notes.txt` asks when the notes.t
 
 **How it asks.** The bubble says "May I run a command?" with **Show the command** and **Not now**, and the command
 window shows the card "Ember wants to run this command": the whole command in monospace, nothing cut, with characters
-you wouldn't see shown in ⟨ ⟩ and letters from another alphabet underlined; then why it asks ("Deletes build and
+you wouldn't see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (each folder of a path is judged
+on its own, so `C:\Users\Иван` marks nothing), and Hebrew or Arabic text shown in the order it runs, as the terminal
+shows it; then why it asks ("Deletes build and
 everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.", "This can reach your Windows files.");
 then the model's reason, quoted. **Allow** stays off until the whole command has been in view ("Read the whole
 command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works only while that card

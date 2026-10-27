@@ -252,6 +252,7 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.READ_ALL_HINT)).toBe("Read the whole command to allow it.");
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");
     expect(keep(commandCopy.LEGEND_MIXED)).toBe("Letters from another alphabet are underlined.");
+    expect(keep(commandCopy.LEGEND_RTL)).toBe("Right-to-left text is shown in the order it runs.");
     expect(keep(commandCopy.countdownText(10_000, 6_000))).toBe("Starts in 4 s.");
     expect(commandCopy.countdownText(10_000, 9_001)).toBe("Starts in 1 s.");
     expect(commandCopy.countdownText(10_000, 12_000)).toBe("Starts in 0 s.");
