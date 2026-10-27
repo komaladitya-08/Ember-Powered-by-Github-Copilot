@@ -50,6 +50,30 @@ describe("the voice process", () => {
     expect(p.sent().filter(m => m.type === "engine-error").at(-1)).toEqual({ type: "engine-error", message: "the speech recognizer failed (92691224)", count: 2 });
   });
 
+  it("says the recognizers are broken, once, when they keep failing (more than 20 times in 10 s), and stops feeding them (review #253)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    // A WebAssembly abort leaves the module unusable: every frame fails from then on.
+    const p = await voiceProcess(() => quiet({ spot: () => { calls++; throw 93407216; } }));
+    p.init();
+    for (let i = 0; i < 20; i++) p.frame();
+    expect(p.sent().filter(m => m.type === "engine-broken")).toEqual([]);
+    p.frame();
+    expect(p.sent().filter(m => m.type === "engine-broken")).toEqual([{ type: "engine-broken", message: "the speech recognizer failed (93407216)" }]);
+    const before = calls;
+    for (let i = 0; i < 50; i++) p.frame();
+    expect(p.sent().filter(m => m.type === "engine-broken")).toHaveLength(1);
+    expect(calls).toBe(before);
+  });
+
+  it("isn't broken by failures spread out over time (review #253)", async () => {
+    vi.useFakeTimers();
+    const p = await voiceProcess(() => quiet({ spot: () => { throw 93407216; } }));
+    p.init();
+    for (let i = 0; i < 60; i++) { p.frame(); vi.advanceTimersByTime(600); }
+    expect(p.sent().filter(m => m.type === "engine-broken")).toEqual([]);
+  });
+
   it("reports a failure the recognizer caught itself (the audio is heard as nothing) (review #253)", async () => {
     let report: ((err: unknown) => void) | undefined;
     const p = await voiceProcess(o => { report = o.onError; return quiet(); });

@@ -300,6 +300,8 @@ export class VoiceService {
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
+      // They keep failing (unusable until loaded again): started again, with the backoff.
+      if (m.type === "engine-broken") { this.o.log.error("voice.engine_broken", { message: m.message }); this.restartLater("The speech recognizer kept failing."); return; }
       if (m.type === "monitor") { this.monitorOn = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
       if (m.type === "silent") {
         // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.

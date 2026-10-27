@@ -24,7 +24,8 @@ type FromMain =
  * Messages for main (VoiceService); `error`: listening couldn't start (`models`: the speech models couldn't be loaded,
  * and downloading them again repairs it); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
  * frames for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the
- * process carried on; `alive`: every second once started (main restarts a process that goes quiet: it is stuck or
+ * process carried on; `engine-broken`: they keep failing, so they are taken for unusable (main starts the process again);
+ * `alive`: every second once started (main restarts a process that goes quiet: it is stuck or
  * suspended, and can't say so itself); `silent`: the microphone has sent only digital silence for a minute (muted, or
  * the wrong input), or sends sound again.
  */
@@ -33,6 +34,7 @@ export type VoiceProcessMessage =
   | { type: "ready"; loadMs: number }
   | { type: "error"; message: string; models?: boolean }
   | { type: "engine-error"; message: string; count: number }
+  | { type: "engine-broken"; message: string }
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
   | { type: "monitor"; on: boolean; reason?: string }
   | { type: "stalled"; ms: number }
@@ -50,17 +52,31 @@ let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
  * be deaf while the models load again (review #253).
  */
 let failures = 0, failureReportedAt = Number.NEGATIVE_INFINITY;
+/**
+ * More failures than BROKEN_FAILURES within BROKEN_MS: the recognizers are unusable (a WebAssembly abort or running out
+ * of memory leaves the module so, and every frame fails), so main is told once and nothing more is fed to them; main
+ * starts the process again with fresh models, with its backoff. Listening would otherwise stay deaf while showing
+ * "Listening" (review #253).
+ */
+const BROKEN_FAILURES = 20, BROKEN_MS = 10_000;
+let recentFailures: number[] = [], broken = false;
 const failed = (err: unknown) => {
+  if (broken) return;
+  const message = err instanceof Error ? err.message : `the speech recognizer failed (${String(err)})`;
+  const now = Date.now();
+  recentFailures = recentFailures.filter(t => now - t < BROKEN_MS);
+  recentFailures.push(now);
+  if (recentFailures.length > BROKEN_FAILURES) { broken = true; send({ type: "engine-broken", message }); return; }
   failures++;
-  if (Date.now() - failureReportedAt < 60_000) return;
-  send({ type: "engine-error", message: err instanceof Error ? err.message : `the speech recognizer failed (${String(err)})`, count: failures });
+  if (now - failureReportedAt < 60_000) return;
+  send({ type: "engine-error", message, count: failures });
   failures = 0;
-  failureReportedAt = Date.now();
+  failureReportedAt = now;
 };
 /** The speakers' stream counts in the CPU report too (its spotter runs while a wake or stop is checked). */
 const speakers = new SpeakerMonitor(f => {
   const t0 = performance.now();
-  try { engine?.feedMonitor(f); } catch (err) { failed(err); }
+  if (!broken) try { engine?.feedMonitor(f); } catch (err) { failed(err); }
   cpuMs += performance.now() - t0;
 }, (on, reason) => send({ type: "monitor", on, ...(reason ? { reason } : {}) }));
 /** Development builds only (installed Ember never keeps audio): EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32). */
@@ -93,7 +109,7 @@ parent.on("message", e => {
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
       silence.frame(frame);
       const t0 = performance.now();
-      try { engine?.feed(frame); } catch (err) { failed(err); }
+      if (!broken) try { engine?.feed(frame); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;
       audioMs += frame.length / 16;
       for (let i = 0; i < frame.length; i++) peak = Math.max(peak, Math.abs(frame[i]));

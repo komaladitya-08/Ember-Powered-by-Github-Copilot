@@ -375,6 +375,21 @@ describe("VoiceService keeps listening going", () => {
     }
   });
 
+  it("starts the voice process again when its recognizers are broken (they kept failing), with the backoff (review #253)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    electron.procs[0].emit("message", { type: "engine-broken", message: "the speech recognizer failed (93407216)" });
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer kept failing. Trying again in 1 s…" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+    electron.procs[1].emit("message", { type: "ready", loadMs: 900 });
+    electron.procs[1].emit("message", { type: "engine-broken", message: "the speech recognizer failed (93407216)" });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer kept failing. Trying again in 5 s…" });
+  });
+
   it("starts again when the voice process stops saying it's alive (frozen, or suspended by security software) (review #257)", async () => {
     vi.useFakeTimers();
     const { v, states } = service();
