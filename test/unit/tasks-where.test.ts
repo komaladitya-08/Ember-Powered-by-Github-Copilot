@@ -8,7 +8,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TaskManager, type WorkerLike } from "../../app/main/agent/tasks";
 import { Presenter } from "../../app/main/agent/presenter";
-import { ANNOUNCE_MS } from "../../app/main/commands/flow";
 import type { TaskSpec, WorkerResult } from "../../app/main/agent/worker";
 import type { EmberState, TaskCard } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
@@ -115,7 +114,8 @@ describe("a task's bubbles say where it acts", () => {
     p.taskStarted();
     p.announce("Pushing feature-x to origin, as you asked.", "ui:cmdstop:0123456789abcdef");
     expect(shown.at(-1)!.bubble).toMatchObject({
-      visible: true, title: "Pushing feature-x to origin, as you asked", thought: `On build-01. It starts in ${ANNOUNCE_MS / 1000} seconds.`,
+      // The badge says where (review #22); the command window counts down.
+      visible: true, title: "Pushing feature-x to origin, as you asked", thought: "It starts in a few seconds.",
       actions: [{ id: "ui:cmdstop:0123456789abcdef", label: "Stop" }], where: "on build-01", task: "t1",
     });
     expect(spoken).toEqual(["Pushing feature-x to origin, as you asked."]);
@@ -131,6 +131,6 @@ describe("a task's bubbles say where it acts", () => {
     const shown: Partial<EmberState>[] = [];
     const p = new Presenter(patch => shown.push(patch), undefined, () => "x", undefined, undefined, false, { task: "t2" });
     p.announce("Deleting build, as you asked.", "ui:cmdstop:1");
-    expect(shown.at(-1)!.bubble!.thought).toBe("On this computer. It starts in 4 seconds.");
+    expect(shown.at(-1)!.bubble!.thought).toBe("On this computer. It starts in a few seconds.");
   });
 });
