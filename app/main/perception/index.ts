@@ -116,6 +116,8 @@ export interface Perceived extends Seen {
 const BUSY_RETRY_MS = 300;
 /** Secret fields whose position is checked again once the picture is taken (they can scroll meanwhile). */
 const MAX_SECRET_RECHECK = 24;
+/** Popups accessibility doesn't list that are logged in a run (perception.popup_unmatched). */
+const UNMATCHED_POPUPS_LOGGED = 32;
 /** Workers see every element a read returns (the sidecar's MAX_NODES), so every id they may need is there. */
 const WORKER_LINES = 400;
 
@@ -129,6 +131,8 @@ export class Perception {
   private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
   /** onNoScreenAccess was called (once a run). */
   private toldNoScreenAccess = false;
+  /** The popups accessibility didn't list that were logged (app and size), a few at most. */
+  private unmatchedPopups = new Set<string>();
 
   constructor(private o: PerceptionOptions) {
     this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
@@ -561,7 +565,9 @@ export class Perception {
    * as a window of the app is looked through for secret fields like a window (secret_fields), and those are blacked
    * out; one that can't be looked through whole (the scan is cut short, its app is busy, the call fails) is blacked out
    * whole (`hidden` then). One accessibility doesn't list as a window (a macOS menu, a Windows menu's shadow) can't be
-   * looked through and is left as before: blacking it out would hide every open menu. `k`: the app's scale.
+   * looked through and is left as before: blacking it out would hide every open menu. Those are logged
+   * (perception.popup_unmatched, once a run for each app and size), so CI and the field show which popups go unscanned.
+   * `k`: the app's scale.
    */
   private async popupMasks(popups: StackedWindow[], k: number): Promise<{ masks: Bounds[]; hidden: boolean }> {
     let listed: AxWindow[] = [];
@@ -574,7 +580,10 @@ export class Perception {
     let hidden = false;
     for (const p of popups) {
       const w = listed.find(l => l.path && isPopupOf(l, p, k));
-      if (!w) continue;
+      if (!w) {
+        this.popupUnmatched(p);
+        continue;
+      }
       const whole = { x: p.x, y: p.y, width: p.width, height: p.height };
       try {
         const r = await this.o.sidecar.secretFields({ pid: w.pid!, path: w.path! });
@@ -589,6 +598,14 @@ export class Perception {
       hidden = true;
     }
     return { masks, hidden };
+  }
+
+  /** Logs a popup of the app's that accessibility doesn't list as a window, so it went unscanned (see popupMasks). */
+  private popupUnmatched(p: StackedWindow): void {
+    const key = `${p.wmClass} ${p.width}x${p.height}`;
+    if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
+    this.unmatchedPopups.add(key);
+    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height });
   }
 
   /**

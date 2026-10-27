@@ -11,10 +11,11 @@ import type { Logger } from "../../app/main/logger";
 type Win = X11Window & { wmClass: string; wmClassName?: string };
 
 /** A logger that keeps its warnings (the event names only). */
-function recordingLog(): { log: Logger; warnings: string[] } {
+function recordingLog(): { log: Logger; warnings: string[]; infos: [string, unknown][] } {
   const warnings: string[] = [];
-  const log = { debug() {}, info() {}, warn(event: string) { warnings.push(event); }, error() {}, child() { return log; } } as unknown as Logger;
-  return { log, warnings };
+  const infos: [string, unknown][] = [];
+  const log = { debug() {}, info(event: string, fields?: unknown) { infos.push([event, fields]); }, warn(event: string) { warnings.push(event); }, error() {}, child() { return log; } } as unknown as Logger;
+  return { log, warnings, infos };
 }
 
 const top = (id: number, pid: number | null, r: Bounds, title = "", wmClass = "app"): StackedWindow =>
@@ -87,13 +88,13 @@ function desktop(o: {
     },
     ...(o.systemDialogOpen ? { systemDialogOpen: o.systemDialogOpen } : {}),
   };
-  const { log, warnings } = recordingLog();
+  const { log, warnings, infos } = recordingLog();
   const perception = new Perception({
     sidecar, x11: ws, log, neverLook: () => o.neverLook ?? [], screenBounds: () => screen, ownPid: 999,
     ...(o.words ? { words: o.words } : {}), ...(o.isSecurityWindow ? { isSecurityWindow: o.isSecurityWindow } : {}),
     ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}), ...(o.onNoScreenAccess ? { onNoScreenAccess: o.onNoScreenAccess } : {}),
   });
-  return { perception, captures, warnings, shellAsked: () => shellAsked };
+  return { perception, captures, warnings, infos, shellAsked: () => shellAsked };
 }
 
 const gedit = axWin("gedit", 42, "notes.txt", { x: 10, y: 10, width: 100, height: 100 });
@@ -572,5 +573,16 @@ describe("the app's own popups in its window's picture (review #7)", () => {
     const { p, at } = await shot({ listed: [window] });
     expect(isGrey(await at(110, 120))).toBe(true);
     expect(p.text).not.toContain("popup");
+  });
+
+  it("logs such a popup, once a run for each app and size, so CI and the field show which popups go unscanned", async () => {
+    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), { ...popup, wmClass: "gedit" }], listed: [window] });
+    await d.perception.perceive({ image: true, scope: "window" });
+    await d.perception.perceive({ image: true, scope: "window" });
+    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80 }]]);
+    // A popup that was looked through isn't.
+    const listed = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], listed: [window, popupWin] });
+    await listed.perception.perceive({ image: true, scope: "window" });
+    expect(listed.infos.some(([e]) => e === "perception.popup_unmatched")).toBe(false);
   });
 });

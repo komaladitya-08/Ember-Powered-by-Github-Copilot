@@ -981,6 +981,10 @@ Rules for code under `app/main/platform/` and `app/sidecar-host/`:
   Win32's `BOOL` is `int`; pointers come back as BigInt or null; never call `koffi.view()`.
 - Fail closed: a check that can't run refuses, returns null or sends no image (`systemDialogOpen()` is true when it
   can't tell; no capture without Screen Recording; a policy Ember can't trust locks it down).
+- A window's screenshot blacks out what covers it, Ember's own windows and its secret fields. The app's own popups
+  over it (menus, lists, autofill panels) are looked through for secret fields only when accessibility lists them as
+  windows of the app; one it doesn't list (a macOS menu, a Windows menu's shadow) is pictured as it is, and
+  `perception.popup_unmatched` in the log names its app and size.
 - Each OS-keyed list lives in one place, with the Linux row frozen (tests pin it): `app/shared/shortcuts.ts`,
   `app/shared/words.ts`, `app/shared/never-look.ts`, `app/main/policy/vocabulary.ts`, `app/main/hands/terminals.ts`,
   `app/main/agent/clipboard-formats.ts` and `app/main/policy/remote-surface.ts`.
