@@ -1452,7 +1452,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         else { hideBubble(); void disconnect(hostId); }
         return true;
       }
-      if (id === "offer:wsl:settings") { hideBubble("offer:wsl"); deps.openSettings("computers"); return true; }
+      if (id === "offer:wsl:settings") { hideBubble("offer:wsl"); deps.openSettings("computers", "wsl"); return true; }
       if (id === "offer:wsl:later") { hideBubble("offer:wsl"); return true; }
       m = /^offer:(\d+):(bring|later|never|connect)$/.exec(id);
       if (m) {
@@ -1517,7 +1517,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         rebuild();
         return targetMenu({
           entries, active: activeId(), sshAllowed: sshAllowed(admin()), pick,
-          bring: () => deps.openSettings("computers"), disconnect: h => { void disconnect(h); },
+          bring: () => deps.openSettings("computers", "host"), disconnect: h => { void disconnect(h); },
         });
       } catch (err) {
         log.warn("targets.menu_failed", { err });

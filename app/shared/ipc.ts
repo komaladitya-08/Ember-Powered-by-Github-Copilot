@@ -31,7 +31,10 @@ export const IPC = {
   openSignInPage: "agent:open-sign-in-page",
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
-  /** Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"). */
+  /**
+   * Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"), or a control in
+   * one ("computers:host", "computers:wsl"; renderer/home/section-request.ts).
+   */
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",

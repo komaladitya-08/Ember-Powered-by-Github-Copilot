@@ -175,7 +175,8 @@ export interface TargetsDeps {
   localHands: Hands | null;
   showState: (patch: Partial<EmberState>) => void;
   notify: (title: string, body: string) => void;
-  openSettings: (section?: "computers" | "commands") => void;
+  /** Opens settings at `section`, with `focus` there: "host" (the field to add a computer) or "wsl" (the WSL switch). */
+  openSettings: (section?: "computers" | "commands", focus?: "host" | "wsl") => void;
   ipc: IpcLike;
   /** The settings (home) window's page: the only sender TARGETS_IPC accepts (critique integration-5). */
   isHome: (sender: WebContentsLike) => boolean;

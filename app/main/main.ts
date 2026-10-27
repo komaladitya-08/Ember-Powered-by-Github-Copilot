@@ -1477,7 +1477,8 @@ function start(): void {
       log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
       execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
       localHands: hands ?? null, showState: setState, notify,
-      openSettings: section => { showHome(); if (section) sendToHome(IPC.focusSection, section); },
+      // "computers:host": the section, then the control there to focus (the settings page reads it).
+      openSettings: (section, focus) => { showHome(); if (section) sendToHome(IPC.focusSection, focus ? `${section}:${focus}` : section); },
       ipc,
       // As the settings channels' guard: the settings window's own page only (critique integration-5).
       isHome: sender => !!home && !home.isDestroyed() && sender.id === home.webContents.id && isTrustedSender(home.webContents.getURL()),

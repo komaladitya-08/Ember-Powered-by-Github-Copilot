@@ -891,7 +891,7 @@ describe("WSL targets", () => {
     await flush();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
-    expect(r.openSettings).toHaveBeenCalledWith("computers");
+    expect(r.openSettings).toHaveBeenCalledWith("computers", "wsl");
   });
 
   it("takes 'on Linux', 'in WSL' and a distro's name as words of the request while WSL is off, not installed or not allowed", async () => {
@@ -1049,7 +1049,7 @@ describe("the handle menu (§8.1)", () => {
     expect(items.map(i => i.label ?? i.type)).toEqual(["Work on", "separator", "Bring Ember to a computer…"]);
     expect(items[0].submenu!.map(i => [i.label, i.type, i.checked, i.enabled])).toEqual([["This computer", "radio", true, true], ["build-01", "radio", false, true]]);
     items[2].click!();
-    expect(r.openSettings).toHaveBeenCalledWith("computers");
+    expect(r.openSettings).toHaveBeenCalledWith("computers", "host");
     items[0].submenu![1].click!();
     await flush();
     await flush();
