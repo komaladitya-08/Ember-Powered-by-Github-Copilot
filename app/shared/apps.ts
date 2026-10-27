@@ -142,15 +142,35 @@ function wslApp(name: string): string | null {
   return `${known !== undefined && known ? known : capitalised(app)} (${capitalised(m[1])})`;
 }
 
+/**
+ * An app on a computer reached over SSH, as its grant is kept ("ssh:<host>:<app>", review #194): "gedit on build-01".
+ * That computer is Linux or a Mac whatever this one is, so its app is named from those tables.
+ */
+function remoteApp(name: string): string | null {
+  const m = /^ssh:([^:\s]+):(.+)$/i.exec(name);
+  if (!m) return null;
+  const app = m[2].trim().replace(/\.desktop$/i, "");
+  const mac = APP_NAMES.darwin[app.toLowerCase()];
+  return `${mac !== undefined && mac ? mac : familiar(APP_NAMES.linux, app)} on ${m[1]}`;
+}
+
+/** The name people know an app by, on this computer's OS (useAppNames) or, for another computer's, on that one. */
 export function friendlyApp(name: string): string {
   const names = APP_NAMES[appOs];
   if (appOs === "win32") {
     const wsl = wslApp(name.trim());
     if (wsl) return wsl;
   }
+  const remote = remoteApp(name.trim());
+  if (remote) return remote;
   // A desktop file name (firefox.desktop): the program is what's inside. On Windows a program may come with its ".exe".
   let n = name.trim().replace(/\.desktop$/i, "");
   if (appOs === "win32") n = n.replace(/\.exe$/i, "");
+  return familiar(names, n);
+}
+
+/** A program's familiar name in one OS's table: known, a LibreOffice part, a desktop id's last part, or capitalised. */
+function familiar(names: Readonly<Record<string, string>>, n: string): string {
   if (!n) return "";
   const known = names[n.toLowerCase()];
   // An empty name is a real answer: a program that is never worth naming (Windows' frame host for packaged apps).
