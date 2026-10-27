@@ -149,7 +149,7 @@ describe.skipIf(!run)("SSH transport against real OpenSSH (ssh-linux)", () => {
   });
 
   const built = existsSync(join(ROOT, "dist", "remote-parts", "remote-parts.json"));
-  // The cases above removed Ember from the remote: this one downloads the Node runtime (about 31 MB) and copies it with
+  // The cases above removed Ember from the remote: this one downloads the Node runtime (about 32 MB) and copies it with
   // the parts before hello, which takes longer than vitest's 5 s default on a runner.
   it.skipIf(!built)("connects, says hello and disconnects (needs the remote parts and the mux)", { timeout: 180_000 }, async () => {
     const c = connections({ hosts: [host("127.0.0.1")] });

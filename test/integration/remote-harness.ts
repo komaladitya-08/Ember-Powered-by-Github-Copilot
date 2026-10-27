@@ -277,7 +277,7 @@ export async function runtimeArchive(target: string): Promise<{ id: string; byte
 
 /**
  * Installs the pinned runtime on the test sshd as the bootstrap leaves it (§5.1.9 steps 3-5): checked with the remote's
- * own sha256 tool, unpacked into staging, the exec check (`node --version`), renamed, `.verified`. Resolves with the
+ * own sha256 tool, unpacked into staging without Node's headers and npm, the exec check (`node --version`), renamed, `.verified`. Resolves with the
  * remote node's absolute path (`home` is the remote's $HOME).
  */
 export async function installRuntime(os: "linux" | "darwin", target: string, home: string): Promise<string> {
@@ -288,7 +288,7 @@ export async function installRuntime(os: "linux" | "darwin", target: string, hom
   const r = sshRun(
     `set -e; umask 077; d=${data}/runtime/${a.id}; [ -f "$d/.verified" ] && exit 0; s="$d.staging"; rm -rf "$s"; mkdir -p "$s/runtime";` +
     ` cat > "$s/archive"; echo "${a.sha256}  $s/archive" | ${check};` +
-    ` tar -xJf "$s/archive" -C "$s/runtime" --strip-components=1; rm -f "$s/archive"; "$s/runtime/bin/node" --version >/dev/null;` +
+    ` tar -xJf "$s/archive" -C "$s/runtime" --strip-components=1 --exclude='*/include' --exclude='*/lib/node_modules'; rm -f "$s/archive"; "$s/runtime/bin/node" --version >/dev/null;` +
     ` rm -rf "$d"; mv "$s/runtime" "$d"; rm -rf "$s"; touch "$d/.verified"`,
     a.bytes,
   );

@@ -123,10 +123,10 @@ you turn it on in settings (**Commands**, **Computers**) and accept the card tha
   settings, records or programs, or press keys in its own windows.
 - **WSL**: Ember reads and uses the Linux apps WSL shows on Windows, opens them, and runs commands in your distros.
 - **Other computers**: on your click, Ember opens its own SSH connection with your SSH settings and keys, copies a
-  small helper there (about 31 MB) that runs only while it is connected, and works there: commands, and the apps on
-  that computer's screen when it is a Linux computer with an X11 desktop and you are the person logged in at it,
-  asking before every step. When it sees you `ssh` somewhere, it can offer to come along. Your voice and your GitHub
-  sign-in always stay on this computer.
+  helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is connected, and works there:
+  commands, and the apps on that computer's screen when it is a Linux computer with an X11 desktop and you are the
+  person logged in at it, asking before every step. When it sees you `ssh` somewhere, it can offer to come along. Your
+  voice and your GitHub sign-in always stay on this computer.
 
 The same switches turn them off, and the stop shortcut stops every command at once. Administrators can turn each off,
 or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember

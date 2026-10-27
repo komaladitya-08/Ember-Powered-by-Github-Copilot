@@ -390,11 +390,13 @@ here when you ask something. Your request reaches build-01 as steps, never as au
 ### 4.3 What Ember copies there, and where
 
 Ember checks build-01 first (system, free space, its own Ember policy, whether it is this same computer) and copies
-nothing until every check passes. Then it copies a small helper over the same SSH connection: Node.js (about 29 MB,
-which this computer downloads from nodejs.org, or your organisation's mirror, and checks against a pinned SHA-256
-before sending) and Ember's own parts (about 1 MB, shipped inside Ember), about 31 MB in all, unpacked to about
-125 MB; build-01 needs about 400 MB free in your home folder. build-01 checks every file again before running it. A
-newer Ember sends only what changed (about 1 MB).
+nothing until every check passes. Then it copies a helper over the same SSH connection: Node.js (about 32 MB as
+`.tar.xz`, or 53 to 58 MB as `.tar.gz` where build-01 has no `xz`, as on most Macs; this computer downloads it from
+nodejs.org, or your organisation's mirror, and checks it against a pinned SHA-256 before sending) and Ember's own
+parts (about 1 MB, shipped inside Ember), about 33 MB in all (up to about 60 MB on a Mac or other computer without
+xz), unpacked to about 130 MB (Node.js without its headers and npm, which the helper doesn't use); build-01 needs
+about 400 MB free in your home folder. build-01 checks every file again before running it. A newer Ember sends only
+what changed (about 1 MB).
 
 | On build-01 | Linux | macOS |
 |---|---|---|

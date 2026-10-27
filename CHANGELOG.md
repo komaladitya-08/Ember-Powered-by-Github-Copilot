@@ -47,13 +47,13 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 - **Other computers over SSH**: add a computer in Settings › **Computers**, or accept Ember's offer when it sees you
   `ssh` somewhere ("You're connected to build-01"). Ember opens its own connection with your SSH settings, keys, agent
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
-  anything, then copies a small helper there (about 31 MB) that runs only while it is connected and leaves no service
-  or autostart behind. It works there on commands, and on the apps of that computer's screen when it is a Linux
-  computer with an X11 desktop and you are the person logged in at it, asking before every step and showing a notice
-  with **Stop** there. When that screen locks or its session goes inactive, the tasks using the screen stop; a task
-  only running commands there goes on (a **Stop** at that computer, a lost connection, **Disconnect** and the stop
-  chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this computer. **Remove Ember from
-  build-01** removes the helper again.
+  anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is connected
+  and leaves no service or autostart behind. It works there on commands, and on the apps of that computer's screen
+  when it is a Linux computer with an X11 desktop and you are the person logged in at it, asking before every step and
+  showing a notice with **Stop** there. When that screen locks or its session goes inactive, the tasks using the
+  screen stop; a task only running commands there goes on (a **Stop** at that computer, a lost connection,
+  **Disconnect** and the stop chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this
+  computer. **Remove Ember from build-01** removes the helper again.
 - **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. A silent connection shows "build-01 isn't answering" in the

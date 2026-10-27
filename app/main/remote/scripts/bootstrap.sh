@@ -228,9 +228,9 @@ ember_install() {
     ember_receive runtime "$3" "$4"
     mkdir "$ember_stage/rt" || ember_fail space
     if [ "$5" = xz ]; then
-      tar -xJf "$ember_stage/runtime.archive" -C "$ember_stage/rt" --strip-components=1 || ember_fail unpack runtime
+      tar -xJf "$ember_stage/runtime.archive" -C "$ember_stage/rt" --strip-components=1 --exclude='*/include' --exclude='*/lib/node_modules' || ember_fail unpack runtime
     else
-      tar -xzf "$ember_stage/runtime.archive" -C "$ember_stage/rt" --strip-components=1 || ember_fail unpack runtime
+      tar -xzf "$ember_stage/runtime.archive" -C "$ember_stage/rt" --strip-components=1 --exclude='*/include' --exclude='*/lib/node_modules' || ember_fail unpack runtime
     fi
     rm -f "$ember_stage/runtime.archive"
   fi
