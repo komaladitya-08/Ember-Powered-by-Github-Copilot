@@ -624,6 +624,24 @@ describe("the Windows and macOS CI jobs", () => {
     }
   });
 
+  it("read the hardened runtime's flag on both Macs, and try DYLD_* only where SIP is on, as on users' Macs (review #177)", () => {
+    for (const name of ["macos", "macos-x64"]) {
+      const s = step(job(name), "fuses.mjs --check");
+      const at = (line: string) => { const i = s.indexOf(line); expect(i, `${name}: ${line}`).toBeGreaterThan(0); return i; };
+      // The flag, whatever SIP says.
+      const flag = at(`\n          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\\([^)]*runtime'\n`);
+      // The runners report SIP off, and with it off dyld may honour DYLD_* for any binary: there the line would fail
+      // for a reason that has nothing to do with Ember, or prove nothing.
+      const sip = at(`\n          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then\n`
+        + `            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'\n`
+        + `          else\n`
+        + `            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"\n`
+        + `          fi\n`);
+      expect(flag).toBeLessThan(sip);
+      expect(s.match(/DYLD_INSERT_LIBRARIES/g), name).toHaveLength(1);
+    }
+  });
+
   it("offer dev:mac, which starts the development Electron through LaunchServices so TCC grants go to Electron (M14)", () => {
     const scripts = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")).scripts as Record<string, string>;
     expect(scripts["dev:mac"]).toBe('node scripts/build-app.mjs && open -n -W node_modules/electron/dist/Electron.app --args "$PWD"');
