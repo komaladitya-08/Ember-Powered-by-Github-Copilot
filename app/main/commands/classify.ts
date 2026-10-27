@@ -127,7 +127,7 @@ export const SAYS = {
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
   interactive: "This opens an interactive program; you'd have to use it yourself in the command window.",
-  openApp: "Open apps with open_app instead.",
+  openApp: "This opens an app window, which Ember can do itself without a command. Say no and ask Ember to open it.",
   cmdLinuxFolder: "cmd can't use a Linux folder: this would run in C:\\Windows.",
   root: "Runs as an administrator (root).",
   secrets: "Reads or changes passwords, keys or sign-ins.",
@@ -1430,7 +1430,7 @@ class Engine extends Classifier {
       return;
     }
     this.simple({ words, redirs, stdin: o.stdinPipe ? "pipe" : c.redirs.some(r => r.op === "<") ? "file" : null, fetchBefore: this.pipe.fetch, background: false, pipedFrom: o.pipedFrom }, sc);
-    if (caret) this.unclear("unclear.cmd-caret", "It spells the program with ^ escapes.");
+    if (caret) this.unclear("unclear.cmd-caret", "It hides the program's name with ^ characters, so Ember can't tell what runs.");
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -1571,7 +1571,7 @@ class Engine extends Classifier {
     for (const a of args) {
       if (a.param !== undefined) continue;
       if (a.v === null) {
-        if (o.unresolvedUnclear) this.unclear("unclear.unresolved-arg", `Ember can't tell what ${this.program || "the program"} is given.`);
+        if (o.unresolvedUnclear) this.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${this.program || "the program"} gets.`);
         continue;
       }
       let v = a.v;
@@ -1587,7 +1587,7 @@ class Engine extends Classifier {
       }
       if (v.startsWith("ember:")) { this.refuseWith("ember.url", "input"); continue; }
       const obj = this.usePath({ ...a, v }, "read", sc);
-      if (obj.abs === null && o.unresolvedUnclear && v !== "") this.unclear("unclear.unresolved-arg", `Ember can't tell what ${this.program || "the program"} is given.`);
+      if (obj.abs === null && o.unresolvedUnclear && v !== "") this.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${this.program || "the program"} gets.`);
     }
   }
 
@@ -2053,9 +2053,9 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
   const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
   for (const a of p.operands) {
-    if (a.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`); continue; }
+    if (a.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`); continue; }
     const obj = h.e.usePath(a, "list", h.sc);
-    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
+    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   }
 });
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
@@ -2069,9 +2069,9 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   const recursive = h.key === "rg" || h.key === "ag" || h.key === "ack" || has(p, "r", "R", "recursive", "dereference-recursive") || values(p, "d", "directories").includes("recurse");
   const use: PathUse = recursive && hiddenToo ? "readTree" : "read";
   for (const f of files) {
-    if (f.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`); continue; }
+    if (f.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`); continue; }
     const obj = h.e.usePath(f, use, h.sc);
-    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
+    if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   }
   if (recursive && hiddenToo && files.length === 0 && h.sc.cwd) h.e.usePath(lit("."), "readTree", h.sc);
 });
@@ -2291,7 +2291,7 @@ reg(NATIVE, ["truncate"], h => {
 reg(NATIVE, ["dd"], h => {
   for (const a of h.args) {
     const v = a.v;
-    if (v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell what dd is given."); continue; }
+    if (v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments dd gets."); continue; }
     const m = /^(if|of)=(.*)$/.exec(v);
     if (!m) continue;
     if (m[1] === "if") { h.e.usePath({ ...a, v: m[2] }, "read", h.sc); continue; }
@@ -2537,7 +2537,7 @@ reg(NATIVE, ["sed", "gsed"], h => {
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
   objsOf(h, files, inPlace ? "write" : "read");
-  if (files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", "Ember can't tell what sed is given.");
+  if (files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments sed gets.");
 });
 /** A sed script without the `e` command, `w`/`W`/`r`/`R` file commands or the `e`/`w` flags of `s`. */
 export function sedScriptOk(script: string): boolean {
@@ -5256,7 +5256,7 @@ reg(CMDLETS, ["get-childitem-env"], () => undefined);
 reg(CMDLETS, ["set-variable", "new-variable"], h => {
   const b = bindPs(h, { params: { Name: "v", Value: "v", Scope: "v", Option: "v", Visibility: "v", Description: "v", PassThru: "s", Force: "s", Include: "v", Exclude: "v" }, pos: ["Name", "Value"] });
   const name = (b.named.get("Name") ?? [])[0]?.v ?? "";
-  if (/^(executioncontext|psmoduleautoloadingpreference|errorActionPreference)$/i.test(name) && /^executioncontext$/i.test(name)) h.e.unclear("unclear.execution-context", "It uses $ExecutionContext.");
+  if (/^(executioncontext|psmoduleautoloadingpreference|errorActionPreference)$/i.test(name) && /^executioncontext$/i.test(name)) h.e.unclear("unclear.execution-context", "It uses PowerShell's $ExecutionContext, which Ember can't follow.");
 });
 
 // ------------------------------------------------------------------------------------------------------------------
