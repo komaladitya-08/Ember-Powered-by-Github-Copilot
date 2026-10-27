@@ -254,8 +254,12 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 (§11.7).
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
-users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down (no actions,
-no listening) until it is fixed, and says so in its settings window. Every key is optional:
+users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
+and says so in its settings window: no actions, commands or listening, nothing sent to any model service (neither
+GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
+again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
+stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
+settings window says so), and the restart reads the new policy whole. Every key is optional:
 
 ```json
 {
@@ -277,11 +281,11 @@ no listening) until it is fixed, and says so in its settings window. Every key i
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
-| `confirmEveryAction` | A click before every action, every time |
+| `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app" |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
-| `auditRetentionDays` | How long the audit log is kept (default 30) |
+| `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
 | `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |
 | `ssh` | Allowed hosts, no remote desktop, console consent, a Node.js mirror, the command grace |
@@ -617,10 +621,11 @@ when an antivirus scan or a sync client holds the file.
 **The policy** is the same JSON as `/etc/ember/policy.json` (§5), kept in the registry: `HKLM\SOFTWARE\Policies\Ember`,
 value `PolicyJson`, a string (`REG_SZ`) or a multi-string (`REG_MULTI_SZ`, whose lines are joined with line breaks).
 Only administrators and SYSTEM can write there. Ember reads the 64-bit registry view, and no file. No value means no
-policy; anything else Ember can't trust locks it down (no actions, no listening) until it is fixed: a value it can't
-read, of another type, over 256 KiB, not JSON, or not valid for the schema. `provider.apiKeyFile` isn't supported on
-Windows and locks Ember down too: put the key in a `ProviderApiKey` string value beside `PolicyJson`, or in the
-`EMBER_PROVIDER_API_KEY` environment variable.
+policy; anything else Ember can't trust locks it down (§5: no actions, commands, listening or model service) until it
+is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not valid for the schema.
+`provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
+value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
+10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
 
 From an elevated Windows PowerShell:
 
@@ -908,8 +913,10 @@ Applications**.
 **The policy** is the same JSON as `/etc/ember/policy.json` (§5), in `/Library/Application Support/Ember/policy.json`.
 The folder must be a real folder, not a link, that belongs to root and only root can write; the file must be a file,
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
-else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads this file
-only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
+else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
+again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
+Ember reads this file only, not managed preferences, so deploy it as a file (a package or a script from your
+management tool):
 
 ```bash
 sudo mkdir -p "/Library/Application Support/Ember"
