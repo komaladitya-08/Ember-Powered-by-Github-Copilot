@@ -130,10 +130,12 @@ export const SECRET_WORDS = [
   "([0-9]+|four|six|eight)[- ]?digit codes?",
   // Wallets' seed phrases.
   "(seed|recovery|backup|mnemonic) phrases?", "mnemonics?",
-  // Keys, network passwords and secret answers.
+  // Keys, network passwords and secret answers. Signing keys only where one is pasted: LibreOffice's "OpenPGP signing key:"
+  // picks one from a list.
   "secrets?", "private keys?", "(api|access|auth|bearer) ?(key|token)s?", "wi-?fi (key|password|passphrase)s?", "network (security )?keys?",
   "wpa2? ?(key|passphrase)s?", "pre-?shared keys?", "psk", "encryption keys?", "security (answer|question)s?", "secret (answer|question)s?",
-  "(security|session|refresh|id) tokens?", "(master|ssh) keys?", "ssns?", "social security",
+  "(security|session|refresh|id) tokens?", "(master|ssh) keys?", "(jwt|webhook|private|gpg|ssh) signing keys?", "ssns?",
+  "social security",
 ];
 /** The same, for scripts written without spaces between words (matched anywhere in the label). */
 export const SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
