@@ -11,6 +11,7 @@ import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/perm
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
+const packageVersion = (JSON.parse(read("package.json")) as { version: string }).version;
 /** Text with its line breaks and runs of spaces made single spaces, so a phrase can span wrapped lines. */
 const flat = (s: string) => s.replace(/\s+/g, " ");
 /**
@@ -52,6 +53,23 @@ describe("docs/DEVELOPING.md", () => {
     const named = [...new Set(win.sidecarFiles.map(f => (f.to.startsWith("sidecar/uia/") ? "sidecar/uia/" : f.to)))];
     for (const rel of [...named, `${REMOTE_PARTS_DIR}/`]) expect(table).toContain(`resources\\${rel.replace(/\//g, "\\")}`);
     for (const l of win.launchers ?? []) expect(table).toContain(l.to);
+  });
+
+  it("says how to publish a release: every file the README downloads, and the SHA256SUMS users check them with", () => {
+    const publish = section(read("docs/DEVELOPING.md"), "15. Publishing a release");
+    // The files a release has (the README's Download and install steps), in §7's spelling with <v> for the version.
+    const files = (v: string) => [
+      `ember-${v}-1.el8.x86_64.rpm`, `ember-voice-models-${v}-1.el8.noarch.rpm`, `Ember-${v}-x86_64.AppImage`,
+      ...[layoutFor("win32", "x64"), layoutFor("darwin", "arm64"), layoutFor("darwin", "x64")].flatMap(l => artifactNames(l, v)),
+    ];
+    for (const f of files("<v>")) expect(flat(publish), f).toContain(`\`${f}\``);
+    // The command that writes SHA256SUMS: "hash  name" lines, which the README's sha256sum -c reads; its patterns
+    // take in every file of the release.
+    const cmd = /^ *sha256sum ([^\n>]+?) > SHA256SUMS$/m.exec(publish)?.[1] ?? "";
+    const globs = cmd.split(/\s+/).filter(Boolean).map(g => new RegExp(`^${g.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`));
+    expect(globs.length).toBeGreaterThan(0);
+    for (const f of files(packageVersion)) expect(globs.some(g => g.test(f)), f).toBe(true);
+    expect(section(read("README.md"), "Download")).toMatch(/^sha256sum -c SHA256SUMS\b/m);
   });
 });
 

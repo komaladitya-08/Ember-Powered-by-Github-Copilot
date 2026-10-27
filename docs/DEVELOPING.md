@@ -1174,6 +1174,26 @@ off. The schema is strict, so **an Ember from before these keys locks down when 
 that is the intended fail-closed behaviour, and why CHANGELOG.md tells administrators to update Ember first. Any key
 added later has the same effect on the Embers before it: say so in the release notes.
 
+## 15. Publishing a release
+
+The README sends users to the Releases page and tells them to check each file against `SHA256SUMS`, so every release
+needs both.
+
+1. Run **Actions › ci › Run workflow** on the release commit with **packages** ticked and **intel** ticked (§13), and
+   download its four artifacts (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Put the files
+   they hold in one folder: `ember-<v>-1.el8.x86_64.rpm`, `ember-voice-models-<v>-1.el8.noarch.rpm`,
+   `Ember-<v>-x86_64.AppImage`, `Ember-<v>-win-x64.zip`, `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`,
+   `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`.
+2. In that folder, write the checksums. Each line is a hash, two spaces and a file name, which is what
+   `sha256sum -c` reads:
+
+   ```bash
+   sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS
+   ```
+
+3. Create the release for the tag `v<v>` with the version's notes from CHANGELOG.md, and attach the eight files and
+   `SHA256SUMS`.
+
 ## Repository layout
 
 ```
