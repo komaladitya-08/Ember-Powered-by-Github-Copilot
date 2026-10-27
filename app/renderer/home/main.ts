@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, signInLabel, tagline, usageLine, type HomePatch, type Segment,
+  modelLabel, retryMessage, signInLabel, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -477,7 +477,7 @@ function renderAgent(a: AgentStatus | null): void {
       const sel = $(id) as HTMLSelectElement;
       sel.replaceChildren(...list.map(m => {
         const o = document.createElement("option");
-        o.value = m.id; o.textContent = m.name; o.selected = m.id === current;
+        o.value = m.id; o.textContent = modelLabel(m); o.selected = m.id === current;
         return o;
       }));
     };

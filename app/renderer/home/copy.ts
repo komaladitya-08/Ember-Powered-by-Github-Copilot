@@ -61,6 +61,11 @@ export function retryMessage(r: { found: boolean; source: string | null; hint?: 
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;
 }
 
+/** A model in the Copilot section's lists: its name, and how many premium requests a call costs when that is above 1. */
+export function modelLabel(m: { name: string; cost?: number }): string {
+  return typeof m.cost === "number" && m.cost > 1 ? `${m.name} (${Number(m.cost.toFixed(2))}× premium requests)` : m.name;
+}
+
 /** The Copilot section's sign-in button: Ember's own GitHub App signs in with the browser; without it, the GitHub CLI. */
 export function signInLabel(signInWith?: string): string {
   return signInWith === "github-cli" ? "Connect with GitHub CLI" : "Sign in with GitHub";

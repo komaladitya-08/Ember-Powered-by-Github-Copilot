@@ -13,7 +13,7 @@ import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type PresenterEvent } from "./presenter";
-import { chooseModels, mayUseRuntimeDefault, type ModelLike } from "./models";
+import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
@@ -99,7 +99,8 @@ export interface AgentStatus {
   source?: string;
   /** How this build signs in (HostOptions.signInWith): the settings window labels its button by it. */
   signInWith?: SignInWith;
-  models: { id: string; name: string; vision: boolean }[];
+  /** `cost`: the premium-request multiplier, when Copilot gives one (the settings window marks the costly ones). */
+  models: { id: string; name: string; vision: boolean; cost?: number }[];
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
@@ -1168,7 +1169,7 @@ export class AgentHost {
         defaultModel: runtimeDefault,
         login,
         source: this.source,
-        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true })),
+        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true, ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}) })),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
       });

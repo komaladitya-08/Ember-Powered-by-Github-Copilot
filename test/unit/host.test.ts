@@ -2399,3 +2399,22 @@ describe("a task's result when the request can't be sent (review #150)", () => {
     await host.stop();
   });
 });
+
+describe("the models' cost in the status (review #144)", () => {
+  it("passes on Copilot's premium-request multiplier, and the default worker is a standard model", async () => {
+    sim.models = [
+      { id: "delta-ultra", name: "Delta Ultra", capabilities: { supports: { vision: true } }, billing: { multiplier: 10 } },
+      { id: "delta-pro", name: "Delta Pro", capabilities: { supports: { vision: true } }, billing: { multiplier: 1 } },
+      { id: "delta-mini", name: "Delta Mini", capabilities: { supports: { vision: true } } },
+    ];
+    const { host } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus().models).toEqual([
+      { id: "delta-ultra", name: "Delta Ultra", vision: true, cost: 10 },
+      { id: "delta-pro", name: "Delta Pro", vision: true, cost: 1 },
+      { id: "delta-mini", name: "Delta Mini", vision: true },
+    ]);
+    expect(host.getStatus()).toMatchObject({ conductorModel: "delta-mini", workerModel: "delta-pro" });
+    await host.stop();
+  });
+});
