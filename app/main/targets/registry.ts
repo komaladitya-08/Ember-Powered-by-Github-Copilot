@@ -222,7 +222,9 @@ export function activeOf(entries: readonly TargetEntry[], wanted: TargetId): Tar
 
 /** What the renderers get (settings, the handle's badge). */
 export function summaryOf(e: TargetEntry, active: TargetId): TargetSummary {
-  return { id: e.id, kind: e.kind, label: e.label, ...(e.login ? { login: e.login } : {}), state: e.state, can: e.can, active: e.id === active };
+  // The distro that "WSL" names is the one "in WSL" goes to: settings marks it.
+  const wslDefault = e.kind === "wsl" && e.names.includes(WSL_WORDS[0]);
+  return { id: e.id, kind: e.kind, label: e.label, ...(e.login ? { login: e.login } : {}), state: e.state, can: e.can, active: e.id === active, ...(wslDefault ? { wslDefault } : {}) };
 }
 
 /** A remote's desktop as the registry shows it: what the agent reported (§5.4). */

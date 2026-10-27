@@ -367,16 +367,20 @@ html { scroll-padding-top: 16px; }
 /* ───── Computers and Commands (§8.3): shown once the targets runtime answers ───── */
 .jump a[hidden] { display: none; }
 .intro { margin: 0 4px 4px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
-.targets li { min-height: 48px; }
-.target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
+/* A computer's name and status, then its buttons on a line of their own: three buttons beside a long address left
+   both cramped at the default window size (review #163). */
+.targets li { min-height: 48px; flex-wrap: wrap; row-gap: 2px; }
+.target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
 .target-text b { font-weight: 600; }
 .target-name { min-width: 0; overflow-wrap: anywhere; }
 .target-detail { color: var(--muted); font: var(--type-callout); }
 .target-status { color: var(--muted); font: var(--type-callout); }
 .target-note { color: var(--muted); font: var(--type-footnote); }
-.target-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 60%; }
+.target-actions { flex: 1 1 100%; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+/* The words line up with the name above (the buttons' padding hangs past it). */
 .targets .target-actions .btn.quiet { margin-right: 0; color: var(--fg); }
+.targets .target-actions .btn.quiet:first-child { margin-left: -8px; }
 .targets .target-actions .btn.quiet.danger { color: var(--red-text); }
-#computers-switches:not(:has(> :not([hidden]))) { display: none; }
+#computers-switches:not(:has(> :not([hidden]))), #wsl-switch:not(:has(> :not([hidden]))) { display: none; }
 .sub-switch { padding-left: 16px; }
 .row-note { color: var(--muted); font: var(--type-footnote); }

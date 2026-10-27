@@ -10,7 +10,7 @@ import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, commandsView, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
   type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
@@ -162,6 +162,8 @@ function draw(): void {
   const shown = summaries !== null && settings !== null;
   for (const id of ["computers", "commands", "jump-computers", "jump-commands"]) $(id).hidden = !shown;
   if (!shown) return;
+  const intro = computersIntro(os);
+  if ($("computers-intro").textContent !== intro) $("computers-intro").textContent = intro;
   const c = computersView({ os, summaries: summaries!, settings: settings!, admin, removing });
   const rows = [c.local, ...(c.wsl?.rows ?? []), ...c.ssh.rows];
   const key = JSON.stringify(rows);

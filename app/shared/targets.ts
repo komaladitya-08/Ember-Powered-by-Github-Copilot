@@ -58,6 +58,8 @@ export interface TargetSummary {
   can: string;
   /** The picker's choice: requests that name no computer go here. */
   active: boolean;
+  /** WSL: the distro "in WSL" and "in Linux" mean (the default one, §2.3); absent for every other target. */
+  wslDefault?: boolean;
 }
 
 /**

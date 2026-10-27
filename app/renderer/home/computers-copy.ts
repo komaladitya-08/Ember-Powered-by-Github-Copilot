@@ -11,12 +11,19 @@ import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
 
 export const COMPUTERS_HEADING = "Computers";
-export const COMPUTERS_INTRO = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+/** The section's intro: the page's own (Linux's, and macOS's), and Windows', the only OS with WSL (review #198). */
+export const COMPUTERS_INTRO = "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+export const COMPUTERS_INTRO_WINDOWS = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+/** The intro for the OS the status names (Linux's without one). */
+export function computersIntro(os: OS | undefined): string {
+  return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
+}
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
 export const WSL_SWITCH = "Let Ember work in WSL";
 export const OFFER_SWITCH = "Offer to bring Ember along when I connect with ssh";
-export const ADD_PLACEHOLDER = "An SSH host, e.g. build-01 or deploy@build-01.example.com";
+/** Short enough to show whole in a narrow window (the field is labelled "SSH host" for screen readers). */
+export const ADD_PLACEHOLDER = "Host name or user@host";
 export const ADD_BUTTON = "Connect";
 export const ASK_EVERY_SWITCH = "Ask me before every command";
 export const OPEN_COMMANDS = "Open the command window";
@@ -128,7 +135,10 @@ export function computersView(i: {
   let wsl: ComputersView["wsl"] = null;
   if (i.os === "win32") {
     const allowed = i.admin.features.wsl !== false;
-    const rows = !allowed ? [] : i.summaries.filter(t => t.kind === "wsl").map(t => ({ id: t.id, name: t.label, detail: null, ...wslStatus(t), actions: [] }));
+    // The distro "in WSL" means is marked, so with two distros the user can tell where it goes (review #198).
+    const rows = !allowed ? [] : i.summaries.filter(t => t.kind === "wsl").map(t => ({
+      id: t.id, name: t.label, detail: t.wslDefault ? "default for “in WSL”" : null, ...wslStatus(t), actions: [],
+    }));
     wsl = {
       rows,
       toggle: allowed ? { label: WSL_SWITCH, checked: i.settings.targets?.wsl?.on === true, disabled: false } : null,

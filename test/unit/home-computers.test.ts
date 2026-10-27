@@ -3,10 +3,11 @@
  * targets runtime. Each block names the review finding it pins.
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import * as cc from "../../app/renderer/home/computers-copy";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { SettingsSchema, type Settings } from "../../app/main/settings";
-import { buildRegistry } from "../../app/main/targets/registry";
+import { buildRegistry, summaryOf } from "../../app/main/targets/registry";
 import type { TargetSummary } from "../../app/shared/targets";
 
 const summary = (over: Partial<TargetSummary>): TargetSummary => ({ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps and commands", active: true, ...over });
@@ -101,5 +102,48 @@ describe("removing Ember from a computer, and forgetting one (review #191, #163)
     expect(cc.actResult({ ok: true }, "Removed. build-01 is no longer in your list.")).toBe("Removed. build-01 is no longer in your list.");
     expect(cc.actResult({ ok: false, message: "Ember couldn't remove its helper from build-01." }, "Removed.")).toBe("Ember couldn't remove its helper from build-01.");
     expect(cc.actResult(undefined, "Removed.")).toBe(cc.ACT_FAILED);
+  });
+});
+
+describe("the Computers section fits its OS and the window (review #198, #163)", () => {
+  const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../../app/renderer/home/styles.css", import.meta.url), "utf8");
+
+  it("mentions WSL only on Windows", () => {
+    expect(cc.computersIntro("win32")).toBe("Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.");
+    for (const os of ["linux", "darwin", undefined] as const) {
+      expect(cc.computersIntro(os)).toBe("Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.");
+    }
+    // The page's own markup is Linux's (a status that names no OS changes nothing).
+    expect(page).toContain(`<p class="intro" id="computers-intro">${cc.computersIntro("linux")}</p>`);
+  });
+
+  it("puts the WSL switch above the list, and the field's hint fits a narrow window", () => {
+    const at = (s: string) => page.indexOf(s);
+    expect(at('id="wsl-on"')).toBeGreaterThan(0);
+    expect(at('id="wsl-on"')).toBeLessThan(at('id="computers-list"'));
+    expect(at('id="offer-ssh"')).toBeGreaterThan(at('id="computers-list"'));
+    expect(cc.ADD_PLACEHOLDER).toBe("Host name or user@host");
+    expect(page).toContain(`placeholder="${cc.ADD_PLACEHOLDER}"`);
+  });
+
+  it("marks the distro “in WSL” means", () => {
+    const rows = cc.computersView({
+      os: "win32", settings: settings(), admin: noPolicy,
+      summaries: [summary({}), wsl({ wslDefault: true, state: "ready", can: "Linux apps" }), wsl({ id: "wsl:Debian", label: "Debian (WSL)", state: "off", can: "Linux apps" })],
+    }).wsl!.rows;
+    expect(rows.map(r => [r.name, r.detail])).toEqual([["Ubuntu (WSL)", "default for “in WSL”"], ["Debian (WSL)", null]]);
+    const [, ubuntu] = buildRegistry({
+      os: "win32", admin: { policy: AdminPolicySchema.parse({}), source: null }, localDesktop: true, commands: () => "off", links: new Map(),
+      settings: SettingsSchema.parse({ targets: { active: "local", offerSsh: true, dismissedOffers: [], hosts: [], pcId: "", wsl: { on: true, consent: { version: 1, at: "x" } } } }),
+      wsl: { installed: true, wslExe: "wsl.exe", distros: [{ name: "Ubuntu", version: 2, isDefault: true, defaultUid: 1000, running: true, needsSetup: false }, { name: "Debian", version: 2, isDefault: false, defaultUid: 1000, running: true, needsSetup: false }], wslg: { available: true, disabledByUser: false, version: "1" }, wslVersion: "2" },
+    });
+    expect(summaryOf(ubuntu, "local")).toMatchObject({ id: "wsl:Ubuntu", wslDefault: true });
+  });
+
+  it("puts a computer's buttons under its name and status, not squeezed beside them", () => {
+    expect(css).toMatch(/\.targets li \{[^}]*flex-wrap: wrap;/);
+    expect(css).toMatch(/\.target-actions \{[^}]*flex: 1 1 100%;/);
+    expect(css).not.toMatch(/\.target-actions \{[^}]*max-width: 60%/);
   });
 });
