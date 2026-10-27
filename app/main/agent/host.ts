@@ -294,6 +294,15 @@ function proxyNote(p?: { url: string | null; socks?: string }): string {
   return "";
 }
 
+/**
+ * A problem on Copilot's or GitHub's side that passes (review #137): a 5xx, a rate limit, a request or the runtime's
+ * own start that timed out ("Timeout waiting for CLI server to start", SessionToolsTimeoutError). A start that fails
+ * with one is retried with the offline backoff, and asking retries at once, as offline.
+ */
+const TRANSIENT = /\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|\b429\b|too many requests|rate.?limit|timed? ?out|timeout/i;
+/** What settings show for one, while the retry waits. */
+const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
+
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models)/;
 
@@ -330,6 +339,7 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "runtime";
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic|\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "no-access";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) return "sign-in";
+  if (TRANSIENT.test(msg)) return "not-answering";
   return "other";
 }
 
@@ -385,6 +395,7 @@ export function explainStartError(err: unknown, ctx: { source?: string; sourceNa
     }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
+  if (TRANSIENT.test(msg)) return TRANSIENT_DETAIL;
   return msg;
 }
 
@@ -397,7 +408,7 @@ export function explainSignInError(err: unknown, ctx: { online?: boolean; reinst
   if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
   if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. Check the network, then sign in again.";
-  if (/refused the sign-in request \(5\d\d\)|is not valid JSON|Unexpected token|JSON/i.test(msg)) return "GitHub's sign-in page didn't answer properly (a proxy or a problem on GitHub's side). Try signing in again in a moment.";
+  if (/refused the sign-in request \(5\d\d\)|is not valid JSON|Unexpected token|JSON/i.test(msg) || TRANSIENT.test(msg)) return "GitHub's sign-in page didn't answer properly (a proxy or a problem on GitHub's side). Try signing in again in a moment.";
   return explainStartError(err, ctx);
 }
 
@@ -1138,11 +1149,13 @@ export class AgentHost {
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
       const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
-      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
+      const reason = startErrorReason(err, ctx);
+      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
       await this.doStop();
-      // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the
-      // sign-in. Not if a newer start or stop came meanwhile: a stale retry would restart a working connection.
-      if (offline && gen === this.gen) this.retryLater();
+      // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
+      // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
+      // came meanwhile: a stale retry would restart a working connection.
+      if ((offline || reason === "not-answering") && gen === this.gen) this.retryLater();
     }
   }
 

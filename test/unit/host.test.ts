@@ -37,6 +37,9 @@ const sim = vi.hoisted(() => ({
   models: null as any[] | null,
   /** Task sessions left in the runtime's store by an earlier run. */
   taskSessions: [] as string[],
+  /** What client.start() and client.listModels() throw (a GitHub 5xx, the SDK's own timeouts), or nothing. */
+  startError: null as Error | null,
+  modelsError: null as Error | null,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -75,11 +78,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { /* nothing */ }
+    async start() { if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
     async deleteSession(id: string) { sim.deleted.push(id); if (sim.deleteHangs) await hang(); }
     ping() { return sim.ping(); }
@@ -134,6 +137,8 @@ beforeEach(() => {
   sim.stall = () => false;
   sim.abortEnds = false;
   sim.models = null;
+  sim.startError = null;
+  sim.modelsError = null;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -2241,5 +2246,53 @@ describe("live retest: 'Read all' stays open until it's closed", () => {
       expect(screen().bubble).toMatchObject({ visible: true, thought: "Saved." });
       expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
     });
+  });
+});
+
+describe("a passing problem while connecting (review #137)", () => {
+  it("GitHub's 5xx, a rate limit or a timeout is retried with the offline backoff and said plainly, not shown raw", async () => {
+    vi.useFakeTimers();
+    for (const raw of ["Request models.list failed with message: 503 Service Unavailable", "Request models.list failed with message: 429 Too Many Requests", "Request timed out after 30000ms"]) {
+      sim.clients = [];
+      sim.modelsError = new Error(raw);
+      const { host } = makeHost({ isOnline: () => true });
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      const s = host.getStatus();
+      expect(s.reason).toBe("not-answering");
+      expect(s.detail).not.toContain("Request ");
+      expect(s.detail).toMatch(/try again/);
+      expect(idleWord(s)).toBe("Reconnecting…");
+      // It tries again on its own.
+      sim.modelsError = null;
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(sim.clients).toHaveLength(2);
+      expect(host.getStatus().phase).toBe("ready");
+      await host.stop();
+    }
+  });
+
+  it("a slow first launch (the runtime's start timeout) is retried too, and asking retries at once", async () => {
+    vi.useFakeTimers();
+    sim.startError = new Error("Timeout waiting for CLI server to start");
+    const { host } = makeHost({ isOnline: () => true });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(host.getStatus().reason).toBe("not-answering");
+    sim.startError = null;
+    // The user asks before the retry's time: it tries now, and the question waits for it.
+    const asked = host.ask("hello");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sim.clients).toHaveLength(2);
+    await asked;
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a real refusal still isn't retried on its own", async () => {
+    vi.useFakeTimers();
+    sim.modelsError = new Error("Request models.list failed with message: 403 Forbidden: Copilot policy");
+    const { host } = makeHost({ isOnline: () => true });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(sim.clients).toHaveLength(1);
   });
 });
