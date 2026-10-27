@@ -112,6 +112,8 @@ export const SettingsSchema = z.object({
   }).default({ conductor: null, worker: null }),
   /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
   reduceMotion: z.boolean().default(false),
+  /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */
+  textSize: z.enum(["default", "large", "larger"]).default("default"),
   /** Where Ember works (§2): the picker's target, the SSH hosts the user added, WSL, and this install's id. */
   targets: z.object({
     /** The picker's choice: requests that name no computer go here. */

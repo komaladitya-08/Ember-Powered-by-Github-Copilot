@@ -38,3 +38,6 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
   .vt { outline: 1px solid CanvasText; }
   .vt-mixed { outline: none; }
 }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type. */
+html[data-text-size] .body code, html[data-text-size] .mono, html[data-text-size] .quote { font-size: calc(12px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }

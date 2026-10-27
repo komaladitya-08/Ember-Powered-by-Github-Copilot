@@ -145,15 +145,15 @@ h2[tabindex="-1"]:focus { outline: none; }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }
 /* A pop-up button, sized to its choice and set at the row's end. */
-.models select {
+.models select, #text-size {
   justify-self: end; max-width: 100%; height: 28px; padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, #text-size:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, #text-size option { background: var(--surface-2); color: var(--fg); }
 .models-hint { grid-column: 1 / -1; margin: 0; }
 .usage { margin: 0; color: var(--muted); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
 .usage:empty { display: none; }
@@ -161,6 +161,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* ───── Switch rows: the words first, the switch at the row's end (a checkbox keeps its box in front) ───── */
 .switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .switch-row:has(> input[role="switch"]) { flex-direction: row-reverse; justify-content: space-between; }
+.switch-row:has(> select) { justify-content: space-between; }
 .switch-row > span { min-width: 0; }
 .locked { opacity: 0.5; }
 
@@ -366,13 +367,13 @@ html { scroll-padding-top: 16px; }
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
   .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .add-row input { border: 1px solid ButtonText; }
+  .card, .start, .models select, #text-size, .add-row input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select { appearance: auto; -webkit-appearance: menulist; }
+  .models select, #text-size { appearance: auto; -webkit-appearance: menulist; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
@@ -398,3 +399,15 @@ html { scroll-padding-top: 16px; }
 #computers-switches:not(:has(> :not([hidden]))) { display: none; }
 .sub-switch { padding-left: 16px; }
 .row-note { color: var(--muted); font: var(--type-footnote); }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type. */
+html[data-text-size] .hero-text p { font-size: calc(15px * var(--text-scale)); }
+html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
+html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: calc(28px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] #text-size { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .facts dd { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
+@media (min-width: 640px) { html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); } }

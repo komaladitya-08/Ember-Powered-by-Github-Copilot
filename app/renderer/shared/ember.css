@@ -19,15 +19,17 @@
   --ember-mono: ui-monospace, "SF Mono", "DejaVu Sans Mono", monospace;
 
   /* Type: Apple's text styles at a Linux desktop's size (body 14 rather than 13), on a 4 px line grid. Hierarchy
-     comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). */
-  --type-large-title: 700 28px/34px var(--ember-font);
-  --type-title-2: 600 17px/22px var(--ember-font);
-  --type-title-3: 700 22px/28px var(--ember-font);
-  --type-headline: 600 14px/20px var(--ember-font);
-  --type-body: 400 14px/20px var(--ember-font);
-  --type-callout: 400 13px/18px var(--ember-font);
-  --type-footnote: 400 12px/16px var(--ember-font);
-  --type-caption: 500 11px/14px var(--ember-font);
+     comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). All of
+     it grows with the text size (Settings > Comfort & access): main sets html[data-text-size] (page-prefs.ts). */
+  --text-scale: 1;
+  --type-large-title: 700 calc(28px * var(--text-scale))/calc(34px * var(--text-scale)) var(--ember-font);
+  --type-title-2: 600 calc(17px * var(--text-scale))/calc(22px * var(--text-scale)) var(--ember-font);
+  --type-title-3: 700 calc(22px * var(--text-scale))/calc(28px * var(--text-scale)) var(--ember-font);
+  --type-headline: 600 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
+  --type-body: 400 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
+  --type-callout: 400 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font);
+  --type-footnote: 400 calc(12px * var(--text-scale))/calc(16px * var(--text-scale)) var(--ember-font);
+  --type-caption: 500 calc(11px * var(--text-scale))/calc(14px * var(--text-scale)) var(--ember-font);
 
   /* Labels: Apple's label / secondary / tertiary on a warm off-white. */
   --label: #f5f2ef;
@@ -142,6 +144,9 @@
     --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent);
   }
 }
+/* Text size: the type tokens above (and each page's own sizes, in its html[data-text-size] rules) grow by this. */
+html[data-text-size="large"] { --text-scale: 1.15; }
+html[data-text-size="larger"] { --text-scale: 1.3; }
 /* Reduce transparency: glass becomes a solid panel. */
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass-fill: linear-gradient(var(--glass-solid), var(--glass-solid)); --glass-sheen: linear-gradient(transparent, transparent); }
@@ -182,7 +187,7 @@ html {
   all: unset; box-sizing: border-box; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 28px; padding: 4px 13px; border-radius: var(--r-sm);
-  font: 600 13px/18px var(--ember-font); letter-spacing: -0.003em; text-align: center;
+  font: 600 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: -0.003em; text-align: center;
   color: var(--on-accent); background: var(--accent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3);
   transition: filter 160ms ease, background-color 160ms ease, transform 220ms var(--spring-snappy);
@@ -194,7 +199,7 @@ html {
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 @media (hover: hover) { .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); filter: none; } }
-.btn.small { min-height: 24px; padding: 3px 10px; border-radius: var(--r-xs); font-size: 12px; line-height: 16px; }
+.btn.small { min-height: 24px; padding: 3px 10px; border-radius: var(--r-xs); font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
@@ -250,7 +255,7 @@ input[type="checkbox"]:not([role="switch"]):checked:focus-visible { box-shadow: 
 /* ───── Keys: keycaps ───── */
 kbd {
   display: inline-block; min-width: 1.6em; padding: 0 5px; border-radius: var(--r-xs); text-align: center;
-  font: 600 11px/18px var(--ember-font); letter-spacing: 0.01em; color: var(--label);
+  font: 600 calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: 0.01em; color: var(--label);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
   vertical-align: 1px;

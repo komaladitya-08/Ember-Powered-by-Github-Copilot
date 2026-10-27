@@ -105,3 +105,8 @@ html.calm .focus::after, html.calm .status i { animation: none; }
   .task-actions button { border: 1px solid ButtonText; }
   .where { outline: 1px solid CanvasText; outline-offset: -1px; }
 }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type
+   (the bubble's own rules are in BUBBLE_CSS). */
+html[data-text-size] .status { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .task-actions button { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }

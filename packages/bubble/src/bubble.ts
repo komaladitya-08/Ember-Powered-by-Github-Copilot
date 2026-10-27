@@ -330,6 +330,13 @@ html.calm .ember-bubble { transition: none; translate: none; }
   .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
   .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
+/* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
+   grow. The bubble keeps its width and its heights, so a long answer fades and offers "Read all" a line sooner. */
+html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
+html[data-text-size] .eb-chip { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
+html[data-text-size] .ember-bubble[data-mood="attention"] .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 `;
 
 /**
