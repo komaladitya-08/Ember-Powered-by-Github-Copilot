@@ -715,6 +715,16 @@ describe("Presenter.post: a bubble of Ember's own in the shared bubble (review #
     expect(shown.at(-1)).toBe("ember:Ember");
   });
 
+  it("keeps its buttons' time on screen while only its words change (a download's progress), so Cancel can be pressed", () => {
+    const { notices } = board();
+    vi.setSystemTime(1000);
+    const connecting = { title: "Connecting to build-01…", thought: "Checking build-01…", actions: [{ id: "conn:build-01:cancel", label: "Cancel" }], mood: "acting" as const };
+    notices.post(connecting);
+    for (let t = 1010; t < 2000; t += 10) { vi.setSystemTime(t); notices.post({ ...connecting, thought: `Downloading (${t} of 2000 MB)…` }, { claim: "reply" }); }
+    expect(notices.shownAt).toBe(1000);
+    expect(notices.shownFor).toBeGreaterThan(500);
+  });
+
   it("says when its bubble reached the screen, starting again with each post", () => {
     const { notices } = board();
     vi.setSystemTime(1000);
@@ -722,7 +732,8 @@ describe("Presenter.post: a bubble of Ember's own in the shared bubble (review #
     notices.post(offer);
     expect(notices.shownAt).toBe(1000);
     vi.setSystemTime(5000);
-    notices.post({ ...offer, title: "Connect to build-02?" });
+    // Another offer (its own buttons): its time starts again.
+    notices.post({ ...offer, title: "Connect to build-02?", actions: [{ id: "offer:2:connect", label: "Connect" }] });
     expect(notices.shownAt).toBe(5000);
     notices.clear();
     expect(notices.visible).toBe(false);

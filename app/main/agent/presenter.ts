@@ -705,13 +705,16 @@ export class Presenter {
    * (its buttons answered, what it said no longer holds), and comes back after anything that covers it meanwhile.
    */
   post(b: NoticeBubble, o: NoticeOptions = {}): void {
+    // The same buttons still up (a connection's progress rewrites its words): they keep the time they reached the
+    // screen, so a press on Cancel isn't ignored for ever while a download reports every few milliseconds.
+    const sameButtons = this.visible && !this.unseen && JSON.stringify(this.state.bubble.actions) === JSON.stringify(b.actions);
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
     this.asked = null;
     this.silent = false;
     this.held = !o.ms;
-    this.since = null;
+    if (!sameButtons) this.since = null;
     this.apply({
       emotion: o.emotion ?? "neutral", talking: false,
       bubble: { ...IDLE_BUBBLE, visible: true, step: b.step ?? null, title: b.title, thought: b.thought, actions: b.actions, mood: b.mood },
