@@ -264,6 +264,22 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     const noUserNs = (() => { try { return fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim() === "0"; } catch { return true; } })();
     expect(run(appRun, ["doctor"], 1000).includes("--no-sandbox")).toBe(noUserNs);
   });
+  it("start the AppImage without Chromium's sandbox where either switch the doctor reads turns user namespaces off (review #202)", () => {
+    // A stand-in /proc/sys: the AppRun reads the same two files as the Linux doctor probe (doctor-probes.ts).
+    const withProc = (files: Record<string, string>) => {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+      for (const [f, v] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), `${v}\n`); }
+      return appRun.replaceAll("/proc/sys/", `${d}/`);
+    };
+    const sandboxOff = (files: Record<string, string>) => run(withProc(files), [], 1000, ":0").includes("--no-sandbox");
+    expect(sandboxOff({ "user/max_user_namespaces": "0" })).toBe(true);
+    // Debian and some hardened Ubuntu hosts: namespaces counted, but unprivileged ones refused.
+    expect(sandboxOff({ "user/max_user_namespaces": "15000", "kernel/unprivileged_userns_clone": "0" })).toBe(true);
+    expect(sandboxOff({ "user/max_user_namespaces": "15000", "kernel/unprivileged_userns_clone": "1" })).toBe(false);
+    expect(sandboxOff({ "user/max_user_namespaces": "15000" })).toBe(false);
+    expect(sandboxOff({})).toBe(true);
+    expect(appRun.match(/\/proc\/sys\/[\w/]+/g)?.sort()).toEqual(["/proc/sys/kernel/unprivileged_userns_clone", "/proc/sys/user/max_user_namespaces"]);
+  });
   it("say Ember needs the desktop session when there is no display, instead of starting into Chromium's error", () => {
     for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, "Ember.AppImage doctor"]]) {
       for (const args of [[], ["--show-settings"]]) {
