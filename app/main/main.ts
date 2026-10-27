@@ -12,7 +12,7 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { createLogger, type LogLevel } from "./logger";
+import { createLogger, logLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { readTextFile } from "./text-file";
@@ -103,12 +103,15 @@ const userData = app.getPath("userData");
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
+// Any case; a name that isn't a level means info, said in the log (review #90).
+const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
 const log = createLogger({
   dir: path.join(userData, "logs"),
-  level: (process.env.EMBER_LOG_LEVEL as LogLevel | undefined) ?? "info",
+  level: wantedLevel.level,
   // `ember doctor` prints a report; log lines would get in its way.
   stdout: !process.argv.includes("--doctor") && (process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged),
 });
+if (wantedLevel.unknown !== undefined) log.warn("log.level_unknown", { value: wantedLevel.unknown.slice(0, 40), using: "info", levels: ["debug", "info", "warn", "error"] });
 
 process.on("uncaughtException", err => log.error("uncaught exception", { err }));
 process.on("unhandledRejection", reason => log.error("unhandled rejection", { reason }));
