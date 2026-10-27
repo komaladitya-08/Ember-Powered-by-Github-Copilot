@@ -27,7 +27,7 @@ import type { WslDistro, WslFacts, WslService } from "../../app/main/wsl/types";
 import { KEYS, SHORTCUTS, type OS } from "../../app/shared/shortcuts";
 import type { ConsentPanel } from "../../app/shared/consent";
 import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
-import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
+import { commandsConsent, consentSha256, sshChangedFrom, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
 import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
 import {
@@ -565,6 +565,27 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     await connected(moved);
     expect(moved.cards).toHaveLength(1);
     expect(moved.settings.get().targets.hosts[0].resolved.hostname).toBe("elsewhere.example.com");
+  });
+
+  it("leads a card asked again for changed SSH settings with what changed, and never on the first card (review #192)", async () => {
+    const moved = rig({ settings: withHosts([hostRecord("build-01")]), resolved: { user: "ops", hostname: "elsewhere.example.com", port: 2222, jump: [] } });
+    await connected(moved);
+    expect(moved.cards[0].body[0]).toBe("Your SSH settings now send build-01 to ops@elsewhere.example.com, port 2222 (before: deploy@build-01.example.com, port 22). Connect only if you meant to change them.");
+    expect(moved.cards[0].body[1]).toMatch(/^Ember will connect to build-01 as ops \(ops@elsewhere\.example\.com, port 2222\)/);
+    const fresh = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]), resolved: { user: "ops", hostname: "elsewhere.example.com", port: 2222, jump: [] } });
+    await connected(fresh);
+    expect(fresh.cards[0].body[0]).toMatch(/^Ember will connect to build-01 as ops/);
+    expect(sshChangedFrom(hostRecord("build-01"), { user: "deploy", hostname: "BUILD-01.example.com", port: 22, jump: ["new-hop"] })).toBeUndefined();
+    expect(sshChangedFrom(hostRecord("build-01"), { user: "deploy", hostname: "build-01.example.com", port: 23, jump: [] })).toEqual(hostRecord("build-01").resolved);
+  });
+
+  it("says where the helper goes and what it does on the screen for a Linux computer, a Mac or a server alike (review #192)", () => {
+    const card = sshConsent({ os: "linux", target: "ssh:build-01", facts: { label: "build-01", resolved: { user: "deploy", hostname: "build-01.example.com", port: 22, jump: [] }, desktopOff: false, graceSeconds: 20 } });
+    const text = card.body.join("\n");
+    expect(text).toContain("in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)");
+    expect(text).toContain("If build-01 has a desktop, Ember reads and uses apps on its screen only when deploy is the person logged in there");
+    expect(text).toContain("On a server with no desktop, or on a Mac, it only runs commands.");
+    expect(validConsent(card)).toBe(true);
   });
 
   it("asks again when the machine reached isn't the one the user said yes to, and disconnects on Not now", async () => {

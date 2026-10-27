@@ -235,7 +235,7 @@ describe("What Ember did, review round 11", () => {
 const NEW_STRINGS: string[] = [];
 const keep = <T extends string>(s: T): T => { NEW_STRINGS.push(s); return s; };
 /** Words that keep their capital inside a sentence. */
-const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
+const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Support\/Ember|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
 
 describe("the command window's words (§8.5)", () => {
   const exit = (e: Partial<Parameters<typeof commandCopy.statusLine>[0]>) => ({ code: 0, signal: null, ended: "exit" as const, ms: 3200, ...e });
@@ -377,7 +377,7 @@ describe("the first-use consent cards (§8.4)", () => {
     expect(keep(c.title)).toBe("Bring Ember to build-01?");
     expect(c.body.map(keep)).toEqual([
       "Ember will connect to build-01 as deploy (deploy@build-01.example.com, port 22, through jump-host) with your own SSH settings and keys.",
-      "It copies a small helper there: about 31 MB, unpacked to about 125 MB in ~/.local/share/ember-remote. It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
+      "It copies a small helper there: about 31 MB, unpacked to about 125 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
       "Your voice and your GitHub sign-in stay on this computer. Ember sends build-01 only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.",
       "On build-01's screen it reads and uses apps only when deploy is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.",
       "build-01 keeps its own record of what Ember does there.",

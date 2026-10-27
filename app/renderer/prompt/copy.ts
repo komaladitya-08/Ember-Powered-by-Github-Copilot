@@ -141,7 +141,7 @@ export interface SshConsentFacts {
   desktop: "screen" | "headless" | "remote-session" | "wsl" | "mac";
   /** A Mac whose probe found full disk access for remote users off (critique remote-11). */
   tccBlocked?: boolean;
-  /** The helper's size and folder (defaults: 31 MB, 125 MB, ~/.local/share/ember-remote). */
+  /** The helper's size and folder (defaults: 31 MB, 125 MB, its own folder on a Linux computer or a Mac). */
   bundleMB?: number;
   unpackedMB?: number;
   installDir?: string;
@@ -197,7 +197,7 @@ export function consentText(i: ConsentInput): ConsentText {
       title: `Bring Ember to ${label}?`,
       body: [
         first,
-        `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "~/.local/share/ember-remote"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
+        `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
         `Your voice and your GitHub sign-in stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
         desktop,
         `${label} keeps its own record of what Ember does there.`,

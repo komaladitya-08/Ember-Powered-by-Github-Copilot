@@ -85,6 +85,8 @@ export interface SshCardFacts {
   graceSeconds: number;
   /** The machine Ember connected to before isn't the one it reached now (§7.4: asked again). */
   machineChanged?: boolean;
+  /** What `ssh -G` resolved the name to when the user said yes, when it now resolves it elsewhere (sshChangedFrom). */
+  changedFrom?: HostRecord["resolved"];
 }
 
 /** "the key ~/.ssh/a and the settings file ~/.ssh/b" from the carried options, or "". */
@@ -118,17 +120,20 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts })
   const r = f.resolved;
   const through = r.jump.length ? `, through ${r.jump.join(", ")}` : "";
   const body: string[] = [];
+  const was = f.changedFrom;
+  if (was) body.push(`Your SSH settings now send ${f.label} to ${r.user}@${r.hostname}, port ${r.port} (before: ${was.user}@${was.hostname}, port ${was.port}). Connect only if you meant to change them.`);
   if (f.machineChanged) body.push(`${f.label} isn't the computer Ember connected to before under this name. Connect only if you know why it changed.`);
   body.push(`Ember will connect to ${f.label} as ${r.user} (${r.user}@${r.hostname}, port ${r.port}${through}) with your own SSH settings and keys.`);
   const carried = carriedLine(f.extra);
   if (carried) body.push(carried);
   if (f.viaLabel) body.push(`It connects from ${f.viaLabel}, with ${f.viaLabel.replace(/ \(WSL\)$/, "")}'s SSH keys.`);
   body.push(
-    `It copies a small helper there: about 31 MB, unpacked to about 125 MB in ~/.local/share/ember-remote. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
+    `It copies a small helper there: about 31 MB, unpacked to about 125 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
     `Your voice and your GitHub sign-in stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
     f.desktopOff
       ? `Your organisation lets Ember only run commands on ${f.label}.`
-      : `On ${f.label}'s screen it reads and uses apps only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.`,
+      // Built before Ember has looked at the computer (§8.4.2): what it does there is said for each kind it may be.
+      : `If ${f.label} has a desktop, Ember reads and uses apps on its screen only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there. On a server with no desktop, or on a Mac, it only runs commands.`,
     `${f.label} keeps its own record of what Ember does there.`,
   );
   return panel({ feature: "ssh", target: o.target, targetLabel: f.label, title: `Bring Ember to ${f.label}?`, body, yes: "Connect", no: "Not now" });
@@ -147,14 +152,24 @@ export function consentCurrent(feature: keyof typeof FEATURE_CONSENT_VERSION, r:
   return !!r && r.version >= FEATURE_CONSENT_VERSION[feature];
 }
 
+/** `ssh -G` sends the name to another user, hostname or port than `was`. */
+const resolvedElsewhere = (was: HostRecord["resolved"], now: HostRecord["resolved"]): boolean =>
+  was.user !== now.user || was.hostname.toLowerCase() !== now.hostname.toLowerCase() || was.port !== now.port;
+
 /**
  * Whether a host's SSH card must be shown (again) before connecting: never accepted at the current version, or `ssh -G`
  * now resolves it to another user, hostname or port than when the user said yes (§7.4).
  */
 export function sshNeedsConsent(host: HostRecord, now: HostRecord["resolved"]): boolean {
-  if (!consentCurrent("ssh", host.consent)) return true;
-  const was = host.resolved;
-  return was.user !== now.user || was.hostname.toLowerCase() !== now.hostname.toLowerCase() || was.port !== now.port;
+  return !consentCurrent("ssh", host.consent) || resolvedElsewhere(host.resolved, now);
+}
+
+/**
+ * What a host resolved to when the user said yes, when its card is asked again only because `ssh -G` now resolves it
+ * to another user, hostname or port (the card then leads with what changed); undefined otherwise.
+ */
+export function sshChangedFrom(host: HostRecord, now: HostRecord["resolved"]): HostRecord["resolved"] | undefined {
+  return consentCurrent("ssh", host.consent) && resolvedElsewhere(host.resolved, now) ? host.resolved : undefined;
 }
 
 /** Whether the machine reached is another than the one the user consented to (a stored hash that differs). */

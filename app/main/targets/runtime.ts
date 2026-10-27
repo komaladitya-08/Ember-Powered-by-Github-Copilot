@@ -50,7 +50,7 @@ import type { WslRunner } from "../wsl/runner";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
 import { signInAgain } from "../../renderer/overlay/target-copy";
-import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
+import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshChangedFrom, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception, wslBinding, type HandsBase } from "./hands";
 import { registerTargetsIpc, type ActResult } from "./ipc";
@@ -604,6 +604,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     label: host.id, resolved, ...(host.extra ? { extra: host.extra } : {}),
     ...(host.via && host.via !== "local" ? { viaLabel: distroLabel(host.via.slice(4)) } : {}),
     desktopOff: admin().policy.ssh?.desktop === false, graceSeconds: admin().policy.ssh?.commandGraceSeconds ?? 20,
+    // Asked again because the SSH settings now send the name elsewhere: the card says from where to where.
+    changedFrom: sshChangedFrom(host, resolved),
   });
   /** Builds the target for a link that came up (a connect, or SA's own reconnect). */
   const adopt = (hostId: string, link: RemoteLink): boolean => {
