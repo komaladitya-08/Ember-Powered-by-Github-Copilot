@@ -957,7 +957,7 @@ class Run {
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
     const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };
-    this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes });
+    this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes, error: exit.error });
     this.resolveDone(exit);
   }
 }

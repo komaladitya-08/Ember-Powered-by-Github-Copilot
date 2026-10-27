@@ -18,7 +18,7 @@ import { cleanEnv } from "../platform/compose";
 import type { JobHostRef } from "../commands/types";
 import { DISTRO_NAME } from "../../shared/targets";
 import type { WslDistro, WslFacts } from "./types";
-import { decodeLines } from "./decode";
+import { decodeLines, decodeMessage } from "./decode";
 import { readLxss, type RegistryReader } from "./lxss";
 
 /** Anything that can't start a distro (`--list`, `--version`): 5 s (§4.1). */
@@ -155,6 +155,10 @@ export function createWslExec(o: { exe: () => string | null; env: NodeJS.Process
             child.stdin?.end();
           } catch {
             // already closed: the process has gone
+          }
+          // Debug only (off by default): why a step in a distro failed, for a CI log or a user's support report.
+          if (r.inDistro && (error || timedOut || exitCode !== 0)) {
+            o.log.debug("wsl.exec_failed", { code: exitCode, timedOut, error, stderr: decodeMessage(Buffer.concat(err)), outBytes });
           }
           resolve({ code: timedOut ? null : exitCode, stdout: Buffer.concat(out), stderr: Buffer.concat(err), timedOut, error });
         };

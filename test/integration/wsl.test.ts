@@ -87,11 +87,12 @@ async function carrying(r: WslRunner, runId: string): Promise<string> {
 suite("WSL on a real Windows runner", () => {
   let wsl: WslServiceImpl;
   let runner: WslRunner;
+  let logDir = "";
 
   beforeAll(async () => {
     if (process.platform !== "win32") throw new Error("EMBER_WSL_TEST=1 needs Windows with WSL");
     if (!fs.existsSync(jobHostScript)) throw new Error("dist/app/job-host.cjs is missing: run npm run build first");
-    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-wsl-test-"));
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-wsl-test-"));
     // The job host must be RUN's real one: Step 0a's stub refuses every run (exit 125, "job").
     // Its stdin is held open as Ember holds it: the job host takes the end of its stdin as Ember stopping the run.
     const probe = await new Promise<{ status: number | null; stderr: string }>(resolve => {
@@ -115,7 +116,16 @@ suite("WSL on a real Windows runner", () => {
     runner = wsl.runner(DISTRO);
   });
 
-  afterAll(() => wsl?.dispose());
+  afterAll(() => {
+    wsl?.dispose();
+    // Ember's own log (exit codes and wsl.exe's messages for each failed step), for the CI log: runners can't be
+    // reached afterwards.
+    try {
+      console.log(`ember.log:\n${fs.readFileSync(path.join(logDir, "ember.log"), "utf8")}`);
+    } catch {
+      // no log was written
+    }
+  });
 
   it("lists the distro from the registry and wsl.exe without starting it", async () => {
     const f = await wsl.facts();
