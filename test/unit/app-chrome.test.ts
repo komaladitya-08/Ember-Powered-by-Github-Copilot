@@ -1,6 +1,6 @@
 /**
- * Ember's app-wide chrome (windows.ts): the application menu and DevTools in a packaged build (review #243, #176).
- * Windows and Linux had Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened
+ * Ember's app-wide chrome (windows.ts): the application menu, the About panel and DevTools in a packaged build
+ * (review #243, #176, #232). Windows and Linux had Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened
  * DevTools on the password card, Ctrl+R reloaded a card, Ctrl+W closed the ask box and Alt showed a menu bar.
  * main.ts can't be loaded in a unit test (it is Electron's entry point), so its call is read from its source; the
  * rest runs against fakes of Electron's Menu and app.
@@ -14,7 +14,7 @@ import type { OS } from "../../app/shared/shortcuts";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, app: {} }));
 
-const { appMenuTemplate, lockDevTools, setUpAppChrome } = await import("../../app/main/windows");
+const { aboutPanel, appMenuTemplate, lockDevTools, setUpAppChrome } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -30,6 +30,7 @@ function fakeElectron(o: { packaged?: boolean } = {}) {
   const handlers = new Map<string, (e: unknown, x: never) => void>();
   const built: MenuItemConstructorOptions[][] = [];
   const menus: (string | null)[] = [];
+  const about: unknown[] = [];
   const e = {
     Menu: {
       buildFromTemplate: (t: MenuItemConstructorOptions[]) => { built.push(t); return "built menu"; },
@@ -37,15 +38,17 @@ function fakeElectron(o: { packaged?: boolean } = {}) {
     },
     app: {
       isPackaged: o.packaged ?? false,
+      getVersion: () => "0.1.0",
+      setAboutPanelOptions: (p: unknown) => { about.push(p); },
       on: (event: string, fn: (e: unknown, x: never) => void) => { calls.push(event); handlers.set(event, fn); },
     },
   };
-  return { e, calls, handlers, built, menus };
+  return { e, calls, handlers, built, menus, about };
 }
 
 const actions = () => ({ showSettings: vi.fn(), quit: vi.fn() });
 
-describe("the application menu (review #243, #176)", () => {
+describe("the application menu (review #243, #176, #232)", () => {
   it("is none at all on Windows and Linux: no Quit that skips the question, no reload, DevTools, close or full screen", () => {
     expect(appMenuTemplate(false, actions())).toBeNull();
     for (const os of ["linux", "win32"] as OS[]) {
@@ -54,15 +57,19 @@ describe("the application menu (review #243, #176)", () => {
       // null, not an empty menu: Electron's default menu goes, and with it the bar Alt showed.
       expect(f.menus).toEqual([null]);
       expect(f.built).toEqual([]);
+      expect(f.about).toEqual([]);
     }
   });
 
-  it("on macOS opens Settings with Command+, and quits through the quit question", () => {
+  it("on macOS starts with About Ember, opens Settings with Command+, and quits through the quit question", () => {
     const a = actions();
     const t = appMenuTemplate(true, a);
     expect(t).not.toBeNull();
     const ember = t![0].submenu as MenuItemConstructorOptions[];
     expect(t![0].label).toBe("Ember");
+    expect(ember[0]).toEqual({ role: "about", label: "About Ember" });
+    // app.name is "ember" (the data folder's name): a role's own label would say "Hide ember".
+    expect(ember.filter(i => i.role === "hide")).toEqual([{ role: "hide", label: "Hide Ember" }]);
     const settings = ember.find(i => i.label === "Settings…")!;
     expect(settings.accelerator).toBe("Command+,");
     const quit = ember.find(i => i.label === "Quit Ember")!;
@@ -81,6 +88,14 @@ describe("the application menu (review #243, #176)", () => {
     expect(f.built).toHaveLength(1);
     expect(f.built[0][0].label).toBe("Ember");
     expect(f.menus).toEqual(["built menu"]);
+  });
+
+  it("is set on macOS with an About panel that names Ember, its version once and its licence", () => {
+    const f = fakeElectron();
+    setUpAppChrome({ os: "darwin", appMenu: true, actions: actions() }, f.e as never);
+    expect(f.about).toEqual([aboutPanel("0.1.0")]);
+    // An empty build version: macOS would otherwise say "Version 0.1.0 (0.1.0)" (Info.plist has both).
+    expect(aboutPanel("0.1.0")).toEqual({ applicationName: "Ember", applicationVersion: "0.1.0", version: "", copyright: "Copyright © 2026 komaladitya-08. Released under the MIT licence." });
   });
 
   it("is set by main.ts on every OS, before the first window, in place of the macOS-only menu", () => {

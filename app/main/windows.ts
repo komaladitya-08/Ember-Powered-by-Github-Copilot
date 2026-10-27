@@ -4,7 +4,7 @@
  * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
- * chrome main sets once Electron is ready: the application menu and DevTools in a packaged build.
+ * chrome main sets once Electron is ready: the application menu, the About panel and DevTools in a packaged build.
  */
 
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
@@ -105,24 +105,38 @@ export interface AppMenuActions {
 }
 
 /**
- * The application menu (review #243, #176). macOS (`appMenu`, from the platform's lifecycle): Settings…, the hide
- * items and a Quit that asks as the handle's Quit does, with the Edit menu that makes Command+C/V/X/A/Z work in fields
- * and the Window menu. Windows and Linux: none. Electron's default menu stayed there otherwise, with Ctrl+Q quitting
- * at once (no "still working" question), Ctrl+R reloading a card, Ctrl+Shift+I opening DevTools on the password card,
- * Ctrl+W closing the ask box, F11, and the bar Alt showed. Chromium itself still cuts, copies, pastes and undoes in
- * fields there.
+ * The application menu (review #243, #176, #232). macOS (`appMenu`, from the platform's lifecycle): About Ember,
+ * Settings…, the hide items and a Quit that asks as the handle's Quit does, with the Edit menu that makes
+ * Command+C/V/X/A/Z work in fields and the Window menu. Windows and Linux: none. Electron's default menu stayed there
+ * otherwise, with Ctrl+Q quitting at once (no "still working" question), Ctrl+R reloading a card, Ctrl+Shift+I opening
+ * DevTools on the password card, Ctrl+W closing the ask box, F11, and the bar Alt showed. Chromium itself still cuts,
+ * copies, pastes and undoes in fields there.
  */
 export function appMenuTemplate(appMenu: boolean, actions: AppMenuActions): MenuItemConstructorOptions[] | null {
   if (!appMenu) return null;
   return [
     { label: "Ember", submenu: [
+      // app.name is "ember" (the data folder's name): the roles' own labels would say "About ember", "Hide ember".
+      { role: "about", label: "About Ember" },
+      { type: "separator" },
       { label: "Settings…", accelerator: "Command+,", click: () => actions.showSettings() },
-      { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
+      { type: "separator" }, { role: "hide", label: "Hide Ember" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
       { label: "Quit Ember", accelerator: "Command+Q", click: () => actions.quit() },
     ] },
     { role: "editMenu" },
     { role: "windowMenu" },
   ];
+}
+
+/** What macOS's About Ember panel says. */
+export interface AboutPanel { applicationName: string; applicationVersion: string; version: string; copyright: string }
+
+/**
+ * What macOS's About Ember panel says (review #232): the name, this build's version once (an empty build number, or
+ * macOS writes "Version 0.1.0 (0.1.0)": Info.plist has both) and the licence.
+ */
+export function aboutPanel(version: string): AboutPanel {
+  return { applicationName: "Ember", applicationVersion: version, version: "", copyright: "Copyright © 2026 komaladitya-08. Released under the MIT licence." };
 }
 
 /** A page's webContents, as far as lockDevTools needs it. */
@@ -145,16 +159,19 @@ export interface ChromeElectron {
   Menu: { buildFromTemplate(template: MenuItemConstructorOptions[]): Menu; setApplicationMenu(menu: Menu | null): void };
   app: {
     readonly isPackaged: boolean;
+    getVersion(): string;
+    setAboutPanelOptions(options: AboutPanel): void;
     on(event: "web-contents-created", listener: (event: unknown, contents: DevToolsHost) => void): unknown;
   };
 }
 
 /**
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
- * Windows and Linux, so Electron's default one goes, with its bar) and, in a packaged build, DevTools locked on every
- * page made from then on.
+ * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS and, in a packaged
+ * build, DevTools locked on every page made from then on.
  */
 export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, app }): void {
+  if (o.appMenu) e.app.setAboutPanelOptions(aboutPanel(e.app.getVersion()));
   const template = appMenuTemplate(o.appMenu, o.actions);
   e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);
   if (e.app.isPackaged) e.app.on("web-contents-created", (_event, contents) => lockDevTools(contents));
