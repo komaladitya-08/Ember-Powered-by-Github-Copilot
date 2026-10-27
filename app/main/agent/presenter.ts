@@ -318,6 +318,8 @@ export interface PresenterOptions {
   onAnnounce?: (text: string) => void;
   /** The clock for when a bubble reached the screen (shownAt; default Date.now). */
   now?: () => number;
+  /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
+  readTime?: () => number;
 }
 
 /** A bubble of Ember's own that is no turn's or task's (the targets runtime's: a connection, an offer, a loss). */
@@ -484,6 +486,7 @@ export class Presenter {
   /** When the latest bubble reached the screen (shownAt). */
   private since: number | null = null;
   private readonly now: () => number;
+  private readonly readTime: () => number;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -506,6 +509,7 @@ export class Presenter {
     if (opts.where) this.where = opts.where;
     this.onAnnounce = opts.onAnnounce;
     this.now = opts.now ?? Date.now;
+    this.readTime = opts.readTime ?? (() => 1);
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
@@ -634,8 +638,12 @@ export class Presenter {
     this.owner.forget(this);
   }
 
-  private hideLater(ms: number): void {
+  private hideLater(base: number): void {
     this.cancelHide();
+    // As long as the user needs to read it (their setting), never shorter than usual.
+    let scale = 1;
+    try { scale = Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { /* the usual time */ }
+    const ms = base * scale;
     // Not on screen yet: its time starts when it shows.
     if (this.unseen) { this.pendingHide = ms; return; }
     this.hideMs = ms;

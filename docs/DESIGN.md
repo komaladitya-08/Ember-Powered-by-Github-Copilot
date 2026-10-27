@@ -53,7 +53,9 @@ They share one emotion rig, so switching never changes behaviour.
   breathes round its edge. The state says
   "Needs you" only when a button needs a decision (a question, an offer, signing in);
   a notice that asks nothing (a stop on another computer, "I'm on build-01") has no
-  state word, connecting to a computer is "Working", and a failure is "Problem".
+  state word, connecting to a computer is "Working", and a failure is "Problem". With
+  **More time to read and answer** (Settings › Comfort & access) every bubble stays three
+  times as long and a question waits 6 minutes instead of 2.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.

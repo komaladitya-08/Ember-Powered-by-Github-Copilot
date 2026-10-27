@@ -35,6 +35,12 @@ describe("settings window words", () => {
     expect(retryMessage({ found: true, source: "stored" })).toBe("Found Ember's saved sign-in; connecting…");
   });
 
+  it("offers more time to read and answer, beside Calm mode (review #51)", () => {
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay three times as long, and questions wait 6 minutes</span></label>');
+    expect(DEFAULT_SETTINGS.moreTime).toBe(false);
+  });
+
   it("keeps the tagline in step with setup, Copilot and where Ember is", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, onboarded: false, phase: "signed-out" })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");

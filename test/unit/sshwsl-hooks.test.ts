@@ -95,6 +95,25 @@ function confirmer(o: { ready?: (n: number) => boolean; armMs?: number; blocked?
   return { c, shown, tick: (ms: number) => { now += ms; } };
 }
 
+describe("the Confirmer's time for an answer (review #51)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("waits as long as the user's setting says, read when each question shows", async () => {
+    vi.useFakeTimers();
+    let ms = 360_000;
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: () => ms });
+    const q = c.ask({ title: "May I?", prompt: "x", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    vi.advanceTimersByTime(120_000);
+    expect(c.waiting).toBe(true);
+    vi.advanceTimersByTime(240_000);
+    await expect(q).resolves.toBeNull();
+    ms = 120_000;
+    const r = c.ask({ title: "May I?", prompt: "y", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    vi.advanceTimersByTime(120_000);
+    await expect(r).resolves.toBeNull();
+  });
+});
+
 describe("the Confirmer's panel questions (§3.9.1, R7)", () => {
   afterEach(() => vi.useRealTimers());
 

@@ -56,8 +56,8 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void }
 
 export interface ConfirmerTiming {
-  /** How long a question stays up before it expires as "no". */
-  timeoutMs?: number;
+  /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
+  timeoutMs?: number | (() => number);
   /** Clicks this soon after a question appears are ignored. */
   armMs?: number;
   /** The pause between one question being answered and the next appearing. */
@@ -83,7 +83,7 @@ export class Confirmer {
   private current: Pending | null = null;
   private n = 0;
   private gapTimer: ReturnType<typeof setTimeout> | null = null;
-  private timeoutMs: number;
+  private timeoutMs: number | (() => number);
   private armMs: number;
   private gapMs: number;
   private now: () => number;
@@ -189,6 +189,13 @@ export class Confirmer {
     try { return this.panelHint?.(panel) || null; } catch { return null; }
   }
 
+  /** How long the question showing now waits for an answer (a setting that can't be read: the default 2 minutes). */
+  private timeout(): number {
+    const t = this.timeoutMs;
+    if (typeof t === "number") return t;
+    try { const v = t(); return Number.isFinite(v) && v > 0 ? v : 120_000; } catch { return 120_000; }
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -215,7 +222,7 @@ export class Confirmer {
     if (!this.current) { this.checkSettled(); return; }
     const p = this.current;
     p.shownAt = this.now();
-    p.timer = setTimeout(() => this.finish(p, null), this.timeoutMs);
+    p.timer = setTimeout(() => this.finish(p, null), this.timeout());
     // The whole task, so a step like "press Enter" is read as part of what the user asked for (typing and saving too).
     const task = p.q.context?.trim();
     const panel = p.q.panel;

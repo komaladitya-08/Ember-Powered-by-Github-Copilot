@@ -856,3 +856,25 @@ describe("one name for the organisation's own model service (review #228)", () =
     expect(friendlyError("content_filter")).toBe("Copilot's content filter blocked that request. Try asking in other words.");
   });
 });
+
+describe("More time to read and answer (review #51)", () => {
+  it("keeps every bubble its reading time times the user's setting", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let scale = 3;
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => scale });
+    p.userPrompt("what time is it?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    p.event({ type: "session.idle", data: {} });
+    const ms = 6000 + 16 * 50;
+    vi.advanceTimersByTime(ms * 3 - 10);
+    expect(states.at(-1)?.bubble?.visible).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+    // The setting off: as before.
+    scale = 1;
+    p.notice({ title: "Copilot isn't running", text: "x", ms: 12_000 });
+    vi.advanceTimersByTime(12_010);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+});

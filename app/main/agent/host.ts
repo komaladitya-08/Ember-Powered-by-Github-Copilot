@@ -113,6 +113,8 @@ export interface HostOptions {
   settings: SettingsStore;
   log: Logger;
   setState: (patch: Partial<EmberState>) => void;
+  /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
+  readTime?: () => number;
   onStatus: (s: AgentStatus) => void;
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
@@ -511,9 +513,10 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
+    const readTime = o.readTime ? { readTime: o.readTime } : {};
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts });
-    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts, ...readTime });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts, ...readTime });
   }
 
   /**
@@ -1238,7 +1241,7 @@ export class AgentHost {
     const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
-      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}),
+      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}), ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
       ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} Say 'Ember, stop' to cancel.`) } : {}),
     });
     this.taskPresenters.set(id, p);

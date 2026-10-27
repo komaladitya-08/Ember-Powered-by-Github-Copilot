@@ -425,10 +425,12 @@ function start(): void {
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
 
-  /** Hides `bubble` later, unless something else has replaced it by then. */
+  /** How many times its usual time a bubble stays, and how long a question waits: the user's "More time to read and answer". */
+  const readTime = () => (settings.get().moreTime ? 3 : 1);
+  /** Hides `bubble` later (as long as the user needs to read it), unless something else has replaced it by then. */
   const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
     if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-  }, ms);
+  }, ms * readTime());
   /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
@@ -1347,6 +1349,8 @@ function start(): void {
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
+      // A question waits 2 minutes for an answer, 6 with more time to read and answer.
+      timeoutMs: () => 120_000 * readTime(),
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
@@ -1512,6 +1516,7 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
+      readTime,
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.

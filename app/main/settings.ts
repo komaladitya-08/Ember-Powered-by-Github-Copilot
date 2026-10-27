@@ -112,6 +112,8 @@ export const SettingsSchema = z.object({
   }).default({ conductor: null, worker: null }),
   /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
   reduceMotion: z.boolean().default(false),
+  /** More time to read and answer: bubbles stay three times as long, and a question waits 6 minutes (WCAG 2.2.1). */
+  moreTime: z.boolean().default(false),
   /** Where Ember works (§2): the picker's target, the SSH hosts the user added, WSL, and this install's id. */
   targets: z.object({
     /** The picker's choice: requests that name no computer go here. */

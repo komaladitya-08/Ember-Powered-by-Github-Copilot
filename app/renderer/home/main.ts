@@ -118,6 +118,7 @@ function applySettings(s: Settings): void {
   if (!sliding && document.activeElement !== size) showSize(s.size);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
+  ($("more-time") as HTMLInputElement).checked = s.moreTime;
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
@@ -141,6 +142,7 @@ $("agree").addEventListener("change", e => {
   $("start-hint").hidden = on;
 });
 $("reduce-motion").addEventListener("change", e => { void window.ember.updateSettings({ reduceMotion: (e.target as HTMLInputElement).checked }); });
+$("more-time").addEventListener("change", e => { void window.ember.updateSettings({ moreTime: (e.target as HTMLInputElement).checked }); });
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
