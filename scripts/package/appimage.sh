@@ -50,6 +50,11 @@ if [ "$1" = "doctor" ]; then
   [ "$(id -u)" = 0 ] && sandbox=--no-sandbox
   exec "$here/ember/ember" --doctor $platform --disable-gpu $sandbox "$@"
 fi
+# Without a display (an ssh session without -X, a text console) Chromium prints only its own error.
+if [ -z "$DISPLAY" ]; then
+  echo "Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '$(basename "${APPIMAGE:-Ember.AppImage}") doctor'." >&2
+  exit 1
+fi
 exec "$here/ember/ember" $platform $sandbox "$@"
 RUN
 chmod +x "$app/AppRun"
