@@ -150,10 +150,10 @@ then the model's reason, quoted. **Allow** stays off until the whole command has
 command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works only while that card
 shows the whole command; **Not now** and the deny chord always work. While the card is up, Ember and its bubble keep
 clear of the command window (as they do of settings), and the same goes for Ember's sign-in and consent cards. There
-is never an "Always" for commands, a voice
-"yes" never approves one, and a notification only says "Ember wants to run a command on build-01." A question nobody
-answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that computer, in that folder, for
-that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+is never an "Always" for commands, a voice "yes" never approves one, and a notification only says "Ember wants to run
+a command on build-01." A question nobody answers counts as "no" after 2 minutes. Your yes covers exactly that
+command, on that computer, in that folder, for that task: any change asks again. After a "no", Ember doesn't try again
+or work around it.
 
 ### 2.5 When you asked for exactly that
 
