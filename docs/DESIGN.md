@@ -68,6 +68,12 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every
   surface, dark text on filled buttons, control edges.
+- **Contrast themes** (Windows' forced colours, where the system paints with its own few colours and
+  drops shadows and gradients): the tokens become system colours, the accent the system's highlight
+  (the prominent button, on-switches, the chosen character, the selected tab). Control edges become
+  real borders and outlines, focus is a 2 px highlight outline set 2 px off the control, and every
+  symbol and status dot keeps its shape in a system colour. Each page's `@media (forced-colors:
+  active)` block adds what only it draws; `BUBBLE_CSS` has its own.
 - **Layers:** the settings window and the desk are the content layer: opaque grouped sections, a
   sidebar with coloured symbol tiles (as System Settings), rounded-rectangle buttons, switches, pop-up
   menus, headers above each group and footnotes below it. What floats over other apps (bubble, task

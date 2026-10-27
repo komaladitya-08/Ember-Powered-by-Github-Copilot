@@ -60,3 +60,14 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .typing { margin: 0; font: var(--type-footnote); color: var(--label-2); }
 .foot { display: flex; align-items: center; gap: 10px; }
 .status { flex: 1; min-width: 0; margin: 0; font: var(--type-callout); color: var(--label); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the tabs, the command and the cards keep
+   their edges, the selected tab is filled with the highlight (its symbol in the highlight's text colour), and a
+   character you wouldn't see keeps its box (its tint is gone). */
+@media (forced-colors: active) {
+  .tab, .command { border: 1px solid ButtonText; }
+  .tab[aria-selected="true"] { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; --sym-tint: HighlightText; }
+  .card, .term { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .vt { outline: 1px solid CanvasText; }
+  .vt-mixed { outline: none; }
+}

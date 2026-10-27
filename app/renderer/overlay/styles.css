@@ -98,3 +98,10 @@ body { font: var(--type-callout); color: var(--label); }
 @media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
 html.calm .focus { transition: none; }
 html.calm .focus::after, html.calm .status i { animation: none; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the cards' buttons and the where badge keep
+   their edges (the cards, the status line and the bubble keep theirs: a border the system colours). */
+@media (forced-colors: active) {
+  .task-actions button { border: 1px solid ButtonText; }
+  .where { outline: 1px solid CanvasText; outline-offset: -1px; }
+}

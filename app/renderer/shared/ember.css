@@ -257,3 +257,48 @@ html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+/* Windows contrast themes (forced colours): the system paints with a few colours of its own and drops every
+   box-shadow and gradient, which draw Ember's control edges, focus ring, switches, slider and selection. A colour
+   given as a system colour is kept, so the tokens become system colours (the accent is the system's highlight, as a
+   selection or a default button is there) and the edges become real borders and outlines. Each page adds what only
+   it draws (its own styles.css), and the bubble its own (BUBBLE_CSS). */
+@media (forced-colors: active) {
+  :root {
+    --accent: Highlight;
+    --accent-2: Highlight;
+    --glow: Highlight;
+    --on-accent: HighlightText;
+    --green: CanvasText;
+    --red: CanvasText;
+    --yellow: CanvasText;
+    --purple: CanvasText;
+    --blue: CanvasText;
+    --gray: GrayText;
+    --control-edge: ButtonText;
+    --scroll-thumb: CanvasText;
+    /* A shadow ring would be dropped, and on the controls drawn as they are it would sit under the outline below. */
+    --focus-ring: 0 0 0 0 transparent;
+  }
+  /* Focus is a real outline, set off from the control so it never merges with a filled one. (A heading that takes
+     focus only to start a screen reader there is no control: no ring.) */
+  :focus-visible:not(:is(h1, h2, h3)[tabindex="-1"]) { outline: 2px solid Highlight !important; outline-offset: 2px; }
+  .link { color: LinkText; }
+  /* Buttons: an edge; the prominent one filled with the highlight and its text (the tokens above), as the default
+     button is. */
+  .btn { border: 1px solid ButtonText; }
+  /* Drawn as it is (the system would put its text on a backplate of the window's colour, unreadable on the fill). */
+  .btn:not(.quiet) { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+  .btn:disabled, .btn[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
+  /* Switches and checkboxes are drawn as they are (their parts are placed to the pixel), in system colours. */
+  input[type="checkbox"] { forced-color-adjust: none; }
+  input[type="checkbox"]:not(:checked) { background: Canvas; }
+  input[type="checkbox"][role="switch"]::before { background: ButtonText; box-shadow: none; }
+  input[type="checkbox"][role="switch"]:checked::before { background: HighlightText; }
+  input[type="checkbox"]:disabled { opacity: 1; --control-edge: GrayText; }
+  input[type="checkbox"]:disabled:checked { background: GrayText; }
+  input[type="checkbox"][role="switch"]:disabled::before { background: GrayText; }
+  input[type="checkbox"][role="switch"]:disabled:checked::before { background: Canvas; }
+  /* Keycaps keep their edge (an outline: it takes no room). */
+  kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
+}

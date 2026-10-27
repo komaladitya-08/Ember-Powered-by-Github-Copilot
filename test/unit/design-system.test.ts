@@ -136,3 +136,83 @@ describe("every window", () => {
     expect(2 * inset + field + gap + line).toBeLessThanOrEqual(92);
   });
 });
+
+/** A selector list split at its top-level commas (`:is(h1, h2)` stays whole). */
+const selectors = (list: string): string[] => {
+  const out: string[] = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === "(") depth++;
+    else if (list[i] === ")") depth--;
+    else if (list[i] === "," && depth === 0) { out.push(list.slice(from, i).trim()); from = i + 1; }
+  }
+  return [...out, list.slice(from).trim()];
+};
+/** The rules of a stylesheet's `@media (forced-colors: active)` block, as [selectors, declarations]. */
+const forcedRules = (css: string): [string[], string][] => {
+  const at = css.indexOf("@media (forced-colors: active) {");
+  if (at < 0) return [];
+  const open = css.indexOf("{", at);
+  let depth = 0, end = open;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) { end = i; break; }
+  }
+  const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]);
+};
+/** Every declaration the forced-colours block gives `selector`. */
+const forced = (css: string, selector: string) => forcedRules(css).filter(([s]) => s.includes(selector)).map(([, d]) => d).join(" ");
+
+describe("Windows contrast themes (forced colours)", () => {
+  const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : read(`app/renderer/${page}/styles.css`);
+
+  it("gives every window's controls and groups a real edge, as the system drops the shadows that draw them (WCAG 1.4.11; review #44, #151, #242, #267, #129)", () => {
+    const edged: [string, string][] = [
+      ["shared", ".btn"], ["home", ".card"], ["home", ".start"], ["home", ".models select"], ["home", ".add-row input"], ["home", ".group"],
+      ["overlay", ".task-actions button"], ["overlay", ".where"], ["bubble", ".eb-actions button"], ["handle", ".actions button"],
+      ["handle", ".task-actions button"], ["handle", ".target"], ["command", ".tab"], ["command", ".command"], ["command", ".card"],
+      ["prompt", ".form input"], ["desk", "button"],
+    ];
+    for (const [page, sel] of edged) expect(forced(css(page), sel), `${page}: ${sel}`).toMatch(/(border|outline): 1px solid (ButtonText|CanvasText)/);
+    // Switches and checkboxes keep their geometry: drawn as they are, their edge token a system colour.
+    expect(forced(shared, 'input[type="checkbox"]')).toContain("forced-color-adjust: none");
+    expect(forced(shared, ":root")).toContain("--control-edge: ButtonText;");
+    expect(forced(shared, 'input[type="checkbox"][role="switch"]::before')).toContain("background: ButtonText;");
+    // The slider: a track and a thumb in system colours.
+    expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-runnable-track')).toMatch(/Highlight .*CanvasText/);
+    expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-thumb')).toContain("background: ButtonText;");
+  });
+
+  it("shows keyboard focus as a real outline in every window, the bubble included (WCAG 2.4.7; review #44, #151, #267)", () => {
+    const ring = forcedRules(shared).find(([s]) => s.some(x => x.startsWith(":focus-visible")));
+    expect(ring?.[1]).toMatch(/outline: 2px solid Highlight !important; outline-offset: 2px;/);
+    expect(forced(shared, ":root")).toContain("--focus-ring: 0 0 0 0 transparent;");
+    // The bubble also runs without ember.css (the character lab).
+    expect(forced(BUBBLE_CSS, ".eb-actions button:focus-visible")).toContain("outline: 2px solid Highlight;");
+  });
+
+  it("keeps every state symbol and status dot painted, in a system colour (WCAG 1.4.1; review #242, #129)", () => {
+    const root = forced(shared, ":root");
+    for (const t of ["accent", "green", "red", "yellow", "purple", "blue", "gray"]) expect(root, t).toMatch(new RegExp(`--${t}: (Highlight|CanvasText|GrayText);`));
+    expect(forced(BUBBLE_CSS, ".ember-bubble[data-mood]")).toContain("--eb-mood: CanvasText;");
+  });
+
+  it("marks what is chosen by more than colour: the character, the selected tab and the section you are in (review #44, #151, #267)", () => {
+    expect(forced(css("home"), '.card[aria-checked="true"]')).toMatch(/border: 3px solid Highlight/);
+    expect(forced(css("command"), '.tab[aria-selected="true"]')).toMatch(/background: Highlight;/);
+    expect(forced(css("home"), '.jump a[aria-current="true"]')).toMatch(/outline: 1px solid LinkText/);
+  });
+
+  it("draws a control filled with the highlight as it is, so the system's text backplate can't hide its words", () => {
+    for (const page of ["shared", "bubble", ...PAGES]) {
+      for (const [sel, decls] of forcedRules(css(page))) {
+        if (/(^|; |\s)color: HighlightText/.test(decls)) expect(decls, `${page}: ${sel.join(", ")}`).toContain("forced-color-adjust: none");
+      }
+    }
+    // Filled through the accent token: the prominent buttons of each window.
+    for (const [page, sel] of [["shared", ".btn:not(.quiet)"], ["home", ".start"], ["handle", ".actions button.primary"], ["desk", "body.control #control"], ["bubble", ".eb-actions button.eb-primary"]]) {
+      expect(forced(css(page), sel), `${page}: ${sel}`).toContain("forced-color-adjust: none");
+    }
+  });
+});

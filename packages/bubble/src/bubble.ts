@@ -321,6 +321,15 @@ html.calm .ember-bubble { transition: none; translate: none; }
 @media (prefers-contrast: more) {
   .ember-bubble { border-color: rgba(255, 255, 255, 0.5); background: var(--glass-fill, linear-gradient(#141112, #141112)) border-box; }
 }
+/* Windows contrast themes (forced colours): the system's colours, which drop every box-shadow. The buttons get real
+   edges and a real focus outline, the prominent one the highlight's fill, and the dot and caret the text colour (the
+   state's word is beside the dot). Written out here too, as the bubble also runs without ember.css. */
+@media (forced-colors: active) {
+  .ember-bubble, .ember-bubble[data-mood] { --eb-mood: CanvasText; }
+  .eb-actions button { border: 1px solid ButtonText; }
+  .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
+  .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+}
 `;
 
 /**

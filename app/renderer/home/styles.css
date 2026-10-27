@@ -361,6 +361,27 @@ html { scroll-padding-top: 16px; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { box-shadow: inset 0 0 0 1px var(--control-edge); }
 }
 
+/* Windows contrast themes (forced colours; the shared part is in ember.css): groups, fields, pop-ups, the character
+   cards and Start keep an edge; the chosen character a thick highlight edge (and its check); the section you are in
+   an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
+@media (forced-colors: active) {
+  .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .card, .start, .models select, .add-row input { border: 1px solid ButtonText; }
+  .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
+  /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
+  .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+  .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
+  /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
+  .models select { appearance: auto; -webkit-appearance: menulist; }
+  .pick-row input[type="range"] { forced-color-adjust: none; }
+  .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
+  .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
+  .fold > summary::before, .fold > summary:hover::before { background: CanvasText; }
+  .jump a[aria-current="true"] { outline: 1px solid LinkText; outline-offset: -1px; }
+  .jump a::after { background: LinkText; }
+  .sign-in-msg code, .conversation .ember .who { color: CanvasText; }
+}
+
 /* ───── Computers and Commands (§8.3): shown once the targets runtime answers ───── */
 .jump a[hidden] { display: none; }
 .intro { margin: 0 4px 4px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }

@@ -34,3 +34,9 @@ body.control #screen:focus-visible { outline: none; }
 /* No picture until the first frame: an <img> without one shows a broken-image icon. */
 body:not(.live) #screen { visibility: hidden; }
 body.control #screen { cursor: crosshair; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the bar's buttons keep their edges. */
+@media (forced-colors: active) {
+  button { border: 1px solid ButtonText; }
+  body.control #control { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+}

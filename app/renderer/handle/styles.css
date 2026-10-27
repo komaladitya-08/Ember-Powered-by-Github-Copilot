@@ -107,3 +107,11 @@ body.fallback .mic { left: 86px; top: 94px; }
 @media (prefers-reduced-motion: reduce) { .mic::after { animation: none !important; } .mic[data-state="active"]::after { opacity: 0.85; } }
 html.calm .mic::after { animation: none !important; }
 html.calm .mic[data-state="active"]::after { opacity: 0.85; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the card's buttons and the computer's badge
+   keep their edges (the handle keeps its own: a border the system colours). */
+@media (forced-colors: active) {
+  .actions button, .task-actions button { border: 1px solid ButtonText; }
+  .actions button.primary { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+  .target { outline: 1px solid CanvasText; outline-offset: -1px; }
+}
