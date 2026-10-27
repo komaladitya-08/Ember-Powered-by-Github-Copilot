@@ -325,11 +325,23 @@ jobs:
           distribution: Ubuntu-22.04
           wsl-version: 1
           additional-packages: openssh-server util-linux python3 git
-      - name: sshd in the distro on port 2222
+      - name: The runner's new Windows key (Win32-OpenSSH's own ssh-keygen sets its ACL), used as root on 127.0.0.1
+        shell: pwsh
+        run: |
+          $ssh = "$env:SystemRoot\System32\OpenSSH"
+          $dir = "$env:USERPROFILE\.ssh"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          & "$ssh\ssh-keygen.exe" -q -t ed25519 -N '' -f "$dir\id_ed25519"
+          if (-not (Test-Path "$dir\id_ed25519.pub")) { throw "ssh-keygen made no key" }
+          # The distro's only user is root (setup-wsl); without this ssh would log in as the Windows user.
+          Add-Content -Path "$dir\config" -Value "Host 127.0.0.1", "  User root"
+      - name: sshd in the distro on port 2222, with that key authorised for root
         shell: wsl-bash {0}
         run: |
           ssh-keygen -A
-          mkdir -p /run/sshd
+          mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
+          win_home=$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %USERPROFILE%' | tr -d '\r')")
+          cat "$win_home/.ssh/id_ed25519.pub" >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
           setsid /usr/sbin/sshd -p 2222 < /dev/null > /dev/null 2>&1 &
           sleep 1
           pgrep -x sshd > /dev/null || { echo "::error::sshd didn't start in the distro"; exit 1; }
@@ -345,6 +357,13 @@ jobs:
           wsl.exe --list --verbose
           wsl.exe --list --running --quiet; "exit $LASTEXITCODE"
           "sshd on 2222 reachable from Windows: $((Test-NetConnection 127.0.0.1 -Port 2222 -WarningAction SilentlyContinue).TcpTestSucceeded)"
+      - name: The distro's host key known to Win32-OpenSSH, and a batch connect as root with the runner's key
+        shell: pwsh
+        run: |
+          $ssh = "$env:SystemRoot\System32\OpenSSH"
+          & "$ssh\ssh-keyscan.exe" -p 2222 127.0.0.1 | Add-Content -Path "$env:USERPROFILE\.ssh\known_hosts"
+          & "$ssh\ssh.exe" -o BatchMode=yes -o ConnectTimeout=10 -p 2222 127.0.0.1 'echo connected as $(id -un)'
+          if ($LASTEXITCODE -ne 0) { throw "ssh to the distro failed ($LASTEXITCODE)" }
       - name: What wsl.test.ts expects here (WSL1, setup-wsl's root default user, running for sshd)
         run: |
           printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=1" "EMBER_WSL_EXPECT_ROOT=1" >> "$GITHUB_ENV"
