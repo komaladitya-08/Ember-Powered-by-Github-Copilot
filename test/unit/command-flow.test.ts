@@ -107,7 +107,7 @@ interface Harness {
   starts: RunSpec[];
   runs: ReturnType<typeof scriptedRun>[];
   attached: { card: CommandCard; run: RunningCommand }[];
-  announced: { text: string; stopId: string }[];
+  announced: { text: string; stopId: string; ms?: number }[];
   ended: string[];
   windowAnnounce: { card: CommandCard; ms: number }[];
   declined: () => number;
@@ -120,6 +120,7 @@ function harness(o: {
   binding?: TargetBinding; cap?: () => CommandCapability; answers?: (string | null)[]; words?: string; facts?: Partial<RunnerFacts>;
   paths?: (p: string) => PathFact; git?: GitFacts | null; run?: (spec: RunSpec, n: number) => Parameters<typeof scriptedRun>[1];
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
+  announceMs?: (base: number) => number;
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
@@ -129,7 +130,7 @@ function harness(o: {
   const starts: RunSpec[] = [];
   const runs: ReturnType<typeof scriptedRun>[] = [];
   const attached: { card: CommandCard; run: RunningCommand }[] = [];
-  const announced: { text: string; stopId: string }[] = [];
+  const announced: { text: string; stopId: string; ms?: number }[] = [];
   const ended: string[] = [];
   const windowAnnounce: { card: CommandCard; ms: number }[] = [];
   const tainted: string[] = [];
@@ -158,7 +159,8 @@ function harness(o: {
       announce: async (card, ms) => { windowAnnounce.push({ card, ms }); return o.announce ?? true; },
       cancelAnnounce: () => undefined,
       attach: (card, run) => { attached.push({ card, run }); },
-    },
+      ...(o.announceMs ? { announceMs: o.announceMs } : {}),
+    } as CommandService["window"],
     consented: () => { consented++; },
     userAskEvery: () => o.askEvery ?? false,
     mode: () => o.mode ?? "on",
@@ -175,7 +177,7 @@ function harness(o: {
     },
     service,
     confirmer: { ask: async (q: Record<string, unknown>) => { asked.push(q); return answers.length ? answers.shift()! : "once"; } } as never,
-    presenter: { announce: (text: string, stopId: string) => { announced.push({ text, stopId }); }, endAnnouncement: (id: string) => { ended.push(id); } } as never,
+    presenter: { announce: (text: string, stopId: string, ms?: number) => { announced.push({ text, stopId, ms }); }, endAnnouncement: (id: string) => { ended.push(id); } } as never,
     audit: e => audit.push(e), log: quiet, signal: abort.signal, isOver: () => abort.signal.aborted,
     state: o.state ?? { cwd: null, downloaded: new Set(), running: false },
     size: () => ({ cols: 100, rows: 30 }), emberPids: () => [4242],
@@ -995,10 +997,26 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(h.announced[0].text).toBe("Pushing feature-x to origin, as you asked.");
     expect(h.announced[0].stopId).toBe(`ui:cmdstop:${h.windowAnnounce[0].card.runId}`);
     expect(h.windowAnnounce[0]).toMatchObject({ ms: ANNOUNCE_MS, card: { mode: "announce", command: "git push origin feature-x" } });
+    // The bubble says the same time the window counts down.
+    expect(h.announced[0].ms).toBe(ANNOUNCE_MS);
     expect(h.ended).toEqual([h.announced[0].stopId]);
     expect(r.resultType).toBe("success");
     expect(h.starts[0].stamp).toMatchObject({ verdict: "announce", rules: ["git.push"], approval: null });
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ requested: "user", intent: "git.push" });
+  });
+
+  it("counts down as long as the command window says (longer while a screen reader runs), in the bubble too (review #46)", async () => {
+    makeJudge({ decide: () => decision({ verdict: "announce", classes: ["publish"], rules: ["git.push"], says: ["Pushes feature-x to origin."], requested: { intent: "git.push", announce: "Pushing feature-x to origin, as you asked." } }) });
+    const h = harness({ words: "push my branch to GitHub", announceMs: base => Math.max(base, 15_000) });
+    await call(h, { command: "git push origin feature-x" });
+    expect(h.windowAnnounce[0].ms).toBe(15_000);
+    expect(h.announced[0].ms).toBe(15_000);
+    // A window that says something odd (or throws) leaves the usual time.
+    for (const announceMs of [() => Number.NaN, () => 1, () => { throw new Error("x"); }, () => 10 * 60_000]) {
+      const g = harness({ words: "push my branch to GitHub", announceMs });
+      await call(g, { command: "git push origin feature-x" });
+      expect(g.windowAnnounce[0].ms).toBe(ANNOUNCE_MS);
+    }
   });
 
   it("Stop during the announcement: nothing runs, and the model hears the user stopped it", async () => {

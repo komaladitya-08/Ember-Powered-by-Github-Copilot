@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
-import { MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import { statusLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
@@ -756,5 +756,24 @@ describe("the command window and a screen reader (review #43)", () => {
     const b = setup({ screenReader: () => { throw new Error("no a11y"); } });
     b.ctl.attach(card(), new FakeRun("0123456789abcdef"));
     expect(b.page().last().screenReader).toBe(false);
+  });
+});
+
+describe("the announcement's time and keys (reviews #46, #269)", () => {
+  it("gives the countdown more time while a screen reader runs", () => {
+    let on = false;
+    const { ctl } = setup({ screenReader: () => on });
+    expect(ctl.announceMs(4000)).toBe(4000);
+    on = true;
+    expect(ctl.announceMs(4000)).toBe(ANNOUNCE_SCREEN_READER_MS);
+    expect(ANNOUNCE_SCREEN_READER_MS).toBe(15_000);
+    expect(ctl.announceMs(20_000)).toBe(20_000);
+  });
+
+  it("names the stop chord with the countdown", async () => {
+    const { ctl, page } = setup();
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
   });
 });

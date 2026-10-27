@@ -247,7 +247,10 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
     expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
-    expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("Running this, as you asked");
+    expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
+    expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
+    expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
+    expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
     expect([commandCopy.ALLOW_LABEL, commandCopy.NOT_NOW_LABEL, commandCopy.STOP_LABEL, commandCopy.CLOSE_LABEL].map(keep)).toEqual(["Allow", "Not now", "Stop", "Close"]);
     expect(keep(commandCopy.READ_ALL_HINT)).toBe("Read the whole command to allow it.");
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");

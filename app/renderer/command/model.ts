@@ -46,6 +46,8 @@ export interface WindowView extends CommandWindowState {
   os?: OS;
   /** A screen reader runs on the PC: each terminal mirrors its output for it (review #43; absent: none). */
   screenReader?: boolean;
+  /** Under the announcement's countdown: the stop chord ("Or press Ctrl+Alt+X to stop everything."), while one is up. */
+  announceKeys?: string;
 }
 
 /** At most this many pending lines are drawn. */

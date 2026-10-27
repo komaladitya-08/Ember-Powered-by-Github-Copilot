@@ -171,8 +171,25 @@ function placesNamedIn(svc: CommandService, words: string, binding: TargetBindin
   return got.filter(p => !said.has(normalName(p)));
 }
 
-/** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7). */
+/** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7), unless the window says longer. */
 export const ANNOUNCE_MS = 4000;
+/** The longest countdown a command window may ask for. */
+const ANNOUNCE_MAX_MS = 60_000;
+
+/**
+ * How long an announcement counts down: what the command window says (UI's announceMs: longer while a screen reader
+ * runs, review #46), never less than ANNOUNCE_MS nor more than a minute; ANNOUNCE_MS when it doesn't say.
+ */
+function announceTime(w: CommandService["window"]): number {
+  const ask = (w as CommandService["window"] & { announceMs?: (base: number) => unknown }).announceMs;
+  if (typeof ask !== "function") return ANNOUNCE_MS;
+  try {
+    const ms = ask.call(w, ANNOUNCE_MS);
+    return typeof ms === "number" && Number.isFinite(ms) && ms >= ANNOUNCE_MS && ms <= ANNOUNCE_MAX_MS ? ms : ANNOUNCE_MS;
+  } catch {
+    return ANNOUNCE_MS; // a window that can't say: the usual time
+  }
+}
 /** Runs one target runs at once; a fourth waits for a slot, honouring its task's stop (§3.8.3). */
 export const MAX_RUNS_PER_TARGET = 3;
 /** A run_command call's default time limit (§3.13), and its longest. */
@@ -700,10 +717,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // Step 11: an announcement with its Stop window (D4.4).
     if (d.verdict === "announce" && d.requested) {
       const stopId = `ui:cmdstop:${runId}`;
-      ctx.presenter.announce(d.requested.announce, stopId);
+      const ms = announceTime(svc.window);
+      ctx.presenter.announce(d.requested.announce, stopId, ms);
       let go = false;
       try {
-        go = await svc.window.announce(card("announce", [...d.says, why]), ANNOUNCE_MS, ctx.signal);
+        go = await svc.window.announce(card("announce", [...d.says, why]), ms, ctx.signal);
       } catch (err) {
         ctx.log.warn("commands.announce_failed", { task, err });
       } finally {

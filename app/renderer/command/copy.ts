@@ -14,7 +14,8 @@ export const WINDOW_TITLE = "Ember commands";
 export const EMPTY_TEXT = "No commands yet.";
 
 export const ASK_HEADING = "Ember wants to run this command";
-export const ANNOUNCE_HEADING = "Running this, as you asked";
+/** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
+export const ANNOUNCE_HEADING = "About to run this, as you asked";
 export const ALLOW_LABEL = "Allow";
 export const NOT_NOW_LABEL = "Not now";
 export const STOP_LABEL = "Stop";
@@ -138,6 +139,11 @@ export const startingText = (distro: string) => `Starting ${distro}…`;
 /** A silent SSH link (the status line, counting down). */
 export const stalledText = (label: string, seconds: number) =>
   `${label} isn't answering. This command stops in ${Math.max(0, Math.ceil(seconds))} s unless the link comes back.`;
+
+/** Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269). */
+export function announceKeyText(os: OS): string {
+  return `Or press ${SHORTCUTS[os].stop.label} to stop everything.`;
+}
 
 /** The announcement's countdown: "Starts in 4 s." */
 export function countdownText(endsAt: number, now: number): string {

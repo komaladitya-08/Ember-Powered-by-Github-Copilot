@@ -17,7 +17,7 @@ import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, headerLine, outsideText, statusLine, typingHint } from "../../renderer/command/copy";
+import { RUNNING_STATUS, announceKeyText, headerLine, outsideText, statusLine, typingHint } from "../../renderer/command/copy";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
 /** Runs whose tabs are kept (the newest first; running ones are never dropped). */
@@ -34,6 +34,11 @@ const INPUT_PIECE = 4096;
 export const DEFAULT_TERM_SIZE = Object.freeze({ cols: 100, rows: 30 });
 /** How long an announcement counts down when the flow gives no usable time. */
 const DEFAULT_ANNOUNCE_MS = 4000;
+/**
+ * The least time an announcement counts down while a screen reader runs (review #46, WCAG 2.2.1): enough to hear the
+ * announcement, find Stop or the stop chord, and act.
+ */
+export const ANNOUNCE_SCREEN_READER_MS = 15_000;
 
 /** What the controller adds to the port for the targets runtime (beyond the contract; see the package report). */
 export interface CommandWindowExtras {
@@ -49,6 +54,8 @@ export interface CommandWindowExtras {
    * with null. It brings the window up (not on top): the run's tab follows there.
    */
   pending(taskId: string, text: string | null): void;
+  /** How long an announcement should count down, given the flow's usual `base`: longer while a screen reader runs. */
+  announceMs(base: number): number;
 }
 
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
@@ -225,6 +232,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       tabs: tabs.map(tabView),
       card: card ? { ...card.card, n: card.n } : null,
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
+      ...(head && head.endsAt !== null ? { announceKeys: announceKeyText(o.os) } : {}),
       keyHint: card ? keyHint() : null,
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
       os: o.os,
@@ -538,6 +546,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     },
 
     termSize: () => ({ ...(size ?? DEFAULT_TERM_SIZE) }),
+
+    announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
 
     note(runId, text) {
       const t = tabs.find(x => x.card.runId === runId);

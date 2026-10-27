@@ -78,6 +78,25 @@ function commandBlock(command: string, label: string, id?: string): { block: HTM
   return { block, legend: v.legend };
 }
 
+/** The card's lines under the command (what it does, why it asks) and the model's reason, small and grey. */
+function appendLines(root: HTMLElement, card: CommandCard): void {
+  const { lines, why } = cardLines(card);
+  if (lines.length) {
+    const ul = el("ul", "lines");
+    for (const line of lines) {
+      const li = el("li");
+      li.append(...visibleNodes(line).nodes);
+      ul.append(li);
+    }
+    root.append(ul);
+  }
+  if (why) {
+    const p = el("p", "why");
+    p.append(...visibleNodes(why).nodes);
+    root.append(p);
+  }
+}
+
 // ───── The question card ─────
 interface AskEls {
   key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
@@ -97,21 +116,7 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   const { block, legend } = commandBlock(card.command, "The command, every character shown", "ask-cmd");
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
-  const { lines, why } = cardLines(card);
-  if (lines.length) {
-    const ul = el("ul", "lines");
-    for (const line of lines) {
-      const li = el("li");
-      li.append(...visibleNodes(line).nodes);
-      ul.append(li);
-    }
-    root.append(ul);
-  }
-  if (why) {
-    const p = el("p", "why");
-    p.append(...visibleNodes(why).nodes);
-    root.append(p);
-  }
+  appendLines(root, card);
   const hint = el("p", "hint");
   hint.setAttribute("aria-live", "polite");
   hint.hidden = true;
@@ -211,7 +216,7 @@ interface AnnounceEls { key: string; root: HTMLElement; count: HTMLElement; ends
 let announce: AnnounceEls | null = null;
 let countTimer: ReturnType<typeof setInterval> | null = null;
 
-function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
+function buildAnnounce(card: CommandCard, endsAt: number, keys: string): AnnounceEls {
   const root = el("section", "card announce");
   root.setAttribute("aria-labelledby", "announce-h");
   const where = headerNode(headerLine(card));
@@ -222,10 +227,13 @@ function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
   const { block, legend } = commandBlock(card.command, "The command, every character shown", "announce-cmd");
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
+  // What it does in plain words and the model's reason, as on the question card (review #269).
+  appendLines(root, card);
   const count = el("p", "count", countdownText(endsAt, Date.now()));
   count.setAttribute("role", "timer");
+  // Stop is the one thing to do here: the prominent button.
   const row = el("div", "buttons");
-  const stop = el("button", "btn quiet", STOP_LABEL);
+  const stop = el("button", "btn", STOP_LABEL);
   stop.type = "button";
   stop.setAttribute("aria-describedby", "announce-cmd");
   stop.addEventListener("click", e => {
@@ -234,7 +242,9 @@ function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
     api.stop(card.runId);
   });
   row.append(stop);
-  root.append(count, row);
+  root.append(count);
+  if (keys) root.append(el("p", "keys", keys));
+  root.append(row);
   return { key: `${card.runId}:${endsAt}`, root, count, endsAt };
 }
 
@@ -338,7 +348,7 @@ function render(): void {
   const annKey = ann ? `${ann.card.runId}:${ann.endsAt}` : "";
   if ((announce?.key ?? "") !== annKey) {
     announce?.root.remove();
-    announce = ann ? buildAnnounce(ann.card, ann.endsAt) : null;
+    announce = ann ? buildAnnounce(ann.card, ann.endsAt, v?.announceKeys ?? "") : null;
     if (announce) $("cards").prepend(announce.root);
   }
   if (announce && !countTimer) countTimer = setInterval(tickCountdown, 250);
