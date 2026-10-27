@@ -17,14 +17,23 @@ export function targetFixOf(id: unknown): TargetFixId | null {
 }
 
 /**
+ * Words for the window, which shows them as plain text: a row's Markdown code marks (`wsl --update`) dropped, so no
+ * stray backticks show (the doctor prints the rows in a terminal as they are; review #157, #218).
+ */
+const plain = (s: string): string => s.replace(/`/g, "");
+
+/** A detail and the fix after it: one full stop between them, never two ("…is on.. System Settings"; review #157). */
+const joined = (detail: string, fix: string): string => `${detail}${/[.!?…]$/.test(detail.trimEnd()) ? " " : ". "}${fix}`;
+
+/**
  * The doctor's target rows as setup-check rows. A `wsl-a11y:<distro>` row that isn't ok gets its fix button (its id);
  * another row's fix, words for the user, follows its detail, as the doctor prints it under the row.
  */
 export function setupChecks(rows: readonly PlatformDoctorRow[]): Check[] {
   return rows.map(r => {
     const button = r.status !== "ok" ? targetFixOf(r.id) : null;
-    const words = !button && r.status !== "ok" && r.fix ? `${r.detail}. ${r.fix}` : r.detail;
-    return { id: r.id, label: r.label, status: r.status, detail: words, ...(button ? { fix: button } : {}) };
+    const words = !button && r.status !== "ok" && r.fix ? joined(r.detail, r.fix) : r.detail;
+    return { id: r.id, label: r.label, status: r.status, detail: plain(words), ...(button ? { fix: button } : {}) };
   });
 }
 
@@ -35,7 +44,7 @@ export function withTargetChecks(env: EnvReport, checks: readonly Check[]): EnvR
 
 /** After a target fix worked: its row says what to do next (the doctor's view of the distro may lag a moment). */
 export function afterTargetFix(env: EnvReport, fix: TargetFixId, message: string): EnvReport {
-  return { ...env, checks: env.checks.map(c => (c.id === fix && c.status !== "ok" ? { id: c.id, label: c.label, status: c.status, detail: message } : c)) };
+  return { ...env, checks: env.checks.map(c => (c.id === fix && c.status !== "ok" ? { id: c.id, label: c.label, status: c.status, detail: plain(message) } : c)) };
 }
 
 /** What applying a fix may call. */

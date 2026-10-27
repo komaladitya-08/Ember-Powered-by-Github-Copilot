@@ -373,9 +373,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01")
   and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval carries
   over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
-  hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect
-  to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says "Can't reconnect to
-  build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.
+  hold) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect to sign in."; for a host
+  key to accept, "build-01 needs you to check its key again" — "Reconnect to check it."; when it gives up for another
+  reason (after 10 minutes, or a refusal), it says "Can't reconnect to build-01" with the reason. All have
+  **Reconnect**, which connects with Ember's sign-in window.
 
 ### 4.2 What stays here
 
@@ -464,8 +465,8 @@ rest of its output is dropped and you won't see it. After the stop chord, output
   OpenSSH Client in Settings › Apps › Optional features."). Its own password window works only with **8.4 or newer**
   (Windows 10's built-in client is older), and not under Constrained Language Mode or where application control
   blocks the small helper Ember compiles for it. There, connect with keys and the ssh-agent service ("build-01 didn't
-  accept your key. Add it to the ssh-agent (`ssh-add`), then connect again."), and accept an unknown host's key once
-  yourself ("Connect once with `ssh build-01` in a terminal, check its key, then try again.").
+  accept your key. Add it to the ssh-agent with ssh-add, then connect again."), and accept an unknown host's key once
+  yourself ("Connect once with ssh build-01 in a terminal, check its key, then try again.").
 - **`ssh` typed in a WSL tab** is noticed too. Ember connects with Windows' SSH unless connecting through the distro
   has been proven to work; then the offer says "Ember connects with Windows' SSH. Add your key to Windows' ssh-agent,
   or connect once from PowerShell, then bring Ember there." Connections through a distro use its keys and agent only,
@@ -515,15 +516,15 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 | Row | Warns or fails when | What to do |
 |---|---|---|
-| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". Only ever a warning: SSH is optional | Install or update OpenSSH (§4.8) |
-| **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | `sudo dnf install util-linux` |
+| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". Only ever a warning: SSH is optional | Install or update OpenSSH (§4.8); on Windows, 8.4 or newer to enter passwords in Ember |
+| **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | Linux: `sudo dnf install util-linux` (macOS comes with `script`) |
 | **PowerShell for commands** (Windows, while your organisation allows commands here) | Windows PowerShell missing, or Constrained Language Mode ("command output may not be UTF-8, and SSH passwords can't be asked") | Turn on Windows PowerShell in Windows features |
 | **WSL** (Windows) | No distros; WSLg off ("Remove `guiApplications=false` from `%USERPROFILE%\.wslconfig`."); the built-in WSL ("Run `wsl --update`."); an X server showing Linux apps | As the row says |
 | **Linux apps in Ubuntu** (a running distro, while WSL is on in Ember) | The helper, Python 3, pyatspi or the session bus is missing, or the distro runs as root | §3.3 |
 | **Accessibility in Ubuntu** (likewise) | Toolkit accessibility is off | The row's button in the setup check (§3.3), then restart your Linux apps |
 | **Linux apps in WSL** (while WSL is off in Ember) | Never: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" | Turn WSL on in Settings › **Computers** to check them |
 | **Helper for other computers** (an installed Ember, while SSH is allowed) | Missing from this install (only a warning: SSH is optional) | Reinstall Ember |
-| **Folders on build-01** (a connected Mac) | Commands can't open Desktop, Documents or Downloads | "Allow full disk access for remote users" on that Mac |
+| **Folders on build-01** (a connected Mac) | Commands can't open Desktop, Documents or Downloads | Turn on "Allow full disk access for remote users" on that Mac: System Settings › General › Sharing › Remote Login › ⓘ |
 
 ## 6. For administrators
 

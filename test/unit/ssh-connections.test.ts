@@ -482,7 +482,7 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
 
   it("never prompts on a reconnect or a batch-only connect: the failure says what to do", async () => {
     const r = track(rig({ remotes: [{ fail: () => ({ stderr: "Permission denied (publickey).\n", code: 255 }) }] }));
-    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent (`ssh-add`), then connect again." });
+    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent with ssh-add, then connect again." });
     expect(r.spawned).toHaveLength(1);
   });
 

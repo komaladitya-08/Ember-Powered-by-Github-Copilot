@@ -1093,10 +1093,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         }
         if (p.step === "failed" && c?.state === "lost" && !p.retry) {
           // SA stopped reconnecting after a loss: no more "trying again". A sign-in it can't do in batch mode (a
-          // password, a passphrase outside the agent, a host key to accept) is §8.2's "sign in again".
+          // password, a passphrase outside the agent) is §8.2's "sign in again"; a host key to accept is checked again
+          // (Reconnect shows its card), never called a sign-in (review #196).
           c.state = "closed";
           const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
-          const words = signIn ? signInAgain(hostId) : null;
+          const words = p.kind === "unknown-host-key" ? { title: `${hostId} needs you to check its key again`, text: "Reconnect to check it." }
+            : signIn ? signInAgain(hostId) : null;
           bubble(`lost:${hostId}`, {
             title: words?.title ?? `Can't reconnect to ${hostId}`, thought: words?.text ?? (p.fix ? `${p.message} ${p.fix}` : p.message),
             actions: [{ id: `conn:${hostId}:reconnect`, label: "Reconnect", primary: true }], mood: signIn ? "attention" : "error",

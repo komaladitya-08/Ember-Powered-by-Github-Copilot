@@ -24,9 +24,20 @@ export function cleanLine(s: string, max = 200): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
-/** Every §8.7 message that names a host, built from its label ("build-01"). */
+/**
+ * How to install the SSH client on `os`, or on each OS when it isn't known. Plain text: the bubble, the settings window
+ * and the setup check show these words as they are, so a command is never wrapped in Markdown (review #157, #196).
+ */
+export function installSsh(os?: OS): string {
+  if (os === "win32") return "Install the OpenSSH Client in Settings › Apps › Optional features, then try again.";
+  if (os === "darwin") return "macOS comes with SSH at /usr/bin/ssh, but Ember can't run it there. Check that it's there, then try again.";
+  if (os === "linux") return "Install OpenSSH with: sudo dnf install openssh-clients";
+  return "Install OpenSSH (on Linux: sudo dnf install openssh-clients; on Windows: Settings › Apps › Optional features › OpenSSH Client), then try again.";
+}
+
+/** Every §8.7 message that names a host, built from its label ("build-01"). Plain text, no Markdown (review #196). */
 export const MESSAGES = {
-  noClient: () => "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again.",
+  noClient: (os?: OS) => `Ember can't find SSH on this computer. ${installSsh(os)}`,
   tooOld: () => "Ember needs OpenSSH 7.6 or newer.",
   tooOldWindows: () => "Ember needs OpenSSH 8.1 or newer: update the OpenSSH Client in Settings › Apps › Optional features.",
   dns: (h: string) => `Ember can't find ${h}. Check the name, or add it to your SSH config.`,
@@ -35,19 +46,19 @@ export const MESSAGES = {
   config: (h: string, line: string) => `Your SSH settings for ${h} have a line this SSH can't use: ${line}. Fix or remove it, then connect again.`,
   timeout: (h: string) => `${h} took too long to answer (a jump host or sign-in helper may be waiting).`,
   noSetup: (h: string) => `${h} didn't run Ember's set-up (it may be Windows, or this login runs a fixed program).`,
-  authNoAskpass: (h: string) => `${h} didn't accept your key. Add it to the ssh-agent (\`ssh-add\`), then connect again.`,
+  authNoAskpass: (h: string) => `${h} didn't accept your key. Add it to the ssh-agent with ssh-add, then connect again.`,
   signInFailed: (h: string) => `${h} didn't accept that sign-in.`,
-  unknownKeyNoAskpass: (h: string) => `Connect once with \`ssh ${h}\` in a terminal, check its key, then try again.`,
+  unknownKeyNoAskpass: (h: string) => `Connect once with ssh ${h} in a terminal, check its key, then try again.`,
   unknownKey: (h: string) => `This computer hasn't connected to ${h} before.`,
   keyChanged: (h: string) => `The key ${h} shows isn't the one this computer knows. Someone may be pretending to be ${h}, or it was reinstalled. Ember won't connect.`,
-  keyChangedFix: (h: string) => `If you know why it changed, remove the old key in a terminal with \`ssh-keygen -R ${h}\`, then connect again.`,
+  keyChangedFix: (h: string) => `If you know why it changed, remove the old key in a terminal with ssh-keygen -R ${h}, then connect again.`,
   knownHostsDiscarded: (h: string) => `${h}'s settings throw host keys away, so Ember can't check it's really ${h}.`,
   jumpWindows: () => "Ember can't connect through a jump host from Windows yet.",
   jumpTooMany: (h: string) => `Ember can connect to ${h} through at most 3 jump hosts.`,
   jumpNested: (h: string) => `Ember can't connect to ${h}: its jump host goes through another jump host of its own.`,
   jumpUnusable: (h: string) => `Ember can't use the jump host your SSH settings give for ${h}.`,
   jumpViaWsl: (h: string) => `Ember can't connect to ${h} through a jump host from a WSL distro.`,
-  tooManyKeys: (h: string) => `${h} refused after too many keys. Add \`IdentitiesOnly yes\` and the right \`IdentityFile\` for ${h} to your SSH config.`,
+  tooManyKeys: (h: string) => `${h} refused after too many keys. In your SSH config, add IdentitiesOnly yes and an IdentityFile line with the right key for ${h}.`,
   notPosix: (h: string) => `${h} runs Windows: Ember can't work there yet.`,
   unsupported: (os: string, cpu: string) => `Ember can't work on ${os} ${cpu} computers yet.`,
   glibc: (h: string) => `${h}'s system is too old for Ember (it needs glibc 2.28 or newer, as in RHEL 8 or Ubuntu 20.04).`,

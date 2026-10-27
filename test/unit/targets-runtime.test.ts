@@ -740,6 +740,16 @@ describe("SSH targets", () => {
     expect(r.showState).not.toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "build-02 needs you to sign in again" }) });
   });
 
+  it("asks to check the key again, never to sign in, when a reconnect stops at a host key it can't accept alone (review #196)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const l = await connected(r);
+    l.move("lost");
+    for (const p of r.progress) p("build-01", { step: "failed", message: "Connect once with ssh build-01 in a terminal, check its key, then try again.", retry: false, kind: "unknown-host-key" });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 needs you to check its key again", thought: "Reconnect to check it.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }], mood: "attention",
+    }) });
+  });
+
   it("adopts the link SA brought back by itself after a loss", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);
@@ -1319,7 +1329,7 @@ describe("the doctor's rows (§8.8)", () => {
     // SSH is optional: without a client the check-up warns, it never fails (a PC that never uses SSH still passes).
     expect(sshClientRow("linux", null)).toMatchObject({ status: "warn", detail: "No SSH client found", fix: expect.stringContaining("sudo dnf install openssh-clients") });
     expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "dropbear v2022" })).toMatchObject({ status: "warn" });
-    expect(commandTerminalRow(null)).toMatchObject({ status: "warn", fix: "Install util-linux (`sudo dnf install util-linux`)." });
+    expect(commandTerminalRow(null)).toMatchObject({ status: "warn", fix: "Install util-linux with: sudo dnf install util-linux" });
     expect(powershellRow({ path: "p", language: "ConstrainedLanguage" })).toMatchObject({ status: "warn" });
     expect(powershellRow(null)).toMatchObject({ status: "fail", detail: "Windows PowerShell isn't available" });
     expect(remotePartsRow(null)).toEqual({ id: "remote-parts", label: "Helper for other computers", status: "warn", detail: "Missing from this install", fix: "Reinstall Ember." });

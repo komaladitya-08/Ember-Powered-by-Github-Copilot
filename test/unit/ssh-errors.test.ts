@@ -1,20 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { bootstrapFailure, classifySshFailure, cleanLine, isLanAddress } from "../../app/main/remote/ssh-errors";
+import { MESSAGES, bootstrapFailure, classifySshFailure, cleanLine, installSsh, isLanAddress } from "../../app/main/remote/ssh-errors";
 
 const at = (stderr: string, exit: number | null = 255, over: Partial<Parameters<typeof classifySshFailure>[2]> = {}) =>
   classifySshFailure(stderr, exit, { probeBegan: false, os: "linux", host: "build-01", ...over });
 
 describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
+  it("are plain text: the bubble and the settings window show them as they are, so no Markdown backticks (review #196)", () => {
+    for (const [name, f] of Object.entries(MESSAGES)) {
+      const text = name === "tools" ? MESSAGES.tools("build-01", ["xz", "tar"]) : (f as (...a: string[]) => string)("build-01", "x");
+      expect(text, name).not.toContain("`");
+    }
+    for (const os of ["linux", "win32", "darwin", undefined] as const) expect(installSsh(os)).not.toContain("`");
+    // This OS's way to install SSH only, when it is known.
+    expect(MESSAGES.noClient("win32")).toBe("Ember can't find SSH on this computer. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.");
+    expect(MESSAGES.noClient("linux")).not.toMatch(/Windows/);
+  });
+
   it("tells an unknown host key from a changed one", () => {
     expect(at("No ED25519 host key is known for build-01 and you have requested strict checking.\r\nHost key verification failed.\r\n"))
-      .toMatchObject({ kind: "unknown-host-key", message: "Connect once with `ssh build-01` in a terminal, check its key, then try again." });
+      .toMatchObject({ kind: "unknown-host-key", message: "Connect once with ssh build-01 in a terminal, check its key, then try again." });
     const changed = at("@@@@@@@@\r\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n…\r\nHost key verification failed.\r\n");
     expect(changed).toMatchObject({ kind: "host-key-changed", retry: false });
     expect(changed.fix).toContain("ssh-keygen -R build-01");
   });
 
   it("classifies authentication, too many keys and DNS", () => {
-    expect(at("deploy@build-01: Permission denied (publickey,gssapi-keyex,gssapi-with-mic).")).toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent (`ssh-add`), then connect again." });
+    expect(at("deploy@build-01: Permission denied (publickey,gssapi-keyex,gssapi-with-mic).")).toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent with ssh-add, then connect again." });
     expect(at("Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures")).toMatchObject({ kind: "too-many-keys" });
     expect(at("ssh: Could not resolve hostname build-01: Name or service not known")).toMatchObject({ kind: "dns", message: "Ember can't find build-01. Check the name, or add it to your SSH config." });
   });

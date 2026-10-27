@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EnvReport } from "../../app/main/environment";
 import type { PlatformDoctorRow } from "../../app/main/platform/types";
 import { afterTargetFix, applySetupFix, setupChecks, targetChecksSource, targetFixOf, withTargetChecks, type FixRoutes } from "../../app/main/targets/setup-check";
+import { commandTerminalRow, remoteTccRow, sshClientRow } from "../../app/main/targets/doctor";
 
 const a11yOff: PlatformDoctorRow = {
   id: "wsl-a11y:Ubuntu", status: "warn", label: "Accessibility in Ubuntu", detail: "Linux apps in Ubuntu don't share their controls (toolkit accessibility is off)",
@@ -32,7 +33,7 @@ describe("setupChecks", () => {
   it("shows each row as the doctor does, with a fix button only for a wsl-a11y row that isn't ok", () => {
     expect(setupChecks(rows)).toEqual([
       { id: "ssh-client", label: "SSH client", status: "ok", detail: "OpenSSH 8.0 at /usr/bin/ssh" },
-      { id: "command-terminal", label: "Command window terminal", status: "warn", detail: "No script program: commands can't ask for passwords or answers. Install util-linux (`sudo dnf install util-linux`)." },
+      { id: "command-terminal", label: "Command window terminal", status: "warn", detail: "No script program: commands can't ask for passwords or answers. Install util-linux (sudo dnf install util-linux)." },
       { id: "wsl-a11y:Ubuntu", label: "Accessibility in Ubuntu", status: "warn", detail: a11yOff.detail, fix: "wsl-a11y:Ubuntu" },
       { id: "wsl-a11y:Debian", label: "Accessibility in Debian", status: "ok", detail: "Linux apps in Debian share their controls" },
     ]);
@@ -46,6 +47,41 @@ describe("setupChecks", () => {
     const after = afterTargetFix(all, "wsl-a11y:Ubuntu", "Restart your Linux apps.");
     expect(after.checks[3]).toEqual({ id: "wsl-a11y:Ubuntu", label: "Accessibility in Ubuntu", status: "warn", detail: "Restart your Linux apps." });
     expect(after.checks.filter((_, k) => k !== 3)).toEqual(all.checks.filter((_, k) => k !== 3));
+  });
+});
+
+describe("the target rows' words in the window (review #157, #218)", () => {
+  const words = (r: PlatformDoctorRow) => setupChecks([r])[0].detail;
+
+  it("joins a detail and its fix with one full stop, and the Mac row's fix is a sentence", () => {
+    expect(words(remoteTccRow("mini"))).toBe(
+      "Commands on mini can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on. "
+      + "Turn it on in System Settings › General › Sharing › Remote Login › ⓘ.",
+    );
+    expect(words({ id: "x", status: "warn", label: "X", detail: "Something is off!", fix: "Fix it." })).toBe("Something is off! Fix it.");
+  });
+
+  it("says once that there is no SSH client, with only this OS's way to install it", () => {
+    expect(words(sshClientRow("linux", null))).toBe("No SSH client found. Install OpenSSH with: sudo dnf install openssh-clients");
+    expect(words(sshClientRow("win32", null))).toBe("No SSH client found. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.");
+    expect(words(sshClientRow("darwin", null))).not.toMatch(/dnf|Optional features/);
+  });
+
+  it("gives Windows' OpenSSH 8.1 to 8.3 its own fix: passwords need 8.4", () => {
+    expect(words(sshClientRow("win32", { path: "x", text: "OpenSSH_for_Windows_8.1p1" })))
+      .toBe("Passwords can't be asked here: keys and the ssh-agent only. Update the OpenSSH Client to 8.4 or newer to enter passwords in Ember.");
+  });
+
+  it("names util-linux only on Linux", () => {
+    expect(words(commandTerminalRow(null, "linux"))).toBe("No script program: commands can't ask for passwords or answers. Install util-linux with: sudo dnf install util-linux");
+    expect(words(commandTerminalRow(null, "darwin"))).not.toMatch(/util-linux|dnf/);
+  });
+
+  it("shows no Markdown backticks (the page sets plain text), from any row or fix's words", () => {
+    expect(words({ id: "wsl", status: "warn", label: "WSL", detail: "WSLg is off", fix: "Remove `guiApplications=false` from `%USERPROFILE%\\.wslconfig`." }))
+      .toBe("WSLg is off. Remove guiApplications=false from %USERPROFILE%\\.wslconfig.");
+    const env2 = withTargetChecks(env, setupChecks([a11yOff]));
+    expect(afterTargetFix(env2, "wsl-a11y:Ubuntu", "Run `xhost` first.").checks[1].detail).toBe("Run xhost first.");
   });
 });
 
