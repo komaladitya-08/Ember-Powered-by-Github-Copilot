@@ -234,8 +234,8 @@ describe("VoiceService keeps listening going", () => {
     }
     electron.procs[4].emit("message", { type: "ready", loadMs: 900 });
     expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
-    // A minute of listening later, a new failure starts the backoff over.
-    await vi.advanceTimersByTimeAsync(61_000);
+    // A minute of listening later (the process says it's alive every second), a new failure starts the backoff over.
+    for (let i = 0; i < 61; i++) { await vi.advanceTimersByTimeAsync(1000); electron.procs[4].emit("message", { type: "alive" }); }
     electron.procs[4].emit("exit", 1);
     expect(states.at(-1)?.detail).toMatch(/Trying again in 1 s/);
   });
@@ -317,6 +317,41 @@ describe("VoiceService keeps listening going", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("starts again when the voice process stops saying it's alive (frozen, or suspended by security software) (review #257)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    // Alive every second: listening goes on.
+    for (let i = 0; i < 60; i++) { await vi.advanceTimersByTimeAsync(1000); proc.emit("message", { type: "alive" }); }
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+    // Then nothing: after 15 s it's taken for stuck.
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(proc.kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The voice process stopped responding. Trying again in 1 s…" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+  });
+
+  it("doesn't take its own sleep for a frozen voice process (the computer slept) (review #257)", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.setSystemTime(Date.now() + 120_000); // main's timers didn't run meanwhile either
+    await vi.advanceTimersByTimeAsync(1000);
+    proc.emit("message", { type: "alive" });
+    await vi.advanceTimersByTimeAsync(5000);
+    proc.emit("message", { type: "alive" });
+    expect(proc.kill).not.toHaveBeenCalled();
   });
 
   it("a model folder that won't load is forgotten, and the download is offered again (review #254)", async () => {

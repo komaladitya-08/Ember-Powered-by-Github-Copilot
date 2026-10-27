@@ -18,6 +18,7 @@ import { pipeline } from "node:stream/promises";
 import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
+import { FrameWatchdog } from "../voice/watchdog";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
 import type { Logger } from "./logger";
 
@@ -32,6 +33,11 @@ const SPEAKING_MAX_MS = 60_000;
 const CANCEL_GRACE_MS = 1000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
 const RESTART_MS = [1000, 5000, 30_000];
+/**
+ * A ready voice process that says nothing for this long is stuck or suspended (it says it's alive every second; its
+ * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
+ */
+const ALIVE_MS = 15_000;
 
 export interface VoiceOptions {
   log: Logger;
@@ -92,6 +98,8 @@ export class VoiceService {
   private retry: NodeJS.Timeout | null = null;
   private failures = 0;
   private readyAt = 0;
+  /** Whether the ready voice process still answers: what it last sent, checked every second (review #257). */
+  private alive: { watch: FrameWatchdog; timer: NodeJS.Timeout } | null = null;
 
   constructor(private o: VoiceOptions) {
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -234,7 +242,9 @@ export class VoiceService {
     });
     proc.on("message", (m: VoiceProcessMessage) => {
       if (this.proc !== proc) return; // a process being replaced: only the current one speaks for the mic
-      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
+      this.alive?.watch.frame();
+      if (m.type === "alive") return;
+      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return; }
       if (m.type === "error") {
         this.o.log.error("voice.error", { message: m.message, models: !!m.models });
         this.teardown();
@@ -290,6 +300,30 @@ export class VoiceService {
     this.retry = setTimeout(() => { this.retry = null; void this.start(); }, ms);
   }
 
+  /**
+   * From ready on, a voice process that says nothing for ALIVE_MS is taken for stuck (a WebAssembly call that never
+   * returns, or security software suspending it) and started again: it can't say so itself, the microphone's frames
+   * would pile up in its queue, and Ember would show "Listening" while deaf (review #257). Main's own late check (the
+   * computer slept) doesn't count.
+   */
+  private watchAlive(proc: UtilityProcess): void {
+    this.stopWatchingAlive();
+    const watch = new FrameWatchdog(ms => {
+      if (this.proc !== proc) return;
+      this.o.log.warn("voice.unresponsive", { ms });
+      this.restartLater("The voice process stopped responding.");
+    }, Date.now, ALIVE_MS, ALIVE_MS);
+    watch.frame();
+    const timer = setInterval(() => watch.check(), 1000);
+    timer.unref?.();
+    this.alive = { watch, timer };
+  }
+
+  private stopWatchingAlive(): void {
+    if (this.alive) clearInterval(this.alive.timer);
+    this.alive = null;
+  }
+
   private cancelRetry(): void {
     if (this.retry) clearTimeout(this.retry);
     this.retry = null;
@@ -304,6 +338,7 @@ export class VoiceService {
   private teardown(): void {
     this.closeMic();
     this.dropFollowUp();
+    this.stopWatchingAlive();
     const p = this.proc;
     this.proc = null;
     if (!p) return;

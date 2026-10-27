@@ -24,7 +24,8 @@ type FromMain =
  * Messages for main (VoiceService); `error`: listening couldn't start (`models`: the speech models couldn't be loaded,
  * and downloading them again repairs it); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
  * frames for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the
- * process carried on.
+ * process carried on; `alive`: every second once started (main restarts a process that goes quiet: it is stuck or
+ * suspended, and can't say so itself).
  */
 export type VoiceProcessMessage =
   | VoiceEvent
@@ -33,7 +34,8 @@ export type VoiceProcessMessage =
   | { type: "engine-error"; message: string; count: number }
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
   | { type: "monitor"; on: boolean; reason?: string }
-  | { type: "stalled"; ms: number };
+  | { type: "stalled"; ms: number }
+  | { type: "alive" };
 
 const parent = process.parentPort;
 const send = (m: VoiceProcessMessage) => parent.postMessage(m);
@@ -79,7 +81,7 @@ parent.on("message", e => {
       else send({ type: "error", message: "The speech models couldn't be loaded.", models: true });
     }
     const watchdog = new FrameWatchdog(ms => send({ type: "stalled", ms }));
-    setInterval(() => watchdog.check(), 1000);
+    setInterval(() => { watchdog.check(); send({ type: "alive" }); }, 1000);
     const port = e.ports[0];
     port.on("message", ev => {
       watchdog.frame();

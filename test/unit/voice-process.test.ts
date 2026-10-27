@@ -70,6 +70,14 @@ describe("the voice process", () => {
     expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true }]);
   });
 
+  it("says it's alive every second once started, so main can tell a frozen process from a quiet room (review #257)", async () => {
+    vi.useFakeTimers();
+    const p = await voiceProcess(() => quiet());
+    p.init();
+    vi.advanceTimersByTime(3000);
+    expect(p.sent().filter(m => m.type === "alive")).toHaveLength(3);
+  });
+
   it("passes on other errors at start as they are", async () => {
     const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
     p.init();
