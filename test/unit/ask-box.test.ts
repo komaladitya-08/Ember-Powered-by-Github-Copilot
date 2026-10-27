@@ -11,7 +11,7 @@ import { SETTINGS } from "../../app/main/hands/system";
 import { DARWIN_SETTINGS } from "../../app/main/platform/darwin/system/settings";
 import { win32Settings } from "../../app/main/platform/win32/system/settings";
 import { notificationBody } from "../../app/main/notification";
-import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey } from "../../app/renderer/ask/field";
+import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "../../app/renderer/ask/field";
 import { seesView } from "../../app/renderer/ask/chips";
 import { targetChip } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
@@ -55,6 +55,13 @@ describe("the ask box's field", () => {
     expect(historyKey(text, 12, 12, "ArrowDown")).toBe(true);
     expect(historyKey(text, 3, 3, "ArrowDown")).toBe(false);
     expect(historyKey("one line", 0, 4, "ArrowUp")).toBe(false);
+  });
+
+  it("names the send key as the keyboard does: Return on a Mac (review #77)", () => {
+    expect(sendKey("darwin")).toBe("Return");
+    expect(sendKey("win32")).toBe("Enter");
+    expect(sendKey(null)).toBe("Enter");
+    expect(ASK_HTML).toMatch(/<kbd id="key-send">Enter<\/kbd> to send/);
   });
 
   it("says when the text reached the most that is sent", () => {

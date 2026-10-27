@@ -6,13 +6,16 @@ import type { AskContext, EmberAskApi } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
 import { targetChip } from "../handle/badge";
 import { AskHistory } from "./history";
-import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey } from "./field";
+import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "./field";
 import { seesView } from "./chips";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
 // No compositor (main says so in the address): an opaque panel, as a transparent window would paint black.
-document.documentElement.classList.toggle("opaque", new URLSearchParams(location.search).has("opaque"));
+const query = new URLSearchParams(location.search);
+document.documentElement.classList.toggle("opaque", query.has("opaque"));
+// The send key as this OS names it (Return on a Mac).
+document.getElementById("key-send")!.textContent = sendKey(query.get("os"));
 
 const input = document.getElementById("q") as HTMLTextAreaElement;
 const sees = document.getElementById("sees")!;

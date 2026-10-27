@@ -3,9 +3,10 @@
  * Without a compositor (xrdp, VNC) a transparent window paints black, so the box is then an opaque panel.
  */
 
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
 import { IPC, type AskContext } from "../shared/ipc";
+import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { x11WindowId } from "./platform/linux/window-system";
@@ -65,6 +66,25 @@ export function grownBounds(b: Box, lines: number, wa: Box, up: boolean, keepOff
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
 }
 
+/** What the field's right-click menu may do now (Electron's context-menu editFlags). */
+export interface EditFlags {
+  canCut: boolean;
+  canCopy: boolean;
+  canPaste: boolean;
+  canSelectAll: boolean;
+}
+
+/** The field's right-click menu: Cut, Copy, Paste and Select all, each only when it can act. */
+export function editMenuItems(f: EditFlags): Electron.MenuItemConstructorOptions[] {
+  return [
+    { role: "cut", label: "Cut", enabled: f.canCut },
+    { role: "copy", label: "Copy", enabled: f.canCopy },
+    { role: "paste", label: "Paste", enabled: f.canPaste },
+    { type: "separator" },
+    { role: "selectAll", label: "Select all", enabled: f.canSelectAll },
+  ];
+}
+
 export class AskWindow {
   private win: BrowserWindow | null = null;
   private context: AskContext = { sees: null, history: [] };
@@ -85,6 +105,8 @@ export class AskWindow {
   private source = "unknown";
   /** The box sits above Ember (or low in the middle of the screen): a taller field grows it upward. */
   private up = true;
+  /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
+  private menuUp = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -94,11 +116,12 @@ export class AskWindow {
    * now (Electron can report focus before the window manager has moved it). `onReveal`: every time the box is
    * actually shown (the only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
    * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
-   * `floating`: the platform's window options and workspace rule (default: today's Linux window).
+   * `floating`: the platform's window options and workspace rule (default: today's Linux window). `os`: the page names
+   * its keys as this OS does (Return on a Mac).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
-    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS;
   } = {}) {}
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
@@ -130,7 +153,9 @@ export class AskWindow {
     win.setAlwaysOnTop(true, "screen-saver");
     if (this.o.floating) applyAllWorkspaces(win, this.o.floating.allWorkspaces);
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
-    win.on("blur", () => { if (this.win === win) this.hide(); });
+    win.on("blur", () => { if (this.win === win && !this.menuUp) this.hide(); });
+    // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
+    win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
     // The field asks for the lines its text needs (Shift+Enter, a pasted traceback): only this box's page is heard here.
     win.webContents.ipc.on(IPC.askFit, (_e, lines: unknown) => { if (this.win === win && typeof lines === "number" && Number.isFinite(lines)) this.fit(lines); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
@@ -138,7 +163,8 @@ export class AskWindow {
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
     // update and the first box opened from the menu never showed "Ember will see: …").
     win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
-    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
+    const query: Record<string, string> = { ...(opaque ? { opaque: "1" } : {}), ...(this.o.os ? { os: this.o.os } : {}) };
+    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), Object.keys(query).length ? { query } : {});
     win.once("ready-to-show", () => {
       if (this.win !== win) return;
       this.loaded = true;
@@ -183,6 +209,19 @@ export class AskWindow {
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
     this.win.setBounds(bounds);
     if (this.loaded) this.reveal(this.win);
+  }
+
+  /** The field's right-click menu; the box stays open while it is up, and has the keyboard again after. */
+  private editMenu(win: BrowserWindow, flags: EditFlags): void {
+    if (this.win !== win || win.isDestroyed() || !win.isVisible()) return;
+    this.menuUp = true;
+    Menu.buildFromTemplate(editMenuItems(flags)).popup({
+      window: win,
+      callback: () => {
+        this.menuUp = false;
+        if (this.win === win && !win.isDestroyed() && win.isVisible() && !win.isFocused()) win.focus();
+      },
+    });
   }
 
   /** The field needs `lines` lines (1 to 4) for its text: the box grows or shrinks to fit, away from Ember. */

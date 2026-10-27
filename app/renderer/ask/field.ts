@@ -36,3 +36,6 @@ export function historyKey(value: string, start: number, end: number, key: "Arro
 
 /** The field holds as much as is sent: anything typed or pasted beyond it was left out, so the note shows. */
 export const atLimit = (value: string): boolean => value.length >= FIELD.maxChars;
+
+/** The send key as the keyboard names it: Return on a Mac, Enter elsewhere (`os` from main, in the page's address). */
+export const sendKey = (os: string | null): string => (os === "darwin" ? "Return" : "Enter");

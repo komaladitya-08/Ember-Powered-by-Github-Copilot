@@ -521,7 +521,9 @@ function start(): void {
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
-    const label = (text: string, def: { accel: string; label: string }) => hasKey(def.accel) ? `${text}   ${def.label}` : text;
+    // A Mac's own menus show it as the system does (⌃⇧⌘Space), from the accelerator, which is shown but never registered.
+    const keyed = (text: string, def: { accel: string; label: string }): Pick<Electron.MenuItemConstructorOptions, "label" | "accelerator"> =>
+      !hasKey(def.accel) ? { label: text } : platform.os === "darwin" ? { label: text, accelerator: def.accel } : { label: `${text}   ${def.label}` };
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
@@ -530,16 +532,16 @@ function start(): void {
     // up), and an ask box that opens without a pick is put away once the menu has closed (ask.spurious_after_menu).
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
-      { label: label("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
+      { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
+      { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
       ...toMenu(targets?.menuItems() ?? [], () => { opens = true; }),
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
+        ? [{ ...keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
+      { ...keyed("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
       { type: "separator" },
@@ -711,6 +713,7 @@ function start(): void {
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
   let askXid = 0;
   const askWindow = new AskWindow({
+    os: platform.os,
     keepOff: () => handle?.bounds ?? null,
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
