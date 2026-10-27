@@ -270,9 +270,9 @@ earlier command printed text that looked like instructions.").
 
 ### 3.1 Turning it on
 
-When you ask for something in WSL while WSL is off for Ember ("in WSL, list my files"), and Windows has a distro Ember
-could use, Ember offers "Ember can work in WSL" (**Open settings**, **Not now**), once each time it runs; the task
-itself goes on where Ember is set to work. Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
+When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember ("in WSL, list my files",
+"in Ubuntu, …"; "Linux" alone doesn't), and Windows has a distro Ember could use, Ember offers "Ember can work in WSL"
+(**Open settings**, **Not now**), once each time it runs; the task itself goes on where Ember is set to work. Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
 Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a small helper inside each distro that has a Linux
 app open, only while one is open, and never starts a distro on its own to read it; what it reads goes to Copilot as
 for your other windows; and commands in WSL, once you turn them on for a distro, can reach your Windows files and

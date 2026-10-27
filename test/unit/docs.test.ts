@@ -31,6 +31,26 @@ function section(text: string, heading: string): string {
   return lines.slice(at, end < 0 ? undefined : end).join("\n");
 }
 
+/**
+ * The docs describe the release: fix/docs merged after the other packages' fixes they describe, each known here by its
+ * code. On fix/docs alone none of them is here yet, so the lines that need them can't be checked against it; once any
+ * is, all must be (merge fix/docs after them all), and each such line is checked against its code, so a fix reverted
+ * later fails here instead of leaving the docs wrong.
+ */
+const RELEASE: { from: string; what: string; here: boolean }[] = [
+  { from: "fix/remote", what: "the WSL offer for a distro Settings lists", here: /\.\.\.wslListedNames\(\)\]/.test(read("app/main/targets/runtime.ts")) },
+];
+/** Every fix the docs describe is here: the release (on fix/docs alone, none is). */
+const released = RELEASE.every(f => f.here);
+
+describe("the release the docs describe", () => {
+  it("has every fix the docs describe, or none of them (fix/docs on its own)", () => {
+    if (!RELEASE.some(f => f.here)) return;
+    const missing = RELEASE.filter(f => !f.here).map(f => `${f.from}: ${f.what}`);
+    expect(missing, "merge fix/docs after these fixes, or take out of the docs what they bring").toEqual([]);
+  });
+});
+
 describe("docs/DESIGN.md", () => {
   it("names only the places where a character can really be chosen", () => {
     const main = read("app/main/main.ts");
@@ -102,12 +122,17 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
 
   it("says Ember offers WSL when a request names it while WSL is off, not when it first sees WSL", () => {
     const runtime = read("app/main/targets/runtime.ts");
-    // offerWsl's one caller is the bind path for a request that said "WSL" while it is off.
+    // offerWsl's one caller is the bind path for a request that names "WSL" (in the release, or a distro Settings
+    // lists: fix/remote adds them to the same list) while WSL is off.
     expect(runtime.match(/\bofferWsl\(\)/g)?.length).toBe(2);
-    expect(runtime).toMatch(/targetsNamed\(words, \[\{ id: "wsl:WSL", names: \["WSL"\] \}\][^\n]*\n(?:[^\n]*\n){0,4}[^\n]*offerWsl\(\)/);
+    expect(runtime).toMatch(/targetsNamed\(words, \[\{ id: "wsl:WSL", names: \["WSL"\] \}[^\n]*\n(?:[^\n]*\n){0,5}[^\n]*offerWsl\(\)/);
     const s31 = flat(section(doc, "3.1 Turning it on"));
     expect(s31).not.toMatch(/first sees WSL/);
-    expect(s31).toMatch(/When you ask for something in WSL while WSL is off for Ember/);
+    expect(s31).toMatch(/When you ask for something in WSL/);
+  });
+
+  it.runIf(released)("says a request that names a distro Settings lists brings the WSL offer too", () => {
+    expect(flat(section(doc, "3.1 Turning it on"))).toMatch(/When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember/);
   });
 });
 
