@@ -32,7 +32,7 @@ vi.mock("electron", () => {
 import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
-import { besideControl } from "../../app/main/follow";
+import { besideControl, followTarget } from "../../app/main/follow";
 import { bubbleHere, cardsCorner } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -71,7 +71,7 @@ async function manager(displays: Shown[], cards: (Box | null)[], handle: Box | n
     for (let i = 0; i < 400; i++) { now += 16; (m as unknown as { tick(): void }).tick(); }
     return m.position;
   };
-  return { m, settle, sent };
+  return { m, settle, sent, pointer };
 }
 
 describe("what Ember keeps off, with more than one display", () => {
@@ -150,6 +150,55 @@ describe("Ember beside a control near the task cards", () => {
     const overlay = [...(m as unknown as { overlays: Map<number, { win: { webContents: Electron.WebContents } }> }).overlays.values()][0];
     m.setCards(overlay.win.webContents, cards);
     expect(under(settle({ x: 300, y: 300 }), cards)).toBe(false);
+  });
+});
+
+describe("the handle at the bottom-right and the cards moved to the bottom-left", () => {
+  const small: Shown = { id: 1, scaleFactor: 1, bounds: { x: 0, y: 0, width: 1366, height: 768 }, workArea: { x: 0, y: 0, width: 1366, height: 728 } };
+  const area = small.workArea;
+  const handle: Box = { x: 1366 - 212, y: 768 - 68 - 40, width: 200, height: 56 };
+  const left: Box = { x: 16, y: 555, width: 270, height: 101 };
+  const right: Box = { x: 1080, y: 555, width: 270, height: 101 };
+  /** The wizard's "Next" at the bottom-right, under where the cards were (so the overlay moved them left). */
+  const next: Box = { x: 1210, y: 620, width: 100, height: 32 };
+  const done = { visible: true, mood: "done" as const, title: "Ember", thought: "Installed.", step: null, streaming: false, actions: [] };
+
+  /** Where Ember holds still by the cursor at the bottom-centre once its work on Next ends with an answer. */
+  const holdStill = async (cards: Box | null) => {
+    const { m, settle, pointer } = await manager([small], [cards], handle);
+    pointer.x = 683; pointer.y = 690;
+    m.setState({ focus: next });
+    // Main parks Ember before the overlay has put the cards back in their corner.
+    m.setState({ focus: null, bubble: done });
+    return settle({ x: 683, y: 690 });
+  };
+
+  it("Ember holds still by the cursor just as with no cards (two areas to keep off, not a band across the bottom)", async () => {
+    const free = await holdStill(null);
+    for (const cards of [left, right]) {
+      const at = await holdStill(cards);
+      expect(Math.abs(at.x - free.x)).toBeLessThan(1);
+      expect(Math.abs(at.y - free.y)).toBeLessThan(1);
+    }
+  });
+
+  it("following the cursor, Ember keeps off each area on its own", () => {
+    const areas = [handle, left];
+    expect(followTarget({ x: 683, y: 690 }, 60, area, areas)).toEqual(followTarget({ x: 683, y: 690 }, 60, area));
+    expect(followTarget({ x: 1200, y: 680 }, 60, area, areas).y + 36).toBeLessThanOrEqual(handle.y);
+    expect(followTarget({ x: 100, y: 560 }, 60, area, areas).y + 36).toBeLessThanOrEqual(left.y);
+  });
+
+  it("beside a control, Ember parks on a side clear of both (not under the handle for want of room in a band)", () => {
+    const areas = [handle, left];
+    const mid: Box = { x: 600, y: 650, width: 80, height: 30 };
+    expect(besideControl(mid, 60, area, areas)).toEqual(besideControl(mid, 60, area));
+    // A control just left of the handle: its usual spot (to the right) is under the handle; the left is clear.
+    const byHandle: Box = { x: 1060, y: 670, width: 80, height: 30 };
+    expect(under(besideControl(byHandle, 60, area), handle)).toBe(true);
+    const p = besideControl(byHandle, 60, area, areas);
+    expect(areas.some(r => under(p, r))).toBe(false);
+    expect(p.x).toBeLessThan(byHandle.x);
   });
 });
 

@@ -7,11 +7,14 @@ import { Spring2D, type Point } from "@ember/motion";
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
+/** What Ember keeps off, as a list: none, one area, or several apart (its handle, and the task cards in another corner). */
+const areasOf = (avoid: Rect | readonly Rect[] | null): readonly Rect[] => (avoid === null ? [] : "width" in avoid ? [avoid] : avoid);
+
 /**
  * Ember's centre relative to the cursor tip, flipped to stay inside the work area,
- * and kept off `avoid` (Ember's own handle in the corner: it never hides behind it).
+ * and kept off `avoid` (Ember's own handle in the corner, and the task cards: it never hides behind them).
  */
-export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rect | null = null): Point {
+export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rect | readonly Rect[] | null = null): Point {
   const dx = size * 0.55 + 14;
   const dy = size * 0.62 + 16;
   const half = size * 0.6;
@@ -23,9 +26,12 @@ export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rec
     x: Math.min(Math.max(x, area.x + half), area.x + area.width - half),
     y: Math.min(Math.max(y, area.y + half), area.y + area.height - half),
   };
-  if (avoid && p.x + half > avoid.x && p.x - half < avoid.x + avoid.width && p.y + half > avoid.y && p.y - half < avoid.y + avoid.height) {
-    // Over the handle: sit just above it instead.
-    p.y = Math.max(area.y + half, avoid.y - half - 4);
+  // Over the handle (or cards): sit just above it instead, and above the next if that puts it over another.
+  const areas = areasOf(avoid);
+  for (let i = 0; i < areas.length; i++) {
+    const r = areas.find(a => p.x + half > a.x && p.x - half < a.x + a.width && p.y + half > a.y && p.y - half < a.y + a.height);
+    if (!r) break;
+    p.y = Math.max(area.y + half, r.y - half - 4);
   }
   return p;
 }
@@ -53,19 +59,20 @@ export const overlapsBody = (p: Point, half: number, r: Rect): boolean =>
  * that spot is under `avoid` (its handle and the task cards), the other side, or above or below the control, if one
  * of those is clear: it never parks under the card of the very task it works for.
  */
-export function besideControl(r: Rect, size: number, area: Rect, avoid: Rect | null = null): Point {
+export function besideControl(r: Rect, size: number, area: Rect, avoid: Rect | readonly Rect[] | null = null): Point {
   const half = size * 0.6;
   const cy = Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half);
   const cx = Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half);
   const spot = besideRect(r, size, area, r.y + r.height / 2) ?? { x: cx, y: cy };
-  if (!avoid || !overlapsBody(spot, half, avoid)) return spot;
+  const clear = (p: Point) => !areasOf(avoid).some(a => overlapsBody(p, half, a));
+  if (clear(spot)) return spot;
   const gap = 10;
   const onScreen = (p: Point) => p.x - half >= area.x && p.x + half <= area.x + area.width && p.y - half >= area.y && p.y + half <= area.y + area.height;
   const spots = [
     { x: r.x + r.width + gap + half, y: cy }, { x: r.x - gap - half, y: cy },
     { x: cx, y: r.y - gap - half }, { x: cx, y: r.y + r.height + gap + half },
   ];
-  return spots.find(p => onScreen(p) && !overlapsBody(p, half, avoid)) ?? spot;
+  return spots.find(p => onScreen(p) && clear(p)) ?? spot;
 }
 
 export class Follower {

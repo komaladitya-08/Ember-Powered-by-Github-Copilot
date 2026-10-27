@@ -206,17 +206,18 @@ export class OverlayManager {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
     // Cards that came up over where Ember holds still beside a control: it moves off them (only then: a question's
     // buttons move with it).
-    const f = this.state.focus;
-    const off = f && this.beside ? this.keepOff(screen.getDisplayMatching(f)) : null;
-    if (f && this.beside && off && overlapsBody(this.beside, this.settings().size * 0.6, off)) this.follower.park(this.besideFocus(f));
+    const f = this.state.focus, at = this.beside;
+    const half = this.settings().size * 0.6;
+    if (f && at && this.keepOff(screen.getDisplayMatching(f)).some(r => overlapsBody(at, half, r))) this.follower.park(this.besideFocus(f));
   }
 
   /**
-   * What Ember keeps off on `display`: its handle (when it is there) and that display's task cards stacked above it
-   * (one area: they touch), within the display's work area. Each display draws its own cards: one area round every
-   * display's would be a band across the desktop that Ember could not follow the cursor into.
+   * What Ember keeps off on `display`: its handle (when it is there) and that display's task cards, within the
+   * display's work area. Cards stacked above the handle make one area with it (Ember fits in no gap between them);
+   * cards moved to the other corner stay a separate area, as each display's cards do: one area round them all would
+   * be a band across the screen that Ember could not follow the cursor into.
    */
-  private keepOff(display: Pick<Display, "id" | "workArea">): Rect | null {
+  private keepOff(display: Pick<Display, "id" | "workArea">): Rect[] {
     const a = display.workArea;
     const clip = (r: Rect | null | undefined): Rect | null => {
       if (!r) return null;
@@ -226,9 +227,10 @@ export class OverlayManager {
     };
     const r = clip(this.avoid?.());
     const c = clip([...this.overlays.values()].find(o => o.display.id === display.id)?.cards);
-    if (!r || !c) return r ?? c;
+    if (!r || !c) return r ? [r] : c ? [c] : [];
+    if (c.x >= r.x + r.width || r.x >= c.x + c.width) return [r, c];
     const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
-    return { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
+    return [{ x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y }];
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
