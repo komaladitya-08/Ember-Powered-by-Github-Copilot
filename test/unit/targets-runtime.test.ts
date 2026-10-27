@@ -1066,6 +1066,21 @@ describe("naming a computer by a short name (reviews #179, #180)", () => {
     expect(r.t.agent.bind({ userWords: "in Ubuntu 22.04, list my home folder" })).toMatchObject({ ok: true, binding: { id: "wsl:Ubuntu-22.04" } });
   });
 
+  it("never takes a distro's own first word as its name: 'in build' stays here with a distro called build-env", async () => {
+    const distros = [ubuntu({ name: "Ubuntu-22.04" }), ubuntu({ name: "build-env", isDefault: false }), ubuntu({ name: "test-box", isDefault: false }), ubuntu({ name: "work-vm", isDefault: false })];
+    const r = rig({ os: "win32", wslFacts: wslFacts(distros), settings: { ...wslOnSettings, ...commandsOn("local") } });
+    await flush();
+    for (const w of ["delete the logs in build", "save it in test mode", "clean up old files in work"]) {
+      for (const choice of [undefined, "build", "test", "work"]) {
+        const b = r.t.agent.bind({ userWords: w, ...(choice ? { choice } : {}) });
+        expect(b.ok ? b.binding.id : b.why, `${w} / ${String(choice)}`).not.toMatch(/^wsl:/);
+      }
+    }
+    expect(r.t.agent.bind({ userWords: "delete the logs in build" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu, list my home folder" })).toMatchObject({ ok: true, binding: { id: "wsl:Ubuntu-22.04" } });
+    expect(r.t.agent.bind({ userWords: "in build-env, delete the logs" })).toMatchObject({ ok: true, binding: { id: "wsl:build-env" } });
+  });
+
   it("while WSL is off, still binds here for 'in Ubuntu' but counts it for the guard and offers to turn WSL on (review #195)", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ name: "Ubuntu-22.04" })]), settings: commandsOn("local") });
     // The settings window looked for distros (nothing is offered for that alone).

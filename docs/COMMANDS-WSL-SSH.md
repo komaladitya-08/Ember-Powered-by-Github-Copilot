@@ -44,8 +44,9 @@ goes to the computer Ember is set to work on (and nothing dangerous in it runs o
 own words choose: never text on a screen, in a file or in a command's output.
 
 **Short names.** A computer added by its full name also answers to its first part when that has a digit or a hyphen
-("on build-01" for build-01.example.com; "in the app" never names app.example.com), and a WSL distro to its first word
-("in Ubuntu" for Ubuntu-22.04, "in kali" for kali-linux). The longest name you say wins ("on build-01-test" is
+("on build-01" for build-01.example.com; "in the app" never names app.example.com), and a distribution's WSL distro to
+its first word ("in Ubuntu" for Ubuntu-22.04, "in kali" for kali-linux; a distro you imported as build-env answers only
+to build-env, so "delete the logs in build" names none). The longest name you say wins ("on build-01-test" is
 build-01-test, not build-01). When two computers share the short name you said, Ember asks which one; when you name a
 version of a distro that isn't installed ("in Ubuntu 24.04" with only Ubuntu-22.04), Ember asks whether you meant the
 one you have.

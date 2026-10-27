@@ -119,12 +119,20 @@ export function shortHostName(name: string): string | null {
 }
 
 /**
+ * The distributions whose first word stands for the distro, as `wsl --list --online` and the Store name them
+ * ("Ubuntu-22.04", "kali-linux", "openSUSE-Leap-15.5", "OracleLinux_9_1"…). A distro the user made with `wsl --import`
+ * ("build-env", "test-box", "work-vm") gets no short name: "delete the logs in build" names no distro.
+ */
+const DISTRO_FAMILY = /^(?:ubuntu|debian|kali|opensuse|suse|sles|oraclelinux|almalinux|fedoralinux|fedora|pengwin|alpine|arch|archlinux|centos|rockylinux)$/i;
+
+/**
  * A distro's first word, before its first "-", "_", "." or digit ("Ubuntu" of "Ubuntu-22.04", "kali" of "kali-linux",
- * "openSUSE" of "openSUSE-Leap-15.5"), as a short name for "in Ubuntu" (review #180); null when that is its whole name.
+ * "openSUSE" of "openSUSE-Leap-15.5"), as a short name for "in Ubuntu" (review #180); null when that is its whole name or
+ * isn't a distribution's own name (a first word such as "build" of "build-env" is an everyday word, not a computer).
  */
 export function shortDistroName(name: string): string | null {
   const m = /^[A-Za-z]+/.exec(name);
-  return m && m[0] !== name && m[0].length >= MIN_NAME ? m[0] : null;
+  return m && m[0] !== name && m[0].length >= MIN_NAME && DISTRO_FAMILY.test(m[0]) ? m[0] : null;
 }
 
 /**

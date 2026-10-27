@@ -14,6 +14,7 @@ import type { TargetId } from "../../app/shared/targets";
 import {
   activeOf, bindable, buildRegistry, defaultDistro, hostPart, namedTargets, summaryOf, type LinkView, type RegistryInput,
 } from "../../app/main/targets/registry";
+import { bindTarget } from "../../app/main/targets/resolve";
 
 const noPolicy: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
 const policy = (p: unknown): LoadedAdminPolicy => ({ policy: AdminPolicySchema.parse(p), source: "/etc/ember/policy.json" });
@@ -192,6 +193,26 @@ describe("short names (reviews #179, #180)", () => {
     // A distro called just Ubuntu keeps its name to itself.
     const both = buildRegistry(input({ os: "win32", settings: settingsWith({ wslOn: true }), wsl: facts([distro("Ubuntu"), distro("Ubuntu-22.04")]) }));
     expect(namesOf(both, "wsl:Ubuntu-22.04")).not.toContain("Ubuntu");
+  });
+
+  it("gives a first word only to a distribution's own name, so \"in build\" never names a distro called build-env", () => {
+    const e = buildRegistry(input({
+      os: "win32", settings: settingsWith({ wslOn: true }),
+      wsl: facts([distro("Ubuntu-22.04", { isDefault: true }), distro("build-env"), distro("test-box"), distro("work-vm"), distro("dev-ubuntu"), distro("the-box"), distro("AlmaLinux-9")]),
+    }));
+    expect(namesOf(e, "wsl:build-env")).toEqual(["build-env", "build-env (WSL)"]);
+    expect(namesOf(e, "wsl:test-box")).toEqual(["test-box", "test-box (WSL)"]);
+    expect(namesOf(e, "wsl:work-vm")).toEqual(["work-vm", "work-vm (WSL)"]);
+    expect(namesOf(e, "wsl:dev-ubuntu")).toEqual(["dev-ubuntu", "dev-ubuntu (WSL)"]);
+    expect(namesOf(e, "wsl:the-box")).toEqual(["the-box", "the-box (WSL)"]);
+    expect(namesOf(e, "wsl:AlmaLinux-9")).toContain("AlmaLinux");
+    const t = namedTargets(e);
+    const bound = (userWords: string) => bindTarget({ userWords, targets: t, active: "local", os: "win32" });
+    for (const w of ["delete the logs in build", "save it in test mode", "clean up old files in work", "work: tidy my folder", "list the files in dev"]) {
+      expect(bound(w)).toEqual({ ok: true, id: "local" });
+    }
+    expect(bound("in Ubuntu, list my home folder")).toEqual({ ok: true, id: "wsl:Ubuntu-22.04" });
+    expect(bound("in build-env, delete the logs")).toEqual({ ok: true, id: "wsl:build-env" });
   });
 });
 
