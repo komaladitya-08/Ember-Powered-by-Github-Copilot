@@ -4,7 +4,7 @@ import type { SpawnOptions } from "node:child_process";
 import type { RunnerFacts, RunSpec } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
 import type { Timers } from "../../app/main/commands/run/kill";
-import { NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { BSD_SCRIPT_LAUNCH, NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import {
   createRunner, DEFAULT_TIMEOUT_MS, isKeptRun, KEEP_BYTES, KEEP_HEAD_BYTES, launchArgv, LaunchError, START_MARKER,
   type ChildLike, type KeptRun, type RunnerDeps, type RunnerOptions,
@@ -202,13 +202,28 @@ describe("launchArgv", () => {
     expect(launchArgv(spec({ shell: "sh" }), linux, { jobHost: null }).args[4]).toBe(posixInner("sh", "/usr/bin/sh", "env"));
   });
 
-  it("runs macOS commands through BSD script and /bin/sh -c", () => {
+  it("runs macOS commands through BSD script started by bash, whose stdin is a real pipe", () => {
     const s = spec({ shell: "zsh" });
     const got = launchArgv(s, mac, { jobHost: null });
-    expect(got.command).toBe("/usr/bin/script");
-    expect(got.args).toEqual(["-q", "/dev/null", "/bin/sh", "-c", posixInner("zsh", "/bin/zsh", "env")]);
+    expect(got.command).toBe("/bin/bash");
+    expect(got.args).toEqual([...NO_RC.bash, "-c", BSD_SCRIPT_LAUNCH]);
     expect(got.options).toEqual({ detached: true, stdio: ["pipe", "pipe", "pipe"] });
-    expect(got.env).toMatchObject({ SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID, PWD: "/home/ana/src" });
+    expect(got.env).toMatchObject({
+      SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: s.command, EMBER_RUN_ID: RUN_ID, PWD: "/home/ana/src",
+      EMBER_SCRIPT: "/usr/bin/script", EMBER_INNER: posixInner("zsh", "/bin/zsh", "env"),
+    });
+  });
+
+  it("starts BSD script with zsh when there is no bash, and fails to start with neither", () => {
+    const noBash: RunnerFacts = { ...mac, shells: ["zsh", "sh"], shellPaths: { zsh: "/bin/zsh", sh: "/bin/sh" } };
+    expect(launchArgv(spec({ shell: "zsh" }), noBash, { jobHost: null })).toMatchObject({ command: "/bin/zsh", args: [...NO_RC.zsh, "-c", BSD_SCRIPT_LAUNCH] });
+    const shOnly: RunnerFacts = { ...mac, shells: ["sh"], shellPaths: { sh: "/bin/sh" } };
+    expect(() => launchArgv(spec({ shell: "sh" }), shOnly, { jobHost: null })).toThrow(/needs bash or zsh/);
+  });
+
+  it("keeps the command and the run's marker away from the BSD launcher's cat", () => {
+    expect(BSD_SCRIPT_LAUNCH).toContain('exec "$s" -q /dev/null /bin/sh -c "$i" < <(');
+    expect(BSD_SCRIPT_LAUNCH.endsWith("< <(unset EMBER_RUN_ID EMBER_CMD; exec /bin/cat)")).toBe(true);
   });
 
   it("runs on pipes with stdin closed and TERM=dumb without script", () => {

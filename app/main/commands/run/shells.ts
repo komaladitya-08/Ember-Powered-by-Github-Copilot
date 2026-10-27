@@ -57,6 +57,17 @@ export const WSL_EVAL = "set -f; eval $EMBER_INNER";
 export const WSL_CD = 'cd -- "$EMBER_CWD" || exit 97';
 
 /**
+ * How a macOS run starts BSD script(1), run by bash or zsh (-c): script's stdin must be a real pipe. Node gives a child
+ * a socket for "pipe", and BSD script's tcgetattr on a socket fails with EOPNOTSUPP (not ENOTTY, the one error it
+ * tolerates), so every run failed to start (remote.yml's first macOS run). The process substitution makes that pipe and
+ * keeps script in the foreground (exec), so Ctrl+C typed into the PTY still reaches the command; its cat relays the
+ * user's typing and ends at stdin's end, and carries neither the command nor the run's marker (never named as left
+ * running). EMBER_SCRIPT is RunnerFacts.script.path; EMBER_INNER is posixInner(…, "env").
+ */
+export const BSD_SCRIPT_LAUNCH =
+  's=$EMBER_SCRIPT i=$EMBER_INNER; unset EMBER_SCRIPT EMBER_INNER; exec "$s" -q /dev/null /bin/sh -c "$i" < <(unset EMBER_RUN_ID EMBER_CMD; exec /bin/cat)';
+
+/**
  * PowerShell's fixed launcher (§3.3, critique integration-10). A cmdlet's non-terminating error ends the run with 1: it
  * lands in $Error, while `$?` after `& $s` stays true (windows-2022, Windows PowerShell 5.1). $Error.Count, not a method
  * call, so Constrained Language Mode allows it.

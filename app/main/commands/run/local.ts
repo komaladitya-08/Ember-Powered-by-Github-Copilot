@@ -33,7 +33,7 @@ import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths, readScriptText } from "./inspect";
 import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
-import { NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "./shells";
+import { BSD_SCRIPT_LAUNCH, NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "./shells";
 import { linesKept, RUN_ID, sweepLocal } from "./sweep";
 import { JOB_FAILED, JOB_FAILED_PREFIX, jobHostArgv } from "./win32-job";
 
@@ -175,13 +175,19 @@ export function launchArgv(
   const { shell, path } = posixPath();
   if (safeScript) {
     const inner = posixInner(shell, path, "env");
-    const args = safeScript.kind === "util-linux" ? ["-q", "-e", "-f", "-c", inner, "/dev/null"] : ["-q", "/dev/null", "/bin/sh", "-c", inner];
+    // script runs its -c text with $SHELL -c.
+    const env = { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: spec.command, EMBER_COLS: cols, EMBER_ROWS: rows, EMBER_RUN_ID: spec.runId, ...posixPwd(spec) };
+    if (safeScript.kind === "util-linux") {
+      return { command: safeScript.path, args: ["-q", "-e", "-f", "-c", inner, "/dev/null"], options: { detached: true, stdio: ["pipe", "pipe", "pipe"] }, env };
+    }
+    // BSD script needs a real pipe on stdin (BSD_SCRIPT_LAUNCH): bash or zsh makes it.
+    const starter = (["bash", "zsh"] as const).find(s => facts.shells.includes(s) && SAFE_POSIX_PATH.test(facts.shellPaths[s] ?? ""));
+    if (!starter) throw new LaunchError("Ember can't start script(1) here: it needs bash or zsh.");
     return {
-      command: safeScript.path,
-      args,
+      command: facts.shellPaths[starter]!,
+      args: [...NO_RC[starter], "-c", BSD_SCRIPT_LAUNCH],
       options: { detached: true, stdio: ["pipe", "pipe", "pipe"] },
-      // script runs its -c text with $SHELL -c.
-      env: { SHELL: "/bin/sh", TERM: "xterm-256color", EMBER_CMD: spec.command, EMBER_COLS: cols, EMBER_ROWS: rows, EMBER_RUN_ID: spec.runId, ...posixPwd(spec) },
+      env: { ...env, EMBER_SCRIPT: safeScript.path, EMBER_INNER: inner },
     };
   }
   return {
