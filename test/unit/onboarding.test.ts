@@ -28,6 +28,12 @@ const MAIN = read("main/main.ts");
 const MIC = read("renderer/mic/main.ts");
 const VOICE_MAIN = read("main/voice.ts");
 
+/** The element with `id` in the page: its tag and attributes, in whatever order the markup writes them. */
+const tagOf = (id: string): { tag: string; attrs: Record<string, string> } => {
+  const m = new RegExp(`<([a-z0-9]+)((?:\\s+[a-z-]+(?:="[^"]*")?)*?\\s+id="${id}"(?:\\s+[a-z-]+(?:="[^"]*")?)*)\\s*>`).exec(PAGE);
+  if (!m) throw new Error(`no element #${id} in the page`);
+  return { tag: m[1], attrs: Object.fromEntries([...m[2].matchAll(/([a-z-]+)(?:="([^"]*)")?/g)].map(a => [a[1], a[2] ?? ""])) };
+};
 /** A status's OS words as main builds them (only what these tests need differs by OS). */
 const platformOf = (os: OS): StatusPlatform => ({
   os, shortcuts: Object.fromEntries(Object.entries(SHORTCUTS[os]).map(([id, d]) => [id, { label: d.label, keys: d.keys }])) as StatusPlatform["shortcuts"],
@@ -52,14 +58,16 @@ describe("the settings window's first paint", () => {
 });
 
 describe("the microphone consent", () => {
-  it("is read with the button that agrees to it, so a screen reader user hears what they agree to (review #153)", () => {
-    // Turning on "Hey Ember" moves focus straight to the button: its description is the whole note.
-    const panel = /<div id="consent" ([^>]*)>\s*<p id="consent-text">/.exec(PAGE);
-    expect(panel, "the note is the panel's first paragraph, with an id").not.toBeNull();
-    expect(panel![1]).toContain("role=\"group\"");
-    expect(panel![1]).toContain("aria-describedby=\"consent-text\"");
-    expect(panel![1]).toMatch(/aria-label="[^"]+"/);
-    expect(PAGE).toMatch(/<button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening<\/button>/);
+  it("is read once, with the button that agrees to it, so a screen reader user hears what they agree to (review #153)", () => {
+    // Turning on "Hey Ember" moves focus straight to the button: its description is the whole note, whatever element
+    // carries the note's words (fix/voice rewrites them). The panel is named, but doesn't describe itself with the
+    // same note too, or NVDA and JAWS read it twice as focus enters the group.
+    const note = tagOf("consent-text");
+    expect(note.attrs).toBeDefined();
+    expect(PAGE.indexOf("id=\"consent-text\"")).toBeGreaterThan(PAGE.indexOf("id=\"consent\""));
+    expect(tagOf("consent").attrs).toMatchObject({ role: "group", "aria-label": "Before Ember listens" });
+    expect(tagOf("consent").attrs["aria-describedby"]).toBeUndefined();
+    expect(tagOf("consent-yes")).toMatchObject({ tag: "button", attrs: { "aria-describedby": "consent-text" } });
     expect(SCRIPT).toContain("$(\"consent-yes\").focus()");
   });
 });
