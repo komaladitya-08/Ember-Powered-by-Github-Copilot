@@ -180,6 +180,25 @@ describe("names that begin another's, and short names two computers share (revie
     expect(targetsNamed("in Ubuntu 24.04, list my home folder", [local, u22, u24])).toEqual(["wsl:Ubuntu-24.04"]);
   });
 
+  it("lets a longer name win only when it is written as one name, so \"on db-01, backup the database\" still asks which one", () => {
+    const db: NamedTarget = { id: "ssh:db-01", names: ["db-01"] };
+    const backup: NamedTarget = { id: "ssh:db-01-backup", names: ["db-01-backup"] };
+    for (const w of ["on db-01, backup the database to /srv/backups", "on db-01: backup the database", "on db-01. Backup the database", "on db-01 backup the database", "on db-01 - backup the database"]) {
+      expect(bindIn([db, backup], w), w).toEqual({ ok: false, why: TWO_NAMED });
+    }
+    for (const w of ["on db-01-backup, check the disk", "on db-01_backup, check the disk", "on db-01.backup, check the disk"]) {
+      expect(bindIn([db, backup], w), w).toEqual({ ok: true, id: "ssh:db-01-backup" });
+    }
+    expect(bindIn([short, test], "on build-01, test the backup")).toEqual({ ok: false, why: TWO_NAMED });
+    expect(bindIn([short, test], "on build zero one test the backup")).toEqual({ ok: false, why: TWO_NAMED });
+    // A version after a distro's name is part of it, with or without a hyphen.
+    expect(bindIn([u22, u24], "in Ubuntu 24.04, list my home folder")).toEqual({ ok: true, id: "wsl:Ubuntu-24.04" });
+    expect(bindIn([u22, u24], "in Ubuntu 24 04, list my home folder")).toEqual({ ok: true, id: "wsl:Ubuntu-24.04" });
+    expect(bindIn([short, other], "restart nginx on build-01.other.net")).toEqual({ ok: true, id: "ssh:build-01.other.net" });
+    // The end of a sentence is not a dot inside a name.
+    expect(bindIn([short, other], "restart nginx on build-01. Other net jobs can wait")).toEqual({ ok: false, why: TWO_NAMED });
+  });
+
   it("asks which one when the user says only a short name two computers share", () => {
     expect(bindIn([short, other], "on build-01, check the disk")).toEqual({ ok: false, why: TWO_NAMED });
     expect(bindIn([u22, u24], "in Ubuntu, list my home folder")).toEqual({ ok: false, why: TWO_NAMED });

@@ -2,10 +2,10 @@
  * Which computer the user's own words name (§2.3): pure and deterministic, run only on the user's typed or spoken words
  * (never the model's text, screen text, a file or command output). A target is named by its label, alias, hostname or
  * distro name (or the registry's short names for them) after one normalisation (NFKC, lower case, spoken numbers zero
- * to twenty as digits, nothing but letters and digits), as a run of whole words, the longest name said winning, and
- * only after a place word ("on build-01", "in Ubuntu"), as the request's first words before ":" or ",", or before
- * "'s desktop" and the like. So "Send build-01's report to Ana" names nothing, and a model that lost track can't move
- * a task by repeating a name the user never used as a place.
+ * to twenty as digits, nothing but letters and digits), as a run of whole words, the longest name written as one name
+ * winning, and only after a place word ("on build-01", "in Ubuntu"), as the request's first words before ":" or ",", or
+ * before "'s desktop" and the like. So "Send build-01's report to Ana" names nothing, and a model that lost track can't
+ * move a task by repeating a name the user never used as a place.
  */
 
 import type { OS } from "../../shared/shortcuts";
@@ -76,17 +76,33 @@ function runsOf(words: readonly Word[], name: string, min = MIN_NAME): [number, 
 interface Run { id: TargetId; i: number; j: number }
 
 /**
- * Every run of `ws` that spells a name of one of `targets` ("local" aside), except a run inside a longer run of another
- * target's name (the longest wins): "on build-01-test" names build-01-test, not also build-01, and "in Ubuntu 24.04"
- * names Ubuntu-24.04, not also another distro that answers to "Ubuntu" (a short name; reviews #179, #180).
+ * Whether the words of `long` outside `short` are written onto it as one name: each joined to its neighbour by one "-",
+ * "_" or "." ("build-01-test", "build-01.other.net"), or by spaces when it is a number ("Ubuntu 24.04"). "db-01, backup"
+ * or "build-01 test" is two things said, not db-01-backup or build-01-test (reviews #179, #180).
  */
-function runsNaming(ws: readonly Word[], targets: readonly NamedTarget[]): Run[] {
+function writtenOnto(folded: string, ws: readonly Word[], long: Run, short: Run): boolean {
+  for (let k = long.i + 1; k <= long.j; k++) {
+    if (k > short.i && k <= short.j) continue;
+    const gap = folded.slice(ws[k - 1].end, ws[k].start);
+    const extra = k <= short.i ? ws[k - 1] : ws[k];
+    if (!/^[-_.]$/.test(gap) && !(/^\s+$/.test(gap) && /^\d+$/.test(extra.text))) return false;
+  }
+  return true;
+}
+
+/**
+ * Every run of `ws` that spells a name of one of `targets` ("local" aside), except a run inside a longer run of another
+ * target's name written as one name with it (the longest wins): "on build-01-test" names build-01-test, not also
+ * build-01, and "in Ubuntu 24.04" names Ubuntu-24.04, not also another distro that answers to "Ubuntu" (a short name;
+ * reviews #179, #180). "on db-01, backup the database" keeps both db-01 and db-01-backup, so Ember asks which one.
+ */
+function runsNaming(folded: string, ws: readonly Word[], targets: readonly NamedTarget[]): Run[] {
   const runs: Run[] = [];
   for (const t of targets) {
     if (t.id === "local") continue;
     for (const n of t.names) for (const [i, j] of runsOf(ws, normaliseName(n))) runs.push({ id: t.id, i, j });
   }
-  return runs.filter(r => !runs.some(o => o.id !== r.id && o.i <= r.i && r.j <= o.j && o.j - o.i > r.j - r.i));
+  return runs.filter(r => !runs.some(o => o.id !== r.id && o.i <= r.i && r.j <= o.j && o.j - o.i > r.j - r.i && writtenOnto(folded, ws, o, r)));
 }
 
 /** Rule 3: the run [i, j] stands where a place is named. */
@@ -136,7 +152,7 @@ export function targetsNamed(words: string, targets: readonly NamedTarget[], os:
     const at = localAt(ws, os);
     if (at >= 0) found.push({ id: "local", at });
   }
-  for (const r of runsNaming(ws, targets)) if (isPlace(folded, ws, r.i, r.j)) found.push({ id: r.id, at: r.i });
+  for (const r of runsNaming(folded, ws, targets)) if (isPlace(folded, ws, r.i, r.j)) found.push({ id: r.id, at: r.i });
   found.sort((a, b) => a.at - b.at);
   return [...new Set(found.map(f => f.id))];
 }
@@ -298,7 +314,8 @@ export function bindTarget(o: { userWords: string; choice?: string; targets: rea
   if (id === o.active) return { ok: true, id };
   const t = o.targets.find(x => x.id === id);
   // Named anywhere, and not only as the start of another computer's name ("build-01" in "build-01-test's report").
-  const said = id === "local" ? !!t && namedAnywhere(o.userWords, t, o.os) : runsNaming(wordsOf(fold(String(o.userWords ?? ""))), o.targets).some(r => r.id === id);
+  const folded = fold(String(o.userWords ?? ""));
+  const said = id === "local" ? !!t && namedAnywhere(o.userWords, t, o.os) : runsNaming(folded, wordsOf(folded), o.targets).some(r => r.id === id);
   return said ? { ok: true, id } : { ok: false, why: NOT_NAMED };
 }
 
