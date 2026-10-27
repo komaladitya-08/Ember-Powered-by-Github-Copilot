@@ -538,3 +538,24 @@ describe("commands off, but the user could turn them on (review #40)", () => {
     }
   });
 });
+
+describe("what offers the Commands switch (review #40)", () => {
+  it("a request to run a command offers it; a word about something else doesn't", async () => {
+    vi.useFakeTimers();
+    try {
+      for (const [words, offered] of [["run this command: df -h", true], ["press the command key twice", false]] as const) {
+        const { t } = fakeTargets({ caps: () => ({ commands: false, targets: false, commandsOffered: true }) });
+        let seen = false;
+        const { host, session } = await started({ hands: hands(), targets: t, setState: (p: any) => { if (p.bubble?.title === "Commands are off" && p.bubble.visible) seen = true; } });
+        await host.ask(words);
+        session.emit("assistant.message", { content: "Okay." });
+        session.emit("session.idle", {});
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(seen, words).toBe(offered);
+        await host.stop();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -1060,7 +1060,7 @@ export class AgentHost {
         } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
-        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn (?:commands|them) on/i.test(text)) this.hintCommands(); },
+        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
         onTurnEnd: this.o.onTurnEnd,
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
@@ -1501,7 +1501,7 @@ export class AgentHost {
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
     // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once).
     const terminal = terminalRequest(this.sys.os, this.wslOn());
-    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\bcommands?\b/i.test(text)) this.hintCommands();
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintCommands();
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
