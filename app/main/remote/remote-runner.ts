@@ -42,7 +42,7 @@ export interface RemoteRunner extends CommandRunner {
   dispose(): void;
   /**
    * The line a running command's tab shows in place of "Running…" (§8.5), as the flow's followStatus reads a runner's
-   * status: while the link is stalled, "<host> isn't answering. This command stops in N s unless the link comes back.",
+   * status: while the link is stalled, "<host> isn't answering. This command stops in N seconds unless it answers again.",
    * counting down each second to the grace; null otherwise.
    */
   status(): string | null;

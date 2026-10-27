@@ -362,7 +362,7 @@ describe("the stop chord in the SSH, WSL and commands words, per OS", () => {
   it("names each OS's chord when the kill switch stopped a command", () => {
     for (const os of OSES) {
       expect(statusLine({ code: null, signal: null, ended: "killswitch", ms: 2000 }, { label: "build-01", os }))
-        .toBe(`Stopped by ${SHORTCUTS[os].stop.label} after 2 s. What it already changed stays.`);
+        .toBe(`Stopped by ${SHORTCUTS[os].stop.label} after 2\u00a0s. What it already changed stays.`);
     }
   });
 });
