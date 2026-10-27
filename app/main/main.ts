@@ -294,7 +294,7 @@ function start(): void {
       bringToFront(home);
       return;
     }
-    home = createHomeWindow();
+    home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
     // A crashed settings page comes back (it may be the consent page on first run).
     revive(home, reason => log.warn("window.home.renderer_gone", { reason }));

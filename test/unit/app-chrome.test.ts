@@ -36,7 +36,7 @@ vi.mock("electron", () => ({
   Menu: {}, nativeTheme: {}, app: {},
 }));
 
-const { WINDOW_ICON, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor } = await import("../../app/main/windows");
+const { WINDOW_ICON, ZOOM, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor, zoomLevelFor } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -170,11 +170,79 @@ describe("the native theme (review #245)", () => {
     // themeSource doesn't reach a GTK window: Mutter reads the window's _GTK_THEME_VARIANT, which darkTheme sets.
     // Windows and macOS ignore the option.
     for (const os of ["linux", "win32", "darwin"] as OS[]) {
-      for (const [name, make] of [["settings", () => createHomeWindow()], ["command", () => createCommandWindow(os)], ["prompt", () => createPromptWindow(os)]] as const) {
+      for (const [name, make] of [["settings", () => createHomeWindow(os)], ["command", () => createCommandWindow(os)], ["prompt", () => createPromptWindow(os)]] as const) {
         make();
         expect(electron.made.at(-1)!.options.darkTheme, `${name} on ${os}`).toBe(true);
       }
     }
+  });
+});
+
+describe("zoom in the settings window on Windows and Linux (review #243)", () => {
+  /** A key going down with Ctrl held, as before-input-event reports it. */
+  const ctrl = (key: string, o: { shift?: boolean; alt?: boolean; meta?: boolean; control?: boolean; type?: string } = {}) =>
+    ({ type: o.type ?? "keyDown", key, control: o.control ?? true, shift: o.shift ?? false, alt: o.alt ?? false, meta: o.meta ?? false });
+
+  it("zooms in with Ctrl+= and Ctrl++, out with Ctrl+-, and back to 100% with Ctrl+0, half a level a step, as Electron's menu did", () => {
+    for (const os of ["linux", "win32"] as OS[]) {
+      expect(zoomLevelFor(os, ctrl("="), 0)).toBe(0.5);
+      // Ctrl+Shift+= on a US keyboard, the + key on a German one, the numpad's +.
+      expect(zoomLevelFor(os, ctrl("+", { shift: true }), 0.5)).toBe(1);
+      expect(zoomLevelFor(os, ctrl("+"), 0)).toBe(0.5);
+      expect(zoomLevelFor(os, ctrl("-"), 0)).toBe(-0.5);
+      expect(zoomLevelFor(os, ctrl("0"), 2.5)).toBe(0);
+      expect(zoomLevelFor(os, ctrl("0"), -1)).toBe(0);
+    }
+  });
+
+  it("goes no further than 58% and 249% (past WCAG's 200% text)", () => {
+    expect(ZOOM).toEqual({ step: 0.5, min: -3, max: 5 });
+    expect(1.2 ** ZOOM.max).toBeGreaterThan(2);
+    expect(zoomLevelFor("linux", ctrl("="), ZOOM.max)).toBe(ZOOM.max);
+    expect(zoomLevelFor("linux", ctrl("="), 4.75)).toBe(ZOOM.max);
+    expect(zoomLevelFor("win32", ctrl("-"), ZOOM.min)).toBe(ZOOM.min);
+  });
+
+  it("leaves every other key to the page: no Ctrl, Alt or AltGr, the Windows or Command key, Shift with - or 0, key up, macOS", () => {
+    for (const input of [
+      ctrl("=", { control: false }), ctrl("+", { alt: true }), ctrl("-", { alt: true }), ctrl("0", { meta: true }),
+      ctrl("-", { shift: true }), ctrl("0", { shift: true }), ctrl("_", { shift: true }), ctrl("=", { type: "keyUp" }),
+      ctrl("a"), ctrl("c"), ctrl("v"), ctrl("z"), ctrl("q"), ctrl("1"),
+    ]) expect(zoomLevelFor("linux", input, 0), JSON.stringify(input)).toBeNull();
+    // macOS never had zoom: its menu has no View menu.
+    for (const k of ["=", "+", "-", "0"]) expect(zoomLevelFor("darwin", ctrl(k), 0)).toBeNull();
+  });
+
+  it("is wired to the settings window only, on Windows and Linux: the command and prompt windows are fixed in size", () => {
+    for (const os of ["linux", "win32"] as OS[]) {
+      createHomeWindow(os);
+      const { page } = electron.made.at(-1)!;
+      const onKey = page.handlers.get("before-input-event") as unknown as (e: { preventDefault(): void }, input: ReturnType<typeof ctrl>) => void;
+      expect(onKey, os).toBeTypeOf("function");
+      const e = { preventDefault: vi.fn() };
+      onKey(e, ctrl("="));
+      onKey(e, ctrl("+", { shift: true }));
+      expect(page.level).toBe(1);
+      expect(e.preventDefault).toHaveBeenCalledTimes(2);
+      onKey(e, ctrl("0"));
+      expect(page.level).toBe(0);
+      // Not a zoom key: the page gets it, untouched.
+      const typed = { preventDefault: vi.fn() };
+      onKey(typed, ctrl("a"));
+      onKey(typed, ctrl("=", { type: "keyUp" }));
+      expect(typed.preventDefault).not.toHaveBeenCalled();
+      expect(page.level).toBe(0);
+      for (const make of [() => createCommandWindow(os), () => createPromptWindow(os)]) {
+        make();
+        expect(electron.made.at(-1)!.page.handlers.has("before-input-event")).toBe(false);
+      }
+    }
+    createHomeWindow("darwin");
+    expect(electron.made.at(-1)!.page.handlers.has("before-input-event")).toBe(false);
+  });
+
+  it("is given the OS by main.ts", () => {
+    expect(MAIN).toContain("home = createHomeWindow(platform.os);");
   });
 });
 

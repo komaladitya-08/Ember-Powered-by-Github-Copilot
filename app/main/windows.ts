@@ -17,7 +17,8 @@ import type { SettingsPatch } from "./settings";
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
 
-export function createHomeWindow(): BrowserWindow {
+/** The settings window, which zooms by keys on Windows and Linux (zoomByKeys). */
+export function createHomeWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
     width: 760,
     height: 640,
@@ -39,8 +40,50 @@ export function createHomeWindow(): BrowserWindow {
     },
   });
   win.once("ready-to-show", () => win.show());
+  zoomByKeys(win.webContents, os);
   void win.loadFile(path.join(appDir, "renderer", "home", "index.html"));
   return win;
+}
+
+/** The settings window's zoom: Electron's own step, from 58% (1.2^-3) to 249% (1.2^5), past WCAG's 200% text. */
+export const ZOOM = { step: 0.5, min: -3, max: 5 } as const;
+
+/** A key as before-input-event reports it, as far as zoomLevelFor reads it. */
+export interface KeyInput { type: string; key: string; control: boolean; shift: boolean; alt: boolean; meta: boolean }
+
+/**
+ * The settings window's zoom level after this key, or null when it isn't a zoom key (review #243). Electron's default
+ * menu was what zoomed on Windows and Linux, and they have no menu now: Ctrl+= or Ctrl++ (Shift+= on a US keyboard,
+ * the + key on others, the numpad's) zooms in, Ctrl+- out, Ctrl+0 back to 100%. Not with Alt (AltGr is Ctrl+Alt on
+ * Windows) or the Windows key. macOS: no zoom, as before (its menu has no View menu).
+ */
+export function zoomLevelFor(os: OS, input: KeyInput, level: number): number | null {
+  if (os === "darwin" || input.type !== "keyDown" || !input.control || input.alt || input.meta) return null;
+  if (input.key === "0" && !input.shift) return 0;
+  const step = input.key === "=" || input.key === "+" ? ZOOM.step : input.key === "-" && !input.shift ? -ZOOM.step : 0;
+  return step ? Math.min(ZOOM.max, Math.max(ZOOM.min, level + step)) : null;
+}
+
+/** A page's webContents, as far as zoomByKeys needs it. */
+export interface ZoomHost {
+  on(event: "before-input-event", listener: (event: { preventDefault(): void }, input: KeyInput) => void): unknown;
+  getZoomLevel(): number;
+  setZoomLevel(level: number): void;
+}
+
+/**
+ * The page zooms by keys on Windows and Linux (zoomLevelFor), and never sees a zoom key. Only the settings window: the
+ * command and prompt windows are fixed in size, and their cards would be cut off. Chromium keeps a file:// page's zoom
+ * to its own window.
+ */
+export function zoomByKeys(contents: ZoomHost, os: OS): void {
+  if (os === "darwin") return;
+  contents.on("before-input-event", (event, input) => {
+    const level = zoomLevelFor(os, input, contents.getZoomLevel());
+    if (level === null) return;
+    event.preventDefault();
+    contents.setZoomLevel(level);
+  });
 }
 
 /** What every Ember page gets: its own preload, contextIsolation, the sandbox, no Node and no spellchecker downloads. */
@@ -117,7 +160,7 @@ export interface AppMenuActions {
  * Command+C/V/X/A/Z work in fields and the Window menu. Windows and Linux: none. Electron's default menu stayed there
  * otherwise, with Ctrl+Q quitting at once (no "still working" question), Ctrl+R reloading a card, Ctrl+Shift+I opening
  * DevTools on the password card, Ctrl+W closing the ask box, F11, and the bar Alt showed. Chromium itself still cuts,
- * copies, pastes and undoes in fields there.
+ * copies, pastes and undoes in fields there, and the settings window zooms by its own keys (zoomByKeys).
  */
 export function appMenuTemplate(appMenu: boolean, actions: AppMenuActions): MenuItemConstructorOptions[] | null {
   if (!appMenu) return null;
