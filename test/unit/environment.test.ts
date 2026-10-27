@@ -76,8 +76,10 @@ describe("a desktop session Ember can't use, at start-up (review #240)", () => {
   it("is what Ember's greeting says instead of “I'll stay by your cursor”", () => {
     const wayland = inspectEnvironment({ ...base, env: { ...base.env, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" } });
     expect(sessionGreeting(wayland)).toBe("This is a Wayland session, so I can't see your screen or use your mouse here. Log out, click the gear on the login screen, choose “GNOME on Xorg”, and log in again.");
-    const noDisplay = inspectEnvironment({ ...base, env: {} });
-    expect(sessionGreeting(noDisplay)).toBe(`This desktop session doesn't work with me. ${noDisplay.checks.find(c => c.id === "session")!.detail}`);
+    // In Ember's own voice throughout, never with the setup check's third-person detail appended.
+    const display = "I can't reach your desktop's display: start me from inside your desktop session.";
+    expect(sessionGreeting(inspectEnvironment({ ...base, env: {} }))).toBe(display);
+    expect(sessionGreeting(inspectEnvironment({ ...base, env: { DISPLAY: ":7" }, x11: false }))).toBe(display);
     expect(sessionGreeting(inspectEnvironment(base))).toBeNull();
     // Another check failing (old glibc) isn't the session's: the greeting stays as it was.
     expect(sessionGreeting(inspectEnvironment({ ...base, glibc: "2.17" }))).toBeNull();
@@ -86,6 +88,6 @@ describe("a desktop session Ember can't use, at start-up (review #240)", () => {
   it("speaks of a Windows service session too", () => {
     const r = inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions: { node: "22" }, platform: "win32", arch: "x64",
       windows: { build: 22631, elevated: false, session: "service", powershell: "full", dpiMixed: false } });
-    expect(sessionGreeting(r)).toBe("This desktop session doesn't work with me. Start Ember from your desktop, not as a service.");
+    expect(sessionGreeting(r)).toBe("I can't work in this session: start me from your desktop, not as a service.");
   });
 });

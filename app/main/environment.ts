@@ -151,7 +151,8 @@ export const WAYLAND_REASON = "this is a Wayland session, so Ember can't take sc
 
 /**
  * What Ember's greeting says when the desktop session check fails (a Wayland session, no X display, a Windows service
- * session), in place of "I'll stay by your cursor": nothing else at start-up says why nothing works. null otherwise.
+ * session), in place of "I'll stay by your cursor": nothing else at start-up says why nothing works. In Ember's own
+ * voice, one line for each case (the setup check's row has the details). null otherwise.
  */
 export function sessionGreeting(report: EnvReport): string | null {
   const c = report.checks.find(x => x.id === "session");
@@ -159,7 +160,9 @@ export function sessionGreeting(report: EnvReport): string | null {
   if (/wayland/i.test(c.detail)) {
     return "This is a Wayland session, so I can't see your screen or use your mouse here. Log out, click the gear on the login screen, choose “GNOME on Xorg”, and log in again.";
   }
-  return `This desktop session doesn't work with me. ${c.detail}`;
+  if (report.sessionType === "service") return "I can't work in this session: start me from your desktop, not as a service.";
+  // Linux without an X display, or with one Ember can't connect to.
+  return "I can't reach your desktop's display: start me from inside your desktop session.";
 }
 
 export function inspectEnvironment(i: EnvInputs): EnvReport {
