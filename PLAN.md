@@ -349,7 +349,8 @@ per-app grants; never-look list before capture; audit log; admin policy; local k
 wake-word protections (second-stage check, self-mute, speaker-output rejection).
 On Windows, remote surfaces (Remote Desktop and WSLg windows) are refused for every action and blacked out of
 screenshots, because Ember can't tell what runs inside them (M11); with WSL on, a WSLg window Ember identifies is
-treated as its Linux app (M12).
+treated as its Linux app (M12). Remote-desktop and virtual-machine viewers on Linux and macOS (Remmina, virt-manager,
+GNOME Boxes, VNC and RDP viewers, Screen Sharing, UTM, Parallels, VMware, VirtualBox) are remote surfaces too.
 
 Commands (M12) never go through a terminal of the user's: they run in Ember's own command window, where the user
 watches and can stop them. Ordinary commands run at once. Deleting or overwriting data, submitting or publishing,
