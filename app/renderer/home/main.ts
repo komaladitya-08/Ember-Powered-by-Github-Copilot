@@ -16,6 +16,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
+import { REPORT_URL } from "../../shared/support";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -253,6 +254,8 @@ function render(status: Status): void {
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`],
     ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json"],
     ["Log file", status.logFile],
+    // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
+    ["Report a problem", REPORT_URL],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val]) => {
     const dt = document.createElement("dt"); dt.textContent = k;

@@ -177,7 +177,9 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     id: "os",
     label: "Operating system",
     status: isRhel8 ? "ok" : "warn",
-    detail: os.PRETTY_NAME ?? "unknown",
+    // Another Linux says why it is only a warning (review #105).
+    detail: isRhel8 ? os.PRETTY_NAME ?? "unknown"
+      : `${os.PRETTY_NAME ?? "This Linux"}. Ember is tested on RHEL 8 and its family (Rocky, Alma and Oracle Linux 8): it may work here, but it isn't supported.`,
   });
 
   if (sessionType === "wayland" || (!!i.env.WAYLAND_DISPLAY && sessionType !== "x11")) {
