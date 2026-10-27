@@ -21,7 +21,7 @@ import {
 import { createRequire } from "node:module";
 import { autostartEntry, autostartFile, execArg, launchCommand, syncAutostart } from "../../app/main/autostart";
 import { inspectEnvironment } from "../../app/main/environment";
-import { AdminPolicySchema } from "../../app/main/admin";
+import { AdminPolicySchema, commandMode, parseAdminPolicy } from "../../app/main/admin";
 
 const goodEnv = inspectEnvironment({
   env: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0", XDG_CURRENT_DESKTOP: "GNOME" },
@@ -145,6 +145,25 @@ describe("the RPM", () => {
     expect(spec).toMatch(/^AutoReqProv:\s+no$/m);
     for (const dep of ["gtk3", "nss", "libXtst", "python3-pyatspi", "platform-python"]) expect(spec).toMatch(new RegExp(`^Requires:.*\\b${dep}\\b`, "m"));
     for (const dep of ["xorg-x11-server-Xvfb", "speech-dispatcher", "gnome-shell-extension-top-icons", "ember-voice-models"]) expect(spec).toMatch(new RegExp(`^Recommends:.*\\b${dep}\\b`, "m"));
+  });
+  it("ships an example policy that takes the current keys, so copying it as-is turns nothing off (review #208, #37)", () => {
+    const example = fs.readFileSync(path.resolve("packaging/policy.example.json"), "utf8");
+    const loaded = parseAdminPolicy(example, "/etc/ember/policy.json");
+    expect(loaded.error).toBeUndefined();
+    // A policy without `commands` turns commands off on every kind of target (R5): the example says "on" for each.
+    for (const kind of ["local", "wsl", "ssh"] as const) expect(commandMode(loaded, kind), kind).toBe("on");
+    expect(loaded.policy.features).toMatchObject({ wsl: true, ssh: true });
+    // "*" lets Ember connect to any computer, as when the key is absent.
+    expect(loaded.policy.ssh).toEqual({ allowedHosts: ["*"], desktop: true });
+    // The README beside it names every key the policy takes, and the rule about `commands`.
+    const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
+    for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
+    expect(readme).toMatch(/without "commands" turns commands off/);
+    for (const f of ["policy.example.json", "policy.README"]) {
+      expect(spec).toContain(`install -Dm644 ${f} %{buildroot}%{_docdir}/ember/${f}`);
+      expect(spec).toContain(`%doc %{_docdir}/ember/${f}`);
+      expect(fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8")).toMatch(new RegExp(`"\\$root/packaging/${f.replace(".", "\\.")}"`));
+    }
   });
   it("puts speech models where Ember looks for them", () => {
     expect(spec).toContain("%{_datadir}/ember/voice-models");

@@ -74,6 +74,7 @@ install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop
 install -Dm644 ember.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/ember.svg
 install -Dm644 ember.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/ember.png
 install -Dm644 policy.example.json %{buildroot}%{_docdir}/ember/policy.example.json
+install -Dm644 policy.README %{buildroot}%{_docdir}/ember/policy.README
 install -dm755 %{buildroot}%{_sysconfdir}/ember
 %if 0%{?with_models}
 mkdir -p %{buildroot}%{_datadir}/ember
@@ -110,6 +111,7 @@ fi
 %{_datadir}/icons/hicolor/256x256/apps/ember.png
 %dir %{_docdir}/ember
 %doc %{_docdir}/ember/policy.example.json
+%doc %{_docdir}/ember/policy.README
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}

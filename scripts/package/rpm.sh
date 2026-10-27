@@ -16,7 +16,7 @@ src="$top/src"
 ln -s "$stage/ember" "$src/ember"
 [ -d "$stage/voice-models" ] && ln -s "$stage/voice-models" "$src/voice-models"
 cp "$root/packaging/ember" "$src/launcher"
-cp "$root/packaging/ember.desktop" "$root/packaging/policy.example.json" "$root/assets/ember.svg" "$src/"
+cp "$root/packaging/ember.desktop" "$root/packaging/policy.example.json" "$root/packaging/policy.README" "$root/assets/ember.svg" "$src/"
 node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$src/ember.png" 256
 tar -C "$src" -chf "$top/SOURCES/ember-$version-staged.tar" .
 cp "$root/packaging/rpm/ember.spec" "$top/SPECS/"

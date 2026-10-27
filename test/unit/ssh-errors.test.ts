@@ -72,7 +72,8 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
 describe("the bootstrap's own errors", () => {
   it("maps each code to §8.7's message", () => {
     expect(bootstrapFailure("busy-install", undefined, "build-01")).toMatchObject({ kind: "busy-install", retry: true, message: "Another Ember is installing its helper on build-01. Try again in a minute." });
-    expect(bootstrapFailure("exec-denied", undefined, "build-01").message).toContain("fapolicyd trust");
+    // The administrator's own fix, and no "Ember remote package", which doesn't exist yet (review #37).
+    expect(bootstrapFailure("exec-denied", undefined, "build-01").message).toBe("build-01's security software doesn't let programs from your home folder run. Ask its administrator to allow Ember's helper there (with fapolicyd, by trusting its folders).");
     expect(bootstrapFailure("integrity", "runtime", "build-01").message).toBe("Ember's helper didn't arrive intact on build-01 (runtime). Try again.");
     expect(bootstrapFailure("space", undefined, "build-01").kind).toBe("disk");
     expect(bootstrapFailure("busy", undefined, "build-01").message).toBe("Ember from another computer is already working on build-01.");

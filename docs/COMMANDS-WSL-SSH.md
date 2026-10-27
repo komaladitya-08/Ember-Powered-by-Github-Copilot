@@ -502,7 +502,7 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 | "build-01's system is too old for Ember (it needs glibc 2.28 or newer, as in RHEL 8 or Ubuntu 20.04)." | Ember can't work there |
 | "build-01 doesn't have room for Ember's helper (it needs about 400 MB in your home folder)." | Free some space |
 | "build-01 doesn't let programs run from your home folder, so Ember can't run there." | Ask its administrator (§6.6) |
-| "build-01's security software doesn't let programs from your home folder run. Ask its administrator to allow Ember's helper (fapolicyd trust), or to install the Ember remote package." | §6.6 |
+| "build-01's security software doesn't let programs from your home folder run. Ask its administrator to allow Ember's helper there (with fapolicyd, by trusting its folders)." | §6.6 |
 | "Ember couldn't download what it needs for build-01 (&lt;reason&gt;). Check your internet connection, or ask your administrator about a mirror." | As it says; the mirror is §6.1's `ssh.runtimeMirror` |
 | "The download of what Ember needs for build-01 stalled. Try again." | Nothing arrived for 60 seconds, so Ember ended the download (nothing was copied to build-01). **Try again**; if it keeps stalling, check your proxy or ask your administrator about a mirror |
 | "Your organisation doesn't allow Ember to connect to build-01." | Your administrator's `ssh.allowedHosts` |
@@ -620,8 +620,8 @@ Ember's helper runs from the user's home folder (`~/.local/share/ember-remote/ru
 `~/.local/share/ember-remote/versions/<version>/ember-remote.cjs`). Before marking it installed, Ember checks that it
 can run there. On a host where fapolicyd (DISA's RHEL 8 STIG requires it), a confined SELinux user or a `noexec` home
 stops programs in home folders, Ember says so ("build-01's security software doesn't let programs from your home
-folder run. Ask its administrator to allow Ember's helper (fapolicyd trust), or to install the Ember remote
-package.") and does nothing there. To allow it, trust those folders with the host's own tools (for fapolicyd, add them
+folder run. Ask its administrator to allow Ember's helper there (with fapolicyd, by trusting its folders).") and does
+nothing there. To allow it, trust those folders with the host's own tools (for fapolicyd, add them
 to its trust database with `fapolicyd-cli --file add <folder>`, then `fapolicyd-cli --update`), and again after an
 Ember update replaces them. These files sit in the user's own home folder, so the user can change them after you trust
 them: with fapolicyd, set its `integrity` option to `sha256` (or `ima`) so that a changed file is no longer trusted.
