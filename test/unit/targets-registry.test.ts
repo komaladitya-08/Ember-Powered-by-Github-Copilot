@@ -129,8 +129,9 @@ describe("SSH hosts (§2.2)", () => {
     expect(e.find(x => x.id === "ssh:db-02")).toMatchObject({ state: "lost", usable: false });
     const off = withHosts([]).find(x => x.id === "ssh:build-01")!;
     expect(off).toMatchObject({ state: "off", usable: false, login: "deploy", can: "not connected" });
-    // The model is pointed at offer_connect, which puts a Connect button in the bubble (review #197).
-    expect(off.why).toBe("build-01 isn't connected. Ember can offer a Connect button for it (offer_connect).");
+    // Points the model at offer_connect's Connect button, in words the user may read too, in a failed task's card (review #197).
+    expect(off.why).toBe("build-01 isn't connected. Ember can show a Connect button for it.");
+    expect(e.find(x => x.id === "ssh:db-02")!.why).toBe("The connection to db-02 dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).");
     const ready = withHosts([["build-01", view("ready", { desktop: "screen", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;
     expect(ready).toMatchObject({ state: "ready", usable: true, can: "apps and commands" });
     const stalled = withHosts([["build-01", view("stalled", { desktop: "none", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;

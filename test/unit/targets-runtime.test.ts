@@ -713,7 +713,7 @@ describe("SSH targets", () => {
     expect(r.showState).toHaveBeenCalledWith({ target: undefined });
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Lost build-01", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }, { id: "conn:build-01:stop", label: "Stop trying" }] }) });
     // The menu's item is disabled while lost: the bubble's Reconnect, offer_connect or Settings (review #197).
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Ember can offer a Connect button for it (offer_connect), or the user can reconnect it in Ember's settings (Computers)." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers)." });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
   });
 
@@ -729,7 +729,7 @@ describe("SSH targets", () => {
       title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
     }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can offer a Connect button for it (offer_connect)." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can show a Connect button for it." });
     // Ten minutes of network failures: said as it is, with Reconnect.
     const l2 = await connected(r, "build-02");
     l2.move("lost");

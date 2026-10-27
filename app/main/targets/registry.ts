@@ -237,10 +237,11 @@ function wslEntries(i: RegistryInput): TargetEntry[] {
 
 /**
  * Why a known computer that isn't connected can't take a task: offer_connect puts a Connect button in the bubble, as it
- * does for a computer Ember doesn't know yet, so the model is pointed there, not at a menu (review #197).
+ * does for a computer Ember doesn't know yet, so the model is pointed there, not at a menu (review #197). The user may
+ * read it too (a queued task's card when its computer drops), so it names no tool and speaks to both.
  */
 export function notConnectedWhy(label: string): string {
-  return `${label} isn't connected. Ember can offer a Connect button for it (offer_connect).`;
+  return `${label} isn't connected. Ember can show a Connect button for it.`;
 }
 
 /** The SSH entries: one per host record, while the administrator allows SSH. */
@@ -265,7 +266,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
     if (link.state === "lost") {
       // The menu's item is disabled while lost: the bubble's Reconnect, offer_connect's button or Settings (review #197).
       out.push({ ...base, state: "lost", can: "connection lost", usable: false,
-        why: `The connection to ${label} dropped. Ember can offer a Connect button for it (offer_connect), or the user can reconnect it in Ember's settings (Computers).` });
+        why: `The connection to ${label} dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).` });
       continue;
     }
     const cmd = link.commands ?? "off";
