@@ -46,7 +46,13 @@ const SILENT_TEXT = "The microphone is sending only silence. Check that the righ
 
 export interface VoiceOptions {
   log: Logger;
+  /** The speech models' folder. */
   modelsRoot: string;
+  /**
+   * `modelsRoot` came with Ember (inside the app, or installed beside it), so Ember never changes it: should its models
+   * turn out damaged, the user's own models folder (`userRoot`) is used, and downloaded to, instead (review #254).
+   */
+  bundled?: { userRoot: string };
   /** Speaker-output rejection (needs parec). */
   monitor: boolean;
   /**
@@ -111,8 +117,13 @@ export class VoiceService {
   private readyAt = 0;
   /** Whether the ready voice process still answers: what it last sent, checked every second (review #257). */
   private alive: { watch: FrameWatchdog; timer: NodeJS.Timeout } | null = null;
+  /** Where the models are: modelsRoot, or the user's own folder once those that came with Ember turned out damaged. */
+  private modelsRoot: string;
+  private bundled: boolean;
 
   constructor(private o: VoiceOptions) {
+    this.modelsRoot = o.modelsRoot;
+    this.bundled = !!o.bundled;
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
@@ -149,7 +160,7 @@ export class VoiceService {
   }
 
   get modelsReady(): boolean {
-    return modelsReady(this.o.modelsRoot);
+    return modelsReady(this.modelsRoot);
   }
 
   /** Lets the mic window (and only it) use the microphone, audio only. */
@@ -191,7 +202,7 @@ export class VoiceService {
   async downloadModels(progress: ModelsProgress): Promise<void> {
     if (!this.downloading && !this.modelsReady) {
       this.setState("downloading");
-      this.downloading = ensureModels(this.o.modelsRoot, electronDownloader, progress)
+      this.downloading = ensureModels(this.modelsRoot, electronDownloader, progress)
         .then(() => { this.o.log.info("voice.models_ready", { bytes: VOICE_MODELS_BYTES }); })
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
@@ -290,8 +301,18 @@ export class VoiceService {
         this.teardown();
         // Models that won't load are damaged: they count as missing from now, and settings offers the download again.
         if (m.models) {
-          if (forgetModels(this.o.modelsRoot)) this.setState("needs-models", "The speech models look damaged. Download them again.");
-          else this.setState("error", "The speech models look damaged, and Ember can't replace them. Reinstall Ember's speech models.");
+          // Models that came with Ember are never changed (they may be inside the signed app, and an update replaces
+          // them): the user's own folder is used from now on, and the download goes there.
+          if (this.bundled && this.o.bundled) {
+            this.o.log.warn("voice.bundled_models_damaged", { root: this.modelsRoot });
+            this.bundled = false;
+            this.modelsRoot = this.o.bundled.userRoot;
+            if (this.modelsReady) void this.start();
+            else this.setState("needs-models", "The speech models look damaged. Download them again.");
+            return;
+          }
+          if (forgetModels(this.modelsRoot)) this.setState("needs-models", "The speech models look damaged. Download them again.");
+          else this.setState("error", "The speech models look damaged, and Ember can't replace them: it isn't allowed to change its models folder.");
           return;
         }
         this.setState("error", m.message);
@@ -325,7 +346,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: modelPaths(this.o.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged }, [port1]);
+    proc.postMessage({ type: "init", models: modelPaths(this.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;

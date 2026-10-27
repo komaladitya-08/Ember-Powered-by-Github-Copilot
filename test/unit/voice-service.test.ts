@@ -451,6 +451,52 @@ describe("VoiceService keeps listening going", () => {
     expect(fs.readdirSync(root).filter(f => f.endsWith(".ok"))).toEqual([]);
   });
 
+  it("never changes models that came with Ember when they turn out damaged: the download goes to the user's own folder (review #254)", async () => {
+    vi.useFakeTimers();
+    const bundled = modelsRoot(true);
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-voice-user-"));
+    const userRoot = path.join(root, "models"); // not there yet, as before a first download
+    const states: { s: MicState; detail?: string }[] = [];
+    const v = new VoiceService({ log, modelsRoot: bundled, bundled: { userRoot }, monitor: false, onEvent: () => undefined, onState: (s, detail) => states.push({ s, detail }) });
+    services.push(v);
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      expect(fs.readdirSync(bundled).filter(f => f.endsWith(".ok"))).toHaveLength(VOICE_MODELS.length); // its markers stay
+      expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+      expect(v.modelsReady).toBe(false); // so settings shows the download button
+      electron.net.fetch.mockRejectedValue(new Error("net::ERR_INTERNET_DISCONNECTED"));
+      await expect(v.downloadModels(() => undefined)).rejects.toThrow();
+      expect(fs.existsSync(userRoot)).toBe(true); // the download went there, not into the app
+      expect(fs.readdirSync(bundled).filter(f => !f.endsWith(".ok")).sort()).toEqual(VOICE_MODELS.map(m => m.target).sort());
+    } finally {
+      fs.rmSync(bundled, { recursive: true, force: true });
+    }
+  });
+
+  it("uses models already in the user's own folder when the ones that came with Ember are damaged (review #254)", async () => {
+    vi.useFakeTimers();
+    const bundled = modelsRoot(true);
+    root = modelsRoot(true); // downloaded earlier
+    const states: { s: MicState; detail?: string }[] = [];
+    const v = new VoiceService({ log, modelsRoot: bundled, bundled: { userRoot: root }, monitor: false, onEvent: () => undefined, onState: (s, detail) => states.push({ s, detail }) });
+    services.push(v);
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(electron.procs).toHaveLength(2);
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ models: { kws: expect.stringContaining(root) } });
+      // Those fail too: they are the user's own, so they're forgotten.
+      electron.procs[1].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+      expect(modelsReady(root)).toBe(false);
+      expect(modelsReady(bundled)).toBe(true);
+    } finally {
+      fs.rmSync(bundled, { recursive: true, force: true });
+    }
+  });
+
   it("a model that won't load is an error to show, not a restart loop", async () => {
     vi.useFakeTimers();
     const { v, states } = service();

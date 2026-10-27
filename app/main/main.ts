@@ -1589,6 +1589,8 @@ function start(): void {
     voice = new VoiceService({
       log: log.child("voice"),
       modelsRoot: speechModels.root,
+      // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
+      ...(speechModels.bundled ? { bundled: { userRoot: path.join(userData, "models") } } : {}),
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without

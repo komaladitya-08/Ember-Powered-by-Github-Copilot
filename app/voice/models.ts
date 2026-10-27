@@ -94,8 +94,8 @@ export function modelsReady(root: string): boolean {
 
 /**
  * The models in `root` turned out damaged (they wouldn't load): their markers go, so they count as missing and the
- * download fetches them again (review #254). False when a marker couldn't be removed (a read-only folder, such as models
- * installed with Ember).
+ * download fetches them again (review #254). False when a marker couldn't be removed (permission denied). Never used on
+ * models that came with Ember: VoiceService turns to the user's own folder instead.
  */
 export function forgetModels(root: string): boolean {
   let all = true;
