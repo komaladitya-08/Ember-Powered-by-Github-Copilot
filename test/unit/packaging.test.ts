@@ -153,12 +153,15 @@ describe("the RPM", () => {
     // A policy without `commands` turns commands off on every kind of target (R5): the example says "on" for each.
     for (const kind of ["local", "wsl", "ssh"] as const) expect(commandMode(loaded, kind), kind).toBe("on");
     expect(loaded.policy.features).toMatchObject({ wsl: true, ssh: true });
-    // "*" lets Ember connect to any computer, as when the key is absent.
-    expect(loaded.policy.ssh).toEqual({ allowedHosts: ["*"], desktop: true });
+    // SSH reaches every computer, so the Computers tab mustn't say "only some computers": main marks SSH as limited
+    // whenever ssh.allowedHosts is set, even to ["*"] (review #208). The README shows the allowedHosts form instead.
+    expect(loaded.policy.ssh).toEqual({ desktop: true });
+    expect(loaded.policy.ssh?.allowedHosts).toBeUndefined();
     // The README beside it names every key the policy takes, and the rule about `commands`.
     const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
     for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
     expect(readme).toMatch(/without "commands" turns commands off/);
+    expect(readme).toMatch(/"ssh": \{ "allowedHosts": \[/);
     for (const f of ["policy.example.json", "policy.README"]) {
       expect(spec).toContain(`install -Dm644 ${f} %{buildroot}%{_docdir}/ember/${f}`);
       expect(spec).toContain(`%doc %{_docdir}/ember/${f}`);

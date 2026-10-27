@@ -6,5 +6,5 @@
   "maxActionsPerMinute": 30,
   "auditRetentionDays": 90,
   "commands": { "local": "on", "wsl": "on", "ssh": "on" },
-  "ssh": { "allowedHosts": ["*"], "desktop": true }
+  "ssh": { "desktop": true }
 }

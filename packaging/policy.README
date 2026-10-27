@@ -36,5 +36,10 @@ Every key is optional:
                         allow Ember first), "runtimeMirror" (an https:// mirror of nodejs.org/dist for remotes) and
                         "commandGraceSeconds" (3 to 120)
 
+The example lets Ember connect to every computer, so it leaves "allowedHosts" out: with the key set, even to ["*"],
+the settings window says your organisation lets Ember connect only to some computers. To limit SSH, add a list:
+
+  "ssh": { "allowedHosts": ["build-*.example.com", "deploy@db-01.example.com:22"], "desktop": true }
+
 Ember's developer guide (docs/DEVELOPING.md, "For administrators") and docs/COMMANDS-WSL-SSH.md section 6 explain
 each key in full, including how the policy of a computer Ember connects to applies there.
