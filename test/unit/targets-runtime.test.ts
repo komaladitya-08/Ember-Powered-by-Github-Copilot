@@ -1631,6 +1631,41 @@ function answers(p: Presenter, text: string): void {
   p.event({ type: "session.idle", data: {} });
 }
 
+describe("connection progress (review #20, #187)", () => {
+  it("rewrites the bubble only when its words change, not on every downloaded chunk", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    r.showState.mockClear();
+    for (let done = 0; done <= 30_000_000; done += 60_000) for (const p of r.progress) p("build-01", { step: "downloading", done, total: 30_000_000 });
+    const texts = r.showState.mock.calls.map(c => (c[0] as Partial<EmberState>).bubble?.thought).filter(Boolean);
+    expect(texts).toHaveLength(31);
+    expect(new Set(texts).size).toBe(31);
+    expect(texts.at(-1)).toBe("Downloading what Ember needs for build-01 (30 of 30 MB)…");
+    release();
+    await pending;
+  });
+
+  it("never puts the connecting bubble back over an answer the user is reading", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    expect(s.screen().title).toBe("Connecting to build-01…");
+    s.convo.userPrompt("what's the time?");
+    answers(s.convo, "Half past three.");
+    for (let done = 0; done <= 29_000_000; done += 1_000_000) for (const p of r.progress) p("build-01", { step: "copying", done, total: 29_000_000 });
+    expect(s.screen().thought).toBe("Half past three.");
+    // Once the answer goes, the connection shows how far it got.
+    s.advance(30_000);
+    expect(s.screen()).toMatchObject({ title: "Connecting to build-01…", thought: expect.stringContaining("(29 of 29 MB)") });
+    release();
+    await pending;
+  });
+});
+
 describe("a dropped connection (review #11, #185)", () => {
   it("says work moves to this computer until it's back, and keeps its Reconnect over the stopped task's result", async () => {
     const s = screenRig();

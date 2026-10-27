@@ -604,6 +604,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
 
   // ── Connecting ──
+  /** What each host's connecting bubble says now (its progress rewrites it only when this changes). */
+  const progressSaid = new Map<string, string>();
   const connState = (hostId: string): Conn => {
     let c = conns.get(hostId);
     if (!c) { c = { state: "closed", link: null, target: null, abort: null, offs: [], activate: false }; conns.set(hostId, c); }
@@ -720,7 +722,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     c.state = "connecting";
     c.activate = o.activate;
     refresh();
-    bubble(`connecting:${hostId}`, say(words.connecting(label, { step: "checking" }), [`conn:${hostId}:cancel`], "thinking"));
+    const first = words.connecting(label, { step: "checking" });
+    progressSaid.set(hostId, first.text);
+    bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "thinking"));
     const stopped = (message: string): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message }; };
     const fail = (message: string, retry = false): ActResult => {
       c.state = "closed";
@@ -1123,7 +1127,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         }
         if (c?.state !== "connecting") return;
         const step = connectStep(p);
-        if (step) bubble(`connecting:${hostId}`, say(words.connecting(hostId, step), [`conn:${hostId}:cancel`], "thinking"));
+        if (!step) return;
+        // A download reports every network chunk, its words change once a megabyte: only the connecting bubble itself is
+        // updated, only when its words change, and never back over what covered it since (it shows once that goes).
+        const w = words.connecting(hostId, step);
+        if (shown?.key !== `connecting:${hostId}` || progressSaid.get(hostId) === w.text) return;
+        progressSaid.set(hostId, w.text);
+        bubble(`connecting:${hostId}`, say(w, [`conn:${hostId}:cancel`], "thinking"), { claim: "reply" });
       }));
     } catch (err) { log.warn("targets.progress_listen_failed", { err }); }
   }
