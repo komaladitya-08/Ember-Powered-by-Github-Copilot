@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
-import { auditRetentionDays, commandMode, managedKeys, modelServiceRefusal } from "./admin";
+import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -35,6 +35,7 @@ import { AuditLog } from "./policy/audit";
 import { KillSwitch } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
+import { watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
@@ -240,11 +241,12 @@ async function runDoctor(): Promise<void> {
 }
 
 function start(): void {
-  // The administrator's policy (/etc/ember/policy.json on Linux) overrides the user's settings.
-  const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
+  // The administrator's policy (/etc/ember/policy.json on Linux) overrides the user's settings. Read again every 10 s:
+  // once it changes, Ember holds itself locked down until it is restarted (the watch below replaces both).
+  let admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
   if (admin.error) log.error("admin_policy.invalid", { error: admin.error, note: "locked down until it is fixed" });
   else if (admin.source) log.info("admin_policy.loaded", { file: admin.source });
-  const policy = admin.policy;
+  let policy = admin.policy;
   // Windows: antivirus and sync tools briefly lock a file being replaced, so the save tries again.
   const settings = new SettingsStore(path.join(userData, "settings.json"), policy, { renameRetries: sys.paths.renameRetries });
   const loaded = settings.load();
@@ -1054,6 +1056,8 @@ function start(): void {
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
+    // The administrator's policy changed while Ember ran: a restart reads it whole.
+    if (id === "ui:restart") { app.relaunch(); app.quit(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -1605,7 +1609,7 @@ function start(): void {
       },
     });
     if (settings.get().voice.muted) voice.setMuted(true);
-    const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent && consented();
+    const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
@@ -1616,6 +1620,29 @@ function start(): void {
       if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
     });
     app.on("will-quit", () => voice?.stop());
+
+    // The administrator's policy changed while Ember ran: everything stops, and Ember holds itself locked down (no
+    // actions, commands, listening or model service) until the user restarts it, which reads the new policy whole.
+    const unwatchPolicy = watchAdminPolicy({
+      first: admin,
+      read: () => sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY")),
+      onChange: next => {
+        log.warn("admin_policy.changed", { file: next.source, error: next.error ?? null, note: "held locked down until Ember restarts" });
+        admin = heldUntilRestart(next);
+        policy = admin.policy;
+        wanted = false;
+        void voice?.setWanted(false);
+        // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.
+        void agent?.start(null);
+        void killSwitch.pull("policy").then(() => {
+          const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "Your organisation changed my policy",
+            thought: "I've stopped everything, and I won't act, listen or answer until you restart me.", actions: [{ id: "ui:restart", label: "Restart Ember" }] };
+          statusBy.listen = statusBy.mic = null;
+          setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
+        });
+      },
+    });
+    app.on("will-quit", unwatchPolicy);
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
     if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();

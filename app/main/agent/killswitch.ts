@@ -14,8 +14,11 @@ export interface StopPart {
   stop: () => void | Promise<unknown>;
 }
 
-/** Who pulled it: Ember's shortcut, "Ember, stop", the menu, or Stop on a remote's notice by someone at that screen. */
-export type StopSource = "hotkey" | "voice" | "menu" | "remote-console";
+/**
+ * Who pulled it: Ember's shortcut, "Ember, stop", the menu, Stop on a remote's notice by someone at that screen, or the
+ * administrator's policy changing while Ember ran.
+ */
+export type StopSource = "hotkey" | "voice" | "menu" | "remote-console" | "policy";
 
 export class KillSwitch {
   constructor(private parts: () => StopPart[], private log: Logger, private audit?: () => AuditLog | null) {}

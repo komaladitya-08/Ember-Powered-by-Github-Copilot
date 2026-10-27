@@ -575,6 +575,10 @@ Example for a fleet that allows SSH to build hosts, commands with questions on r
 A locked-down Ember (a broken policy) also connects to no model service, neither GitHub Copilot nor the organisation's
 own endpoint, and prunes nothing from the audit log, until the policy reads fine again.
 
+Ember reads the PC's policy again every 10 seconds, as the helper on a remote does. When what it says changes (tightened,
+repaired, added or removed), Ember stops everything, holds itself locked down as above, and asks the user to restart it;
+the restart reads the new policy whole.
+
 **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
 before this release reads `commands`, `ssh`, `features.wsl` or `features.ssh` as a mistake and locks down (no actions,
 no listening) until the policy is fixed or Ember is updated. Update Ember everywhere before deploying a policy that

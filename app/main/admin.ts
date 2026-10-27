@@ -98,6 +98,8 @@ export interface LoadedAdminPolicy {
   source: string | null;
   /** Set when the file exists but couldn't be used: Ember is locked down. */
   error?: string;
+  /** The policy changed while Ember ran: Ember holds itself locked down until it is restarted (heldUntilRestart). */
+  held?: boolean;
 }
 
 /** Everything off that could act or listen: used when the policy file is broken. */
@@ -177,7 +179,23 @@ export function auditRetentionDays(loaded: LoadedAdminPolicy): number | null {
  */
 export function modelServiceRefusal(loaded: LoadedAdminPolicy): string | null {
   if (loaded.error === undefined) return null;
+  if (loaded.held) return "Your organisation changed Ember's policy while Ember was running. Restart Ember to use the new one.";
   return "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed.";
+}
+
+/** Do `a` and `b` say the same (the same source, the same values, the same problem)? */
+export function samePolicy(a: LoadedAdminPolicy, b: LoadedAdminPolicy): boolean {
+  return a.source === b.source && a.error === b.error && JSON.stringify(a.policy) === JSON.stringify(b.policy);
+}
+
+/**
+ * What Ember holds to once the administrator's policy changed while it ran (`next`: what it says now): the lockdown,
+ * until a restart reads the new policy whole. Much of Ember is built from the policy once (the settings it overrides,
+ * the borrowed mouse, the desk, the model endpoint), so the old snapshot can't be trusted and the new one can't be
+ * applied in place: Ember stops acting, listening and using any model service in between (fail closed).
+ */
+export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
+  return { ...lockedDown(next.source ?? "the administrator's policy", "it changed while Ember was running; restart Ember to use it"), held: true };
 }
 
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
