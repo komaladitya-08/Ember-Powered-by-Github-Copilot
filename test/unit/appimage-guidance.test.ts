@@ -50,4 +50,17 @@ describe("an AppImage's guidance", () => {
     expect(appImage).toContain(`sudo dnf install ${rpmA11y.join(" ")}`);
     expect(appImage).toMatch(/\.AppImage doctor/);
   });
+
+  it("names every package the RPM recommends for voice, speaking and the desk in the README's optional line", () => {
+    const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
+    const recommends = [...spec.matchAll(/^Recommends:\s*(.+)$/gm)].flatMap(m => m[1].split(/[,\s]+/)).filter(Boolean);
+    // Left out on purpose: the models RPM requires Ember's own RPM, and the tray extension shows icons Ember never makes.
+    expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).not.toMatch(/\bnew Tray\(/);
+    const wanted = recommends.filter(p => p !== "ember-voice-models" && p !== "gnome-shell-extension-top-icons");
+    // pulseaudio-utils: parec (speaker rejection, without which a spoken request never counts as yours) and pactl.
+    expect(wanted).toContain("pulseaudio-utils");
+    const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
+    const optional = /^# Optional, for [^\n]*\nsudo dnf install ([^\n]+)$/m.exec(readme)?.[1].split(/\s+/) ?? [];
+    expect([...optional].sort()).toEqual([...wanted].sort());
+  });
 });

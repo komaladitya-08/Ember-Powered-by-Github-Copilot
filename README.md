@@ -46,8 +46,8 @@ system packages the RPM would bring for reading apps:
 
 ```bash
 sudo dnf install python3-pyatspi python3-gobject at-spi2-core
-# Optional, for speaking and Ember's desk:
-sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon
+# Optional, for “Hey Ember”, speaking and Ember's desk:
+sudo dnf install pulseaudio-utils speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon
 chmod +x Ember-0.1.0-x86_64.AppImage
 ./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
