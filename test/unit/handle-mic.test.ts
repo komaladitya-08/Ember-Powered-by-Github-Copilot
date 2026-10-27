@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { idleLine, micAnnouncement, micBadge, MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import type { MicState } from "../../app/shared/voice";
+import { HandleLive } from "../../app/renderer/handle/live";
+import { IDLE_BUBBLE } from "../../app/shared/overlay";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const STATES: MicState[] = ["off", "needs-models", "downloading", "starting", "waiting", "active", "muted", "error"];
@@ -71,6 +73,71 @@ describe("the microphone badge", () => {
   it("offers the way to fix a microphone problem in the handle's menu (review #73)", () => {
     expect(MIC_PROBLEM_MENU).toBe("Microphone problem: open Settings…");
     expect(read("app/main/main.ts")).toMatch(/voice\?\.micState === "error"[^\n]*MIC_PROBLEM_MENU/);
+  });
+});
+
+describe("what the handle says about the microphone in its live region", () => {
+  /** Feeds microphone states in order, as main sends them; what is said at each. */
+  const said = (states: MicState[]) => { const live = new HandleLive("Ember"); return states.map(s => live.micNews(s)); };
+
+  it("says a microphone problem once while Ember keeps retrying, not at every retry (review #73)", () => {
+    // VoiceService.restartLater: error, starting again after 1 s, error, after 5 s, error, then every 30 s.
+    expect(said(["waiting", "error", "starting", "error", "starting", "error"])).toEqual([null, "Microphone problem", null, null, null, null]);
+    // Through the speech models' download too.
+    expect(said(["waiting", "error", "downloading", "starting", "error"])).toEqual([null, "Microphone problem", null, null, null]);
+  });
+
+  it("says it again when listening worked in between, and when it breaks while starting (review #73)", () => {
+    expect(said(["waiting", "error", "starting", "waiting", "error"])).toEqual([null, "Microphone problem", null, null, "Microphone problem"]);
+    expect(said(["muted", "starting", "waiting", "muted"])).toEqual([null, null, null, "Microphone off"]);
+    // Ember starting to listen as it opens, then failing: news (the first state is only what it was).
+    expect(said(["starting", "error"])).toEqual([null, "Microphone problem"]);
+    expect(said(["error", "starting", "error"])).toEqual([null, null, null]);
+    expect(said(["off", "starting", "error"])).toEqual([null, null, "Microphone problem"]);
+  });
+
+  it("says \"Microphone off\" once in the no-compositor card when the shortcut mutes it (review #59)", () => {
+    // main's toggleMute: the voice state changes to muted, then its status line says the same words for 2.5 s.
+    const live = new HandleLive("Ember");
+    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    expect(update("waiting", null)).toBeNull();
+    expect(update("muted", null)).toBe("Microphone off");
+    expect(update("muted", "Microphone off")).toBeNull();
+    expect(update("muted", null)).toBeNull();
+    // Unmuted and muted again: said again.
+    expect(update("starting", null)).toBeNull();
+    expect(update("waiting", null)).toBeNull();
+    expect(update("muted", null)).toBe("Microphone off");
+    expect(update("muted", "Microphone off")).toBeNull();
+    // A status line with other words is said as before.
+    expect(update("muted", "Using your mouse: move it to take over")).toBe("Using your mouse: move it to take over");
+  });
+
+  it("says it once in whichever order the two updates come, or when they come together (review #59)", () => {
+    const live = new HandleLive("Ember");
+    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    update("waiting", null);
+    expect(update("waiting", "Microphone off")).toBe("Microphone off");
+    expect(update("muted", "Microphone off")).toBeNull();
+    update("muted", null); update("starting", null); update("waiting", null);
+    expect(update("muted", "Microphone off")).toBe("Microphone off");
+  });
+
+  it("still says the same status line again later, once the microphone's news is used up", () => {
+    const live = new HandleLive("Ember");
+    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    update("waiting", null);
+    expect(update("muted", null)).toBe("Microphone off");
+    expect(update("muted", "Using your mouse: move it to take over")).toBe("Using your mouse: move it to take over");
+    // The microphone's news was not on the status line this time: a later "Microphone off" line is new.
+    expect(update("muted", "Microphone off")).toBe("Microphone off");
+  });
+
+  it("is what the handle page uses, in the pill and the card alike", () => {
+    const main = read("app/renderer/handle/main.ts");
+    expect(main).toContain("new HandleLive(name)");
+    expect(main).toMatch(/const micNews = live\.micNews\(s\.mic\)/);
+    expect(main).toMatch(/live\.card\(b, s\.status \?\? null, micNews\)/);
   });
 });
 
