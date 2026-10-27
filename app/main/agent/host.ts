@@ -341,7 +341,7 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
  * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
  * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
  */
-export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string } = {}): string {
+export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
   if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
@@ -352,6 +352,11 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
   if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
+    // A token from the environment comes before every other sign-in: only taking it out of Ember's environment (or
+    // fixing it) gets past it for good. (Ember tried the other sign-ins it found before saying this: main.)
+    if (ctx.source === "environment" && ctx.sourceName && /^[A-Z_]+$/.test(ctx.sourceName)) {
+      return `Copilot didn't accept the GitHub token in ${ctx.sourceName} (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove ${ctx.sourceName}, then restart Ember; or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
+    }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
   return msg;
@@ -429,6 +434,8 @@ export class AgentHost {
   private chain: Promise<void> = Promise.resolve();
   private token: string | null = null;
   private source: string | undefined;
+  /** The environment variable the token came from (source "environment"). */
+  private sourceName: string | undefined;
   private health: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   /** When the runtime died lately (five in ten minutes: Ember stops trying). */
@@ -710,9 +717,11 @@ export class AgentHost {
    *
    * `how`: "auto" for Ember's own start at launch. After the user signed out, a GitHub CLI or
    * environment sign-in found then isn't used until they sign in again ("user", the default).
+   * `name`: the environment variable a token from the environment came from (a refusal names it).
    */
-  start(token: string | null, source?: string, how: "user" | "auto" = "user"): Promise<AgentPhase> {
+  start(token: string | null, source?: string, how: "user" | "auto" = "user", name?: string): Promise<AgentPhase> {
     this.quitting = false;
+    this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
     if (token && how === "user") this.setSignedOut(false);
     else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
@@ -1089,7 +1098,7 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      const ctx = { source: this.source, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall };
+      const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall };
       this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
       await this.doStop();
       // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the

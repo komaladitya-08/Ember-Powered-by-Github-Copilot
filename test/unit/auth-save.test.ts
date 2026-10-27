@@ -45,13 +45,13 @@ describe("ghCliToken", () => {
   it("asks gh on PATH with today's options when nothing is given (Linux)", async () => {
     answer("gho_fromcli\n");
     expect(await ghCliToken()).toBe("gho_fromcli");
-    expect(execFile).toHaveBeenLastCalledWith("gh", ["auth", "token"], { timeout: 3000 }, expect.any(Function));
+    expect(execFile).toHaveBeenLastCalledWith("gh", ["auth", "token", "--hostname", "github.com"], { timeout: 3000 }, expect.any(Function));
   });
 
   it("uses the platform's path and spawn options (no console window on Windows)", async () => {
     answer("gho_fromcli\n");
     expect(await ghCliToken({ path: "C:\\Program Files\\GitHub CLI\\gh.exe", spawn: { windowsHide: true } })).toBe("gho_fromcli");
-    expect(execFile).toHaveBeenLastCalledWith("C:\\Program Files\\GitHub CLI\\gh.exe", ["auth", "token"], { windowsHide: true, timeout: 3000 }, expect.any(Function));
+    expect(execFile).toHaveBeenLastCalledWith("C:\\Program Files\\GitHub CLI\\gh.exe", ["auth", "token", "--hostname", "github.com"], { windowsHide: true, timeout: 3000 }, expect.any(Function));
   });
 
   it("gives nothing for a failed or unusable answer", async () => {
@@ -64,7 +64,7 @@ describe("ghCliToken", () => {
   it("is what resolveToken asks, with the options main passes", async () => {
     answer("gho_viaoptions\n");
     expect(await resolveToken(null, {}, { path: "/opt/homebrew/bin/gh" })).toEqual({ token: "gho_viaoptions", source: "github-cli" });
-    expect(execFile).toHaveBeenLastCalledWith("/opt/homebrew/bin/gh", ["auth", "token"], { timeout: 3000 }, expect.any(Function));
+    expect(execFile).toHaveBeenLastCalledWith("/opt/homebrew/bin/gh", ["auth", "token", "--hostname", "github.com"], { timeout: 3000 }, expect.any(Function));
     // A function still stands in for the CLI (tests, as before).
     expect(await resolveToken(null, {}, async () => "gho_fake")).toEqual({ token: "gho_fake", source: "github-cli" });
   });

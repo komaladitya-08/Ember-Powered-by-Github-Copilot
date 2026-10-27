@@ -13,7 +13,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 
 export type TokenSource = "stored" | "environment" | "github-cli";
-export interface ResolvedToken { token: string; source: TokenSource }
+/** A sign-in found, where from, and for the environment the variable that holds it (a refusal names it). */
+export interface ResolvedToken { token: string; source: TokenSource; name?: string }
 
 export interface SecretBox {
   isEncryptionAvailable(): boolean;
@@ -75,10 +76,13 @@ export interface GhCliOptions {
   timeoutMs?: number;
 }
 
-/** The GitHub CLI's token (`gh auth token`), or null when gh is missing, signed out or gives an unusable token. */
+/**
+ * The GitHub CLI's token for github.com (`gh auth token --hostname github.com`: Copilot is on github.com, whatever GH_HOST
+ * or gh's default host says), or null when gh is missing, isn't signed in to github.com, or gives an unusable token.
+ */
 export function ghCliToken(o: GhCliOptions = {}): Promise<string | null> {
   return new Promise(resolve => {
-    execFile(o.path ?? "gh", ["auth", "token"], { ...o.spawn, timeout: o.timeoutMs ?? 3000 }, (err, stdout) => {
+    execFile(o.path ?? "gh", ["auth", "token", "--hostname", "github.com"], { ...o.spawn, timeout: o.timeoutMs ?? 3000 }, (err, stdout) => {
       const t = stdout?.trim();
       resolve(!err && isUsableToken(t) ? t : null);
     });
@@ -88,19 +92,46 @@ export function ghCliToken(o: GhCliOptions = {}): Promise<string | null> {
 /**
  * The token Ember uses: its own stored one, then the environment's, then the GitHub CLI's. `gh` is how the CLI is
  * asked: a function (tests), or the options ghCliToken takes (main passes the platform's path and spawn options).
+ * `skip`: tokens Copilot refused this run (a stale GH_TOKEN): the next source is looked at instead.
  */
 export async function resolveToken(
   store: TokenStore | null,
   env: NodeJS.ProcessEnv = process.env,
   gh: (() => Promise<string | null>) | GhCliOptions = {},
+  skip: ReadonlySet<string> = new Set(),
 ): Promise<ResolvedToken | null> {
   const stored = store?.load();
-  if (stored) return { token: stored, source: "stored" };
+  if (stored && !skip.has(stored)) return { token: stored, source: "stored" };
   for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
-    if (isUsableToken(env[name])) return { token: env[name]!.trim(), source: "environment" };
+    const t = env[name]?.trim();
+    if (isUsableToken(t) && !skip.has(t)) return { token: t, source: "environment", name };
   }
   const fromGh = await (typeof gh === "function" ? gh() : ghCliToken(gh));
-  return fromGh ? { token: fromGh, source: "github-cli" } : null;
+  return fromGh && !skip.has(fromGh) ? { token: fromGh, source: "github-cli" } : null;
+}
+
+/**
+ * Connects with the first sign-in Copilot accepts. `find` gives the next one not in `refused` (null: none), `start`
+ * connects with it and says whether Copilot refused that sign-in; a refused token goes into `refused` and the next
+ * source is tried, so a stale token in the environment doesn't shadow a working GitHub CLI sign-in. Any other failure
+ * (offline, the runtime) stands, as does the last refusal when nothing else is left (its message names it).
+ */
+export async function connectFirstAccepted<P>(
+  find: () => Promise<ResolvedToken | null>,
+  start: (found: ResolvedToken | null) => Promise<{ phase: P; refused: boolean }>,
+  refused: Set<string>,
+  first?: ResolvedToken | null,
+): Promise<{ phase: P; found: ResolvedToken | null }> {
+  let found = first === undefined ? await find() : first;
+  // Each source at most once (there are five), whatever `find` answers.
+  for (let n = 0; ; n++) {
+    const r = await start(found);
+    if (!r.refused || !found || n >= 5) return { phase: r.phase, found };
+    refused.add(found.token);
+    const next = await find();
+    if (!next || refused.has(next.token)) return { phase: r.phase, found };
+    found = next;
+  }
 }
 
 // ───────────── device flow ─────────────

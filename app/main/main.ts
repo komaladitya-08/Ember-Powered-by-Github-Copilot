@@ -45,7 +45,7 @@ import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } f
 import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
-import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
+import { TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceFlow, type ResolvedToken } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitingMessage, githubClientId, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
@@ -916,6 +916,19 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
+  /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead (review #139). */
+  const refusedTokens = new Set<string>();
+  /** The sign-in to use: the first source whose token Copilot hasn't refused this run. */
+  const findToken = () => resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null);
+  /**
+   * Connects with `found`, or the first sign-in after it that Copilot accepts: a refused token gives way to the next
+   * source (a token in the environment comes before the GitHub CLI's). Resolves to the phase and the sign-in used.
+   */
+  const connectWith = (found: ResolvedToken | null, how: "user" | "auto" = "user") => connectFirstAccepted(findToken, async f => {
+    currentToken = f?.token ?? null;
+    const phase = await agent?.start(currentToken, f?.source, how, f?.name);
+    return { phase, refused: phase === "error" && agent?.getStatus().reason === "sign-in" };
+  }, refusedTokens, found);
   let signInAbort: AbortController | null = null;
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
@@ -951,9 +964,9 @@ function start(): void {
    */
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null; hint?: string }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
-    const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
-    currentToken = found?.token ?? null;
-    await agent?.start(currentToken, found?.source);
+    // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
+    const first = await findToken() ?? (refusedTokens.size ? await resolveToken(tokens, process.env, ghOptions()).catch(() => null) : null);
+    const { found } = await connectWith(first);
     return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
@@ -978,11 +991,11 @@ function start(): void {
       say({ state: "waiting", message: cliWaitingMessage(platform.os, ghInstalled()) });
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
-        const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
+        // (A refused token in the environment is passed over: the new GitHub CLI sign-in is found behind it.)
+        const found = await findToken();
         if (ac.signal.aborted) return;
         if (found && found.token !== before) {
-          currentToken = found.token;
-          await connected(await agent?.start(found.token, found.source));
+          await connected((await connectWith(found)).phase);
           return;
         }
         await new Promise(r => setTimeout(r, 3000));
@@ -1568,10 +1581,10 @@ function start(): void {
       brainStarted = true;
       const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
-      currentToken = found?.token ?? null;
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
-      // (then "Sign in" may use it at once, so it isn't counted as the token in use).
-      const phase = await agent?.start(currentToken, found?.source, "auto");
+      // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
+      // the next source.
+      const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto");
       if (phase === "signed-out") currentToken = null;
     };
     brainStart = startBrain();
