@@ -65,7 +65,8 @@ function findingLines(F: readonly Finding[]): string[] {
   for (const cls of CLASS_ORDER) {
     const fs = F.filter(f => f.cls === cls);
     if (fs.length === 0) continue;
-    if (cls === "unclear") out.push(LINES.unclear);
+    // A script Ember can't read all of says so in its own line (scripts.ts unreadPart): the command itself is clear.
+    if (cls === "unclear" && fs.some(f => !f.widening.includes("in-script"))) out.push(LINES.unclear);
     for (const f of fs) if (f.says && !out.includes(f.says)) out.push(f.says);
   }
   return out;

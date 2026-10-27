@@ -369,6 +369,36 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "\x7fELF\x02\x01\x01\x00")).toEqual({ kind: "none" });
   });
 
+  it("runs an ordinary POSIX script with if, for and while without asking; a dangerous command inside still asks (review #27)", async () => {
+    const plain = "#!/bin/sh\nif [ -f Makefile ]; then\n  make build\nelse\n  echo no Makefile\nfi\nfor t in unit lint; do echo $t; done\nwhile false; do echo; done\n";
+    const h = scriptHarness(plain);
+    expect((await call(h, { target: "this computer", command: "./build.sh" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    const risky = scriptHarness("if [ -d build ]; then\n  rm -rf build\nfi\n");
+    expect((await call(risky, { target: "this computer", command: "sh clean.sh" })).resultType).toBe("denied");
+    expect((risky.asked[0].panel as { card: CommandCard }).card.says.some(l => /^In clean\.sh: .*build/.test(l))).toBe(true);
+    // PowerShell's blocks aren't read inside, so its `if` still asks.
+    const ps = scriptHarness("if ($true) { Write-Output 1 }\n");
+    expect((await call(ps, { target: "this computer", command: "powershell -File t.ps1" })).resultType).toBe("denied");
+  });
+
+  it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
+    const named = scriptHarness("case $1 in\n  start) make ;;\nesac\n", "run the build script");
+    await call(named, { target: "this computer", command: "./build.sh" });
+    const card = (named.asked[0].panel as { card: CommandCard }).card;
+    expect(card.says[0]).toMatch(/^Ember can't read all of build\.sh \(.+\)\.$/);
+    expect(card.says).not.toContain("Ember can't tell exactly what this does.");
+    expect(card.says).not.toContain("You didn't ask for this.");
+    expect(card.unasked).toBe(false);
+    const many = scriptHarness(Array.from({ length: 90 }, (_, k) => `echo step ${k}`).join("\n"), "run many.sh");
+    await call(many, { target: "this computer", command: "sh many.sh" });
+    expect((many.asked[0].panel as { card: CommandCard }).card.says[0]).toBe("Ember can't read all of many.sh (it has more commands than Ember can check one by one).");
+    // Words that don't name the script: the card still says so.
+    const other = scriptHarness("case $1 in\n  start) make ;;\nesac\n", "tidy up the logs");
+    await call(other, { target: "this computer", command: "./build.sh" });
+    expect((other.asked[0].panel as { card: CommandCard }).card.says).toContain("You didn't ask for this.");
+  });
+
   it("runs an ordinary script without asking", async () => {
     const h = scriptHarness("echo building\nmake build\n");
     const r = await call(h, { target: "this computer", command: "sh ok.sh" });

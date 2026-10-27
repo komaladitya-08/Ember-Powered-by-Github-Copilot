@@ -285,6 +285,17 @@ const whereNamed = (resolved: string, idx: number, w: Words): boolean => {
   return folder === null || inNamedFolder(resolved, folder);
 };
 
+/**
+ * Whether the user's words name a script: its file name ("build.sh", "./ci/test.sh"), or its name without the
+ * extension with the word "script" ("run the build script"), or a name without one ("gradlew").
+ */
+function scriptNamed(name: string, w: Words): boolean {
+  const lower = name.toLowerCase();
+  if (w.tokens.some(t => lastSegment(t) === lower) || nameNamed(name, w.raw)) return true;
+  const stem = lower.replace(/\.[a-z0-9]{1,4}$/, "");
+  return stem !== lower && nameNamed(stem, w.raw) && hasWord(w.list, ["script", "scripts"]);
+}
+
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -640,6 +651,9 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   if (!userWords || userWords.trim() === "") return false;
   const w = wordsOf(userWords);
   return findings.some(f => {
+    // What a script does, when the user's words name the script (review #27: "run the build script", "run build.sh").
+    const script = f.widening.find(x => x.startsWith("script:"))?.slice("script:".length);
+    if (script !== undefined) return scriptNamed(script, w);
     const row = rowOf(f, findings);
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;
