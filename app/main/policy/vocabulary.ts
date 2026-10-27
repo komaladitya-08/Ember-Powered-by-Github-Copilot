@@ -205,13 +205,22 @@ const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?(\s|$)`
   + String.raw`|[\\/](${[...TERMINALS.win32].map(literal).join("|")})"?(\s|$)`
   + String.raw`|^"?[a-z][\w+.-]+:`, "i");
 
-/** File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' main languages. */
-const ADDRESS_BOX = /^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|주소)(\s*[:：].*)?$/iu;
-/** The Run dialog's "Open:" box, in Windows' main languages (an access key may follow: "打开(O):"). */
-const RUN_BOX = /^(open|öffnen|ouvrir|abrir|apri|openen|打开|開啟|열기)\s*(\(\w\))?\s*[:：]?$/iu;
+/**
+ * File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' display languages;
+ * and, whatever the language, the box while it shows a folder's path ("<one or two words>: C:\…", "…: \\server\…",
+ * "…: %USERPROFILE%\…", "…: shell:…"), the shape no other box of Explorer's has.
+ */
+const ADDRESS_BOX = new RegExp(String.raw`^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|位址|주소|адрес|адреса|adress|adresa|adresas|adrese|`
+  + String.raw`adresă|aadress|osoite|cím|naslov|διεύθυνση|כתובת|العنوان|ที่อยู่)(\s*[:：].*)?$`
+  + String.raw`|^[^\s:：\\/]+(\s[^\s:：\\/]+)?\s*[:：]\s*([a-z]:\\|\\\\|%[\w()]+%|shell:)`, "iu");
+/** The Run dialog's "Open:" box, in Windows' display languages (an access key may follow: "打开(O):", "名前(O):"). */
+const RUN_BOX = /^(open|öffnen|ouvrir|abrir|apri|openen|打开|開啟|열기|名前|открыть|відкрити|отваряне|otwórz|otevřít|otvoriť|otvori|odpri|aç|öppna|åbn|åpne|avaa|ava|megnyitás|άνοιγμα|פתח|פתיחה|فتح|deschidere|atvērt|atidaryti|เปิด)\s*(\(\w\))?\s*[:：]?$/iu;
 
 /**
  * Boxes where type_text and fill_cells refuse to type a program's name. Empty on Linux: GNOME has no such box.
+ * These Windows rules know the boxes and windows by their words in Windows' display languages (a Language Interface
+ * Pack beyond them is judged as any other app); the accessibility host doesn't pass the controls' AutomationId or
+ * class name to the policy yet, which would know them in any language.
  * Windows: File Explorer's address box, and the Run dialog's box (it belongs to explorer.exe too), where any text
  * typed runs with Enter.
  */
@@ -238,7 +247,7 @@ export interface ReadOnlyWindow {
 }
 
 /**
- * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' main languages), whose OK
+ * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' display languages), whose OK
  * and Enter run whatever its box holds, the last command typed there included, so a click is as good as typing one.
  * A File Explorer folder named "Run" has the same title and program, but it is a frame (CabinetWClass) where the Run
  * dialog is a dialog (Win32's dialog class, #32770, which the accessibility host reads as one): a folder window known
@@ -246,7 +255,11 @@ export interface ReadOnlyWindow {
  */
 export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> = {
   linux: [],
-  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu, otherRole: /^frame$/ }],
+  win32: [{
+    app: /^explorer(\.exe)?$/i,
+    title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행|выполнить|виконати|изпълнение|uruchamianie|spustit|spustiť|pokretanje|zaženi|çalıştır|kör|kør|kjør|suorita|käivitamine|futtatás|εκτέλεση|הפעלה|تشغيل|executare|rulare|palaišana|vykdyti|เรียกใช้)$/iu,
+    otherRole: /^frame$/,
+  }],
   darwin: [],
 };
 
@@ -273,7 +286,7 @@ const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|
 /**
  * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
  * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
- * PowerShell commands, in Windows' main languages (and a script's Open with Command Prompt, which runs it in a console,
+ * PowerShell commands, in Windows' display languages (and a script's Open with Command Prompt, which runs it in a console,
  * in English). An item is known by the extension its name shows: where Explorer
  * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
  * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
@@ -297,6 +310,29 @@ export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
       "打开", "打开方式", "以管理员身份运行", "以其他用户身份运行", "使用 powershell 运行",
       "開啟", "開啟檔案", "以系統管理員身分執行", "以不同使用者身分執行", "用 powershell 執行",
       "열기", "연결 프로그램", "관리자 권한으로 실행", "다른 사용자로 실행", "powershell에서 실행",
+      "открыть", "открыть с помощью", "запуск от имени администратора", "запуск от имени другого пользователя", "выполнить с помощью powershell",
+      "відкрити", "відкрити за допомогою", "запуск від імені адміністратора", "запуск від імені іншого користувача", "виконати за допомогою powershell",
+      "отваряне", "отваряне с", "изпълнение като администратор", "изпълнение като друг потребител", "изпълнение с powershell",
+      "otwórz", "otwórz za pomocą", "uruchom jako administrator", "uruchom jako inny użytkownik", "uruchom za pomocą programu powershell",
+      "otevřít", "otevřít v programu", "spustit jako správce", "spustit jako jiný uživatel", "spustit pomocí powershellu",
+      "otvoriť", "otvoriť pomocou", "spustiť ako správca", "spustiť ako iný používateľ", "spustiť pomocou powershellu",
+      "otvori", "otvori pomoću", "pokreni kao administrator", "pokreni kao drugi korisnik", "pokreni pomoću powershella",
+      "odpri", "odpri z", "zaženi kot skrbnik", "zaženi kot drug uporabnik", "zaženi s programom powershell",
+      "aç", "birlikte aç", "yönetici olarak çalıştır", "farklı bir kullanıcı olarak çalıştır", "powershell ile çalıştır",
+      "öppna", "öppna med", "kör som administratör", "kör som annan användare", "kör med powershell",
+      "åbn", "åbn med", "kør som administrator", "kør som en anden bruger", "kør med powershell",
+      "åpne", "åpne med", "kjør som administrator", "kjør som en annen bruker", "kjør med powershell",
+      "avaa", "avaa sovelluksessa", "suorita järjestelmänvalvojana", "suorita toisena käyttäjänä", "suorita powershellillä",
+      "ava", "ava rakendusega", "käivita administraatorina", "käivita teise kasutajana", "käivita powershelliga",
+      "megnyitás", "társítás", "megnyitás a következővel", "futtatás rendszergazdaként", "futtatás más felhasználóként", "futtatás a powershell segítségével",
+      "άνοιγμα", "άνοιγμα με", "εκτέλεση ως διαχειριστής", "εκτέλεση ως διαφορετικός χρήστης", "εκτέλεση με το powershell",
+      "פתח", "פתח באמצעות", "הפעל כמנהל מערכת", "הפעל כמשתמש אחר", "הפעל באמצעות powershell",
+      "فتح", "فتح باستخدام", "تشغيل كمسؤول", "تشغيل كمستخدم مختلف", "تشغيل باستخدام powershell",
+      "deschidere", "deschidere cu", "executare ca administrator", "rulare ca administrator", "executare ca alt utilizator", "rulare cu powershell",
+      "atvērt", "atvērt ar", "palaist kā administratoram", "palaist kā citam lietotājam", "palaist ar powershell",
+      "atidaryti", "atidaryti naudojant", "vykdyti kaip administratoriui", "paleisti kaip administratorių", "vykdyti kaip kitam vartotojui",
+      "เปิด", "เปิดด้วย", "เรียกใช้ในฐานะผู้ดูแลระบบ", "เรียกใช้ในฐานะผู้ใช้อื่น", "เรียกใช้ด้วย powershell",
+      "executar como outro utilizador",
     ],
   }],
   darwin: [],

@@ -1819,7 +1819,8 @@ export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequ
   if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key) || SUBMENU_KEY.test(key))) return null;
   let commands = commandExpressions.get(rule);
   if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
-  return commands.test(plainText(name)) ? "command" : null;
+  // As written too: plainText maps Cyrillic and Greek look-alikes to Latin ("Открыть" would never match its own label).
+  return bothForms(name).some(l => commands.test(l)) ? "command" : null;
 }
 
 export class PolicyEngine {
