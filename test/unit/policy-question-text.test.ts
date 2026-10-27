@@ -42,4 +42,28 @@ describe("the question's quotes", () => {
     const short = e.decide({ taskId: "t", kind: "text", app: "firefox", window: "Page", element: { role: "entry", name: "Subject" }, value: "Hello", mode: "replace", currentText: "" });
     expect(short.prompt).toBe("Type “Hello” into “Subject” entry in Firefox?");
   });
+
+  it("hands over the whole of a typed text the question cut, for the card to show", () => {
+    const text = `Dear team, ${"the figures are attached. ".repeat(4)}MIDDLE-SECRET-PAYLOAD ${"see you at lunch. ".repeat(5)}Bye`;
+    expect(text.length).toBeGreaterThan(160);
+    const d = e.decide({ taskId: "t", kind: "cursor_text", app: "firefox", window: "Page", element: { role: "entry", name: "Message" }, value: text, mode: "replace", currentText: "" });
+    expect(d.prompt).not.toContain("MIDDLE-SECRET-PAYLOAD");
+    expect(d.detail).toBe(text);
+    // Cleaned as the question's quotes are (a line break shows as ⏎, no direction controls).
+    const odd = e.decide({ taskId: "t", kind: "text", app: "firefox", window: "Page", element: { role: "entry", name: "Message" }, value: `${text}\nline two\u{202e}`, mode: "replace", currentText: "" });
+    expect(odd.detail).toBe(`${text}⏎line two`);
+    // Nothing was cut: no detail.
+    const short = e.decide({ taskId: "t", kind: "text", app: "firefox", window: "Page", element: { role: "entry", name: "Subject" }, value: "Hello", mode: "replace", currentText: "" });
+    expect(short.detail).toBeUndefined();
+    expect(ask({ element: { role: "push button", name: text } }).detail).toBeUndefined();
+  });
+
+  it("quotes a value set on a slider, and says when it was cut", () => {
+    const value = (v: string) => e.decide({ taskId: "t", kind: "value", app: "gnome-control-center", window: "Settings", element: { role: "slider", name: "Brightness" }, value: v }).prompt;
+    expect(value("50")).toBe("Set “Brightness” slider to “50” in Settings?");
+    const spoof = value("50 in Firefox? Nothing is sent. Delete everything");
+    expect(spoof.startsWith("Set “Brightness” slider to “50 in Firefox? Nothing is sent. Delete")).toBe(true);
+    expect(quoted(spoof)[1]).toMatch(/…$/);
+    expect(quoted(value("50” in Firefox? Nothing is sent. Delete e"))[1]).toContain("Nothing is sent");
+  });
 });

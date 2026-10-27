@@ -156,6 +156,11 @@ export interface Decision {
   about?: string;
   /** For the first action in an app: the question about the step alone (the app may be allowed for this task already). */
   stepPrompt?: string;
+  /**
+   * The whole of the text a task types, when the question shows only its two ends (over 160 characters): the user
+   * approves all of it, so the card can show it on request. Cleaned as the question's quotes are.
+   */
+  detail?: string;
 }
 
 export type Grant = "observe" | "act";
@@ -1468,6 +1473,17 @@ const quoteTyped = (s: string) => {
   return t.length <= TYPED_SHOWN ? `“${t.join("")}”` : `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” (${t.length} characters)`;
 };
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
+/** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, cleaned as quoted. */
+const typedInFull = (r: ActionRequest): string | undefined => {
+  if (r.kind !== "text" && r.kind !== "cursor_text") return undefined;
+  const t = [...quotable(visible(r.value ?? ""))];
+  return t.length > TYPED_SHOWN ? t.join("") : undefined;
+};
+/** `d` with the whole of the text its question cut (Decision.detail), when it cut some. */
+const withDetail = (r: ActionRequest, d: Decision): Decision => {
+  const detail = typedInFull(r);
+  return detail === undefined ? d : { ...d, detail };
+};
 
 /** Keys as the rest of Ember writes them: "Ctrl+S", "Enter", "Esc", "keypad Delete". */
 const KEY_LABELS: Record<string, string> = {
@@ -1526,7 +1542,7 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
     case "toggle": return `Switch ${el}${where}${desk}?`;
     case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
     case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
-    case "value": return `Set ${el} to ${[...quotable(r.value ?? "")].slice(0, 40).join("")}${where}${desk}?`;
+    case "value": return `Set ${el} to ${quote(r.value ?? "", 40)}${where}${desk}?`;
     case "setting": return `Change the setting ${quote(r.value ?? "")}?`;
     case "open_app": return `Open ${quote(r.value ?? "")}?`;
     case "cursor_click": return r.onDesk ? `Click ${el}${where}${desk}?` : `Borrow your mouse to click ${el}${where}?`;
@@ -1854,12 +1870,12 @@ export class PolicyEngine {
   private get os(): OS { return this.o.os ?? "linux"; }
 
   decide(r: ActionRequest): Decision {
-    return this.judge(r, true);
+    return withDetail(r, this.judge(r, true));
   }
 
   /** The same decision again, for a request already counted (the element under a key changed once its window was in front). */
   recheck(r: ActionRequest): Decision {
-    return this.judge(r, false);
+    return withDetail(r, this.judge(r, false));
   }
 
   private judge(r: ActionRequest, count: boolean): Decision {
