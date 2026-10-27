@@ -134,6 +134,34 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }
 
+/**
+ * A Wayland session (GNOME's default login on RHEL 8): Ember's launcher forces X11, so it runs through XWayland, which
+ * shows it only X11 apps' windows, pixels, pointer and keys. WAYLAND_DISPLAY counts unless the session says x11.
+ */
+export function isWaylandSession(env: Record<string, string | undefined>): boolean {
+  const type = env.XDG_SESSION_TYPE ?? "unknown";
+  return type === "wayland" || (!!env.WAYLAND_DISPLAY && type !== "x11");
+}
+
+/**
+ * Why Ember takes no screenshots and doesn't borrow the mouse in a Wayland session (the window system's
+ * systemDialogReason there, so the model and the user read it in each refusal), as a clause.
+ */
+export const WAYLAND_REASON = "this is a Wayland session, so Ember can't take screenshots or use the mouse and keyboard here: log out and choose “GNOME on Xorg” on the login screen";
+
+/**
+ * What Ember's greeting says when the desktop session check fails (a Wayland session, no X display, a Windows service
+ * session), in place of "I'll stay by your cursor": nothing else at start-up says why nothing works. null otherwise.
+ */
+export function sessionGreeting(report: EnvReport): string | null {
+  const c = report.checks.find(x => x.id === "session");
+  if (!c || c.status !== "fail") return null;
+  if (/wayland/i.test(c.detail)) {
+    return "This is a Wayland session, so I can't see your screen or use your mouse here. Log out, click the gear on the login screen, choose “GNOME on Xorg”, and log in again.";
+  }
+  return `This desktop session doesn't work with me. ${c.detail}`;
+}
+
 export function inspectEnvironment(i: EnvInputs): EnvReport {
   if (i.platform === "win32") return inspectWindows(i);
   if (i.platform === "darwin") return inspectMac(i);
@@ -155,7 +183,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     detail: os.PRETTY_NAME ?? "unknown",
   });
 
-  if (sessionType === "wayland" || (!!i.env.WAYLAND_DISPLAY && sessionType !== "x11")) {
+  if (isWaylandSession(i.env)) {
     checks.push({
       id: "session", label: "Desktop session", status: "fail",
       detail: "Wayland session. Ember v1 needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",

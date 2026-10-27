@@ -15,7 +15,7 @@ import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
-import { inspectEnvironment, type EnvReport } from "./environment";
+import { inspectEnvironment, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -442,16 +442,18 @@ function start(): void {
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
-    const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
+    // A session Ember can't use (Wayland, no X display) is said first: nothing else at start-up says why nothing works.
+    const session = sessionGreeting(readEnvironment());
+    const thought = session ?? (waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
-      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
-      actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`);
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: session ? "attention" as const : connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
+      actions: settingsOpen || (!session && (connected || waiting)) ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
-    greetTimer = hideIfStill(bubble, connected ? 7000 : 15000);
+    greetTimer = hideIfStill(bubble, connected && !session ? 7000 : 15000);
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
@@ -1612,8 +1614,9 @@ function start(): void {
     });
     app.on("will-quit", () => voice?.stop());
 
-    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
-    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
+    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
+    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin || sessionGreeting(env)) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings

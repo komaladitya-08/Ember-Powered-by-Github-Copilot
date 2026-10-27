@@ -81,13 +81,15 @@ export interface WindowSystem extends Omit<X11, "capture"> {
    * "Default" (UAC, Ctrl+Alt+Del, lock screen) or a credential prompt window is on screen; macOS, a SecurityAgent /
    * coreautha window is on screen or secure keyboard entry is on (or can't be checked). Fails closed (true when it
    * can't tell). port/darwin implements it natively; the Windows composition adds it with withSystemDialog (§2.5, §7.2).
-   * Absent on Linux, where GNOME Shell's own dialogs come from the sidecar's shell_overlays. Perception ORs it with
+   * Absent on Linux, where GNOME Shell's own dialogs come from the sidecar's shell_overlays, except in a Wayland
+   * session: always true there (XWayland shows Ember only X11 apps, review #240). Perception ORs it with
    * shell_overlays.
    */
   systemDialogOpen?(): boolean;
   /**
    * (Added by the release fixes; optional.) Why systemDialogOpen() is true when the cause is a state the user can turn
-   * off rather than a dialog (macOS: secure keyboard entry on in an app, and no system prompt on screen), as a clause
+   * off rather than a dialog (macOS: secure keyboard entry on in an app, and no system prompt on screen; Linux: a
+   * Wayland session), as a clause
    * that starts in lower case, has no full stop and says what Ember holds back ("secure keyboard entry is on in
    * Terminal …, so Ember won't look at the screen or use the mouse or keyboard until it's off"). null when it is a
    * dialog, when nothing is up, or when it can't be told: the dialog's words stay. Only words: systemDialogOpen()
