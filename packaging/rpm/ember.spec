@@ -9,7 +9,8 @@
 
 Name:           ember
 Version:        %{ember_version}
-Release:        1%{?dist}
+# 1 unless rpm.sh is given another (EMBER_RPM_RELEASE: CI builds Release 2 to test an upgrade).
+Release:        %{?ember_release}%{!?ember_release:1}%{?dist}
 Summary:        A cursor companion that works visibly in your apps, powered by GitHub Copilot
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
 # LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0), semver

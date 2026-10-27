@@ -577,6 +577,30 @@ describe("staging in CI", () => {
     const uses = lines.flatMap((l, i) => (/--allow-missing/.test(l) && !/^\s*#/.test(l) ? [i] : []));
     for (const i of uses) expect(lines.slice(Math.max(0, i - 12), i).join("\n"), lines[i]).toMatch(/TODO\(port\): drop --allow-missing/);
   });
+  it("builds the speech models package, then upgrades, verifies and removes both RPMs, keeping the admin's policy (review #207)", () => {
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    const at = (s: string) => { const i = job.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
+    // The real models, verified, before staging: rpm.sh then builds ember-voice-models too.
+    expect(at("node scripts/voice/prepare.mjs")).toBeLessThan(at("node scripts/package/stage.mjs"));
+    expect(at("dist/package/ember-voice-models-")).toBeGreaterThan(at("scripts/package/rpm.sh"));
+    const life = job.slice(at("RPM lifecycle"));
+    const order = ["dnf -y install ./dist/package/ember-voice-models-", "rpm -V ember ember-voice-models", "/etc/ember/policy.json",
+      "EMBER_RPM_RELEASE=2 scripts/package/rpm.sh", "dnf -y upgrade", "rpm -V ember ember-voice-models", "rpm -e ember ember-voice-models"];
+    let from = 0;
+    for (const s of order) { const i = life.indexOf(s, from); expect(i, s).toBeGreaterThanOrEqual(from); from = i + s.length; }
+    for (const gone of ["/opt/ember", "/usr/share/ember", "/usr/bin/ember", "/usr/share/applications/ember.desktop"]) expect(life.slice(life.indexOf("rpm -e"))).toContain(gone);
+    expect(life.slice(life.indexOf("rpm -e"))).toMatch(/cmp packaging\/policy\.example\.json \/etc\/ember\/policy\.json/);
+    // The packages kept for download are Release 1's.
+    expect(life).toContain("rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm");
+    expect(at("RPM lifecycle")).toBeLessThan(at("actions/upload-artifact"));
+  });
+  it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
+    const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
+    expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);
+    const rpmSh = fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8");
+    expect(rpmSh).toContain('--define "ember_release $release"');
+    expect(rpmSh).toMatch(/release=\$\{EMBER_RPM_RELEASE:-1\}/);
+  });
 });
 
 describe("the Windows and macOS CI jobs", () => {
