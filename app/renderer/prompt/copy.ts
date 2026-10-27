@@ -197,7 +197,7 @@ export function consentText(i: ConsentInput): ConsentText {
       title: `Bring Ember to ${label}?`,
       body: [
         first,
-        `It copies a helper there: about ${s.bundleMB ?? 33} MB (up to about 60 MB on a Mac or other computer without xz), unpacked to about ${s.unpackedMB ?? 130} MB in ${s.installDir ?? "its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
+        `It copies a helper there: about ${s.bundleMB ?? 33} MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about ${s.unpackedMB ?? 130} MB in ${s.installDir ?? "its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
         `Your voice and your GitHub sign-in stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
         desktop,
         `${label} keeps its own record of what Ember does there.`,

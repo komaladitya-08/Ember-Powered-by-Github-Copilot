@@ -124,7 +124,7 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts })
   if (carried) body.push(carried);
   if (f.viaLabel) body.push(`It connects from ${f.viaLabel}, with ${f.viaLabel.replace(/ \(WSL\)$/, "")}'s SSH keys.`);
   body.push(
-    `It copies a helper there: about 33 MB (up to about 60 MB on a Mac or other computer without xz), unpacked to about 130 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
+    `It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
     `Your voice and your GitHub sign-in stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
     f.desktopOff
       ? `Your organisation lets Ember only run commands on ${f.label}.`

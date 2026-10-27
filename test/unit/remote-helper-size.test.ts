@@ -29,7 +29,7 @@ const withoutXz = Math.max(...Object.values(runtime.targets).map(t => mb(t.gz.by
 const UNPACKED_MB = 130;
 
 /** The card's size sentence: "about 33 MB (up to about 60 MB …), unpacked to about 130 MB in …". */
-const SIZES = /about (\d+) MB \(up to about (\d+) MB on a Mac or other computer without xz\), unpacked to about (\d+) MB in its own folder there \(~\/\.local\/share\/ember-remote, or ~\/Library\/Application Support\/Ember Remote on a Mac\)/;
+const SIZES = /about (\d+) MB \(up to about (\d+) MB where that computer can't unpack the smaller download, as is usual on a Mac\), unpacked to about (\d+) MB in its own folder \(~\/\.local\/share\/ember-remote, or ~\/Library\/Application Support\/Ember Remote on a Mac\)/;
 
 function cardSizes(text: string): [number, number, number] {
   const m = SIZES.exec(text);
@@ -50,6 +50,12 @@ describe("the helper's size", () => {
     expect(unpacked).toBe(UNPACKED_MB);
     // The prompt window's own copy of the card says the same.
     expect(cardSizes(renderer)).toEqual([download, most, unpacked]);
+    // In words a person clicking Connect knows: no tool's name, and "there" once.
+    for (const text of [card, renderer]) {
+      const sentence = /It copies a helper there[^]*?\)\./.exec(text)?.[0] ?? "";
+      expect(sentence).not.toMatch(/\bxz\b/);
+      expect(sentence.match(/\bthere\b/g)).toHaveLength(1);
+    }
   });
 
   it("leaves Node's headers and npm out when the bootstrap unpacks the runtime, from either archive", () => {
