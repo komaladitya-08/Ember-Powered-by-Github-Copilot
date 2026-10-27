@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "../../app/main/settings";
+import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -127,5 +128,26 @@ describe("README.md", () => {
     const ssh = flat(section(readme, "Commands, WSL and other computers"));
     expect(ssh).toContain("**Remove Ember from build-01**");
     expect(ssh).toContain("sh ~/.local/share/ember-remote/versions/*/uninstall.sh");
+  });
+
+  it("gives Windows users blocked by Smart App Control the way forward", () => {
+    const win = flat(section(readme, "Install on Windows"));
+    // What the user sees, where the switch is, what turning it off costs, and who to ask on a managed PC.
+    expect(win).toMatch(/"Smart App Control blocked an app that may be unsafe"/);
+    expect(win).toContain("**Windows Security › App & browser control › Smart App Control settings**");
+    expect(win).toMatch(/reset/i);
+    expect(win).toMatch(/managed by your organisation[^.]*administrator/);
+  });
+
+  it("covers every macOS from 13 to the newest Ember knows with its first-start steps", () => {
+    const mac = flat(section(readme, "Install on macOS"));
+    const newest = Number(macVersionFromDarwin("25.0.0").split(".")[0]);
+    const covered = new Set<number>();
+    for (const m of mac.matchAll(/- macOS (\d+)(?: and (\d+)| and later)?:/g)) {
+      const from = Number(m[1]);
+      const to = m[2] ? Number(m[2]) : /and later/.test(m[0]) ? newest : from;
+      for (let v = from; v <= to; v++) covered.add(v);
+    }
+    for (let v = 13; v <= newest; v++) expect(covered.has(v), `macOS ${v}`).toBe(true);
   });
 });

@@ -68,8 +68,13 @@ and `~/Ember` (what it made on its desk).
    start `Ember\Ember.exe`. The first start adds Ember to the Start menu.
 3. Ember isn't signed yet, so Windows checks with you first:
    - SmartScreen says "Windows protected your PC": choose **More info**, then **Run anyway**.
-   - Smart App Control (on some new Windows 11 installations) blocks unsigned apps outright and can't make an
-     exception for one app.
+   - Smart App Control (on new Windows 11 installations) blocks apps that aren't signed and can't make an exception
+     for one app: Windows says "Smart App Control blocked an app that may be unsafe" (or "Smart App Control has
+     blocked part of this app"), with no **Run anyway**. To use Ember on that PC, turn it off in **Windows Security ›
+     App & browser control › Smart App Control settings** (Windows asks for an administrator's OK). Since the April
+     2026 update (Windows 11 24H2 build 26100.8116, 25H2 build 26200.8116) you can turn it on again there later; on
+     older builds, turning it back on needs a Windows reset. On a PC managed by your organisation, ask your
+     administrator instead. Otherwise, use Ember on another computer until a signed build is out.
    - Where your organisation lets PowerShell run downloaded scripts only when they are signed (`RemoteSigned`),
      Ember's setup check says Windows blocked its accessibility helper because it came from the internet: press
      **Unblock it**. (Or unblock the zip before you extract it: right-click it, **Properties**, tick **Unblock**.)
@@ -96,8 +101,8 @@ turn off **Start Ember when I log in** in its settings, quit it, and delete the 
 2. Open the dmg, drag Ember into **Applications** and open it from there. Run from the dmg or from Downloads, macOS
    starts Ember from a temporary copy, and its permissions and login item don't stick.
 3. Ember is signed ad hoc and not notarised, so macOS stops its first start:
-   - macOS 15: open Ember once and choose **Done**, then in **System Settings › Privacy & Security** choose **Open
-     Anyway** next to the message about Ember, and confirm.
+   - macOS 15 and later: open Ember once and choose **Done**, then in **System Settings › Privacy & Security** choose
+     **Open Anyway** next to the message about Ember, and confirm.
    - macOS 13 and 14: Control-click Ember in Applications, choose **Open**, then **Open** again.
    - If macOS says Ember "is damaged", clear the download mark and open it again:
      `xattr -dr com.apple.quarantine /Applications/Ember.app`.
