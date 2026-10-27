@@ -104,6 +104,23 @@ describe("ensureModels with an archive", () => {
     expect(seen.at(-1)).toBe(VOICE_MODELS_BYTES);
   });
 
+  it("keeps the last part of an archive's share for checking and unpacking it, saying so, instead of sitting at 100% (review #259)", async () => {
+    const root = tmpRoot();
+    othersInPlace(root);
+    const seen: { done: number; phase?: string; inPlace: boolean }[] = [];
+    // A real download reports the archive's whole size at its last byte.
+    const served = serve(bzip2Compress(goodTar, { blockBytes: 10_000 }));
+    const whole: Downloader = (url, dest, progress) => served(url, dest, () => progress(kws.bytes));
+    await ensureModels(root, whole, (done, _total, phase) => seen.push({ done, phase, inPlace: fs.existsSync(path.join(root, ".fake-kws.ok")) }));
+    const before = seen.filter(s => !s.inPlace);
+    // The archive is the first model: until it's in place, nothing says it's done, and the end says it's unpacking.
+    expect(Math.max(...before.map(s => s.done))).toBeLessThan(kws.bytes);
+    expect(before.filter(s => s.phase === "unpacking").length).toBeGreaterThanOrEqual(2);
+    expect(before.findIndex(s => s.phase === "unpacking")).toBeGreaterThan(0); // after the download's own progress
+    expect(seen.map(s => s.done)).toEqual([...seen.map(s => s.done)].sort((a, b) => a - b)); // it never goes back
+    expect(seen.at(-1)?.done).toBe(VOICE_MODELS_BYTES);
+  });
+
   it("replaces an older copy of the model whole, and clears a staging folder a crash left", async () => {
     const root = tmpRoot();
     othersInPlace(root);

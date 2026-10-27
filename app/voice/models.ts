@@ -59,6 +59,19 @@ export const VOICE_MODELS_BYTES = VOICE_MODELS.reduce((n, m) => n + m.bytes, 0);
 /** Downloads `url` to `dest`, reporting bytes so far. */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
 
+/**
+ * Progress of getting the models: bytes of the whole (`total`) done so far. `phase` "unpacking": the last download is
+ * in, and is being checked and unpacked.
+ */
+export type ModelsProgress = (done: number, total: number, phase?: "unpacking") => void;
+
+/**
+ * Of an archive's share of the progress, what its download counts for: the rest is checking and unpacking it, which
+ * took longer than the download itself on a fast network (5 s for the 107 MB archive), so the bar never sits at the end
+ * meanwhile (review #259).
+ */
+const DOWNLOAD_SHARE = 0.8;
+
 export function modelPaths(root: string): ModelPaths {
   const p = (id: keyof ModelPaths) => path.join(root, VOICE_MODELS.find(m => m.id === id)!.target);
   return { kws: p("kws"), vad: p("vad"), asr: p("asr") };
@@ -130,8 +143,11 @@ async function moveIntoPlace(from: string, to: string): Promise<void> {
   }
 }
 
-/** Unpacks a verified archive into `root`: into a staging folder first, then its top folder is moved into place. */
-async function unpackArchive(archive: string, root: string, m: ModelDownload): Promise<void> {
+/**
+ * Unpacks a verified archive into `root`: into a staging folder first, then its top folder is moved into place.
+ * `unpacked`: the share of the archive read so far (0 to 1).
+ */
+async function unpackArchive(archive: string, root: string, m: ModelDownload, unpacked?: (fraction: number) => void): Promise<void> {
   // A fixed name, so a staging folder left by a crash is cleared on the next try instead of piling up.
   const staging = path.join(root, `.unpack-${m.target}`);
   fs.rmSync(staging, { recursive: true, force: true, maxRetries: 5 });
@@ -139,7 +155,8 @@ async function unpackArchive(archive: string, root: string, m: ModelDownload): P
   try {
     try {
       // Only the model's own folder: an entry anywhere else (another model's folder, a marker) is refused.
-      await extractTarBz2(archive, staging, { topFolder: m.target });
+      const size = fs.statSync(archive).size;
+      await extractTarBz2(archive, staging, { topFolder: m.target, ...(unpacked && size ? { onRead: (n: number) => unpacked(Math.min(1, n / size)) } : {}) });
       if (!fs.statSync(path.join(staging, m.target), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`it has no ${m.target} folder`);
     } catch (err) {
       // "tar" in the message: the voice service tells the user the download couldn't be unpacked.
@@ -155,30 +172,38 @@ async function unpackArchive(archive: string, root: string, m: ModelDownload): P
 
 /**
  * Downloads one pinned model into `root`, checks its SHA-256 and puts it in place (unpacked, for an
- * archive). Whatever happens, no partial download or half-unpacked model is left behind.
+ * archive). Whatever happens, no partial download or half-unpacked model is left behind. `unpacking`: the
+ * download is in and is being checked, then unpacked (the share of the archive read so far, 0 to 1).
  */
-export async function fetchModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<void> {
+export async function fetchModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined, unpacking?: (fraction: number) => void): Promise<void> {
   const tmp = path.join(root, `.download-${path.basename(m.url)}`);
   try {
     await download(m.url, tmp, progress);
+    unpacking?.(0);
     const got = await sha256File(tmp);
     if (got !== m.sha256) throw new Error(`${m.name}: checksum mismatch (got ${got.slice(0, 12)}…). The download was not used.`);
     if (m.kind === "file") await moveIntoPlace(tmp, path.join(root, m.target));
-    else await unpackArchive(tmp, root, m);
+    else await unpackArchive(tmp, root, m, unpacking);
   } finally {
     fs.rmSync(tmp, { force: true, maxRetries: 5 });
   }
 }
 
-/** Makes every model present and verified; skips ones already in place. */
-export async function ensureModels(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined): Promise<ModelPaths> {
+/**
+ * Makes every model present and verified; skips ones already in place. Progress counts an archive's download as
+ * DOWNLOAD_SHARE of its share, and checking and unpacking it as the rest.
+ */
+export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined): Promise<ModelPaths> {
   fs.mkdirSync(root, { recursive: true });
   let done = 0;
   for (const m of VOICE_MODELS) {
     if (verified(root, m)) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
     fs.rmSync(marker(root, m), { force: true });
-    const base = done;
-    await fetchModel(root, m, download, bytes => progress(base + bytes, VOICE_MODELS_BYTES));
+    const base = done, share = m.kind === "file" ? 1 : DOWNLOAD_SHARE;
+    const downloaded = Math.floor(m.bytes * share);
+    // (A file has nothing to unpack, and its check is quick.)
+    await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), VOICE_MODELS_BYTES),
+      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), VOICE_MODELS_BYTES, "unpacking"));
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
     done += m.bytes;
     progress(done, VOICE_MODELS_BYTES);

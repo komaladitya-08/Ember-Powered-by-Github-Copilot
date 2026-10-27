@@ -834,8 +834,10 @@ window.ember.onVoiceProgress(p => {
   bar.hidden = false;
   bar.value = p.done / p.total;
   const pct = Math.round((p.done / p.total) * 100);
-  $("voice-text").textContent = `Downloading speech models… ${pct}%`;
-  voiceLive(`Downloading speech models… ${progressStep(p.done / p.total)}%`);
+  // Once the last byte is in, the archive is checked and unpacked: said, so the bar doesn't look stuck (review #259).
+  const doing = p.phase === "unpacking" ? "Unpacking" : "Downloading";
+  $("voice-text").textContent = `${doing} speech models… ${pct}%`;
+  voiceLive(`${doing} speech models… ${progressStep(p.done / p.total)}%`);
 });
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);

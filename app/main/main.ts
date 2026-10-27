@@ -1014,7 +1014,7 @@ function start(): void {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
     try {
-      await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));
+      await voice?.downloadModels((done, total, phase) => broadcast(IPC.voiceProgress, { done, total, ...(phase ? { phase } : {}) }));
     } catch {
       return; // VoiceService already left "Downloading…" and said why (onState → voiceStatus with the detail)
     }

@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
+import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader, type ModelsProgress } from "../voice/models";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import { FrameWatchdog } from "../voice/watchdog";
@@ -158,7 +158,7 @@ export class VoiceService {
   }
 
   /** Rejects if the download fails; the state has then already gone back (with what went wrong as its detail). */
-  async downloadModels(progress: (done: number, total: number) => void): Promise<void> {
+  async downloadModels(progress: ModelsProgress): Promise<void> {
     if (!this.downloading && !this.modelsReady) {
       this.setState("downloading");
       this.downloading = ensureModels(this.o.modelsRoot, electronDownloader, progress)
