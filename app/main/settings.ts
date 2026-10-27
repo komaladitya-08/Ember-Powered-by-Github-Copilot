@@ -276,6 +276,14 @@ export function saveFailure(err: unknown, later = false): string {
   return `Ember couldn't save your settings: ${why}. ${later ? "It will try again with your next change." : "Your change wasn't kept."}`;
 }
 
+/**
+ * What the settings window is told when update() threw (review #84): a failed save as saveFailure's sentence (the
+ * raw error as its cause), never Node's own words; anything else as it is.
+ */
+export function plainSaveError(err: unknown): unknown {
+  return typeof (err as NodeJS.ErrnoException | null)?.code === "string" ? new Error(saveFailure(err), { cause: err }) : err;
+}
+
 /** How a SettingsStore saves on this OS (the platform's paths). */
 export interface SettingsStoreOptions {
   /**
@@ -343,6 +351,7 @@ export class SettingsStore {
    */
   private read(running: boolean, settle = running): LoadResult {
     let raw: string;
+    this.deferred = false;
     this.seen = this.mtime();
     try {
       // Whatever Unicode form an editor or script saved it in (a byte-order mark, UTF-16): review #82.
@@ -394,6 +403,7 @@ export class SettingsStore {
     // rewritten only once it has stayed the same for SETTLE_MS, never under the editor (review #92).
     if (settle && !this.settled()) {
       this.seen = null; // looked at again at the next check
+      this.deferred = true;
       return { settings: this.current };
     }
     // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
@@ -415,6 +425,8 @@ export class SettingsStore {
 
   /** The version of a repairable hand edit being waited on (its time stamp), and since when it has looked the same. */
   private settling: { mtime: number | null; since: number } | null = null;
+  /** The last read left a repairable hand edit for later (it may still be changing): nothing changed in memory. */
+  private deferred = false;
 
   /** Has the file (as last read) stayed the same for SETTLE_MS? */
   private settled(): boolean {
@@ -472,7 +484,8 @@ export class SettingsStore {
     if (m === this.seen && !wasUnread) return false;
     const before = this.current;
     this.read(true);
-    if (wasUnread && this.unread) return false;
+    // Still unreadable, or an edit left until it stops changing: nothing to use (or save) yet.
+    if ((wasUnread && this.unread) || this.deferred) return false;
     // A change still waiting to be saved goes on top of the hand edit.
     if (this.pending) {
       const next = SettingsSchema.safeParse({ ...this.current, ...this.pending });
@@ -480,8 +493,8 @@ export class SettingsStore {
     }
     if (this.current === before) return false;
     this.apply(this.current);
-    // Changes made while the file couldn't be read are saved now, on top of the user's own settings.
-    if (wasUnread && this.pending) { try { this.flush(); } catch { /* saved with the next change */ } }
+    // Changes held while the file couldn't be read (no save is due for them) are saved now, on top of the user's own.
+    if (this.pending && !this.pendingTimer) { try { this.flush(); } catch { /* saved with the next change */ } }
     for (const fn of this.listeners) fn(this.effective);
     return true;
   }
@@ -547,8 +560,8 @@ export class SettingsStore {
   private saveNotice: string | null = null;
 
   /**
-   * save(), with its failure said plainly (review #84): every window's notice says why, and the error thrown is that
-   * sentence (the raw error is its cause). `later`: the change stays in use and is saved with the next one.
+   * save(), with its failure said plainly (review #84): every window's notice says why (the error is thrown on as it
+   * came; plainSaveError words it for the settings window). `later`: the change stays in use and is saved later.
    */
   private persist(settings: Settings, later: boolean): void {
     try {
@@ -556,7 +569,7 @@ export class SettingsStore {
     } catch (err) {
       this.saveNotice = saveFailure(err, later);
       this.problem(this.saveNotice);
-      throw Object.assign(new Error(this.saveNotice, { cause: err }), { code: (err as NodeJS.ErrnoException | null)?.code });
+      throw err;
     }
     if (this.saveNotice !== null && this.lastProblem === this.saveNotice) this.problem(null);
     this.saveNotice = null;

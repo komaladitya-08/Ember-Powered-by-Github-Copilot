@@ -112,3 +112,23 @@ describe("the notice while settings.json stays unreadable (review #83)", () => {
     expect(store.lastProblem).toMatch(/won't save over the file until it can read it again/);
   });
 });
+
+describe("a file that reads again with a slip in it (reviews #83 and #92)", () => {
+  it("is waited on and repaired with the user's settings, never replaced with defaults plus the changes", () => {
+    const f = settingsFile();
+    let now = 0;
+    const fail = failReads(f, "EIO", Infinity);
+    const store = new SettingsStore(f, null, { clock: () => now });
+    store.load();
+    store.update({ size: 70 });
+    // The file reads again, with a trailing comma the user left in it.
+    fail.undo();
+    fs.writeFileSync(f, JSON.stringify(good, null, 2).replace(/\n}$/, ",\n}"));
+    expect(store.reloadIfChanged()).toBe(false);
+    expect(JSON.parse(fs.readFileSync(f, "utf8").replace(/,\n}$/, "\n}"))).toMatchObject({ character: "wisp", size: 80 });
+    now += 2000;
+    expect(store.reloadIfChanged()).toBe(true);
+    expect(store.get()).toMatchObject({ character: "wisp", size: 70, onboarded: true });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "wisp", size: 70, onboarded: true, grants: { gedit: "act" } });
+  });
+});
