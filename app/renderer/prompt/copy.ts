@@ -147,13 +147,18 @@ export interface SshConsentFacts {
   installDir?: string;
   /** How long a running command outlives a dropped connection (admin ssh.commandGraceSeconds; default 20). */
   graceSeconds?: number;
+  /** The organisation's own model service is in use (the policy's provider): no GitHub sign-in, nothing to Copilot. */
+  byok?: boolean;
 }
 
 /** Everything a consent card's text depends on. `os` is this PC's OS (its stop chord). */
 export type ConsentInput =
-  | { feature: "wsl"; os: OS; target: TargetId; targetLabel: string }
+  | { feature: "wsl"; os: OS; target: TargetId; targetLabel: string; byok?: boolean }
   | { feature: "ssh"; os: OS; target: TargetId; targetLabel: string; ssh: SshConsentFacts }
-  | { feature: "commands"; os: OS; target: TargetId; targetLabel: string; commands?: { wsl?: boolean; privileged?: boolean; windows?: boolean; podman?: boolean } };
+  | { feature: "commands"; os: OS; target: TargetId; targetLabel: string; commands?: { wsl?: boolean; privileged?: boolean; windows?: boolean; podman?: boolean; byok?: boolean } };
+
+/** Where what Ember reads goes: GitHub Copilot, or the organisation's own model service (`byok`), as targets/consent.ts says. */
+const serviceName = (byok: boolean | undefined) => (byok ? "your organisation's model service" : "GitHub Copilot");
 
 /** A consent card's text: title, body lines and buttons (prompt-window.ts's consentPanel adds the hash). */
 export interface ConsentText { title: string; body: string[]; yes: string; no: string }
@@ -170,7 +175,7 @@ export function consentText(i: ConsentInput): ConsentText {
       title: "Use Ember with WSL?",
       body: [
         "Ember will start a small helper inside each WSL distro that has a Linux app open, so it can read and use those apps the way it reads your other windows. It runs only while a Linux app is open, and never starts a distro on its own.",
-        "When you ask something, what Ember read goes to GitHub Copilot, as it does for your other windows.",
+        `When you ask something, what Ember read goes to ${serviceName(i.byok)}, as it does for your other windows.`,
         "Ember can also run commands in WSL if you turn commands on for it. Commands in WSL can reach your Windows files and programs.",
       ],
       yes: "Turn on",
@@ -198,7 +203,7 @@ export function consentText(i: ConsentInput): ConsentText {
       body: [
         first,
         `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "~/.local/share/ember-remote"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
-        `Your voice and your GitHub sign-in stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
+        `Your voice and ${s.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(s.byok)} from this computer when you ask something.`,
         desktop,
         `${label} keeps its own record of what Ember does there.`,
       ],
@@ -212,7 +217,7 @@ export function consentText(i: ConsentInput): ConsentText {
     body: [
       "Ember runs commands in its own command window, where you can watch them and stop them. It never types into your own terminal windows.",
       "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      `What a command prints goes to ${serviceName(c.byok)} as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.`,
       ...(c.wsl ? ["Commands in WSL can also reach your Windows files and programs."] : []),
       ...(c.privileged ? ["Commands here run as the administrator, so Ember asks before every one."] : []),
       ...(c.windows ? ["Commands here run in Windows PowerShell and can't ask you for answers or passwords."] : []),

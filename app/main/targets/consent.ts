@@ -25,14 +25,23 @@ function panel(o: Omit<ConsentPanel, "sha256">): ConsentPanel {
 /** The PC's stop chord as the cards name it ("Ctrl+Alt+X"). */
 const stopLabel = (os: OS) => SHORTCUTS[os].stop.label;
 
-/** The WSL card (§8.4.1). `target` is the distro "WSL" names (or "local" when none is installed yet). */
-export function wslConsent(o: { target: TargetId; targetLabel: string }): ConsentPanel {
+/**
+ * Where what Ember reads goes, as the cards name it: GitHub Copilot, or the organisation's own model endpoint when the
+ * administrator set one (`byok`: the policy's provider; Ember then never uses a GitHub sign-in).
+ */
+const serviceName = (byok: boolean | undefined) => (byok ? "your organisation's model service" : "GitHub Copilot");
+
+/**
+ * The WSL card (§8.4.1). `target` is the distro "WSL" names (or "local" when none is installed yet); `byok`: the
+ * organisation's own model service is in use.
+ */
+export function wslConsent(o: { target: TargetId; targetLabel: string; byok?: boolean }): ConsentPanel {
   return panel({
     feature: "wsl", target: o.target, targetLabel: o.targetLabel,
     title: "Use Ember with WSL?",
     body: [
       "Ember will start a small helper inside each WSL distro that has a Linux app open, so it can read and use those apps the way it reads your other windows. It runs only while a Linux app is open, and never starts a distro on its own.",
-      "When you ask something, what Ember read goes to GitHub Copilot, as it does for your other windows.",
+      `When you ask something, what Ember read goes to ${serviceName(o.byok)}, as it does for your other windows.`,
       "Ember can also run commands in WSL if you turn commands on for it. Commands in WSL can reach your Windows files and programs.",
     ],
     yes: "Turn on", no: "Not now",
@@ -48,6 +57,8 @@ export interface CommandsCardFacts {
   windows: boolean;
   /** A Podman distro. */
   podman: boolean;
+  /** The organisation's own model service is in use (the policy's provider), not GitHub Copilot. */
+  byok?: boolean;
 }
 
 /** The commands card for one target (§8.4.3). */
@@ -64,7 +75,7 @@ export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: stri
     body: [
       "Ember runs commands in its own command window, where you can watch them and stop them. It never types into your own terminal windows.",
       "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      `What a command prints goes to ${serviceName(o.facts.byok)} as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.`,
       ...extra,
       `${stopLabel(o.os)} stops everything at once. What a command already changed stays changed.`,
     ],
@@ -85,6 +96,8 @@ export interface SshCardFacts {
   graceSeconds: number;
   /** The machine Ember connected to before isn't the one it reached now (§7.4: asked again). */
   machineChanged?: boolean;
+  /** The organisation's own model service is in use (the policy's provider): no GitHub sign-in, nothing to Copilot. */
+  byok?: boolean;
 }
 
 /** "the key ~/.ssh/a and the settings file ~/.ssh/b" from the carried options, or "". */
@@ -125,7 +138,7 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts })
   if (f.viaLabel) body.push(`It connects from ${f.viaLabel}, with ${f.viaLabel.replace(/ \(WSL\)$/, "")}'s SSH keys.`);
   body.push(
     `It copies a small helper there: about 31 MB, unpacked to about 125 MB in ~/.local/share/ember-remote. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
-    `Your voice and your GitHub sign-in stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
+    `Your voice and ${f.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(f.byok)} from this computer when you ask something.`,
     f.desktopOff
       ? `Your organisation lets Ember only run commands on ${f.label}.`
       : `On ${f.label}'s screen it reads and uses apps only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.`,
