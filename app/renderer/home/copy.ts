@@ -71,6 +71,9 @@ export function tagline(t: {
   return `${where} Press ${askLabel} to ask it anything.`;
 }
 
+/** What a screen reader hears when Start has done its work and gone (review #50). */
+export const STARTED_TEXT = "Ember has started.";
+
 /** "Today", "Yesterday", else the weekday and date. */
 export function dayLabel(t: string, now = new Date()): string {
   const d = new Date(t);

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fixButtonName, fixFailedText } from "../../app/renderer/home/copy";
+import { STARTED_TEXT, fixButtonName, fixFailedText } from "../../app/renderer/home/copy";
 
 const read = (f: string) => readFileSync(new URL(`../../app/renderer/home/${f}`, import.meta.url), "utf8");
 const css = read("styles.css");
@@ -58,5 +58,12 @@ describe("the Size slider says its value once (review #56)", () => {
     expect(page).toContain('<label for="size">Size <span id="size-out" class="size-out" aria-hidden="true">60 px</span></label>');
     expect(page).toMatch(/<input type="range" id="size"[^>]*aria-valuetext="60 pixels">/);
     expect(css).toMatch(/\.pick-row \.size-out \{/);
+  });
+});
+
+describe("Start hands focus on when it goes (review #50)", () => {
+  it("has a status line that says Ember started, there from the start", () => {
+    expect(STARTED_TEXT).toBe("Ember has started.");
+    expect(page).toMatch(/<p id="tagline" role="status">Starting…<\/p>\s*<p class="sr" id="home-live" role="status"><\/p>/);
   });
 });

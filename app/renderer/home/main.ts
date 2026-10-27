@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, withCommandShells, type HomePatch, type Segment,
+  retryMessage, STARTED_TEXT, tagline, usageLine, withCommandShells, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -121,6 +121,9 @@ function applySettings(s: Settings): void {
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
+  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // (review #50), rather than dropping to the page.
+  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
   $("welcome").hidden = consented;
@@ -131,6 +134,11 @@ function applySettings(s: Settings): void {
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
+  if (started) {
+    $("home-live").textContent = STARTED_TEXT;
+    window.scrollTo({ top: 0 });
+    $("pick-h").focus({ preventScroll: true });
+  }
 }
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
