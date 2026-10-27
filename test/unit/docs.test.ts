@@ -151,3 +151,18 @@ describe("README.md", () => {
     for (let v = 13; v <= newest; v++) expect(covered.has(v), `macOS ${v}`).toBe(true);
   });
 });
+
+describe("CHANGELOG.md", () => {
+  const changelog = read("CHANGELOG.md");
+  const version = (JSON.parse(read("package.json")) as { version: string }).version;
+
+  it("opens with this version and its date, as the first release of Ember on Linux, Windows and macOS", () => {
+    const headings = changelog.split("\n").filter(l => l.startsWith("## "));
+    expect(headings[0]).toMatch(new RegExp(`^## ${version.replace(/\./g, "\\.")} \\(\\d{4}-\\d{2}-\\d{2}\\)$`));
+    expect(changelog).not.toMatch(/^## Unreleased/m);
+    const first = flat(section(changelog, headings[0].slice(3)));
+    for (const words of ["first release", "Windows", "macOS", "RHEL 8", "Hey Ember", "Cinder", "Commands, WSL and other computers"]) expect(first).toContain(words);
+    // A first release has nothing earlier to have changed from.
+    expect(first).not.toMatch(/### Changed/);
+  });
+});
