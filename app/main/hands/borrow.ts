@@ -292,6 +292,12 @@ export class CursorBorrow {
     const keyboardFree = () => {
       if (x.keyboardGrabbed?.(o.window)) throw new Error(GRABBED("stopped"));
     };
+    // The keyboard may be unusable while the mouse is fine (X11: Typing Assist; macOS: an input method, for keys that
+    // type): asked before the first key of a shortcut or of typed text, so nothing is half typed.
+    const keyboardUsable = (keys?: { modifiers: readonly number[]; sym: number }) => {
+      const why = x.keyboardBlockedReason?.(keys) ?? null;
+      if (why) throw new Error(why);
+    };
     // A click goes to whatever is on top at that spot: it must be the approved window or the app's own open menu
     // (not its dialog over that spot, unless the element is in it).
     const pointerOnTarget = () => {
@@ -407,13 +413,14 @@ export class CursorBorrow {
         const { modifiers, key } = parseCombo(spelled, kc);
         const sym = x.keysymOf(key);
         if (!sym) throw new Error(`unknown key "${key}"`);
+        const mods = modifiers.map(m => x.keysymOf(m));
+        keyboardUsable({ modifiers: [...mods], sym });
         // The key in the active layout when it has one (with Shift if it's on the shifted level there, like
         // "plus" on a US keyboard); else in another layout of the keyboard (Ctrl+C still works with a Russian
         // layout active). Never a key that gives it only with AltGr: without AltGr it is another shortcut.
         const layout = x.layout?.() ?? null;
         const stroke = layout ? shortcutStroke(sym, layout) : null;
         if (layout && !stroke) throw new Error(`The keyboard layout in use can't press ${combo.trim()} (its key needs AltGr there, or isn't there), so Ember pressed nothing: any other key would be another shortcut. Switch the layout (for example to English) and try again.`);
-        const mods = modifiers.map(m => x.keysymOf(m));
         if ((stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
         const tap = (down: boolean) => (stroke ? pressCode(stroke.code, sym, down) : press(sym, down));
         for (const m of mods) press(m, true);
@@ -428,6 +435,7 @@ export class CursorBorrow {
         check();
       },
       type: async text => {
+        keyboardUsable();
         if (x.textKey) {
           // The backend types any character whatever the layout (Windows' KEYEVENTF_UNICODE, macOS's Unicode string):
           // no layout plan. Line breaks and tabs are the Return and Tab keys. check() runs only while Ember's own
@@ -468,6 +476,7 @@ export class CursorBorrow {
         check();
       },
       checkTyping: text => {
+        keyboardUsable();
         // With the backend's own typing any ASCII text goes (see type); otherwise the layout in use must type it all.
         if (x.textKey) { if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard"); return; }
         planText(text);

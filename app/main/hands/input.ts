@@ -5,7 +5,9 @@
  * that no key Ember didn't press is down, so the user can take over at once.
  * After close() every method is a harmless no-op: the Display is freed, and
  * touching it would crash the whole process. Keys and buttons Ember still holds
- * are let go before the connection closes.
+ * are let go before the connection closes. The server filters XTest keys like
+ * the user's: with Typing Assist on (XKB AccessX Slow, Bounce or Sticky Keys)
+ * keys would be lost or changed, so the keyboard is refused (the mouse isn't).
  */
 
 import { createRequire } from "node:module";
@@ -82,6 +84,29 @@ export interface XInput {
   watchUser?(on: boolean): boolean;
   /** What the user did since the last call, on their own devices (never Ember's XTest input). */
   userInput?(): "pointer" | "keys" | null;
+  /**
+   * Why Ember can't use the keyboard for this now, or null when it can: asked before any key of a shortcut or of
+   * typed text goes down (clicks and scrolls don't ask). `keys`: the shortcut about to be pressed (its modifiers'
+   * keysyms and its key's); absent for typing text. X11: Typing Assist is on, whatever the keys.
+   */
+  keyboardBlockedReason?(keys?: { modifiers: readonly number[]; sym: number }): string | null;
+}
+
+/** Shown while GNOME's Typing Assist is on: the server would drop, debounce or latch Ember's keys like the user's. */
+export const TYPING_ASSIST_REASON =
+  "Typing Assist is on (Slow Keys, Bounce Keys or Sticky Keys, in Settings › Universal Access), so Ember won't use your keyboard: its keys would be lost or changed. It can still click for you, or fill the field directly.";
+
+/** XkbControlsRec.enabled_ctrls bits that change synthetic keys: XkbSlowKeysMask, XkbBounceKeysMask, XkbStickyKeysMask. */
+const TYPING_ASSIST_CTRLS = (1 << 1) | (1 << 2) | (1 << 3);
+
+/**
+ * Why Typing Assist stops the keyboard, from XKB's enabled controls, or null. Slow Keys drops keys held less than its
+ * delay (all of Ember's), Bounce Keys drops a key pressed again within its delay ("hello" arrives as "helo"), and
+ * Sticky Keys latches modifiers and switches itself off at the first chord (GNOME's "disable if two keys are pressed
+ * together"). Ember never turns them off itself: a crash would leave the user's setting off.
+ */
+export function typingAssistReason(enabledCtrls: number): string | null {
+  return enabledCtrls & TYPING_ASSIST_CTRLS ? TYPING_ASSIST_REASON : null;
 }
 
 const requireCjs = createRequire(__filename);
@@ -461,6 +486,21 @@ export function openXInput(displayName?: string): XInput | null {
           const others: KeyLevels[] = [];
           for (let g = 0; g < Math.min(groups, 4); g++) if (g !== group % groups) others.push(levels(mods & ~LockMask, g));
           return { typing, shortcuts, shift: shiftKey(shortcuts), others };
+        } finally {
+          XkbFreeKeyboard(xkb, 0, 1);
+        }
+      },
+      keyboardBlockedReason() {
+        if (!open) return null;
+        // Without XKB there is no AccessX either.
+        const xkb = XkbGetMap(dpy, 0, XkbUseCoreKbd);
+        if (!xkb) return null;
+        try {
+          if (XkbGetControls(dpy, 0x80000000 /* XkbControlsEnabledMask */, xkb) !== 0) return null;
+          // XkbDescRec.ctrls (16) → XkbControlsRec.enabled_ctrls (12).
+          const ctrls = koffi.decode(xkb, 16, "void *");
+          if (!ctrls) return null;
+          return typingAssistReason(Buffer.from(koffi.decode(ctrls, "uint8_t", 16) as Uint8Array).readUInt32LE(12));
         } finally {
           XkbFreeKeyboard(xkb, 0, 1);
         }

@@ -223,6 +223,9 @@ async function runDoctor(): Promise<void> {
   // for every window at once (the Accessibility permission, secure input), while Windows refuses a window it can't
   // check, and 0 is never one, so every Windows check-up would say input was missing. Linux has no such question.
   const blocked = ws && input?.blockedReason ? input.blockedReason(ws.activeWindow()?.id ?? 0) : null;
+  // What stops Ember's typing but not its clicks (Linux: Typing Assist; macOS: an input method) has a row of its own.
+  const typing = ws && input && !blocked ? input.keyboardBlockedReason?.() ?? null : null;
+  if (typing) probes.extra.push({ id: "typing", status: "warn", label: "Typing", detail: typing });
   const checks = doctorChecks({
     os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
     xtest: ws ? !!input && !blocked : null,
