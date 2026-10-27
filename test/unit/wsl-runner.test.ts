@@ -241,7 +241,7 @@ function hereDoc(script: string): string[] {
 
 /** A distro behind a fake wsl.exe and job host. Runs (anything not a fixed script) are left for the test to drive. */
 function distro(o: {
-  facts?: string; listed?: WslDistro | null; running?: boolean; jobHost?: JobHostRef | null; sweepNames?: Record<string, string[]>;
+  facts?: string; factsFail?: { stdout?: Buffer; stderr?: Buffer; code: number }; listed?: WslDistro | null; running?: boolean; jobHost?: JobHostRef | null; sweepNames?: Record<string, string[]>;
   hang?: ("facts" | "boot" | "KILL" | "TERM" | "read")[]; inspect?: (lines: string[]) => string | null; git?: string;
   /** What READ_SCRIPT prints for a path (null: it fails with exit 3, as for a missing or non-regular file). */
   read?: (path: string) => Buffer | string | null;
@@ -268,7 +268,8 @@ function distro(o: {
           const names = o.sweepNames?.[tail[3]] ?? [];
           answerWith(call, { stdout: names.map((n, i) => `${4242 + i} ${n}\n`).join("") });
         } else if (script.includes(FACTS_SCRIPT.split("\n")[0])) {
-          if (!o.hang?.includes("facts")) answerWith(call, { stdout: o.facts ?? FACTS_OUT });
+          if (o.factsFail) answerWith(call, o.factsFail);
+          else if (!o.hang?.includes("facts")) answerWith(call, { stdout: o.facts ?? FACTS_OUT });
         } else if (script.includes(INSPECT_SCRIPT)) {
           const out = o.inspect ? o.inspect(hereDoc(script)) : hereDoc(script).map(p => `1\t${p}\n`).join("");
           if (out === null) answerWith(call, { stderr: utf16("chdir failed\r\n"), code: 1 });
@@ -378,6 +379,14 @@ describe("WSL runner: starting a command", () => {
     w.runs[0].child.out("fatal: not a git repository\n");
     w.runs[0].child.exit(128);
     expect(await run.done).toMatchObject({ ended: "exit", code: 128 });
+  });
+
+  it("says wsl.exe's own message when the set-up can't be read: wsl.exe writes its errors to stdout (CI's WSL runners)", async () => {
+    const failing = distro({ factsFail: { stdout: utf16("The system cannot find the file specified.\r\n"), code: 4294967295 } });
+    await expect(failing.runner.facts()).rejects.toThrow("Ember couldn't read Ubuntu's set-up: The system cannot find the file specified.");
+    // stderr still comes first when it says something.
+    const both = distro({ factsFail: { stdout: utf16("on stdout\r\n"), stderr: utf16("on stderr\r\n"), code: 1 } });
+    await expect(both.runner.facts()).rejects.toThrow("Ember couldn't read Ubuntu's set-up: on stderr");
   });
 
   it("refuses a distro whose set-up is pending, a hidden or unknown one, and runs nothing in it", async () => {

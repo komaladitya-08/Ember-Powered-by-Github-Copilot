@@ -158,7 +158,8 @@ export function createWslExec(o: { exe: () => string | null; env: NodeJS.Process
           }
           // Debug only (off by default): why a step in a distro failed, for a CI log or a user's support report.
           if (r.inDistro && (error || timedOut || exitCode !== 0)) {
-            o.log.debug("wsl.exec_failed", { code: exitCode, timedOut, error, stderr: decodeMessage(Buffer.concat(err)), outBytes });
+            // wsl.exe writes its own errors to stdout: a failed step's stdout is its message.
+            o.log.debug("wsl.exec_failed", { code: exitCode, timedOut, error, stderr: decodeMessage(Buffer.concat(err)), stdout: exitCode !== 0 ? decodeMessage(Buffer.concat(out)) : "", outBytes });
           }
           resolve({ code: timedOut ? null : exitCode, stdout: Buffer.concat(out), stderr: Buffer.concat(err), timedOut, error });
         };

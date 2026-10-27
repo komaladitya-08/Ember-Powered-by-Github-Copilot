@@ -496,7 +496,8 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     if (r.timedOut) throw new Error(`${name} took too long to start`);
     const lines = parseFacts(r.stdout.toString("utf8"));
     if (!lines) {
-      const why = decodeMessage(r.stderr);
+      // wsl.exe writes its own errors to stdout, not stderr.
+      const why = decodeMessage(r.stderr) || (r.code !== 0 ? decodeMessage(r.stdout) : "");
       d.log.warn("wsl.facts_unreadable", { distro: name, code: r.code, why });
       throw new Error(why ? `Ember couldn't read ${name}'s set-up: ${why}` : `Ember couldn't read ${name}'s set-up`);
     }
