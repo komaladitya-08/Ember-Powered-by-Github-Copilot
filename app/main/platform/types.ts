@@ -410,8 +410,8 @@ export interface PlatformDoctorProbes {
   microphones: string[] | null;
   /** linux: speech-dispatcher is there; win32/darwin: true (Chromium uses the system's voices). */
   speechDispatcher: boolean;
-  /** Linux only; null elsewhere (the check is left out). */
-  sandbox: { userNamespaces: boolean; suidHelper: boolean } | null;
+  /** Linux only; null elsewhere (the check is left out). appImage: running as an AppImage, which has no setuid helper. */
+  sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** Linux only (inotify); null elsewhere. */
   fileWatchers: { used: number; max: number } | null;
   /** Linux only (DeskManager.available()); null elsewhere. */

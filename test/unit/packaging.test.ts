@@ -79,6 +79,17 @@ describe("ember doctor", () => {
     expect(byId(doctorChecks(probes({ sandbox: { userNamespaces: false, suidHelper: false } })), "sandbox")).toMatchObject({ status: "fail", fix: expect.stringMatching(/chmod 4755/) });
   });
 
+  it("only warns about the sandbox in an AppImage on a host with user namespaces off, with no chown for files it lacks", () => {
+    // AppRun starts Ember there with --no-sandbox on purpose: an AppImage can't carry a setuid helper.
+    const checks = doctorChecks(probes({ sandbox: { userNamespaces: false, suidHelper: false, appImage: true } }));
+    const row = byId(checks, "sandbox");
+    expect(row).toMatchObject({ status: "warn", label: "Sandbox", detail: expect.stringMatching(/without Chromium's sandbox/), fix: expect.stringMatching(/RPM/) });
+    expect(`${row.detail} ${row.fix}`).not.toMatch(/chown|chmod|\/opt\/ember/);
+    expect(formatDoctor(checks)).toMatch(/Ember can work\. 1 thing worth a look\.$/);
+    // With user namespaces the AppImage sandboxes as usual.
+    expect(byId(doctorChecks(probes({ sandbox: { userNamespaces: true, suidHelper: false, appImage: true } })), "sandbox").status).toBe("ok");
+  });
+
   it("gives each desktop-session problem its own fix", () => {
     const withSession = (detail: string) => {
       const p = probes();
