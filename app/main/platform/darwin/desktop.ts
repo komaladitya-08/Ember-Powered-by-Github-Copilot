@@ -122,6 +122,17 @@ export function secureInputOf(desktop: Pick<DarwinDesktop, "secureInput" | "sess
   return { on, pid, app: desktop.windows().find(e => e.pid === pid)?.owner || processName(desktop.processPath(pid)) };
 }
 
+/**
+ * What holds Ember back while secure keyboard entry is on, as a clause in lower case without a full stop: the input's
+ * refusal and the window system's systemDialogReason() both start from it (Terminal's “Secure Keyboard Entry” is on
+ * for good on many managed Macs, and a password field left focused keeps it on, so "a system dialog is open" would
+ * send the user looking for a dialog that isn't there).
+ */
+export function secureInputCause(app: string): string {
+  const where = app ? ` in ${app}` : "";
+  return `secure keyboard entry is on${where} (a password field, or Terminal's “Secure Keyboard Entry”)`;
+}
+
 /** Tunables and seams for makeDesktop() (the defaults are the real ones). */
 export interface DesktopOptions {
   /** The process AX must never be asked about (Ember's own). */

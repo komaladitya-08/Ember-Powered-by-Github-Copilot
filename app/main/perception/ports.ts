@@ -8,8 +8,12 @@ import type { Perception } from "./index";
 import type { AtspiSidecar } from "./sidecar";
 import type { ActionKind } from "../policy/policy";
 
-/** What workers and the host use of a screen's perception: the local Perception, the desk's, or a remote's. */
-export type PerceptionPort = Pick<Perception, "focused" | "read" | "atPoint" | "quickContext" | "describe" | "perceive" | "systemDialogOpen" | "windows">;
+/**
+ * What workers and the host use of a screen's perception: the local Perception, the desk's, or a remote's. Only this
+ * screen's says why its system-dialog check is on when that isn't a dialog (systemDialogReason, optional).
+ */
+export type PerceptionPort = Pick<Perception, "focused" | "read" | "atPoint" | "quickContext" | "describe" | "perceive" | "systemDialogOpen" | "windows">
+  & Partial<Pick<Perception, "systemDialogReason">>;
 /** What Perception uses of its reader (AtspiSidecar, or WSL's routed one). */
 export type PerceptionSidecar = Pick<AtspiSidecar, "listWindows" | "readWindow" | "atPoint" | "secretFields" | "markSecret" | "shellOverlays" | "scaleElements" | "readElement">;
 /** What a worker uses of the reader, plus the remote's step stamp. */

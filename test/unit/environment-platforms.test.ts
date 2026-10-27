@@ -119,6 +119,16 @@ describe("macOS setup checks", () => {
     expect(check(mac({ root: true }), "elevated")).toMatchObject({ status: "warn", detail: "Ember is running as root. Start it as yourself." });
   });
 
+  it("show secure keyboard entry with the app that holds it, and leave it out when it is off (review #236)", () => {
+    expect(check(mac({ secureInput: { on: true, app: "Terminal" } }), "secure-input")).toEqual({ id: "secure-input", label: "Secure input", status: "warn",
+      detail: "Secure keyboard entry is on in Terminal, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field in Terminal, or turn off Secure Keyboard Entry there (Terminal menu › Secure Keyboard Entry)." });
+    expect(check(mac({ secureInput: { on: true, app: "" } }), "secure-input")?.detail).toMatch(/^Secure keyboard entry is on, so Ember won't look at the screen.*Close the password field, or turn off/);
+    expect(check(mac({ secureInput: { on: null, app: "" } }), "secure-input")).toMatchObject({ status: "warn",
+      detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
+    expect(check(mac({ secureInput: { on: false, app: "" } }), "secure-input")).toBeUndefined();
+    expect(check(mac(), "secure-input")).toBeUndefined();
+  });
+
   it("name macOS's own shortcuts", () => {
     expect(check(mac(), "shortcuts")?.detail).toBe("Control+Shift+Command+Space ask · Control+Shift+Command+X stop · Control+Shift+Command+E settings · Control+Shift+Command+M microphone");
   });

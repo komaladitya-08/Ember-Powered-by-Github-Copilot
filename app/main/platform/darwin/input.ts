@@ -17,7 +17,7 @@ import { strokeFor, type KeyLayout } from "../../hands/keymap";
 import type { Logger } from "../../logger";
 import type { Input, OwnWindowHandle } from "../types";
 import { EVENT, FLAG, MOUSE_BUTTON } from "./cg";
-import { openDesktop, openPoster, desktopError, secureInputOf, type DarwinDesktop, type DarwinPoster } from "./desktop";
+import { openDesktop, openPoster, desktopError, secureInputCause, secureInputOf, type DarwinDesktop, type DarwinPoster } from "./desktop";
 import { resolveActive, resolveFocus } from "./focus";
 import {
   SHORTCUT_FLAGS, VK, buildLayout, cgKeyOf, charKeysym, isModifierKey, keyFlags, keysymOf, modifierFlags, namedKey, toCode,
@@ -31,8 +31,8 @@ export const ACCESSIBILITY_REASON =
 
 /** Shown while another app holds secure keyboard entry. */
 export function secureInputReason(app: string): string {
-  const where = app ? ` in ${app}` : "";
-  return `Secure keyboard entry is on${where} (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't use the mouse or keyboard until it's off.`;
+  const cause = secureInputCause(app);
+  return `${cause[0]!.toUpperCase()}${cause.slice(1)}, so Ember won't use the mouse or keyboard until it's off.`;
 }
 
 /** Shown when neither IsSecureEventInputEnabled nor the session can say whether secure keyboard entry is on. */

@@ -327,6 +327,31 @@ describe("system dialogs and permissions on macOS", () => {
     expect(warned).toEqual(['platform.secure_input_unknown {"part":"windows"}']);
   });
 
+  it("says secure keyboard entry, naming the app, when that and no prompt is why (review #236)", () => {
+    const { s, ws } = setup();
+    expect(ws.systemDialogReason()).toBeNull();
+    // Terminal's "Secure Keyboard Entry": no dialog anywhere, so "a system dialog is open" would be wrong.
+    s.windows.push(w(130, 777, "Terminal", "bash", 60, 60, 700, 400));
+    s.secure = true;
+    s.session = { locked: false, secureInputPid: 777 };
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.systemDialogReason()).toBe(
+      "secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off");
+    // A real prompt on screen is the reason then: the dialog's own words stay.
+    s.windows.unshift(w(990, 77, "SecurityAgent", "", 500, 300, 400, 200, 1000));
+    expect(ws.systemDialogReason()).toBeNull();
+    s.windows.shift();
+    // Can't tell: still refused, with the generic words.
+    s.secure = null;
+    s.session = null;
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.systemDialogReason()).toBeNull();
+    s.secure = true;
+    s.session = { locked: false, secureInputPid: 777 };
+    ws.close();
+    expect(ws.systemDialogReason()).toBeNull();
+  });
+
   it("names the app holding secure input, for the refusal text and the doctor", () => {
     const { s, ws } = setup();
     expect(ws.secureInput()).toEqual({ on: false, pid: null, app: "" });

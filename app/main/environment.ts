@@ -48,6 +48,11 @@ export interface MacEnvInputs {
   inApplications: boolean;
   /** Ember runs as root. */
   root: boolean;
+  /**
+   * Secure keyboard entry (a password field, Terminal's “Secure Keyboard Entry”) and the app holding it ("" when
+   * unnamed); `on` null when it can't be told. Omitted without a window system to ask (no row).
+   */
+  secureInput?: { on: boolean | null; app: string };
 }
 
 export interface EnvInputs {
@@ -285,6 +290,17 @@ function inspectMac(i: EnvInputs): EnvReport {
     // Not asked yet is fine: macOS asks when the user turns on “Hey Ember”.
     if (m.microphone === "denied" || m.microphone === "restricted") {
       checks.push({ id: "microphone", label: "Microphone", status: "warn", detail: `Microphone access is off for Ember, so “Hey Ember” can't hear you. ${MAC_REGRANT}`, fix: "open-microphone-settings" });
+    }
+
+    // While it is on Ember neither looks nor acts (the window system's system-dialog check), so the reason is shown here
+    // too, with the app that holds it: a stuck Secure Keyboard Entry otherwise turns Ember off without a word.
+    const secure = m.secureInput;
+    if (secure?.on === true) {
+      const where = secure.app ? ` in ${secure.app}` : "";
+      checks.push({ id: "secure-input", label: "Secure input", status: "warn",
+        detail: `Secure keyboard entry is on${where}, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field${where}, or turn off Secure Keyboard Entry there (Terminal menu › Secure Keyboard Entry).` });
+    } else if (secure && secure.on === null) {
+      checks.push({ id: "secure-input", label: "Secure input", status: "warn", detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
     }
 
     checks.push(m.inApplications

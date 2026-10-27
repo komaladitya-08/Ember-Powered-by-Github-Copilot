@@ -412,7 +412,7 @@ export class Perception {
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
     // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
     // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next).
-    if (this.platformDialog()) return noShot(SYSTEM_DIALOG);
+    if (this.platformDialog()) return noShot(this.platformDialogWords());
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
     if (shell.unchecked) return noShot(this.words.shellUnchecked);
@@ -504,7 +504,7 @@ export class Perception {
       // No marks on what is blacked out (an element under another window can't be clicked either).
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
-    if (!capture) return noShot(dialogAfter ? SYSTEM_DIALOG : "the window is off screen, or the screen couldn't be captured safely");
+    if (!capture) return noShot(dialogAfter ? this.platformDialogWords() : "the window is off screen, or the screen couldn't be captured safely");
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
     return { ...seen, text: text + note, capture };
   }
@@ -575,6 +575,27 @@ export class Perception {
    */
   async systemDialogOpen(): Promise<boolean> {
     return (await this.shellOverlays()).dialog || this.platformDialog();
+  }
+
+  /**
+   * Why the window system's check is on when it isn't a dialog (macOS: secure keyboard entry in a named app, review
+   * #236), as a clause; null when it is a dialog, nothing, or the words can't be read. Words only: the check decides.
+   */
+  async systemDialogReason(): Promise<string | null> {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? null;
+    } catch {
+      return null; // no words: the dialog's own are used
+    }
+  }
+
+  /** The no-screenshot note for the window system's check: its own reason when it gives one, else the dialog's. */
+  private platformDialogWords(): string {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? SYSTEM_DIALOG;
+    } catch {
+      return SYSTEM_DIALOG;
+    }
   }
 
   /**

@@ -37,6 +37,22 @@ describe("darwinEnvironment", () => {
     expect(i.mac).toEqual({ version: "15.1", accessibility: true, screen: "granted", microphone: "not-determined", inputMonitoring: true, inApplications: true, root: false });
   });
 
+  it("reads secure keyboard entry from the window system, for the setup check's row (review #236)", () => {
+    const held = { on: true as boolean | null, pid: 777 as number | null, app: "Terminal" };
+    const { d } = deps({ ws: fakeDarwinWindows({ secureInput: () => held }) });
+    expect(darwinEnvironment(d, { windows: undefined }).mac?.secureInput).toEqual({ on: true, app: "Terminal" });
+    Object.assign(held, { on: false, pid: null, app: "" });
+    expect(darwinEnvironment(d, { windows: undefined }).mac?.secureInput).toEqual({ on: false, app: "" });
+    Object.assign(held, { on: null });
+    expect(darwinEnvironment(d, { windows: undefined }).mac?.secureInput).toEqual({ on: null, app: "" });
+    // A read that throws can't tell: the row says so (fail closed), as the doctor does.
+    const broken = deps({ ws: fakeDarwinWindows({ secureInput: () => { throw new Error("gone"); } }) });
+    expect(darwinEnvironment(broken.d, { windows: undefined }).mac?.secureInput).toEqual({ on: null, app: "" });
+    // No window system (or one without the extra): nothing is known, so no row.
+    expect(darwinEnvironment(deps({ ws: null }).d, { windows: undefined }).mac?.secureInput).toBeUndefined();
+    expect(darwinEnvironment(deps({ ws: fakeDarwinWindows() }).d, { windows: undefined }).mac?.secureInput).toBeUndefined();
+  });
+
   it("reads the opened window system's answers first, and Electron's before it opened", () => {
     const { d, e } = deps({ ws: fakeDarwinWindows({ trusted: false }) });
     expect(darwinEnvironment(d, { windows: undefined }).mac?.accessibility).toBe(false);
@@ -274,16 +290,16 @@ describe("the macOS doctor rows", () => {
   it("name the app holding secure keyboard entry", () => {
     const rows = darwinDoctorRows(deps({ ws: fakeDarwinWindows({ secureInput: () => ({ on: true, pid: 812, app: "Terminal" }) }) }).d);
     expect(row(rows, "secure-input")).toMatchObject({
-      status: "warn", detail: "Secure keyboard entry is on in Terminal, so Ember won't use the keyboard until it's off.",
+      status: "warn", detail: "Secure keyboard entry is on in Terminal, so Ember won't look at the screen or use the mouse or keyboard until it's off.",
     });
     expect(row(rows, "secure-input")?.fix).toMatch(/Terminal menu › Secure Keyboard Entry/);
   });
 
   it("warn when secure input can't be told, and leave the row out without a window system", () => {
     expect(row(darwinDoctorRows(deps({ ws: fakeDarwinWindows({ secureInput: () => ({ on: true, pid: 9, app: "" }) }) }).d), "secure-input")?.detail)
-      .toBe("Secure keyboard entry is on, so Ember won't use the keyboard until it's off.");
+      .toBe("Secure keyboard entry is on, so Ember won't look at the screen or use the mouse or keyboard until it's off.");
     expect(row(darwinDoctorRows(deps({ ws: fakeDarwinWindows({ secureInput: () => ({ on: null, pid: null, app: "" }) }) }).d), "secure-input"))
-      .toMatchObject({ status: "warn", detail: "Ember can't tell whether a password is being typed, so it won't use the keyboard." });
+      .toMatchObject({ status: "warn", detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
     expect(row(darwinDoctorRows(deps({ ws: null }).d), "secure-input")).toBeUndefined();
   });
 

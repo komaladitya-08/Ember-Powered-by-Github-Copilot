@@ -85,6 +85,15 @@ export interface WindowSystem extends Omit<X11, "capture"> {
    * shell_overlays.
    */
   systemDialogOpen?(): boolean;
+  /**
+   * (Added by the release fixes; optional.) Why systemDialogOpen() is true when the cause is a state the user can turn
+   * off rather than a dialog (macOS: secure keyboard entry on in an app, and no system prompt on screen), as a clause
+   * that starts in lower case, has no full stop and says what Ember holds back ("secure keyboard entry is on in
+   * Terminal …, so Ember won't look at the screen or use the mouse or keyboard until it's off"). null when it is a
+   * dialog, when nothing is up, or when it can't be told: the dialog's words stay. Only words: systemDialogOpen()
+   * alone decides.
+   */
+  systemDialogReason?(): string | null;
 }
 
 /**
@@ -116,7 +125,7 @@ export interface Input extends XInput {
 // ───────────── Everything below is added by the design ─────────────
 
 /** What Perception needs of a window system. The desk's remote X11 facade (desk/agent.ts) satisfies it structurally. */
-export type PerceptionWindows = Pick<WindowSystem, "activeWindow" | "focusWindow" | "clientWindows" | "stack" | "capture" | "systemDialogOpen">;
+export type PerceptionWindows = Pick<WindowSystem, "activeWindow" | "focusWindow" | "clientWindows" | "stack" | "capture" | "systemDialogOpen" | "systemDialogReason">;
 
 /**
  * Keys held when an ask-shortcut callback runs (WindowSystem.keysDown, freshAskPress). Every backend answers it, but
