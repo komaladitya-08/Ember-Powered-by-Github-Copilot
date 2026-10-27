@@ -262,6 +262,20 @@ function pause(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * One plain sentence for a save that failed, for the settings window (review #84). `later`: the change stays in use
+ * and is saved with the next one (the size slider); otherwise it wasn't kept.
+ */
+export function saveFailure(err: unknown, later = false): string {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  const why = code === "ENOSPC" || code === "EDQUOT" ? "the disk is full"
+    : code === "EROFS" ? "its folder is on a disk that can only be read"
+    : code === "EACCES" || code === "EPERM" ? "it isn't allowed to write to its folder"
+    : code === "EBUSY" ? "another program is holding settings.json"
+    : "the file couldn't be written";
+  return `Ember couldn't save your settings: ${why}. ${later ? "It will try again with your next change." : "Your change wasn't kept."}`;
+}
+
 /** How a SettingsStore saves on this OS (the platform's paths). */
 export interface SettingsStoreOptions {
   /**
@@ -512,7 +526,7 @@ export class SettingsStore {
       }
     } else {
       // Saved first: memory changes only once the change is on disk.
-      this.save(next);
+      this.persist(next, false);
       this.clearPending();
       this.savedOverBroken();
     }
@@ -524,9 +538,28 @@ export class SettingsStore {
   /** Saves a change made with `soon` now (also done on quit); nothing while the file can't be read (review #83). */
   flush(): void {
     if (!this.pending || this.unread) return;
-    this.save(this.current);
+    this.persist(this.current, true);
     this.clearPending();
     this.savedOverBroken();
+  }
+
+  /** The notice a failed save raised (the next save that works takes it away). */
+  private saveNotice: string | null = null;
+
+  /**
+   * save(), with its failure said plainly (review #84): every window's notice says why, and the error thrown is that
+   * sentence (the raw error is its cause). `later`: the change stays in use and is saved with the next one.
+   */
+  private persist(settings: Settings, later: boolean): void {
+    try {
+      this.save(settings);
+    } catch (err) {
+      this.saveNotice = saveFailure(err, later);
+      this.problem(this.saveNotice);
+      throw Object.assign(new Error(this.saveNotice, { cause: err }), { code: (err as NodeJS.ErrnoException | null)?.code });
+    }
+    if (this.saveNotice !== null && this.lastProblem === this.saveNotice) this.problem(null);
+    this.saveNotice = null;
   }
 
   /** Ember's own save replaced a hand edit that wasn't JSON: the notice says so (not "until it is fixed"). */

@@ -9,10 +9,10 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
-import type { Settings } from "../../main/settings";
+import type { Settings, SettingsPatch } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, saveFailedText, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -65,7 +65,7 @@ const cards: Card[] = FACTORIES.map(make => {
   const pitch = document.createElement("span"); pitch.textContent = PITCH[character.id] ?? "";
   el.append(canvas, name, pitch);
   el.addEventListener("click", () => {
-    void window.ember.updateSettings({ character: character.id as Settings["character"] });
+    void save({ character: character.id as Settings["character"] });
   });
   $("cards").appendChild(el);
   return { id: character.id, el, canvas, character, rig: new Rig() };
@@ -134,24 +134,39 @@ function applySettings(s: Settings): void {
 }
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
-$("login").addEventListener("change", e => { void window.ember.updateSettings({ startAtLogin: (e.target as HTMLInputElement).checked }); });
+$("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
 $("agree").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   ($("start") as HTMLButtonElement).disabled = !on;
   $("start-hint").hidden = on;
 });
-$("reduce-motion").addEventListener("change", e => { void window.ember.updateSettings({ reduceMotion: (e.target as HTMLInputElement).checked }); });
+$("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
   sizeLabel(v);
-  void window.ember.updateSettings({ size: v });
+  void save({ size: v });
 });
 $("start").addEventListener("click", () => {
   const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
   if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void window.ember.updateSettings({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true });
+  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
+    // Start did nothing visible: the notice at the top says why (review #84).
+    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+  });
 });
+/**
+ * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
+ * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
+ */
+function save(patch: SettingsPatch): Promise<boolean> {
+  return window.ember.updateSettings(patch).then(() => true, err => {
+    renderSettingsNotice(saveFailedText(err));
+    if (settings) { applySettings(settings); applyVoiceSettings(settings); }
+    if (agent) renderAgent(agent);
+    return false;
+  });
+}
 /** Something needs the user's agreement first: take them to the checkbox. */
 function focusAgree(): void {
   const agree = $("agree");
@@ -492,7 +507,7 @@ for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] a
   $(id).addEventListener("change", e => {
     const value = (e.target as HTMLSelectElement).value;
     const current = settings?.models ?? { conductor: null, worker: null };
-    void window.ember.updateSettings({ models: { ...current, [key]: value } });
+    void save({ models: { ...current, [key]: value } });
   });
 }
 const signInMsg = (text: string, error = false) => {
@@ -706,7 +721,7 @@ function renderPrivacy(s: Settings): void {
       const next = { ...s.grants };
       delete next[app];
       focusAfter = { list: "grants", index: i };
-      void window.ember.updateSettings({ grants: next });
+      void save({ grants: next });
     }, managed.has("grants")))
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: confirmEvery ? "None." : "None: Ember asks before its first action in each app." })]));
   // The user's own entries (with Remove), then the organisation's (locked).
@@ -717,7 +732,7 @@ function renderPrivacy(s: Settings): void {
       ...own.map((item, i) => row(neverLookLabel(item), () => {
         focusAfter = { list: "never-look", index: i };
         listMsg("");
-        void window.ember.updateSettings({ privacy: { neverLook: own.filter(x => x !== item) } });
+        void save({ privacy: { neverLook: own.filter(x => x !== item) } });
       }, false)),
       ...theirs.map(item => row(neverLookLabel(item), () => {}, null)),
     ]
@@ -744,7 +759,7 @@ $("never-look-form").addEventListener("submit", e => {
   window.ember.updateSettings({ privacy: { neverLook: [...own, v] } }).then(() => {
     input.value = "";
     listMsg(`Added ${v}.`);
-  }, err => listMsg(`Couldn't add it: ${ipcErrorText(err)}`));
+  }, err => listMsg(saveFailedText(err)));
 });
 $("never-look-add").addEventListener("input", () => listMsg(""));
 $("never-look-defaults").addEventListener("click", () => {
@@ -752,7 +767,7 @@ $("never-look-defaults").addEventListener("click", () => {
   const own = ownNeverLook(settings);
   const back = missingDefaults(settings.privacy.neverLook, platform?.os);
   const room = Math.max(0, NEVER_LOOK_MAX - own.length);
-  void window.ember.updateSettings({ privacy: { neverLook: [...own, ...back.slice(0, room)] } });
+  void save({ privacy: { neverLook: [...own, ...back.slice(0, room)] } }).then(ok => { if (!ok) listMsg(""); });
   listMsg(room < back.length
     ? `The list is full (${NEVER_LOOK_MAX} names): remove some to restore the rest of the defaults.`
     : "The usual password managers and password prompts are back on the list.");
@@ -813,17 +828,17 @@ $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // First time: the microphone note comes first, and focus moves to it so it is read and answered.
   if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
-  void window.ember.updateSettings({ wakeWord: on });
+  void save({ wakeWord: on });
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void window.ember.updateSettings({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-$("speak").addEventListener("change", e => { void window.ember.updateSettings({ speak: (e.target as HTMLInputElement).checked }); });
+$("speak").addEventListener("change", e => { void save({ speak: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.
