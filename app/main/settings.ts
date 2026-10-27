@@ -235,6 +235,23 @@ const BUSY_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
 /** How long to wait between those retries. */
 const RENAME_RETRY_MS = 50;
 
+/** Read errors another program's hold or a network home's hiccup causes for a moment (at login, scans and syncs run). */
+const BUSY_READ = new Set(["EBUSY", "EPERM", "EACCES", "EIO", "ETIMEDOUT", "EAGAIN"]);
+/** How long to wait before each further try of a start-up read (about 350 ms in all, only when it fails). */
+const READ_RETRY_MS = [50, 100, 200];
+
+/** The file's text at start-up, tried again a few times when it fails for a moment (review #83). */
+function readSoon(file: string): string {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return readTextFile(file);
+    } catch (err) {
+      if (attempt >= READ_RETRY_MS.length || !BUSY_READ.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+      pause(READ_RETRY_MS[attempt]);
+    }
+  }
+}
+
 /** Waits `ms` without returning to the event loop (saves are synchronous; this runs only after a refused rename). */
 function pause(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -267,8 +284,10 @@ export class SettingsStore {
   private broken: string | null = null;
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
   private seen: number | null = null;
-  /** A change applied in memory whose save is due shortly (a slider being dragged). */
+  /** A change applied in memory whose save is due shortly (a slider being dragged), or once the file reads again. */
   private pending: SettingsPatch | null = null;
+  /** The file is there but couldn't be read at start-up: nothing is saved over it until it reads (review #83). */
+  private unread = false;
   private pendingTimer: NodeJS.Timeout | null = null;
 
   private renameRetries: number;
@@ -304,15 +323,27 @@ export class SettingsStore {
     this.seen = this.mtime();
     try {
       // Whatever Unicode form an editor or script saved it in (a byte-order mark, UTF-16): review #82.
-      raw = readTextFile(this.file);
+      raw = running ? readTextFile(this.file) : readSoon(this.file);
     } catch (err) {
+      const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+      // Nothing is there to save over any more.
+      if (missing) this.unread = false;
       if (running) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
+        // (Still unreadable since start-up: its notice stands.)
+        if (!missing && !this.unread) this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
         return { settings: this.current };
       }
       this.current = DEFAULT_SETTINGS;
+      if (!missing) {
+        // The user's settings are there but can't be read: Ember runs on defaults and saves nothing over them until
+        // they can be read (the watcher keeps trying), so one change can't replace consent, hosts and the never-look
+        // list with defaults (review #83).
+        this.unread = true;
+        this.problem(`Ember can't read ${this.file}, so it started with its default settings. It won't save over the file until it can read it again.`);
+      }
       return { settings: this.current };
     }
+    this.unread = false;
     let json: unknown;
     let strict = true;
     try {
@@ -377,12 +408,14 @@ export class SettingsStore {
     return () => this.problemListeners.delete(fn);
   }
 
-  /** The file changed outside Ember (edited by hand): use it. Returns true when it did. */
+  /** The file changed outside Ember (edited by hand), or reads again after it couldn't: use it. Returns true when it did. */
   reloadIfChanged(): boolean {
     const m = this.mtime();
-    if (m === this.seen) return false;
+    const wasUnread = this.unread;
+    if (m === this.seen && !wasUnread) return false;
     const before = this.current;
     this.read(true);
+    if (wasUnread && this.unread) return false;
     // A change still waiting to be saved goes on top of the hand edit.
     if (this.pending) {
       const next = SettingsSchema.safeParse({ ...this.current, ...this.pending });
@@ -390,6 +423,8 @@ export class SettingsStore {
     }
     if (this.current === before) return false;
     this.apply(this.current);
+    // Changes made while the file couldn't be read are saved now, on top of the user's own settings.
+    if (wasUnread && this.pending) { try { this.flush(); } catch { /* saved with the next change */ } }
     for (const fn of this.listeners) fn(this.effective);
     return true;
   }
@@ -417,11 +452,15 @@ export class SettingsStore {
    * second (a slider being dragged); any other change, or flush(), saves it at once.
    */
   update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
-    // A hand edit since Ember last looked comes first: the patch goes on top of it.
-    if (this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
+    // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
+    if (this.unread || this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
     const next = SettingsSchema.parse({ ...this.current, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
-    if (opts.soon) {
+    if (this.unread) {
+      // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
+      // their settings once the file reads again (review #83).
+      this.pending = { ...this.pending, ...patch };
+    } else if (opts.soon) {
       this.pending = { ...this.pending, ...patch };
       if (!this.pendingTimer) {
         this.pendingTimer = setTimeout(() => { try { this.flush(); } catch { /* saved with the next change */ } }, 400);
@@ -438,9 +477,9 @@ export class SettingsStore {
     return this.effective;
   }
 
-  /** Saves a change made with `soon` now (also done on quit). */
+  /** Saves a change made with `soon` now (also done on quit); nothing while the file can't be read (review #83). */
   flush(): void {
-    if (!this.pending) return;
+    if (!this.pending || this.unread) return;
     this.save(this.current);
     this.clearPending();
     this.savedOverBroken();
