@@ -703,9 +703,14 @@ app). Ember names a window by its program, so to Ember whatever runs inside one,
 or a whole remote desktop, is just "msrdc" or "mstsc": its terminal, security-window and never-look checks can't see
 in, and one grant would cover every Linux app. So Ember refuses every action in these windows ("Ember can't tell
 what's inside a remote window…") and blacks them out of every screenshot. Reading their titles is unchanged. Other
-remote viewers (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't covered yet. The rule is
-`app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no Windows CI run has included it yet); Linux
-and macOS are unaffected.
+remote viewers on Windows (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't covered yet. On Linux and macOS the
+remote-desktop and virtual-machine viewers are remote surfaces too, refused and blacked out the same way: on Linux
+Remmina, virt-manager, virt-viewer and remote-viewer, GNOME Boxes and Connections, Vinagre, KRDC, the VNC viewers
+(TigerVNC, TightVNC), FreeRDP, rdesktop, X2Go, AnyDesk, TeamViewer, NoMachine, SPICE's spicy, VirtualBox, VMware, QEMU
+and Citrix Workspace; on macOS Screen Sharing, Apple Remote Desktop, Microsoft Remote Desktop and the Windows App, UTM,
+Parallels Desktop, VMware Fusion, VirtualBox, TeamViewer, AnyDesk, VNC Viewer, TigerVNC, Jump Desktop, Royal TSX,
+Citrix Viewer and NoMachine. The rule is `app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no
+Windows CI run has included it yet).
 
 With WSL turned on for Ember (§14), WSLg's windows are identified instead: `app/main/wsl/rail.ts` tells WSLg's `msrdc`
 from a Remote Desktop client's by its program's path (`isWslgImage`), a helper inside the distro reads the Linux apps
