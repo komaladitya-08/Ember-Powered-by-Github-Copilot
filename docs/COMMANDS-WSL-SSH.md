@@ -76,7 +76,9 @@ into the command (Ctrl+I types a tab for a program that wants one). Off a Mac, C
 (without a selection it interrupts the command, as in any terminal) and Ctrl+Shift+C always copies; **Copy output**
 copies everything the command printed. Commands without a terminal (on Windows, or where `script` isn't installed)
 say "This command can't take typing here." and are left out of the Tab order; programs there run with their
-non-interactive settings, so one that wants a password fails at once instead of waiting.
+non-interactive settings, so one that wants a password fails at once instead of waiting. While a screen reader runs
+(Orca, NVDA, JAWS, Narrator, VoiceOver), what a command prints is read out as it comes and can be read again line by
+line.
 
 The window never reaches Copilot as a picture: Ember blacks out its own windows in every screenshot.
 

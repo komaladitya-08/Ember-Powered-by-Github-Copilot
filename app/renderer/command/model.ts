@@ -44,6 +44,8 @@ export interface WindowView extends CommandWindowState {
   pending?: PendingView[];
   /** The PC's OS, for its keys in a run's terminal (keys.ts; absent: not a Mac). */
   os?: OS;
+  /** A screen reader runs on the PC: each terminal mirrors its output for it (review #43; absent: none). */
+  screenReader?: boolean;
 }
 
 /** At most this many pending lines are drawn. */

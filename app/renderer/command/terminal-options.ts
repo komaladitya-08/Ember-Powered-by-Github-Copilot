@@ -3,7 +3,9 @@
  * own so renderer-command.test.ts can pin them without a DOM: no proposed API, no addons (no clipboard addon, so OSC 52
  * does nothing; no web-links or image addon), OSC 8 hyperlinks inert, every window-manipulation report off
  * (`windowOptions: {}`), no bell (the page never listens to onBell), titles ignored (it never listens to
- * onTitleChange), 5000 lines of scrollback, no newline conversion, and typing off unless the run takes it.
+ * onTitleChange), 5000 lines of scrollback, no newline conversion, typing off unless the run takes it, and the
+ * screen reader's mirror of the output (`screenReaderMode`) on only while main says a screen reader runs (review #43:
+ * without it every row is aria-hidden, so a screen reader finds no output at all).
  * Type-only import: the xterm package itself is loaded only by terminal.ts.
  */
 
@@ -51,8 +53,13 @@ export const XTERM_OPTIONS: Readonly<ITerminalOptions> = Object.freeze({
   theme: THEME,
 });
 
-/** One run's options: the fixed ones, its size (fixed for the run, §3.10) and typing only when the run takes it. */
-export function terminalOptions(o: { interactive: boolean; cols: number; rows: number }): ITerminalOptions & ITerminalInitOnlyOptions {
+/**
+ * One run's options: the fixed ones, its size (fixed for the run, §3.10), typing only when the run takes it, and the
+ * screen reader's mirror only while one runs.
+ */
+export function terminalOptions(o: { interactive: boolean; cols: number; rows: number; screenReader?: boolean }): ITerminalOptions & ITerminalInitOnlyOptions {
   const clamp = (v: number, lo: number, hi: number, d: number) => (Number.isInteger(v) && v >= lo && v <= hi ? v : d);
-  return { ...XTERM_OPTIONS, disableStdin: !o.interactive, cols: clamp(o.cols, 20, 500, 100), rows: clamp(o.rows, 5, 200, 30) };
+  return {
+    ...XTERM_OPTIONS, disableStdin: !o.interactive, cols: clamp(o.cols, 20, 500, 100), rows: clamp(o.rows, 5, 200, 30), screenReaderMode: o.screenReader === true,
+  };
 }

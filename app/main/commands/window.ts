@@ -128,13 +128,25 @@ export function typedPieces(data: string, piece = INPUT_PIECE): Uint8Array[] {
 }
 
 /** The command window as the command flow drives it, plus what the targets runtime needs of it. */
-export function createCommandWindowPort(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS; keyHint: () => string | null }):
-  CommandWindowPort & { show(): void; owns(sender: WebContentsLike): boolean; dispose(): void } {
+export function createCommandWindowPort(o: CommandWindowOptions): CommandWindowPort & { show(): void; owns(sender: WebContentsLike): boolean; dispose(): void } {
   return createCommandWindowController(o);
 }
 
+/**
+ * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, and whether a
+ * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43).
+ */
+export interface CommandWindowOptions {
+  create: () => BrowserWindowLike;
+  ipc: IpcLike;
+  log: Logger;
+  os: OS;
+  keyHint: () => string | null;
+  screenReader?: () => boolean;
+}
+
 /** createCommandWindowPort with its extras typed: the same object (the targets runtime may call this name instead). */
-export function createCommandWindowController(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS; keyHint: () => string | null }): CommandWindowController {
+export function createCommandWindowController(o: CommandWindowOptions): CommandWindowController {
   /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
   const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
     try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
@@ -192,6 +204,11 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
     } catch { return null; } // a hint that can't be built shows none
   }
 
+  /** A screen reader runs (main asks the OS each time); false when it isn't told or asking fails. */
+  function screenReader(): boolean {
+    try { return o.screenReader?.() === true; } catch { return false; } // not known: the terminals stay as they are
+  }
+
   function tabView(t: Tab): TabView {
     const interactive = !t.ended && t.run.interactive === true;
     return {
@@ -211,6 +228,7 @@ export function createCommandWindowController(o: { create: () => BrowserWindowLi
       keyHint: card ? keyHint() : null,
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
       os: o.os,
+      screenReader: screenReader(),
     };
   }
 

@@ -18,6 +18,8 @@ export interface RunTerminal {
   open(host: HTMLElement): void;
   readonly opened: boolean;
   setInteractive(on: boolean): void;
+  /** Mirrors its output for a screen reader (review #43), while one runs. */
+  setScreenReader(on: boolean): void;
   /** Puts the keyboard in it (once open), so what the user types goes to the run. */
   focus(): void;
   /** Copies everything it shows, scrollback included, to the clipboard (the Copy output button); false if it couldn't. */
@@ -50,9 +52,10 @@ function copyText(text: string): boolean {
 }
 
 /** A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). */
-export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; onInput: (data: string) => void }): RunTerminal {
+export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; onInput: (data: string) => void }): RunTerminal {
   let interactive = o.interactive;
-  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows }));
+  let screenReader = o.screenReader;
+  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader }));
   // Typing and xterm's answers to queries (cursor position, device attributes) go to the run, and only while it takes them.
   const sub = term.onData(data => { if (interactive) o.onInput(data); });
   // Tab and Shift+Tab move the focus, never into the run; paste and copy are the user's (keys.ts). xterm handles the rest.
@@ -66,15 +69,27 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
     return false;
   });
   let opened = false;
-  // A run that can't take typing keeps its terminal out of the Tab order: there is nothing to type there.
-  const tabStop = () => { if (term.textarea) term.textarea.tabIndex = interactive ? 0 : -1; };
+  // xterm's mirror for a screen reader misses what the first render drew: a redraw shortly after output keeps it whole.
+  let mirrorTimer: ReturnType<typeof setTimeout> | null = null;
+  const refreshMirror = () => {
+    if (!screenReader || mirrorTimer) return;
+    mirrorTimer = setTimeout(() => { mirrorTimer = null; if (opened) term.refresh(0, term.rows - 1); }, 150);
+  };
+  // A run that can't take typing keeps its terminal's input out of the Tab order, and says it is read-only: there is
+  // nothing to type there.
+  const tabStop = () => {
+    if (!term.textarea) return;
+    term.textarea.tabIndex = interactive ? 0 : -1;
+    term.textarea.setAttribute("aria-readonly", String(!interactive));
+  };
   return {
-    write: bytes => term.write(bytes),
+    write: bytes => term.write(bytes, refreshMirror),
     open(host) {
       if (opened) return;
       opened = true;
       term.open(host);
       tabStop();
+      refreshMirror();
     },
     get opened() { return opened; },
     setInteractive(on) {
@@ -82,6 +97,12 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
       interactive = on;
       term.options.disableStdin = !on;
       tabStop();
+    },
+    setScreenReader(on) {
+      if (on === screenReader) return;
+      screenReader = on;
+      term.options.screenReaderMode = on;
+      refreshMirror();
     },
     focus: () => { if (opened) term.focus(); },
     copyAll() {
@@ -100,6 +121,7 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
     },
     refresh: () => { if (opened) term.refresh(0, term.rows - 1); },
     dispose() {
+      if (mirrorTimer) clearTimeout(mirrorTimer);
       sub.dispose();
       term.dispose();
     },

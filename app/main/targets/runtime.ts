@@ -401,7 +401,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // ── Windows of Ember's own (made only when something needs them; their channels are theirs) ──
   // The card's key hint: the keys main holds for the question up now (none when main doesn't say).
   const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
-  const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint });
+  // Whether a screen reader runs: each run's terminal then mirrors its output for it (review #43).
+  const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
+  const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader });
   const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os });
 
   // ── This computer's commands ──

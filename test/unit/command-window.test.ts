@@ -99,12 +99,13 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
     ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+    ...(o.screenReader ? { screenReader: o.screenReader } : {}),
   });
   const win = () => windows[windows.length - 1];
   const page = () => win().webContents;
@@ -734,5 +735,26 @@ describe("the window's life", () => {
     for (const k of ["showCard", "hideCard", "cardReady", "announce", "cancelAnnounce", "attach", "show", "owns", "dispose"]) {
       expect(typeof (port as unknown as Record<string, unknown>)[k]).toBe("function");
     }
+  });
+});
+
+describe("the command window and a screen reader (review #43)", () => {
+  it("tells the page whether a screen reader is running, so the terminal's output is read to it", () => {
+    let on = false;
+    const { ctl, page } = setup({ screenReader: () => on });
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(page().last().screenReader).toBe(false);
+    on = true;
+    ctl.note("0123456789abcdef", "Starting Ubuntu…");
+    expect(page().last().screenReader).toBe(true);
+  });
+
+  it("says no screen reader when it isn't told, or when asking fails", () => {
+    const a = setup();
+    a.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(a.page().last().screenReader).toBe(false);
+    const b = setup({ screenReader: () => { throw new Error("no a11y"); } });
+    b.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(b.page().last().screenReader).toBe(false);
   });
 });

@@ -37,6 +37,16 @@ describe("the terminal's options (\u00a73.10)", () => {
     expect(INERT_LINKS.hover).toBeUndefined();
   });
 
+  it("expose the output to a screen reader when one is running, and only then (review #43)", () => {
+    expect(XTERM_OPTIONS.screenReaderMode).toBe(false);
+    expect(terminalOptions({ interactive: false, cols: 100, rows: 30, screenReader: true }).screenReaderMode).toBe(true);
+    expect(terminalOptions({ interactive: true, cols: 100, rows: 30, screenReader: false }).screenReaderMode).toBe(false);
+    expect(terminalOptions({ interactive: true, cols: 100, rows: 30 }).screenReaderMode).toBe(false);
+    const term = read("terminal.ts"), main = read("main.ts");
+    expect(term).toMatch(/options\.screenReaderMode = /);
+    expect(main).toMatch(/setScreenReader\(/);
+  });
+
   it("take typing only for a run that takes it, at the run's size", () => {
     expect(terminalOptions({ interactive: true, cols: 120, rows: 40 })).toMatchObject({ disableStdin: false, cols: 120, rows: 40, scrollback: 5000 });
     expect(terminalOptions({ interactive: false, cols: 120, rows: 40 }).disableStdin).toBe(true);

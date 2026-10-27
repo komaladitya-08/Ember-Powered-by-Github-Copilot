@@ -306,7 +306,8 @@ function buildTab(t: TabView): TabEls {
   // passing through it (reviews #42, #261).
   panel.append(where.node, block, ...legends, foot, host, typing);
   const term = createRunTerminal({
-    cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", onInput: data => api.input(t.runId, data),
+    cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", screenReader: model.view?.screenReader === true,
+    onInput: data => api.input(t.runId, data),
   });
   return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
 }
@@ -400,6 +401,7 @@ function render(): void {
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
+    e.term.setScreenReader(v?.screenReader === true);
     if (e.ended !== t.ended) {
       e.ended = t.ended;
       e.action.textContent = t.ended ? CLOSE_LABEL : STOP_LABEL;
