@@ -210,6 +210,12 @@ describe("choosing the packages to bundle", () => {
       .toEqual({ file: "npm ls --omit=dev --all --parseable", args: [], shell: true });
     expect(npmInvocation({ platform: "win32", execPath: "C:\\node\\node.exe" }, args).shell).toBe(true);
     expect(() => npmInvocation({ platform: "win32", execPath: "n" }, ["ls", "& calc"])).toThrow(/through the shell/);
+    // remote-parts.mjs packs scoped packages by version (CI run 133): @ and / pass, cmd.exe's own characters don't.
+    expect(npmInvocation({ platform: "win32", execPath: "n" }, ["pack", "@koromix/koffi-linux-x64@2.15.3", "--json"]))
+      .toEqual({ file: "npm pack @koromix/koffi-linux-x64@2.15.3 --json", args: [], shell: true });
+    for (const bad of ["a%PATH%", "a^b", "a|b", "a>b", "(a)", "a!b", "a b", "a\"b"]) {
+      expect(() => npmInvocation({ platform: "win32", execPath: "n" }, ["pack", bad]), bad).toThrow(/through the shell/);
+    }
   });
 });
 

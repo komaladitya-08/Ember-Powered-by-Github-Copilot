@@ -203,7 +203,8 @@ export function npmInvocation(host, args) {
   if (host.npmExecPath && /^npm-cli\.c?js$/i.test(host.npmExecPath.split(/[\\/]/).pop() ?? "")) {
     return { file: host.execPath, args: [host.npmExecPath, ...args], shell: false };
   }
-  const unsafe = args.find(a => !/^[\w.=-]+$/.test(a));
+  // Letters, digits and . = - _ @ / only: none is special to cmd.exe, and a scoped package spec needs @ and /.
+  const unsafe = args.find(a => !/^[\w.=@/-]+$/.test(a));
   if (unsafe !== undefined) throw new Error(`won't pass ${JSON.stringify(unsafe)} to npm through the shell`);
   return { file: ["npm", ...args].join(" "), args: [], shell: true };
 }
