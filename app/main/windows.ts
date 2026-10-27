@@ -115,6 +115,24 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
   return Object.assign(win, { fit, takeKeyboard });
 }
 
+/** One of Ember's windows as main sees it for keeping clear of it: on screen or not, focused or not, and where. */
+export interface ShownWindow { visible: boolean; minimized: boolean; focused: boolean; bounds: { x: number; y: number; width: number; height: number } }
+
+/**
+ * What Ember steps beside (`aside`) and what its bubble keeps off (`avoid`), in DIP. Settings counts while it is shown
+ * and focused (the user works in it), as before. Ember's own approval windows count while they ask (review #125): the
+ * prompt window whenever it is shown (it shows only with a card), the command window while a question's command card is
+ * up in it. They come first: the overlay stays above every window, so otherwise Ember, its bubble and the task cards
+ * would sit on the card the user must read, and on its buttons.
+ */
+export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean }):
+  { aside: ShownWindow["bounds"] | null; avoid: ShownWindow["bounds"][] } {
+  const up = (w: ShownWindow | null): w is ShownWindow => !!w && w.visible && !w.minimized;
+  const approvals = [o.prompt, o.commandCard ? o.command : null].filter(up).map(w => w.bounds);
+  const home = up(o.home) && o.home.focused ? o.home.bounds : null;
+  return { aside: approvals[0] ?? home, avoid: [...approvals, ...(home ? [home] : [])] };
+}
+
 /**
  * What the settings page may change through IPC.updateSettings: anything but where Ember works (`targets`) and what
  * commands may do (`commands`). Those change only through the targets runtime's own channel, behind their consent
