@@ -190,10 +190,22 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
   }, 120_000);
 
   const partsBuilt = existsSync(join(ROOT, "dist", "remote-parts", "remote-parts.json"));
-  it.skipIf(!partsBuilt)("connects with the test switch and says hello (needs the remote parts and the mux)", async () => {
+  it.skipIf(!partsBuilt)("connects with the test switch and says hello, or refuses a kernel older than 4.18 before installing (needs the remote parts)", async () => {
     const c = connections(true);
     const resolved = await c.resolve("127.0.0.1", { port: PORT });
-    const link = await c.connect({ ...host(), resolved: { user: resolved.user, hostname: resolved.hostname, port: resolved.port, jump: resolved.jump } }, { interactive: false });
+    const record = { ...host(), resolved: { user: resolved.user, hostname: resolved.hostname, port: resolved.port, jump: resolved.jump } };
+    // WSL1 reports an emulated 4.4 kernel, below the agent's Linux 4.18: Ember must refuse it from its probe, with
+    // nothing installed. A real kernel (WSL2, a server) says hello.
+    const kernel = spawnSync(SSH, ["-o", "BatchMode=yes", "-p", String(PORT), "127.0.0.1", "uname -r"], { encoding: "utf8", windowsHide: true, timeout: 30_000 }).stdout.trim();
+    console.log(`remote kernel: ${kernel}`);
+    const [major, minor] = kernel.split(".").map(Number);
+    if (major < 4 || (major === 4 && minor < 18)) {
+      await expect(c.connect(record, { interactive: false })).rejects.toMatchObject({ kind: "unsupported", message: expect.stringContaining("Linux 4.18") });
+      const installed = spawnSync(SSH, ["-o", "BatchMode=yes", "-p", String(PORT), "127.0.0.1", "{ test -e ~/.local/share/ember-remote/runtime || test -e ~/.local/share/ember-remote/versions; } && echo yes || echo no"], { encoding: "utf8", windowsHide: true, timeout: 30_000 }).stdout.trim();
+      expect(installed).toBe("no");
+      return;
+    }
+    const link = await c.connect(record, { interactive: false });
     expect(link.welcome.isWsl).toBe(true);
     await c.disconnect("wsl-sshd");
   }, 300_000);
